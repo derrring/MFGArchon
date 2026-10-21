@@ -1401,6 +1401,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             if len(unmatched) > 5:
                 lines.append(f"  ... and {len(unmatched) - 5} more")
             raise ValueError("\n".join(lines))
+        # A segment that governs none of these points has its condition dropped unless it writes the same row as each
+        # segment that outranks it where it is held -- or, held nowhere, as every segment read; the owner refuses it by
+        # name, reading these points as GFDM read them (#2490 B1e-2). A corner no longer runs the face owner's check in
+        # its place.
+        bc.refuse_segments_governing_no_point(
+            [(self.collocation_points[i], None, segment) for i, segment in self._bc_segment_per_point.items()],
+            type(self).__name__,
+            f"its {len(self.boundary_indices)} boundary collocation points",
+            geometry=geometry,
+            tolerance=BOUNDARY_TOL,
+            equivalent=_same_bc_row,
+        )
 
     def _detect_boundary_indices(self, collocation_points: np.ndarray) -> np.ndarray:
         """Auto-detect boundary point indices from collocation points and domain bounds.

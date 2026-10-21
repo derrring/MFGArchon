@@ -146,18 +146,10 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     if isinstance(bc, str):
         raise ValueError(f"needs_segment_aware_bc: a BC is a BoundaryConditions, not the string {bc!r}")
 
-    from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type
-    from mfgarchon.geometry.boundary.types import segment_robin_coefficients
+    from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type, segment_particle_action
 
     def action(segment: BCSegment) -> ParticleAction:
-        # A classification that writes no row, so a Robin segment's coefficients as stored (the owner's equivalence
-        # readers' form).
-        beta = (
-            segment_robin_coefficients(segment, where="FPParticleSolver's routing", as_stored=True)[1]
-            if segment.bc_type == BCType.ROBIN
-            else None
-        )
-        return particle_action_for_bc_type(segment.bc_type, beta)
+        return segment_particle_action(segment, "FPParticleSolver's routing")
 
     # One condition everywhere, default_bc counted wherever no global segment covers the boundary: the fast path wraps
     # or reflects it, and its topology read answers a uniform BC without reading placements.

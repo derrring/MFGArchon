@@ -408,26 +408,41 @@ def normal_holds(segment: BCSegment, normals: np.ndarray, where: str) -> np.ndar
     return normals @ target[: normals.shape[1]] / norm >= segment.normal_tolerance
 
 
+def region_axis(segment: BCSegment, key: str | int, dimension: int, axis_names: dict[int, str] | None = None) -> int:
+    """The axis a ``region`` key names, for every reader of a ``region`` (#2490 B1e-2): a name, among ``axis_names``
+    (by default x, y, z, w), or an integer, ``numbers.Integral`` included (a numpy integer). It must name one of the
+    domain's ``dimension`` axes. Anything else is refused: a float is not truncated to an axis, a negative index does
+    not count from the last axis, and a bool is not an index."""
+    if axis_names is None:
+        axis_names = {0: "x", 1: "y", 2: "z", 3: "w"}
+    if isinstance(key, str):
+        axis = next((idx for idx, name in axis_names.items() if name == key), None)
+    elif isinstance(key, (bool, np.bool_)):
+        axis = None
+    elif isinstance(key, numbers.Integral):
+        axis = int(key)
+    else:
+        axis = None
+    if axis is None or not 0 <= axis < dimension:
+        raise ValueError(
+            f"BC segment {segment.name!r}: region axis {key!r} names no axis of a {dimension}-D domain. Name an axis "
+            f"({', '.join(axis_names[i] for i in sorted(axis_names) if i < dimension)}) or give its index, an integer "
+            f"from 0 to {dimension - 1}."
+        )
+    return axis
+
+
 def region_holds(
     segment: BCSegment, points: np.ndarray, tolerance: float, axis_names: dict[int, str] | None = None
 ) -> np.ndarray:
     """For each point (a row of ``points``), does ``segment.region`` hold it: every named axis within its range, to
     ``tolerance``? The point family's one reading of ``region``: `BCSegment.matches_point` and a mesh facet's midpoint
-    (`BoundaryConditions.segments_for_facets`, #2512 row B1)."""
+    (`BoundaryConditions.segments_for_facets`, #2512 row B1). Each key is read by `region_axis`, as the face readers
+    read it."""
     points = np.atleast_2d(np.asarray(points, dtype=float))
-    if axis_names is None:
-        axis_names = {0: "x", 1: "y", 2: "z", 3: "w"}
     held = np.ones(points.shape[0], dtype=bool)
     for axis_key, (range_min, range_max) in segment.region.items():
-        if isinstance(axis_key, str):
-            axis_idx = next((idx for idx, name in axis_names.items() if name == axis_key), None)
-            if axis_idx is None:
-                raise ValueError(f"Unknown axis name: {axis_key}")
-        else:
-            axis_idx = int(axis_key)
-        if axis_idx >= points.shape[1]:
-            raise ValueError(f"Axis index {axis_idx} exceeds point dimension {points.shape[1]}")
-        coord = points[:, axis_idx]
+        coord = points[:, region_axis(segment, axis_key, points.shape[1], axis_names)]
         held &= (coord >= range_min - tolerance) & (coord <= range_max + tolerance)
     return held
 
