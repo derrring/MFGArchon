@@ -53,9 +53,10 @@ class SegmentIntervals:
     """The parts of segments a -> b inside a domain, as parameters t of a + t (b - a) in [0, 1] (#2733 D1).
 
     ``t[i, k]`` is the k-th interval (lo, hi) of segment i: closed, sorted and disjoint, with rows padded by NaN. A
-    point of the segment is in an interval exactly where `contains` holds there, up to the rounding of the ends'
-    parameters: each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's
-    intervals as Roth (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
+    point of the segment is in an interval exactly where `contains` holds there, up to rounding within about an ulp of
+    a surface, in space: a segment that grazes a face can disagree with `contains` over a long stretch of its parameter.
+    Each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's intervals as Roth
+    (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
     intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
@@ -63,7 +64,7 @@ class SegmentIntervals:
     Hyperrectangle 2 * axis for the min face and 2 * axis + 1 for the max face, on a Hypersphere 0. ``complemented``
     marks a leaf that enters complemented, an obstacle, so that the domain's outward normal at that end is the leaf's
     inward one. Where the ends of several leaves coincide, at a corner or a wall two rooms share, the end carries one
-    of them.
+    of them; a box's own tie, at an edge or a corner, goes to its lowest axis.
     """
 
     t: NDArray[np.float64]
@@ -609,7 +610,7 @@ class ImplicitDomain(
           is one the step actually met (#2706, review 1). The crossing is found by a scan of 32 steps per leg
           and bisection on the sign of phi alone, so a leg whose path inside a feature is shorter than a scan step,
           1/32 of the leg, can step over it and name a later face: a thin feature, or a corner the leg clips
-          (#2710). On a flat face this
+          (#2733). On a flat face this
           is the projected-Euler (Skorokhod) map: it keeps the step's displacement along the face. On a curved
           face, at an edge or a seam it is a local approximation, repeated from the new segment while the result
           is still outside, up to 8 faces, each time projecting onto the intersection of the faces met. A point
@@ -720,7 +721,7 @@ class ImplicitDomain(
         its first phi = 0 crossing, or None when no scan point beyond ``a`` is outside. A scan of ``n_scan`` steps
         and ``n_bisect`` bisections on the sign of phi; a leg whose path inside a feature is shorter than a scan step
         -- a thin feature, or a corner the leg clips -- can pass it over, and the crossing found is then a later one
-        (#2710). One more sample sits 1e-9 of the leg before ``b``: a leg that
+        (#2733). One more sample sits 1e-9 of the leg before ``b``: a leg that
         ends ON an obstacle's face -- a reflected step's wall hit where the obstacle is flush with the wall -- has
         phi = 0 there, which reads inside, and its excursion into the obstacle just before the end can be shorter
         than a scan step (#2706)."""
@@ -885,6 +886,13 @@ class ImplicitDomain(
         if not (np.isfinite(a).all() and np.isfinite(b).all()):
             raise ValueError(
                 "segment ends must be finite: a NaN end would classify the whole segment as outside, with nothing raised"
+            )
+        with np.errstate(over="ignore"):
+            extent = b - a
+        if not np.isfinite(extent).all():
+            raise ValueError(
+                "a segment's extent b - a overflows: its direction is infinite, so the intervals along it and the start's "
+                "admission are not the domain's"
             )
         return np.atleast_2d(a), np.atleast_2d(b)
 
@@ -1410,8 +1418,9 @@ def _combine_line_sets(
     opening end comes before a closing one, so that closed intervals that touch are joined, and a point where one
     closes as another opens is kept, as the closed sets' intersection holds it."""
     n = parts[0][0].shape[0]
-    t = np.concatenate([part[0].reshape(n, -1) for part in parts], axis=1)
-    tag = np.concatenate([part[1].reshape(n, -1) for part in parts], axis=1)
+    # Each part's (N, K, 2) ends as (N, 2K) events. The width is given, not inferred, so N = 0 reshapes too.
+    t = np.concatenate([part[0].reshape(n, 2 * part[0].shape[1]) for part in parts], axis=1)
+    tag = np.concatenate([part[1].reshape(n, 2 * part[1].shape[1]) for part in parts], axis=1)
     closing = np.broadcast_to(np.arange(t.shape[1]) % 2, t.shape)
     order = np.lexsort((closing, t), axis=-1)
     t, tag, closing = (np.take_along_axis(x, order, axis=1) for x in (t, tag, closing))
