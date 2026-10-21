@@ -48,6 +48,7 @@ exp15's widened fan; the research keeps its own copy for the paper. Two-dimensio
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
@@ -86,7 +87,7 @@ MIRROR_POOL = 21
 MIRROR_REACH = 0.6
 
 #: The obliqueness the mirror row certifies, gamma_0 of eq:bc_gamma_main. The theorem needs one gamma_0 > 0 at every
-#: h; on exp17's clouds the largest gamma_hat each layer row can reach stays at or above 1.19 from N_int 400 to 2500.
+#: h; on exp17's clouds the largest gamma_hat each layer row can reach stays at or above 1.187 from N_int 400 to 2500.
 MIRROR_GAMMA0 = 0.5
 
 
@@ -274,20 +275,21 @@ def _positive_laplacian_row(
 
 
 def _mirror_row(
-    displacement: np.ndarray, distance: np.ndarray, radius: float, length: float
+    displacement: np.ndarray, distance: np.ndarray, radius: float, length: float, gamma0: float = MIRROR_GAMMA0
 ) -> tuple[np.ndarray, float, float, int] | None:
     """A layer node's mirror row (#1689 PR 4), or None: the centre at index 0, then its ``m`` sources, then their
     ghosts, in ``displacement`` (shape ``(1 + 2m, 2)``); ``distance`` each source's inward distance to the mirrored
     face, ``radius`` the pool's radius ``delta_i``.
 
     The QP ``min ||L||^2`` subject to ``A^T L = e_lap``, ``L >= 0`` off the centre and ``2 delta_i distance . L_ghost
-    >= MIRROR_GAMMA0`` is solved in units of ``length``, the node's ``h6``, as `_positive_laplacian_row` is; the
-    certificate is scale-free, since ``L`` scales as ``1 / length**2`` and ``delta_i`` and ``s`` as ``length``.
-    Admitted only by its certificate: each moment's residual at most `CERTIFICATE_TOL` times its scale, every
-    off-centre weight of the QP at least ``-CERTIFICATE_TOL * max|L|``, and ``gamma_hat >= MIRROR_GAMMA0 -
-    CERTIFICATE_TOL``. The ghosts are then folded onto their sources; a folded weight in the band below 0 is set to 0
-    and the centre to minus the off-centre sum, so the folded row is exactly Metzler with zero row sum. Returns the
-    folded weights (the centre, then the sources), the residual, ``gamma_hat`` and how many weights were set to 0.
+    >= gamma0`` (`MIRROR_GAMMA0`; 0 where a refusal asks whether the moments alone can be met) is solved in units of
+    ``length``, the node's ``h6``, as `_positive_laplacian_row` is; the certificate is scale-free, since ``L`` scales
+    as ``1 / length**2`` and ``delta_i`` and ``s`` as ``length``. Admitted only by its certificate: each moment's
+    residual at most `CERTIFICATE_TOL` times its scale, every off-centre weight of the QP, before folding, at least
+    ``-CERTIFICATE_TOL * max|L|``, and ``gamma_hat >= gamma0 - CERTIFICATE_TOL``. The ghosts are then folded onto
+    their sources; a folded weight in the band below 0 is set to 0 and the centre to minus the off-centre sum, so the
+    folded row is exactly Metzler with zero row sum. Returns the folded weights (the centre, then the sources), the
+    residual, ``gamma_hat`` and how many weights were set to 0.
     """
     cp = joint_socp.cp
     A, _ = build_taylor_matrix_2d(displacement / length)
@@ -295,7 +297,7 @@ def _mirror_row(
     weights = cp.Variable(1 + 2 * m)
     gamma = 2.0 * (radius / length) * (np.asarray(distance) / length) @ weights[1 + m :]
     problem = cp.Problem(
-        cp.Minimize(cp.sum_squares(weights)), [A.T @ weights == _E_LAP, weights[1:] >= 0, gamma >= MIRROR_GAMMA0]
+        cp.Minimize(cp.sum_squares(weights)), [A.T @ weights == _E_LAP, weights[1:] >= 0, gamma >= gamma0]
     )
     try:
         problem.solve(solver="CLARABEL")
@@ -311,7 +313,7 @@ def _mirror_row(
     if not (
         residual <= CERTIFICATE_TOL
         and w[1:].min() >= -CERTIFICATE_TOL * np.abs(w).max()
-        and gamma_hat >= MIRROR_GAMMA0 - CERTIFICATE_TOL
+        and gamma_hat >= gamma0 - CERTIFICATE_TOL
     ):
         return None
     folded = np.r_[w[0], w[1 : 1 + m] + w[1 + m :]]
@@ -396,8 +398,9 @@ class PositiveQPFan:
             )
         if reflecting_faces and obstacle_sdf is not None:
             raise ValueError(
-                "PositiveQPFan: a reflecting face beside an obstacle needs exp09's reflected candidate pool and the "
-                "visibility-enlarged pool, which are not ported (#1689 R-D3); the mirror row reads no visibility."
+                "HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'): a reflecting face beside an obstacle needs exp09's "
+                "reflected candidate pool, its pairwise images at junctions and the visibility-enlarged pool, which are "
+                "not ported (#1689 R-D3); the mirror row reads no visibility. Use monotonicity_scheme='joint_socp'."
             )
         self.parameters = parameters
         n = len(points)
@@ -546,10 +549,18 @@ class PositiveQPFan:
         row = _mirror_row(displacement, c - points[sources] @ normal, radius, length)
         if row is None:
             face = f"the face {normal.tolist()} . x = {c}"
-            return (
-                f"a layer node of {face}, within {MIRROR_REACH} times its pool radius of it, with no mirror row across "
-                f"it in its {MIRROR_POOL} nearest nodes that meets the obliqueness certificate gamma_hat >= "
-                f"{MIRROR_GAMMA0} (eq:bc_gamma_main)"
+            # Which part fails: the P2 moments with non-negative weights, or only the obliqueness certificate. Read
+            # through its certificate alone, so the solver's note that an infeasible problem's answer is inaccurate
+            # says nothing here.
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Solution may be inaccurate", category=UserWarning)
+                moments = _mirror_row(displacement, np.zeros(len(sources)), radius, length, gamma0=0.0) is not None
+            return f"a layer node of {face}, within {MIRROR_REACH} times its pool radius of it, with " + (
+                f"no mirror row across it in its {MIRROR_POOL} nearest nodes that meets the obliqueness certificate "
+                f"gamma_hat >= {MIRROR_GAMMA0} (eq:bc_gamma_main)"
+                if moments
+                else f"no mirror row across it in its {MIRROR_POOL} nearest nodes and their images with non-negative "
+                "off-centre weights: the P2 moments cannot be met there"
             )
         return row, np.r_[i, sources]
 

@@ -310,8 +310,9 @@ class HJBHowardSolver:
           `HJBGFDMSolver(monotonicity_scheme="positive_qp_fan")`. The policy is the exact argmin
           over each node's fan sectors (`positive_qp_fan.cone_policy`), and each advection row has
           non-negative off-diagonals, so every interior row of the policy-evaluation matrix is an
-          M-matrix row. Its boundary rows are the provider's BC rows, which the provider's
-          boundary type check admits at each step only when every boundary point is Dirichlet.
+          M-matrix row. Its boundary rows are the provider's (`_positive_qp_fan_bc_rows`): a
+          Dirichlet point's value row and a reflecting point's value-copy row, which the provider's
+          closure (`_positive_qp_fan_closure`) admits at each step (#1689 PR 4).
           Needs `control_cost` and `use_provider_bc_rows=True`.
     max_iter : int
         Maximum Howard inner iterations per backward time step.

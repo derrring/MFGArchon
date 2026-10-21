@@ -15,12 +15,10 @@
   - Parameters: `positive_qp_fan=GuardedFanParameters(...)`, from `mfgarchon.alg.numerical.gfdm_components`, with
     defaults at the paper's values. A value outside the range the scheme supports is refused by name, with the
     reason.
-  - Scope: two-dimensional, `SeparableHamiltonian` with `QuadraticControlCost`, and Dirichlet faces only. A
-    boundary point of any other condition is refused by its classified type, at construction and at each step where
-    `HJBHowardSolver` installs the BC rows, so a BC set on the grid after construction is refused too. The scheme
-    takes Dirichlet faces only until its reflecting closure lands: a reflecting face's BC row is not certified an
-    M-matrix row (at `taylor_order=2` it is a GFDM normal-gradient stencil with mixed signs), and on a degenerate
-    stencil it is an identity imposing u = 0. Ghost nodes are refused, as with `joint_socp`.
+  - Scope: two-dimensional, `SeparableHamiltonian` with `QuadraticControlCost`. Its boundary conditions are
+    closed as `1689-positive-qp-fan-reflecting-closure.added.md` states: Dirichlet faces, and homogeneous reflecting
+    faces by mirror and value-copy rows, never by a GFDM normal-gradient row (at `taylor_order=2` one has mixed
+    signs). Ghost nodes are refused, as with `joint_socp`.
   - Oracle: the decoupled LQ HJB in closed form converges at first order, and each step solves the discrete Bellman
     equation, at control cost 1 and 4, with the minimum over each node's sectors computed independently of the
     scheme's policy.

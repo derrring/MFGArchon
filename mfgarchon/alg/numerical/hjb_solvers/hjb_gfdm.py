@@ -131,14 +131,14 @@ def _outward_normal(axis: int, side: int, dimension: int) -> tuple[float, ...]:
 
 
 def _is_constant_zero(value: Any) -> bool:
-    """Whether a stored BC datum is the constant 0 (a number, or a one-element array, equal to 0), read without
-    evaluating anything: a callable or a provider is not known to be 0 at every point and time."""
+    """Whether a stored BC datum is the constant 0 (a number, or an array, every entry 0), read without evaluating
+    anything: a callable or a provider is not known to be 0 at every point and time."""
     if value is None:
         return True
     if callable(value):
         return False
     try:
-        return np.size(value) == 1 and float(np.asarray(value, dtype=float).ravel()[0]) == 0.0
+        return bool(np.all(np.asarray(value, dtype=float) == 0.0))
     except (TypeError, ValueError):
         return False
 
@@ -442,7 +442,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                   are non-negative by certificate, and a control's advection row has non-negative
                   off-diagonals by its sector. Two-dimensional, ``SeparableHamiltonian`` with
                   ``QuadraticControlCost``. It closes Dirichlet faces and homogeneous reflecting faces (no-flux,
-                  reflecting, Neumann with g = 0) of an axis-aligned box, whole faces in any combination: a
+                  or Neumann with g = 0) of an axis-aligned box, whole faces in any combination: a
                   reflecting face by mirror rows on the interior nodes within reach of it, certified by the
                   paper's obliqueness condition, and value-copy rows on its sampled nodes
                   (`gfdm_components.positive_qp_fan`, #1689 PR 4). An obstacle beside a reflecting face, a door, a
@@ -602,7 +602,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "stencils whose M-matrix structure is not enforced — boundary "
                 "stencils can produce oscillatory derivatives that destabilize "
                 "FP-Particle coupling on long-time-horizon problems. For a "
-                "monotone scheme on a 2-D problem with Dirichlet faces and a SeparableHamiltonian with a "
+                "monotone scheme on a 2-D box with Dirichlet and homogeneous reflecting faces and a SeparableHamiltonian with a "
                 "quadratic control cost, pass "
                 "`monotonicity_scheme='positive_qp_fan', inner_solver='howard'`, whose every interior row is an "
                 "M-matrix row (#1689). Otherwise pass `monotonicity_scheme='joint_socp'` "
@@ -1148,12 +1148,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._positive_qp_fan: PositiveQPFan | None = None
         if self.monotonicity_scheme == "positive_qp_fan":
             faces, reflecting = self._positive_qp_fan_closure()
-            if faces and obstacle_sdf is not None:
-                raise ValueError(
-                    "HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'): a reflecting face beside an obstacle needs "
-                    "exp09's reflected candidate pool, its pairwise images at junctions and the visibility-enlarged "
-                    "pool, which are not ported (#1689 R-D3). Use monotonicity_scheme='joint_socp'."
-                )
             interior_indices = np.setdiff1d(np.arange(self.n_points), self.boundary_indices)
             self._positive_qp_fan = PositiveQPFan(
                 self.collocation_points,
@@ -1204,21 +1198,23 @@ class HJBGFDMSolver(BaseHJBSolver):
         an outward normal mapped to its offset (`PositiveQPFan`'s ``reflecting_faces``), and the boundary points that
         take value-copy rows.
 
-        Each boundary point's classified condition decides, with no BC value evaluated beyond a Neumann datum's
-        stored constant: a Dirichlet point takes its Dirichlet row, a corner included; a reflecting one -- no-flux,
-        reflecting, or Neumann with the constant datum 0 -- takes the value-copy row to its nearest interior node,
-        and its box face reflects. A GFDM normal-gradient row is never installed: at taylor_order 2 it has mixed signs,
-        0 of 40 rows with the M-matrix pattern on an 11 x 11 no-flux box (#1689 comment 6246936251). Refused by name:
-        a nonzero or non-constant Neumann datum and a Robin face (the research's affine correction is not ported); a
-        periodic face (#2713); a reflecting point off the axis-aligned faces of the box, or on a BC read from a
-        ``domain_sdf`` (a curved boundary); and a face whose points off its corners carry both a Dirichlet and a
-        reflecting condition (a door: exp09's reflected pool and its images at junctions are not ported).
+        Each boundary point's classified condition decides, with no BC value evaluated beyond a stored datum: a
+        Dirichlet point takes its Dirichlet row; a reflecting one -- no-flux, or Neumann, with the constant datum 0 --
+        takes the value-copy row to its nearest interior node, and its box face reflects. A point several faces share
+        takes the condition the boundary owner's corner rule gives it (priority, then a Dirichlet condition before
+        another), so a corner of a Dirichlet face whose neighbour outranks it takes a value-copy row. A GFDM
+        normal-gradient row is never installed: at taylor_order 2 it has mixed signs, 0 of 40 rows with the M-matrix
+        pattern on an 11 x 11 no-flux box (#1689 comment 6246936251). Refused by name: a no-flux or Neumann datum other
+        than the constant 0, and a Robin face (the research's affine correction is not ported); a periodic face
+        (#2713); a reflecting point on a boundary read from ``domain_sdf`` or off the axis-aligned faces of the box;
+        and a face whose points off its corners carry both a Dirichlet and a reflecting condition (a door: exp09's
+        reflected pool and its images at junctions are not ported).
 
         Run at construction, before the operator is built, and by HJBHowardSolver(discretisation="guarded_fan") at
-        each step, before it reads the BC rows it installs: a BC adopted after construction whose reflecting faces are
-        not the ones the operator's mirror rows were built for is refused."""
+        each step, before it reads the BC rows it installs: a BC adopted after construction whose reflecting faces, or
+        whose value-copy points, are not the ones the operator was built with is refused."""
         head = "HJBGFDMSolver(monotonicity_scheme='positive_qp_fan')"
-        reflecting_types = (BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING)
+        reflecting_types = (BCType.NO_FLUX, BCType.NEUMANN)
         refused: list[tuple[int, str]] = []
         reflecting: list[int] = []
         conditions: dict[tuple[int, int], set[str]] = {}
@@ -1241,24 +1237,28 @@ class HJBGFDMSolver(BaseHJBSolver):
             if bc_enum == BCType.DIRICHLET:
                 kind = "dirichlet"
             elif bc_enum in reflecting_types:
+                # HJB-GFDM writes NEUMANN and NO_FLUX as one row with the segment's datum (`_bc_row`), so both are read.
                 value = getattr(segment, "value", 0.0) if segment is not None else 0.0
-                if bc_enum == BCType.NEUMANN and not _is_constant_zero(value):
+                if not _is_constant_zero(value):
                     refused.append(
                         (
                             i,
-                            f"a Neumann datum {value!r}: only g = 0 reflects, the affine correction b_N(g) is not ported",
+                            f"a {bc_enum.value} datum other than the constant 0 ({value!r}): only g = 0 reflects, the "
+                            "affine correction b_N(g) is not ported",
                         )
                     )
                     continue
-                if on_sdf or not faces:
+                if on_sdf:
                     refused.append(
                         (
                             i,
-                            "a reflecting point on a boundary read from domain_sdf, or off the axis-aligned faces of the "
-                            "box: a curved boundary, whose mirror across the tangent plane of the SDF's gradient is not "
-                            "ported (#2675)",
+                            "a reflecting point on a boundary read from domain_sdf, whose mirror across the tangent plane "
+                            "of the SDF's gradient is not ported (#2675)",
                         )
                     )
+                    continue
+                if not faces:
+                    refused.append((i, "a reflecting point off the axis-aligned faces of the box"))
                     continue
                 kind = "reflecting"
                 reflecting.append(i)
@@ -1287,7 +1287,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"{head}: {len(refused)} boundary point(s) the scheme cannot close (#1689 R-D3)"
                 + (f". First 10: {shown}." if refused else ".")
                 + door
-                + " It closes Dirichlet faces and homogeneous reflecting faces (no-flux, reflecting, Neumann with g = 0) of "
+                + " It closes Dirichlet faces and homogeneous reflecting faces (no-flux, or Neumann with g = 0) of "
                 "an axis-aligned box, in any combination of whole faces. monotonicity_scheme='joint_socp' runs such a "
                 "problem, with monotone interior rows only."
             )
@@ -1302,6 +1302,14 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"{head}: the boundary conditions now reflect on the faces {sorted(faces_reflecting)} (outward normals), "
                 f"and the operator's mirror rows were built for {sorted(built)} at construction (#1689). Build the "
                 "solver on the boundary conditions it solves with."
+            )
+        fan = getattr(self, "_positive_qp_fan", None)
+        if fan is not None and set(reflecting) != set(fan.copy_rows):
+            moved = sorted(set(reflecting) ^ set(fan.copy_rows))
+            raise ValueError(
+                f"{head}: the boundary conditions now give {len(moved)} boundary point(s) another row than the operator "
+                f"was built with -- a value-copy row where it had a Dirichlet row, or the reverse -- first 10 {moved[:10]} "
+                "(#1689). Build the solver on the boundary conditions it solves with."
             )
         return faces_reflecting, np.asarray(reflecting, dtype=int)
 
@@ -1318,8 +1326,14 @@ class HJBGFDMSolver(BaseHJBSolver):
                 row = np.zeros(n)
                 row[i], row[copy_rows[i]] = 1.0, -1.0
                 rows[i] = (row, 0.0)
-            else:
+            elif bc_enum == BCType.DIRICHLET:
                 rows[i] = self._bc_row_for_point(i, bc_enum, segment, normal, self.dimension, n, current_time)
+            else:
+                raise ValueError(
+                    f"HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'): boundary point {i} has a {bc_enum} condition "
+                    "and no value-copy row; the scheme writes no other row for it (#1689). `_positive_qp_fan_closure` "
+                    "refuses such a BC first."
+                )
         return rows
 
     def _compute_n_spatial_grid_points(self) -> int:
