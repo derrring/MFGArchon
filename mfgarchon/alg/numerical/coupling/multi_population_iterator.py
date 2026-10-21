@@ -27,6 +27,7 @@ from .base_mfg import (
     fp_solve_kwargs,
     hjb_coupling_binding,
     hjb_solve_kwargs,
+    hjb_terminal_binding,
 )
 from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
 
@@ -148,7 +149,7 @@ class MultiPopulationIterator:
         K = self.multi_problem.K
         # The terminal coupling is single-population (#1642, the user's ruling 5): with more than one population this
         # loop couples them through the stacked densities it hands each HJB as its cross-density.
-        coupled = [k for k in range(K) if self.multi_problem.get_population(k).terminal_energy is not None]
+        coupled = [k for k in range(K) if self.multi_problem.get_population(k).declared_terminal_coupling is not None]
         if coupled:
             raise NotImplementedError(
                 f"MultiPopulationIterator: population(s) {coupled} set Model(terminal_coupling=...). A terminal coupling "
@@ -175,7 +176,9 @@ class MultiPopulationIterator:
             M.append(M_k)
 
             # The terminal datum's one owner (#1642 stage 2); no population carries a terminal coupling (refused above).
-            U_terminal_k = prob_k.terminal_value(m0_k)
+            U_terminal_k = prob_k.terminal_value(
+                m0_k, binding=hjb_terminal_binding(self.hjb_solvers[k]), reader="MultiPopulationIterator"
+            )
             U_k = np.zeros((Nt + 1, Nx))
             U_k[-1] = U_terminal_k
             U.append(U_k)
@@ -230,7 +233,11 @@ class MultiPopulationIterator:
             for k in range(K):
                 solver_k = self.hjb_solvers[k]
                 # u(T) at the density this population's HJB solve uses: g, since a terminal coupling is refused above.
-                U_terminal_k = np.asarray(populations[k].terminal_value(M[k][-1]))
+                U_terminal_k = np.asarray(
+                    populations[k].terminal_value(
+                        M[k][-1], binding=hjb_terminal_binding(solver_k), reader="MultiPopulationIterator"
+                    )
+                )
 
                 # Issue #1071 (lock-faithful): pass the stacked cross-density trajectory ``m_all``
                 # directly. The HJB solver indexes it at each integer timestep and feeds it to the

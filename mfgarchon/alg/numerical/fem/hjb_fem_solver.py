@@ -104,7 +104,8 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
     def _coupling_point_measure(self) -> LumpedMassPointMeasure:
         """P1's dofs, the mesh's vertices in its order, with the consistent mass matrix's row sums as their weights, on
-        the mesh's measure, the sum of its element volumes (#1642 stage 1b-2). ``Model.coupling_cost`` binds on it.
+        the mesh's measure, the sum of its element volumes (#1642 stage 1b-2). ``Model.coupling_cost`` and
+        ``Model.terminal_coupling`` bind on it.
 
         The element volumes are the mesh's own (``MeshData.compute_element_volumes``): a mesh without them, such as a
         quad or hexahedron mesh, refuses the cost by name. A PERIODIC condition is refused at construction, by the BC
@@ -117,8 +118,9 @@ class HJBFEMSolver(WeakFormHJBSolver):
             domain_measure = float(np.sum(self._mesh_data.compute_element_volumes()))
         except NotImplementedError as unread:
             raise NotImplementedError(
-                f"HJBFEMSolver binds Model(coupling_cost=...) on the measure of its mesh, the sum of its element "
-                f"volumes, and this mesh of {element} elements has none: {unread} (#1642 stage 1b-2). Triangle and "
+                "HJBFEMSolver binds Model(coupling_cost=...) and Model(terminal_coupling=...) on the measure of its "
+                f"mesh, the sum of its element volumes, and this mesh of {element} elements has none: {unread} (#1642 "
+                "stage 1b-2). Triangle and "
                 "tetrahedron meshes, and a generated Mesh1D, have them."
             ) from unread
         if self.order != 1:
@@ -129,8 +131,8 @@ class HJBFEMSolver(WeakFormHJBSolver):
                 "no positive quadrature. ",
             }.get(element, "")
             raise NotImplementedError(
-                f"HJBFEMSolver(order={self.order}) binds Model(coupling_cost=...) on P1 only (#1642 stage 1b-2). "
-                f"{reason}Solve with order=1."
+                f"HJBFEMSolver(order={self.order}) binds Model(coupling_cost=...) and Model(terminal_coupling=...) "
+                f"on P1 only (#1642 stage 1b-2). {reason}Solve with order=1."
             )
         weights = np.asarray(self._M.sum(axis=1)).ravel()
         return LumpedMassPointMeasure(self._disc.dof_coordinates, weights, domain_measure)

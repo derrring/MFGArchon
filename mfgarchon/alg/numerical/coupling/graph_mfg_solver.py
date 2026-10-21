@@ -211,7 +211,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         Us_full = []
         for k in range(N):
             p = self._problems[k]
-            u_terminal = np.asarray(p.terminal_value(Ms[k]))
+            u_terminal = np.asarray(p.terminal_value(Ms[k], reader="GraphMFGSolver"))
             U_k = np.zeros((p.Nt + 1, len(u_terminal)))
             U_k[-1] = u_terminal
             Us_full.append(U_k)
@@ -231,7 +231,7 @@ class GraphMFGSolver(BaseCouplingIterator):
                 hjb_source = self._compose_hjb_source(k, Us_full, Ms_expanded, raw_coupling)
                 # u(T) at the density this node's HJB solve uses (#1642 stage 2). The previous iterate's last row,
                 # read here before, is the damped mix of two terminals.
-                terminal_k = np.asarray(self._problems[k].terminal_value(Ms_expanded[k][-1]))
+                terminal_k = np.asarray(self._problems[k].terminal_value(Ms_expanded[k][-1], reader="GraphMFGSolver"))
 
                 U_k = self._hjb[k].solve_hjb_system(
                     Ms_expanded[k],

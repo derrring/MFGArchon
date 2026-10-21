@@ -535,6 +535,15 @@ def hjb_coupling_binding(hjb_solver: Any) -> CouplingBinding | None:
     return hjb_solver.coupling_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
 
 
+def hjb_terminal_binding(hjb_solver: Any) -> CouplingBinding | None:
+    """The terminal coupling's binding from ``hjb_solver``, ``BaseHJBSolver.terminal_binding``, for
+    ``problem.terminal_value`` (#1642, stage 1b's G line). None for a solver that is not a ``BaseHJBSolver``, as in
+    `hjb_coupling_binding`: off a grid a declared G is then refused by name."""
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+
+    return hjb_solver.terminal_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
+
+
 def hjb_solve_kwargs(
     problem: Any,
     params: set[str] | None,
@@ -631,8 +640,10 @@ class BaseCouplingIterator(ABC):
         self._fp_drift_convention: DriftConvention | None = None
         self._hjb_solver_name: str = "<hjb solver>"
         self._fp_solver_name: str = "<fp solver>"
-        # #1642 stage 1b-2: the HJB solver's binding of the coupling cost, cached beside its signature.
+        # #1642 stage 1b-2: the HJB solver's bindings of the coupling cost and the terminal coupling, cached beside its
+        # signature.
         self._hjb_coupling_binding: CouplingBinding | None = None
+        self._hjb_terminal_binding: CouplingBinding | None = None
 
     @staticmethod
     def _reshape_to(arr: np.ndarray, shape: tuple) -> np.ndarray:
@@ -647,6 +658,7 @@ class BaseCouplingIterator(ABC):
         self._hjb_solver_name = type(hjb_solver).__name__
         self._fp_solver_name = type(fp_solver).__name__
         self._hjb_coupling_binding = hjb_coupling_binding(hjb_solver)
+        self._hjb_terminal_binding = hjb_terminal_binding(hjb_solver)
         try:
             sig = inspect.signature(hjb_solver.solve_hjb_system)
             self._hjb_sig_params = set(sig.parameters.keys())

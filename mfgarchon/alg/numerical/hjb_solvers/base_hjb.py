@@ -290,6 +290,15 @@ class BaseHJBSolver(BaseNumericalSolver):
         """
         return None
 
+    def terminal_binding(self) -> CouplingBinding | None:
+        """``Model.terminal_coupling`` bound on this solver's own points and weights, or None (#1642, stage 1b's G
+        line).
+
+        None by default, as `coupling_binding` is, and read where it is: off a grid, by the couplers that hand
+        `coupling_binding` to ``compose_hjb_source``, which hand this to ``problem.terminal_value``.
+        """
+        return None
+
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         # Maintain backward compatibility - if no config provided, create a minimal one
         if config is None:
@@ -460,7 +469,9 @@ class BaseHJBSolver(BaseNumericalSolver):
         m_uniform = np.ones(full_shape) / volume
 
         # u(T) at the frozen density's m(T): a terminal coupling adds its derivative there (#1642)
-        U_terminal = self.problem.terminal_value(m_uniform[-1])
+        U_terminal = self.problem.terminal_value(
+            m_uniform[-1], binding=self.terminal_binding(), reader=f"{type(self).__name__}.solve"
+        )
 
         # Initial guess for nonlinear solver: repeat terminal condition across time
         U_prev_picard = np.tile(U_terminal, (Nt_points,) + (1,) * len(spatial_shape))

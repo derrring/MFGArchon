@@ -86,7 +86,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._M_lumped_inv: NDArray | None = None
         self._bc = self.get_boundary_conditions()
-        self._coupling_binding = self._bind_coupling_cost(getattr(problem, "declared_coupling_cost", None))
+        self._coupling_binding, self._terminal_binding = self._bind_coupling_costs(
+            getattr(problem, "declared_coupling_cost", None), getattr(problem, "declared_terminal_coupling", None)
+        )
 
     @property
     def n_dof(self) -> int:
@@ -109,17 +111,22 @@ class WeakFormHJBSolver(BaseHJBSolver):
         sets whatever else it reads before calling ``super().__init__``."""
         return None
 
-    def _bind_coupling_cost(self, cost: Any) -> CouplingBinding | None:
-        """``cost`` bound on `_coupling_point_measure` through ``bind_on_measure``, the one place a point measure is put
-        to use; None with no cost, and refused by name where this solver has no measure to bind it on."""
-        if cost is None:
-            return None
+    def _bind_coupling_costs(self, cost: Any, terminal: Any) -> tuple[CouplingBinding | None, CouplingBinding | None]:
+        """``Model.coupling_cost`` and ``Model.terminal_coupling`` bound on one `_coupling_point_measure` through
+        ``bind_on_measure``, the one place a point measure is put to use, so the two share one quadrature (#1642 stage
+        1b-2, stage 1b's G line); None for each one absent, and each refused by name where this solver has no measure
+        to bind it on."""
+        if cost is None and terminal is None:
+            return None, None
         measure = self._coupling_point_measure()
         if measure is None:
+            fields = " and ".join(
+                f"Model({name}=...)" for name, c in (("coupling_cost", cost), ("terminal_coupling", terminal)) if c
+            )
             raise NotImplementedError(
-                f"{type(self).__name__} solves on its own discretization and binds no Model(coupling_cost=...) there "
-                "(#1642 stage 1b-2). HJB-FEM P1 binds it on a mesh, HJBFEMSolver(problem, order=1); for a linear "
-                "F = integral V m, V can also go to the Hamiltonian as its potential."
+                f"{type(self).__name__} solves on its own discretization and binds no {fields} there (#1642 stage "
+                "1b). HJB-FEM P1 binds it on a mesh, HJBFEMSolver(problem, order=1); for a linear F = integral V m, V "
+                "can also go to the Hamiltonian as its potential, and for a linear G = integral V m(T), to u_terminal."
             )
         points = np.asarray(measure.points, dtype=float)
         if not np.array_equal(points, self._disc.dof_coordinates):
@@ -131,12 +138,20 @@ class WeakFormHJBSolver(BaseHJBSolver):
         from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
         from mfgarchon.operators.interaction.point_measure import bind_on_measure
 
-        return CouplingBinding(bind_on_measure(cost, measure), points, cost)
+        def bound(c: Any) -> CouplingBinding | None:
+            return None if c is None else CouplingBinding(bind_on_measure(c, measure), points, c)
+
+        return bound(cost), bound(terminal)
 
     def coupling_binding(self) -> CouplingBinding | None:
         """``Model.coupling_cost`` bound on this solver's own discretization at construction, or None with no cost
         (#1642 stage 1b-2): never the problem's grid binding, which this solver refuses."""
         return self._coupling_binding
+
+    def terminal_binding(self) -> CouplingBinding | None:
+        """``Model.terminal_coupling`` bound on the measure `coupling_binding` is bound on, at construction, or None
+        with no G (#1642, stage 1b's G line): never the problem's grid binding, which this solver refuses."""
+        return self._terminal_binding
 
     # --- Boundary-condition strategy (subclass-supplied) ----------------------
     def _is_pure_neumann(self) -> bool:

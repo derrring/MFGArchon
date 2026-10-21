@@ -187,11 +187,15 @@ class MFGResidual:
 
         # The terminal value at the initial density: the cold start's U(T). A terminal coupling
         # moves u(T) with m(T), so each HJB solve reads terminal_at(M) instead (#1642).
-        self.U_terminal = np.asarray(self.problem.terminal_value(self.M_initial), dtype=float).reshape(shape)
+        self.U_terminal = np.asarray(
+            self.problem.terminal_value(self.M_initial, reader="MFGResidual"), dtype=float
+        ).reshape(shape)
 
     def terminal_at(self, M: NDArray) -> NDArray:
         """u(T) for the density trajectory ``M``: the problem's terminal value at ``M[-1]`` (#1642)."""
-        return np.asarray(self.problem.terminal_value(M[-1]), dtype=float).reshape(self.spatial_shape)
+        return np.asarray(self.problem.terminal_value(M[-1], reader="MFGResidual"), dtype=float).reshape(
+            self.spatial_shape
+        )
 
     def _cache_solver_signatures(self) -> None:
         """Cache solver method signatures for parameter passing."""

@@ -470,7 +470,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         for k in range(K):
             p = self._problems[k]
             Nt = p.Nt
-            u_terminal = np.asarray(p.terminal_value(Ms[k]))
+            u_terminal = np.asarray(p.terminal_value(Ms[k], reader="RegimeSwitchingIterator"))
             U_k = np.zeros((Nt + 1, len(u_terminal)))
             U_k[-1] = u_terminal
             Us_full.append(U_k)
@@ -514,7 +514,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
                 # u(T) at the density this regime's HJB solve uses (#1642 stage 2). The previous iterate's last row, read
                 # here before, is the damped mix of two terminals.
-                terminal_k = np.asarray(self._problems[k].terminal_value(M_k[-1]))
+                terminal_k = np.asarray(self._problems[k].terminal_value(M_k[-1], reader="RegimeSwitchingIterator"))
                 U_k = self._hjb[k].solve_hjb_system(
                     M_k,
                     terminal_k,  # terminal condition

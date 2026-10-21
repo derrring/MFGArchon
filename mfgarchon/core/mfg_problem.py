@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
     from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.types.pde_coefficients import DriftField
@@ -892,9 +893,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
         self._coupling_energy = self._bind_cost("coupling_cost")
         self._terminal_energy = self._bind_cost("terminal_coupling")
-        # Off a grid the HJB solver binds F as declared (stage 1b-2). Read with the binding, so that a Model changed
-        # after this build moves neither (#2745).
+        # Off a grid the HJB solver binds F and G as declared (stage 1b-2, stage 1b's G line). Read with the binding, so
+        # that a Model changed after this build moves neither (#2745).
         self._declared_coupling_cost = None if self._v1_model is None else self._v1_model.coupling_cost
+        self._declared_terminal_coupling = None if self._v1_model is None else self._v1_model.terminal_coupling
 
         # Validate custom components if provided
         if self.is_custom:
@@ -2315,40 +2317,88 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """
         return self._terminal_energy
 
-    def terminal_value(self, m_terminal: NDArray | None) -> NDArray:
-        """u(T, .) on this problem's grid: the terminal cost g, plus ``delta G / delta m`` at ``m_terminal`` when
-        ``Model.terminal_coupling`` is bound (#1642 stage 2).
+    @property
+    def declared_terminal_coupling(self) -> Any:
+        """``Model.terminal_coupling`` as this problem was built with it, bound or not: the specification, not its
+        binding (#1642, stage 1b's G line). Not None wherever ``terminal_energy`` is not None. None for a problem not
+        built from a ``Model``, or with no G."""
+        return self._declared_terminal_coupling
 
-        The one owner of the terminal datum. Every coupler, the Newton residual and ``BaseHJBSolver.solve`` read it,
-        with the density at t = T of the solve it is the terminal of: an iteration's HJB solve, its re-imposition and
-        its restore after a diverged step all take the m that HJB solve used. Without a terminal coupling
-        ``m_terminal`` is not read, and None is accepted. With one it is required, in the grid's shape or flattened
-        in the grid's C order.
+    def terminal_value(
+        self, m_terminal: NDArray | None, binding: CouplingBinding | None = None, reader: str | None = None
+    ) -> NDArray:
+        """u(T, .) on this problem's points: the terminal cost g, plus ``delta G / delta m`` at ``m_terminal`` when
+        ``Model.terminal_coupling`` is declared (#1642 stage 2, stage 1b's G line).
+
+        The one owner of an ``MFGProblem``'s terminal datum. Every coupler, the Newton residual and
+        ``BaseHJBSolver.solve`` read it, with the density at t = T of the solve it is the terminal of: an iteration's
+        HJB solve, its re-imposition and its restore after a diverged step all take the m that HJB solve used.
+        Without a terminal coupling ``m_terminal`` is not read, and None is accepted. With one it is required, in the
+        points' shape or flattened in their C order.
+
+        On a grid G is the problem's own binding (``terminal_energy``). Off a grid the problem binds none, and G is
+        read through ``binding``, the HJB solver's (``BaseHJBSolver.terminal_binding``), bound from this problem's G
+        on its own points, which must be this problem's. Refused by name, naming ``reader``: a binding where the
+        problem binds G itself, one G with two bindings; a binding of another problem's G; and no binding for a G
+        declared off a grid. Where the problem declares no G, u(T) is g and a binding is not read, as a coupling
+        cost's binding is not read where the problem declares none.
         """
         g = self.get_u_terminal()
-        if self._terminal_energy is None:
+        who = reader or "MFGProblem.terminal_value"
+        declared = self._declared_terminal_coupling
+        if self._terminal_energy is not None and binding is not None:
+            raise ValueError(
+                f"{who} was handed a binding of Model(terminal_coupling=...) for a problem that binds its own on its "
+                f"grid: one G with two bindings (#1642). On a grid G is read through the problem's binding; pass none."
+            )
+        if binding is not None and declared is not None and binding.cost is not declared:
+            raise NotImplementedError(
+                f"{who} was handed a binding of another problem's terminal coupling: the HJB solver was built from a "
+                f"problem whose Model(terminal_coupling=...), a {type(binding.cost).__name__}, is not the "
+                f"{type(declared).__name__} the problem solved declares (#1642). The costs are compared as objects, so "
+                "an equal G built again, or a copy, is another. A solver binds the G of the problem it was built from, "
+                "so build the HJB solver from the problem it solves."
+            )
+        if declared is None:
             return g
+        energy = self._terminal_energy
+        if energy is None:
+            if binding is None:
+                raise NotImplementedError(
+                    f"{who} has no binding of Model(terminal_coupling=...) on this {type(self.geometry).__name__}: off "
+                    "a grid the problem binds none, since a terminal coupling is bound where it is put to use, by the "
+                    "HJB solver that evaluates it, on its own points and weights, and a solver binds the G of the "
+                    "problem it was built from (#1642). HJB-FEM P1 on a mesh binds it, built from this problem, "
+                    "through a coupler that passes its binding: problem.solve(), FixedPointIterator or a BlockIterator."
+                )
+            points = np.asarray(self.geometry.get_spatial_grid(), dtype=float)
+            if not np.array_equal(np.asarray(binding.nodes, dtype=float), points):
+                raise ValueError(
+                    f"{who} was handed a binding of Model(terminal_coupling=...) on {np.shape(binding.nodes)[0]} "
+                    f"points that are not this problem's {points.shape[0]}, in their order, compared bitwise (#1642). "
+                    "u(T) is one value per point of the problem, so G's binding is on those points."
+                )
+            energy = binding.energy
         if m_terminal is None:
             raise ValueError(
-                "MFGProblem.terminal_value: this problem binds Model(terminal_coupling=...), so u(T) depends on m(T), "
-                "and no m(T) was given (#1642). Pass the density at t = T of the solve this terminal belongs to."
+                f"{who}: this problem declares Model(terminal_coupling=...), so u(T) depends on m(T), and no m(T) was "
+                "given (#1642). Pass the density at t = T of the solve this terminal belongs to."
             )
         flat = np.asarray(m_terminal, dtype=float).ravel()
         if flat.size != g.size:
             raise ValueError(
-                f"MFGProblem.terminal_value: m(T) has {flat.size} values and this problem's grid has {g.size} nodes "
-                f"(#1642). Pass one time slice of m, the one at t = T, on the grid the terminal coupling was bound on."
+                f"{who}: m(T) has {flat.size} values and this problem has {g.size} points (#1642). Pass one time slice "
+                "of m, the one at t = T, on the points the terminal coupling was bound on."
             )
-        return g + np.asarray(self._terminal_energy.flat_derivative(flat, t=self.T), dtype=float).reshape(g.shape)
+        return g + np.asarray(energy.flat_derivative(flat, t=self.T), dtype=float).reshape(g.shape)
 
     def _bind_cost(self, field: str) -> EnergyFunctional | None:
         """``model.<field>.bind(self)`` for ``coupling_cost`` and ``terminal_coupling``, where this stage binds one; the
         reason by name where it does not (#1642).
 
-        On a geometry that is neither a grid nor a network a ``coupling_cost`` is left unbound (stage 1b-2): it is bound
-        where it is put to use, by the HJB solver that evaluates it on its own points and weights, and a reader that
-        cannot bind it refuses it by name at solve time. Both fields are refused here on a network, and a
-        ``terminal_coupling`` everywhere off a grid."""
+        On a geometry that is neither a grid nor a network both are left unbound (stage 1b-2, stage 1b's G line): each
+        is bound where it is put to use, by the HJB solver that evaluates it on its own points and weights, and a reader
+        that cannot bind it refuses it by name at solve time. Both fields are refused here on a network."""
         if self._v1_model is None:
             return None
         self._v1_model.refuse_what_is_not_bound()
@@ -2370,13 +2420,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         from mfgarchon.geometry import TensorProductGrid
 
         if not isinstance(self.geometry, TensorProductGrid):
-            if field == "coupling_cost":
-                return None
-            raise NotImplementedError(
-                f"Model({field}=...) binds on a TensorProductGrid; this problem's geometry is "
-                f"{type(self.geometry).__name__}. Off a grid a terminal coupling binds against the HJB solver's own "
-                "discretization, which is the remaining part of #1642's stage 1b (the issue's 'Stage 1b remaining')."
-            )
+            return None
         from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
 
         energy = bound_energy_functional(cost, self)

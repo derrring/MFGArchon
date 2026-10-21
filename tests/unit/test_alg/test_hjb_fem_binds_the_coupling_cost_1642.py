@@ -12,6 +12,7 @@ mass matrix's row sums, and the couplers hand that binding to the HJB source.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import warnings
 
@@ -510,3 +511,192 @@ def test_a_reader_that_passes_no_binding_refuses_by_its_name(reader):
 
     with pytest.raises(NotImplementedError, match=rf"{refusal} Mesh2D"):
         solve()
+
+
+# --- The terminal coupling G, bound on the same measure (#1642, stage 1b's G line) ---------------------------------
+
+
+def _VT(x):
+    """A fifth of ``_V``: the terminal term the G pins use, under which every route's solve stays bounded (at ``_V``
+    itself the density reaches 1.9e4 through ``problem.solve()`` and 8.3e19 through a ``BlockIterator``)."""
+    return 0.2 * _V(x)
+
+
+def _g_problem(where=None, g=None, nt=8, **mesh):
+    """``_VT`` added to ``u_terminal`` (``"u"``), ``PotentialCost(_VT)`` as G (``"G"``), or ``g`` as G."""
+    if where == "G":
+        g = PotentialCost(lambda x: float(_VT(x)))
+
+    def terminal(x):
+        return float(np.sum((np.asarray(x) - 0.7) ** 2))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # the density's mass on the mesh is not these pins' subject
+        return MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                volatility=0.3,
+                terminal_coupling=g,
+            ),
+            domain=_mesh(**mesh),
+            conditions=Conditions(
+                u_terminal=(lambda x: terminal(x) + float(_VT(x))) if where == "u" else terminal,
+                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                T=0.5,
+            ),
+            Nt=nt,
+        )
+
+
+@pytest.mark.parametrize("route", ["problem.solve()", "BlockIterator"])
+def test_a_linear_terminal_coupling_solves_as_the_same_terminal_cost_on_hjb_fem(route):
+    """G = int V m(T) has ``delta G / delta m = V``, so ``PotentialCost(V)`` as G and V added to ``u_terminal`` pose one
+    game. On HJB-FEM P1 the binding gives V at the dofs, the points ``u_terminal`` is read at, so u(T) is g + V either
+    way, and a solve through any route that hands the solver's binding to ``terminal_value`` on a mesh is bitwise the
+    same. One row per such route: ``FixedPointIterator`` (``problem.solve()`` builds one with HJB-FEM and FP-FEM here)
+    and ``BlockIterator``. ``FictitiousPlayIterator`` and the solver's own ``solve()`` hand it over too, and run on no
+    mesh: the first takes a ``CartesianGrid`` only, and HJB-FEM refuses a standalone Picard solve (#2642)."""
+    from mfgarchon.alg.numerical.coupling.block_iterators import BlockIterator
+
+    def solve(where):
+        problem = _g_problem(where)
+        if route == "problem.solve()":
+            return np.asarray(problem.solve(config=_PICARD).U)
+        loop = BlockIterator(problem, HJBFEMSolver(problem), FPFEMSolver(problem))
+        result = loop.solve(max_iterations=5, tolerance=1e-12, verbose=False)
+        return np.asarray(result.U)
+
+    logging.disable(logging.WARNING)  # the FP's positivity-clip notices are not this pin's subject
+    try:
+        gap = np.max(np.abs(solve("u") - solve("G")))
+        dropped = np.max(np.abs(solve("u") - solve(None)))
+    finally:
+        logging.disable(logging.NOTSET)
+    assert gap == 0.0, f"{route}: PotentialCost(V) as G and V in u_terminal differ by {gap:.3e} on HJB-FEM P1"
+    assert dropped > 0.1, f"the fixture does not see V: dropping it moves U by {dropped:.3e}"
+
+
+def test_a_constant_kernel_as_g_shifts_u_at_t_by_c_times_the_mass():
+    """With K = c, G = (1/2) int int c m m has ``delta G / delta m = c * mass(m(T))``, the same at every dof: u(T) is g
+    shifted by exactly that, the mass the P1 interpolant's integral, assembled by scikit-fem's own quadrature rather
+    than read from the binding's weights."""
+    c = 0.7
+    problem = _g_problem(g=InteractionCost(_Constant(c)))
+    hjb = HJBFEMSolver(problem)
+    m_T = _frozen(hjb, problem)[0][-1]
+    shift = problem.terminal_value(m_T, binding=hjb.terminal_binding()) - problem.get_u_terminal()
+    mass = skfem.Functional(lambda w: w["m"]).assemble(hjb.basis, m=hjb.basis.interpolate(m_T))
+    assert np.max(np.abs(shift - c * mass)) <= 1e-13 * c * mass, (
+        f"the constant kernel shifts u(T) by {shift.mean():.6f}, not c * mass = {c * mass:.6f}"
+    )
+
+
+def _g_refused(case):
+    """The call ``test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name`` refuses, for ``case``."""
+    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
+
+    if case == "HJB-FEM P2":
+        return lambda: HJBFEMSolver(_g_problem("G"), order=2)
+    if case == "the meshless solver":
+        from mfgarchon.alg.numerical.meshless_galerkin import MeshlessGalerkinHJBSolver
+
+        problem = _g_problem("G")
+        points = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
+        return lambda: MeshlessGalerkinHJBSolver(problem, collocation_points=points, delta=0.3)
+    if case in ("GraphMFGSolver", "RegimeSwitchingIterator", "MFGResidual"):
+        problems = [_g_problem("G"), _g_problem("G")]
+        hjbs, fps = [HJBFEMSolver(p) for p in problems], [FPFEMSolver(p) for p in problems]
+        if case == "GraphMFGSolver":
+            from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+            from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+
+            coupling = AdjacencyCoupling(np.array([[0.0, 1.0], [1.0, 0.0]]))
+            return lambda: GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=2).solve()
+        if case == "RegimeSwitchingIterator":
+            from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+            from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+            config = RegimeSwitchingConfig(transition_matrix=np.array([[-1.0, 1.0], [1.0, -1.0]]))
+            return lambda: RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=2).solve()
+        from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
+
+        return lambda: MFGResidual(problems[0], hjbs[0], fps[0])
+    if case == "MultiPopulationIterator":
+        from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+        from mfgarchon.core.multi_population import MultiPopulationProblem
+
+        problem = _g_problem("G")
+        loop = MultiPopulationIterator(
+            MultiPopulationProblem(populations=[problem], population_names=["a"]),
+            [HJBFEMSolver(problem)],
+            [FPFEMSolver(problem)],
+        )
+        return lambda: loop.solve(max_iterations=2, tolerance=1e-12)
+    problem = _g_problem("G")
+    m_T = np.ones(problem.get_u_terminal().size)
+    binding = HJBFEMSolver(problem).terminal_binding()
+    if case == "no binding":
+        return lambda: problem.terminal_value(m_T)
+    if case == "a binding on other points":
+        moved = CouplingBinding(binding.energy, binding.nodes + 0.01, binding.cost)
+        return lambda: problem.terminal_value(m_T, binding=moved)
+    if case == "another problem's G":
+        return lambda: problem.terminal_value(m_T, binding=HJBFEMSolver(_g_problem("G")).terminal_binding())
+    if case == "two bindings of one G":
+        from mfgarchon.geometry import TensorProductGrid
+
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[9, 9], boundary_conditions=no_flux_bc(dimension=2))
+        on_grid = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                volatility=0.3,
+                terminal_coupling=problem.declared_terminal_coupling,
+            ),
+            domain=grid,
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+            Nt=4,
+        )
+        return lambda: on_grid.terminal_value(np.ones(81), binding=binding)
+    raise AssertionError(case)
+
+
+_G_REFUSALS = {
+    "HJB-FEM P2": r"HJBFEMSolver\(order=2\) binds .*Model\(terminal_coupling=\.\.\.\) on P1 only",
+    "the meshless solver": r"MeshlessGalerkinHJBSolver solves on its own discretization and binds no "
+    r"Model\(terminal_coupling=\.\.\.\)",
+    "GraphMFGSolver": r"GraphMFGSolver has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
+    "RegimeSwitchingIterator": r"RegimeSwitchingIterator has no binding of Model\(terminal_coupling=\.\.\.\) on this",
+    "MFGResidual": r"MFGResidual has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
+    "MultiPopulationIterator": r"population\(s\) \[0\] set Model\(terminal_coupling=\.\.\.\)",
+    "no binding": r"MFGProblem.terminal_value has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
+    "a binding on other points": r"on 81 points that are not this problem's 81, in their order, compared bitwise",
+    "another problem's G": r"a binding of another problem's terminal coupling",
+    "two bindings of one G": r"for a problem that binds its own on its grid: one G with two bindings",
+}
+
+
+@pytest.mark.parametrize("case", list(_G_REFUSALS))
+def test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name(case):
+    """Off a grid the problem declares G and binds none, and every reader that cannot read it refuses it by name (#1642,
+    stage 1b's G line): a solver with no point measure, P2 and the meshless solver, at construction; the routes that
+    hand ``terminal_value`` no binding (graph, regime switching, the Newton residual), as they refuse F; the
+    multi-population iterator, where G is single-population (the user's ruling 5); and ``terminal_value`` itself, for
+    no binding, a binding on other points, a binding of another problem's G, and a binding beside the problem's own on
+    a grid, one G with two bindings."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        call = _g_refused(case)
+        with pytest.raises((NotImplementedError, ValueError), match=_G_REFUSALS[case]):
+            call()
+
+
+def test_a_network_problem_refuses_a_terminal_binding():
+    """``NetworkMFGProblem.terminal_value``, the protocol's second implementer, takes ``binding`` and ``reader`` as
+    ``MFGProblem.terminal_value`` does, since ``FixedPointIterator`` hands both on the network route, and refuses a
+    binding, since a network binds no terminal coupling (#1642, #2568)."""
+    from mfgarchon.extensions.topology import NetworkMFGProblem
+
+    terminal_value = NetworkMFGProblem.terminal_value
+    assert list(inspect.signature(terminal_value).parameters) == ["self", "m_terminal", "binding", "reader"]
+    with pytest.raises(ValueError, match=r"FixedPointIterator was handed a binding of Model\(terminal_coupling"):
+        terminal_value(object.__new__(NetworkMFGProblem), None, binding=object(), reader="FixedPointIterator")
