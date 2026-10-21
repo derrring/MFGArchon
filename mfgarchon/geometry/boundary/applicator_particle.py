@@ -414,16 +414,20 @@ class ParticleApplicator:
     def refuse_segments_it_would_drop(
         self, bc: BoundaryConditions, bounds: list[tuple[float, float]], reader: str = "ParticleApplicator"
     ) -> None:
-        """Refuse, by name, a segment of ``bc`` that governs no part of the faces of ``bounds`` a particle is read on
+        """Refuse, by name, a segment of ``bc`` that governs no part of the faces of ``bounds`` a particle crosses
         (#2490 B1e-2), so its condition would be dropped: the boundary owner's point-family check
         (`BoundaryConditions.refuse_segments_governing_no_point`) over this reader's own points, with its sameness,
         `same_particle_action`.
 
         :meth:`apply` reads a particle that reached the box on the face `_get_boundary_id` names, through
         ``get_bc_at_point``, on the BC as `_with_box` gives it. The check reads, with the same calls, one point in each
-        cell of each face where every placement reads one answer (`BoundaryConditions.face_cell_centres`), so a
-        segment that governs a set of positive width on a face governs one of them, except where a placement read from a
-        signed distance is sampled on a lattice."""
+        cell of an arrangement of each face (`BoundaryConditions.face_cell_centres`), so a segment that governs a set of
+        positive width on a face governs one of them, except where a placement read from a signed distance is sampled
+        on a lattice. A set of no width -- a corner, an edge, a range that is one coordinate on the face -- is not read:
+        a particle crossing the face meets it with probability zero. Today ``apply`` reads a particle where its step
+        ends, not where it crossed (#2733), so such a set, a BC whose ``domain_bounds`` reach past ``bounds``, or a
+        ``normal_direction`` no face's normal lies within, can catch particles; that is the end-point reading's, and
+        such a segment is refused here with its own reason."""
         box = np.array(bounds, dtype=float)
         bc = _with_box(bc, box)
         points, lattice = bc.face_cell_centres(box)
@@ -432,22 +436,20 @@ class ParticleApplicator:
             boundary_id = self._get_boundary_id(point, box[:, 0], box[:, 1], box.shape[0])
             readings.append((point, boundary_id, bc.get_bc_at_point(point, boundary_id=boundary_id)))
         note = (
-            "A set of no width on a face holds no cell (a region whose range there is a single coordinate): a particle "
-            "reaches it with probability zero"
+            f"An sdf_region, or a normal_direction read from domain_sdf, is read on a lattice of {lattice} equal parts "
+            f"along each axis of a face (FACE_LATTICE_CELLS), so a set one holds that contains no box of side "
+            f"1/{lattice} of the face's extent is missed: widen it, or place it by region"
+            if lattice is not None
+            else ""
         )
-        if lattice is not None:
-            note += (
-                f". An sdf_region, or a normal_direction read from domain_sdf, is read on a lattice of {lattice} equal "
-                f"parts along each axis of a face (FACE_LATTICE_CELLS), so a set one holds that contains no box of side "
-                f"1/{lattice} of the face's extent holds no cell either: widen it, or place it by region"
-            )
         bc.refuse_segments_governing_no_point(
             readings,
             reader,
-            f"the {len(points)} points it reads the faces of the box {box.tolist()} on, one in each cell of a face where "
-            "every placement reads one answer",
+            f"the {len(points)} points it reads the faces of the box {box.tolist()} on, one in each cell of an "
+            "arrangement of each face",
             equivalent=same_particle_action,
             note=note,
+            explain=lambda segment: bc.why_no_face_cell(segment, box),
         )
 
     def _get_boundary_id(

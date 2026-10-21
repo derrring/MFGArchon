@@ -981,7 +981,7 @@ def test_a_point_at_a_corner_is_read_at_the_point_only_where_a_face_is_partly_co
     longer runs (#2490 B1e-2). So a ``region`` covering part of x_max no longer refuses x_max's corners -- (1, 1) is
     the wall's, the door's strip not reaching it -- and a segment shadowed on every face no longer refuses a corner it
     does not reach, (0, 0) the walls'. A point reader refuses it over its own points instead: here the grid's boundary
-    nodes, at each of which exitA outranks exitB."""
+    nodes, among which exitB holds only x_max's, where exitA outranks it."""
     door = BoundaryConditions(
         dimension=2,
         domain_bounds=UNIT_SQUARE,
@@ -1018,7 +1018,10 @@ def test_a_point_at_a_corner_is_read_at_the_point_only_where_a_face_is_partly_co
         assert bc.segment_for_point(point, face, geometry=grid).name == "walls"
     nodes = [np.array(node) for node in np.asarray(grid.get_spatial_grid()) if np.isin(node, (0.0, 1.0)).any()]
     readings = [(node, None, bc.segment_for_point(node, geometry=grid)) for node in nodes]
-    with pytest.raises(ValueError, match=r"'exitB' \(priority 0\) -- at \[1\.0, 0\.0\]: 'exitA' \(priority 1\)"):
+    with pytest.raises(
+        ValueError,
+        match=r"'exitB' \(priority 0\) -- outranked at \[1\.0, 0\.0\], a corner, on x_max: 'exitA' \(priority 1\)",
+    ):
         bc.refuse_segments_governing_no_point(readings, "a reader", "the grid's boundary nodes", geometry=grid)
 
 

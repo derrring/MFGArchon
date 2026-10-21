@@ -112,7 +112,8 @@ def test_a_whole_bc_refusal_refuses_the_corner_node_and_the_point_reader_at_the_
     read = bc.segment_for_point(corner, geometry=grid)
     assert read.name == "exit"
     with pytest.raises(
-        ValueError, match=r"'patch' \(priority 0\) -- at \[1\.0, 1\.0\]: 'exit' \(priority 1\) outranks it"
+        ValueError,
+        match=r"'patch' \(priority 0\) -- outranked at \[1\.0, 1\.0\], a corner, on x_max: 'exit' \(priority 1\)",
     ):
         bc.refuse_segments_governing_no_point([(corner, None, read)], "a reader", "its one point", geometry=grid)
 
