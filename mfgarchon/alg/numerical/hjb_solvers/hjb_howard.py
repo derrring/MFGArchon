@@ -347,9 +347,9 @@ class HJBHowardSolver:
         `use_provider_bc_rows`; with `control_cost` under another discretisation; for a
         negative scalar volatility, an array volatility without `volatility_kind`, or
         `volatility_kind="field"` without a volatility; and at a solve, under
-        `"guarded_fan"`, when a boundary point has a condition other than Dirichlet (the
-        provider's boundary type check), or when a volatility override is neither a scalar
-        nor a field of shape `(n,)`.
+        `"guarded_fan"`, when a boundary point has a condition the provider cannot close or
+        reflects on other faces than its operator was built for (`_positive_qp_fan_closure`),
+        or when a volatility override is neither a scalar nor a field of shape `(n,)`.
     NotImplementedError
         For a `volatility_kind="tensor"` volatility; and at a solve, for `cross_density`,
         `source_term` or `volatility` passed to `solve_hjb_system`, and for a periodic BC in
@@ -397,7 +397,7 @@ class HJBHowardSolver:
                     "HJBGFDMSolver(monotonicity_scheme='joint_socp')."
                 )
             if getattr(stencil_provider, "_positive_qp_fan", None) is None or not callable(
-                getattr(stencil_provider, "_refuse_boundary_positive_qp_fan_cannot_close", None)
+                getattr(stencil_provider, "_positive_qp_fan_closure", None)
             ):
                 raise RuntimeError(
                     "HJBHowardSolver(discretisation='guarded_fan') reads its Laplacian, its fans and its boundary type "
@@ -652,11 +652,13 @@ class HJBHowardSolver:
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
         if guarded:
-            # #1689: the scheme takes Dirichlet boundary points only until its reflecting closure lands. A reflecting
-            # point's row is, at taylor_order 2, a mixed-sign normal-gradient stencil, and on a degenerate stencil an
-            # identity imposing u = 0; the provider's type check refuses it, on the BC whose rows are read next.
-            self.stencil_provider._refuse_boundary_positive_qp_fan_cannot_close()
-        bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
+            # #1689 PR 4: the scheme's boundary rows are a Dirichlet point's value row and a reflecting point's
+            # value-copy row; the provider's closure refuses what it cannot close, on the BC whose rows are read next,
+            # and a BC whose reflecting faces are not the ones its mirror rows were built for.
+            self.stencil_provider._positive_qp_fan_closure()
+            bc_rows = self.stencil_provider._positive_qp_fan_bc_rows(t_idx)
+        else:
+            bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
         if isinstance(volatility, np.ndarray):
             diffusion_operator = diags(diffusion_from_volatility(volatility, kind="field")) @ D_lap
         else:

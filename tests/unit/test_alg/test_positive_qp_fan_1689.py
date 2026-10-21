@@ -23,10 +23,10 @@ from scipy.stats import qmc
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.gfdm_components import GuardedFanParameters
 from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import PositiveQPFan, cone_policy
-from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver, HJBHowardSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
 L_BOX, T_END, SIGMA, COST, G_TERM = 20.0, 4.0, 0.3, 1.0, 0.5
 
@@ -219,19 +219,13 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
         "the Newton inner solver",
         "ghost nodes",
         "positive_qp_fan= with another scheme",
-        "a no-flux face",
-        "a no-flux face with degenerate stencils",
-        "a no-flux face set after construction",
-        "a no-flux face adopted after construction, solved by HJBHowardSolver directly",
         "a fan that cannot close",
     ],
 )
 def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
-    """Each refusal names what it cannot do (D5 and P3-D1 of #1689 comment 6246915117). A boundary point of any other
-    condition than Dirichlet is refused by its type: at construction, also where its stencil is degenerate and its
-    row an identity, and where HJBHowardSolver installs the BC rows, for a condition the provider adopts after
-    construction: set on the grid, which HJBGFDMSolver's solve adopts (#2750 review 1), or adopted by hand before
-    HJBHowardSolver solves directly (#2750 review 2)."""
+    """Each refusal names what it cannot do (D5 of #1689 comment 6246915117). The boundary conditions the scheme
+    cannot close, and a reflecting face adopted after construction, are refused in
+    `test_positive_qp_fan_reflecting_1689.py` (#1689 PR 4), which closes a reflecting face."""
     if row == "one dimension":
         from mfgarchon.geometry.boundary import dirichlet_bc
 
@@ -275,41 +269,6 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
             HJBGFDMSolver(
                 _lq_problem(4), positive_qp_fan=GuardedFanParameters(), **{**with_howard, "monotonicity_scheme": "none"}
             )
-    elif row == "a no-flux face":
-        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
-            HJBGFDMSolver(_lq_problem(4), boundary_conditions=no_flux_bc(dimension=2), **with_howard)
-    elif row == "a no-flux face with degenerate stencils":
-        # A radius of 0.5 on a 1.33 spacing leaves the stencils degenerate, and the no-flux rows identities; the
-        # operator says so, and the scheme refuses the face.
-        with (
-            pytest.warns(UserWarning, match=r"degenerate stencils"),
-            pytest.raises(ValueError, match=r"condition other than Dirichlet"),
-        ):
-            HJBGFDMSolver(
-                _lq_problem(4),
-                boundary_conditions=no_flux_bc(dimension=2),
-                **{**with_howard, "delta": 0.5, "neighborhood_mode": "radius"},
-            )
-    elif row == "a no-flux face set after construction":
-        problem = _lq_problem(4)
-        solver = HJBGFDMSolver(problem, **with_howard)
-        problem.geometry.set_boundary_conditions(no_flux_bc(dimension=2))
-        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
-            solver.solve_hjb_system(M_density=np.zeros((5, len(points))), U_terminal=_u_star(T_END, points))
-    elif row == "a no-flux face adopted after construction, solved by HJBHowardSolver directly":
-        problem = _lq_problem(4)
-        provider = HJBGFDMSolver(problem, **with_howard)
-        problem.geometry.set_boundary_conditions(no_flux_bc(dimension=2))
-        provider._refresh_boundary_conditions_if_changed()  # the adoption the provider's own solve begins with
-        howard = HJBHowardSolver(
-            problem,
-            stencil_provider=provider,
-            discretisation="guarded_fan",
-            control_cost=QuadraticControlCost(lambda_=COST),
-            use_provider_bc_rows=True,
-        )
-        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
-            howard.solve_hjb_system(np.zeros((5, len(points))), _u_star(T_END, points))
     else:
         # Without the widened caps, the nodes within about 0.3h of the frame have no fan with every gap below 120.
         with pytest.raises(ValueError, match=r"interior row\(s\) cannot be built.*no fan with every gap at most 120"):
