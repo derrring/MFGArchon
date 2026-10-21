@@ -149,13 +149,18 @@ def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to(domain_sdf, r
 
 # The components route on a geometry that declares no BC is deprecated; that warning is not this pin's subject.
 @pytest.mark.filterwarnings("ignore:Specifying boundary conditions via MFGComponents:DeprecationWarning")
-def test_a_door_marked_off_the_domain_lets_no_particle_out():
+@pytest.mark.parametrize("on_the_domain", [False, True], ids=["the door alone", "with a corner of it on the domain"])
+def test_a_door_marked_off_the_domain_lets_no_particle_out(on_the_domain):
     """A BC with no ``domain_bounds`` of its own, bound to a grid that is not the problem's geometry: on the components
     route over a ``Hyperrectangle``, which declares no BC, the problem's BC is the one the caller bound to a grid on x in
     [0, 1.2], whose door, x > 1.05, lies outside the domain [0, 1]^2. 500 particles driven onto x = 1 are read at their
     nearest point of the step's box, which stands in for where they crossed it (#2733 will pass that point), and none
     leaves. A query that read the bound grid's box instead read a particle past x = 1.05 as in the door: 492 left (#2767
-    review 3). A BC that carries its own ``domain_bounds`` is read on them, and is not this row's case (#2733)."""
+    review 3). A BC that carries its own ``domain_bounds`` is read on them, and is not this row's case (#2733).
+
+    The door alone governs no part of the domain's faces, so the solver refuses it by name (#2490 B1e-2). With a corner
+    of it, y > 0.9 at x > 0.95, on the face x = 1, far from where the particles cross, the door governs that corner and
+    is admitted, and the part past x = 1.05 still lets no particle out."""
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.implicit import Hyperrectangle
 
@@ -168,7 +173,13 @@ def test_a_door_marked_off_the_domain_lets_no_particle_out():
             default_bc=BCType.NO_FLUX,
         ),
     )
-    marking.mark_region("door", predicate=lambda x: (x[:, 0] > 1.05) & (x[:, 1] > 0.3) & (x[:, 1] < 0.7))
+    marking.mark_region(
+        "door",
+        predicate=lambda x: (
+            ((x[:, 0] > 1.05) & (x[:, 1] > 0.3) & (x[:, 1] < 0.7))
+            | (on_the_domain & (x[:, 0] > 0.95) & (x[:, 1] > 0.9))
+        ),
+    )
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="The components= form", category=PendingDeprecationWarning)
         problem = MFGProblem(
@@ -183,6 +194,10 @@ def test_a_door_marked_off_the_domain_lets_no_particle_out():
             Nt=20,
             volatility=0.05,
         )
+    if not on_the_domain:
+        with pytest.raises(ValueError, match=r"FPParticleSolver: segment\(s\) 'door' hold none of"):
+            FPParticleSolver(problem, num_particles=500, seed=1, density_mode="query_only")
+        return
     solver = FPParticleSolver(problem, num_particles=500, seed=1, density_mode="query_only")
     start = np.column_stack(
         [np.random.default_rng(1).uniform(0.6, 0.9, 500), np.random.default_rng(2).uniform(0.35, 0.65, 500)]

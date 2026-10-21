@@ -977,9 +977,11 @@ def test_a_point_at_a_corner_is_read_at_the_point_only_where_a_face_is_partly_co
     """The user's ruling of 2026-10-14, which supersedes B1a's "a point at a corner takes the node's answer, refusals
     included" (review 4's Blocker 1, 2026-10-13): a point at a corner is resolved at the point. Each face gives its own
     segment where it answers; where it refuses because a segment covers only part of it, the segment holding the
-    point on that face stands in; any other refusal stands. So a ``region`` covering part of x_max no longer refuses
-    x_max's corners -- (1, 1) is the wall's, the door's strip not reaching it -- while a segment shadowed on every face
-    still refuses every corner, (0, 0) included, with the face owner's own refusal."""
+    point on that face stands in; any other refusal stands, except the face owner's whole-BC check, which a point no
+    longer runs (#2490 B1e-2). So a ``region`` covering part of x_max no longer refuses x_max's corners -- (1, 1) is
+    the wall's, the door's strip not reaching it -- and a segment shadowed on every face no longer refuses a corner it
+    does not reach, (0, 0) the walls'. A point reader refuses it over its own points instead: here the grid's boundary
+    nodes, at each of which exitA outranks exitB."""
     door = BoundaryConditions(
         dimension=2,
         domain_bounds=UNIT_SQUARE,
@@ -1011,10 +1013,13 @@ def test_a_point_at_a_corner_is_read_at_the_point_only_where_a_face_is_partly_co
     grid = _grid(shadowed)
     bc = grid.get_boundary_conditions()
     point = np.array([0.0, 0.0])
-    with pytest.raises(ValueError, match="govern no face of the domain"):
-        bc.segment_for_point(point, geometry=grid)
+    assert bc.segment_for_point(point, geometry=grid).name == "walls"
     for face in ("x_min", "y_min"):
         assert bc.segment_for_point(point, face, geometry=grid).name == "walls"
+    nodes = [np.array(node) for node in np.asarray(grid.get_spatial_grid()) if np.isin(node, (0.0, 1.0)).any()]
+    readings = [(node, None, bc.segment_for_point(node, geometry=grid)) for node in nodes]
+    with pytest.raises(ValueError, match=r"'exitB' \(priority 0\) -- at \[1\.0, 0\.0\]: 'exitA' \(priority 1\)"):
+        bc.refuse_segments_governing_no_point(readings, "a reader", "the grid's boundary nodes", geometry=grid)
 
 
 def test_fdm_applicator_writes_each_corner_from_the_owners_choice():
@@ -1189,8 +1194,9 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
     and the periodicity readers' (review 1 of #2663, B3) -- or both refuse, for the same reason. Where the face rule refuses what one
     condition per face cannot hold -- a partial cover, a segment holding no node of a face's interior, a segment
     shadowed on every face, or a face part of which nothing governs while the point is held -- a point may still
-    answer; those nodes are counted, not compared. Whether a point query should refuse what no face holds is the
-    point family's own shadow check, which #2512's plan puts in stage B1d. A default segment is built per query, so two answers are the
+    answer; those nodes are counted, not compared. Whether a point should refuse what no face holds is the point
+    family's own check, which each point reader runs over its own points (#2490 B1e-2), not the point query. A default
+    segment is built per query, so two answers are the
     same segment when they have its name and its condition."""
     eq = _EQUIVALENCES[equivalence]
     same = _same_condition if eq is None else eq

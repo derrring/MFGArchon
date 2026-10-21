@@ -334,6 +334,15 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor.
         self._validate_bc_support(self.boundary_conditions)
         self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
+        # The per-point path reads each particle at the box's faces by segment, and a segment it reads at no part of
+        # them was dropped with no word (#2490 B1e-2). Both routes above end here, and this is the only assignment of
+        # the solver's BC; the fast path reads no segment, so there is nothing to drop.
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+
+        if isinstance(self.boundary_conditions, BoundaryConditions) and self._needs_segment_aware_bc():
+            self._applicator.refuse_segments_it_would_drop(
+                self.boundary_conditions, self._get_grid_params()["bounds"], reader=type(self).__name__
+            )
 
     @staticmethod
     def _refuse_inhomogeneous_dirichlet(bc: Any) -> None:

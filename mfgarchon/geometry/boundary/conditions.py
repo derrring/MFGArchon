@@ -55,7 +55,12 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+
+#: How finely `BoundaryConditions.face_cell_centres` samples a face for a placement it cannot cut exactly (an
+#: ``sdf_region``, a ``normal_direction`` read from ``domain_sdf``): at most this many lattice cells per face, ``n`` equal
+#: parts along each of the face's axes -- 1024 on an edge of a 2-D box, 32 x 32 on a face of a 3-D one (#2490 B1e-2).
+FACE_LATTICE_CELLS = 1024
 
 
 @dataclass(frozen=True, eq=False)
@@ -541,11 +546,13 @@ class BoundaryConditions:
         geometry: Any,
         equivalent: Callable[[BCSegment, BCSegment], bool] | None,
         context: str,
+        whole_bc_check: bool = True,
     ) -> tuple[BCSegment | None, BCSegment | None]:
         """The face owner's steps, in one place (#2512 row B1): :meth:`segment_for_face` refuses on their outcome,
         and a point at a corner (:meth:`segment_for_point`) reads it.
 
-        The whole-BC check (:meth:`_refuse_shadowed_segments`) runs first, and its refusals raise. Then, in the face
+        The whole-BC check (:meth:`_refuse_shadowed_segments`) runs first, and its refusals raise; a point at a corner
+        asks without it (``whole_bc_check=False``, :meth:`_corner_face_at_point`). Then, in the face
         order, the first segment covering the face whole governs it -- or, with none, ``default_bc``. Returns
         ``(governing, part)``:
 
@@ -560,7 +567,8 @@ class BoundaryConditions:
         a cover that cannot be decided. Only a partial cover is returned rather than raised.
         """
         same = _same_condition if equivalent is None else equivalent
-        self._refuse_shadowed_segments(target, geometry, equivalent)
+        if whole_bc_check:
+            self._refuse_shadowed_segments(target, geometry, equivalent)
         partial: list[BCSegment] = []
         governing: BCSegment | None = None
         for segment in self._face_order():
@@ -703,11 +711,13 @@ class BoundaryConditions:
         from answering (:meth:`_face_resolution`): a ``region`` or ``sdf_region`` covering part of it ahead of the
         segment governing the rest with another condition, or covering part of a face no segment covers whole and
         whose ``default_bc`` does not answer. Then the segment holding the point on that face (this method with
-        ``face``) stands in. Every other refusal stands; a segment shadowed on every face refuses every corner wherever
-        the shadow check can enumerate the faces -- the BC's ``dimension`` is set, or the geometry is a grid.
-        ``corner_strategy`` then chooses among them in the corner order (:meth:`_corner_choice`). Both steps are
-        asked with ``equivalent``, so wherever the node asked with the same ``equivalent`` answers, the point gives
-        the node's segment; and where the node refuses only because a face is partly covered, the point answers.
+        ``face``) stands in. Every other refusal stands, except the face owner's whole-BC check, which a point does not
+        run (#2490 B1e-2): it reads which segments govern a face on a grid's nodes, the face family's points, so a
+        reader's admission of a BC depended on whether its points included a corner. A point reader checks its own
+        points instead (:meth:`refuse_segments_governing_no_point`). ``corner_strategy`` then chooses among them in the
+        corner order (:meth:`_corner_choice`). Both steps are asked with ``equivalent``, so wherever the node asked with
+        the same ``equivalent`` answers, the point gives the node's segment; and where the node refuses only because a
+        face is partly covered or for the whole BC, the point answers.
         With ``face``, the point is read on that face alone and the corner rule does not apply.
 
         **A point read on a face is read at its nearest point of the box** (#2780), by every placement region
@@ -733,38 +743,184 @@ class BoundaryConditions:
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
+        faces, bounds, corner = self._reading_faces(point, face, geometry, tolerance, "segment_for_point")
+        if corner:
+            at_point = [
+                seg for _, seg in self._corner_readings(point, corner, geometry, tolerance, axis_names, equivalent)
+            ]
+            return self._corner_choice(at_point, ", ".join(f.to_string() for f in corner), equivalent)
+        held = next(self._segments_holding(point, faces[0], bounds, geometry, tolerance, axis_names), None)
+        if held is None:
+            return self._default_segment("segment_for_point", f"the boundary point {point.tolist()}")
+        return held
+
+    def _reading_faces(
+        self, point: np.ndarray, face: BoundaryFace | str | None, geometry: Any, tolerance: float, reader: str
+    ) -> tuple[list[str | None], np.ndarray | None, list[BoundaryFace]]:
+        """The faces :meth:`segment_for_point` reads ``point`` on, the box they come from, and the corner's faces when
+        the point lies on several and no ``face`` was passed (else empty): ``face`` itself; else every face the point lies
+        on (:meth:`_point_faces`), or ``[None]`` where it lies on none."""
         if face is None:
-            on, bounds = self._point_faces(point, geometry, tolerance, "segment_for_point")
-            if len(on) > 1:
-                at_point = [
-                    seg for _, seg in self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
-                ]
-                return self._corner_choice(at_point, ", ".join(f.to_string() for f in on), equivalent)
-            faces: list[str | None] = [f.to_string() for f in on] or [None]
-        else:
-            bounds = self._query_bounds(geometry)
-            faces = [face.to_string() if isinstance(face, BoundaryFace) else face]
+            on, bounds = self._point_faces(point, geometry, tolerance, reader)
+            return [f.to_string() for f in on] or [None], bounds, on if len(on) > 1 else []
+        return [face.to_string() if isinstance(face, BoundaryFace) else face], self._query_bounds(geometry), []
+
+    def _segments_holding(
+        self,
+        point: np.ndarray,
+        boundary_id: str | None,
+        bounds: np.ndarray | None,
+        geometry: Any,
+        tolerance: float,
+        axis_names: dict[int, str] | None,
+    ) -> Iterator[BCSegment]:
+        """The segments holding ``point`` on the face ``boundary_id``, in the face order (`BCSegment.matches_point`):
+        the first governs it (:meth:`segment_for_point`). On a face the point is read at its nearest point of the box
+        (#2780), and a ``normal_direction`` under ``domain_sdf`` reads the SDF's normal at the point as asked."""
         on_box = point
-        if bounds is not None and point.shape == (bounds.shape[0],):
+        if boundary_id is not None and bounds is not None and point.shape == (bounds.shape[0],):
             on_box = np.clip(point, bounds[:, 0], bounds[:, 1])
-        governing = []
-        for boundary_id in faces:
-            for segment in self._face_order():
-                if segment.matches_point(
-                    point if boundary_id is None else on_box,
-                    boundary_id,
-                    bounds,
-                    tolerance,
-                    axis_names,
-                    domain_sdf=self.domain_sdf,
-                    geometry=geometry,
-                    normal_at=point,
-                ):
-                    governing.append(segment)
-                    break
-            else:
-                governing.append(self._default_segment("segment_for_point", f"the boundary point {point.tolist()}"))
-        return governing[0]
+        for segment in self._face_order():
+            if segment.matches_point(
+                on_box,
+                boundary_id,
+                bounds,
+                tolerance,
+                axis_names,
+                domain_sdf=self.domain_sdf,
+                geometry=geometry,
+                normal_at=point,
+            ):
+                yield segment
+
+    def refuse_segments_governing_no_point(
+        self,
+        readings: list[tuple[np.ndarray, str | None, BCSegment]],
+        reader: str,
+        population: str,
+        geometry: Any = None,
+        tolerance: float = SDF_BOUNDARY_TOL,
+        axis_names: dict[int, str] | None = None,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
+        note: str = "",
+    ) -> None:
+        """The point family's whole-BC check (#2490 B1e-2): refuse, by name, a segment that governs none of the points a
+        reader reads, where its condition would be dropped.
+
+        ``readings`` are the reader's own: each point it reads, the face it reads it on (None where it passes none, so
+        the point is read on every face it lies on, a corner's included), and the segment it read there. A segment
+        governs a point where it is that reading, and is held there where it holds the point on a face the point is
+        read on (:meth:`_segments_holding`, as :meth:`segment_for_point` reads it). The rule is the face owner's
+        (`_segments_governing_nothing`) over the reader's points in place of a grid's faces: a segment that governs
+        none of them is refused unless it imposes the same condition -- ``equivalent``, by default `_same_condition`
+        -- as each segment read where it is held, or, held at none of them, as every segment read anywhere.
+        ``population`` names the points in the refusal, and ``note`` says what reading them cannot see. The face
+        family keeps its own check, on its own population (:meth:`_refuse_shadowed_segments`); so does a mesh's facet
+        reader (:meth:`segments_for_facets`)."""
+        order = self._face_order()
+        governs = {id(read) for _, _, read in readings}
+        if all(id(segment) in governs for segment in order):
+            return
+        geometry = self._query_geometry(geometry)
+        touched: dict[int, list[tuple[str, BCSegment]]] = {id(segment): [] for segment in order}
+        for point, face, read in readings:
+            point = np.asarray(point, dtype=float)
+            faces, bounds, _ = self._reading_faces(point, face, geometry, tolerance, reader)
+            held: list[BCSegment] = []
+            for boundary_id in faces:
+                for segment in self._segments_holding(point, boundary_id, bounds, geometry, tolerance, axis_names):
+                    if id(segment) not in governs and all(segment is not other for other in held):
+                        held.append(segment)
+            where = f"{np.round(point, 6).tolist()}" + (f" on {face}" if face is not None else "")
+            for segment in held:
+                touched[id(segment)].append((where, read))
+        winners = list({id(read): read for _, _, read in readings}.values())
+        same = _same_condition if equivalent is None else equivalent
+        nowhere, dead = _segments_governing_nothing(order, governs, touched, set(), winners, same)
+        if nowhere:
+            raise ValueError(
+                f"{reader}: segment(s) {', '.join(repr(seg.name) for seg in nowhere)} hold none of {population}, so "
+                "their conditions would be dropped where they differ from what governs there. Their placement holds "
+                "none of these points -- a region or sdf_region between them or off the box, a normal_direction no "
+                "face points along, a boundary naming no face, a marked region on none of them"
+                + (f". {note}" if note else "")
+                + ". Place them where the reader reads, or remove them (#2490 B1e-2)."
+            )
+        if dead:
+            where = " | ".join(
+                f"{seg.name!r} (priority {seg.priority}) -- "
+                + "; ".join(
+                    f"at {at}: {winner.name!r} (priority {winner.priority}) outranks it" for at, winner in hits[:3]
+                )
+                + (f"; and at {len(hits) - 3} more" if len(hits) > 3 else "")
+                for seg, hits in dead
+            )
+            raise ValueError(
+                f"{reader}: these segments govern none of {population}, so their conditions would be dropped: {where}. "
+                "Order at a point: priority, then a placed segment before a global one (no placement, or "
+                "boundary='all'), then declaration order. Raise the segment's priority, or remove it (#2490 B1e-2)."
+            )
+
+    def face_cell_centres(
+        self, box: np.ndarray, geometry: Any = None, tolerance: float = SDF_BOUNDARY_TOL
+    ) -> tuple[list[np.ndarray], int | None]:
+        """For a reader that reads the faces of ``box`` as a continuum (a particle crosses anywhere on them), one point
+        in each cell of each face where every placement reads one answer: the cell's centre (#2490 B1e-2).
+
+        Each face is cut, along each of its own axes, wherever a placement's answer can change there: at both ends of
+        every ``region`` range on that axis and of ``domain_bounds``, which a point on the box is read within (#2780);
+        and, for a ``region_name`` the geometry marks, midway between consecutive nodes, where the node a point is read
+        at changes (`region_name_holds_point`). ``boundary``, a ``region_name`` that is a face label and a
+        ``normal_direction`` read on a box hold a face whole. So a cell's centre reads as all of the cell does, and a
+        set a segment holds that contains no centre has no width on the face, which a particle reaches with probability
+        zero. Cuts within four times ``tolerance`` of each other are merged, since a point is read to within
+        ``tolerance`` of a range's end.
+
+        An ``sdf_region``, and a ``normal_direction`` read from ``domain_sdf``, have no such cuts. Where one is present,
+        each face is also cut into a lattice of at most `FACE_LATTICE_CELLS` cells, ``n`` equal parts along each of its
+        axes, and the reading can then miss a set such a segment holds only where that set contains no box of side
+        ``1/n`` of the face's extent. Returns the centres, and ``n``, or None where no lattice was needed."""
+        box = np.asarray(box, dtype=float)
+        geometry = self._query_geometry(geometry)
+        dimension = box.shape[0]
+        sampled = any(
+            seg.sdf_region is not None or (seg.normal_direction is not None and self.domain_sdf is not None)
+            for seg in self.segments
+        )
+        n = max(1, round(FACE_LATTICE_CELLS ** (1.0 / (dimension - 1)))) if sampled and dimension > 1 else None
+        own = None if self.domain_bounds is None else np.asarray(self.domain_bounds, dtype=float)
+        nodes = getattr(geometry, "coordinates", None)
+        cuts = []
+        for axis in range(dimension):
+            low, high = box[axis]
+            at = [low, high] + ([] if own is None else list(own[axis]))
+            for seg in self.segments:
+                if seg.region is not None:
+                    at += [
+                        c for key, ends in seg.region.items() if _region_axis(seg, key, dimension) == axis for c in ends
+                    ]
+                if seg.region_name is not None and _marks_region(geometry, seg.region_name) and nodes is not None:
+                    grid = np.asarray(nodes[axis], dtype=float)
+                    at += list((grid[1:] + grid[:-1]) / 2.0)
+            if n is not None:
+                at += list(np.linspace(low, high, n + 1))
+            kept: list[float] = []
+            for c in sorted(float(c) for c in at if low <= c <= high):
+                if not kept or c - kept[-1] > 4.0 * tolerance:
+                    kept.append(c)
+            if len(kept) > 1:
+                kept[-1] = high
+            cuts.append(np.asarray(kept))
+        centres = []
+        for axis in range(dimension):
+            along = [(cuts[t][1:] + cuts[t][:-1]) / 2.0 for t in range(dimension) if t != axis]
+            for side in (0, 1):
+                for tangent in itertools.product(*along):
+                    point = np.empty(dimension)
+                    point[axis] = box[axis, side]
+                    point[[t for t in range(dimension) if t != axis]] = tangent
+                    centres.append(point)
+        return centres, n
 
     def face_segments_at_point(
         self,
@@ -1150,10 +1306,14 @@ class BoundaryConditions:
         (:meth:`_face_resolution`) wherever it has one, so the point and the node asked with the same ``equivalent``
         agree; where a partial cover keeps the face from answering (:meth:`_face_resolution`'s second and third
         outcomes), the segment holding the point on that face.
-        Every other refusal stands. Reading every face at the point instead would let a segment holding the point at
-        a higher priority override the face's answer -- review 2's B-c, a strip accepted on x_max as the wall's
-        condition, would take the y_max Dirichlet's corner."""
-        governing, part = self._face_resolution(face, geometry, equivalent, "BoundaryConditions.segment_for_point")
+        Every other refusal stands, except the face owner's whole-BC check, which is not run here (#2490 B1e-2): it
+        reads the faces on a grid's nodes, not the reader's points, and the reader runs the point family's check on its
+        own (:meth:`refuse_segments_governing_no_point`). Reading every face at the point instead would let a segment
+        holding the point at a higher priority override the face's answer -- review 2's B-c, a strip accepted on x_max
+        as the wall's condition, would take the y_max Dirichlet's corner."""
+        governing, part = self._face_resolution(
+            face, geometry, equivalent, "BoundaryConditions.segment_for_point", whole_bc_check=False
+        )
         if part is None:
             return governing
         return self.segment_for_point(point, face, geometry, tolerance, axis_names)
@@ -2231,8 +2391,9 @@ def _segments_governing_nothing(
     ``touched`` gives, for each segment that governs nowhere, where it is outranked and by what. One that is outranked
     somewhere is dropped there unless ``same`` as each segment that outranks it; one that reaches nowhere (and covers
     no part of a face ahead of its winner, ``partial_ahead``) is dropped unless ``same`` as every winner. Returns the
-    second kind, then the first with its outranking segments. Read by the box faces (`_check_shadowed`) and by a mesh's
-    facets (`BoundaryConditions.segments_for_facets`).
+    second kind, then the first with its outranking segments. Read by the box faces (`_check_shadowed`), by a mesh's
+    facets (`BoundaryConditions.segments_for_facets`) and by a point reader's own points
+    (`BoundaryConditions.refuse_segments_governing_no_point`).
     """
     nowhere, dead = [], []
     for seg in order:

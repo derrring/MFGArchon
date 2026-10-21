@@ -88,10 +88,11 @@ def test_a_corner_of_a_face_split_into_strips_is_answered_at_the_point():
     assert bc.segment_for_point(near, geometry=geometry, tolerance=BOUNDARY_TOL).name == "bottom"
 
 
-def test_a_whole_bc_refusal_still_refuses_a_corner_where_every_face_is_partly_covered():
-    """Review 1 of #2663, B1: only a partial-cover refusal is read at the point. ``patch`` covers the corner box of
-    both x_max and y_max and governs no face, so the BC is refused as a whole -- at the node, and at the point,
-    although each face there is partly covered."""
+def test_a_whole_bc_refusal_refuses_the_corner_node_and_the_point_reader_at_the_point():
+    """Review 1 of #2663, B1: ``patch`` covers the corner box of both x_max and y_max and governs no face, so the BC is
+    refused as a whole at the node. At the point, the face owner's whole-BC check no longer runs (#2490 B1e-2): it read
+    the grid's nodes in place of the reader's points. The point answers x_max's segment, and the point family's check,
+    over the points a reader reads, refuses ``patch`` by name: outranked at the corner it holds."""
     bc = BoundaryConditions(
         dimension=2,
         domain_bounds=UNIT_SQUARE,
@@ -107,8 +108,13 @@ def test_a_whole_bc_refusal_still_refuses_a_corner_where_every_face_is_partly_co
     bc = grid.get_boundary_conditions()
     with pytest.raises(ValueError, match="govern no face of the domain"):
         bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")], grid)
-    with pytest.raises(ValueError, match="govern no face of the domain"):
-        bc.segment_for_point(np.array([1.0, 1.0]), geometry=grid)
+    corner = np.array([1.0, 1.0])
+    read = bc.segment_for_point(corner, geometry=grid)
+    assert read.name == "exit"
+    with pytest.raises(
+        ValueError, match=r"'patch' \(priority 0\) -- at \[1\.0, 1\.0\]: 'exit' \(priority 1\) outranks it"
+    ):
+        bc.refuse_segments_governing_no_point([(corner, None, read)], "a reader", "its one point", geometry=grid)
 
 
 def test_a_bc_with_its_own_sdf_is_not_overridden_by_the_geometrys_box():

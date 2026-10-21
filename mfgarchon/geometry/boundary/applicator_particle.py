@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from .conditions import BoundaryConditions
+    from .types import BCSegment
 
 ParticleAction = Literal["reflecting", "absorbing", "periodic"]
 
@@ -133,6 +134,30 @@ def particle_action_for_bc_type(
         "EXTRAPOLATION_LINEAR and EXTRAPOLATION_QUADRATIC describe how to continue a "
         "field past a truncated domain and say nothing about a particle that reaches it."
     )
+
+
+def segment_particle_action(segment: BCSegment, where: str) -> ParticleAction:
+    """What a particle does at ``segment``, for a reader that routes or compares on it and writes no row: its type's
+    action (`particle_action_for_bc_type`), a Robin segment's read on its ``beta`` as stored, the owner's form for
+    such readers (`segment_robin_coefficients`). `needs_segment_aware_bc` routes on it and `same_particle_action`
+    compares on it; ``where`` names the reader in a refusal."""
+    from .types import segment_robin_coefficients
+
+    beta = (
+        segment_robin_coefficients(segment, where=where, as_stored=True)[1] if segment.bc_type == BCType.ROBIN else None
+    )
+    return particle_action_for_bc_type(segment.bc_type, beta)
+
+
+def same_particle_action(first: BCSegment, second: BCSegment) -> bool:
+    """The particle reader's sameness of two segments, for the boundary owner's whole-BC check (#2490 B1e-2): a particle
+    cannot tell them apart. It reads the action (`segment_particle_action`) and never a segment's value. A segment carrying a ``flux_capacity`` is the same as no other: the flux-limited path
+    (`ParticleApplicator.apply_with_flux_limits`) counts a capped exit's absorptions under its own name, so an outranked
+    one would have its limit dropped."""
+    if first.flux_capacity is not None or second.flux_capacity is not None:
+        return False
+    where = "the particle reader's whole-BC check"
+    return segment_particle_action(first, where) == segment_particle_action(second, where)
 
 
 def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryConditions:
@@ -386,6 +411,45 @@ class ParticleApplicator:
 
         return remaining_particles, absorbed_mask, exit_positions, absorbed_count
 
+    def refuse_segments_it_would_drop(
+        self, bc: BoundaryConditions, bounds: list[tuple[float, float]], reader: str = "ParticleApplicator"
+    ) -> None:
+        """Refuse, by name, a segment of ``bc`` that governs no part of the faces of ``bounds`` a particle is read on
+        (#2490 B1e-2), so its condition would be dropped: the boundary owner's point-family check
+        (`BoundaryConditions.refuse_segments_governing_no_point`) over this reader's own points, with its sameness,
+        `same_particle_action`.
+
+        :meth:`apply` reads a particle that reached the box on the face `_get_boundary_id` names, through
+        ``get_bc_at_point``, on the BC as `_with_box` gives it. The check reads, with the same calls, one point in each
+        cell of each face where every placement reads one answer (`BoundaryConditions.face_cell_centres`), so a
+        segment that governs a set of positive width on a face governs one of them, except where a placement read from a
+        signed distance is sampled on a lattice."""
+        box = np.array(bounds, dtype=float)
+        bc = _with_box(bc, box)
+        points, lattice = bc.face_cell_centres(box)
+        readings = []
+        for point in points:
+            boundary_id = self._get_boundary_id(point, box[:, 0], box[:, 1], box.shape[0])
+            readings.append((point, boundary_id, bc.get_bc_at_point(point, boundary_id=boundary_id)))
+        note = (
+            "A set of no width on a face holds no cell (a region whose range there is a single coordinate): a particle "
+            "reaches it with probability zero"
+        )
+        if lattice is not None:
+            note += (
+                f". An sdf_region, or a normal_direction read from domain_sdf, is read on a lattice of {lattice} equal "
+                f"parts along each axis of a face (FACE_LATTICE_CELLS), so a set one holds that contains no box of side "
+                f"1/{lattice} of the face's extent holds no cell either: widen it, or place it by region"
+            )
+        bc.refuse_segments_governing_no_point(
+            readings,
+            reader,
+            f"the {len(points)} points it reads the faces of the box {box.tolist()} on, one in each cell of a face where "
+            "every placement reads one answer",
+            equivalent=same_particle_action,
+            note=note,
+        )
+
     def _get_boundary_id(
         self,
         particle: NDArray[np.floating],
@@ -464,4 +528,4 @@ class ParticleApplicator:
         return wrap_positions(particle, bounds)
 
 
-__all__ = ["ParticleApplicator"]
+__all__ = ["ParticleApplicator", "same_particle_action", "segment_particle_action"]
