@@ -63,6 +63,7 @@ ALLOWED = {
     ("mfgarchon/alg/numerical/gfdm_components/joint_socp.py", "solve_joint_socp_at_stencil"): "cvxpy",
     ("mfgarchon/alg/numerical/gfdm_components/joint_socp.py", "solve_relaxed_joint_socp_at_stencil"): "cvxpy",
     ("mfgarchon/alg/numerical/gfdm_components/positive_qp_fan.py", "_positive_laplacian_row"): "cvxpy",
+    ("mfgarchon/alg/numerical/gfdm_components/positive_qp_fan.py", "_mirror_row"): "cvxpy",
 }
 
 

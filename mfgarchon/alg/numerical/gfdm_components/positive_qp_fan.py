@@ -16,12 +16,39 @@ solver's status:
   control cost that control is the Euclidean projection of ``alpha* = -g / lambda`` onto the sector's cone, which
   is why the scheme admits ``QuadraticControlCost`` only.
 
+**A reflecting face** (#1689 PR 4) is closed by two rows:
+
+- **The mirror row** (`_mirror_row`) replaces the Laplacian row of every interior node whose nearest reflecting face
+  lies within its reach, ``MIRROR_REACH * delta_i``. Over the node's `MIRROR_POOL` nearest nodes (the centre
+  included, sampled boundary nodes kept as sources) and their mirror images across that face, it is ``min ||L||^2``
+  subject to the P2 moments, ``L >= 0`` off the centre, and the obliqueness certificate of the paper's
+  eq:bc_gamma_main (chap_01:479-482): ``gamma_hat = 2 delta_i sum_j L_ghost_ij s_ij >= MIRROR_GAMMA0``, with
+  ``s_ij`` the source's inward distance to the face and ``delta_i`` the mirror pool's radius, ``max |x_j - x_i|``.
+  Each ghost's weight is then folded onto its source, so the row's off-centre weights stay non-negative and its row
+  sum zero. A layer node no mirror row places is refused by name.
+- **The value-copy row** ``u_b - u_j = 0`` (`value_copy_rows`) is a sampled boundary node's, ``j`` its nearest
+  interior node: the paper's copy row (eq:copy_row, chap_01:363-366), with the M-matrix sign pattern, annihilating
+  constants.
+
+Two differences from the paper, which the measurement behind them (#1689 comment 6296766771) made:
+
+- **Copied boundary nodes are stencil sources** of the mirror rows, as they are of the interior rows. The paper
+  assumes they are not (chap_01:367, restated at line 493 in def:row_classification and at line 677 in (B)).
+- **A mirror row goes on every layer node.** def:row_classification places one only where the plain row fails,
+  since its (P) comes before its (R) (chap_01:488-490).
+
+A construction note, not a difference in the theorem's hypotheses: the mirror row's advection is the node's
+physical fan, a folded fan with zero reflected coefficients, so (B)'s fan clause (chap_01:677) holds where that
+fan is complete. (R) at chap_01:490 builds its fan over the reflected rays as well, which is not ported, so a layer
+node with no complete physical fan is refused by name.
+
 Ported from mfg-research's ``alg_beta`` (``two_tier_stencils._posL``, ``guarded_fan``, ``howard_cone_patch``) and
 exp15's widened fan; the research keeps its own copy for the paper. Two-dimensional only: a fan is angular.
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
@@ -49,6 +76,19 @@ CERTIFICATE_TOL = 1e-8
 #: A sector whose rays' cross product is below this times the product of their lengths -- the sine of its aperture
 #: -- is degenerate and not emitted.
 _DET_TOL = 1e-10
+
+#: The mirror row's pool: the nearest nodes, the centre included (#1689 PR 4). The certificate was measured with it,
+#: on exp17's clouds at N_int 400 to 2500 (comment 6296766771); a wider pool would move ``delta_i`` and the reach.
+MIRROR_POOL = 21
+
+#: The reach factor kappa: a node is mirrored when its nearest reflecting face lies within ``kappa * delta_i``. The
+#: paper's computations take the pool radius 5 delta / 2 and the reach 3 delta / 2 (def:row_classification,
+#: chap_01:486), so kappa = 3/5.
+MIRROR_REACH = 0.6
+
+#: The obliqueness the mirror row certifies, gamma_0 of eq:bc_gamma_main. The theorem needs one gamma_0 > 0 at every
+#: h; on exp17's clouds the largest gamma_hat each layer row can reach stays at or above 1.187 from N_int 400 to 2500.
+MIRROR_GAMMA0 = 0.5
 
 
 @dataclass(frozen=True)
@@ -234,6 +274,68 @@ def _positive_laplacian_row(
     return w / length**2, residual, snapped
 
 
+def _mirror_row(
+    displacement: np.ndarray, distance: np.ndarray, radius: float, length: float, gamma0: float | None = None
+) -> tuple[np.ndarray, float, float, int] | None:
+    """A layer node's mirror row (#1689 PR 4), or None: the centre at index 0, then its ``m`` sources, then their
+    ghosts, in ``displacement`` (shape ``(1 + 2m, 2)``); ``distance`` each source's inward distance to the mirrored
+    face, ``radius`` the pool's radius ``delta_i``.
+
+    The QP ``min ||L||^2`` subject to ``A^T L = e_lap``, ``L >= 0`` off the centre and ``2 delta_i distance . L_ghost
+    >= gamma0`` (`MIRROR_GAMMA0` where None, read at the call as the refusal and the report read it; 0 where a
+    refusal asks whether the moments alone can be met) is solved in units of
+    ``length``, the node's ``h6``, as `_positive_laplacian_row` is; the certificate is scale-free, since ``L`` scales
+    as ``1 / length**2`` and ``delta_i`` and ``s`` as ``length``. Admitted only by its certificate: each moment's
+    residual at most `CERTIFICATE_TOL` times its scale, every off-centre weight of the QP, before folding, at least
+    ``-CERTIFICATE_TOL * max|L|``, and ``gamma_hat >= gamma0 - CERTIFICATE_TOL``. The ghosts are then folded onto
+    their sources; a folded weight in the band below 0 is set to 0 and the centre to minus the off-centre sum, so the
+    folded row is exactly Metzler with zero row sum. Returns the folded weights (the centre, then the sources), the
+    residual, ``gamma_hat`` and how many weights were set to 0.
+    """
+    gamma0 = MIRROR_GAMMA0 if gamma0 is None else gamma0
+    cp = joint_socp.cp
+    A, _ = build_taylor_matrix_2d(displacement / length)
+    m = len(distance)
+    weights = cp.Variable(1 + 2 * m)
+    gamma = 2.0 * (radius / length) * (np.asarray(distance) / length) @ weights[1 + m :]
+    problem = cp.Problem(
+        cp.Minimize(cp.sum_squares(weights)), [A.T @ weights == _E_LAP, weights[1:] >= 0, gamma >= gamma0]
+    )
+    try:
+        problem.solve(solver="CLARABEL")
+    except cp.error.SolverError:
+        return None
+    if weights.value is None:
+        return None
+    w = np.asarray(weights.value, dtype=float)
+    if not np.all(np.isfinite(w)):
+        return None
+    residual = float(np.max(np.abs(A.T @ w - _E_LAP) / (1.0 + np.abs(A.T * w).sum(axis=1))))
+    gamma_hat = float(2.0 * (radius / length) * (np.asarray(distance) / length) @ w[1 + m :])
+    if not (
+        residual <= CERTIFICATE_TOL
+        and w[1:].min() >= -CERTIFICATE_TOL * np.abs(w).max()
+        and gamma_hat >= gamma0 - CERTIFICATE_TOL
+    ):
+        return None
+    folded = np.r_[w[0], w[1 : 1 + m] + w[1 + m :]]
+    snapped = int(np.count_nonzero(folded[1:] < 0.0))
+    folded[1:] = np.maximum(folded[1:], 0.0)
+    folded[0] = -folded[1:].sum()
+    return folded / length**2, residual, gamma_hat, snapped
+
+
+def value_copy_rows(points: np.ndarray, interior_indices: np.ndarray, nodes: np.ndarray) -> dict[int, int]:
+    """For each sampled boundary node in ``nodes``, its nearest interior node: the value-copy row ``u_b - u_j = 0``
+    a reflecting face's boundary node takes (#1689 PR 4, the paper's eq:copy_row)."""
+    interior = np.asarray(interior_indices, dtype=int)
+    nodes = np.asarray(nodes, dtype=int)
+    if not len(nodes):
+        return {}
+    _, nearest = cKDTree(points[interior]).query(points[nodes], k=1)
+    return {int(b): int(interior[j]) for b, j in zip(nodes, np.atleast_1d(nearest), strict=True)}
+
+
 class PositiveQPFan:
     """The positive Laplacian rows and the guarded fans of a 2-D cloud's interior nodes, with their certificates.
 
@@ -247,6 +349,12 @@ class PositiveQPFan:
     obstacle_sdf, visibility_samples, visibility_margin
         With ``obstacle_sdf``, a node's Laplacian pool and its ray candidates keep only the nodes it sees, by the
         same filter as the GFDM neighbourhoods.
+    reflecting_faces : dict
+        The reflecting faces of the box, each an outward unit normal ``n`` (a tuple) mapped to the face's offset
+        ``c``, the face being ``n . x = c`` (#1689 PR 4). A node whose nearest of them lies within its reach takes a
+        mirror row across it in place of its Laplacian row. Empty: no mirror row.
+    reflecting_nodes : np.ndarray
+        The sampled boundary nodes on those faces, which take value-copy rows (`copy_rows`).
 
     Raises
     ------
@@ -263,9 +371,11 @@ class PositiveQPFan:
         Arrays ``node``, ``j0``, ``j1`` (int) and ``z0``, ``z1`` (rays, shape ``(m, 2)``) and ``zinv`` (shape
         ``(m, 2, 2)``, the inverse of the matrix with columns ``z0``, ``z1``), one entry per sector, grouped by
         node.
+    copy_rows : dict
+        Each of ``reflecting_nodes`` mapped to its nearest interior node (`value_copy_rows`).
     report : dict
         What the certificates measured: rows per pool, widened fans and the widest cap, the largest residual,
-        the weights set to 0.
+        the weights set to 0; and the mirror rows, the smallest ``gamma_hat`` and how many sit at ``MIRROR_GAMMA0``.
     """
 
     def __init__(
@@ -276,6 +386,8 @@ class PositiveQPFan:
         obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
+        reflecting_faces: dict[tuple[float, ...], float] | None = None,
+        reflecting_nodes: np.ndarray | None = None,
     ):
         if not joint_socp._cvxpy():
             raise ImportError(
@@ -285,6 +397,13 @@ class PositiveQPFan:
         if points.ndim != 2 or points.shape[1] != 2:
             raise ValueError(
                 f"PositiveQPFan is two-dimensional (a fan is angular); got points of shape {points.shape}."
+            )
+        if reflecting_faces and obstacle_sdf is not None:
+            raise ValueError(
+                "PositiveQPFan (monotonicity_scheme='positive_qp_fan'): a reflecting face with an obstacle in the "
+                "domain needs exp09's reflected candidate pool, its pairwise images at junctions and the "
+                "visibility-enlarged pool, which are not ported (#1689 R-D3); the mirror row reads no visibility. "
+                "Use monotonicity_scheme='joint_socp'."
             )
         self.parameters = parameters
         n = len(points)
@@ -308,8 +427,23 @@ class PositiveQPFan:
         unplaced: dict[int, str] = {}
         node, j0, j1, z0, z1 = [], [], [], [], []
         widened: dict[int, float] = {}
+        faces = [(np.asarray(normal, dtype=float), float(c)) for normal, c in (reflecting_faces or {}).items()]
+        mirrored: dict[int, tuple[float, float]] = {}
+        mirror_residual_max = 0.0
         for i in (int(k) for k in np.asarray(interior_indices)):
-            for k in parameters.laplacian_pools:
+            layer = self._mirror(i, points, tree, faces, h6[i]) if faces else None
+            if isinstance(layer, str):
+                unplaced[i] = layer
+                continue
+            if layer is not None:
+                (weights, residual, gamma_hat, snapped), pool = layer
+                rows.extend([i] * len(pool))
+                cols.extend(pool.tolist())
+                vals.extend(weights.tolist())
+                mirrored[i] = (gamma_hat, residual)
+                mirror_residual_max = max(mirror_residual_max, residual)
+                snapped_total += snapped
+            for k in () if layer is not None else parameters.laplacian_pools:
                 _, pool = tree.query(points[i], k=min(k, n))
                 pool = visible(i, np.atleast_1d(pool).astype(int))
                 center = int(np.flatnonzero(pool == i)[0])
@@ -324,8 +458,9 @@ class PositiveQPFan:
                     snapped_total += snapped
                     break
             else:
-                unplaced[i] = f"no positive P2 Laplacian row in the {parameters.laplacian_pools[-1]} nearest nodes"
-                continue
+                if layer is None:
+                    unplaced[i] = f"no positive P2 Laplacian row in the {parameters.laplacian_pools[-1]} nearest nodes"
+                    continue
 
             _, candidates = tree.query(points[i], k=min(parameters.n_candidates, n))
             candidates = visible(i, np.atleast_1d(candidates).astype(int))
@@ -338,6 +473,12 @@ class PositiveQPFan:
             else:
                 unplaced[i] = (
                     f"no fan with every gap at most {max((parameters.theta0_deg, *parameters.widened_caps_deg))} degrees"
+                    + (
+                        "; a mirror row's advection is its physical fan, since the fan over reflected rays "
+                        "(def:row_classification's (R)) is not ported"
+                        if layer is not None
+                        else ""
+                    )
                 )
                 continue
             if cap > parameters.theta0_deg:
@@ -370,6 +511,10 @@ class PositiveQPFan:
         incomplete = _incomplete_fans(self.sectors, np.asarray(interior_indices, dtype=int), n)
         if incomplete:
             raise ValueError(_refusal(dict.fromkeys(incomplete, "its fan's sectors do not cover the plane"), points))
+        self.copy_rows = value_copy_rows(
+            points, interior_indices, np.zeros(0, dtype=int) if reflecting_nodes is None else reflecting_nodes
+        )
+        gammas = np.array([g for g, _ in mirrored.values()])
         self.report = {
             "rows_per_pool": per_pool,
             "n_widened": len(widened),
@@ -377,7 +522,50 @@ class PositiveQPFan:
             "laplacian_relative_residual_max": residual_max,
             "weights_set_to_zero": snapped_total,
             "n_sectors": len(node),
+            "n_mirror_rows": len(mirrored),
+            "mirror_gamma_hat_min": float(gammas.min()) if len(gammas) else None,
+            "mirror_rows_at_gamma0": int(np.count_nonzero(gammas <= MIRROR_GAMMA0 + 1e-6)),
+            "mirror_relative_residual_max": mirror_residual_max,
+            "n_value_copy_rows": len(self.copy_rows),
         }
+
+    @staticmethod
+    def _mirror(
+        i: int, points: np.ndarray, tree: cKDTree, faces: list[tuple[np.ndarray, float]], length: float
+    ) -> tuple[tuple[np.ndarray, float, float, int], np.ndarray] | str | None:
+        """Node ``i``'s mirror row, if it is a layer node (#1689 PR 4): None when its nearest reflecting face lies
+        beyond its reach, ``MIRROR_REACH * delta_i``. Else ``(row, pool)``, the folded row of `_mirror_row` over the
+        pool's nodes, the centre first; or the reason, where no row meets the certificate."""
+        n = len(points)
+        _, pool = tree.query(points[i], k=min(MIRROR_POOL, n))
+        pool = np.atleast_1d(pool).astype(int)
+        sources = pool[pool != i]
+        offset = points[sources] - points[i]
+        radius = float(np.linalg.norm(offset, axis=1).max())
+        inward = [c - float(normal @ points[i]) for normal, c in faces]
+        nearest = int(np.argmin(inward))
+        if not inward[nearest] < MIRROR_REACH * radius:
+            return None
+        normal, c = faces[nearest]
+        ghosts = points[sources] - 2.0 * ((points[sources] @ normal) - c)[:, None] * normal
+        displacement = np.vstack([np.zeros((1, 2)), offset, ghosts - points[i]])
+        row = _mirror_row(displacement, c - points[sources] @ normal, radius, length)
+        if row is None:
+            face = f"the face {normal.tolist()} . x = {c}"
+            # Which part fails: the P2 moments with non-negative weights, or only the obliqueness certificate. Read
+            # through its certificate alone, so the solver's note that an infeasible problem's answer is inaccurate
+            # says nothing here.
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Solution may be inaccurate", category=UserWarning)
+                moments = _mirror_row(displacement, np.zeros(len(sources)), radius, length, gamma0=0.0) is not None
+            return f"a layer node of {face}, within {MIRROR_REACH} times its pool radius of it, with " + (
+                f"no mirror row across it in its {MIRROR_POOL} nearest nodes that meets the obliqueness certificate "
+                f"gamma_hat >= {MIRROR_GAMMA0} (eq:bc_gamma_main)"
+                if moments
+                else f"no mirror row across it in its {MIRROR_POOL} nearest nodes and their images with non-negative "
+                "off-centre weights: no weights meeting the P2 moments were found there"
+            )
+        return row, np.r_[i, sources]
 
 
 def _incomplete_fans(sectors: dict, interior: np.ndarray, n: int) -> list[int]:
