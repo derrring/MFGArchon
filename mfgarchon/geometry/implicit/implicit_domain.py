@@ -20,6 +20,7 @@ References:
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from itertools import combinations, pairwise
 from typing import Literal
 
@@ -42,6 +43,56 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 # Module logger
 logger = get_logger(__name__)
+
+# An interval end that no surface bounds: a segment's own end, or the line's ends at infinity.
+_NO_SURFACE = -1
+
+
+@dataclass(frozen=True)
+class SegmentIntervals:
+    """The parts of segments a -> b inside a domain, as parameters t of a + t (b - a) in [0, 1] (#2733 D1).
+
+    ``t[i, k]`` is the k-th interval (lo, hi) of segment i: closed, sorted and disjoint, with rows padded by NaN. A
+    point of the segment is in an interval exactly where `contains` holds there, up to the rounding of the ends'
+    parameters: each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's
+    intervals as Roth (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
+    intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
+
+    ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
+    that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face: on a
+    Hyperrectangle 2 * axis for the min face and 2 * axis + 1 for the max face, on a Hypersphere 0. ``complemented``
+    marks a leaf that enters complemented, an obstacle, so that the domain's outward normal at that end is the leaf's
+    inward one. Where the ends of several leaves coincide, at a corner or a wall two rooms share, the end carries one
+    of them.
+    """
+
+    t: NDArray[np.float64]
+    leaf: NDArray[np.int64]
+    leaf_face: NDArray[np.int64]
+    complemented: NDArray[np.bool_]
+    leaves: tuple["ImplicitDomain", ...]
+
+
+@dataclass(frozen=True)
+class FirstContact:
+    """Each segment's first contact with its domain's boundary, read from `ImplicitDomain.segment_intervals` (#2733 D1).
+
+    ``inside_at_start`` is whether t = 0 lies in an interval: the admission of the start point, decided by the leaves'
+    own forms rather than by a band around phi = 0. From a start inside, the contact is where the path leaves the
+    domain, at t < 1, and at t = 0 where it leaves at once, from a face or a corner it starts on. From a start outside,
+    it is where the path enters, at t <= 1. Elsewhere ``t`` is NaN and ``leaf`` and ``leaf_face`` are -1. ``point`` is
+    a + t (b - a). ``normal`` is the domain's outward unit normal there, from the leaf's own form: +-e_axis on a box
+    face, radial on a sphere, negated for a complemented leaf. ``leaf``, ``leaf_face`` and ``leaves`` are as in
+    `SegmentIntervals`.
+    """
+
+    t: NDArray[np.float64]
+    point: NDArray[np.float64]
+    leaf: NDArray[np.int64]
+    leaf_face: NDArray[np.int64]
+    normal: NDArray[np.float64]
+    inside_at_start: NDArray[np.bool_]
+    leaves: tuple["ImplicitDomain", ...]
 
 
 class ImplicitDomain(
@@ -756,6 +807,114 @@ class ImplicitDomain(
                 )
         return placed
 
+    def segment_intervals(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> SegmentIntervals:
+        """The parts of each segment a -> b inside this domain, exactly, with the surfaces that bound them (#2733 D1).
+
+        Args:
+            a, b: The segments' ends, shape (N, d), or (d,) for one segment, which is returned as N = 1.
+
+        Returns:
+            `SegmentIntervals`, of shape (N, K, 2) with K the most intervals any segment has, and at least 1.
+
+        Raises:
+            NotImplementedError: a domain with no exact form, one given only by its phi (`_line_sets`), or a
+                Hyperrectangle with periodic axes (#2704).
+            ValueError: ends of different shapes, of another dimension, or not finite.
+        """
+        a, b = self._segment_ends(a, b)
+        t, tag = self._line_sets(a, b - a, False, 0)
+        lo, hi = t[..., 0], t[..., 1]
+        kept = (hi >= 0.0) & (lo <= 1.0)
+        ends = np.stack(
+            [np.where(lo < 0.0, _NO_SURFACE, tag[..., 0]), np.where(hi > 1.0, _NO_SURFACE, tag[..., 1])], -1
+        )
+        t = np.stack([np.maximum(lo, 0.0), np.minimum(hi, 1.0)], axis=-1)
+        k = max(int(kept.sum(axis=1).max(initial=0)), 1)
+        order = np.argsort(~kept, axis=1, kind="stable")[:, :k]
+        kept = np.take_along_axis(kept, order, axis=1)[..., None]
+        t = np.where(kept, np.take_along_axis(t, order[..., None], axis=1), np.nan)
+        tag = np.where(kept, np.take_along_axis(ends, order[..., None], axis=1), _NO_SURFACE)
+        none = tag < 0
+        return SegmentIntervals(
+            t=t,
+            leaf=np.where(none, _NO_SURFACE, tag >> 32),
+            leaf_face=np.where(none, _NO_SURFACE, (tag & 0xFFFFFFFF) >> 1),
+            complemented=~none & ((tag & 1) == 1),
+            leaves=self._leaves(),
+        )
+
+    def first_contact(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> FirstContact:
+        """Each segment's first contact with this domain's boundary, from `segment_intervals` (#2733 D1); see
+        `FirstContact`. Arguments and refusals are `segment_intervals`'s."""
+        a, b = self._segment_ends(a, b)
+        found = self.segment_intervals(a, b)
+        lo, hi = found.t[:, 0, 0], found.t[:, 0, 1]
+        inside = lo == 0.0
+        exits = inside & (hi < 1.0)
+        hit = exits | (~inside & ~np.isnan(lo))
+        end = exits.astype(np.int64)
+        rows = np.arange(len(a))
+        t = np.where(hit, np.where(exits, hi, lo), np.nan)
+        leaf = np.where(hit, found.leaf[rows, 0, end], _NO_SURFACE)
+        face = np.where(hit, found.leaf_face[rows, 0, end], _NO_SURFACE)
+        if np.any(leaf[hit] < 0):
+            raise RuntimeError(
+                f"first_contact: a contact at t = {t[hit][leaf[hit] < 0][0]} carries no surface; an exit before t = 1 "
+                f"or an entry after t = 0 is always a leaf's end, so the classification is inconsistent (#2733)"
+            )
+        point = a + t[:, None] * (b - a)
+        normal = np.full_like(a, np.nan)
+        for index in np.unique(leaf[hit]):
+            at = leaf == index
+            normal[at] = found.leaves[index]._face_normal(point[at], face[at])
+        normal[hit & found.complemented[rows, 0, end]] *= -1.0
+        return FirstContact(
+            t=t, point=point, leaf=leaf, leaf_face=face, normal=normal, inside_at_start=inside, leaves=found.leaves
+        )
+
+    def _segment_ends(
+        self, a: NDArray[np.float64], b: NDArray[np.float64]
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """The ends as (N, d) arrays, refused where they cannot be segments of this domain's space."""
+        a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+        if a.shape != b.shape or a.ndim not in (1, 2) or a.shape[-1] != self.dimension:
+            raise ValueError(
+                f"segment ends must both have shape (d,) or (N, d), with d = {self.dimension} for this domain; got "
+                f"{a.shape} and {b.shape}"
+            )
+        if not (np.isfinite(a).all() and np.isfinite(b).all()):
+            raise ValueError(
+                "segment ends must be finite: a NaN end would classify the whole segment as outside, with nothing raised"
+            )
+        return np.atleast_2d(a), np.atleast_2d(b)
+
+    def _line_sets(
+        self, a: NDArray[np.float64], d: NDArray[np.float64], outside: bool, leaf: int
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """Along each line a + t d: the closed set where phi <= 0, or with ``outside`` where phi >= 0, as sorted
+        disjoint intervals of shape (N, K, 2) with NaN rows, and each end's surface packed as one integer
+        (`_surface_tag`). ``leaf`` is the index of this node's first leaf in the ``_leaves()`` of the domain the search
+        began at. A leaf solves its own form and a CSG node combines its children's sets (#2733 D1).
+
+        Here, with no form to solve, it is refused. A search that steps along the segment by phi, sphere tracing, is
+        exact only where phi is a distance or bounds one, and that is stated (`get_lipschitz_constant`) and never
+        checked: a phi such as |x|^2 - r^2 would let it step over a feature with nothing raised."""
+        raise NotImplementedError(
+            f"{type(self).__name__} has no exact segment classification: segment_intervals and first_contact are "
+            f"defined for Hyperrectangle, Hypersphere and the CSG domains built from them. A domain given only by its "
+            f"phi is refused, not sphere-traced, since phi is never checked to be a distance, and where it is not, a "
+            f"search that steps by phi passes over a feature with nothing raised (#2733 D1)."
+        )
+
+    def _leaves(self) -> tuple["ImplicitDomain", ...]:
+        """The primitives this domain is built from, depth first: the domain itself, unless it is a CSG node."""
+        return (self,)
+
+    def _face_normal(self, x: NDArray[np.float64], face: NDArray[np.int64]) -> NDArray[np.float64]:
+        """The outward unit normal of this leaf's face ``face`` at the points ``x`` on it, shape (n, d). A leaf with
+        no exact form has none; `_line_sets` refuses it before this is reached."""
+        raise NotImplementedError(f"{type(self).__name__} has no exact face normals (#2733 D1).")
+
     @property
     def manifold_dimension(self) -> int:
         """
@@ -1200,6 +1359,75 @@ class ImplicitDomain(
     def __repr__(self) -> str:
         """String representation of the domain."""
         return f"{self.__class__.__name__}(dimension={self.dimension})"
+
+
+def _surface_tag(leaf: int, face: NDArray[np.int64] | int, complemented: bool) -> NDArray[np.int64]:
+    """An interval end's surface as one integer, which sorts and gathers with its parameter: the leaf in the high 32
+    bits, then the face, then whether the leaf enters complemented (`SegmentIntervals`)."""
+    return (np.int64(leaf) << 32) | (np.asarray(face, dtype=np.int64) << 1) | np.int64(complemented)
+
+
+def _closed_inside(
+    t_in: NDArray[np.float64],
+    t_out: NDArray[np.float64],
+    holds: NDArray[np.bool_],
+    tag_in: NDArray[np.int64],
+    tag_out: NDArray[np.int64],
+) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+    """A convex leaf's phi <= 0 along each line: [t_in, t_out] where ``holds``, else nothing. Shape (N, 1, 2)."""
+    t = np.where(holds[:, None], np.stack([t_in, t_out], axis=1), np.nan)[:, None, :]
+    tag = np.where(holds[:, None], np.stack([tag_in, tag_out], axis=1), _NO_SURFACE)[:, None, :]
+    return t, tag
+
+
+def _closed_outside(
+    t_in: NDArray[np.float64],
+    t_out: NDArray[np.float64],
+    meets: NDArray[np.bool_],
+    tag_in: NDArray[np.int64],
+    tag_out: NDArray[np.int64],
+) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+    """A convex leaf's phi >= 0 along each line, the complement of its open interior (t_in, t_out) where the line
+    ``meets`` it: the line before t_in and after t_out, nothing of either part at infinity; and the whole line where it
+    misses the open interior, as a line that only grazes the leaf does. Shape (N, 2, 2)."""
+    n = t_in.shape[0]
+    before, after = meets & (t_in > -np.inf), meets & (t_out < np.inf)
+    t = np.full((n, 2, 2), np.nan)
+    tag = np.full((n, 2, 2), _NO_SURFACE, dtype=np.int64)
+    t[~meets, 0] = (-np.inf, np.inf)
+    t[before, 0, 0], t[before, 0, 1], tag[before, 0, 1] = -np.inf, t_in[before], tag_in[before]
+    t[after, 1, 0], t[after, 1, 1], tag[after, 1, 0] = t_out[after], np.inf, tag_out[after]
+    return t, tag
+
+
+def _combine_line_sets(
+    parts: list[tuple[NDArray[np.float64], NDArray[np.int64]]], need: int
+) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+    """The set of each line that at least ``need`` of ``parts`` cover: their union for 1, their intersection for
+    ``len(parts)`` (#2733 D1). Each part is a `_line_sets` result.
+
+    A sweep over every part's ends, in parameter order, counting the parts that cover; at an equal parameter an
+    opening end comes before a closing one, so that closed intervals that touch are joined, and a point where one
+    closes as another opens is kept, as the closed sets' intersection holds it."""
+    n = parts[0][0].shape[0]
+    t = np.concatenate([part[0].reshape(n, -1) for part in parts], axis=1)
+    tag = np.concatenate([part[1].reshape(n, -1) for part in parts], axis=1)
+    closing = np.broadcast_to(np.arange(t.shape[1]) % 2, t.shape)
+    order = np.lexsort((closing, t), axis=-1)
+    t, tag, closing = (np.take_along_axis(x, order, axis=1) for x in (t, tag, closing))
+    step = np.where(np.isnan(t), 0, 1 - 2 * closing)
+    covered = np.cumsum(step, axis=1)
+    opens, closes = (step == 1) & (covered == need), (step == -1) & (covered == need - 1)
+    count = opens.sum(axis=1)
+    k = max(int(count.max(initial=0)), 1)
+    real = np.arange(k)[None, :] < count[:, None]
+    first_opens = np.argsort(~opens, axis=1, kind="stable")[:, :k]
+    first_closes = np.argsort(~closes, axis=1, kind="stable")[:, :k]
+    out_t = np.stack([np.take_along_axis(t, first_opens, axis=1), np.take_along_axis(t, first_closes, axis=1)], -1)
+    out_tag = np.stack(
+        [np.take_along_axis(tag, first_opens, axis=1), np.take_along_axis(tag, first_closes, axis=1)], -1
+    )
+    return np.where(real[..., None], out_t, np.nan), np.where(real[..., None], out_tag, _NO_SURFACE)
 
 
 def _project_onto_half_spaces(

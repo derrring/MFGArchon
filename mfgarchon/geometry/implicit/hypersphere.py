@@ -24,7 +24,7 @@ from collections.abc import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-from .implicit_domain import ImplicitDomain
+from .implicit_domain import _NO_SURFACE, ImplicitDomain, _closed_inside, _closed_outside, _surface_tag
 
 
 class Hypersphere(ImplicitDomain):
@@ -150,6 +150,35 @@ class Hypersphere(ImplicitDomain):
         bounds[:, 0] = self.center - self.radius
         bounds[:, 1] = self.center + self.radius
         return bounds
+
+    def _line_sets(
+        self, a: NDArray[np.float64], d: NDArray[np.float64], outside: bool, leaf: int
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """The quadratic |a + t d - c|^2 = r^2, solved exactly by the stable form, which takes the root that does not
+        cancel and the other from the product of the two (#2733 D1; see `ImplicitDomain._line_sets`). The constant term
+        is computed as (|a - c| - r)(|a - c| + r) from the phi that `signed_distance` computes, so its sign, and with
+        it whether t = 0 is held, agrees with `contains` at a; the roots' product has that sign."""
+        f = a - self.center
+        quad, lin = np.einsum("nd,nd->n", d, d), 2.0 * np.einsum("nd,nd->n", f, d)
+        norm = np.linalg.norm(f, axis=1)
+        const = (norm - self.radius) * (norm + self.radius)
+        disc = lin * lin - 4.0 * quad * const
+        moving = quad > 0.0
+        root = np.sqrt(np.maximum(disc, 0.0))
+        q = -0.5 * (lin + np.where(lin >= 0.0, root, -root))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            near, far = q / quad, np.where(q != 0.0, const / q, 0.0)
+        t1 = np.where(moving, np.minimum(near, far), -np.inf)
+        t2 = np.where(moving, np.maximum(near, far), np.inf)
+        tag = np.where(moving, _surface_tag(leaf, 0, outside), _NO_SURFACE)
+        if not outside:
+            return _closed_inside(t1, t2, np.where(moving, disc >= 0.0, const <= 0.0), tag, tag)
+        return _closed_outside(t1, t2, np.where(moving, (disc > 0.0) & (t1 < t2), const < 0.0), tag, tag)
+
+    def _face_normal(self, x: NDArray[np.float64], face: NDArray[np.int64]) -> NDArray[np.float64]:
+        """Radial: (x - c) / |x - c|."""
+        radial = x - self.center
+        return radial / np.linalg.norm(radial, axis=1, keepdims=True)
 
     def sample_uniform(self, n_samples: int, max_attempts: int = 100, seed: int | None = None) -> NDArray:
         """

@@ -29,7 +29,7 @@ import numpy as np
 from mfgarchon.geometry.boundary.periodic import periodic_distance
 from mfgarchon.utils.deprecation import deprecated
 
-from .implicit_domain import ImplicitDomain
+from .implicit_domain import _NO_SURFACE, ImplicitDomain, _closed_inside, _closed_outside, _surface_tag
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -232,6 +232,46 @@ class Hyperrectangle(ImplicitDomain):
             bounds: Array of shape (d, 2) where bounds[i] = [min_i, max_i]
         """
         return self.bounds.copy()
+
+    def _line_sets(
+        self, a: NDArray[np.float64], d: NDArray[np.float64], outside: bool, leaf: int
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """The slab test, exact (#2733 D1; see `ImplicitDomain._line_sets`). On each moving axis the line is between
+        the two faces for t between the parameters where it meets them, and the box holds it from the largest entry to
+        the smallest exit. A still axis holds it everywhere or nowhere. A parameter's sign is the sign of the
+        difference it is computed from, so whether t = 0 is held agrees with `contains` at a, short of that quotient
+        underflowing to zero."""
+        if self._periodic_dims:
+            raise NotImplementedError(
+                f"segment_intervals on a Hyperrectangle periodic in axes {self._periodic_dims}: a periodic axis has no "
+                f"face to meet, and a segment across it wraps rather than leaves. Periodic outer boundaries with "
+                f"obstacles are #2704."
+            )
+        lo, hi = self.bounds[:, 0], self.bounds[:, 1]
+        moving, forward = d != 0.0, d > 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            to_lo, to_hi = (lo - a) / d, (hi - a) / d
+        entry = np.where(moving, np.where(forward, to_lo, to_hi), -np.inf)
+        leave = np.where(moving, np.where(forward, to_hi, to_lo), np.inf)
+        rows = np.arange(a.shape[0])
+        first, last = entry.argmax(axis=1), leave.argmin(axis=1)
+        t_in, t_out = entry[rows, first], leave[rows, last]
+        # The face entered is the axis's min face moving forward, its max face moving back; the face left, the other.
+        tag_in = np.where(
+            np.isfinite(t_in), _surface_tag(leaf, 2 * first + ~forward[rows, first], outside), _NO_SURFACE
+        )
+        tag_out = np.where(np.isfinite(t_out), _surface_tag(leaf, 2 * last + forward[rows, last], outside), _NO_SURFACE)
+        if not outside:
+            holds = np.all(moving | ((lo <= a) & (a <= hi)), axis=1) & (t_in <= t_out)
+            return _closed_inside(t_in, t_out, holds, tag_in, tag_out)
+        meets = np.all(moving | ((lo < a) & (a < hi)), axis=1) & (t_in < t_out)
+        return _closed_outside(t_in, t_out, meets, tag_in, tag_out)
+
+    def _face_normal(self, x: NDArray[np.float64], face: NDArray[np.int64]) -> NDArray[np.float64]:
+        """+e_axis on an axis's max face (``face`` odd), -e_axis on its min face."""
+        normal = np.zeros_like(x)
+        normal[np.arange(len(x)), face // 2] = np.where(face % 2 == 1, 1.0, -1.0)
+        return normal
 
     def sample_uniform(self, n_samples: int, max_attempts: int = 100, seed: int | None = None) -> NDArray[np.float64]:
         """

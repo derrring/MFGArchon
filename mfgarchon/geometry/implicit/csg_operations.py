@@ -25,7 +25,7 @@ References:
 import numpy as np
 from numpy.typing import NDArray
 
-from .implicit_domain import ImplicitDomain
+from .implicit_domain import ImplicitDomain, _combine_line_sets
 
 
 class UnionDomain(ImplicitDomain):
@@ -128,6 +128,21 @@ class UnionDomain(ImplicitDomain):
         bounds[:, 1] = np.max(boxes[:, :, 1], axis=0)
 
         return bounds
+
+    def _line_sets(
+        self, a: NDArray[np.float64], d: NDArray[np.float64], outside: bool, leaf: int
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """The union of the children's sets; with ``outside``, the intersection of their outsides, since
+        min_i phi_i >= 0 where every phi_i >= 0 (#2733 D1; see `ImplicitDomain._line_sets`)."""
+        parts = []
+        for domain in self.domains:
+            parts.append(domain._line_sets(a, d, outside, leaf))
+            leaf += len(domain._leaves())
+        return _combine_line_sets(parts, len(parts) if outside else 1)
+
+    def _leaves(self) -> tuple[ImplicitDomain, ...]:
+        """The children's leaves, in order."""
+        return tuple(leaf for domain in self.domains for leaf in domain._leaves())
 
     def __repr__(self) -> str:
         """String representation."""
@@ -240,6 +255,22 @@ class IntersectionDomain(ImplicitDomain):
 
         return bounds
 
+    def _line_sets(
+        self, a: NDArray[np.float64], d: NDArray[np.float64], outside: bool, leaf: int
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """The intersection of the children's sets; with ``outside``, the union of their outsides, since
+        max_i phi_i >= 0 where some phi_i >= 0 (#2733 D1; see `ImplicitDomain._line_sets`). A difference is this with
+        the subtracted domain's complement."""
+        parts = []
+        for domain in self.domains:
+            parts.append(domain._line_sets(a, d, outside, leaf))
+            leaf += len(domain._leaves())
+        return _combine_line_sets(parts, 1 if outside else len(parts))
+
+    def _leaves(self) -> tuple[ImplicitDomain, ...]:
+        """The children's leaves, in order."""
+        return tuple(leaf for domain in self.domains for leaf in domain._leaves())
+
     def __repr__(self) -> str:
         """String representation."""
         return f"IntersectionDomain({len(self.domains)} domains)"
@@ -344,6 +375,18 @@ class ComplementDomain(ImplicitDomain):
             >>> particles = exterior.sample_uniform(1000)
         """
         self._bounding_box = np.asarray(bounds, dtype=float)
+
+    def _line_sets(
+        self, a: NDArray[np.float64], d: NDArray[np.float64], outside: bool, leaf: int
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """The child's set with ``outside`` turned over, since -phi <= 0 where phi >= 0: the complement is carried down
+        to the leaves as their closed outside, never formed as gaps between intervals (#2733 D1; see
+        `ImplicitDomain._line_sets`)."""
+        return self.domain._line_sets(a, d, not outside, leaf)
+
+    def _leaves(self) -> tuple[ImplicitDomain, ...]:
+        """The complemented domain's leaves."""
+        return self.domain._leaves()
 
     def __repr__(self) -> str:
         """String representation."""
