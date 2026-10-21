@@ -15,7 +15,8 @@
     - a set of no width on a face -- a `region` meeting the face only at a corner or an edge, or in a range that is
       one coordinate -- which a crossing particle meets with probability zero; an exit at the corner (1, 1) absorbed
       all 200 particles driven into it at f2dcb164. Give it a range of positive width, or place it by `boundary=`;
-    - a `region` lying where the BC's `domain_bounds` reach past the solver's box: an exit at x = (1.05, 1.2) of a
+    - a `region` lying where the BC's `domain_bounds` reach past the solver's box -- across the face its `boundary=`
+      names, or on that face past the box, where it names one: an exit at x = (1.05, 1.2) of a
       BC bounded at x = 1.2 absorbed 200 of 200 at f2dcb164. Give the BC the solver's box and place the exit on its
       faces, or place it on the solver's face by `boundary=`;
     - a `normal_direction` no face's normal lies within its `normal_tolerance` of, read under a box `domain_sdf` past

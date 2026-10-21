@@ -58,7 +58,7 @@ def _particles_remaining(segments, route="own") -> int:
     return int(np.count_nonzero(np.all(np.isfinite(final), axis=1)))
 
 
-def _gfdm(segments, points=None) -> HJBGFDMSolver:
+def _gfdm(segments, points=None, delta=0.25) -> HJBGFDMSolver:
     """HJB-GFDM on the 11 x 11 grid's nodes, or on ``points``, with the BC set on the grid: a NO_FLUX default beside
     ``segments``."""
     bc = BoundaryConditions(segments=segments, dimension=2, default_bc=NF)
@@ -68,7 +68,7 @@ def _gfdm(segments, points=None) -> HJBGFDMSolver:
         return HJBGFDMSolver(
             _problem(grid, nt=4),
             collocation_points=grid.get_spatial_grid() if points is None else points,
-            delta=0.25,
+            delta=delta,
             monotonicity_scheme="none",
         )
 
@@ -242,7 +242,11 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
     read at none of them: refused, naming each face's own segment there and the corner rule, with no advice to raise
     its priority, which could not help. Review 2: each segment gets its own remedy. Raising helps where the face is read
     at the point -- a door covers part of x_max -- and where the corner rule chose another face's segment; there the
-    refusal advises it, and the raised BC is admitted. Under the wall alone it does not help, and is not advised."""
+    refusal advises it, and the raised BC is admitted. Under the wall alone it does not help, and is not advised.
+    Review 3: on points coarser than the grid, a segment covering part of y_max with the wall's condition is held only at
+    the corner (0, 1); raised, it sits ahead of the wall, which still answers for the face, so no priority reads it and
+    raising is not advised. Covering it with another condition, it is advised and admitted raised. A cover that cannot
+    be read gives the cover's own refusal, not a claim about it."""
     floor = [
         _seg("exit", D, boundary="x_max"),
         _seg("wall", D, boundary="x_max", priority=1),
@@ -262,7 +266,7 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
         _gfdm(corner_only)
     assert "the corner rule" in str(refused.value)
     assert "raise its priority" not in str(refused.value)
-    assert "it is held only at corners of faces it covers no part of" in str(refused.value)
+    assert "it is held only at corners, where each face answers with its own segment" in str(refused.value)
 
     def corner(priority, door=True, top=False):
         segments = [_seg("C", D, 0.3, region={"x": (0.95, 1.05), "y": (0.95, 1.05)}, priority=priority)]
@@ -281,8 +285,37 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
             _gfdm(raisable)
         assert _reading(_gfdm(raised), "C") == 1
     for priority in (0, 5):
-        with pytest.raises(ValueError, match=r"'C' .*: it is held only at corners of faces it covers no part of"):
+        with pytest.raises(ValueError, match=r"'C' .*: it is held only at corners, where each face answers"):
             _gfdm(corner(priority, door=False))
+
+    lattice = np.array([[x, y] for x in np.linspace(0.0, 1.0, 6) for y in np.linspace(0.0, 1.0, 6)])
+
+    def top_strip(bc_type, value, priority):
+        strip = _seg("S", bc_type, value, region={"x": (-0.05, 0.15), "y": (1.0, 1.05)}, priority=priority)
+        return [_seg("inlet", D, 1.0, boundary="x_min"), _seg("wall", NF), strip]
+
+    for priority in (0, 10):
+        with pytest.raises(
+            ValueError, match=r"'S' \(priority \d+\) -- outranked .*: it is held only at corners, where"
+        ):
+            _gfdm(top_strip(NF, 0.0, priority), lattice, delta=0.45)
+    with pytest.raises(ValueError, match=r"'S' \(priority 0\) -- outranked .*: raise its priority above theirs"):
+        _gfdm(top_strip(BCType.NEUMANN, 1.0, 0), lattice, delta=0.45)
+    assert _reading(_gfdm(top_strip(BCType.NEUMANN, 1.0, 10), lattice, delta=0.45), "S") == 1
+
+    disk = lambda x: float(np.linalg.norm(np.asarray(x, dtype=float) - [0.0, 1.0]) - 0.08)  # noqa: E731
+    unread = BoundaryConditions(
+        segments=[_seg("wall", NF, priority=1), _seg("S", D, 1.0, sdf_region=disk)],
+        dimension=2,
+        default_bc=NF,
+        domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
+    )
+    ring = [np.array([x, y]) for x in np.linspace(0, 1, 11) for y in np.linspace(0, 1, 11) if {x, y} & {0.0, 1.0}]
+    with pytest.raises(
+        ValueError, match=r"'S' .*cannot be read here: BC segment 'S' is placed by sdf_region"
+    ) as unread_:
+        unread.refuse_segments_governing_no_point([(p, None, unread.segment_for_point(p)) for p in ring], "r", "them")
+    assert "covers no part of" not in str(unread_.value)
 
 
 def _particle_solver(segments, **bc_kw):
@@ -318,7 +351,8 @@ _DIAGONAL = {"normal_direction": np.array([1.0, 1.0]) / np.sqrt(2.0), "normal_to
         (
             {"region": {"x": (1.05, 1.2), "y": (0.3, 0.7)}},
             {"domain_bounds": np.array([[0.0, 1.2], [0.0, 1.0]])},
-            r"its region lies where the BC's domain_bounds \[\[0\.0, 1\.2\], \[0\.0, 1\.0\]\] reach past the solver's box",
+            r"its region lies where the BC's domain_bounds \[\[0\.0, 1\.2\], \[0\.0, 1\.0\]\] reach past the solver's box"
+            r".* or place it on the solver's face by boundary=",
             [{"region": {"x": (1.0, 1.0), "y": (0.3, 0.7)}}, {"boundary": "x_max", "region": {"y": (0.3, 0.7)}}],
         ),
         (
@@ -339,18 +373,34 @@ def test_a_refusal_names_why_and_its_advice_is_admitted(refused, bc_kw, reason, 
     normal read past a corner of the box's SDF. A particle crossing a face never meets them, so they are refused, each
     with its own reason; the advice it gives is admitted. The wider box's advice has two halves, run each alone (review
     2): the solver's box as the BC's domain_bounds with the exit on its face, or the exit on the solver's face by
-    boundary= with the wider box kept; each absorbs every particle driven into it."""
-    with pytest.raises(ValueError, match=reason):
+    boundary= with the wider box kept; each absorbs every particle driven into it. Review 3: a segment its boundary=
+    keeps off every face, with a region the wider box reaches past, is not given that reason; and a segment already
+    placed on a face by boundary= is not advised to place itself by boundary=."""
+    with pytest.raises(ValueError, match=reason) as refusal:
         _particle_solver([_seg("exit", D, **refused)], **bc_kw)
+    if refused.get("boundary") not in (None, "all"):
+        assert "or place it by boundary=" not in str(refusal.value)
     if "domain_bounds" in bc_kw:
         solver_box = {"domain_bounds": np.array([[0.0, 1.0], [0.0, 1.0]])}
         first, by_boundary = advised
         assert _particles_remaining_with([_seg("exit", D, **first)], **solver_box) == 0
         assert _particles_remaining_with([_seg("exit", D, **by_boundary)], **bc_kw) == 0
         # A segment held nowhere for another cause, under the same wider box, is not given this reason.
-        with pytest.raises(ValueError, match=r"'exit': the placement holds none of these points") as other:
-            _particle_solver([_seg("exit", D, boundary="inlet")], **bc_kw)
-        assert "reach past the solver's box" not in str(other.value)
+        for elsewhere in (
+            {"boundary": "inlet", "region": {"x": (0.9, 1.1), "y": (0.3, 0.7)}},
+            {"boundary": "y_min", "region": {"x": (0.9, 1.1), "y": (0.3, 0.7)}},
+            {"boundary": "inlet", "region": {"x": (1.05, 1.2), "y": (0.3, 0.7)}},
+            {"region": {"x": (1.3, 1.4), "y": (0.3, 0.7)}},
+        ):
+            with pytest.raises(ValueError, match=r"'exit': the placement holds none of these points") as other:
+                _particle_solver([_seg("exit", D, **elsewhere)], **bc_kw)
+            assert "reach past the solver's box" not in str(other.value)
+        # On its named face's plane, past the solver's box along another axis, it is.
+        with pytest.raises(ValueError, match=r"'exit': its region lies where the BC's domain_bounds"):
+            _particle_solver(
+                [_seg("exit", D, boundary="x_max", region={"y": (1.05, 1.2)})],
+                domain_bounds=np.array([[0.0, 1.0], [0.0, 1.2]]),
+            )
         return
     for placement in advised:
         _particle_solver([_seg("exit", D, **placement)], **bc_kw)

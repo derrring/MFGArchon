@@ -830,6 +830,8 @@ class BoundaryConditions:
         touched: dict[int, list[tuple[str, BCSegment]]] = {id(segment): [] for segment in order}
         at_corner: set[int] = set()
         raisable: set[int] = set()  # outranked somewhere a higher priority would read it
+        undecided: dict[int, str] = {}  # held at a corner of a face whose cover cannot be read: that refusal
+        same = _same_condition if equivalent is None else equivalent
         for point, face, read in readings:
             point = np.asarray(point, dtype=float)
             faces, bounds, corner = self._reading_faces(point, face, geometry, tolerance, reader)
@@ -840,20 +842,28 @@ class BoundaryConditions:
                 for side, answer in self._corner_readings(point, corner, geometry, tolerance, axis_names, equivalent):
                     on = side.to_string()
                     # A higher priority reads a segment at this corner of a face where the face is read at the point
-                    # (a partial cover keeps it from answering), or where the segment covers some of the face: as the
-                    # face's segment, or ahead of it, which then reads the face at the point.
-                    _, part = self._face_resolution(
+                    # (a partial cover keeps it from answering); or where the segment, raised, changes the face's
+                    # answer: covering it whole, it becomes the face's segment; covering part of it with another
+                    # condition than the face's segment, it keeps the face from answering. A partial cover imposing the
+                    # face's segment's condition leaves the face answering that segment at any priority.
+                    governing, part = self._face_resolution(
                         side, geometry, equivalent, "BoundaryConditions.segment_for_point", whole_bc_check=False
                     )
                     for segment in self._segments_holding(point, on, bounds, geometry, tolerance, axis_names):
                         if segment is not answer and id(segment) in touched and id(segment) not in governs:
                             touched[id(segment)].append((f"{where}, a corner, on {on}: {answer.name!r}", answer))
                             at_corner.add(id(segment))
+                            if part is not None:
+                                raisable.add(id(segment))
+                                continue
                             try:
-                                covers = self._cached_face_cover(segment, side, geometry) != "none"
-                            except ValueError:
-                                covers = False
-                            if part is not None or covers:
+                                cover = self._cached_face_cover(segment, side, geometry)
+                            except ValueError as refusal:
+                                undecided.setdefault(id(segment), " ".join(str(refusal).split()).rstrip("."))
+                                continue
+                            if governing is not None and (
+                                cover == "whole" or (cover == "partial" and not same(segment, governing))
+                            ):
                                 raisable.add(id(segment))
                     if answer is not read and id(answer) in touched and id(answer) not in governs:
                         touched[id(answer)].append((f"{where}, a corner, by the corner rule: {read.name!r}", read))
@@ -869,7 +879,6 @@ class BoundaryConditions:
                 touched[id(segment)].append((f"{where}: {read.name!r}", read))
                 raisable.add(id(segment))
         winners = list({id(read): read for _, _, read in readings}.values())
-        same = _same_condition if equivalent is None else equivalent
         nowhere, dead = _segments_governing_nothing(order, governs, touched, set(), winners, same)
         if nowhere:
             reasons = [(seg, explain(seg) if explain is not None else None) for seg in nowhere]
@@ -896,8 +905,11 @@ class BoundaryConditions:
                 + (
                     ": raise its priority above theirs, or remove it"
                     if id(seg) in raisable
-                    else ": it is held only at corners of faces it covers no part of, each answering with the segment "
-                    "that governs it, so no priority reads it there; place it on a face's interior, or remove it"
+                    else ": whether a higher priority reads it at these corners turns on how much of the face it "
+                    f"covers, which cannot be read here: {undecided[id(seg)]}"
+                    if id(seg) in undecided
+                    else ": it is held only at corners, where each face answers with its own segment at any priority of "
+                    "this one, so no priority reads it there; place it on a face's interior, or remove it"
                 )
                 for seg, hits in dead
             )
@@ -1028,9 +1040,10 @@ class BoundaryConditions:
     def why_no_face_cell(self, segment: BCSegment, box: np.ndarray, tolerance: float = SDF_BOUNDARY_TOL) -> str | None:
         """Why ``segment`` holds none of :meth:`face_cell_centres`' points on ``box``, where the reading can say (#2490
         B1e-2): a ``normal_direction`` no face's outward normal lies within; a ``region`` that meets every face it
-        reaches in a set of no width; ``domain_bounds`` other than ``box``. None where none of these is the reason.
-        Each is a set a reader of where particles cross the faces never meets; each catches particles today only
-        because a particle is read where its step ends, not where it crossed (#2733)."""
+        reaches in a set of no width; ``domain_bounds`` reaching past ``box`` where the ``region`` lies -- across the face
+        its ``boundary`` names, where it names one; a ``boundary`` naming no face is not this reason. None where none of
+        these is the reason. Each is a set a reader of where particles cross the faces never meets; each catches
+        particles today only because a particle is read where its step ends, not where it crossed (#2733)."""
         box = np.asarray(box, dtype=float)
         faces = [BoundaryFace(axis, side) for axis in range(box.shape[0]) for side in ("min", "max")]
         reasons = []
@@ -1050,10 +1063,17 @@ class BoundaryConditions:
                     "its region meets each face it reaches in a set of no width (a corner, an edge, or a range there "
                     "that is one coordinate), which a particle crossing the face meets with probability zero: give it a "
                     "range of positive width on the face"
-                    + (", or place it by boundary=" if segment.boundary is None else "")
+                    + (", or place it by boundary=" if segment.boundary in (None, "all") else "")
                 )
         own = None if self.domain_bounds is None else np.asarray(self.domain_bounds, dtype=float)
-        if own is not None and not np.array_equal(own, box) and self._region_beyond(segment, own, box, tolerance):
+
+        named = None if segment.boundary in (None, "all") else parse_boundary_face(segment.boundary)
+        if (
+            own is not None
+            and not np.array_equal(own, box)
+            and (segment.boundary in (None, "all") or named is not None)
+            and self._region_beyond(segment, own, box, tolerance, named)
+        ):
             reasons.append(
                 f"its region lies where the BC's domain_bounds {own.tolist()} reach past the solver's box "
                 f"{box.tolist()}, whose faces the particles cross: give the BC the solver's box as its domain_bounds "
@@ -1062,8 +1082,12 @@ class BoundaryConditions:
         return "; ".join(reasons) or None
 
     @staticmethod
-    def _region_beyond(segment: BCSegment, own: np.ndarray, box: np.ndarray, tolerance: float) -> bool:
-        """Whether ``segment.region`` holds a part of the box ``own`` that lies outside ``box``."""
+    def _region_beyond(
+        segment: BCSegment, own: np.ndarray, box: np.ndarray, tolerance: float, face: BoundaryFace | None = None
+    ) -> bool:
+        """Whether ``segment.region`` holds a part of the box ``own`` that lies outside ``box``. Where ``face`` is given,
+        the face its ``boundary`` names, only a part a particle crossing that face is read at: past ``box`` across it,
+        or on its plane (read within ``own``) and past ``box`` along another axis."""
         if segment.region is None:
             return False
         low, high = own[:, 0].copy(), own[:, 1].copy()
@@ -1072,7 +1096,14 @@ class BoundaryConditions:
             low[axis], high[axis] = max(low[axis], a), min(high[axis], b)
         if np.any(high < low - tolerance):
             return False
-        return bool(np.any(low < box[:, 0] - tolerance) or np.any(high > box[:, 1] + tolerance))
+        past = (low < box[:, 0] - tolerance) | (high > box[:, 1] + tolerance)
+        if face is None:
+            return bool(np.any(past))
+        axis = face.axis
+        if (low[axis] < box[axis, 0] - tolerance) if face.side == "min" else (high[axis] > box[axis, 1] + tolerance):
+            return True
+        plane = np.clip(box[axis, 0 if face.side == "min" else 1], own[axis, 0], own[axis, 1])
+        return bool(low[axis] - tolerance <= plane <= high[axis] + tolerance and np.any(np.delete(past, axis)))
 
     def face_segments_at_point(
         self,
