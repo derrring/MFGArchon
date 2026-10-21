@@ -16,11 +16,11 @@
     defaults at the paper's values. A value outside the range the scheme supports is refused by name, with the
     reason.
   - Scope: two-dimensional, `SeparableHamiltonian` with `QuadraticControlCost`. Its boundary conditions are
-    closed as `1689-positive-qp-fan-reflecting-closure.added.md` states: Dirichlet faces, and homogeneous reflecting
-    faces by mirror and value-copy rows, never by a GFDM normal-gradient row (at `taylor_order=2` one has mixed
-    signs). Ghost nodes are refused, as with `joint_socp`.
+    Dirichlet faces, and homogeneous reflecting faces, closed by mirror and value-copy rows as the reflecting-closure
+    entry states, never by a GFDM normal-gradient row (at `taylor_order=2` one has mixed signs). Ghost nodes are
+    refused, as with `joint_socp`.
   - Oracle: the decoupled LQ HJB in closed form converges at first order, and each step solves the discrete Bellman
     equation, at control cost 1 and 4, with the minimum over each node's sectors computed independently of the
     scheme's policy.
-- The warning for a missing `monotonicity_scheme` recommends `positive_qp_fan` for 2-D problems with Dirichlet faces
-  and a `SeparableHamiltonian` with a quadratic control cost, and `joint_socp` otherwise.
+- The warning for a missing `monotonicity_scheme` recommends `positive_qp_fan` for a 2-D box with Dirichlet and
+  homogeneous reflecting faces and a `SeparableHamiltonian` with a quadratic control cost, and `joint_socp` otherwise.

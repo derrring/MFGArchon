@@ -31,6 +31,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     eval_H_batch,
 )
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
+from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as_stored
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
@@ -128,19 +129,6 @@ def _outward_normal(axis: int, side: int, dimension: int) -> tuple[float, ...]:
     normal = [0.0] * dimension
     normal[axis] = -1.0 if side == 0 else 1.0
     return tuple(normal)
-
-
-def _is_constant_zero(value: Any) -> bool:
-    """Whether a stored BC datum is the constant 0 (a number, or an array, every entry 0), read without evaluating
-    anything: a callable or a provider is not known to be 0 at every point and time."""
-    if value is None:
-        return True
-    if callable(value):
-        return False
-    try:
-        return bool(np.all(np.asarray(value, dtype=float) == 0.0))
-    except (TypeError, ValueError):
-        return False
 
 
 def _same_bc_row(first: BCSegment, second: BCSegment) -> bool:
@@ -445,9 +433,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                   or Neumann with g = 0) of an axis-aligned box, whole faces in any combination: a
                   reflecting face by mirror rows on the interior nodes within reach of it, certified by the
                   paper's obliqueness condition, and value-copy rows on its sampled nodes
-                  (`gfdm_components.positive_qp_fan`, #1689 PR 4). An obstacle beside a reflecting face, a door, a
-                  curved boundary, a nonzero Neumann datum, a Robin face and a periodic face are refused by name;
-                  so is a row the scheme cannot build. Parameters: ``positive_qp_fan``.
+                  (`gfdm_components.positive_qp_fan`, #1689 PR 4). An obstacle in a domain with a reflecting face,
+                  a door, a curved boundary, a no-flux or Neumann datum not verifiably 0, a Robin face and a
+                  periodic face are refused by name; so is a row the scheme cannot build. Parameters:
+                  ``positive_qp_fan``.
                 Default: "none". The derivative-coefficient QP, ``"qp_m_matrix"``, is deleted (#1689): it
                 constrained the solution's Taylor coefficients, not the stencil's weights.
             monotonicity_application: ``"precompute"`` (the only one ``joint_socp`` has: its weights
@@ -1199,14 +1188,15 @@ class HJBGFDMSolver(BaseHJBSolver):
         take value-copy rows.
 
         Each boundary point's classified condition decides, with no BC value evaluated beyond a stored datum: a
-        Dirichlet point takes its Dirichlet row; a reflecting one -- no-flux, or Neumann, with the constant datum 0 --
-        takes the value-copy row to its nearest interior node, and its box face reflects. A point several faces share
-        takes the condition the boundary owner's corner rule gives it (priority, then a Dirichlet condition before
-        another), so a corner of a Dirichlet face whose neighbour outranks it takes a value-copy row. A GFDM
-        normal-gradient row is never installed: at taylor_order 2 it has mixed signs, 0 of 40 rows with the M-matrix
-        pattern on an 11 x 11 no-flux box (#1689 comment 6246936251). Refused by name: a no-flux or Neumann datum other
-        than the constant 0, and a Robin face (the research's affine correction is not ported); a periodic face
-        (#2713); a reflecting point on a boundary read from ``domain_sdf`` or off the axis-aligned faces of the box;
+        Dirichlet point takes its Dirichlet row; a reflecting one -- no-flux, or Neumann, with a datum
+        `bc_utils._describe_bc_value` calls zero -- takes the value-copy row to its nearest interior node, and its box
+        face reflects. A point several faces share takes the condition the boundary owner's corner rule gives it
+        (priority, then a Dirichlet condition before another), so a corner of a Dirichlet face whose neighbour outranks
+        it takes a value-copy row. A GFDM normal-gradient row is never installed: at taylor_order 2 it has mixed signs,
+        0 of 40 rows with the M-matrix pattern on an 11 x 11 no-flux box (#1689 comment 6246936251). Refused by name: a
+        no-flux or Neumann datum not verifiably 0 (a nonzero, complex, callable or provider value), and a Robin face
+        (the research's affine correction is not ported); a periodic face (#2713); a reflecting point on a boundary
+        read from ``domain_sdf`` or off the axis-aligned faces of the box;
         and a face whose points off its corners carry both a Dirichlet and a reflecting condition (a door: exp09's
         reflected pool and its images at junctions are not ported).
 
@@ -1237,14 +1227,15 @@ class HJBGFDMSolver(BaseHJBSolver):
             if bc_enum == BCType.DIRICHLET:
                 kind = "dirichlet"
             elif bc_enum in reflecting_types:
-                # HJB-GFDM writes NEUMANN and NO_FLUX as one row with the segment's datum (`_bc_row`), so both are read.
+                # HJB-GFDM writes NEUMANN and NO_FLUX as one row with the segment's datum (`_bc_row`), so both are read,
+                # zero as the library's one owner of that question calls it.
                 value = getattr(segment, "value", 0.0) if segment is not None else 0.0
-                if not _is_constant_zero(value):
+                if _describe_bc_value(value) is not None:
                     refused.append(
                         (
                             i,
-                            f"a {bc_enum.value} datum other than the constant 0 ({value!r}): only g = 0 reflects, the "
-                            "affine correction b_N(g) is not ported",
+                            f"a {bc_enum.value} datum not verifiably 0 ({value!r}): only g = 0 reflects, the affine "
+                            "correction b_N(g) is not ported",
                         )
                     )
                     continue

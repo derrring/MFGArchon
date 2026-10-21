@@ -348,8 +348,9 @@ class HJBHowardSolver:
         `use_provider_bc_rows`; with `control_cost` under another discretisation; for a
         negative scalar volatility, an array volatility without `volatility_kind`, or
         `volatility_kind="field"` without a volatility; and at a solve, under
-        `"guarded_fan"`, when a boundary point has a condition the provider cannot close or
-        reflects on other faces than its operator was built for (`_positive_qp_fan_closure`),
+        `"guarded_fan"`, when a boundary point has a condition the provider cannot close, or the
+        BC reflects on other faces, or gives a value-copy row at other points, than its operator
+        was built with (`_positive_qp_fan_closure`),
         or when a volatility override is neither a scalar nor a field of shape `(n,)`.
     NotImplementedError
         For a `volatility_kind="tensor"` volatility; and at a solve, for `cross_density`,
@@ -655,7 +656,7 @@ class HJBHowardSolver:
         if guarded:
             # #1689 PR 4: the scheme's boundary rows are a Dirichlet point's value row and a reflecting point's
             # value-copy row; the provider's closure refuses what it cannot close, on the BC whose rows are read next,
-            # and a BC whose reflecting faces are not the ones its mirror rows were built for.
+            # and a BC whose reflecting faces or value-copy points are not the ones its operator was built with.
             self.stencil_provider._positive_qp_fan_closure()
             bc_rows = self.stencil_provider._positive_qp_fan_bc_rows(t_idx)
         else:

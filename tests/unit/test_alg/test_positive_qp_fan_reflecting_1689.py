@@ -11,8 +11,9 @@ kills. Measured on #1689 (comment 6296766771, "Ps'", and the PR's ladder): at N_
 face no-flux, B 5.0524e-3 and 2.7573e-3 against A 1.0458e-2 and 8.2644e-3; with x_max Dirichlet (u* its data), B
 2.7067e-3 and 1.6068e-3 against A 6.5181e-3 and 8.0987e-3. Each threshold is the geometric mean of B and A, rounded to
 two digits: B sits 1.4 to 2.2 times below it and A 1.4 to 2.2 times above. Those numbers are exp17's clouds' (Sobol
-scramble seed 42): on other scrambles A is below a threshold, or below B, in some cases, so the pin also counts the
-mirror rows, which depend on the cloud's geometry alone, and checks every row against the paper's QP solved here.
+scramble seed 42), and both sides of each threshold are: on other scrambles A is below a threshold, B above one (seed
+3, mixed, N_int 900: B 4.3498e-3), or A below B, in some cases. So the pin also counts the mirror rows, which depend on
+the cloud's geometry alone, and checks every row against the paper's QP solved here.
 """
 
 from __future__ import annotations
@@ -248,28 +249,33 @@ def _frame_problem(bc, nt=4):
 @pytest.mark.parametrize(
     "row",
     [
-        "an obstacle beside a reflecting face",
+        "an obstacle in a domain with a reflecting face",
         "a boundary read from domain_sdf",
         "a nonzero Neumann datum",
         "a no-flux datum other than 0",
         "a Neumann datum given as a callable",
+        "a complex Neumann datum",
         "a Robin face",
         "a periodic face",
         "a door",
         "a layer node no mirror row places",
+        "a layer node failing only the obliqueness certificate",
         "a layer node with no complete physical fan",
         "a reflecting face adopted after construction",
         "a reflecting face adopted after construction, solved by HJBHowardSolver directly",
         "a corner given a value-copy row after construction",
+        "a corner given a Dirichlet row after construction",
     ],
 )
 def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
     """Each refusal names what is not ported (R-D3 of #1689 comment 6296766771): an obstacle or a door needs exp09's
     reflected pool, a curved boundary the mirror across the SDF's tangent plane, a nonzero Neumann or a Robin face the
-    affine correction b_N(g). A layer node no mirror row places, and one with no complete physical fan (the fan over
-    reflected rays is not ported), are refused by name; so is a BC adopted after construction whose reflecting faces,
-    or whose value-copy points, are not the ones the operator was built with. A no-flux datum is read as a Neumann one
-    is, since HJB-GFDM writes them as one row (review 1 of #2783, B1)."""
+    affine correction b_N(g). A layer node no mirror row places, named by which part fails, and one with no complete
+    physical fan (the fan over reflected rays is not ported), are refused by name; so is a BC adopted after
+    construction whose reflecting faces, or whose value-copy points, are not the ones the operator was built with, in
+    either direction. A no-flux datum is read as a Neumann one is, since HJB-GFDM writes them as one row (review 1 of
+    #2783, B1), and zero is what the library's one owner of that question calls zero, so a complex datum is refused
+    (review 2, N1)."""
     from mfgarchon.geometry.boundary import neumann_bc, periodic_bc, robin_bc
 
     points, boundary = _frame_cloud()
@@ -280,13 +286,30 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
         dense = np.vstack([points, wall, [[10.0, 0.003]]])
         faces = {(0.0, -1.0): 0.0, (0.0, 1.0): 20.0, (-1.0, 0.0): 0.0, (1.0, 0.0): 20.0}
         interior = np.r_[np.arange(boundary[0]), len(dense) - 1]
-        with pytest.raises(ValueError, match=r"no mirror row across it .* the P2 moments cannot be met there"):
+        with pytest.raises(
+            ValueError, match=r"no mirror row across it .* no weights meeting the P2 moments were found"
+        ):
             PositiveQPFan(dense, interior, GuardedFanParameters(), reflecting_faces=faces)
         return
-    if row == "an obstacle beside a reflecting face":
+    if row == "a layer node failing only the obliqueness certificate":
+        # Review 2 agent A's fixture: a node 0.04 off y = 0, 19 face nodes 0.073 to 0.092 either side of it and one node
+        # straight above at its pool radius 0.1. The P2 moments are met with non-negative weights; the largest gamma_hat
+        # its mirror row can reach is 0.370.
+        xs = 0.1 * np.sqrt(1 - 0.4**2) * np.r_[np.linspace(0.8, 1.0, 10), -np.linspace(0.8, 1.0, 9)]
+        dense = np.vstack([points, np.c_[10.0 + xs, np.zeros(19)], [[10.0, 0.04], [10.0, 0.14]]])
+        interior = np.r_[np.arange(boundary[0]), len(dense) - 2, len(dense) - 1]
+        faces = {(0.0, -1.0): 0.0, (0.0, 1.0): 20.0, (-1.0, 0.0): 0.0, (1.0, 0.0): 20.0}
+        with pytest.raises(
+            ValueError, match=r"\[10\.0, 0\.04\]: a layer node .* meets the obliqueness certificate gamma_hat >= 0\.5"
+        ):
+            PositiveQPFan(dense, interior, GuardedFanParameters(), reflecting_faces=faces)
+        return
+    if row == "an obstacle in a domain with a reflecting face":
         from mfgarchon.geometry.implicit import Hypersphere
 
-        with pytest.raises(ValueError, match=r"reflecting face beside an obstacle .*not ported \(#1689 R-D3\)"):
+        with pytest.raises(
+            ValueError, match=r"reflecting face with an obstacle in the domain .*not ported \(#1689 R-D3\)"
+        ):
             _solver(
                 _frame_problem(no_flux_bc(dimension=2)),
                 points,
@@ -312,6 +335,18 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
         provider = _solver(problem, points, boundary)
         floor = BCSegment(name="floor", bc_type=BCType.NO_FLUX, boundary="y_min", priority=2)
         problem.geometry.set_boundary_conditions(BoundaryConditions(segments=[exit_, walls, floor], dimension=2))
+        with pytest.raises(ValueError, match=r"now give 1 boundary point\(s\) another row than the operator was built"):
+            provider.solve_hjb_system(M_density=np.zeros((5, len(points))), U_terminal=np.zeros(len(points)))
+        return
+    if row == "a corner given a Dirichlet row after construction":
+        # The reverse (review 2, N2): built with the floor, whose corner (20, 0) reflects, then adopted without it,
+        # where the corner is the exit's; a value-copy row would drop its Dirichlet value.
+        exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, boundary="x_max")
+        walls = BCSegment(name="walls", bc_type=BCType.NO_FLUX)
+        floor = BCSegment(name="floor", bc_type=BCType.NO_FLUX, boundary="y_min", priority=2)
+        problem = _frame_problem(BoundaryConditions(segments=[exit_, walls, floor], dimension=2))
+        provider = _solver(problem, points, boundary)
+        problem.geometry.set_boundary_conditions(BoundaryConditions(segments=[exit_, walls], dimension=2))
         with pytest.raises(ValueError, match=r"now give 1 boundary point\(s\) another row than the operator was built"):
             provider.solve_hjb_system(M_density=np.zeros((5, len(points))), U_terminal=np.zeros(len(points)))
         return
@@ -347,18 +382,24 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
         ),
         "a nonzero Neumann datum": (
             neumann_bc(value=0.3, dimension=2),
-            r"a neumann datum other than the constant 0 \(0.3\): only g = 0 reflects",
+            r"a neumann datum not verifiably 0 \(0.3\): only g = 0 reflects",
         ),
         "a no-flux datum other than 0": (
             BoundaryConditions(segments=[BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.3)], dimension=2),
-            r"a no_flux datum other than the constant 0 \(0.3\)",
+            r"a no_flux datum not verifiably 0 \(0.3\)",
         ),
         "a Neumann datum given as a callable": (
             neumann_bc(value=lambda t, x: 0.0, dimension=2),
-            r"a neumann datum other than the constant 0",
+            r"a neumann datum not verifiably 0",
+        ),
+        "a complex Neumann datum": (
+            BoundaryConditions(
+                segments=[BCSegment(name="walls", bc_type=BCType.NEUMANN, value=np.complex128(1j))], dimension=2
+            ),
+            r"a neumann datum not verifiably 0 \(np\.complex128\(1j\)\)",
         ),
         "a Robin face": (robin_bc(value=0.0, dimension=2), r"a robin condition, which the scheme has no row for"),
-        "a periodic face": (periodic_bc(dimension=2), r"periodic"),
+        "a periodic face": (periodic_bc(dimension=2), r"a periodic face \(#2713\)"),
         "a door": (
             BoundaryConditions(
                 segments=[
@@ -372,3 +413,14 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
     }[row]
     with pytest.raises(ValueError, match=refusal):
         _solver(_frame_problem(bc), points, boundary)
+
+
+def test_a_stored_all_zero_datum_reflects():
+    """Review 2 of #2783: a reflecting datum is zero where `bc_utils._describe_bc_value`, the library's one owner of
+    that question, calls it zero, so an all-zero array closes the faces by value-copy rows as 0 does."""
+    points, boundary = _frame_cloud()
+    walls = BoundaryConditions(
+        segments=[BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=np.zeros(3))], dimension=2
+    )
+    provider = _solver(_frame_problem(walls), points, boundary)
+    assert sorted(provider._positive_qp_fan.copy_rows) == sorted(boundary.tolist())
