@@ -157,10 +157,11 @@ class Hypersphere(ImplicitDomain):
         """The quadratic |a + t d - c|^2 = r^2, solved exactly by the stable form, which takes the root that does not
         cancel and the other from the product of the two (#2733 D1; see `ImplicitDomain._line_sets`). The constant term
         is computed as (|a - c| - r)(|a - c| + r) from the phi that `signed_distance` computes, so its sign, and with
-        it whether t = 0 is held, agrees with `contains` at a; the roots' product has that sign. Two limits: that holds
-        unless the discriminant's 4 |d|^2 const underflows to zero, as for a start one ulp off the unit sphere and a
-        step shorter than about 5e-155; and a line tangent at a representable point can miss the tangency, since this
-        constant is the one `contains` reads and not |a - c|^2 - r^2."""
+        it whether t = 0 is held, agrees with `contains` at a; the roots' product has that sign. Three limits: that
+        holds unless the discriminant's 4 |d|^2 const underflows to zero, as for a start one ulp off the unit sphere and
+        a step shorter than about 5e-155, or unless |d|^2 overflows, as for a step longer than about 1.3e154; and a
+        line tangent at a representable point can miss the tangency, since this constant is the one `contains` reads
+        and not |a - c|^2 - r^2."""
         f = a - self.center
         quad, lin = np.einsum("nd,nd->n", d, d), 2.0 * np.einsum("nd,nd->n", f, d)
         norm = np.linalg.norm(f, axis=1)

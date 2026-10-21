@@ -54,17 +54,18 @@ class SegmentIntervals:
 
     ``t[i, k]`` is the k-th interval (lo, hi) of segment i: closed, sorted and disjoint, with rows padded by NaN. A
     point of the segment is in an interval exactly where `contains` holds there, up to rounding within about an ulp of
-    a surface, in space: a segment that grazes a face can disagree with `contains` over a long stretch of its parameter.
+    a surface, in space, and short of the overflow and underflow limits each leaf states: a segment that grazes a face
+    can disagree with `contains` over a long stretch of its parameter.
     Each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's intervals as Roth
     (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
     intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
-    that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face: on a
-    Hyperrectangle 2 * axis for the min face and 2 * axis + 1 for the max face, on a Hypersphere 0. ``complemented``
-    marks a leaf that enters complemented, an obstacle, so that the domain's outward normal at that end is the leaf's
-    inward one. Where the ends of several leaves coincide, at a corner or a wall two rooms share, the end carries one
-    of them; a box's own tie, at an edge or a corner, goes to its lowest axis.
+    that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
+    on a Hyperrectangle 2 * axis for the min face and 2 * axis + 1 for the max face, on a Hypersphere 0.
+    ``complemented`` marks a leaf that enters complemented, an obstacle, so that the domain's outward normal at that end
+    is the leaf's inward one. Where the ends of several leaves coincide, at a corner or a wall two rooms share, the end
+    carries one of them; a box's own tie, at an edge or a corner, goes to its lowest axis.
     """
 
     t: NDArray[np.float64]
@@ -820,7 +821,8 @@ class ImplicitDomain(
         Raises:
             NotImplementedError: a domain with no exact form, one given only by its phi (`_line_sets`), or a
                 Hyperrectangle with periodic axes (#2704).
-            ValueError: ends of different shapes, of another dimension, or not finite.
+            ValueError: ends of different shapes, of another dimension, or not finite, or ends whose extent b - a
+                overflows.
         """
         a, b = self._segment_ends(a, b)
         t, tag = self._line_sets(a, b - a, False, 0)
@@ -885,14 +887,15 @@ class ImplicitDomain(
             )
         if not (np.isfinite(a).all() and np.isfinite(b).all()):
             raise ValueError(
-                "segment ends must be finite: a NaN end would classify the whole segment as outside, with nothing raised"
+                "segment ends must be finite: a NaN end would classify the whole segment as outside, with nothing "
+                "raised"
             )
         with np.errstate(over="ignore"):
             extent = b - a
         if not np.isfinite(extent).all():
             raise ValueError(
-                "a segment's extent b - a overflows: its direction is infinite, so the intervals along it and the start's "
-                "admission are not the domain's"
+                "a segment's extent b - a overflows: its direction is infinite, so the intervals along it and the "
+                "start's admission are not the domain's"
             )
         return np.atleast_2d(a), np.atleast_2d(b)
 

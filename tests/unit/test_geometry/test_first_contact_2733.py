@@ -221,6 +221,18 @@ _CASES = [
         -1,
     ),
     (
+        "a chord of the unit disc from a point on it, (1, 0) -> (-2, 0): the far root",
+        _DISC,
+        [1.0, 0.0],
+        [-2.0, 0.0],
+        [(0.0, 2 / 3)],
+        2 / 3,
+        [-1.0, 0.0],
+        [-1.0, 0.0],
+        _DISC,
+        0,
+    ),
+    (
         "a chord of the unit disc from outside",
         _DISC,
         [-2.0, 0.5],
@@ -379,10 +391,11 @@ def test_the_intervals_are_where_contains_holds(case, domain, dim):
     """Dense sampling against the intervals, and every contact against the surface it names.
 
     - 300 uniform segments, 75 of whose starts are snapped onto a face of [0, 1]^d, 38 of those onto two faces in 2-D
-      and 3-D (on the L some of those lie outside it), and 100 built on the domain's own box leaves: starts on a face or a corner, a still axis, a step along a
-      face, a zero-length step. At 2001 points along each, a point lies in an interval exactly where `contains` holds,
-      away from 1e-9 of an interval end, where the ends' rounding decides; whether the start is inside agrees with
-      `contains` with no band (#2732's A2); and the first contact is the first interval's end.
+      and 3-D (on the L some of those lie outside it), and 100 built on the domain's own box leaves: starts on a face
+      or a corner, a still axis, a step along a face, a zero-length step. At 2001 points along each, a point lies in an
+      interval exactly where `contains` holds, away from 1e-9 of an interval end, where the ends' rounding decides;
+      whether the start is inside agrees with `contains` with no band (#2732's A2); and the first contact is the first
+      interval's end.
     - At each contact, against the tree read here rather than through the owner: the leaf named is that depth-first
       leaf, the contact point lies on the face named, the normal is that face's outward normal, negated for a leaf
       that enters complemented, and it faces along the step for an exit and against it for an entry.
