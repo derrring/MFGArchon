@@ -1244,15 +1244,20 @@ def get_spatial_grid(problem: MFGProblem) -> np.ndarray | tuple[np.ndarray, ...]
     2D problem:
     >>> grid = get_spatial_grid(problem)  # (x_coords, y_coords)
     """
-    # Geometry-based API
-    if hasattr(problem, "geometry") and hasattr(problem.geometry, "coordinates"):
-        coords = problem.geometry.coordinates
-        # For 1D, return single array; for nD, return tuple of arrays
-        if len(coords) == 1:
-            return coords[0]
-        return tuple(coords)
-    else:
-        raise AttributeError("Problem must have geometry.coordinates attribute")
+    from mfgarchon.geometry.base import CartesianGrid
+
+    # Node axes only from the type that declares them and their order (#2490).
+    geometry = getattr(problem, "geometry", None)
+    if not isinstance(geometry, CartesianGrid):
+        raise AttributeError(
+            f"get_spatial_grid: the problem's geometry is a {type(geometry).__name__}, which is not a CartesianGrid, the "
+            "type that declares node coordinates and their order (#2490)."
+        )
+    coords = geometry.coordinates
+    # For 1D, return single array; for nD, return tuple of arrays
+    if len(coords) == 1:
+        return coords[0]
+    return tuple(coords)
 
 
 class _DriftDispatcher:
@@ -1352,7 +1357,7 @@ class _DriftDispatcher:
     def evaluate_velocity_at(
         self,
         timestep_idx: int,
-        grid: np.ndarray | tuple[np.ndarray, ...],
+        grid: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray],
         density: np.ndarray,
         dt: float | None = None,
     ) -> np.ndarray:
@@ -1365,7 +1370,7 @@ class _DriftDispatcher:
         ----------
         timestep_idx : int
             Timestep index
-        grid : ndarray | tuple[ndarray, ...]
+        grid : ndarray | tuple[ndarray, ...] | list[ndarray]
             Spatial coordinates
         density : ndarray
             Current density field
@@ -1434,7 +1439,7 @@ class _DriftArrayDispatcher(_DriftDispatcher):
     def evaluate_velocity_at(
         self,
         timestep_idx: int,
-        grid: np.ndarray | tuple[np.ndarray, ...],
+        grid: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray],
         density: np.ndarray,
         dt: float | None = None,
     ) -> np.ndarray:

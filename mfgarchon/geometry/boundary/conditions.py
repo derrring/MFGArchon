@@ -962,7 +962,11 @@ class BoundaryConditions:
             while n > 1 and n ** (dimension - 1) > FACE_LATTICE_CELLS:
                 n -= 1
         own = None if self.domain_bounds is None else np.asarray(self.domain_bounds, dtype=float)
-        nodes = getattr(geometry, "coordinates", None)
+        from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+        # Node axes only from the type that declares them and their order: the cuts are midpoints between consecutive
+        # nodes. Any other geometry's region is refused where it is read at a point (`_region_node`) (#2490).
+        nodes = geometry.coordinates if isinstance(geometry, CartesianGrid) else None
         centres = []
         for axis in range(dimension):
             for side in (0, 1):
@@ -2779,8 +2783,8 @@ def region_name_holds_point(
       where `BoundaryConditions.segment_for_point` reads every point it reads on a face (#2780); a point outside
       ``domain_bounds`` read on no face is refused, since no face was passed to read it on. A point
       outside the marking grid's own box, where the BC's box reaches past the grid's, or of another dimension than the
-      grid, is refused, not read as outside the region; so is a point on a grid whose nodes do not strictly ascend on
-      an axis, where the face rule reads the axis's first node as its min face whatever its coordinate (#2490);
+      grid, is refused, not read as outside the region; so is a geometry that marks the region and is no
+      `CartesianGrid`, the type that declares node coordinates and their ascending order (#2490);
     - otherwise a region name that is a face label ("x_max", "left") holds the points on that face: the face the
       point is read on (``boundary_id``), or, with none, the face of ``domain_bounds`` it lies on within ``tolerance``;
     - otherwise refused, as the face rule refuses.
@@ -2825,16 +2829,19 @@ def region_name_holds_point(
 
 def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray, tolerance: float) -> int:
     """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``point``, for a region mask: refused
-    where the geometry has no node coordinates, the point has another number of coordinates than the grid has axes, an
-    axis's nodes do not strictly ascend, or the point lies outside the grid's own box by more than ``tolerance``."""
+    where the geometry is not a `CartesianGrid`, the type that declares node coordinates and their ascending order, the
+    point has another number of coordinates than the grid has axes, or the point lies outside the grid's own box by
+    more than ``tolerance``."""
+    from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
     region = f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}"
-    coordinates = getattr(geometry, "coordinates", None)
-    if coordinates is None:
+    if not isinstance(geometry, CartesianGrid):
         raise ValueError(
-            f"{region}, and {type(geometry).__name__} gives no node coordinates to read its mask at the point "
-            f"{point.tolist()} (#2490). Read the region on a TensorProductGrid, or place the segment by "
-            "sdf_region=... or boundary=..."
+            f"{region}, and {type(geometry).__name__} is not a CartesianGrid, the type that declares node coordinates "
+            f"and their order, so its mask is not read at the point {point.tolist()} (#2490). Read the region on a "
+            "TensorProductGrid, or place the segment by sdf_region=... or boundary=..."
         )
+    coordinates = geometry.coordinates
     if len(coordinates) != point.size:
         raise ValueError(
             f"{region}, and the point {point.tolist()} has {point.size} coordinates where the "
@@ -2846,18 +2853,6 @@ def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray, tolerance
     index = []
     for axis, nodes in enumerate(coordinates):
         nodes = np.asarray(nodes, dtype=float)
-        if not np.all(np.diff(nodes) > 0):
-            mirrored = (
-                "The face rule reads an axis's first node as its min face whatever its coordinate, and reading "
-                "the point by coordinate would put the region on the other face. "
-                if nodes[-1] < nodes[0]
-                else ""
-            )
-            raise ValueError(
-                f"{region}, and the nodes of the {type(geometry).__name__} that marks it do not strictly ascend on axis "
-                f"{axis}, so its mask is not read at the point {point.tolist()} (#2490). {mirrored}Give the grid "
-                "strictly ascending coordinates, with no repeated node."
-            )
         if not (lo[axis] - tolerance <= point[axis] <= hi[axis] + tolerance):
             raise ValueError(
                 f"{region}, and the point {point.tolist()} lies outside the grid that marks it, whose box on axis "
