@@ -1401,9 +1401,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             if len(unmatched) > 5:
                 lines.append(f"  ... and {len(unmatched) - 5} more")
             raise ValueError("\n".join(lines))
-        # A segment that governs none of these points, and writes another row than what outranks it where it is held,
-        # has its condition dropped; the owner refuses it by name, reading these points as GFDM read them (#2490 B1e-2).
-        # A corner no longer runs the face owner's check in its place.
+        # A segment that governs none of these points, and writes another row than what outranks it where it is held, or
+        # than every segment read where it is held nowhere, has its condition dropped; the owner refuses it by name,
+        # reading these points as GFDM read them (#2490 B1e-2). A corner no longer runs the face owner's check in its
+        # place.
         bc.refuse_segments_governing_no_point(
             [(self.collocation_points[i], None, segment) for i, segment in self._bc_segment_per_point.items()],
             type(self).__name__,

@@ -336,7 +336,8 @@ class FPParticleSolver(BaseFPSolver):
         self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
         # The per-point path reads each particle at the box's faces by segment, and a segment it reads at no part of
         # them was dropped with no word (#2490 B1e-2). Both routes above end here, and this is the only assignment of
-        # the solver's BC; the fast path reads no segment, so there is nothing to drop.
+        # the solver's BC. The fast path applies one action per axis, taken where every condition in play takes it, so
+        # no segment's condition is dropped there.
         from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
         if isinstance(self.boundary_conditions, BoundaryConditions) and self._needs_segment_aware_bc():

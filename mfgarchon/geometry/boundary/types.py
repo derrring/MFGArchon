@@ -411,12 +411,14 @@ def normal_holds(segment: BCSegment, normals: np.ndarray, where: str) -> np.ndar
 def region_axis(segment: BCSegment, key: str | int, dimension: int, axis_names: dict[int, str] | None = None) -> int:
     """The axis a ``region`` key names, for every reader of a ``region`` (#2490 B1e-2): a name, among ``axis_names``
     (by default x, y, z, w), or an integer, ``numbers.Integral`` included (a numpy integer). It must name one of the
-    domain's ``dimension`` axes. Anything else is refused: a float is not truncated to an axis, and a negative index
-    does not count from the last axis."""
+    domain's ``dimension`` axes. Anything else is refused: a float is not truncated to an axis, a negative index does
+    not count from the last axis, and a bool is not an index."""
     if axis_names is None:
         axis_names = {0: "x", 1: "y", 2: "z", 3: "w"}
     if isinstance(key, str):
         axis = next((idx for idx, name in axis_names.items() if name == key), None)
+    elif isinstance(key, (bool, np.bool_)):
+        axis = None
     elif isinstance(key, numbers.Integral):
         axis = int(key)
     else:
