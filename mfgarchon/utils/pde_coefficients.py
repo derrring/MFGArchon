@@ -1357,7 +1357,7 @@ class _DriftDispatcher:
     def evaluate_velocity_at(
         self,
         timestep_idx: int,
-        grid: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray],
+        grid: np.ndarray | tuple[np.ndarray, ...],
         density: np.ndarray,
         dt: float | None = None,
     ) -> np.ndarray:
@@ -1370,7 +1370,7 @@ class _DriftDispatcher:
         ----------
         timestep_idx : int
             Timestep index
-        grid : ndarray | tuple[ndarray, ...] | list[ndarray]
+        grid : ndarray | tuple[ndarray, ...]
             Spatial coordinates
         density : ndarray
             Current density field
@@ -1439,7 +1439,7 @@ class _DriftArrayDispatcher(_DriftDispatcher):
     def evaluate_velocity_at(
         self,
         timestep_idx: int,
-        grid: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray],
+        grid: np.ndarray | tuple[np.ndarray, ...],
         density: np.ndarray,
         dt: float | None = None,
     ) -> np.ndarray:

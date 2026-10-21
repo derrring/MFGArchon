@@ -169,9 +169,9 @@ class TensorProductGrid(
                 If provided, must match len(bounds) (validated for consistency).
                 Note: For d>3, grid requires O(N^d) memory/computation.
             spacing_type: "uniform" or "custom"
-            custom_coordinates: Optional list of 1D coordinate arrays, each strictly ascending. The grid copies
-                each into its own read-only float64 array, so a later change to the caller's array does not reach
-                it (#2490).
+            custom_coordinates: Optional list of 1-D coordinate arrays, each strictly ascending. The grid holds
+                each as its own read-only float64 copy, in a tuple, so a later change to the caller's array does not
+                reach it (#2490).
             boundary_conditions: **REQUIRED** - Spatial BC specification.
                 Must be explicitly provided (Issue #674 - Fail Fast principle).
                 Use no_flux_bc(), neumann_bc(), dirichlet_bc(), or periodic_bc()
@@ -287,9 +287,10 @@ class TensorProductGrid(
         # switching to `endpoint=False` here without changing that property would leave every
         # periodic ghost stencil one cell off, silently.
         if spacing_type == "uniform":
-            self.coordinates = [
-                np.linspace(bounds[i][0], bounds[i][1], self._Nx_points[i]) for i in range(self._dimension)
-            ]
+            self.coordinates = self._own_axes(
+                [np.linspace(bounds[i][0], bounds[i][1], self._Nx_points[i]) for i in range(self._dimension)],
+                "uniform",
+            )
             self.spacing = [
                 (bounds[i][1] - bounds[i][0]) / (self._Nx_points[i] - 1) if self._Nx_points[i] > 1 else 0.0
                 for i in range(self._dimension)
@@ -302,31 +303,12 @@ class TensorProductGrid(
             if len(custom_coordinates) != self._dimension:
                 raise ValueError(f"custom_coordinates must have length {self._dimension}")
 
-            self.coordinates = [np.array(coords, dtype=float) for coords in custom_coordinates]
+            self.coordinates = self._own_axes(custom_coordinates, "custom")
             self.spacing = [None] * self._dimension  # Variable spacing
             self.is_uniform = False
 
         else:
             raise ValueError(f"Unknown spacing_type: {spacing_type}")
-
-        # Validate coordinates
-        for i, coords in enumerate(self.coordinates):
-            if len(coords) != self._Nx_points[i]:
-                raise ValueError(f"Coordinate array {i} has length {len(coords)}, expected {self._Nx_points[i]}")
-            # Every reader of an axis takes its index order as its coordinate order: the face rule and region
-            # marking read node 0 as the min face, and the measure's trapezoid weights are np.diff of the nodes (#2490).
-            out_of_order = np.flatnonzero(~(np.diff(coords) > 0))
-            if out_of_order.size:
-                k = int(out_of_order[0])
-                raise ValueError(
-                    f"custom_coordinates[{i}] does not strictly ascend: node {k} is at {coords[k]} and node {k + 1} at "
-                    f"{coords[k + 1]}. A TensorProductGrid reads an axis's first node as its min face and its last as "
-                    f"its max face, and its measure from the gaps between consecutive nodes, so an axis that descends, "
-                    f"or repeats or swaps a node, is placed and integrated wrongly (#2490). Give each axis's nodes in "
-                    f"strictly ascending order."
-                )
-            # The grid owns its axes: no write into them, the caller's or the library's, can reorder one (#2490).
-            coords.flags.writeable = False
 
         # Store boundary conditions (SSOT for spatial BC)
         # Issue #674: Require explicit BC specification (Fail Fast principle)
@@ -2092,8 +2074,54 @@ class TensorProductGrid(
         A BC leaves its binding behind when it is pickled or copied (`BoundaryConditions.__getstate__`), so the BC
         this grid stores would otherwise come back unbound (#2634, review 2)."""
         self.__dict__.update(state)
+        # numpy arrays unpickle writeable whatever their flag was, and a state can hold any axes: own them again (#2490).
+        self.coordinates = self._own_axes(self.coordinates, "restored")
         if self._boundary_conditions is not None:
             self._boundary_conditions = self._boundary_conditions.bind_geometry(self)
+
+    def _own_axes(self, axes: Sequence[Any], given: str) -> tuple[NDArray[np.float64], ...]:
+        """Each axis as the grid's own read-only float64 copy, in a tuple: the one place an axis's values enter the grid
+        (#2490). Called by the constructor's two branches and by `__setstate__`; ``given`` is "uniform", "custom" or
+        "restored", which names the axis in a refusal.
+
+        Every reader of an axis takes its index order as its coordinate order: the face rule and region marking read
+        node 0 as the min face, the measure's trapezoid weights are the gaps between consecutive nodes, and a point is
+        read at its nearest node. So an axis is refused unless it is 1-D, of its ``Nx_points`` length, and strictly
+        ascending. The tuple closes element reassignment and the read-only arrays an in-place write; what is left,
+        rebinding ``coordinates`` or setting an array writeable again, is a deliberate write to the grid."""
+        owned = []
+        for i, values in enumerate(axes):
+            axis = np.array(values, dtype=float)
+            name = {
+                "uniform": f"the uniform axis {i}, {self._Nx_points[i]} nodes on bounds {tuple(self.bounds[i])},",
+                "custom": f"custom_coordinates[{i}]",
+                "restored": f"the restored grid's axis {i}",
+            }[given]
+            if axis.ndim != 1:
+                raise ValueError(
+                    f"{name} has shape {axis.shape}: a TensorProductGrid's axis is a 1-D array of its nodes, and one "
+                    f"of another shape is not read along any axis of its own (#2490). Give each axis as a 1-D array."
+                )
+            if len(axis) != self._Nx_points[i]:
+                raise ValueError(f"Coordinate array {i} has length {len(axis)}, expected {self._Nx_points[i]}")
+            out_of_order = np.flatnonzero(~(np.diff(axis) > 0))
+            if out_of_order.size:
+                k = int(out_of_order[0])
+                cause = (
+                    "the bounds do not resolve that many distinct float64 nodes. Use fewer points, or bounds whose "
+                    "spacing float64 can represent"
+                    if given == "uniform"
+                    else "give each axis's nodes in strictly ascending order"
+                )
+                raise ValueError(
+                    f"{name} does not strictly ascend: node {k} is at {axis[k]} and node {k + 1} at {axis[k + 1]}. A "
+                    f"TensorProductGrid reads an axis's first node as its min face and its last as its max face, and "
+                    f"its measure from the gaps between consecutive nodes, so an axis that descends, or repeats or "
+                    f"swaps a node, is placed and integrated wrongly (#2490): {cause}."
+                )
+            axis.flags.writeable = False
+            owned.append(axis)
+        return tuple(owned)
 
 
 def points_are_grid_nodes(points: NDArray, nodes: NDArray) -> bool:

@@ -108,12 +108,12 @@ class LevelSetFunction:
         # ImplicitDomain - infer from phi
         return self.phi.shape
 
-    def _get_grid_coordinates(self) -> list[NDArray[np.float64]]:
+    def _get_grid_coordinates(self) -> tuple[NDArray[np.float64], ...]:
         """
         Extract 1D coordinate arrays from geometry.
 
-        Returns list of 1D arrays, one per spatial dimension. For a 2D grid
-        with shape (Nx, Ny), returns [x_coords, y_coords].
+        Returns the grid's tuple of 1D arrays, one per spatial dimension (#2490). For a 2D grid
+        with shape (Nx, Ny), returns (x_coords, y_coords).
 
         Raises:
             TypeError: If geometry is not a TensorProductGrid (requires per-axis coordinates).

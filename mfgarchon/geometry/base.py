@@ -776,12 +776,14 @@ class CartesianGrid(Geometry):
         - Any solver requiring structured grid
 
     Node coordinates:
-        ``coordinates`` holds one 1-D array per axis, strictly ascending, so that an axis's index order runs from
-        its min face to its max face. Every reader of the attribute relies on that order: the face rule and region
-        marking read node 0 as the min face, the measure's trapezoid weights are the gaps between consecutive nodes,
-        and a point is read at its nearest node. A reader asks this type for it and refuses any other geometry, which
-        declares no such order (#2490). ``TensorProductGrid``'s constructor enforces the order, and holds each axis
-        as its own read-only copy.
+        ``coordinates`` holds one 1-D array per axis, strictly ascending, in a tuple, so that an axis's index order
+        runs from its min face to its max face. Every reader of the attribute relies on that order: the face rule and
+        region marking read node 0 as the min face, the measure's trapezoid weights are the gaps between consecutive
+        nodes, and a point is read at its nearest node. A reader reads the attribute only from this type, which is the
+        one that declares it and its order (#2490): where it cannot proceed without node coordinates it refuses another
+        geometry by name, and where it has another path it takes that one. ``TensorProductGrid`` enforces the order
+        wherever an axis enters it, at construction and when it is unpickled or copied, and holds each axis as its own
+        read-only copy.
 
     Examples:
         >>> # Type-safe solver check
@@ -790,7 +792,7 @@ class CartesianGrid(Geometry):
         ...     shape = geometry.get_grid_shape()  # Guaranteed to work
     """
 
-    coordinates: list[NDArray]
+    coordinates: tuple[NDArray, ...]
 
     # --- Trait properties (Issue #732 Tier 1b) ---
 

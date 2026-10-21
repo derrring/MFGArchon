@@ -275,7 +275,7 @@ def _get_dirichlet_value_at_point(
     return float(segment_value(segment, t=time, x=point, where=where, time_keyword="time"))
 
 
-def _grid_axes(grid: Any) -> list[np.ndarray]:
+def _grid_axes(grid: Any) -> tuple[np.ndarray, ...]:
     """The grid's node axes, read only from `CartesianGrid`, the type that declares them and their order (#2490)."""
     if not isinstance(grid, CartesianGrid):
         raise TypeError(
