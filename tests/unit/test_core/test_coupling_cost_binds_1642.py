@@ -918,8 +918,9 @@ def test_each_hjb_solve_is_given_u_T_at_its_own_density(loop, diverge_at):
 def test_what_stage_two_does_not_bind_is_refused():
     """A terminal coupling is refused in the multi-population iterator, which passes the stacked densities (#1642, the
     user's ruling 5), and on a network, where no coupled solve takes a problem (#2568); the network's message names its
-    own route for u(T), ``terminal_node_value_func``. G is refused on FEM and meshless geometries, whose HJB solvers own
-    their discretization (stage 1b; F binds there on HJB-FEM P1, ``test_hjb_fem_binds_the_coupling_cost_1642``); and F
+    own route for u(T), ``terminal_node_value_func``. Off a grid, on FEM and meshless geometries, the problem declares G
+    and binds none, as it does F, and u(T) read with no binding is refused by name (stage 1b's G line; G and F bind on
+    HJB-FEM P1, ``test_hjb_fem_binds_the_coupling_cost_1642``); and F
     and G alike by a weak-form HJB solver on a grid problem, meshless Galerkin on its own cloud, which would read the
     grid-bound energy at its dofs by index (#2672). At 14cb5839 that solver ran with either energy on a cloud of the
     grid's 21 nodes, and with G on the nodes reversed or shifted by 0.01, with nothing raised."""
@@ -936,16 +937,18 @@ def test_what_stage_two_does_not_bind_is_refused():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on these measures is not this pin's subject
         for domain in (Hyperrectangle(np.array([[0.0, 1.0]])), mesh):
-            refusal = rf"Model\(terminal_coupling=\.\.\.\) binds on a TensorProductGrid.*{type(domain).__name__}"
+            g_cost = PotentialCost(lambda x: x)
+            off_grid = MFGProblem(
+                model=Model(hamiltonian=_hamiltonian(), volatility=0.3, terminal_coupling=g_cost),
+                domain=domain,
+                conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+                Nt=4,
+            )
+            assert off_grid.terminal_energy is None
+            assert off_grid.declared_terminal_coupling is g_cost
+            refusal = rf"has no binding of Model\(terminal_coupling=\.\.\.\) on this {type(domain).__name__}"
             with pytest.raises(NotImplementedError, match=refusal):
-                MFGProblem(
-                    model=Model(
-                        hamiltonian=_hamiltonian(), volatility=0.3, terminal_coupling=PotentialCost(lambda x: x)
-                    ),
-                    domain=domain,
-                    conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
-                    Nt=4,
-                )
+                off_grid.terminal_value(np.ones(off_grid.get_u_terminal().size))
     for field, energy in (("coupling_cost", "coupling_energy"), ("terminal_coupling", "terminal_energy")):
         on_grid = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x)}),

@@ -294,7 +294,9 @@ class BlockIterator(BaseCouplingIterator):
 
         # The terminal datum's one owner (#1642 stage 2), at the initial density, which a cold start writes into every
         # row; each iteration re-reads it at the density its HJB solve uses.
-        U_terminal = np.asarray(self.problem.terminal_value(M_initial))
+        U_terminal = np.asarray(
+            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__)
+        )
         if U_terminal.shape != shape:
             U_terminal = U_terminal.reshape(shape)
 
@@ -742,7 +744,9 @@ class BlockIterator(BaseCouplingIterator):
             U_old = self.U.copy()
             M_old = self.M.copy()
             # u(T) at the density this iteration's HJB solve uses: both steps solve the HJB with M_old (#1642 stage 2).
-            self._U_terminal = np.asarray(self.problem.terminal_value(M_old[-1])).reshape(shape)
+            self._U_terminal = np.asarray(
+                self.problem.terminal_value(M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__)
+            ).reshape(shape)
 
             # Perform block iteration step
             U_new, M_new = step_fn(U_old, M_old, self._M_initial, self._U_terminal)

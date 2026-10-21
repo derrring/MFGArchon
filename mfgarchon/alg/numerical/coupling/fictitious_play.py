@@ -226,7 +226,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             (M_initial, U_terminal): Initial density and terminal value function
         """
         M_initial = self._reshape_to(self.problem.get_m_init(), shape)
-        U_terminal = np.asarray(self.problem.terminal_value(M_initial))
+        U_terminal = np.asarray(
+            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__)
+        )
         return M_initial, self._reshape_to(U_terminal, shape)
 
     def solve(
@@ -350,7 +352,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             M_old = self.M.copy()
             # u(T) at the density this iteration's HJB solve uses (#1642 stage 2), for the solve, the restore and the
             # re-imposition alike.
-            U_terminal = np.asarray(self.problem.terminal_value(M_old[-1])).reshape(shape)
+            U_terminal = np.asarray(
+                self.problem.terminal_value(M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__)
+            ).reshape(shape)
 
             # Compute learning rate for this iteration
             alpha = self.get_learning_rate(k)
