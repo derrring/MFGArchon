@@ -167,7 +167,7 @@ class Hyperrectangle(ImplicitDomain):
         """
         return periodic_distance(points1, points2, self.get_periods())
 
-    def contains(self, x: NDArray, tol: float = 0.0) -> np.bool_ | NDArray:
+    def contains(self, x: NDArray, tol: float = 0.0) -> bool | NDArray:
         """Whether point(s) lie in the closed box. At ``tol == 0`` it reads the bounds directly, ``a <= x <= b`` on every
         axis, which is ``signed_distance(x) <= 0`` exactly: ``a - x <= 0`` holds just when ``a <= x`` in floating point.
         The particle solver's contact loop reads it for every particle at every step (#2733). Another ``tol`` is read
@@ -180,7 +180,7 @@ class Hyperrectangle(ImplicitDomain):
         if points.shape[1] != self.dimension:
             raise ValueError(f"Point dimension {points.shape[1]} does not match domain dimension {self.dimension}")
         inside = np.all((points >= self.bounds[:, 0]) & (points <= self.bounds[:, 1]), axis=1)
-        return inside[0] if is_single else inside
+        return bool(inside[0]) if is_single else inside
 
     def signed_distance(self, x: NDArray[np.float64]) -> float | NDArray[np.float64]:
         """
