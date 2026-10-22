@@ -46,9 +46,10 @@ logger = get_logger(__name__)
 
 # An interval end that no surface bounds: a segment's own end, or the line's ends at infinity.
 _NO_SURFACE = -1
-#: Two box faces on one axis this many ulps apart or fewer, and not equal, are a seam no point can occupy; the particle
-#: solver refuses a domain with one (`ImplicitDomain.refuse_near_coincident_box_faces`).
-SEAM_ULPS = 4
+#: A gap between two intervals whose computed ends' coordinates on the segment's dominant axis have at most this many
+#: doubles strictly between them is read by `contains` at each double from end to end and at its midpoint, and joined
+#: where all hold (`ImplicitDomain._join_seams`).
+SEAM_DOUBLES = 1024
 
 
 @dataclass(frozen=True)
@@ -61,9 +62,17 @@ class SegmentIntervals:
     intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
     A point of the segment is in an interval exactly where `contains` holds there, up to rounding within about an ulp of
     a surface, in space, and short of the overflow and underflow limits each leaf states: a segment that grazes a face
-    can disagree with `contains` over a long stretch of its parameter. Two box faces one or a few ulps apart that are
-    one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, leave a gap no point can occupy,
-    and it is reported as a gap; the particle solver refuses such a domain (`refuse_near_coincident_box_faces`).
+    can disagree with `contains` over a long stretch of its parameter.
+
+    Two surfaces that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, or a ball's
+    end at 0.65 - 0.35, leave each leaf's interval ending at its own surface, a gap no point between them can occupy.
+    Such a seam is joined by the domain's own answer (`_join_seams`): on the segment's dominant axis, the one it moves
+    furthest along, `contains` is read at each double from the gap's one end to the other, both included, and at the
+    gap's midpoint, and the gap is joined where all hold and at most ``SEAM_DOUBLES`` doubles lie strictly between its
+    ends. A real crack holds a double outside the domain and stays a gap: measured, cracks two ulps wide or wider
+    reflected at every angle below |tan phi| = 1024 to their normal (#2791). A gap of more than ``SEAM_DOUBLES``
+    doubles is left as a wall without being read, so a step whose dominant axis runs along a seam, crossing it at
+    |tan phi| >= 1024 or so, can reflect there.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -689,6 +698,7 @@ class ImplicitDomain(
         kept = np.take_along_axis(kept, order, axis=1)[..., None]
         t = np.where(kept, np.take_along_axis(t, order[..., None], axis=1), np.nan)
         tag = np.where(kept, np.take_along_axis(ends, order[..., None], axis=1), _NO_SURFACE)
+        t, tag = self._join_seams(a, b - a, t, tag)
         none = tag < 0
         return SegmentIntervals(
             t=t,
@@ -698,36 +708,59 @@ class ImplicitDomain(
             leaves=self._leaves(),
         )
 
-    def refuse_near_coincident_box_faces(self, reader: str) -> None:
-        """Refuse, by name, two box faces of this domain on one axis that are not equal yet no more than ``SEAM_ULPS``
-        ulps apart, and that meet: their extents on every other axis overlap with positive length (#2733 PR 2).
+    def _join_seams(
+        self, a: NDArray[np.float64], extent: NDArray[np.float64], t: NDArray[np.float64], tag: NDArray[np.int64]
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """Join two consecutive intervals across a seam (`SegmentIntervals`): a gap whose two computed ends'
+        coordinates on the segment's dominant axis have at most ``SEAM_DOUBLES`` doubles strictly between them, with
+        `contains` holding at every double from one end to the other, both included, and at the gap's midpoint.
 
-        Such faces are one wall in floating point, such as two rooms of a union meeting at 0.3 and 0.1 + 0.2, but
-        each leaf's interval ends at its own face, so a segment across them has a gap no point can occupy and a
-        particle step reads it as a wall (`SegmentIntervals`). Faces exactly equal are one face, and near-equal faces
-        that do not meet leave no gap. Only `Hyperrectangle` leaves are read: of the library's two leaf types, only box
-        faces form a seam of positive area, since spheres meet in a point or not at all."""
-        from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
-
-        boxes = [np.asarray(leaf.bounds, dtype=float) for leaf in self._leaves() if isinstance(leaf, Hyperrectangle)]
-        for i, a in enumerate(boxes):
-            for b in boxes[i + 1 :]:
-                for axis in range(a.shape[0]):
-                    others = [k for k in range(a.shape[0]) if k != axis]
-                    if any(min(a[k, 1], b[k, 1]) - max(a[k, 0], b[k, 0]) <= 0.0 for k in others):
-                        continue
-                    for side_a in (0, 1):
-                        for side_b in (0, 1):
-                            u, v = float(a[axis, side_a]), float(b[axis, side_b])
-                            if 0.0 < abs(u - v) <= SEAM_ULPS * np.spacing(max(abs(u), abs(v))):
-                                raise ValueError(
-                                    f"{reader}: the boxes {a.tolist()} and {b.tolist()} have faces on axis {axis} "
-                                    f"at {u!r} and {v!r}, {abs(u - v) / np.spacing(max(abs(u), abs(v))):.0f} ulp(s) "
-                                    "apart, which meet: one wall in floating point, with no point between them, yet "
-                                    "each box's interval ends at its own face, so a particle step would read a wall "
-                                    "there (#2733). Give the two faces the same double, for example build both from "
-                                    "one variable."
-                                )
+        The reads are a lattice in space, so a seam a few ulps wide holds a few doubles wherever on the step it lies.
+        Each is the segment's point at that double's parameter with its dominant coordinate set to the double itself:
+        the point the parameter gives can round onto a neighbouring double, and a computed end can lie a double off its
+        surface, and either let a step through a crack two ulps wide when only the doubles strictly between the ends
+        were read as computed (#2791). The midpoint covers a gap holding no double on the dominant axis, where that axis
+        runs along a crack. Doubles of t would not do: they are far finer near t = 0 than the points a + t(b - a), and a
+        seam near a step's start would hold more than ``SEAM_DOUBLES``. Where two obstacles touch at p and rounding
+        drops the degenerate interval at p, the gap through both holds far more than ``SEAM_DOUBLES`` doubles and stays
+        a wall."""
+        n = t.shape[0]
+        lo, hi = t[..., 0], t[..., 1]
+        real = ~np.isnan(lo)
+        gap = real[:, 1:] & real[:, :-1]
+        if not gap.any():
+            return t, tag
+        rows, k = np.nonzero(gap)
+        t1, t2 = hi[rows, k], lo[rows, k + 1]
+        d = extent[rows]
+        axis = np.argmax(np.abs(d), axis=1)
+        start = a[rows, axis]
+        step = d[np.arange(len(rows)), axis]
+        x1, x2 = start + t1 * step, start + t2 * step
+        o1, o2 = _ordered(np.minimum(x1, x2)), _ordered(np.maximum(x1, x2))
+        between = o2 - o1 - 1
+        holds = np.zeros(len(rows), dtype=bool)
+        for g in np.flatnonzero(between <= SEAM_DOUBLES):
+            on_axis = _unordered(np.arange(o1[g], o2[g] + 1, dtype=np.int64))
+            points = a[rows[g]] + ((on_axis - start[g]) / step[g])[:, None] * d[g]
+            points[:, axis[g]] = on_axis
+            points = np.vstack([points, a[rows[g]] + 0.5 * (t1[g] + t2[g]) * d[g]])
+            holds[g] = bool(np.all(np.atleast_1d(np.asarray(self.contains(points), dtype=bool))))
+        if not holds.any():
+            return t, tag
+        joined = np.zeros_like(gap)
+        joined[rows[holds], k[holds]] = True
+        starts = real & np.concatenate([np.ones((n, 1), dtype=bool), ~joined], axis=1)
+        ends = real & np.concatenate([~joined, np.ones((n, 1), dtype=bool)], axis=1)
+        most = max(int(starts.sum(axis=1).max(initial=0)), 1)
+        pick_start = np.argsort(~starts, axis=1, kind="stable")[:, :most]
+        pick_end = np.argsort(~ends, axis=1, kind="stable")[:, :most]
+        kept = np.take_along_axis(starts, pick_start, axis=1)
+        out_t = np.stack([np.take_along_axis(lo, pick_start, axis=1), np.take_along_axis(hi, pick_end, axis=1)], -1)
+        out_tag = np.stack(
+            [np.take_along_axis(tag[..., 0], pick_start, axis=1), np.take_along_axis(tag[..., 1], pick_end, axis=1)], -1
+        )
+        return np.where(kept[..., None], out_t, np.nan), np.where(kept[..., None], out_tag, _NO_SURFACE)
 
     def first_contact(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> FirstContact:
         """Each segment's first contact with this domain's boundary, from `segment_intervals` (#2733 D1); see
@@ -1331,6 +1364,18 @@ class ImplicitDomain(
     def __repr__(self) -> str:
         """String representation of the domain."""
         return f"{self.__class__.__name__}(dimension={self.dimension})"
+
+
+def _ordered(x: NDArray[np.float64]) -> NDArray[np.int64]:
+    """Doubles as integers in their own order, so that two doubles' difference counts the doubles between them."""
+    i = np.asarray(x, dtype=np.float64).view(np.int64)
+    return np.where(i >= 0, i, np.int64(-0x8000000000000000) - i)
+
+
+def _unordered(o: NDArray[np.int64]) -> NDArray[np.float64]:
+    """`_ordered`'s inverse."""
+    o = np.asarray(o, dtype=np.int64)
+    return np.where(o >= 0, o, np.int64(-0x8000000000000000) - o).view(np.float64)
 
 
 def _surface_tag(leaf: int, face: NDArray[np.int64] | int, complemented: bool) -> NDArray[np.int64]:

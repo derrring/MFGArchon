@@ -20,11 +20,11 @@
     face flush with an obstacle is an isolated point of the domain. Before this change the step raised in
     `project_to_interior`. The remedy is no initial mass on that node.
   - **The cap.** A step reflected more than 20 times returns to its start, and a solve warns once when any step did.
+  - **A seam is crossed as one room.** Two rooms of a union meeting at 0.3 and 0.1 + 0.2, a ball ending at
+    0.65 - 0.35 beside a room's wall at 0.3, or a disc inside a ring of inner radius 0.1 + 0.2 have no point between
+    them, and a step crosses with no contact, as at one shared wall (`SegmentIntervals`). A step grazing such a seam,
+    at |tan phi| >= 1024 to its normal, can still reflect there.
 - **Refused at construction, where a particle domain is set** (an `ImplicitDomain` geometry or `implicit_domain=`):
-  - **Two box faces on one axis, not equal but no more than 4 ulps apart, that meet**, such as two rooms of a union at
-    0.3 and 0.1 + 0.2. They are one wall in floating point with no point between them, yet each box's interval ends at
-    its own face, so a step across would read a wall. The message names both boxes, the axis and both offsets; the
-    remedy is to give the two faces the same double.
   - **An absorbing condition the boundary owner can place off the box**: one placed by `region`, `sdf_region`,
     `normal_direction`, `region_name`, `boundary="all"` or nothing, and an absorbing `default_bc`.
     - An exit on a disc's arc absorbed 400 of 400 particles drifting toward (1.2, 0.5), read where the arc touches the

@@ -559,16 +559,19 @@ def test_a_domain_or_segment_it_cannot_classify_is_refused_by_name(row, domain, 
     ("label", "east_wall", "joined"),
     [
         ("the exact shared wall", 0.3, True),
-        ("a seam one ulp apart", 0.1 + 0.2, False),
+        ("a seam one ulp apart", 0.1 + 0.2, True),
+        ("a crack two ulps wide", float(np.nextafter(np.nextafter(0.3, 1.0), 1.0)), False),
         ("a crack of 1e-9", 0.3 + 1e-9, False),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
 )
-def test_a_seam_one_ulp_apart_is_reported_as_a_gap_as_a_real_crack_is(label, east_wall, joined):
+def test_a_seam_one_ulp_apart_is_joined_and_a_real_crack_is_not(label, east_wall, joined):
     """Two rooms meeting at 0.3 and 0.1 + 0.2, adjacent doubles, have no point between them, and `contains` holds across;
-    each leaf's interval ends at its own wall, so the intervals leave a gap of t-length 2.2e-16 and the first contact is
-    at the seam, as for a real crack of 1e-9 (`SegmentIntervals`). Only the exact shared wall is one interval. The
-    particle solver refuses the one-ulp seam at construction (`refuse_near_coincident_box_faces`, #2791)."""
+    each leaf's interval ends at its own wall, leaving a gap of t-length 2.2e-16. On the segment's axis the gap's two
+    ends are adjacent doubles; `contains` holds at both and at its midpoint, and it is joined: one interval and no
+    contact, as for the exact shared wall (`SegmentIntervals`, #2791). A crack two ulps wide holds one double, 0.3 + 1
+    ulp, outside both rooms, and stays a gap, as a crack of 1e-9 does, which holds more than ``SEAM_DOUBLES`` and is
+    not read."""
     rooms = UnionDomain([_box((0, 0.3), (0, 1)), _box((east_wall, 1), (0, 1))])
     a, b = np.array([[0.2, 0.5]]), np.array([[0.4, 0.5]])
     found, contact = rooms.segment_intervals(a, b), rooms.first_contact(a, b)
@@ -584,8 +587,8 @@ def test_a_seam_one_ulp_apart_is_reported_as_a_gap_as_a_real_crack_is(label, eas
 def test_a_gap_through_two_touching_obstacles_is_no_seam():
     """Review 2 of #2791: two balls of radius 0.007 touching at 0.314. On this step rounding drops the degenerate
     interval at the touching point, so the gap left is [0.3, 0.328], solid obstacle, with the touching point, a point of
-    the closed domain, at its midpoint. It is 0.028 thick across both balls, no seam: the intervals stay two and the
-    first contact is the entry into the first ball, at x = 0.3."""
+    the closed domain, at its midpoint. It holds about 5e14 doubles, more than ``SEAM_DOUBLES``, so it is not read: the
+    intervals stay two and the first contact is the entry into the first ball, at x = 0.3."""
     pinch = DifferenceDomain(_box((0, 1)), UnionDomain([Hypersphere([0.307], 0.007), Hypersphere([0.321], 0.007)]))
     a, b = np.array([[0.278525939767154]]), np.array([[0.36341352620241907]])
     found, contact = pinch.segment_intervals(a, b), pinch.first_contact(a, b)

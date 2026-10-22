@@ -298,11 +298,8 @@ class FPParticleSolver(BaseFPSolver):
         # ImplicitDomain, else the implicit_domain= keyword (`_obstacle_domain`). Each step ends in `_finish_step` at its
         # first contacts with the particles' boundary, the domain's and the box's together (#2733). The initial
         # particles are drawn navigable, and what the loop cannot do -- a periodic outer boundary, the GPU path, initial
-        # mass inside an obstacle, an absorbing condition placed off the box, two box faces one wall in floating point
-        # but not one double -- is refused.
+        # mass inside an obstacle, an absorbing condition placed off the box -- is refused.
         self._implicit_domain = self._obstacle_domain(implicit_domain)
-        if self._implicit_domain is not None:
-            self._implicit_domain.refuse_near_coincident_box_faces(type(self).__name__)
         self._box_domain: tuple[bytes, ImplicitDomain] | None = None  # `_particle_domain`'s box, built once per box
 
         # Issue #1119: preserve_indices flag for particle ID tracking

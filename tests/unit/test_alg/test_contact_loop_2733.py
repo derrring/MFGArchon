@@ -474,80 +474,104 @@ def _rooms(wall):
     )
 
 
-_SEAM = r"one wall in floating point, with no point between them.*Give the two faces the same double"
+def _crossings(n=6000, seed=1):
+    """Steps of length 0.05 across x = 0.3 in the unit square at angles phi to its normal drawn uniformly, the wall
+    anywhere along the step, and |tan phi| < 1024: past that a gap across a one-ulp seam can hold more than
+    ``SEAM_DOUBLES`` doubles on the step's dominant axis and is left a wall (`SegmentIntervals`)."""
+    rng = np.random.default_rng(seed)
+    phi = rng.uniform(-np.pi / 2, np.pi / 2, n)
+    d = 0.05 * np.c_[np.cos(phi), np.sin(phi)]
+    a = np.c_[0.3 - rng.uniform(0.0, 1.0, n) * d[:, 0], rng.uniform(0.3, 0.7, n)]
+    b = a + d
+    keep = (a[:, 0] < 0.3) & (b[:, 0] > 0.3 + 1e-9) & (np.abs(np.tan(phi)) < 1024)
+    assert np.sum(np.abs(np.tan(phi[keep])) >= 16) > 100
+    return a[keep], b[keep]
 
 
-@pytest.mark.parametrize(
-    ("label", "geometry", "domain"),
-    [
-        ("2-D: two rooms meeting at 0.3 and 0.1 + 0.2", _grid(), _rooms(0.1 + 0.2)),
-        (
-            "1-D: rooms meeting at 0.01 and the next double",
-            _grid(1, 21),
-            UnionDomain(
-                [Hyperrectangle(np.array([[0.0, 0.01]])), Hyperrectangle(np.array([[np.nextafter(0.01, 1.0), 1.0]]))]
-            ),
-        ),
-    ],
-    ids=lambda v: v if isinstance(v, str) else "",
-)
-def test_two_box_faces_one_wall_in_floating_point_but_not_one_double_are_refused(label, geometry, domain):
-    """Reviews 1 to 3 of #2791: two rooms meeting at adjacent doubles have no point between them, yet each leaf's interval
-    ends at its own face, so a step across reads a wall there (`SegmentIntervals`). Joining such gaps in the intervals
-    missed seams near the origin and could cross a solid obstacle (review 3); the solver refuses the domain at
-    construction instead, naming both boxes, and the remedy is one double (user and audit ruling, 2026-10-22)."""
-    with pytest.raises(ValueError, match=_SEAM):
-        FPParticleSolver(_problem(geometry, T=0.1, nt=2), num_particles=20, seed=0, implicit_domain=domain)
+def _two_rooms(east):
+    """The 1-D rooms [0, 0.3] and [east, 1]."""
+    return UnionDomain([Hyperrectangle(np.array([[0.0, 0.3]])), Hyperrectangle(np.array([[east, 1.0]]))])
 
 
-@pytest.mark.parametrize(
-    ("label", "domain"),
-    [
-        ("the exact shared face", _rooms(0.3)),
-        ("a real crack of 1e-9", _rooms(0.3 + 1e-9)),
-        (
-            "faces one ulp apart whose extents do not meet",
-            UnionDomain(
-                [
-                    Hyperrectangle(np.array([[0.0, 0.3], [0.0, 0.4]])),
-                    Hyperrectangle(np.array([[0.1 + 0.2, 1.0], [0.6, 1.0]])),
-                ]
-            ),
-        ),
-    ],
-    ids=lambda v: v if isinstance(v, str) else "",
-)
-def test_box_faces_that_are_one_double_apart_or_do_not_meet_are_admitted(label, domain):
-    """The refusal's controls: faces exactly equal are one face; faces further apart than 4 ulps are real geometry; and
-    near-equal faces whose extents on the other axes do not overlap leave no gap."""
-    FPParticleSolver(_problem(_grid(), T=0.1, nt=2), num_particles=20, seed=0, implicit_domain=domain)
-
-
-def test_a_union_whose_rooms_share_one_face_is_crossed_as_one_room_and_a_crack_reflects():
-    """The admitted cases at the loop: steps across the exact shared face at 0.3, at angles to its normal drawn from
-    (-pi/2, pi/2), land at their raw ends with no contact; across a crack of 1e-9 they meet it."""
-    rng = np.random.default_rng(5)
-    phi = rng.uniform(-np.pi / 2 + 1e-3, np.pi / 2 - 1e-3, 3000)
-    d = np.c_[np.cos(phi), np.sin(phi)]
-    length = rng.uniform(0.01, 0.05, 3000) / np.maximum(np.cos(phi), 0.02)
-    a = (
-        np.c_[np.full(3000, 0.3), rng.uniform(0.3, 0.7, 3000)]
-        - (rng.uniform(0.2, 0.8, 3000) * 0.5 * length)[:, None] * d
-    )
-    b = a + length[:, None] * d
-    keep = (a[:, 0] < 0.3) & (b[:, 0] > 0.3 + 1e-9) & (np.minimum(a[:, 1], b[:, 1]) > 0.01)
-    keep &= np.maximum(a[:, 1], b[:, 1]) < 0.99
-    a, b = a[keep], b[keep]
-    shared = _step(_rooms(0.3), a, b)
-    assert shared.counts["contacts"] == 0
-    np.testing.assert_array_equal(shared.positions, b)
+def test_a_union_whose_shared_wall_is_one_ulp_apart_is_crossed_as_one_room():
+    """Review 1 of #2791, B1: 0.3 and 0.1 + 0.2 are adjacent doubles, so no point lies between the two rooms' walls and
+    `contains` holds across the seam, but each leaf's interval ends at its own wall and the loop reflected every
+    crossing step there. The owner joins a gap whose doubles on the step's dominant axis number at most
+    ``SEAM_DOUBLES`` and are all inside (`SegmentIntervals`): every step lands at its raw end, with no contact, as with
+    the exact shared wall, wherever the seam lies along it. Counting doubles of t instead reflected 5,834 of 199,880
+    such steps, those meeting the seam near their start (#2791). In 1-D the seam at 0.01 and the next double, small
+    against steps of U(0.01, 0.1), is crossed too: review 3's width join reflected 4,447 of 102,262 there. Across a
+    crack of 1e-9 every step meets it."""
+    a, b = _crossings()
+    for wall in (0.3, 0.1 + 0.2):
+        stepped = _step(_rooms(wall), a, b)
+        assert stepped.counts["contacts"] == 0, wall
+        np.testing.assert_array_equal(stepped.positions, b)
     assert _step(_rooms(0.3 + 1e-9), a, b).counts["contacts"] == len(a)
+    w, rng, n = 0.01, np.random.default_rng(11), 20000
+    length, f = rng.uniform(0.01, 0.1, n), rng.uniform(0.0, 1.0, n)
+    sign = np.where(rng.random(n) < 0.5, 1.0, -1.0)
+    a = (w - sign * f * length)[:, None]
+    b = a + (sign * length)[:, None]
+    keep = (a[:, 0] > 0) & (b[:, 0] > 0)
+    keep &= ((a[:, 0] < w) & (b[:, 0] > np.nextafter(w, 1.0))) | ((b[:, 0] < w) & (a[:, 0] > np.nextafter(w, 1.0)))
+    a, b = a[keep], b[keep]
+    assert len(a) > 4000
+    for east in (w, np.nextafter(w, 1.0)):
+        rooms = UnionDomain([Hyperrectangle(np.array([[0.0, w]])), Hyperrectangle(np.array([[east, 1.0]]))])
+        stepped = _step(rooms, a, b, box=np.array([[0.0, 1.0]]))
+        assert stepped.counts["contacts"] == 0, east
+        np.testing.assert_array_equal(stepped.positions, b)
+
+
+def test_a_seam_at_a_spheres_surface_is_crossed_as_one_room():
+    """Review 4 of #2791: the seam is the domain's, not a box face's. In 1-D a ball is an interval, and the room [0, 0.3]
+    with the ball about 0.65 of radius 0.35, whose left end is 0.65 - 0.35 = 0.30000000000000004, met 1872 of 2000
+    crossings at e4d47368. A disc of radius 0.3 inside a ring of inner radius 0.1 + 0.2 about (0.5, 0.5), two sphere
+    surfaces one double apart, met all 2000 radial steps from r = 0.25 to 0.35. With the seam joined, no step meets
+    either, as none meets the ring of inner radius 0.3."""
+    rng = np.random.default_rng(0)
+    a, b = rng.uniform(0.1, 0.29, (2000, 1)), rng.uniform(0.31, 0.6, (2000, 1))
+    ball = UnionDomain([Hyperrectangle(np.array([[0.0, 0.3]])), Hypersphere(center=[0.65], radius=0.35)])
+    stepped = _step(ball, a, b, box=np.array([[0.0, 1.0]]))
+    assert stepped.counts["contacts"] == 0
+    np.testing.assert_array_equal(stepped.positions, b)
+    c = np.array([0.5, 0.5])
+    theta = np.random.default_rng(3).uniform(0.0, 2.0 * np.pi, 2000)
+    u = np.c_[np.cos(theta), np.sin(theta)]
+    a, b = c + 0.25 * u, c + 0.35 * u
+    for inner in (0.3, 0.1 + 0.2):
+        ring = DifferenceDomain(Hypersphere(center=c, radius=0.5), Hypersphere(center=c, radius=inner))
+        stepped = _step(UnionDomain([Hypersphere(center=c, radius=0.3), ring]), a, b)
+        assert stepped.counts["contacts"] == 0, inner
+        np.testing.assert_array_equal(stepped.positions, b)
+
+
+def test_a_crack_two_ulps_wide_reflects_at_every_angle():
+    """The join's other side: rooms meeting at 0.3 and the double two above it leave a crack holding one double, 0.3 +
+    1 ulp, outside both, and every step across meets it. In 1-D, steps from U(0.05, 0.29) to U(0.31, 0.6): reading
+    only the doubles strictly between the gap's computed ends, at the parameter's own points, let 1,906 of 100,000
+    through, since a computed end or a read point can round a double off. In 2-D, steps of 0.05 at every angle below
+    |tan phi| = 1024: dropping the gap's midpoint let 2,690 of 99,932 through, all at |tan phi| in [1, 4), where the
+    dominant axis runs along the crack and the gap holds no double on it (#2791)."""
+    crack = float(np.nextafter(np.nextafter(0.3, 1.0), 1.0))
+    assert not np.atleast_1d(_two_rooms(crack).contains(np.array([[np.nextafter(0.3, 1.0)]])))[0]
+    rng = np.random.default_rng(7)
+    a, b = rng.uniform(0.05, 0.29, (20000, 1)), rng.uniform(0.31, 0.6, (20000, 1))
+    stepped = _step(_two_rooms(crack), a, b, box=np.array([[0.0, 1.0]]))
+    assert stepped.counts["contacts"] == len(a)
+    assert np.all(stepped.positions[:, 0] <= 0.3)
+    a, b = _crossings()
+    stepped = _step(_rooms(crack), a, b)
+    assert stepped.counts["contacts"] == len(a)
+    assert np.all(stepped.positions[:, 0] <= 0.3)
 
 
 def test_a_step_through_a_deep_obstacle_between_coplanar_faces_meets_it():
     """Review 3 of #2791: a step rising 3 ulps leaves one box obstacle and enters another through faces nearly parallel to
     it, crossing a third obstacle 0.055 deep in between. A join by the width at the two bounding faces passed through;
-    with the leaves' own intervals the step meets the first obstacle."""
+    on the step's dominant axis the gap holds far more than ``SEAM_DOUBLES`` doubles, so it stays a wall and the step
+    meets the first obstacle."""
     u = np.spacing(0.375)
     domain = DifferenceDomain(
         _square(),
@@ -575,8 +599,8 @@ _PINCH = DifferenceDomain(
 def test_a_step_across_two_touching_obstacles_meets_the_first():
     """Review 2 of #2791: where two obstacles touch at p, rounding can drop the degenerate interval at p, and the gap
     through both, [0.3, 0.328] here, has p at its midpoint, a point of the closed domain. Reading the midpoint alone
-    joined it, and the step passed through both. The gap is 0.028 thick across the walls, far more than a seam, so the
-    step meets the first ball at x = 0.3."""
+    joined it, and the step passed through both. The gap holds about 5e14 doubles on the step's axis, far more than
+    ``SEAM_DOUBLES``, so it stays a wall, unread, and the step meets the first ball at x = 0.3."""
     stepped = _step(_PINCH, [[0.278525939767154]], [[0.36341352620241907]], box=np.array([[0.0, 1.0]]))
     assert stepped.counts["contacts"] >= 1
     assert stepped.positions[0, 0] < 0.3
