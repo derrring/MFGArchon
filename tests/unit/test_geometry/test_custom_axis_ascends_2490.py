@@ -107,11 +107,13 @@ def _deep_copied_then_written():
 
 
 def _pickled_then_written():
-    """numpy arrays unpickle writeable whatever their flag was; the round-tripped grid's axes are owned again."""
-    grid = pickle.loads(pickle.dumps(_grid([_ASCENDING, _ASCENDING])))
-    np.testing.assert_array_equal(grid.coordinates[0], _ASCENDING)
-    with pytest.raises(ValueError, match="read-only"):
-        grid.coordinates[0][:] = _DESCENDING
+    """An array unpickled at protocols 0-4 comes back writeable whatever its flag was, and protocol 5 keeps the flag, so
+    the round trip runs at every protocol: at each, the grid's axes are owned again."""
+    for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+        grid = pickle.loads(pickle.dumps(_grid([_ASCENDING, _ASCENDING]), protocol=protocol))
+        np.testing.assert_array_equal(grid.coordinates[0], _ASCENDING)
+        with pytest.raises(ValueError, match="read-only"):
+            grid.coordinates[0][:] = _DESCENDING
 
 
 def _restored_with_a_descending_axis():
@@ -169,7 +171,7 @@ _ROWS = [
     ("an element of coordinates replaced", _element_replaced),
     ("a write into an axis", _written_into),
     ("a deep copy, then a write into its axis", _deep_copied_then_written),
-    ("a pickle round trip, then a write into its axis", _pickled_then_written),
+    ("a pickle round trip at each protocol, then a write into its axis", _pickled_then_written),
     ("a restored state holding a descending axis", _restored_with_a_descending_axis),
 ]
 

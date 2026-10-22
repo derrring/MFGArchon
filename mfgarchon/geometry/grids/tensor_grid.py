@@ -88,7 +88,7 @@ class TensorProductGrid(
         Nx: Number of intervals along each dimension (list)
         Nx_points: Number of grid points along each dimension (Nx + 1)
         num_points: Alias for Nx_points (deprecated, use Nx_points instead)
-        coordinates: List of 1D coordinate arrays
+        coordinates: Tuple of 1D coordinate arrays, one per axis, each strictly ascending and read-only
         spacing: Grid spacing along each dimension (if uniform)
         is_uniform: Whether grid has uniform spacing in each dimension
         boundary_conditions: Spatial BC specification (SSOT for MFG solvers)
@@ -2074,7 +2074,8 @@ class TensorProductGrid(
         A BC leaves its binding behind when it is pickled or copied (`BoundaryConditions.__getstate__`), so the BC
         this grid stores would otherwise come back unbound (#2634, review 2)."""
         self.__dict__.update(state)
-        # numpy arrays unpickle writeable whatever their flag was, and a state can hold any axes: own them again (#2490).
+        # An array unpickled at protocols 0-4 comes back writeable whatever its flag was (protocol 5 keeps it), and a
+        # state can hold any axes: own them again (#2490).
         self.coordinates = self._own_axes(self.coordinates, "restored")
         if self._boundary_conditions is not None:
             self._boundary_conditions = self._boundary_conditions.bind_geometry(self)
@@ -2108,8 +2109,8 @@ class TensorProductGrid(
             if out_of_order.size:
                 k = int(out_of_order[0])
                 cause = (
-                    "the bounds do not resolve that many distinct float64 nodes. Use fewer points, or bounds whose "
-                    "spacing float64 can represent"
+                    "the bounds do not resolve that many distinct finite float64 nodes. Use fewer points, or bounds "
+                    "whose width and spacing float64 can represent"
                     if given == "uniform"
                     else "give each axis's nodes in strictly ascending order"
                 )

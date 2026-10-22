@@ -585,7 +585,7 @@ the time grid is `tSpace`, of length `Nt_points`.
 
 **The two halves live on different objects.** Time is the problem's: `problem.Nt`, `.Nt_points`,
 `.dt`, `.tSpace`, and `problem.T`, supplied through `Conditions(T=...)`. Space is the domain's:
-`grid.Nx`, `.Nx_points`, `.coordinates` (a per-axis list of coordinate arrays),
+`grid.Nx`, `.Nx_points`, `.coordinates` (a tuple of read-only coordinate arrays, one per axis),
 `.num_spatial_points` (the product of `Nx_points`) and `.get_spacing(axis)`. There is no
 `problem.Nx`, no `problem.xSpace` and no `problem.dx`.
 
