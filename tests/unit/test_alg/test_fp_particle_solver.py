@@ -794,198 +794,98 @@ class TestFPParticleSolverCallableDrift:
         assert mean_slope == pytest.approx(0.2, rel=0.25), f"drift rate {mean_slope:.4f} is not 0.2"
 
 
-class TestProjectToNavigableOrDefer:
-    """Issue #1064: project_to_navigable_or_defer must respect outer-boundary
-    handling — only project obstacle-interior violations, leave outer-boundary
-    violations for the caller's segment-aware BC."""
+class TestReflectionAtFirstContact:
+    """#2733: a step that meets an obstacle is reflected specularly at its first contact, in the obstacle's own outward
+    normal, and re-traced (`reflect_at_first_contacts`). Each row is a closed form. They replace the nearest-point
+    projection and the face-of-entry placement (#2679, #2688, #2706), whose landings these geometries pinned."""
 
-    def _make_diff_domain(self):
-        """Box [0,1]² minus circular obstacle, off-center to avoid degenerate projection."""
-        from mfgarchon.geometry.implicit import (
-            DifferenceDomain,
-            Hyperrectangle,
-            Hypersphere,
+    _BOX = np.array([[0.0, 1.0], [0.0, 1.0]])
+
+    @staticmethod
+    def _step(domain, starts, ends):
+        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import reflect_at_first_contacts
+
+        return reflect_at_first_contacts(
+            np.asarray(starts, dtype=float),
+            np.asarray(ends, dtype=float),
+            domain,
+            TestReflectionAtFirstContact._BOX,
+            no_flux_bc(dimension=2),
         )
 
-        box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
-        # Obstacle off the bbox centre; the nearest-point projection has a well-defined direction except at its centre
-        obstacle = Hypersphere(center=np.array([0.3, 0.5]), radius=0.15)
-        return DifferenceDomain(box, obstacle)
+    def test_a_step_into_a_disc_lands_back_on_the_side_it_entered(self):
+        """#2679: the projection moved a particle toward the bounding-box centre, so one that entered the far side came
+        out on the obstacle's other side. A radial step from 0.01 outside the rim to 0.01 inside it meets the rim halfway
+        and is reflected back along its own line: it lands where it started, on the side it entered, for an obstacle on
+        the box's centre and one off it."""
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
 
-    def test_obstacle_interior_projected(self):
-        """Particle inside obstacle is projected back to navigable region."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-
-        domain = self._make_diff_domain()
-        particles = np.array([[0.3, 0.5]])  # obstacle center
-        result = project_to_navigable_or_defer(particles.copy(), domain)
-        assert not np.allclose(result, particles), "Particle inside obstacle should have been projected out"
-        assert domain.contains(result).all()
-
-    def test_a_particle_in_an_obstacle_moves_to_the_nearest_navigable_point(self):
-        """#2679: the projection moved a particle along the ray toward the bounding-box centre, to the first navigable
-        point on it, so a particle that entered the side facing away from the centre came out on the obstacle's far
-        side -- every particle, for an obstacle on the centre. The nearest navigable point is on the rim, 0.01 from a
-        particle 0.01 deep, on the side it entered. Landing on the rim is not enough: a computed rim point's phi
-        rounds to either sign, and `contains` is phi <= 0."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere, UnionDomain
-
-        radius = 0.15
         for centre in (np.array([0.5, 0.5]), np.array([0.3, 0.3])):
-            domain = DifferenceDomain(
-                Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hypersphere(center=centre, radius=radius)
-            )
+            domain = DifferenceDomain(Hyperrectangle(self._BOX), Hypersphere(center=centre, radius=0.15))
             theta = np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False)
-            entered = centre + (radius - 0.01) * np.c_[np.cos(theta), np.sin(theta)]
-            moved = project_to_navigable_or_defer(entered.copy(), domain)
-            assert domain.contains(moved).all(), (centre, moved)
-            np.testing.assert_allclose(np.linalg.norm(moved - entered, axis=1), 0.01, atol=1e-9, err_msg=str(centre))
-            assert np.all(np.sum((moved - centre) * (entered - centre), axis=1) > 0), centre
+            direction = np.c_[np.cos(theta), np.sin(theta)]
+            starts = centre + 0.16 * direction
+            stepped = self._step(domain, starts, centre + 0.14 * direction)
+            np.testing.assert_allclose(stepped.positions, starts, rtol=0, atol=1e-12, err_msg=str(centre))
+            assert stepped.counts["reflections"] == 8, stepped.counts
 
-        # In the lens of two overlapping discs the nearest navigable point is a seam point, where the projection
-        # converges linearly and stops short of the boundary (#2687); walked toward the bounding-box centre instead,
-        # the particle crossed the obstacle, 0.18 away.
-        a, b = np.array([0.4, 0.5]), np.array([0.55, 0.5])
-        lens = DifferenceDomain(
-            Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])),
-            UnionDomain([Hypersphere(center=a, radius=0.1), Hypersphere(center=b, radius=0.1)]),
-        )
-        seam = (a + b) / 2 - [0.0, np.sqrt(0.1**2 - 0.075**2)]
-        entered = np.array([[0.473395, 0.439368]])
-        moved = project_to_navigable_or_defer(entered.copy(), lens)
-        assert lens.contains(moved).all(), moved
-        assert abs(np.linalg.norm(moved[0] - entered[0]) - np.linalg.norm(seam - entered[0])) < 1e-6, moved
-
-    def test_a_particle_the_projection_cannot_place_is_placed_by_the_face_its_step_crossed(self):
-        """#2688: for an obstacle reaching past the box, the projection onto the domain's boundary is trapped at the
-        box wall, inside the obstacle, wherever the obstacle's nearest face lies outside the box (#2687). The walk
-        toward the bounding-box centre that placed those particles crossed the obstacle; the face the step crossed
-        places them instead, so one point lands on different faces for different steps -- the closed form for a
-        flat face is the projection onto it. Without the step's start there is nothing to place it by."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+    def test_a_step_into_an_obstacle_past_the_box_reflects_in_the_face_it_crosses(self):
+        """#2688: the obstacle [0.9, 1.05] x [0.2, 0.8] reaches past the wall x = 1, where the nearest-point projection
+        was trapped. A step through its left face x = 0.9 is reflected there, and one through its bottom face y = 0.2
+        there: the same end point (0.98, 0.3) lands at (0.82, 0.3) and at (0.98, 0.1). A step that starts inside the
+        obstacle is refused, since every step starts inside the domain."""
         from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
 
-        domain = DifferenceDomain(
-            Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
-        )
-        tol = 1e-10  # project_to_interior's default, which project_to_navigable_or_defer uses
-        # (0.98, 0.3) has the obstacle's face x = 1.05 nearest, outside the box; (0.91, 0.5) has x = 0.9.
-        entered = np.array([[0.98, 0.3], [0.98, 0.3], [0.91, 0.5]])
-        # Through the left face; through the bottom face; and a start the projection never reads.
-        previous = np.array([[0.85, 0.3], [0.95, 0.15], [0.91, 0.15]])
-        report: dict[str, int] = {}
-        moved = project_to_navigable_or_defer(entered.copy(), domain, previous=previous, report=report)
-        np.testing.assert_allclose(moved, [[0.9 - tol, 0.3], [0.98, 0.2 - tol], [0.9 - tol, 0.5]], rtol=0, atol=1e-12)
-        assert report == {"projected": 1, "face_of_entry": 2}, report
+        domain = DifferenceDomain(Hyperrectangle(self._BOX), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]])))
+        stepped = self._step(domain, [[0.85, 0.3], [0.95, 0.15]], [[0.98, 0.3], [0.98, 0.3]])
+        np.testing.assert_allclose(stepped.positions, [[0.82, 0.3], [0.98, 0.1]], rtol=0, atol=1e-12)
+        with pytest.raises(RuntimeError, match="a particle step starts outside the particles' domain"):
+            self._step(domain, [[0.95, 0.5]], [[0.96, 0.5]])
 
-        with pytest.raises(RuntimeError, match=r"project_to_interior\(points, previous=\.\.\.\)"):
-            project_to_navigable_or_defer(entered[:1].copy(), domain)
-        with pytest.raises(ValueError, match="is not inside the domain"):
-            project_to_navigable_or_defer(entered[:1].copy(), domain, previous=np.array([[0.95, 0.5]]))
-
-    def test_a_step_into_a_concave_junction_is_placed_on_the_wedge_its_two_faces_bound(self):
-        """#2688: projected onto the first face it met, this point lands in the other arm of an L-shaped obstacle, so
-        the second face is met too and the point is projected onto the wedge the two bound -- whose apex is the closed
-        form. One face at a time converges there only geometrically. A point that the faces met do not place is
-        refused, naming it and them (here by allowing one face only), rather than put somewhere navigable."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+    def test_a_step_that_cuts_a_concave_corner_reflects_in_both_faces(self):
+        """#2733 M1, the L-shaped obstacle of #2688: from (0.85, 0.6) to (0.97, 0.33) the step meets the vertical arm's
+        face x = 0.9 at (0.9, 0.4875), and its reflection meets the horizontal arm's top y = 0.45 at (0.88333, 0.45). It
+        lands at (2 * 0.9 - 0.97, 2 * 0.45 - 0.33) = (0.83, 0.57), not on the corner point (0.9, 0.45)."""
         from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, UnionDomain
 
-        # Both arms cross x = 1, so the nearest face of (0.97, 0.33) is outside the box and the projection does not
-        # place it. Its step enters the vertical arm through x = 0.9; the horizontal arm's top is y = 0.45.
         arms = [
             Hyperrectangle(np.array([[0.8, 1.05], [0.2, 0.45]])),
             Hyperrectangle(np.array([[0.9, 1.05], [0.45, 0.9]])),
         ]
-        domain = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), UnionDomain(arms))
-        previous, entered, tol = np.array([[0.85, 0.6]]), np.array([[0.97, 0.33]]), 1e-10
-        report: dict[str, int] = {}
-        moved = project_to_navigable_or_defer(entered.copy(), domain, previous=previous, report=report)
-        np.testing.assert_allclose(moved, [[0.9 - tol, 0.45 + tol]], rtol=0, atol=1e-12)
-        assert report == {"projected": 0, "face_of_entry": 1}, report
+        domain = DifferenceDomain(Hyperrectangle(self._BOX), UnionDomain(arms))
+        stepped = self._step(domain, [[0.85, 0.6]], [[0.97, 0.33]])
+        np.testing.assert_allclose(stepped.positions, [[0.83, 0.57]], rtol=0, atol=1e-12)
+        assert stepped.counts["reflections"] == 2, stepped.counts
 
-        with pytest.raises(RuntimeError, match=r"not placed by the 1 face\(s\) its step met \(at \[0\.9 +0\.4875\]"):
-            domain._place_by_face_of_entry(previous, entered, tol, max_faces=1)
-
-    def test_the_first_face_a_step_meets_places_it_even_behind_another_obstacle(self):
-        """#2706 review 1, S1: the step from (0.80, 0.5) to (0.98, 0.5) passes the slab W = [0.85, 0.87] before it
-        ends in O, so the face it met first is W's at x = 0.85, and it is placed there. The slab is thicker than a
-        scan step (0.18 / 32), so the scan finds it; a scan of one step would bisect onto O's face at x = 0.9."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+    @pytest.mark.parametrize("width", [0.02, 0.003])
+    def test_the_first_face_a_step_meets_reflects_it_even_before_another_obstacle(self, width):
+        """#2706 review 1, S1, and #2710: from (0.80, 0.5) to (0.98, 0.5) the step meets the slab W = [0.85, 0.85 + w]
+        before the obstacle at x = 0.9, and is reflected at W's face: it lands at (2 * 0.85 - 0.98, 0.5) = (0.72, 0.5).
+        At w = 0.003 the slab is thinner than 1/32 of the step, which the face-of-entry scan stepped over (#2710)."""
         from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, UnionDomain
 
         obstacles = UnionDomain(
-            [Hyperrectangle(np.array([[0.85, 0.87], [0.3, 0.7]])), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))]
-        )
-        domain = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), obstacles)
-        report: dict[str, int] = {}
-        moved = project_to_navigable_or_defer(
-            np.array([[0.98, 0.5]]), domain, previous=np.array([[0.80, 0.5]]), report=report
-        )
-        np.testing.assert_allclose(moved, [[0.85 - 1e-10, 0.5]], rtol=0, atol=1e-12)
-        assert report == {"projected": 0, "face_of_entry": 1}, report
-
-    @pytest.mark.parametrize("gap", [3e-5, 1e-5, 5e-6, 3.5e-7, 1e-9])
-    def test_the_face_where_an_obstacle_meets_the_wall_is_the_obstacles_own(self, gap):
-        """#2706: a particle on the obstacle's top face, ``gap`` from the wall x = 1, steps straight down into the
-        obstacle, and is placed back on that face: (1 - gap, 0.8 + 1e-10). The face's normal is the obstacle's own,
-        chosen by which component's phi changes sign across the crossing (`crossing_normal`). The domain's gradient
-        normal blends the wall's within its central difference of 1e-6: at gap 3.5e-7 that raised, and at 1e-9 it
-        placed the particle at (0.88, 0.68), on the obstacle's far side."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
-
-        domain = DifferenceDomain(
-            Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
-        )
-        x = 1.0 - gap
-        moved = project_to_navigable_or_defer(np.array([[x, 0.56]]), domain, previous=np.array([[x, 0.8 + 1e-10]]))
-        np.testing.assert_allclose(moved, [[x, 0.8 + 1e-10]], rtol=0, atol=1e-12)
-
-    def test_outer_bbox_violation_left_alone(self):
-        """Issue #1064: Particle past outer bbox is NOT touched — caller's BC handles it."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-
-        domain = self._make_diff_domain()
-        particles = np.array([[1.5, 0.5]])  # past right wall x=1.5 > bbox max 1.0
-        result = project_to_navigable_or_defer(particles.copy(), domain)
-        np.testing.assert_array_equal(result, particles)
-
-    def test_navigable_particles_untouched(self):
-        """Particles in navigable region are unchanged."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-
-        domain = self._make_diff_domain()
-        particles = np.array([[0.1, 0.1], [0.9, 0.5], [0.3, 0.7]])
-        result = project_to_navigable_or_defer(particles.copy(), domain)
-        np.testing.assert_array_equal(result, particles)
-
-    def test_mixed_obstacle_and_outer_violations(self):
-        """Mix: one in obstacle (project), one past bbox (leave), one valid (untouched)."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-
-        domain = self._make_diff_domain()
-        particles = np.array(
             [
-                [0.3, 0.5],  # inside obstacle → should be projected
-                [1.5, 0.5],  # past right wall → should be left alone (Issue #1064)
-                [0.1, 0.1],  # navigable → untouched
+                Hyperrectangle(np.array([[0.85, 0.85 + width], [0.3, 0.7]])),
+                Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]])),
             ]
         )
-        result = project_to_navigable_or_defer(particles.copy(), domain)
-        assert not np.allclose(result[0], particles[0])
-        assert domain.contains(result[0:1]).all()
-        np.testing.assert_array_equal(result[1], particles[1])
-        np.testing.assert_array_equal(result[2], particles[2])
+        stepped = self._step(DifferenceDomain(Hyperrectangle(self._BOX), obstacles), [[0.80, 0.5]], [[0.98, 0.5]])
+        np.testing.assert_allclose(stepped.positions, [[0.72, 0.5]], rtol=0, atol=1e-12)
 
-    def test_none_implicit_domain_passthrough(self):
-        """No implicit_domain → no-op."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+    @pytest.mark.parametrize("gap", [3e-5, 1e-5, 5e-6, 3.5e-7, 1e-9])
+    def test_the_face_where_an_obstacle_meets_the_wall_reflects_in_the_obstacles_own_normal(self, gap):
+        """#2706: a particle on the obstacle's top face, ``gap`` from the wall x = 1, steps straight down into it. The
+        normal at the contact is the obstacle's own, -e_y, from its leaf's form (`ImplicitDomain.first_contact`), so it is
+        reflected up, meets the top wall and lands at (1 - gap, 0.96) at every gap. The domain's gradient normal blended
+        the wall's within 1e-6: at gap 3.5e-7 that raised, and at 1e-9 it placed the particle on the far side."""
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
 
-        particles = np.array([[10.0, 10.0]])
-        result = project_to_navigable_or_defer(particles.copy(), None)
-        np.testing.assert_array_equal(result, particles)
+        domain = DifferenceDomain(Hyperrectangle(self._BOX), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]])))
+        x = 1.0 - gap
+        stepped = self._step(domain, [[x, 0.8 + 1e-10]], [[x, 0.56]])
+        np.testing.assert_allclose(stepped.positions, [[x, 0.96]], rtol=0, atol=1e-12)
+        assert stepped.counts["reflections"] == 2, stepped.counts
 
 
 class TestFPParticlePreserveIndices:

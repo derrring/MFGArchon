@@ -1,0 +1,6 @@
+- **The particle obstacle placement that `reflect_at_first_contacts` replaces is removed** (#2733 PR 2):
+  - `fp_particle_bc.project_to_navigable_or_defer` and `fp_particle_bc.reflection_waypoints`;
+  - `ImplicitDomain.crossing_normal` and its overrides on `UnionDomain`, `IntersectionDomain` and `ComplementDomain`;
+  - the `previous`, `report` and `via` parameters of `ImplicitDomain.project_to_interior`.
+    - A point its projection does not place is refused, naming it, as it was without `previous`.
+    - A particle step is placed by its first contact instead.

@@ -599,6 +599,14 @@ class BoundaryConditions:
             or seg.normal_direction is not None
         ]
 
+    def segments_answered_off_box_faces(self) -> list[BCSegment]:
+        """The segments this owner can answer at a point on no face of its box: all but those placed on one face by name,
+        ``boundary`` set and not ``"all"``. `BCSegment.matches_point` returns False for those when no face is passed, and
+        a point on no face of the box lies on none, so they are answered on the box alone. A ``region``, an
+        ``sdf_region``, a ``normal_direction`` or a ``region_name`` with no such ``boundary``, ``boundary="all"`` and no
+        placement at all can each be answered off it (#2733)."""
+        return [seg for seg in self.segments if seg.boundary is None or seg.boundary == "all"]
+
     def segments_placed_off_face_labels(self) -> list[BCSegment]:
         """The segments a reader that integrates over whole box faces cannot place where it can matter to a DIRICHLET
         condition (#2490, #2717): those placed by ``region``, by ``sdf_region``, or by a ``region_name`` that the bound
@@ -930,6 +938,13 @@ class BoundaryConditions:
     def face_cell_centres(
         self, box: np.ndarray, geometry: Any = None, tolerance: float = SDF_BOUNDARY_TOL
     ) -> tuple[list[np.ndarray], int | None]:
+        """The centres of :meth:`face_cells`'s cells, and its ``n``."""
+        cells, n = self.face_cells(box, geometry, tolerance)
+        return [cell[3] for cell in cells], n
+
+    def face_cells(
+        self, box: np.ndarray, geometry: Any = None, tolerance: float = SDF_BOUNDARY_TOL
+    ) -> tuple[list[tuple[int, int, np.ndarray, np.ndarray]], int | None]:
         """For a reader that reads the faces of ``box`` as a continuum (a particle crosses anywhere on them), one point
         in each cell of each face where every placement reads one answer: the cell's centre (#2490 B1e-2).
 
@@ -947,8 +962,9 @@ class BoundaryConditions:
         An ``sdf_region``, and a ``normal_direction`` read from ``domain_sdf``, have no such cuts. Where one is present,
         each face is also cut into a lattice of at most `FACE_LATTICE_CELLS` cells, ``n`` equal parts along each of its
         axes (``n`` is 1, no lattice, from a 12-dimensional box on), and the reading can then miss a set such a segment
-        holds only where that set contains no box of side ``1/n`` of the face's extent. Returns the centres, and ``n``,
-        or None where no lattice was needed."""
+        holds only where that set contains no box of side ``1/n`` of the face's extent. Returns each cell as (axis,
+        side, its bounds along the face's own axes, shape (d - 1, 2), its centre), and ``n``, or None where no lattice was
+        needed."""
         box = np.asarray(box, dtype=float)
         geometry = self._query_geometry(geometry)
         dimension = box.shape[0]
@@ -1006,12 +1022,13 @@ class BoundaryConditions:
                     if len(kept) > 1:
                         kept[-1] = high
                     cuts = np.asarray(kept)
-                    along.append((cuts[1:] + cuts[:-1]) / 2.0)
-                for tangent in itertools.product(*along):
+                    along.append(list(itertools.pairwise(cuts)))
+                for spans in itertools.product(*along):
+                    bounds = np.asarray(spans, dtype=float).reshape(dimension - 1, 2)
                     point = np.empty(dimension)
                     point[axis] = box[axis, side]
-                    point[[t for t in range(dimension) if t != axis]] = tangent
-                    centres.append(point)
+                    point[[t for t in range(dimension) if t != axis]] = bounds.mean(axis=1)
+                    centres.append((axis, side, bounds, point))
         return centres, n
 
     def _width_on_face(self, segment: BCSegment, face: BoundaryFace, box: np.ndarray, tolerance: float) -> float | None:
@@ -2663,6 +2680,16 @@ def _multi_face_nodes(shape: tuple[int, ...]):
                 faces = tuple(BoundaryFace(d, fixed[d]) for d in axes)
                 for node in itertools.product(*ranges):
                     yield tuple(int(i) for i in node), faces
+
+
+def describe_placement(segment: BCSegment) -> str:
+    """How ``segment`` is placed, for a refusal: the fields that place it, else that it places itself everywhere."""
+    fields = [
+        key for key in ("region", "sdf_region", "normal_direction", "region_name") if getattr(segment, key) is not None
+    ]
+    if segment.boundary is not None:
+        fields.insert(0, f"boundary={segment.boundary!r}")
+    return "placed by " + ", ".join(fields) if fields else "with no placement: every boundary point"
 
 
 def _placement_mask_on_grid(segment: BCSegment, geometry: Any) -> np.ndarray | None:

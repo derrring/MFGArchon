@@ -21,7 +21,7 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from itertools import combinations, pairwise
+from itertools import pairwise
 from typing import Literal
 
 import numpy as np
@@ -581,14 +581,7 @@ class ImplicitDomain(
         # Delegate to existing implementation
         return self.signed_distance(points)
 
-    def project_to_interior(
-        self,
-        points: NDArray[np.float64],
-        tolerance: float = 1e-10,
-        previous: NDArray[np.float64] | None = None,
-        report: dict[str, int] | None = None,
-        via: NDArray[np.float64] | None = None,
-    ) -> NDArray[np.float64]:
+    def project_to_interior(self, points: NDArray[np.float64], tolerance: float = 1e-10) -> NDArray[np.float64]:
         """
         Project points from outside domain into interior.
 
@@ -601,41 +594,20 @@ class ImplicitDomain(
 
         The projection does not place a point where phi is not the true distance to the domain: a point
         trapped against the outer box where an obstacle crosses or is flush with it, and a point inside a
-        union, overlapping obstacles or an approximate SDF (#2689). Such a point needs where it came from
-        (#2688):
-
-        - With ``previous`` (the point's position before the step that took it out), the first phi = 0
-          crossing on the step's path names the face it crossed, and the point is projected onto that face's
-          tangent plane, then moved inward by ``tolerance``. The path is the segment from ``previous``, or,
-          with ``via``, the polyline through those waypoints -- a reflected step's wall hits, so that the face
-          is one the step actually met (#2706, review 1). The crossing is found by a scan of 32 steps per leg
-          and bisection on the sign of phi alone, so a leg whose path inside a feature is shorter than a scan step,
-          1/32 of the leg, can step over it and name a later face: a thin feature, or a corner the leg clips
-          (#2733). On a flat face this
-          is the projected-Euler (Skorokhod) map: it keeps the step's displacement along the face. On a curved
-          face, at an edge or a seam it is a local approximation, repeated from the new segment while the result
-          is still outside, up to 8 faces, each time projecting onto the intersection of the faces met. A point
-          still outside after 8 faces raises, naming it and the faces.
-        - Without ``previous`` such a point is refused: nothing here can place it nearest, and the walk toward
-          the bounding-box centre that used to place it crossed the obstacle (#2688).
+        union, overlapping obstacles or an approximate SDF (#2689). Such a point is refused, naming it: nothing
+        here can place it nearest, and the walk toward the bounding-box centre that used to place it crossed the
+        obstacle (#2688). A particle step is not placed here: the particle solver ends each step at its first contact
+        with the boundary (`reflect_at_first_contacts`, #2733).
 
         Args:
             points: Points to project, shape (num_points, dimension) or (dimension,)
             tolerance: Distance to move inside boundary (for numerical stability)
-            previous: The points' positions before the step, same shape as ``points``, each inside the domain.
-                Read only for the points the projection does not place.
-            report: Optional counter, updated in place: ``"projected"`` (placed by the projection) and
-                ``"face_of_entry"`` (by the face map).
-            via: Optional waypoints between ``previous`` and each point, shape (num_points, k, dimension), rows of
-                NaN unused: the step's actual path when it is not straight. Read only with ``previous``.
 
         Returns:
             Projected points in interior, same shape as input
 
         Raises:
-            RuntimeError: a point the projection does not place, with no ``previous`` given; or one that 8
-                faces do not place.
-            ValueError: a ``previous`` position, for such a point, that is not inside the domain.
+            RuntimeError: a point the projection does not place.
 
         Example:
             >>> sphere = Hypersphere(center=[0, 0], radius=1.0)
@@ -649,8 +621,6 @@ class ImplicitDomain(
         is_single = points.ndim == 1
         if is_single:
             points = points.reshape(1, -1)
-            if previous is not None:
-                previous = np.asarray(previous, dtype=float).reshape(1, -1)
 
         outside = np.atleast_1d(self.signed_distance(points)) > 0
 
@@ -674,140 +644,16 @@ class ImplicitDomain(
 
         if missed.any():
             at = np.where(outside)[0][missed]
-            if previous is None:
-                raise RuntimeError(
-                    f"project_to_interior: {at.size} point(s), the first {points[at[0]]}, are not placed by the "
-                    f"projection onto the boundary: the domain's phi is not the true distance there (a point trapped "
-                    f"against the outer box where an obstacle meets it, inside a union or overlapping obstacles, or "
-                    f"an approximate SDF), and no previous position was given. Pass "
-                    f"project_to_interior(points, previous=...) -- each point's position before the step -- and the "
-                    f"point is placed on the face that step crossed (#2688)."
-                )
-            prev = np.asarray(previous, dtype=float)[at]
-            if np.any(np.atleast_1d(self.signed_distance(prev)) > 0):
-                bad = prev[np.atleast_1d(self.signed_distance(prev)) > 0][0]
-                raise ValueError(
-                    f"project_to_interior: previous position {bad} is not inside the domain, so the step from it "
-                    f"names no face it crossed (#2688)."
-                )
-            waypoints = (
-                None if via is None else np.asarray(via, dtype=float).reshape(len(points), -1, points.shape[1])[at]
+            raise RuntimeError(
+                f"project_to_interior: {at.size} point(s), the first {points[at[0]]}, are not placed by the "
+                f"projection onto the boundary: the domain's phi is not the true distance there (a point trapped "
+                f"against the outer box where an obstacle meets it, inside a union or overlapping obstacles, or "
+                f"an approximate SDF), so no nearest interior point is known (#2688, #2689). A particle step is "
+                f"placed by its first contact with the boundary instead (`reflect_at_first_contacts`, #2733)."
             )
-            moved[missed] = self._place_by_face_of_entry(prev, points[at], tolerance, via=waypoints)
-        if report is not None:
-            report["projected"] = report.get("projected", 0) + int(outside.sum() - missed.sum())
-            report["face_of_entry"] = report.get("face_of_entry", 0) + int(missed.sum())
         points_interior[outside] = moved
 
         return points_interior[0] if is_single else points_interior
-
-    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
-        """The outward unit normal of this domain's boundary where it is crossed between ``inside`` (phi <= 0) and
-        ``outside`` (phi > 0), two points bracketing the crossing closely.
-
-        Here, with no components to choose among, it is the gradient normal at ``outside``
-        (:meth:`get_outward_normal`). That is a central difference of step 1e-6 on phi (`get_boundary_normal`'s
-        ``eps``), so within that distance of
-        another surface of the boundary -- a corner, an obstacle meeting a wall -- it blends the two surfaces'
-        normals (#2698). A CSG domain overrides this: it decides which component's surface is crossed by which
-        component's own phi changes sign between the two points, and gives that component's normal, so no
-        difference straddles another surface (#2706).
-        """
-        return np.atleast_2d(self.get_outward_normal(np.asarray(outside, dtype=float)[None, :]))[0]
-
-    def _leg_crossing(
-        self, a: NDArray[np.float64], b: NDArray[np.float64], n_scan: int = 32, n_bisect: int = 60
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
-        """On the leg from ``a`` (taken as inside) to ``b``: the last inside and the first outside point bracketing
-        its first phi = 0 crossing, or None when no scan point beyond ``a`` is outside. A scan of ``n_scan`` steps
-        and ``n_bisect`` bisections on the sign of phi; a leg whose path inside a feature is shorter than a scan step
-        -- a thin feature, or a corner the leg clips -- can pass it over, and the crossing found is then a later one
-        (#2733). One more sample sits 1e-9 of the leg before ``b``: a leg that
-        ends ON an obstacle's face -- a reflected step's wall hit where the obstacle is flush with the wall -- has
-        phi = 0 there, which reads inside, and its excursion into the obstacle just before the end can be shorter
-        than a scan step (#2706)."""
-        s = np.concatenate([np.linspace(0.0, 1.0, n_scan + 1)[:-1], [1.0 - 1e-9, 1.0]])
-        out = np.atleast_1d(self.signed_distance(a[None, :] + s[:, None] * (b - a)[None, :])) > 0
-        out[0] = False
-        if not out.any():
-            return None
-        first = int(np.argmax(out))
-        lo, hi = float(s[first - 1]), float(s[first])
-        for _ in range(n_bisect):
-            mid = 0.5 * (lo + hi)
-            if float(np.atleast_1d(self.signed_distance((a + mid * (b - a))[None, :]))[0]) > 0:
-                hi = mid
-            else:
-                lo = mid
-        return a + lo * (b - a), a + hi * (b - a)
-
-    def _place_by_face_of_entry(
-        self,
-        previous: NDArray[np.float64],
-        points: NDArray[np.float64],
-        tolerance: float,
-        max_faces: int = 8,
-        via: NDArray[np.float64] | None = None,
-    ) -> NDArray[np.float64]:
-        """Place each outside point by the faces its step crosses (#2688); see `project_to_interior`.
-
-        The first crossing on the step's path -- the segment from the previous position, or the polyline through
-        ``via`` -- names a face, kept as the half-space on the
-        domain's side of its tangent plane, and the point is projected onto the intersection of the faces kept so
-        far, `tolerance` inside each. Where that is still outside, the segment from the last inside point to it
-        crosses one more face, and the original point is projected again onto the larger intersection. One face is
-        the flat-face projection; two at a seam or an edge are the projection onto the wedge they bound -- repeated
-        projections onto one face at a time converge only geometrically there. Raises, naming the point and the
-        faces, where ``max_faces`` faces do not place it, or where `_project_onto_half_spaces` finds no nearest
-        point of their intersection (#2688)."""
-        placed = np.empty_like(points)
-        for i in range(points.shape[0]):
-            target = points[i]
-            legs = [previous[i]]
-            if via is not None:
-                legs.extend(v for v in via[i] if np.all(np.isfinite(v)))
-            legs.append(target)
-            crossing = next(
-                (c for a, b in pairwise(legs) if (c := self._leg_crossing(a, b)) is not None),
-                None,
-            )
-            centres, normals = [], []
-            candidate, why = None, ""
-            for _ in range(max_faces):
-                if crossing is None:
-                    candidate = None
-                    why = (
-                        "no crossing of the domain's boundary was found where one was sought: on its path, or on the "
-                        "segment from the last inside point to the point projected onto the faces met"
-                    )
-                    break
-                inside, crossed = crossing
-                centres.append(crossed)
-                normals.append(self.crossing_normal(inside, crossed))
-                candidate = _project_onto_half_spaces(target, np.array(centres), np.array(normals), tolerance)
-                if candidate is None:
-                    why = (
-                        "no nearest point of their intersection was found. That is the active-set solve's limit "
-                        "(`_project_onto_half_spaces`): faces so nearly parallel that the Gram matrix of the set "
-                        "holding the nearest point is too close to singular -- two faces facing apart at half-angle "
-                        "1e-7 or less, with the placement's gap 1e-10"
-                    )
-                    break
-                if float(np.atleast_1d(self.signed_distance(candidate[None, :]))[0]) <= 0:
-                    placed[i] = candidate
-                    break
-                crossing = self._leg_crossing(inside, candidate)
-            else:
-                candidate = None
-                why = f"projected onto the intersection of these {max_faces} faces it is still outside the domain"
-            if candidate is None:
-                faces = "; ".join(f"at {c} with outward normal {n}" for c, n in zip(centres, normals, strict=True))
-                raise RuntimeError(
-                    f"project_to_interior: the point {target}, whose step began at {previous[i]}, is not placed by "
-                    f"the {len(centres)} face(s) its step met ({faces}): {why}. The face-of-entry placement does "
-                    f"not cover this geometry (#2688); report it with the domain."
-                )
-        return placed
 
     def segment_intervals(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> SegmentIntervals:
         """The parts of each segment a -> b inside this domain, exactly, with the surfaces that bound them (#2733 D1).
@@ -874,6 +720,78 @@ class ImplicitDomain(
         return FirstContact(
             t=t, point=point, leaf=leaf, leaf_face=face, normal=normal, inside_at_start=inside, leaves=found.leaves
         )
+
+    def face_trace(
+        self,
+        axis: int,
+        side: int,
+        box: NDArray[np.float64],
+        s: float,
+        cell: NDArray[np.float64] | None = None,
+    ) -> float:
+        """The longest piece of this domain's trace on a face of ``box`` within ``cell``, read on the face moved inward
+        by ``s`` (#2733 PR 2): what a particle crossing the box there can cross.
+
+        ``axis`` and ``side`` (0 for the min face, 1 for the max) name the face. ``cell`` bounds the face's own axes, shape
+        (d - 1, 2); the whole face by default. The trace is read where the domain lies on the box's inner side, so a
+        corridor a flush obstacle leaves, which the closed set keeps, has none.
+
+        - **1-D:** a face is a point. Returns ``inf`` where the point moved inward by ``s`` lies in the domain, else 0.
+          This is exact: near a face the domain is an interval or an isolated point.
+        - **2-D:** a face is a segment. Returns the longest interval of the domain on the face's line moved inward by
+          ``s``, exactly, from `segment_intervals`.
+        - **d >= 3:** each of the face's axes but the last is cut at every leaf's extent on the moved plane (a box's
+          bounds; a ball's cross-section, ``c +- rho``), and each slab of those cuts is read along the line through its
+          midpoint, down to one axis. Within a slab every leaf's cross-section is empty or not throughout, but the
+          trace's can still vary, so this is a midpoint-line rule, not exact: it misses a trace of positive area its
+          midpoint line does not meet, and it reads a line lying on a trace of zero area.
+
+        Where a ball is tangent to the face with the domain inside it, the moved line meets it in a chord of length
+        ``2 sqrt(2 r s - s^2)``, which vanishes with ``s``: a reader that counts only pieces longer than a length it
+        states keeps the tangency out for every radius below a bound it can state."""
+        box = np.asarray(box, dtype=float).reshape(self.dimension, 2)
+        inward = 1.0 if side == 0 else -1.0
+        plane = float(box[axis, side]) + inward * s
+        if self.dimension == 1:
+            return float("inf") if bool(np.atleast_1d(self.contains(np.array([[plane]])))[0]) else 0.0
+        tangential = [t for t in range(self.dimension) if t != axis]
+        bounds = box[tangential] if cell is None else np.asarray(cell, dtype=float).reshape(len(tangential), 2)
+        return self._trace_longest({axis: plane}, tangential, dict(zip(tangential, bounds, strict=True)))
+
+    def _trace_longest(self, fixed: dict[int, float], free: list[int], ranges: dict[int, NDArray[np.float64]]) -> float:
+        """`face_trace`'s recursion: the longest trace piece along the last free axis, over the slabs of the others."""
+        if len(free) == 1:
+            u = free[0]
+            a = np.empty(self.dimension)
+            for k, value in fixed.items():
+                a[k] = value
+            b = a.copy()
+            a[u], b[u] = ranges[u]
+            found = self.segment_intervals(a[None, :], b[None, :]).t[0]
+            lengths = (found[:, 1] - found[:, 0]) * (b[u] - a[u])
+            lengths = lengths[np.isfinite(lengths)]
+            return float(lengths.max()) if lengths.size else 0.0
+        from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+        from mfgarchon.geometry.implicit.hypersphere import Hypersphere
+
+        u, low, high = free[0], *ranges[free[0]]
+        cuts = [low, high]
+        for leaf in self._leaves():
+            if isinstance(leaf, Hyperrectangle):
+                cuts += list(np.asarray(leaf.bounds, dtype=float)[u])
+            elif isinstance(leaf, Hypersphere):
+                centre = np.asarray(leaf.center, dtype=float)
+                rho2 = float(leaf.radius) ** 2 - sum((value - centre[k]) ** 2 for k, value in fixed.items())
+                if rho2 > 0:
+                    cuts += [centre[u] - np.sqrt(rho2), centre[u] + np.sqrt(rho2)]
+        edges = np.unique([c for c in cuts if low <= c <= high])
+        longest = 0.0
+        for left, right in pairwise(edges):
+            if right > left:
+                inner = dict(fixed)
+                inner[u] = 0.5 * (left + right)
+                longest = max(longest, self._trace_longest(inner, free[1:], ranges))
+        return longest
 
     def _segment_ends(
         self, a: NDArray[np.float64], b: NDArray[np.float64]
@@ -1440,40 +1358,3 @@ def _combine_line_sets(
         [np.take_along_axis(tag, first_opens, axis=1), np.take_along_axis(tag, first_closes, axis=1)], -1
     )
     return np.where(real[..., None], out_t, np.nan), np.where(real[..., None], out_tag, _NO_SURFACE)
-
-
-def _project_onto_half_spaces(
-    point: NDArray[np.float64], centres: NDArray[np.float64], normals: NDArray[np.float64], tolerance: float
-) -> NDArray[np.float64] | None:
-    """The nearest point to ``point`` in the intersection of the half-spaces ``(x - c_k) . n_k <= -tolerance``.
-
-    Each half-space is a face's domain side, ``n_k`` its outward unit normal. The minimiser has at most ``d``
-    active faces with independent normals, so it is found by trying every such set -- at most 92 for 8 faces in
-    3-D -- and keeping the nearest candidate that satisfies all of them. Feasibility is judged with a slack
-    relative to the problem's scale (#2706, review 1). None where no active set yields a feasible candidate: the
-    intersection is empty, or the faces are so nearly parallel that the active set holding the nearest point has a
-    Gram matrix too close to singular to solve. Two faces through one point, facing apart at half-angle 1e-7 or
-    less, with ``tolerance`` 1e-10, are one: their intersection is a sliver whose apex lies ``tolerance / sin`` of the
-    half-angle from that point, 0.1 at 1e-9 (#2706, review 2)."""
-    d = point.shape[0]
-    offsets = np.einsum("kd,kd->k", centres, normals) - tolerance
-    slack = 64.0 * np.finfo(float).eps * max(1.0, float(np.abs(offsets).max()), float(np.abs(point).max()))
-    if np.all(normals @ point <= offsets + slack):
-        return point.copy()
-    best, best_dist = None, np.inf
-    k = len(normals)
-    for size in range(1, min(d, k) + 1):
-        for active in combinations(range(k), size):
-            n_act = normals[list(active)]
-            gram = n_act @ n_act.T
-            if abs(np.linalg.det(gram)) < 1e-14:
-                continue
-            lam = np.linalg.solve(gram, n_act @ point - offsets[list(active)])
-            if np.any(lam < 0):
-                continue
-            candidate = point - n_act.T @ lam
-            if np.all(normals @ candidate <= offsets + slack):
-                dist = float(np.linalg.norm(candidate - point))
-                if dist < best_dist:
-                    best, best_dist = candidate, dist
-    return best

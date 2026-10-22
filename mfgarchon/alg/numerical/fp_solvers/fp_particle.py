@@ -39,11 +39,11 @@ from mfgarchon.utils.pde_coefficients import (
 )
 
 from .base_fp import BaseFPSolver, DriftConvention
+from .fp_particle_bc import MAX_REFLECTIONS
 from .fp_particle_bc import apply_boundary_conditions as _apply_bc
 from .fp_particle_bc import get_topology_per_dimension as _get_topology
 from .fp_particle_bc import needs_segment_aware_bc as _needs_segment_bc
-from .fp_particle_bc import project_to_navigable_or_defer as _project_to_navigable
-from .fp_particle_bc import reflection_waypoints as _reflection_waypoints
+from .fp_particle_bc import reflect_at_first_contacts as _reflect_at_first_contacts
 from .fp_particle_density import generate_brownian_increment as _gen_brownian
 from .particle_result import FPParticleResult
 
@@ -290,16 +290,17 @@ class FPParticleSolver(BaseFPSolver):
         self.exit_flux_history: list[int] = []  # Number absorbed per timestep
         self.exit_positions_history: list[np.ndarray] = []  # Where particles exited
         self.total_absorbed: int = 0  # Cumulative absorbed count
-        # Per step, how the obstacle placement placed the particles that ended inside an obstacle (#2688)
+        # Per step, the contact loop's counts (#2733): particles searched, contacts, reflections, corridors, offsets,
+        # fallbacks and absorptions (`reflect_at_first_contacts`)
         self.obstacle_placement_history: list[dict[str, int]] = []
 
         # The domain every step's particles must end in (#533, #2708): the problem's geometry when it is an
-        # ImplicitDomain, else the implicit_domain= keyword (`_obstacle_domain`). When set, each step ends in
-        # `_finish_step`: the outer boundary condition, then the survivors outside the domain are placed by
-        # ImplicitDomain.project_to_interior with their positions before the step (#2679, #2688). The initial
-        # particles are drawn navigable, and what cannot be placed -- a periodic outer boundary, the GPU path, initial
-        # mass inside an obstacle -- is refused.
+        # ImplicitDomain, else the implicit_domain= keyword (`_obstacle_domain`). Each step ends in `_finish_step` at its
+        # first contacts with the particles' boundary, the domain's and the box's together (#2733). The initial
+        # particles are drawn navigable, and what the loop cannot do -- a periodic outer boundary, the GPU path, initial
+        # mass inside an obstacle, an absorbing condition placed off the box -- is refused.
         self._implicit_domain = self._obstacle_domain(implicit_domain)
+        self._box_domain: tuple[bytes, ImplicitDomain] | None = None  # `_particle_domain`'s box, built once per box
 
         # Issue #1119: preserve_indices flag for particle ID tracking
         # When True, absorbed particles are NaN-marked instead of compact-removed, so every slice of
@@ -340,10 +341,61 @@ class FPParticleSolver(BaseFPSolver):
         # no segment's condition is dropped there.
         from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
+        # The off-box refusal first: it names the remedy and #2789, where B1e-2's check would refuse the same exit for
+        # crossing no cell of the box.
+        self._refuse_absorbing_off_the_box()
         if isinstance(self.boundary_conditions, BoundaryConditions) and self._needs_segment_aware_bc():
             self._applicator.refuse_segments_it_would_drop(
-                self.boundary_conditions, self._get_grid_params()["bounds"], reader=type(self).__name__
+                self.boundary_conditions,
+                self._get_grid_params()["bounds"],
+                reader=type(self).__name__,
+                domain=self._implicit_domain,
             )
+
+    def _refuse_absorbing_off_the_box(self) -> None:
+        """Refuse, at construction, an absorbing condition whose placement reaches the particles' boundary off the box
+        (#2733 PR 2, ruled 2026-10-22). The contact loop reads the boundary owner at a contact on the box's boundary
+        and reflects at every other contact (D2's box rule), so an exit the owner would place on a disc's arc or an
+        obstacle's surface would be admitted and reflected there: read only where the arc touches the box, so whether
+        the BC absorbs would depend on where the drift aims.
+
+        The owner never answers off the box a segment placed on one box face by name, ``boundary`` set and not
+        ``"all"``: `BCSegment.matches_point` returns False with no face, and a point off the box lies on none. Every other
+        placement can be answered there -- ``region``, ``sdf_region``, ``normal_direction``, ``region_name``,
+        ``boundary="all"``, none at all, and ``default_bc`` -- so an absorbing one is refused, erring toward refusal:
+        one placed on box faces only by other means is refused too. Reading the owner off the box is #2789."""
+        from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type, segment_particle_action
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions, describe_placement
+
+        bc = self.boundary_conditions
+        if self._implicit_domain is None or not isinstance(bc, BoundaryConditions):
+            return
+        where = f"{type(self).__name__}'s off-box check"
+        offending = [
+            segment
+            for segment in bc.segments_answered_off_box_faces()
+            if segment_particle_action(segment, where) == "absorbing"
+        ]
+        default_absorbs = (
+            bc.default_bc is not None
+            and bc.default_bc != BCType.ROBIN
+            and particle_action_for_bc_type(bc.default_bc) == "absorbing"
+        )
+        if not offending and not default_absorbs:
+            return
+        named = [f"{segment.name!r} ({segment.bc_type.name}, {describe_placement(segment)})" for segment in offending]
+        if default_absorbs:
+            named.append(f"default_bc={bc.default_bc.name}")
+        raise ValueError(
+            f"{type(self).__name__}: an absorbing condition is placed where it reaches the particles' boundary off the "
+            f"grid's box -- {'; '.join(named)} -- and the particles' domain ({type(self._implicit_domain).__name__}) has "
+            "boundary there, an obstacle's surface or a curved outer boundary. Particles reflect at every contact off "
+            "the box and read the boundary condition only on the box, so such an exit would be read only where the "
+            "domain touches the box (#2733). A dirichlet_bc(...) or default_bc=DIRICHLET beside an obstacle is this "
+            'case: give one exit per box face with boundary= (for example BCSegment(name="exit", '
+            'bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max")) and a reflecting default_bc '
+            "(default_bc=BCType.NO_FLUX). Absorbing on an obstacle's surface or a curved boundary is #2789."
+        )
 
     @staticmethod
     def _refuse_inhomogeneous_dirichlet(bc: Any) -> None:
@@ -957,8 +1009,9 @@ class FPParticleSolver(BaseFPSolver):
             # 2**32 - 1, not 2**63: sample_from_density builds a legacy np.random.RandomState,
             # which refuses anything larger. A 2**63 draw raised for all but 2**-31 of seeds.
             seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
-            # t = 0 of #2688: a jitter that lands in an obstacle is redrawn within its cell.
-            navigable=None if self._implicit_domain is None else self._implicit_domain.contains,
+            # t = 0 of #2688: a jitter that lands outside the particles' domain, the box included, is redrawn within
+            # its cell (#2733: the contact loop starts every step inside it).
+            navigable=self._particle_domain().contains,
         )
 
     def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:
@@ -971,7 +1024,7 @@ class FPParticleSolver(BaseFPSolver):
         """
         from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
 
-        inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(x_grid.reshape(-1, 1)), dtype=bool))
+        inside = ~np.atleast_1d(np.asarray(self._particle_domain().contains(x_grid.reshape(-1, 1)), dtype=bool))
         blocked = (probs > 0) & inside
         if not blocked.any():
             return probs
@@ -996,10 +1049,8 @@ class FPParticleSolver(BaseFPSolver):
         starts inside the domain only if the first does. `sample_from_density(navigable=)` redraws a jitter that
         lands in an obstacle. What reaches here has no jitter to redraw: a grid node, a uniform fallback, or the
         caller's own particles."""
-        if self._implicit_domain is None:
-            return
         points = np.asarray(particles, dtype=float).reshape(len(particles), -1)
-        inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(points), dtype=bool))
+        inside = ~np.atleast_1d(np.asarray(self._particle_domain().contains(points), dtype=bool))
         if np.any(inside):
             raise ValueError(
                 f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are outside the particles' "
@@ -1075,44 +1126,6 @@ class FPParticleSolver(BaseFPSolver):
         """
         return _get_topology(self.boundary_conditions, dimension, self.problem.geometry)
 
-    def _project_obstacle_violations(
-        self, particles: np.ndarray, previous: np.ndarray, via: np.ndarray | None = None
-    ) -> np.ndarray:
-        """
-        Place the particles that ended a step outside the domain (#533, #2688), after the outer boundary
-        condition has run (`_finish_step`).
-
-        ``previous`` is each particle's position before the step, inside the domain by induction from t = 0.
-        `ImplicitDomain.project_to_interior` reads it only where its projection does not place a particle; there
-        the face the step crossed decides. This step's counts go to ``obstacle_placement_history``.
-
-        Parameters
-        ----------
-        particles : np.ndarray
-            Particle positions after the outer boundary condition, shape (num_particles, dimension)
-        previous : np.ndarray
-            The same particles' positions before the step, same shape
-
-        Returns
-        -------
-        particles : np.ndarray
-            Updated particle positions, every one inside the domain
-        """
-        if self._implicit_domain is None:
-            return particles
-        report: dict[str, int] = {}
-        placed = _project_to_navigable(particles, self._implicit_domain, previous=previous, report=report, via=via)
-        self.obstacle_placement_history.append(report)
-        inside = np.atleast_1d(self._implicit_domain.contains(placed))
-        if not np.all(inside):
-            raise RuntimeError(
-                f"FPParticleSolver: internal error -- {int((~inside).sum())} particle(s), the first "
-                f"{np.atleast_2d(placed)[~inside][0]}, are outside the domain after the outer boundary condition and "
-                f"the obstacle placement. Every recorded particle must be inside, so that the next step starts from "
-                f"inside (#2688)."
-            )
-        return placed
-
     def _finish_step(
         self,
         raw: np.ndarray,
@@ -1120,12 +1133,14 @@ class FPParticleSolver(BaseFPSolver):
         bounds: list[tuple[float, float]],
         use_segment_aware_bc: bool,
     ) -> tuple[np.ndarray, np.ndarray | None, int]:
-        """The one end of a particle step, for every forward path (#2688, #1561 part 2).
+        """The one end of a particle step, for every forward path (#2688, #2733).
 
-        The outer boundary condition runs on the raw step first -- absorption at Dirichlet segments, then
-        reflection or wrap (#1064) -- and the obstacle placement second, on the survivors, with their positions
-        before the step. The other order let a wall reflection put a particle back inside an obstacle that meets
-        the wall, where it was recorded.
+        A BC that declares no periodic face ends each step at its first contacts with the particles' boundary
+        (`reflect_at_first_contacts`): one search over the particles' domain -- the problem's ImplicitDomain or
+        implicit_domain= (`_obstacle_domain`), else the box -- reads the boundary owner at a contact on the box and
+        reflects at every other. The step's counts go to ``obstacle_placement_history``. A BC that declares a periodic
+        face keeps the wrap and fold of the outer boundary condition (#2704); no particle domain reaches it, since
+        `_refuse_what_the_obstacle_placement_cannot_do` refuses one at the start of the solve.
 
         Parameters
         ----------
@@ -1146,20 +1161,52 @@ class FPParticleSolver(BaseFPSolver):
             Which of the N were absorbed, or None when nothing can be
         n_absorbed : int
         """
-        if use_segment_aware_bc:
-            recorded, n_absorbed, _, absorbed_mask = self._apply_boundary_conditions_segment_aware(raw, bounds)
-            survivors_previous, survivors_raw = previous[~absorbed_mask], raw[~absorbed_mask]
-        else:
+        if declares_periodic(self.boundary_conditions):
+            if use_segment_aware_bc:
+                recorded, n_absorbed, _, absorbed_mask = self._apply_boundary_conditions_segment_aware(raw, bounds)
+                return recorded, absorbed_mask, n_absorbed
             topologies = self._get_topology_per_dimension(raw.shape[1])
-            recorded = self._apply_boundary_conditions_nd(raw, bounds, topologies)
-            absorbed_mask, n_absorbed = None, 0
-            survivors_previous, survivors_raw = previous, raw
-        # A survivor whose raw step left the box was reflected: its path is broken at the wall, and the face it met
-        # is on that path, not on the chord to where it was reflected (#2706, review 1).
-        via = (
-            None if self._implicit_domain is None else _reflection_waypoints(survivors_previous, survivors_raw, bounds)
+            return self._apply_boundary_conditions_nd(raw, bounds, topologies), None, 0
+        box = np.asarray(bounds, dtype=float).reshape(-1, 2)
+        domain = self._particle_domain(box)
+        stepped = _reflect_at_first_contacts(
+            np.asarray(previous, dtype=float).reshape(raw.shape),
+            np.asarray(raw, dtype=float),
+            domain,
+            box,
+            self.boundary_conditions,
+            reader=type(self).__name__,
         )
-        return self._project_obstacle_violations(recorded, survivors_previous, via), absorbed_mask, n_absorbed
+        self.obstacle_placement_history.append(stepped.counts)
+        absorbed = stepped.absorbed
+        n_absorbed = int(absorbed.sum())
+        if n_absorbed > 0:
+            self.exit_flux_history.append(n_absorbed)
+            self.exit_positions_history.append(stepped.positions[absorbed])
+            self.total_absorbed += n_absorbed
+        if not use_segment_aware_bc and n_absorbed:
+            raise RuntimeError(
+                f"FPParticleSolver: internal error -- {n_absorbed} particle(s) absorbed under a BC routed as one that "
+                "absorbs nowhere (`needs_segment_aware_bc`), so preserve_indices and the exit counts would miss them."
+            )
+        recorded = stepped.positions if n_absorbed == 0 else stepped.positions[~absorbed]
+        return recorded, (absorbed if use_segment_aware_bc else None), n_absorbed
+
+    def _particle_domain(self, box: np.ndarray | None = None) -> ImplicitDomain:
+        """The domain every particle must be in, at every step and at t = 0: the problem's ImplicitDomain or
+        implicit_domain= (`_obstacle_domain`), else the box, ``box`` or the grid's (#2733). The contact loop searches
+        it, and the initial sampling and the caller's initial particles are held to it."""
+        if self._implicit_domain is not None:
+            return self._implicit_domain
+        from mfgarchon.geometry.implicit import Hyperrectangle
+
+        if box is None:
+            box = np.asarray(self._get_grid_params()["bounds"], dtype=float).reshape(-1, 2)
+        key = np.asarray(box, dtype=float).tobytes()
+        if self._box_domain is None or self._box_domain[0] != key:
+            # Built once per box, not once per step: the build is a quarter of a box-only query_only step.
+            self._box_domain = (key, Hyperrectangle(np.asarray(box, dtype=float)))
+        return self._box_domain[1]
 
     def _obstacle_domain(self, implicit_domain: ImplicitDomain | None) -> ImplicitDomain | None:
         """The one owner of the domain the particles must end in (#2708, #2679 stage 2c). Two channels declare it: the
@@ -1215,9 +1262,9 @@ class FPParticleSolver(BaseFPSolver):
             raise NotImplementedError(
                 "FPParticleSolver: a domain for the particles -- an ImplicitDomain geometry or implicit_domain= -- "
                 "with a periodic condition on the outer boundary (a periodic segment or default_bc) is not supported. "
-                "A particle that ends a step outside the domain is placed by the face its step crossed, and a "
-                "wrapped particle's step is not the straight segment from where it started (#2688). Placing it by "
-                "the wrapped image of its step is #2704."
+                "Each step ends at its first contacts with the particles' boundary along the straight segment from "
+                "where it started, and a wrapped particle's step is not that segment (#2733). Reflecting along the "
+                "wrapped image of its step is #2704."
             )
         # The BC and the placement must each land inside the other's reach: two inclusions, which equal boxes give.
         # (i) The BC's output is inside the grid's box, and the placement defers to the BC whatever lies outside the
@@ -1825,6 +1872,16 @@ class FPParticleSolver(BaseFPSolver):
             drift_needs_density=drift_needs_density,
             potential_field=potential_field,
         )
+        fallbacks = sum(counts.get("fallbacks", 0) for counts in self.obstacle_placement_history)
+        if fallbacks:
+            logger.warning(
+                "FPParticleSolver: %d particle step(s) in this solve returned to their start: reflected more than %d "
+                "times in one step, or still outside the domain after the offset (#2733 D5, D6). A wedge narrower "
+                "than the reflections allow, or a step much longer than the features it crosses, does this; a smaller "
+                "dt reduces it. Counts per step: obstacle_placement_history.",
+                fallbacks,
+                MAX_REFLECTIONS,
+            )
         return M
 
     def _solve_fp_system_unscaled(

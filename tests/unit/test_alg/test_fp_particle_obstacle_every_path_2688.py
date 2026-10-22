@@ -3,16 +3,16 @@
 Three CPU paths step particles -- the 1-D grid drift, the n-D grid drift, and the callable drift -- and each crossed
 with the outer boundary condition it can take, uniform or segment-aware (absorbing); each absorbing path again with
 `preserve_indices`, and the callable path with the caller's `initial_particles`, which only it takes. Each ends its
-step in `_finish_step`: the outer boundary condition on the raw step, then the obstacle placement for the survivors
-with their positions before the step. Before, the 1-D grid path never placed (1990 of 2000 particles inside the
-obstacle at the peak, i2688/prod/product_base.log) and the n-D paths placed BEFORE the wall reflection, which put
-particles back inside an obstacle that meets the wall (13438 particle-times). The GPU path, a periodic outer
-boundary and initial mass inside an obstacle are refused by name.
+step in `_finish_step` at the step's first contacts with the particles' boundary, the box and the obstacles in one
+search (`reflect_at_first_contacts`, #2733). Before #2688, the 1-D grid path never placed (1990 of 2000 particles
+inside the obstacle at the peak) and the n-D paths placed BEFORE the wall reflection, which put particles back inside
+an obstacle that meets the wall (13438 particle-times). The GPU path, a periodic outer boundary and initial mass inside
+an obstacle are refused by name.
 
-What reddens this file: any path whose step stops calling the placement, or calls it before the boundary condition
-(its cell); a path recording its `preserve_indices` slice before the placement (its `preserve_indices` cell); the
-placement indexing ``previous`` without the absorbed mask (the mask test); the initial sampler
-dropping ``navigable=`` (the cells' t = 0, whose jitter at the box's edge nodes leaves the domain).
+What reddens this file: any path whose step stops ending at the loop (its cell); a path recording its
+`preserve_indices` slice before the step ends (its `preserve_indices` cell); a reflection read off another particle's
+start, or off the chord rather than the path (the landing rows); the initial sampler dropping ``navigable=`` (the
+cells' t = 0, whose jitter at the box's edge nodes leaves the domain).
 """
 
 from __future__ import annotations
@@ -158,21 +158,22 @@ def test_no_step_path_records_a_particle_outside_the_domain(cell):
         )
 
 
-def test_the_placement_reads_each_survivors_own_previous_position():
-    """The boundary condition absorbs first, so the survivors are a subset; the placement must read each survivor's
-    own position before the step, through the absorbed mask. Particle 0 leaves at the absorbing wall; particle 1 ends
-    inside the obstacle having entered through its bottom face. Read without the mask, particle 1 would take particle
-    0's start -- left of the obstacle -- and land on the face x = 0.9 instead of y = 0.2."""
+def test_each_particle_ends_by_its_own_path_beside_an_absorbed_one():
+    """In one step particle 0 leaves at the absorbing wall above the obstacle, at (1, 0.9214), and particle 1 enters the
+    obstacle through its bottom face y = 0.2 at (0.96, 0.2) and is reflected there to (0.98, 0.1), each along its own
+    segment from its own start. Read from particle 0's start, (0.85, 0.9), particle 1's path would meet the obstacle's
+    left face x = 0.9 and land at (0.82, 0.3)."""
     problem, _ = _problem(2, _absorbing_at_x_max(2))
     solver = FPParticleSolver(
         problem, num_particles=2, implicit_domain=_DOMAIN[2], seed=0, boundary_conditions=_absorbing_at_x_max(2)
     )
-    previous = np.array([[0.85, 0.3], [0.95, 0.15]])
+    previous = np.array([[0.85, 0.9], [0.95, 0.15]])
     raw = np.array([[1.2, 0.95], [0.98, 0.3]])
     recorded, absorbed, n_absorbed = solver._finish_step(raw, previous, [(0.0, 1.0), (0.0, 1.0)], True)
     assert n_absorbed == 1, n_absorbed
     assert absorbed.tolist() == [True, False], absorbed
-    np.testing.assert_allclose(recorded, [[0.98, 0.2 - 1e-10]], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(recorded, [[0.98, 0.1]], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(solver.exit_positions_history[-1], [[1.0, 0.9 + 0.05 * 0.15 / 0.35]], rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize(
@@ -298,13 +299,13 @@ def test_a_step_that_absorbs_every_particle_records_none():
     assert n_absorbed == 2, n_absorbed
 
 
-def test_a_reflected_step_is_placed_by_the_face_its_path_met():
-    """#2706 review 1, M3: a reflected step's path is broken at the wall, and the face it met is on that path.
+def test_a_reflected_step_is_reflected_at_the_face_its_path_met():
+    """#2706 review 1, M3: a reflected step's path is broken at the wall, and the face it meets is on that path.
 
-    From (0.985, 0.95) the raw step to (1.015, 0.7) hits the wall at (1.0, 0.825) and its reflected leg enters O
-    through O's top face at (0.997, 0.8). The chord from the start to the reflected end, (0.985, 0.7), crosses the
-    small obstacle Q's top face instead, a face the particle never approached; placed by the chord it landed at
-    (0.985, 0.82). Placed by the path, it is projected onto O's top face: (0.985, 0.8 + 1e-10)."""
+    From (0.985, 0.95) the raw step to (1.015, 0.7) hits the wall at (1.0, 0.825), and its reflected leg meets O's top
+    face at (0.997, 0.8), where it is reflected again: it lands at (2 - 1.015, 2 * 0.8 - 0.7) = (0.985, 0.9). The chord
+    from the start to the wall's reflected end, (0.985, 0.7), crosses the small obstacle Q's top face instead, a face the
+    particle never approaches; the path passes Q by."""
     obstacles = UnionDomain(
         [Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]])), Hyperrectangle(np.array([[0.984, 0.99], [0.81, 0.82]]))]
     )
@@ -312,15 +313,14 @@ def test_a_reflected_step_is_placed_by_the_face_its_path_met():
     problem, _ = _problem(2, no_flux_bc(dimension=2))
     solver = FPParticleSolver(problem, num_particles=1, implicit_domain=domain, seed=0)
     recorded, _, _ = solver._finish_step(np.array([[1.015, 0.7]]), np.array([[0.985, 0.95]]), [(0.0, 1.0)] * 2, False)
-    np.testing.assert_allclose(recorded, [[0.985, 0.8 + 1e-10]], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(recorded, [[0.985, 0.9]], rtol=0, atol=1e-12)
+    assert solver.obstacle_placement_history[-1]["reflections"] == 2, solver.obstacle_placement_history[-1]
 
 
-def test_a_reflected_step_that_clips_a_flush_obstacles_corner_is_placed_on_its_top_face():
-    """#2706: the obstacle [0.9, 1.0] x [0.2, 0.8] is flush with the wall x = 1. This step's first leg clips the
-    obstacle's corner just before it hits the wall at (1.0, 0.79896), which lies ON the obstacle's face, phi = 0. That
-    excursion is shorter than a scan step, so it was missed, the second leg began on a face that coincides with the
-    wall, and the placement raised. Found by `i2688/m3/reflected_faces_code.py` on pop's flush rectangle. The face it
-    met is the top face, so it is placed at (2 - raw_x, 0.8 + 1e-10)."""
+def test_a_step_that_clips_a_flush_obstacles_corner_reflects_at_its_top_face_then_the_wall():
+    """#2706: the obstacle [0.9, 1.0] x [0.2, 0.8] is flush with the wall x = 1. This step meets the obstacle's top face
+    at (0.99918, 0.8) just before the wall, which a 32-point scan missed (#2710). Reflected there, it meets the wall at
+    (1, 0.80104) and is reflected again, so it lands at (2 - raw_x, 2 * 0.8 - raw_y), above the obstacle."""
     flush = DifferenceDomain(
         Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.0], [0.2, 0.8]]))
     )
@@ -330,18 +330,18 @@ def test_a_reflected_step_that_clips_a_flush_obstacles_corner_is_placed_on_its_t
     recorded, _, _ = solver._finish_step(
         raw, np.array([[0.9547534651728411, 0.8562972391037148]]), [(0.0, 1.0)] * 2, False
     )
-    np.testing.assert_allclose(recorded, [[2.0 - raw[0, 0], 0.8 + 1e-10]], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(recorded, [[2.0 - raw[0, 0], 1.6 - raw[0, 1]]], rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize("path", ["grid", "callable"])
-def test_every_placement_in_a_solve_reads_its_own_particles_start(path):
-    """#2706 review 1, S1: in a solve, each particle that ends a step in the obstacle is placed from its own start.
+def test_every_reflection_in_a_solve_reads_its_own_particles_start(path):
+    """#2706 review 1, S1: in a solve, each particle that meets the obstacle is reflected along its own step.
 
     The drift is linear, 8 * ((1, 0.5) - x), so each step's end is known from its start up to noise of order 1e-7,
-    and particles enter the crossing rectangle through its left, top and bottom faces. Each recorded position is
-    checked against the placement owner's answer from that particle's own start. A start read from another particle
-    names another face and moves the placement by O(0.1)."""
-    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+    and particles meet the crossing rectangle on its left, top and bottom faces. Each recorded position is checked
+    against the contact loop's answer from that particle's own start (`reflect_at_first_contacts`). A start read from
+    another particle meets another face and moves the landing by O(0.1)."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import reflect_at_first_contacts
 
     nt, rate, target = 5, 8.0, np.array([1.0, 0.5])
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[21, 21], boundary_conditions=no_flux_bc(dimension=2))
@@ -384,14 +384,14 @@ def test_every_placement_in_a_solve_reads_its_own_particles_start(path):
         )
     traj = [np.asarray(P, dtype=float).reshape(-1, 2) for P in solver.M_particles_trajectory]
     dt = problem.T / nt
-    report: dict[str, int] = {}
+    box = np.array([[0.0, 1.0], [0.0, 1.0]])
+    reflections = 0
     for t in range(len(traj) - 1):
         start = traj[t]
-        expected = project_to_navigable_or_defer(
-            start + rate * (target - start) * dt, _DOMAIN[2], previous=start, report=report
-        )
-        np.testing.assert_allclose(traj[t + 1], expected, rtol=0, atol=1e-4, err_msg=f"step {t}")
-    assert report.get("face_of_entry", 0) > _N, f"the face map must act for many particles here: {report}"
+        stepped = reflect_at_first_contacts(start, start + rate * (target - start) * dt, _DOMAIN[2], box, no_flux_bc(2))
+        np.testing.assert_allclose(traj[t + 1], stepped.positions, rtol=0, atol=1e-4, err_msg=f"step {t}")
+        reflections += stepped.counts["reflections"]
+    assert reflections > _N, f"the obstacle must reflect many particles here: {reflections}"
 
 
 def test_a_single_particle_steps_in_two_dimensions():
@@ -509,13 +509,11 @@ def test_the_gate_leaves_out_the_blocked_entries_and_renormalises_the_rest(route
     np.testing.assert_allclose(kept[unblocked] / kept[unblocked][0], probs[unblocked] / probs[unblocked][0], rtol=1e-15)
 
 
-def test_a_reflected_step_off_two_walls_is_placed_by_the_face_its_folded_path_met():
-    """#2706 review 2: a step that hits the wall x = 1 and then y = 1. From (0.55, 0.57) to raw (1.15, 1.01): it hits
-    x = 1 at (1, 0.90) and y = 1 at x = 1.13636, folded to 0.86364; it ends at the fold (0.85, 0.99), inside the
-    obstacle O = [0.70, 0.95] x [0.93, 1.02], which meets the top wall. O's nearest face to that end is beyond the
-    wall, so the face its path met places it. That is the second leg's: from (1, 0.90) toward (0.86364, 1) it enters
-    O through the right face x = 0.95, at y = 0.93667; placed at (0.95 + 1e-10, 0.99). The hits taken in the other
-    order, or the chord, enter through the bottom face (0.85, 0.93 - 1e-10); unfolded hits name the wall x = 1."""
+def test_a_step_off_two_walls_and_an_obstacle_meets_each_in_path_order():
+    """#2706 review 2: from (0.55, 0.57) to raw (1.15, 1.01), beside the obstacle O = [0.70, 0.95] x [0.93, 1.02], which
+    meets the top wall. In path order the step meets the wall x = 1 at (1, 0.9); O's right face x = 0.95 at
+    (0.95, 0.93667); the wall x = 1 again at (1, 0.97333); and the top wall y = 1 at (0.96364, 1). Each reflects it, and
+    it lands on O's right face at (0.95, 0.99). The fold of the raw end, (0.85, 0.99), lies inside O."""
     domain = DifferenceDomain(
         Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.70, 0.95], [0.93, 1.02]]))
     )
@@ -523,19 +521,5 @@ def test_a_reflected_step_off_two_walls_is_placed_by_the_face_its_folded_path_me
     solver = FPParticleSolver(problem, num_particles=1, implicit_domain=domain, seed=0)
     raw = np.array([[1.15, 1.01]])
     recorded, _, _ = solver._finish_step(raw, np.array([[0.55, 0.57]]), [(0.0, 1.0)] * 2, False)
-    np.testing.assert_allclose(recorded, [[0.95 + 1e-10, 2.0 - raw[0, 1]]], rtol=0, atol=1e-12)
-
-
-def test_two_faces_meeting_at_a_tiny_angle_still_place_at_their_apex():
-    """#2706 review 1, S3: a point projected onto two faces through the origin with outward normals (cos a, +-sin a),
-    half-angle a = 3e-8. The nearest point of their intersection is the apex, the origin. The pair's Gram determinant
-    is below the solver's 1e-14, so the single-face projection stands in, 3e-8 from the apex, and it satisfies the
-    other face to within a slack relative to the problem's scale. With an absolute 1e-15 slack it was refused (None),
-    and the particle raised."""
-    from mfgarchon.geometry.implicit.implicit_domain import _project_onto_half_spaces
-
-    a = 3e-8
-    normals = np.array([[np.cos(a), np.sin(a)], [np.cos(a), -np.sin(a)]])
-    placed = _project_onto_half_spaces(np.array([1.0, 0.0]), np.zeros((2, 2)), normals, 0.0)
-    assert placed is not None
-    assert np.linalg.norm(placed) <= 2 * a, placed
+    np.testing.assert_allclose(recorded, [[0.95, 0.99]], rtol=0, atol=1e-12)
+    assert solver.obstacle_placement_history[-1]["reflections"] == 4, solver.obstacle_placement_history[-1]

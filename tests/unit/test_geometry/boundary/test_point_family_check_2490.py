@@ -97,7 +97,7 @@ CASES = {
     ),
     "an exit strip between the grid's nodes (S2)": (
         [_seg("exit", D, region={"x": (1.0, 1.0), "y": (0.42, 0.48)})],
-        12,
+        5,
         _NOWHERE.format(_GFDM_POINTS),
     ),
     "S2's control: a strip holding nodes": ([_seg("exit", D, region={"x": (1.0, 1.0), "y": (0.35, 0.65)})], 0, 3),
@@ -129,7 +129,7 @@ CASES = {
             _seg("exit", D, region={"x": (1.0, 1.0), "y": (0.3, 0.7)}),
             _seg("wall", NF, region={"x": (1.0, 1.0), "y": (0.2, 0.5)}, priority=1),
         ],
-        190,
+        191,
         2,
     ),
 }
@@ -139,8 +139,10 @@ CASES = {
 @pytest.mark.parametrize("case", list(CASES))
 def test_the_particle_reader_refuses_a_segment_governing_none_of_its_points(case, route):
     """At f2dcb164 the particles kept all 200 under S3 to S7: the exit was dropped with no word. S2's exit governs a
-    strip of x_max, which particles reach, so it is admitted; its 12 are #2780's, read past the wall outside it. Both
-    routes the solver takes its BC by end in the one assignment the check follows."""
+    strip of x_max, which particles cross, so it is admitted. Each particle is read where its step crosses x_max (#2733),
+    so the 5 that remain crossed it outside the strip; read where their steps ended, past the wall, 12 did. S8's wall
+    outranks the exit on y in (0.2, 0.5), where most particles cross, and 191 remain (190 read at the end). Both routes
+    the solver takes its BC by end in the one assignment the check follows."""
     segments, expected, _ = CASES[case]
     if isinstance(expected, str):
         with pytest.raises(ValueError, match=f"FPParticleSolver: {expected}"):
@@ -469,20 +471,35 @@ def _particles_remaining_with(segments, **bc_kw):
     return int(np.count_nonzero(np.all(np.isfinite(final), axis=1)))
 
 
+def _hair_exit(gap):
+    """An exit strip on the x_max face of a BC box that sits inside the solver's [0, 1]^2 by ``gap`` along x."""
+    exit_ = _seg("exit", D, region={"x": (1.0 - gap, 1.0 - gap), "y": (0.42, 0.48)})
+    return [exit_], {"domain_bounds": np.array([[0.0, 1.0 - gap], [0.0, 1.0]])}
+
+
 @pytest.mark.parametrize("gap", [1e-7, 1e-6, 1e-4])
-def test_a_bc_box_within_the_solvers_by_a_hair_is_read_exactly(gap):
-    """Review 2 of #2782, B-1: a BC whose domain_bounds sit inside the solver's box by ``gap`` keeps every segment's cuts,
-    since a point is read within the BC's own box. An exit strip at its x_max, x = 1 - gap, over y = (0.42, 0.48), is
-    admitted and absorbs as many particles driven across as at gap 0, as at f2dcb164. It was refused for gaps of about
-    1e-8 to 1e-5, which `np.allclose` called equal: the face then had no cut at the strip's ends."""
+def test_a_bc_box_within_the_solvers_by_a_hair_is_refused_with_its_second_box_named(gap):
+    """#2733 PR 2, the folded #2767 review 4 P1: a particle is read where its step crosses the solver's box, so a BC
+    whose domain_bounds sit inside that box by ``gap`` places its exit on a face no particle crosses, x = 1 - gap. It is
+    refused, naming the BC's box. Review 2 of #2782, B-1, pinned it admitted when a point was read within the BC's own
+    box, the second box the contact loop removes. The advice, the solver's box with the exit on x = 1, absorbs as at
+    gap 0."""
+    segments, bc_kw = _hair_exit(gap)
+    with pytest.raises(ValueError, match=r"'exit'.*The BC's domain_bounds .* are not the solver's box"):
+        _particles_remaining_with(segments, **bc_kw)
+    advised = _seg("exit", D, region={"x": (1.0, 1.0), "y": (0.42, 0.48)})
+    assert _particles_remaining_with([advised], domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]])) == (
+        _particles_remaining_with(*_hair_exit(0.0)[:1], **_hair_exit(0.0)[1])
+    )
 
-    def remaining(g):
-        exit_ = _seg("exit", D, region={"x": (1.0 - g, 1.0 - g), "y": (0.42, 0.48)})
-        return _particles_remaining_with([exit_], domain_bounds=np.array([[0.0, 1.0 - g], [0.0, 1.0]]))
 
-    at_zero = remaining(0.0)
+def test_a_bc_box_that_differs_from_the_solvers_by_rounding_is_admitted():
+    """A BC box that differs from the solver's only by rounding is admitted and absorbs as at gap 0: the check and the
+    loop read a face within ``CONTACT_EPS`` (1e-12) of the box's diagonal, here 1.4e-12, and a gap of 1e-13 lies within
+    it. Without this row the refusals above could not tell a declared second box from any mismatch."""
+    at_zero = _particles_remaining_with(*_hair_exit(0.0)[:1], **_hair_exit(0.0)[1])
     assert at_zero < 200, "no particle reached the exit, so the comparison is vacuous"
-    assert remaining(gap) == at_zero
+    assert _particles_remaining_with(*_hair_exit(1e-13)[:1], **_hair_exit(1e-13)[1]) == at_zero
 
 
 def test_a_region_key_is_read_by_one_owner():

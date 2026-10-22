@@ -8,24 +8,10 @@
     - Then the survivors that ended outside the domain are placed, with their positions before the step.
     - Before, the 1-D grid-drift path never placed them. The n-D paths placed them before the wall reflection,
       which put particles back inside an obstacle that meets the wall.
-  - **The face of entry.** A particle that the projection onto the boundary does not place is now placed by the face
-    its step crossed. This reverses part of #2687's entry.
-    - `ImplicitDomain.project_to_interior(points, previous=..., via=...)` finds the first crossing on the step's
-      path and projects the point onto that face's tangent plane. The path is the segment from `previous`, or for a
-      reflected step the polyline through its wall hits (`reflection_waypoints`), so the face is one the particle met.
-    - The crossing is found by a scan of 32 steps per leg and bisection on the sign of φ. A leg whose path inside a
-      feature is shorter than a scan step, 1/32 of the leg, can step over it: a thin feature, or a corner the leg
-      clips (#2710).
-    - The face's normal is the crossed component's own, decided by which component's φ changes sign across the
-      crossing (`ImplicitDomain.crossing_normal`, overridden by the CSG domains). Within 1e-6 of the outer box, the
-      domain's gradient normal blended the box wall's into an obstacle face's. Next to a wall, a particle stepping
-      onto the face was then either refused or placed on the obstacle's far side.
-    - On a flat face this is the projected-Euler (Skorokhod) map, which keeps the displacement along the face. Where
-      the result lands in a second face, the point is projected onto the wedge the faces bound. It meets up to 8
-      faces, and a point those faces do not place raises, naming the point and the faces.
-    - The walk toward the bounding-box centre is deleted. Without `previous`, `project_to_interior` raises at exactly
-      the points it used to walk, naming the point and the route. #2687's "always lands navigable" holds only with
-      `previous`.
+  - **The face of entry.** A particle that ends a step outside the domain is placed by the boundary its step met, not
+    by the projection alone. #2733 replaced this stage's face-of-entry placement in the same release: its crossing scan
+    of 32 points per leg could step over a thin feature or a clipped corner (#2710), and each step now ends at its
+    exact first contact, reflected specularly (#2733's fragment). The walk toward the bounding-box centre is deleted.
   - **Initial particles are drawn navigable.**
     - `sample_from_density(..., navigable=)` redraws, within its cell, a jitter that lands where `navigable` is
       False.

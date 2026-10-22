@@ -2,12 +2,12 @@
   domain's φ is the true distance to the navigable set, outside a 1e-6 band about a medial axis** (#2679 stage 1,
   #2687; the rest is #2688 and #2689). φ is not that distance for a point trapped against the outer box, inside a
   union or overlapping obstacles, or for an approximate SDF.
-  - `project_to_navigable_or_defer`, which both `FPParticleSolver` forward loops use, now calls
-    `ImplicitDomain.project_to_interior`. It used `project_to_domain`, which walked the ray toward the bounding-box
-    centre to the first navigable point. A particle that entered the side of an obstacle facing away from the centre
-    came out on the far side -- every particle, for an obstacle on the centre.
+  - `FPParticleSolver` no longer places a particle by `project_to_domain`, which walked the ray toward the
+    bounding-box centre to the first navigable point: a particle that entered the side of an obstacle facing away from
+    the centre came out on the far side -- every particle, for an obstacle on the centre. It now ends each step at its
+    first contact with the boundary (#2733's fragment).
   - `ImplicitDomain.project_to_interior` no longer returns a point outside the domain. This changes it for every
-    caller that reaches it with an `ImplicitDomain`: `project_to_navigable_or_defer`, the deprecated
+    caller that reaches it with an `ImplicitDomain`: the deprecated
     `apply_boundary_conditions("reflecting")`, and in `geometry/boundary/applicator_meshfree.py`
     `ParticleReflector.reflect` (`reflection_type="simple"`) and `ParticleReflector._elastic_reflect`.
     (`MeshfreeApplicator._apply_reflecting_bc` falls back to it only for a geometry without bounds, which an

@@ -2,10 +2,11 @@
 
 `ImplicitDomain.segment_intervals(a, b)` gives the parts of each segment a -> b inside the domain, with the leaf and
 face that bound each end: a slab test on a box, a quadratic on a ball, and each CSG node combining its children's
-intervals, a complement entering as the closed set phi >= 0. `first_contact(a, b)` reads the first end. Main's crossing
-search samples phi at 32 points per leg and bisects (`_leg_crossing`), so a feature thinner than a sample step can be
-passed over, wherever no sample lands in it, as the slab case below is at d23a5c87 (#2733), and the face it names
-reads one leaf only (#2732's B1). No solver reads the new owner yet; the contact loop is PR 2."""
+intervals, a complement entering as the closed set phi >= 0. `first_contact(a, b)` reads the first end. The crossing
+search it replaced sampled phi at 32 points per leg and bisected (`_leg_crossing`, deleted by #2733 PR 2), so a feature
+thinner than a sample step could be passed over, wherever no sample landed in it, as the slab case below was at
+d23a5c87 (#2733), and the face it named read one leaf only (#2732's B1). The contact loop of PR 2 reads this owner
+(`reflect_at_first_contacts`)."""
 
 from __future__ import annotations
 
