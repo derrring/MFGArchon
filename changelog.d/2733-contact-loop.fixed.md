@@ -21,6 +21,10 @@
     `project_to_interior`. The remedy is no initial mass on that node.
   - **The cap.** A step reflected more than 20 times returns to its start, and a solve warns once when any step did.
 - **Refused at construction, where a particle domain is set** (an `ImplicitDomain` geometry or `implicit_domain=`):
+  - **Two box faces on one axis, not equal but no more than 4 ulps apart, that meet**, such as two rooms of a union at
+    0.3 and 0.1 + 0.2. They are one wall in floating point with no point between them, yet each box's interval ends at
+    its own face, so a step across would read a wall. The message names both boxes, the axis and both offsets; the
+    remedy is to give the two faces the same double.
   - **An absorbing condition the boundary owner can place off the box**: one placed by `region`, `sdf_region`,
     `normal_direction`, `region_name`, `boundary="all"` or nothing, and an absorbing `default_bc`.
     - An exit on a disc's arc absorbed 400 of 400 particles drifting toward (1.2, 0.5), read where the arc touches the

@@ -474,12 +474,58 @@ def _rooms(wall):
     )
 
 
-def test_a_union_whose_shared_wall_is_one_ulp_apart_is_crossed_as_one_room():
-    """Review 1 of #2791, B1: 0.3 and 0.1 + 0.2 are adjacent doubles, so no point lies between the two rooms' walls and
-    `contains` holds across the seam, but the segment intervals left a gap between them and the loop reflected every
-    crossing step there. The owner joins a gap no thicker than ``SEAM_ULPS`` ulps across both walls (`SegmentIntervals`):
-    every step lands at its raw end, with no contact, as with the exact shared wall, at every angle to the seam's normal
-    (review 2: a width read along the step left grazing crossings reflected)."""
+_SEAM = r"one wall in floating point, with no point between them.*Give the two faces the same double"
+
+
+@pytest.mark.parametrize(
+    ("label", "geometry", "domain"),
+    [
+        ("2-D: two rooms meeting at 0.3 and 0.1 + 0.2", _grid(), _rooms(0.1 + 0.2)),
+        (
+            "1-D: rooms meeting at 0.01 and the next double",
+            _grid(1, 21),
+            UnionDomain(
+                [Hyperrectangle(np.array([[0.0, 0.01]])), Hyperrectangle(np.array([[np.nextafter(0.01, 1.0), 1.0]]))]
+            ),
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_two_box_faces_one_wall_in_floating_point_but_not_one_double_are_refused(label, geometry, domain):
+    """Reviews 1 to 3 of #2791: two rooms meeting at adjacent doubles have no point between them, yet each leaf's interval
+    ends at its own face, so a step across reads a wall there (`SegmentIntervals`). Joining such gaps in the intervals
+    missed seams near the origin and could cross a solid obstacle (review 3); the solver refuses the domain at
+    construction instead, naming both boxes, and the remedy is one double (user and audit ruling, 2026-10-22)."""
+    with pytest.raises(ValueError, match=_SEAM):
+        FPParticleSolver(_problem(geometry, T=0.1, nt=2), num_particles=20, seed=0, implicit_domain=domain)
+
+
+@pytest.mark.parametrize(
+    ("label", "domain"),
+    [
+        ("the exact shared face", _rooms(0.3)),
+        ("a real crack of 1e-9", _rooms(0.3 + 1e-9)),
+        (
+            "faces one ulp apart whose extents do not meet",
+            UnionDomain(
+                [
+                    Hyperrectangle(np.array([[0.0, 0.3], [0.0, 0.4]])),
+                    Hyperrectangle(np.array([[0.1 + 0.2, 1.0], [0.6, 1.0]])),
+                ]
+            ),
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_box_faces_that_are_one_double_apart_or_do_not_meet_are_admitted(label, domain):
+    """The refusal's controls: faces exactly equal are one face; faces further apart than 4 ulps are real geometry; and
+    near-equal faces whose extents on the other axes do not overlap leave no gap."""
+    FPParticleSolver(_problem(_grid(), T=0.1, nt=2), num_particles=20, seed=0, implicit_domain=domain)
+
+
+def test_a_union_whose_rooms_share_one_face_is_crossed_as_one_room_and_a_crack_reflects():
+    """The admitted cases at the loop: steps across the exact shared face at 0.3, at angles to its normal drawn from
+    (-pi/2, pi/2), land at their raw ends with no contact; across a crack of 1e-9 they meet it."""
     rng = np.random.default_rng(5)
     phi = rng.uniform(-np.pi / 2 + 1e-3, np.pi / 2 - 1e-3, 3000)
     d = np.c_[np.cos(phi), np.sin(phi)]
@@ -489,25 +535,33 @@ def test_a_union_whose_shared_wall_is_one_ulp_apart_is_crossed_as_one_room():
         - (rng.uniform(0.2, 0.8, 3000) * 0.5 * length)[:, None] * d
     )
     b = a + length[:, None] * d
-    keep = (a[:, 0] < 0.3) & (b[:, 0] > 0.30000000000000004) & (np.minimum(a[:, 1], b[:, 1]) > 0.01)
+    keep = (a[:, 0] < 0.3) & (b[:, 0] > 0.3 + 1e-9) & (np.minimum(a[:, 1], b[:, 1]) > 0.01)
     keep &= np.maximum(a[:, 1], b[:, 1]) < 0.99
     a, b = a[keep], b[keep]
-    assert np.sum(np.abs(np.tan(phi[keep])) >= 16) > 20
-    for wall in (0.3, 0.1 + 0.2):
-        stepped = _step(_rooms(wall), a, b)
-        assert stepped.counts["contacts"] == 0, wall
-        np.testing.assert_array_equal(stepped.positions, b)
+    shared = _step(_rooms(0.3), a, b)
+    assert shared.counts["contacts"] == 0
+    np.testing.assert_array_equal(shared.positions, b)
+    assert _step(_rooms(0.3 + 1e-9), a, b).counts["contacts"] == len(a)
 
 
-def test_a_step_grazing_a_one_ulp_seam_crosses_it():
-    """The seam's grazing row: a step at |tan phi| = 52.8 to the seam's normal, whose intervals at 0.3 and 0.1 + 0.2 leave
-    a gap of t-length 4.8e-15. Along the step the gap is 53 ulps of 0.3 long, across the walls one; it is joined, and
-    the step lands at its raw end."""
-    a = np.array([[0.297483089773426, 0.7144295529063409]])
-    b = np.array([[0.3091892931203627, 0.09628943179539262]])
-    stepped = _step(_rooms(0.1 + 0.2), a, b)
-    assert stepped.counts["contacts"] == 0
-    np.testing.assert_array_equal(stepped.positions, b)
+def test_a_step_through_a_deep_obstacle_between_coplanar_faces_meets_it():
+    """Review 3 of #2791: a step rising 3 ulps leaves one box obstacle and enters another through faces nearly parallel to
+    it, crossing a third obstacle 0.055 deep in between. A join by the width at the two bounding faces passed through;
+    with the leaves' own intervals the step meets the first obstacle."""
+    u = np.spacing(0.375)
+    domain = DifferenceDomain(
+        _square(),
+        UnionDomain(
+            [
+                Hyperrectangle(np.array([[0.1, 0.52], [0.375, 0.6]])),
+                Hyperrectangle(np.array([[0.51, 0.62], [0.1, 0.6]])),
+                Hyperrectangle(np.array([[0.6, 0.9], [0.2, 0.375 + u]])),
+            ]
+        ),
+    )
+    stepped = _step(domain, [[0.05, 0.375 - u]], [[0.95, 0.375 + 2 * u]])
+    assert stepped.counts["contacts"] >= 1
+    assert stepped.positions[0, 0] < 0.51
 
 
 #: Two balls of radius 0.007 touching at 0.314, in [0, 1]: the domain's isolated point 0.314 lies between two solid

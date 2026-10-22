@@ -46,8 +46,8 @@ logger = get_logger(__name__)
 
 # An interval end that no surface bounds: a segment's own end, or the line's ends at infinity.
 _NO_SURFACE = -1
-#: A gap between two intervals no thicker than this many ulps of its largest coordinate, across both surfaces that
-#: bound it, is a seam: two walls one wall in floating point (`ImplicitDomain._join_seams`).
+#: Two box faces on one axis this many ulps apart or fewer, and not equal, are a seam no point can occupy; the particle
+#: solver refuses a domain with one (`ImplicitDomain.refuse_near_coincident_box_faces`).
 SEAM_ULPS = 4
 
 
@@ -59,11 +59,11 @@ class SegmentIntervals:
     Each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's intervals as Roth
     (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
     intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
-    Two surfaces that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, leave a gap
-    between two intervals that no point can occupy: one no thicker than ``SEAM_ULPS`` ulps across both surfaces, at
-    whose midpoint `contains` holds. Such a seam is joined (`_join_seams`); any other gap is outside. A segment that
-    grazes a face, where `contains` itself flips along it, can still disagree with it, as can a segment short of the
-    overflow and underflow limits each leaf states.
+    A point of the segment is in an interval exactly where `contains` holds there, up to rounding within about an ulp of
+    a surface, in space, and short of the overflow and underflow limits each leaf states: a segment that grazes a face
+    can disagree with `contains` over a long stretch of its parameter. Two box faces one or a few ulps apart that are
+    one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, leave a gap no point can occupy,
+    and it is reported as a gap; the particle solver refuses such a domain (`refuse_near_coincident_box_faces`).
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -689,7 +689,6 @@ class ImplicitDomain(
         kept = np.take_along_axis(kept, order, axis=1)[..., None]
         t = np.where(kept, np.take_along_axis(t, order[..., None], axis=1), np.nan)
         tag = np.where(kept, np.take_along_axis(ends, order[..., None], axis=1), _NO_SURFACE)
-        t, tag = self._join_seams(a, b - a, t, tag)
         none = tag < 0
         return SegmentIntervals(
             t=t,
@@ -699,59 +698,36 @@ class ImplicitDomain(
             leaves=self._leaves(),
         )
 
-    def _join_seams(
-        self, a: NDArray[np.float64], extent: NDArray[np.float64], t: NDArray[np.float64], tag: NDArray[np.int64]
-    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
-        """Join two consecutive intervals of ``t`` across a seam (`SegmentIntervals`): a gap between them no thicker
-        than ``SEAM_ULPS`` ulps of its largest coordinate, along the normal of each surface that bounds it, at whose
-        midpoint `contains` holds.
+    def refuse_near_coincident_box_faces(self, reader: str) -> None:
+        """Refuse, by name, two box faces of this domain on one axis that are not equal yet no more than ``SEAM_ULPS``
+        ulps apart, and that meet: their extents on every other axis overlap with positive length (#2733 PR 2).
 
-        The width is read across the surfaces, not along the segment, so a step grazing a seam joins as one crossing it
-        square does. A gap that holds a point of the domain's exterior is wider than that, however its midpoint falls:
-        where two obstacles touch at p, rounding can drop the degenerate interval at p, and the gap through both
-        obstacles then has p, a point of the closed domain, at its midpoint. Only gaps are read: a leaf classifies
-        t = 0 and t = 1 with the same phi `contains` reads, so a segment's own ends agree with it."""
-        n = t.shape[0]
-        lo, hi = t[..., 0], t[..., 1]
-        real = ~np.isnan(lo)
-        gap = real[:, 1:] & real[:, :-1]
-        if not gap.any():
-            return t, tag
-        rows, k = np.nonzero(gap)
-        below = a[rows] + hi[rows, k][:, None] * extent[rows]
-        above = a[rows] + lo[rows, k + 1][:, None] * extent[rows]
-        limit = SEAM_ULPS * np.spacing(np.maximum(np.abs(below), np.abs(above)).max(axis=1))
-        leaves = self._leaves()
-        thin = np.ones(len(rows), dtype=bool)
-        for point, end in ((below, tag[rows, k, 1]), (above, tag[rows, k + 1, 0])):
-            normal = np.full_like(point, np.nan)
-            leaf = np.where(end >= 0, end >> 32, _NO_SURFACE)
-            face = (end & 0xFFFFFFFF) >> 1
-            for index in np.unique(leaf[leaf >= 0]):
-                at = leaf == index
-                normal[at] = leaves[index]._face_normal(point[at], face[at])
-            width = np.abs(np.sum((above - below) * normal, axis=1))
-            thin &= np.isfinite(width) & (width <= limit)
-        if not thin.any():
-            return t, tag
-        holds = np.zeros(len(rows), dtype=bool)
-        holds[thin] = np.atleast_1d(np.asarray(self.contains(0.5 * (below[thin] + above[thin])), dtype=bool))
-        if not holds.any():
-            return t, tag
-        joined = np.zeros_like(gap)
-        joined[rows[holds], k[holds]] = True
-        # Interval j keeps its start unless the gap before it is joined, and its end unless the gap after it is.
-        starts = real & np.concatenate([np.ones((n, 1), dtype=bool), ~joined], axis=1)
-        ends = real & np.concatenate([~joined, np.ones((n, 1), dtype=bool)], axis=1)
-        most = max(int(starts.sum(axis=1).max(initial=0)), 1)
-        pick_start = np.argsort(~starts, axis=1, kind="stable")[:, :most]
-        pick_end = np.argsort(~ends, axis=1, kind="stable")[:, :most]
-        kept = np.take_along_axis(starts, pick_start, axis=1)
-        out_t = np.stack([np.take_along_axis(lo, pick_start, axis=1), np.take_along_axis(hi, pick_end, axis=1)], -1)
-        out_tag = np.stack(
-            [np.take_along_axis(tag[..., 0], pick_start, axis=1), np.take_along_axis(tag[..., 1], pick_end, axis=1)], -1
-        )
-        return np.where(kept[..., None], out_t, np.nan), np.where(kept[..., None], out_tag, _NO_SURFACE)
+        Such faces are one wall in floating point, such as two rooms of a union meeting at 0.3 and 0.1 + 0.2, but
+        each leaf's interval ends at its own face, so a segment across them has a gap no point can occupy and a
+        particle step reads it as a wall (`SegmentIntervals`). Faces exactly equal are one face, and near-equal faces
+        that do not meet leave no gap. Only `Hyperrectangle` leaves are read: of the library's two leaf types, only box
+        faces form a seam of positive area, since spheres meet in a point or not at all."""
+        from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+        boxes = [np.asarray(leaf.bounds, dtype=float) for leaf in self._leaves() if isinstance(leaf, Hyperrectangle)]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1 :]:
+                for axis in range(a.shape[0]):
+                    others = [k for k in range(a.shape[0]) if k != axis]
+                    if any(min(a[k, 1], b[k, 1]) - max(a[k, 0], b[k, 0]) <= 0.0 for k in others):
+                        continue
+                    for side_a in (0, 1):
+                        for side_b in (0, 1):
+                            u, v = float(a[axis, side_a]), float(b[axis, side_b])
+                            if 0.0 < abs(u - v) <= SEAM_ULPS * np.spacing(max(abs(u), abs(v))):
+                                raise ValueError(
+                                    f"{reader}: the boxes {a.tolist()} and {b.tolist()} have faces on axis {axis} "
+                                    f"at {u!r} and {v!r}, {abs(u - v) / np.spacing(max(abs(u), abs(v))):.0f} ulp(s) "
+                                    "apart, which meet: one wall in floating point, with no point between them, yet "
+                                    "each box's interval ends at its own face, so a particle step would read a wall "
+                                    "there (#2733). Give the two faces the same double, for example build both from "
+                                    "one variable."
+                                )
 
     def first_contact(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> FirstContact:
         """Each segment's first contact with this domain's boundary, from `segment_intervals` (#2733 D1); see

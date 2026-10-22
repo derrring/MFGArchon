@@ -559,17 +559,16 @@ def test_a_domain_or_segment_it_cannot_classify_is_refused_by_name(row, domain, 
     ("label", "east_wall", "joined"),
     [
         ("the exact shared wall", 0.3, True),
-        ("a seam one ulp apart", 0.1 + 0.2, True),
+        ("a seam one ulp apart", 0.1 + 0.2, False),
         ("a crack of 1e-9", 0.3 + 1e-9, False),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
 )
-def test_a_seam_no_point_can_occupy_is_no_gap_and_a_real_crack_is(label, east_wall, joined):
-    """Review 1 of #2791, B1: two rooms meeting at 0.3 and 0.1 + 0.2, adjacent doubles, have no point between them, and
-    `contains` holds across; each leaf's interval ends at its own wall, which left a gap of t-length 7e-16 that the
-    first contact read as an exit. A gap no thicker than ``SEAM_ULPS`` ulps across both walls, at whose midpoint
-    `contains` holds, is a seam and is joined (`SegmentIntervals`): one interval and no contact, as the exact shared
-    wall gives; a crack of 1e-9 is far thicker and stays a gap, with its contact at the crack."""
+def test_a_seam_one_ulp_apart_is_reported_as_a_gap_as_a_real_crack_is(label, east_wall, joined):
+    """Two rooms meeting at 0.3 and 0.1 + 0.2, adjacent doubles, have no point between them, and `contains` holds across;
+    each leaf's interval ends at its own wall, so the intervals leave a gap of t-length 2.2e-16 and the first contact is
+    at the seam, as for a real crack of 1e-9 (`SegmentIntervals`). Only the exact shared wall is one interval. The
+    particle solver refuses the one-ulp seam at construction (`refuse_near_coincident_box_faces`, #2791)."""
     rooms = UnionDomain([_box((0, 0.3), (0, 1)), _box((east_wall, 1), (0, 1))])
     a, b = np.array([[0.2, 0.5]]), np.array([[0.4, 0.5]])
     found, contact = rooms.segment_intervals(a, b), rooms.first_contact(a, b)
