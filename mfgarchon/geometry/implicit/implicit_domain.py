@@ -46,9 +46,9 @@ logger = get_logger(__name__)
 
 # An interval end that no surface bounds: a segment's own end, or the line's ends at infinity.
 _NO_SURFACE = -1
-#: A gap between two intervals whose computed ends' coordinates on the segment's dominant axis have at most this many
-#: doubles strictly between them is read by `contains` at each double from end to end and at its midpoint, and joined
-#: where all hold (`ImplicitDomain._join_seams`).
+#: A gap between two intervals at most this many coarsest ulps wide on every axis, the coarsest ulp being the largest
+#: spacing of its two ends' coordinates, is read by `contains` and joined where every read holds; an axis holding at most
+#: this many doubles across the gap is also read at each of them (`ImplicitDomain._join_seams`).
 SEAM_DOUBLES = 1024
 
 
@@ -66,13 +66,14 @@ class SegmentIntervals:
 
     Two surfaces that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, or a ball's
     end at 0.65 - 0.35, leave each leaf's interval ending at its own surface, a gap no point between them can occupy.
-    Such a seam is joined by the domain's own answer (`_join_seams`): on the segment's dominant axis, the one it moves
-    furthest along, `contains` is read at each double from the gap's one end to the other, both included, and at the
-    gap's midpoint, and the gap is joined where all hold and at most ``SEAM_DOUBLES`` doubles lie strictly between its
-    ends. A real crack holds a double outside the domain and stays a gap: measured, cracks two ulps wide or wider
-    reflected at every angle below |tan phi| = 1024 to their normal (#2791). A gap of more than ``SEAM_DOUBLES``
-    doubles is left as a wall without being read, so a step whose dominant axis runs along a seam, crossing it at
-    |tan phi| >= 1024 or so, can reflect there.
+    Such a seam is joined by the domain's own answer (`_join_seams`): a gap at most ``SEAM_DOUBLES`` coarsest ulps wide
+    on every axis is read by `contains`, at points no more than one coarsest ulp apart, at its midpoint and at each
+    double of an axis that holds few, and joined where all hold. A one-ulp seam crossed at angle phi to its normal is
+    joined wherever |tan phi| is at most ``SEAM_DOUBLES`` times the coarsest ulp over the seam's own, which is at least
+    ``SEAM_DOUBLES``; past that the gap is a wall, unread, and the step reflects there. A real crack holds a double
+    outside the domain and stays a gap: measured, cracks two ulps wide or wider reflected at every angle below the
+    gate (#2791). A crack narrower than the segment's parameter can resolve, such as 0 | 1e-323, is merged by the union
+    before any join.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -711,19 +712,24 @@ class ImplicitDomain(
     def _join_seams(
         self, a: NDArray[np.float64], extent: NDArray[np.float64], t: NDArray[np.float64], tag: NDArray[np.int64]
     ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
-        """Join two consecutive intervals across a seam (`SegmentIntervals`): a gap whose two computed ends'
-        coordinates on the segment's dominant axis have at most ``SEAM_DOUBLES`` doubles strictly between them, with
-        `contains` holding at every double from one end to the other, both included, and at the gap's midpoint.
+        """Join two consecutive intervals across a seam (`SegmentIntervals`). With u the coarsest ulp of the gap's two
+        computed ends, the largest spacing of any of their coordinates, a gap at most ``SEAM_DOUBLES`` u wide on every
+        axis is joined where `contains` holds at every read (`_seam_reads`): points evenly spaced in t from end to end,
+        at most u apart on every axis; the gap's midpoint; and, on every axis holding at most ``SEAM_DOUBLES`` doubles
+        from end to end, each of them, at the segment's point there with that coordinate set to the double itself.
 
-        The reads are a lattice in space, so a seam a few ulps wide holds a few doubles wherever on the step it lies.
-        Each is the segment's point at that double's parameter with its dominant coordinate set to the double itself:
-        the point the parameter gives can round onto a neighbouring double, and a computed end can lie a double off its
-        surface, and either let a step through a crack two ulps wide when only the doubles strictly between the ends
-        were read as computed (#2791). The midpoint covers a gap holding no double on the dominant axis, where that axis
-        runs along a crack. Doubles of t would not do: they are far finer near t = 0 than the points a + t(b - a), and a
-        seam near a step's start would hold more than ``SEAM_DOUBLES``. Where two obstacles touch at p and rounding
-        drops the degenerate interval at p, the gap through both holds far more than ``SEAM_DOUBLES`` doubles and stays
-        a wall."""
+        The bound. A one-ulp seam at x_s crossed at angle phi to its normal leaves a gap about ulp(x_s) across it and
+        |tan phi| ulp(x_s) along it. u is at least ulp(x_s), since x_s is one of the ends' coordinates, so the gap passes
+        the gate wherever |tan phi| <= SEAM_DOUBLES u / ulp(x_s), at least SEAM_DOUBLES whatever the other axes' scales;
+        and where the two surfaces have no point between them, every read holds. A tunnel needs an exterior feature that
+        no read lands in: narrower than u along the segment on every axis, holding no double of an axis read exactly,
+        and not containing the midpoint.
+
+        The exact reads catch a crack a few ulps wide on a fine axis, which the even reads, u apart, would step over. A
+        computed end can lie a double off its surface, so the ends are read too, and a read's own coordinate on that axis
+        is set, not computed (#2791). The midpoint covers a gap holding no double on an axis that runs along a crack.
+        Where two obstacles touch at p and rounding drops the degenerate interval at p, the gap through both is far wider
+        than the gate and stays a wall."""
         n = t.shape[0]
         lo, hi = t[..., 0], t[..., 1]
         real = ~np.isnan(lo)
@@ -733,19 +739,17 @@ class ImplicitDomain(
         rows, k = np.nonzero(gap)
         t1, t2 = hi[rows, k], lo[rows, k + 1]
         d = extent[rows]
-        axis = np.argmax(np.abs(d), axis=1)
-        start = a[rows, axis]
-        step = d[np.arange(len(rows)), axis]
-        x1, x2 = start + t1 * step, start + t2 * step
-        o1, o2 = _ordered(np.minimum(x1, x2)), _ordered(np.maximum(x1, x2))
-        between = o2 - o1 - 1
+        start = a[rows]
+        p1, p2 = start + t1[:, None] * d, start + t2[:, None] * d
+        coarse = np.maximum(np.spacing(np.abs(p1)), np.spacing(np.abs(p2))).max(axis=1)
+        width = np.abs(p2 - p1).max(axis=1)
+        candidate = np.flatnonzero(width <= SEAM_DOUBLES * coarse)
         holds = np.zeros(len(rows), dtype=bool)
-        for g in np.flatnonzero(between <= SEAM_DOUBLES):
-            on_axis = _unordered(np.arange(o1[g], o2[g] + 1, dtype=np.int64))
-            points = a[rows[g]] + ((on_axis - start[g]) / step[g])[:, None] * d[g]
-            points[:, axis[g]] = on_axis
-            points = np.vstack([points, a[rows[g]] + 0.5 * (t1[g] + t2[g]) * d[g]])
-            holds[g] = bool(np.all(np.atleast_1d(np.asarray(self.contains(points), dtype=bool))))
+        if candidate.size:
+            owner, points = _seam_reads(start, d, t1, t2, p1, p2, coarse, width, candidate)
+            inside = np.atleast_1d(np.asarray(self.contains(points), dtype=bool))
+            failed = np.bincount(owner[~inside], minlength=len(rows))
+            holds[candidate] = failed[candidate] == 0
         if not holds.any():
             return t, tag
         joined = np.zeros_like(gap)
@@ -1364,6 +1368,43 @@ class ImplicitDomain(
     def __repr__(self) -> str:
         """String representation of the domain."""
         return f"{self.__class__.__name__}(dimension={self.dimension})"
+
+
+def _seam_reads(
+    start: NDArray[np.float64],
+    d: NDArray[np.float64],
+    t1: NDArray[np.float64],
+    t2: NDArray[np.float64],
+    p1: NDArray[np.float64],
+    p2: NDArray[np.float64],
+    coarse: NDArray[np.float64],
+    width: NDArray[np.float64],
+    candidate: NDArray[np.intp],
+) -> tuple[NDArray[np.intp], NDArray[np.float64]]:
+    """The points `ImplicitDomain._join_seams` reads for each candidate gap, and the gap each belongs to: points evenly
+    spaced in t, the midpoint, and the exact reads of every axis that holds at most ``SEAM_DOUBLES`` doubles."""
+    m = np.maximum(np.ceil(width[candidate] / coarse[candidate]), 1).astype(np.int64)
+    gap = np.repeat(candidate, m + 1)
+    k = np.arange(gap.size) - np.repeat(np.cumsum(m + 1) - (m + 1), m + 1)
+    ts = t1[gap] + (t2[gap] - t1[gap]) * (k / np.repeat(m, m + 1))
+    owners = [gap, candidate]
+    points = [
+        start[gap] + ts[:, None] * d[gap],
+        start[candidate] + (0.5 * (t1[candidate] + t2[candidate]))[:, None] * d[candidate],
+    ]
+    for axis in range(d.shape[1]):
+        moving = candidate[d[candidate, axis] != 0]
+        lo = _ordered(np.minimum(p1[moving, axis], p2[moving, axis]))
+        count = _ordered(np.maximum(p1[moving, axis], p2[moving, axis])) - lo + 1
+        few = count <= SEAM_DOUBLES
+        moving, lo, count = moving[few], lo[few], count[few]
+        gap = np.repeat(moving, count)
+        on_axis = _unordered(np.repeat(lo, count) + np.arange(gap.size) - np.repeat(np.cumsum(count) - count, count))
+        read = start[gap] + ((on_axis - start[gap, axis]) / d[gap, axis])[:, None] * d[gap]
+        read[:, axis] = on_axis
+        owners.append(gap)
+        points.append(read)
+    return np.concatenate(owners), np.concatenate(points)
 
 
 def _ordered(x: NDArray[np.float64]) -> NDArray[np.int64]:
