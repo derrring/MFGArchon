@@ -73,7 +73,6 @@ def test_a_region_named_segment_is_read_at_a_point_as_on_its_face(row):
         "another dimension",
         "outside the grid's own box",
         "the walls of a cell-centred grid",
-        "a descending axis",
     ],
 )
 def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
@@ -91,9 +90,8 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
       (#2780). Read on x_min, it is read at (-0.2, 0.5) and refused as that point is.
     - A cell-centred grid, nodes 0.05 ... 0.95 on the box [0, 1]: its walls lie half a cell past its end nodes, inside
       its box, and are read at the end nodes, as at main.
-    - x nodes 1, 0.75, ..., 0 and "exit" at x > 0.5: the face rule reads the first node as x_min (#2490) and puts the
-      exit on x_min, so a point reading by coordinate would put it on x_max. It is refused, by the point it is read
-      at: (1.2, 0.5), past the wall and read on x_max, is read at (1, 0.5) (#2780)."""
+
+    A descending axis no longer reaches this reader: the grid refuses it when built (`test_custom_axis_ascends_2490.py`)."""
     if row == "a particle past a wall":
         from mfgarchon import Conditions, MFGProblem, Model
         from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
@@ -146,7 +144,6 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
     xs = {
         "outside the grid's own box": [0.0, 0.05, 0.1, 0.55, 1.0],
         "the walls of a cell-centred grid": list(np.linspace(0.05, 0.95, 10)),
-        "a descending axis": [1.0, 0.75, 0.5, 0.25, 0.0],
     }[row]
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 1.0)],
@@ -172,11 +169,5 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
             wide.segment_for_point(np.array([-0.5, 0.5]), "x_min", geometry=grid)
         return
     bc = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
-    if row == "a descending axis":
-        with pytest.raises(
-            ValueError, match=r"do not strictly ascend on axis 0, .*the point \[1.0, 0.5\].*first node as its min face"
-        ):
-            bc.segment_for_point(np.array([1.2, 0.5]), "x_max", geometry=grid)
-        return
     assert bc.segment_for_point(np.array([1.0, 0.5]), geometry=grid).name == "exit"
     assert bc.segment_for_point(np.array([0.0, 0.5]), geometry=grid).name == "rest"

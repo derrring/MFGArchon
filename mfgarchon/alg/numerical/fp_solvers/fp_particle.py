@@ -416,29 +416,15 @@ class FPParticleSolver(BaseFPSolver):
                 try:
                     # Legacy 1D geometry
                     bounds = [(geom.xmin, geom.xmax)]
-                except AttributeError:
-                    try:
-                        # Infer from coordinates
-                        if len(geom.coordinates) > 0:
-                            bounds = [(coords[0], coords[-1]) for coords in geom.coordinates]
-                        else:
-                            # Issue #1053: fail-fast instead of silent unit-cube
-                            # fallback. Empty coordinates on a non-Hyperrectangle
-                            # geometry means we genuinely cannot derive bounds.
-                            raise TypeError(
-                                f"FPParticleSolver._get_grid_params: cannot derive simulation bounds "
-                                f"from {type(geom).__name__} (geom.bounds, geom.xmin/.xmax, and "
-                                f"geom.coordinates all absent or empty). Implement one of these on "
-                                f"your geometry class, or wrap with a Hyperrectangle bbox."
-                            )
-                    except AttributeError as _e:
-                        # Issue #1053: same fail-fast for the AttributeError branch.
-                        raise TypeError(
-                            f"FPParticleSolver._get_grid_params: cannot derive simulation bounds "
-                            f"from {type(geom).__name__} (tried geom.bounds, geom.xmin/.xmax, "
-                            f"geom.coordinates — all raised AttributeError). Implement one of "
-                            f"these on your geometry class, or wrap with a Hyperrectangle bbox."
-                        ) from _e
+                except AttributeError as _e:
+                    # Issue #1053: fail fast, not a silent unit cube. A geometry's node coordinates are not read for
+                    # its bounds: only CartesianGrid declares them, and it declares get_bounds too (#2490).
+                    raise TypeError(
+                        f"FPParticleSolver._get_grid_params: cannot derive simulation bounds "
+                        f"from {type(geom).__name__} (tried geom.get_bounds() and geom.xmin/.xmax, "
+                        f"both raised AttributeError). Implement get_bounds() on your geometry class, "
+                        f"or wrap with a Hyperrectangle bbox."
+                    ) from _e
 
             # Get spacing per dimension
             # For implicit geometry (e.g., Hyperrectangle), get_grid_spacing() returns None
@@ -454,13 +440,9 @@ class FPParticleSolver(BaseFPSolver):
             # tensor grid has none, and its density is estimated on axes made up from its bounds (#2757).
             coordinates = geometry_grid_axes(geom)
             if coordinates is None:
-                try:
-                    if len(geom.coordinates) > 0:
-                        coordinates = [np.array(c) for c in geom.coordinates]
-                    else:
-                        coordinates = [np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) for d in range(dimension)]
-                except AttributeError:
-                    coordinates = [np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) for d in range(dimension)]
+                # `geometry_grid_axes` is the one reading of a grid's node axes; no second one is read off the geometry
+                # (#2490).
+                coordinates = [np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) for d in range(dimension)]
 
         except AttributeError as e:
             # Geometry is always available after MFGProblem initialization

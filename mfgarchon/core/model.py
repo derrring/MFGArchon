@@ -205,7 +205,7 @@ class Conditions:
                 "mass of 1 is your modelling decision, not a requirement. If you do want one, "
                 "compute the constant yourself against the grid you will solve on -- in 1-D "
                 "`x = domain.coordinates[0]; c = float(domain.integrate(f(x)))`, then divide your "
-                "closed form by `c`. `coordinates` is a list of per-axis vectors, so that "
+                "closed form by `c`. `coordinates` is a tuple of per-axis vectors, so that "
                 "one-liner is 1-D only: in n-D build the field on `domain.meshgrid(indexing='ij')` "
                 "first, or `integrate` refuses the shape. "
                 "If your density has no closed form (a KDE, a histogram, a previous solve), there "

@@ -199,11 +199,14 @@ class GridPointMeasure:
         )
 
     def __init__(self, problem: Any) -> None:
+        from mfgarchon.geometry.base import CartesianGrid
+
         geometry = problem.geometry
-        if getattr(geometry, "coordinates", None) is None:
+        if not isinstance(geometry, CartesianGrid):
             raise TypeError(
-                f"GridPointMeasure: the problem's geometry is a {type(geometry).__name__}, which has no grid "
-                "coordinates; a grid's point measure is a TensorProductGrid's (#1642)."
+                f"GridPointMeasure: the problem's geometry is a {type(geometry).__name__}, which is not a "
+                "CartesianGrid, the type that declares grid coordinates and their order; a grid's point measure is a "
+                "TensorProductGrid's (#1642, #2490)."
             )
         self._problem = problem
 

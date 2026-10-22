@@ -23,6 +23,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary import BoundaryConditions
 
 
@@ -85,6 +86,12 @@ class ImplicitHeatSolver:
         For large 3D problems (N > 10⁶), consider using iterative solver instead
         of direct LU factorization.
         """
+        # The forcing is evaluated on the grid's node axes, which only CartesianGrid declares (#2490).
+        if not isinstance(grid, CartesianGrid):
+            raise TypeError(
+                f"ImplicitHeatSolver solves on a CartesianGrid, the type that declares node coordinates and their "
+                f"order; got a {type(grid).__name__} (#2490)."
+            )
         self.grid = grid
         self.alpha = alpha
         self.bc = bc

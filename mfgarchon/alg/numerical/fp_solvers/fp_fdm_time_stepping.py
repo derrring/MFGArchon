@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import scipy.sparse as sparse
 
+from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
@@ -274,9 +275,20 @@ def _get_dirichlet_value_at_point(
     return float(segment_value(segment, t=time, x=point, where=where, time_keyword="time"))
 
 
+def _grid_axes(grid: Any) -> tuple[np.ndarray, ...]:
+    """The grid's node axes, read only from `CartesianGrid`, the type that declares them and their order (#2490)."""
+    if not isinstance(grid, CartesianGrid):
+        raise TypeError(
+            f"FP-FDM reads node coordinates only from a CartesianGrid, the type that declares them and their order; "
+            f"the problem's geometry is a {type(grid).__name__} (#2490)."
+        )
+    return grid.coordinates
+
+
 def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray:
     """The coordinates of a grid node, one point of shape (d,)."""
-    return np.array([grid.coordinates[d][multi_idx[d]] for d in range(len(multi_idx))], dtype=float)
+    axes = _grid_axes(grid)
+    return np.array([axes[d][multi_idx[d]] for d in range(len(multi_idx))], dtype=float)
 
 
 def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, BoundaryFace, np.ndarray]]:
@@ -1076,7 +1088,7 @@ def solve_fp_nd_full_system(
             # Drift callable signature: (t, x_coords, m) -> drift_array
             # For 1D: drift_array shape is (N,)
             # For nD: drift_array shape is (ndim, N1, N2, ...) for vector drift
-            drift_values = drift.evaluate_velocity_at(k, grid.coordinates, M_current, dt)
+            drift_values = drift.evaluate_velocity_at(k, _grid_axes(grid), M_current, dt)
             U_current = None  # Not needed when drift is provided directly
         else:
             # Array/MFG drift: get U slice for gradient computation in solver
@@ -1125,7 +1137,7 @@ def solve_fp_nd_full_system(
             diffusion = problem.get_diffusion_coefficient_field(
                 override=sigma_base, field_name="volatility", dimension=ndim
             )
-            sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=grid.coordinates, density=M_current, dt=dt)
+            sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=_grid_axes(grid), density=M_current, dt=dt)
 
             M_next = solve_timestep_explicit_with_drift(
                 M_current,
@@ -1143,7 +1155,7 @@ def solve_fp_nd_full_system(
             diffusion = problem.get_diffusion_coefficient_field(
                 override=sigma_base, field_name="volatility", dimension=ndim
             )
-            sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=grid.coordinates, density=M_current, dt=dt)
+            sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=_grid_axes(grid), density=M_current, dt=dt)
 
             M_next = solve_timestep_full_nd(
                 M_current,
@@ -1291,8 +1303,9 @@ def solve_timestep_tensor_explicit(
         # Callable tensor: Sigma(t, x, m) -> (d, d) array
         t = timestep_idx * dt
         Sigma = np.zeros((*shape, ndim, ndim))
+        axes = _grid_axes(grid)
         for idx in np.ndindex(shape):
-            x_coords = np.array([grid.coordinates[d][idx[d]] for d in range(ndim)])
+            x_coords = np.array([axes[d][idx[d]] for d in range(ndim)])
             m_at_point = M_current[idx]
             Sigma[idx] = tensor_field(t, x_coords, m_at_point)
 

@@ -113,7 +113,7 @@ print(f"Dimension: {grid.dimension}")  # 2 or 3
 print(f"Total points: {grid.total_points()}")  # Nx * Ny * Nz
 
 # Coordinate arrays (memory-efficient)
-coords = grid.coordinates  # List of 1D arrays
+coords = grid.coordinates  # Tuple of 1D arrays, one per axis
 print(f"Memory: {sum(len(c) for c in coords)} values")  # Nx + Ny + Nz
 
 # Spacing
