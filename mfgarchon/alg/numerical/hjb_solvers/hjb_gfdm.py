@@ -409,8 +409,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 `HJBHowardSolver`'s policy iteration, which needs a quadratic control cost.
                 **In d >= 2 the choice also changes the advection's discretisation.** Howard is handed
                 ``discretisation="upwind_projection"``, a one-sided stencil along the policy direction, which is
-                first order in space. In 1-D it is handed ``"central"``, and under
-                ``monotonicity_scheme="positive_qp_fan"`` ``"guarded_fan"``. On #2512's exact reflected solution in
+                first order in space; in 1-D it is handed ``"central"``. Under
+                ``monotonicity_scheme="positive_qp_fan"``, which is 2-D only, it is handed ``"guarded_fan"`` instead
+                of either. On #2512's exact reflected solution in
                 2-D (comment 6333097202), ``monotonicity_scheme="none"`` converges at second order with Newton and at
                 first order with Howard.
             boundary_indices: Indices of boundary collocation points

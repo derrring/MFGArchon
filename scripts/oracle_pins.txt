@@ -160,7 +160,8 @@ oracle hjb_gfdm/no_flux_2d_none_howard  tests/unit/test_alg/test_gfdm_no_flux_ra
 oracle hjb_gfdm/no_flux_2d_none_howard  tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-7]
 # joint_socp's solves take minutes, so its pins are marked slow and the gate does not run them; a target the gate does
 # not run fails this check (NOT RUN). Its cells stay `-` here: pinned, but not met in the gate's measure (audit ruling,
-# 2026-10-22). `.github/workflows/nightly.yml`, the only tier that runs @slow, runs them daily with cvxpy installed:
+# 2026-10-22). `.github/workflows/nightly.yml` runs them daily with cvxpy installed (ci.yml's release run takes @slow
+# too, without cvxpy, so they skip there):
 # `test_gfdm_no_flux_rate_2d_2512.py::test_joint_socp_converges_at_its_equations_order_on_reflecting_walls`.
 oracle hjb_gfdm/no_flux_2d_joint_socp_newton  -
 oracle hjb_gfdm/no_flux_2d_joint_socp_howard  -

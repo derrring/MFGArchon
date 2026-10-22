@@ -1,12 +1,12 @@
 """#2512 (a) item 1: HJB-GFDM's reflecting cell, the 2-D box with every face no-flux, converges to an exact reflected
-solution at the order of each distinct discrete equation the class ships (user ruling 2026-10-22, #2512 comment
-6333790265).
+solution at its order for four of the five distinct discrete equations the class ships (user ruling 2026-10-22, #2512
+comment 6333790265); the fifth, ``positive_qp_fan``, keeps #1689's tolerance pin.
 
 The solution is exp17's, as `test_positive_qp_fan_reflecting_1689` builds it and imported from there:
 ``u* = phi + C (T - t)``, ``phi = a (q(x) + q(y))``, ``q(s) = s^3 - 1.5 s^2``, so ``d_n phi = 0`` on every edge; ``m*``
 is frozen and ``V`` absorbs the residual, so the equation holds exactly, and implicit Euler is exact in time, so the
 error is the spatial one. The clouds are exp17's Sobol clouds, refined as N_int 900 -> 1600 -> 2500 with the
-neighbourhood radius scaled with the spacing, ``delta = 4.5 h``, ``h = 1/sqrt(N_int)`` (0.15 at N_int 900). A fixed
+neighbourhood radius scaled with the spacing, ``delta = 4.5 h`` with ``h = 1/sqrt(N_int)``, so delta is 0.15 at N_int 900. A fixed
 delta is not a refinement: there the error saturates near 6.7e-4 from N_int 900.
 
 The equations, and what was measured at 29cdb9d6 over these two refinements on scrambles 42, 3 and 7 (#2512 comment
@@ -22,7 +22,11 @@ The equations, and what was measured at 29cdb9d6 over these two refinements on s
   1689's tolerance pin.
 
 With the no-flux row read along the face's tangent instead of its normal (`_bc_row_for_point`), every row here is red:
-@MUT@
+the errors are 0.11 to 4.2e+82 at every N of the ladder, against 2.5e-4 to 8.8e-3 unmutated.
+
+What this cannot see: the fixture is symmetric under x <-> y, so a defect that swaps the axes or the x and y faces
+leaves u* unchanged; the sign of the normal, at a zero datum; and a defect in time, since u* is linear in t and its
+gradient, m* and V do not depend on it.
 """
 
 from __future__ import annotations
