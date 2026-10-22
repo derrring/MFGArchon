@@ -124,7 +124,7 @@ class KDEMethod(StrEnum):
 
 def _same_box(domain: ImplicitDomain, dimension: int, bounds: list[tuple[float, float]]) -> bool:
     """Whether ``domain``'s bounding box is the grid's box, to a slack relative to the grid's scale: the one comparison
-    the obstacle placement's box refusal and its owner of the domain read (#2706, #2708)."""
+    the contact loop's box refusal and its owner of the domain read (#2706, #2708)."""
     box = np.asarray(domain.get_bounding_box(), dtype=float).reshape(dimension, 2)
     grid = np.asarray(bounds, dtype=float).reshape(dimension, 2)
     slack = 1e-12 * max(1.0, float(np.abs(grid).max()))
@@ -388,8 +388,8 @@ class FPParticleSolver(BaseFPSolver):
             named.append(f"default_bc={bc.default_bc.name}")
         raise ValueError(
             f"{type(self).__name__}: an absorbing condition is placed where it reaches the particles' boundary off the "
-            f"grid's box -- {'; '.join(named)} -- and the particles' domain ({type(self._implicit_domain).__name__}) has "
-            "boundary there, an obstacle's surface or a curved outer boundary. Particles reflect at every contact off "
+            f"grid's box -- {'; '.join(named)} -- and the particles' domain ({type(self._implicit_domain).__name__}) can "
+            "have boundary there, an obstacle's surface or a curved outer boundary. Particles reflect at every contact off "
             "the box and read the boundary condition only on the box, so such an exit would be read only where the "
             "domain touches the box (#2733). A dirichlet_bc(...) or default_bc=DIRICHLET beside an obstacle is this "
             'case: give one exit per box face with boundary= (for example BCSegment(name="exit", '
@@ -1253,9 +1253,9 @@ class FPParticleSolver(BaseFPSolver):
         )
 
     def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
-        """What the obstacle placement cannot do, refused at the start of a solve: an obstacle with any periodic
-        condition, since a wrapped particle's straight segment from its previous position is not its path (#2688; the
-        capability is #2704); and an implicit_domain whose bounding box is not the grid's box (#2706)."""
+        """What the contact loop cannot do, refused at the start of a solve: an obstacle with any periodic condition,
+        since a wrapped particle's straight segment from its previous position is not its path (#2688; the capability
+        is #2704); and an implicit_domain whose bounding box is not the grid's box (#2706)."""
         # Any periodic face, not a periodic axis: a BC periodic on one face of an axis reads as a bounded topology, yet
         # the applicator wraps a particle through that face (#2706, review 2).
         if self._implicit_domain is not None and declares_periodic(self.boundary_conditions):
@@ -1266,22 +1266,19 @@ class FPParticleSolver(BaseFPSolver):
                 "where it started, and a wrapped particle's step is not that segment (#2733). Reflecting along the "
                 "wrapped image of its step is #2704."
             )
-        # The BC and the placement must each land inside the other's reach: two inclusions, which equal boxes give.
-        # (i) The BC's output is inside the grid's box, and the placement defers to the BC whatever lies outside the
-        # domain's bounding box, so grid box within domain box (#2706, review 1). (ii) The placement's output is
-        # navigable, so inside the domain's bounding box, and it must be inside the grid's box the BC has already
-        # applied: domain box within grid box is enough for that, though not needed. Review 2's counter-case broke
-        # (ii): the domain's box reached past the wall, and the projection put a particle on an obstacle's far face
-        # beyond it. Do not narrow this to one inclusion again.
+        # A step ends at its contacts with the implicit_domain, and a contact reads the BC only on the grid's box (D2's
+        # box rule, #2733). A domain reaching past the grid's box lets a particle leave the box with no contact; one
+        # inside it has no surface on the box, so its BC is read nowhere and every contact reflects. Equal boxes give
+        # neither.
         if not _same_box(self._implicit_domain, dimension, bounds):
             box = np.asarray(self._implicit_domain.get_bounding_box(), dtype=float).reshape(dimension, 2)
             grid = np.asarray(bounds, dtype=float).reshape(dimension, 2)
             raise ValueError(
                 f"FPParticleSolver: the implicit_domain's bounding box {box.tolist()} is not the grid's box "
-                f"{grid.tolist()}. The outer boundary condition reflects at the grid's box and the obstacle placement "
-                "acts inside the domain's: where the grid's box reaches further, a particle between the two is "
-                "placed by neither, and where the domain's does, a particle can be placed beyond the reflecting wall "
-                "(#2706). Build the implicit_domain on the grid's box, e.g. "
+                f"{grid.tolist()}. A particle's step ends at its contacts with the implicit_domain, and a contact "
+                "reads the boundary condition only on the grid's box: where the domain's box reaches further, a "
+                "particle can leave the grid's box with no contact, and where the grid's does, the domain has no "
+                "surface the condition is read on (#2706, #2733). Build the implicit_domain on the grid's box, e.g. "
                 "DifferenceDomain(Hyperrectangle(grid bounds), obstacle)."
             )
 
@@ -2271,7 +2268,7 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama update
             new_particles = particles_t + alpha_optimal_at_particles * Dt + sigma_sde * dW
 
-            # The outer boundary condition, then the obstacle placement (#2688): see `_finish_step`.
+            # Each step ends at its first contacts with the particles' boundary (#2733): see `_finish_step`.
             recorded_2d, _absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles.reshape(-1, 1), particles_t.reshape(-1, 1), [(xmin, xmin + Lx)], use_segment_aware_bc
             )
@@ -2452,7 +2449,7 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama step: X_{t+1} = X_t + drift * dt + sigma * dW
             new_particles = particles_t + drift * Dt + dW
 
-            # The outer boundary condition, then the obstacle placement (#2688): see `_finish_step`.
+            # Each step ends at its first contacts with the particles' boundary (#2733): see `_finish_step`.
             new_particles, _absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles, particles_t, bounds, use_segment_aware_bc
             )
@@ -3002,8 +2999,9 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama step
             new_particles = particles_t + drift * Dt + dW
 
-            # The outer boundary condition -- segment-aware where it has Dirichlet (absorbing) segments (#1042) --
-            # then the obstacle placement (#2688): see `_finish_step`.
+            # Each step ends at its first contacts with the particles' boundary (#2733), or, for a BC that declares a
+            # periodic face, at the outer boundary condition, segment-aware where it has absorbing segments (#1042):
+            # see `_finish_step`.
             new_particles, absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles, particles_t, bounds, use_segment_aware_bc
             )

@@ -107,6 +107,25 @@ def test_an_exit_on_a_discs_arc_is_refused_whatever_the_drift(segment):
 
 
 @pytest.mark.parametrize(
+    "placement",
+    [{"boundary": "all"}, {"region": {"x": (0.4, 1.0)}}, {"region_name": "door"}],
+    ids=lambda p: next(iter(p)),
+)
+def test_an_absorbing_exit_placed_by_name_all_region_or_region_name_beside_an_obstacle_is_refused(placement):
+    """The other placements the owner answers off the box. Admitted, ``boundary="all"`` absorbed on the obstacle's
+    surface (400 of 400, none on the box) and a ``region`` exit covering the obstacle absorbed none of 400 after 2359
+    contacts (review 1 of #2791)."""
+    geometry = _grid()
+    geometry.mark_region("door", predicate=lambda x: x[:, 0] > 0.5)
+    bc = BoundaryConditions(
+        segments=[BCSegment(name="exit", bc_type=D, value=0.0, **placement)], dimension=2, default_bc=NF
+    )
+    obstacle = DifferenceDomain(_square(), Hypersphere(center=[0.6, 0.5], radius=0.15))
+    with pytest.raises(ValueError, match=_OFF_BOX + r".*#2789"):
+        FPParticleSolver(_problem(geometry), num_particles=50, seed=1, boundary_conditions=bc, implicit_domain=obstacle)
+
+
+@pytest.mark.parametrize(
     ("label", "geometry", "implicit", "bc"),
     [
         ("a box exit on x_max", _grid(), None, _exit_bc()),
@@ -182,6 +201,22 @@ _NOT_CROSSED = r"govern only face cells no particle can cross: the particles' do
         ("a flush obstacle, an exit on its corridor", 2, _grid(), _FLUSH, {"region": {"y": (0.4, 0.6)}}, False),
         ("a flush obstacle, a whole-face exit", 2, _grid(), _FLUSH, {}, True),
         (
+            "two flush obstacles leaving a crossable gap of 1e-3",
+            2,
+            _grid(),
+            DifferenceDomain(
+                _square(),
+                UnionDomain(
+                    [
+                        Hyperrectangle(np.array([[0.8, 1.0], [0.0, 0.4995]])),
+                        Hyperrectangle(np.array([[0.8, 1.0], [0.5005, 1.0]])),
+                    ]
+                ),
+            ),
+            {},
+            True,
+        ),
+        (
             "a sphere of radius 100 tangent to x_max, the domain inside it",
             2,
             _grid(),
@@ -235,6 +270,22 @@ def test_a_box_face_exit_is_read_only_where_particles_can_cross_it(label, d, geo
     else:
         with pytest.raises(ValueError, match=r"'exit' on (x_max|right).*" + _NOT_CROSSED + r".*#2789"):
             build()
+
+
+def test_an_exit_read_on_one_crossable_cell_among_uncrossable_ones_is_admitted():
+    """A segment is refused only where it governs no cell a particle can cross. An x_max exit beside a flush obstacle
+    on y in [0.4, 0.6], cut by two wall strips into the cells [0, 0.35], [0.45, 0.55] and [0.65, 1], governs one cell
+    no particle crosses and two it does, so it is admitted (review 1 of #2791: reading every cell refused it)."""
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="exit", bc_type=D, value=0.0, boundary="x_max"),
+            BCSegment(name="w1", bc_type=NF, region={"x": (1.0, 1.0), "y": (0.35, 0.45)}, priority=1),
+            BCSegment(name="w2", bc_type=NF, region={"x": (1.0, 1.0), "y": (0.55, 0.65)}, priority=1),
+        ],
+        dimension=2,
+        default_bc=NF,
+    )
+    FPParticleSolver(_problem(_grid()), num_particles=50, seed=1, boundary_conditions=bc, implicit_domain=_FLUSH)
 
 
 #: The boundary owner's point readers: what a function calls to ask which segment governs a point.
@@ -343,7 +394,7 @@ def test_an_absorbing_face_at_a_corridor_absorbs_whichever_face_is_met_first(ste
 def test_a_step_with_no_direction_along_a_corridor_is_refused(domain, point, sign):
     """Ruled 2026-10-22: in 1-D a corridor is an isolated point of the domain, with no tangential direction, so the
     corridor rule leaves no step; it is refused by name, keeping main's loud outcome (`project_to_interior` raised). The
-    1-D grid path puts about 5% of its particles on such a node when it carries mass; with that node's mass zeroed the
+    1-D grid path puts 5 to 8% of its particles on such a node when it carries mass; with that node's mass zeroed the
     same solves run."""
     with pytest.raises(ValueError, match=r"an isolated point of the domain.*Give no initial mass to that node"):
         _step(domain, [[point]], [[point + sign * 0.02]], box=np.array([[0.0, 1.0]]))
@@ -382,16 +433,76 @@ def test_a_1d_step_across_a_ring_reflects_at_the_ring_and_then_the_wall():
     assert stepped.counts["reflections"] == 2
 
 
-def test_the_loop_on_the_box_is_the_fold_bitwise():
-    """On the box alone the loop is today's fold: reflecting the leg's end, e' = e - 2 ((e - p) . n) n, carries a
-    coordinate the normal does not touch exactly and rounds a face's once, as 2 h - e does. 20000 steps from near the
-    (1, 1) corner, many reflected in both faces."""
+def test_the_loop_on_the_box_is_the_exact_reflection_to_an_ulp():
+    """On the box alone the loop reflects the leg's end, e' = e - 2 ((e - p) . n) n, which carries a coordinate the
+    normal does not touch exactly and gives a face's as e - 2 (e - h): exact where e - h is (e within a factor 2 of h),
+    and within one ulp of 2 h - e where it rounds (here against rational arithmetic). Today's fold computes it as
+    xmin + (2L - (x - xmin) % 2L): it agrees bitwise on the high faces of a box at the origin, as on 20000 steps from
+    near the unit box's (1, 1) corner, and to within 1e-15 elsewhere (review 1 of #2791 measured 8.9e-16)."""
+    from fractions import Fraction
+
     rng = np.random.default_rng(0)
     a = rng.uniform(0.85, 1.0, (20000, 2))
     b = a + rng.normal(0.0, 0.1, (20000, 2))
     stepped = _step(_square(), a, b)
     assert stepped.counts["reflections"] > 5000
     assert np.array_equal(stepped.positions, reflect_positions(b.copy(), [(0.0, 1.0), (0.0, 1.0)]))
+    for box in (_BOX, np.array([[0.1, 0.9], [-0.3, 0.7]])):
+        lo, hi = box[:, 0], box[:, 1]
+        a = rng.uniform(lo, hi, (4000, 2))
+        b = a + rng.normal(0.0, 0.15, (4000, 2))
+        once = np.all((b > 2 * lo - hi) & (b < 2 * hi - lo), axis=1)
+        exact = [
+            [
+                float(2 * Fraction(float(lo[k])) - Fraction(float(x)))
+                if x < lo[k]
+                else float(2 * Fraction(float(hi[k])) - Fraction(float(x)))
+                if x > hi[k]
+                else x
+                for k, x in enumerate(row)
+            ]
+            for row in b[once]
+        ]
+        landed = _step(Hyperrectangle(box), a[once], b[once], box=box).positions
+        assert np.all(np.abs(landed - np.array(exact)) <= np.spacing(np.abs(np.array(exact)))), box.tolist()
+        assert np.abs(landed - reflect_positions(b[once].copy(), [tuple(r) for r in box])).max() <= 1e-15
+
+
+def test_a_union_whose_shared_wall_is_one_ulp_apart_is_crossed_as_one_room():
+    """Review 1 of #2791, B1: 0.3 and 0.1 + 0.2 are adjacent doubles, so no point lies between the two rooms' walls and
+    `contains` holds across the seam, but the segment intervals left a stretch between them and the loop reflected every
+    crossing step there. The owner joins it (`SegmentIntervals`): every step lands at its raw end, with no contact, as
+    with the exact shared wall."""
+    rng = np.random.default_rng(0)
+    a = np.column_stack([rng.uniform(0.2, 0.299, 500), rng.uniform(0.1, 0.9, 500)])
+    b = a + np.column_stack([rng.uniform(0.02, 0.1, 500), rng.normal(0.0, 0.02, 500)])
+    assert np.sum(b[:, 0] > 0.30000000000000004) > 300
+    for wall in (0.3, 0.1 + 0.2):
+        rooms = UnionDomain(
+            [Hyperrectangle(np.array([[0.0, 0.3], [0.0, 1.0]])), Hyperrectangle(np.array([[wall, 1.0], [0.0, 1.0]]))]
+        )
+        stepped = _step(rooms, a, b)
+        assert stepped.counts["contacts"] == 0, wall
+        np.testing.assert_array_equal(stepped.positions, b)
+
+
+def test_a_restart_that_rounding_puts_inside_an_obstacle_is_offset_inward():
+    """Review 1 of #2791, B2: a restart, the start of a leg re-traced from a contact, lies on the surface up to rounding.
+    In a box at offset 1000, where an ulp is 1.1e-13, this grazing step's contact with a disc rounds into the disc, and
+    the re-traced leg started outside the domain. D6 at the restart moves it along the contact's inward normal by the
+    ladder, and the step lands inside: one contact, one reflection, one offset."""
+    box = np.array([[1000.0, 1001.0], [1000.0, 1001.0]])
+    domain = DifferenceDomain(Hyperrectangle(box), Hypersphere(center=[1000.5, 1000.5], radius=0.2))
+    a = np.array([[1000.5238303968127, 1000.7016592725379]])
+    b = np.array([[1000.4639329039809, 1000.6981535126412]])
+    stepped = _step(domain, a, b, box=box)
+    assert {k: stepped.counts[k] for k in ("contacts", "reflections", "offsets", "fallbacks")} == {
+        "contacts": 1,
+        "reflections": 1,
+        "offsets": 1,
+        "fallbacks": 0,
+    }
+    assert np.atleast_1d(domain.contains(stepped.positions))[0]
 
 
 def test_the_skip_changes_no_landing(monkeypatch):
@@ -640,8 +751,9 @@ def test_a_box_only_solve_starts_every_particle_in_the_box(path):
 
 
 def test_a_landing_just_outside_the_domain_after_a_contact_is_offset_inward():
-    """D6, on its own helper: no natural step reaches it -- over about 4.5 million random steps beside a disc, two discs
-    and a disc touching a wall, every landing passed `contains` -- so it is pinned directly. A landing 1e-13 inside a
+    """D6 at a landing, on its own helper: no natural step reaches it -- over about 4.5 million random steps beside a disc,
+    two discs and a disc touching a wall, every landing passed `contains` -- so it is pinned directly. (D6 at a restart
+    is reached naturally: `test_a_restart_that_rounding_puts_inside_an_obstacle_is_offset_inward`.) A landing 1e-13 inside a
     box obstacle, after a contact on its face x = 0.9 with outward normal +e_x, is moved along -e_x by the ladder's
     first rung that puts it in the domain (from 1e-12 of the diagonal, doubling), and counted; one with no contact to read
     a normal from returns to its start."""

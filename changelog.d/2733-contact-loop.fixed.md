@@ -4,7 +4,8 @@
   - **The action.** A contact on the grid's box reads the boundary condition there. Every other contact, on an
     obstacle's surface or a curved boundary, reflects. A reflection is in the outward normal at the contact, from the
     surface's own form, and the rest of the step is re-traced.
-  - **On the box alone** this is the fold it replaces, bitwise.
+  - **On the box alone** this agrees with the fold it replaces to within 1e-15, and bitwise on the high faces of a box
+    at the origin. A coordinate reflected once is within an ulp of the exact reflection.
   - **#2707's table:** the peak count of particles on an obstacle's far side is 0 in all four cases. Before this change
     it was 500, 500, 0 and 9: a step through a thin obstacle was placed past it.
   - **A slab thinner than 1/32 of a step** (#2733's thin-feature row, the folded #2710): of width 1e-3 or 1e-4, against
@@ -35,10 +36,12 @@
     - A cell counts where the domain's trace on the face, read 1e-12 of the box's diagonal inside, has a piece at least
       2e-4 of the diagonal long (`ImplicitDomain.face_trace`). This is exact in 1-D and 2-D, and a midpoint-line rule
       in 3-D and above.
-    - Two cases are misjudged:
+    - Four cases are misjudged:
       - a ball of radius 5000 diagonals or more, tangent to a face with the domain inside it, is admitted although no
         particle crosses there;
-      - a crossable piece shorter than 2e-4 of the diagonal is refused.
+      - a crossable piece shorter than 2e-4 of the diagonal is refused;
+      - in 3-D and above, a trace of positive length but no area that a cell's midpoint line lies on is admitted;
+      - in 3-D and above, a trace of positive area that a cell's midpoint line misses is refused.
 - **The boundary condition is read on the solver's box.** A BC whose `domain_bounds` differ from the solver's box is
   read where particles cross the solver's box. An exit placed on a face of the BC's own box that is not the solver's
   is refused, naming both boxes.
@@ -48,7 +51,8 @@
     bump's sample on a [0, 1] x [0, 0.5] box. The t = 0 law is unchanged: for
     a uniform jitter, folding its outside half onto its inside half and redrawing it within the cell give the same law
     on the inside half. Seeded random streams change.
-  - `initial_particles` outside the box are refused by name, where they used to be folded silently.
+  - `initial_particles` outside the box are refused by name, where they used to be folded, or wrapped on a periodic
+    face, silently.
 - **`exit_positions_history`** records where a particle met the exit, not where its raw step ended past it.
-- **`obstacle_placement_history`** records each step's contact counts, on every solve: searched, contacts,
-  reflections, corridors, offsets, fallbacks and absorbed.
+- **`obstacle_placement_history`** records each step's contact counts, on every solve whose boundary condition declares
+  no periodic face: searched, contacts, reflections, corridors, offsets, fallbacks and absorbed.

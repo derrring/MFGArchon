@@ -553,3 +553,30 @@ def test_a_domain_or_segment_it_cannot_classify_is_refused_by_name(row, domain, 
         domain.segment_intervals(a, b)
     with pytest.raises(error, match=match):
         domain.first_contact(a, b)
+
+
+@pytest.mark.parametrize(
+    ("label", "east_wall", "joined"),
+    [
+        ("the exact shared wall", 0.3, True),
+        ("a seam one ulp apart", 0.1 + 0.2, True),
+        ("a crack of 1e-9", 0.3 + 1e-9, False),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_a_seam_no_point_can_occupy_is_no_gap_and_a_real_crack_is(label, east_wall, joined):
+    """Review 1 of #2791, B1: two rooms meeting at 0.3 and 0.1 + 0.2, adjacent doubles, have no point between them, and
+    `contains` holds across; each leaf's interval ends at its own wall, which left a stretch of t-length 7e-16 that the
+    first contact read as an exit. Every left-out stretch is read by `contains` at its midpoint (`SegmentIntervals`), so
+    the seam joins, one interval and no contact, as the exact shared wall does; a crack of 1e-9, whose midpoint
+    `contains` rejects, stays a gap, with its contact at the crack."""
+    rooms = UnionDomain([_box((0, 0.3), (0, 1)), _box((east_wall, 1), (0, 1))])
+    a, b = np.array([[0.2, 0.5]]), np.array([[0.4, 0.5]])
+    found, contact = rooms.segment_intervals(a, b), rooms.first_contact(a, b)
+    assert contact.inside_at_start[0]
+    if joined:
+        np.testing.assert_array_equal(found.t[0], [[0.0, 1.0]])
+        assert np.isnan(contact.t[0])
+    else:
+        assert np.sum(~np.isnan(found.t[0, :, 0])) == 2
+        assert contact.point[0, 0] == 0.3

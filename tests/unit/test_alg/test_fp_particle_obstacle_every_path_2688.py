@@ -240,8 +240,8 @@ def test_what_the_placement_cannot_do_is_refused(case):
         ):
             _solve(1, no_flux_bc(dimension=1), "grid", centres=[0.5])
     elif case == "an implicit_domain box short of the grid's":
-        # #2706 review 1, B1: the BC reflects at the grid's box, and the placement leaves to it whatever is outside
-        # the domain's box, so a particle between the two would be recorded outside the domain.
+        # #2706 review 1, B1: the domain has no surface on the grid's box, so the BC is read nowhere and every
+        # contact reflects (#2733's box rule).
         short = DifferenceDomain(
             Hyperrectangle(np.array([[0.0, 0.8], [0.0, 1.0]])), Hyperrectangle(np.array([[0.3, 0.4], [0.3, 0.4]]))
         )
@@ -255,9 +255,9 @@ def test_what_the_placement_cannot_do_is_refused(case):
                 show_progress=False,
             )
     elif case == "an implicit_domain box beyond the grid's":
-        # #2706 review 2: the BC reflects at the grid's box first, and a domain whose box reaches past it lets the
-        # projection put a particle on the obstacle's far face x = 1.05, beyond the wall. The advice -- the same
-        # obstacle cut from the grid's box -- then records nothing outside the grid's box or the domain.
+        # #2706 review 2: a domain whose box reaches past the grid's lets a particle leave the grid's box with no
+        # contact. The advice -- the same obstacle cut from the grid's box -- then records nothing outside the grid's
+        # box or the domain.
         obstacle = Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
         wide = DifferenceDomain(Hyperrectangle(np.array([[-0.5, 1.5], [-0.5, 1.5]])), obstacle)
         problem, _ = _problem(2, no_flux_bc(dimension=2))

@@ -1,7 +1,8 @@
-- **A particle that steps into an obstacle always lands navigable, and at the nearest navigable point wherever the
-  domain's φ is the true distance to the navigable set, outside a 1e-6 band about a medial axis** (#2679 stage 1,
-  #2687; the rest is #2688 and #2689). φ is not that distance for a point trapped against the outer box, inside a
-  union or overlapping obstacles, or for an approximate SDF.
+- **A particle that steps into an obstacle no longer comes out on its far side, and `ImplicitDomain.project_to_interior`
+  places a point at the nearest navigable point wherever the domain's φ is the true distance to the navigable set,
+  outside a 1e-6 band about a medial axis** (#2679 stage 1, #2687; the rest is #2688, #2689 and #2733). φ is not
+  that distance for a point trapped against the outer box, inside a union or overlapping obstacles, or for an
+  approximate SDF.
   - `FPParticleSolver` no longer places a particle by `project_to_domain`, which walked the ray toward the
     bounding-box centre to the first navigable point: a particle that entered the side of an obstacle facing away from
     the centre came out on the far side -- every particle, for an obstacle on the centre. It now ends each step at its

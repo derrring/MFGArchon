@@ -314,8 +314,8 @@ def reflect_at_first_contacts(
     """End a particle step at its contacts with the particles' boundary, in path order (#2733 D1-D6).
 
     ``starts`` are the positions before the step, inside ``domain`` by induction, and ``ends`` the raw Euler-Maruyama
-    ends; ``box`` is the box the step is taken in, of shape (d, 2). One search, `ImplicitDomain.segment_intervals`,
-    finds the first point where the path leaves ``domain``, over the obstacles and the box walls together.
+    ends; ``box`` is the box the step is taken in, of shape (d, 2). One search, `ImplicitDomain.first_contact`, finds
+    the first point where the path leaves ``domain``, over the obstacles and the box walls together.
 
     - **The action at a contact.** A contact on the box's boundary reads the boundary owner there
       (`segment_at_box_contact`); every other contact reflects (D2's box rule). An absorbing contact ends the particle
@@ -328,8 +328,9 @@ def reflect_at_first_contacts(
       step has no tangential part, a 1-D corridor or an isolated point of the domain, the rule has no answer and the
       step is refused by name.
     - **The cap (D5).** A step reflected more than ``MAX_REFLECTIONS`` times returns to its start, and is counted.
-    - **The offset (D6).** A landing that fails ``domain.contains`` after a contact moves along that contact's inward
-      normal, by the ladder ``OFFSET_LADDER``; one that still fails returns to its start, and is counted.
+    - **The offset (D6).** A point the loop computed that fails ``domain.contains`` moves along the last contact's
+      inward normal, by the ladder ``OFFSET_LADDER``: a landing, and a restart, the start of a leg re-traced from a
+      contact that rounding put outside. One the ladder cannot place returns to its start, and is counted.
     - **The skip.** A particle whose segment provably reaches no surface is not searched: on a convex domain one whose
       end is inside, elsewhere one with ``|b - a| < |phi(a)| - eps``. ``|phi|`` is a lower bound on the distance to
       the boundary for every domain built from `Hyperrectangle` and `Hypersphere` by the CSG nodes.
@@ -350,7 +351,7 @@ def reflect_at_first_contacts(
     absorbed = np.zeros(n, dtype=bool)
     if _convex(domain):
         # A start is inside by induction, so a segment whose end is inside a convex domain meets no surface. A searched
-        # leg's start is checked where it is searched (`_first_exits`).
+        # leg's start is checked where it is searched (`first_contact`'s ``inside_at_start``).
         rows = np.flatnonzero(~np.atleast_1d(np.asarray(domain.contains(ends), dtype=bool)))
     else:
         phi = np.atleast_1d(np.asarray(domain.signed_distance(starts), dtype=float))
@@ -372,7 +373,9 @@ def reflect_at_first_contacts(
     uniform_action = None if uniform is None else segment_particle_action(uniform, reader)
     # Each leg runs from ``position`` to ``end``. A reflection moves the end, e' = e - 2 ((e - p) . n) n, rather than
     # the remaining vector, so a coordinate the normal does not touch is carried exactly and a box face's coordinate
-    # rounds once, as the fold's 2 h - e does: on the box the loop is the fold, bitwise.
+    # is e - 2 (e - h): exact where e - h is, and within an ulp of 2 h - e. The fold computes it as
+    # xmin + (2L - (x - xmin) % 2L), so on the box the two agree to rounding, and bitwise on the high faces of a box at
+    # the origin.
     position, end = starts[rows].copy(), ends[rows].copy()
     total = np.linalg.norm(end - position, axis=1)
     previous_normal = np.full(
@@ -380,6 +383,7 @@ def reflect_at_first_contacts(
     )  # the last contact's normal, unless a corridor followed it
     last_normal = np.full((rows.size, dimension), np.nan)  # the last contact's normal, for D6
     reflections = np.zeros(rows.size, dtype=np.int64)
+    restarted = np.zeros(rows.size, dtype=bool)  # moved inside by D6 since the last search that found it inside
     live = np.ones(rows.size, dtype=bool)
     while live.any():
         legs = np.flatnonzero(live)
@@ -391,12 +395,26 @@ def reflect_at_first_contacts(
         legs, a, b, leg_length = legs[~idle], a[~idle], b[~idle], leg_length[~idle]
         if legs.size == 0:
             break
-        inside, t, point, normal = _first_exits(domain, a, b, eps / leg_length)
-        if not inside.all():
-            raise RuntimeError(
-                f"{reader}: internal error -- a particle step starts outside the particles' domain, at "
-                f"{a[~inside][0].tolist()}. Every recorded particle is inside, so every step starts inside (#2733)."
-            )
+        found = domain.first_contact(a, b)
+        outside = ~found.inside_at_start
+        if outside.any():
+            # A restart, a leg from the last contact, that rounding put outside: D6 at the restart. A first leg's start is
+            # a recorded particle's, inside by induction.
+            first = outside & ~np.isfinite(last_normal[legs]).all(axis=1)
+            if first.any():
+                raise RuntimeError(
+                    f"{reader}: internal error -- a particle step starts outside the particles' domain, at "
+                    f"{a[first][0].tolist()}. Every recorded particle is inside, so every step starts inside (#2733)."
+                )
+            _offset_restarts(domain, legs[outside], position, last_normal, restarted, box, live, counts)
+            failed = legs[outside][~live[legs[outside]]]
+            positions[rows[failed]] = starts[rows[failed]]
+            inside = ~outside
+            legs, a, b, leg_length = legs[inside], a[inside], b[inside], leg_length[inside]
+            t, point, normal = found.t[inside], found.point[inside], found.normal[inside]
+        else:
+            t, point, normal = found.t, found.point, found.normal
+        restarted[legs] = False
         clear = np.isnan(t)
         positions[rows[legs[clear]]] = b[clear]
         live[legs[clear]] = False
@@ -489,35 +507,49 @@ def _convex(domain: ImplicitDomain) -> bool:
     return False
 
 
-def _first_exits(
-    domain: ImplicitDomain, a: np.ndarray, b: np.ndarray, eps_t: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Each leg's first exit from ``domain``, read from `ImplicitDomain.segment_intervals` as `ImplicitDomain.first_contact`
-    reads it, with one difference: a start within ``eps_t`` of its first interval is inside it. A leg starts where the
-    last one met a surface, which rounding puts on either side of it. Returns whether each start is inside, the exit's
-    t (NaN where the leg leaves nowhere before its end), the point, and the domain's outward unit normal there. A box
-    leaf's contact is put on its face exactly, the leaf's own form."""
-    from mfgarchon.geometry.implicit import Hyperrectangle
+def _offset_restarts(
+    domain: ImplicitDomain,
+    legs: np.ndarray,
+    position: np.ndarray,
+    last_normal: np.ndarray,
+    restarted: np.ndarray,
+    box: np.ndarray,
+    live: np.ndarray,
+    counts: dict[str, int],
+) -> None:
+    """D6 at a restart: a leg from the last contact whose start rounding put outside the domain, as a contact with a
+    curved surface does about half the time, moves along that contact's inward normal by `_inward_offsets` and is
+    searched again. One moved once already, or that the ladder cannot place, ends its step (D5): the caller returns it
+    to its start."""
+    diagonal = float(np.linalg.norm(box[:, 1] - box[:, 0]))
+    again, fresh = legs[restarted[legs]], legs[~restarted[legs]]
+    moved, placed = _inward_offsets(domain, position[fresh], -last_normal[fresh], diagonal)
+    position[fresh[placed]] = moved[placed]
+    restarted[fresh[placed]] = True
+    counts["offsets"] += int(placed.sum())
+    failed = np.concatenate([again, fresh[~placed]])
+    live[failed] = False
+    counts["fallbacks"] += int(failed.size)
 
-    found = domain.segment_intervals(a, b)
-    lo, hi = found.t[:, 0, 0], found.t[:, 0, 1]
-    inside = lo <= eps_t
-    exits = inside & (hi < 1.0)
-    rows = np.arange(len(a))
-    t = np.where(exits, hi, np.nan)
-    leaf = np.where(exits, found.leaf[rows, 0, 1], -1)
-    face = np.where(exits, found.leaf_face[rows, 0, 1], -1)
-    point = a + np.where(exits, hi, 0.0)[:, None] * (b - a)
-    normal = np.full_like(a, np.nan)
-    for index in np.unique(leaf[exits]):
-        at = leaf == index
-        surface = found.leaves[index]
-        if isinstance(surface, Hyperrectangle):
-            axis, side = face[at] // 2, face[at] % 2
-            point[np.flatnonzero(at), axis] = np.asarray(surface.bounds, dtype=float)[axis, side]
-        normal[at] = surface._face_normal(point[at], face[at])
-    normal[exits & found.complemented[rows, 0, 1]] *= -1.0
-    return inside, t, point, normal
+
+def _inward_offsets(
+    domain: ImplicitDomain, points: np.ndarray, inward: np.ndarray, diagonal: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """D6: each point moved along its ``inward`` direction by ``OFFSET_LADDER[0]`` to ``OFFSET_LADDER[1]`` times
+    ``diagonal``, doubling, to the first place ``domain.contains``. Returns the moved points and which were placed; one
+    past the ladder, or with no direction to move along, is not."""
+    moved = np.array(points, dtype=float)
+    placed = np.zeros(len(moved), dtype=bool)
+    todo = np.flatnonzero(np.isfinite(inward).all(axis=1))
+    size = OFFSET_LADDER[0] * diagonal
+    while todo.size and size <= OFFSET_LADDER[1] * diagonal:
+        candidate = moved[todo] + size * inward[todo]
+        inside = np.atleast_1d(np.asarray(domain.contains(candidate), dtype=bool))
+        moved[todo[inside]] = candidate[inside]
+        placed[todo[inside]] = True
+        todo = todo[~inside]
+        size *= 2.0
+    return moved, placed
 
 
 def _offset_landings(
@@ -531,9 +563,9 @@ def _offset_landings(
     counts: dict[str, int],
     reader: str,
 ) -> None:
-    """D6: a searched landing that fails ``domain.contains`` after a contact moves along that contact's inward normal,
-    from ``OFFSET_LADDER[0]`` to ``OFFSET_LADDER[1]`` times the box's diagonal, doubling, until it is inside; past that,
-    or with no contact to read a normal from, it returns to its start. A landing already inside is left where it is."""
+    """D6 at a landing: a searched landing that fails ``domain.contains`` after a contact moves along that contact's
+    inward normal by `_inward_offsets`; past the ladder, or with no contact to read a normal from, it returns to its
+    start. A landing already inside is left where it is."""
     landed = rows[~absorbed[rows]]
     if landed.size == 0:
         return
@@ -541,23 +573,12 @@ def _offset_landings(
     if not out.any():
         return
     diagonal = float(np.linalg.norm(box[:, 1] - box[:, 0]))
-    where = {row: k for k, row in enumerate(rows)}
-    for row in landed[out]:
-        inward = -last_normal[where[row]]
-        placed = False
-        if np.isfinite(inward).all():
-            size = OFFSET_LADDER[0] * diagonal
-            while size <= OFFSET_LADDER[1] * diagonal:
-                moved = positions[row] + size * inward
-                if bool(np.atleast_1d(domain.contains(moved[None, :]))[0]):
-                    positions[row] = moved
-                    counts["offsets"] += 1
-                    placed = True
-                    break
-                size *= 2.0
-        if not placed:
-            positions[row] = starts[row]
-            counts["fallbacks"] += 1
+    out_rows = landed[out]
+    where = np.searchsorted(rows, out_rows)
+    moved, placed = _inward_offsets(domain, positions[out_rows], -last_normal[where], diagonal)
+    positions[out_rows] = np.where(placed[:, None], moved, starts[out_rows])
+    counts["offsets"] += int(placed.sum())
+    counts["fallbacks"] += int((~placed).sum())
 
 
 # =============================================================================

@@ -52,13 +52,16 @@ _NO_SURFACE = -1
 class SegmentIntervals:
     """The parts of segments a -> b inside a domain, as parameters t of a + t (b - a) in [0, 1] (#2733 D1).
 
-    ``t[i, k]`` is the k-th interval (lo, hi) of segment i: closed, sorted and disjoint, with rows padded by NaN. A
-    point of the segment is in an interval exactly where `contains` holds there, up to rounding within about an ulp of
-    a surface, in space, and short of the overflow and underflow limits each leaf states: a segment that grazes a face
-    can disagree with `contains` over a long stretch of its parameter.
+    ``t[i, k]`` is the k-th interval (lo, hi) of segment i: closed, sorted and disjoint, with rows padded by NaN.
     Each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's intervals as Roth
     (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
     intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
+    Every stretch the intervals leave out, before the first, between two or after the last, is outside where
+    `contains` fails at its midpoint, and is joined to its neighbours where it holds: two surfaces one ulp apart
+    that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, leave a stretch with
+    no point `contains` can see, and the domain's own answer closes it. A stretch that grazes a face, where
+    `contains` itself flips along it, can still disagree with it, as can a segment short of the overflow and
+    underflow limits each leaf states.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -83,7 +86,8 @@ class FirstContact:
     own forms rather than by a band around phi = 0. From a start inside, the contact is where the path leaves the
     domain, at t < 1, and at t = 0 where it leaves at once, from a face or a corner it starts on. From a start outside,
     it is where the path enters, at t <= 1. Elsewhere ``t`` is NaN and ``leaf`` and ``leaf_face`` are -1. ``point`` is
-    a + t (b - a). ``normal`` is the domain's outward unit normal there, from the leaf's own form: +-e_axis on a box
+    a + t (b - a), put on a box leaf's face exactly (`_on_face`). ``normal`` is the domain's outward unit normal there,
+    from the leaf's own form: +-e_axis on a box
     face, radial on a sphere, negated for a complemented leaf. ``leaf``, ``leaf_face`` and ``leaves`` are as in
     `SegmentIntervals`.
     """
@@ -683,6 +687,7 @@ class ImplicitDomain(
         kept = np.take_along_axis(kept, order, axis=1)[..., None]
         t = np.where(kept, np.take_along_axis(t, order[..., None], axis=1), np.nan)
         tag = np.where(kept, np.take_along_axis(ends, order[..., None], axis=1), _NO_SURFACE)
+        t, tag = self._join_stretches_contains_holds(a, b - a, t, tag)
         none = tag < 0
         return SegmentIntervals(
             t=t,
@@ -691,6 +696,74 @@ class ImplicitDomain(
             complemented=~none & ((tag & 1) == 1),
             leaves=self._leaves(),
         )
+
+    def _join_stretches_contains_holds(
+        self, a: NDArray[np.float64], extent: NDArray[np.float64], t: NDArray[np.float64], tag: NDArray[np.int64]
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """Join each stretch the intervals ``t`` leave out to its neighbours where `contains` holds on it
+        (`SegmentIntervals`): a gap merges its two intervals, a leading or trailing stretch extends its interval to the
+        segment's end, and a segment with no interval becomes [0, 1]. An end that moves to the segment's end has no
+        surface.
+
+        A stretch is read at its midpoint, and a leading or trailing one also at the segment's own end it holds, a
+        double `contains` sees: a start one ulp outside a face has a leading stretch whose midpoint rounds onto the face.
+        A real stretch is outside in exact arithmetic, so its midpoint fails `contains`, however short; a gap with no
+        double inside it is one no point can occupy."""
+        n = t.shape[0]
+        lo, hi = t[..., 0], t[..., 1]
+        real = ~np.isnan(lo)
+        count = real.sum(axis=1)
+        rows = np.arange(n)
+        first_lo, last_hi = lo[:, 0], hi[rows, np.maximum(count - 1, 0)]
+        lead = (count == 0) | (first_lo > 0.0)
+        gap = real[:, 1:] & real[:, :-1]
+        trail = (count > 0) & (last_hi < 1.0)
+        whole = count == 0
+        probes = [
+            (rows[lead], np.where(whole, 0.5, 0.5 * np.nan_to_num(first_lo))[lead]),
+            (rows[lead], np.zeros(int(lead.sum()))),
+            (np.nonzero(gap)[0], (0.5 * (hi[:, :-1] + lo[:, 1:]))[gap]),
+            (rows[trail], (0.5 * (np.nan_to_num(last_hi) + 1.0))[trail]),
+            (rows[trail], np.ones(int(trail.sum()))),
+            (rows[whole], np.ones(int(whole.sum()))),
+        ]
+        owners = np.concatenate([owner for owner, _ in probes])
+        if owners.size == 0:
+            return t, tag
+        at = np.concatenate([where for _, where in probes])
+        holds = np.atleast_1d(np.asarray(self.contains(a[owners] + at[:, None] * extent[owners]), dtype=bool))
+        if not holds.any():
+            return t, tag
+        lead_mid, lead_end, gap_mid, trail_mid, trail_end, whole_end = np.split(
+            holds, np.cumsum([len(owner) for owner, _ in probes])[:-1]
+        )
+        lead_holds, trail_holds = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+        lead_holds[rows[lead]] = lead_mid & lead_end
+        lead_holds[rows[whole]] &= whole_end
+        trail_holds[rows[trail]] = trail_mid & trail_end
+        gap_holds = np.zeros_like(gap)
+        gap_holds[gap] = gap_mid
+        # Interval j keeps its start unless the gap before it is joined, and its end unless the gap after it is.
+        starts = real & np.concatenate([np.ones((n, 1), dtype=bool), ~gap_holds], axis=1)
+        ends = real & np.concatenate([~gap_holds, np.ones((n, 1), dtype=bool)], axis=1)
+        width = max(int(starts.sum(axis=1).max(initial=0)), 1)
+        pick_start = np.argsort(~starts, axis=1, kind="stable")[:, :width]
+        pick_end = np.argsort(~ends, axis=1, kind="stable")[:, :width]
+        kept = np.take_along_axis(starts, pick_start, axis=1)
+        out_t = np.stack([np.take_along_axis(lo, pick_start, axis=1), np.take_along_axis(hi, pick_end, axis=1)], -1)
+        out_tag = np.stack(
+            [np.take_along_axis(tag[..., 0], pick_start, axis=1), np.take_along_axis(tag[..., 1], pick_end, axis=1)], -1
+        )
+        out_t = np.where(kept[..., None], out_t, np.nan)
+        out_tag = np.where(kept[..., None], out_tag, _NO_SURFACE)
+        joined = lead_holds & whole
+        out_t[joined, 0], out_tag[joined, 0] = (0.0, 1.0), _NO_SURFACE
+        front = lead_holds & ~whole
+        out_t[front, 0, 0], out_tag[front, 0, 0] = 0.0, _NO_SURFACE
+        back = rows[trail_holds]
+        back_last = kept[back].sum(axis=1) - 1
+        out_t[back, back_last, 1], out_tag[back, back_last, 1] = 1.0, _NO_SURFACE
+        return out_t, out_tag
 
     def first_contact(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> FirstContact:
         """Each segment's first contact with this domain's boundary, from `segment_intervals` (#2733 D1); see
@@ -715,6 +788,7 @@ class ImplicitDomain(
         normal = np.full_like(a, np.nan)
         for index in np.unique(leaf[hit]):
             at = leaf == index
+            point[at] = found.leaves[index]._on_face(point[at], face[at])
             normal[at] = found.leaves[index]._face_normal(point[at], face[at])
         normal[hit & found.complemented[rows, 0, end]] *= -1.0
         return FirstContact(
@@ -843,6 +917,11 @@ class ImplicitDomain(
         """The outward unit normal of this leaf's face ``face`` at the points ``x`` on it, shape (n, d). A leaf with
         no exact form has none; `_line_sets` refuses it before this is reached."""
         raise NotImplementedError(f"{type(self).__name__} has no exact face normals (#2733 D1).")
+
+    def _on_face(self, x: NDArray[np.float64], face: NDArray[np.int64]) -> NDArray[np.float64]:
+        """The points ``x``, computed on this leaf's face ``face``, put on it by the leaf's own form where it has one
+        coordinate to set (`Hyperrectangle`); elsewhere ``x`` as computed."""
+        return x
 
     @property
     def manifold_dimension(self) -> int:
