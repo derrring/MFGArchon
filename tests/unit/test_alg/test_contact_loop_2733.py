@@ -468,22 +468,80 @@ def test_the_loop_on_the_box_is_the_exact_reflection_to_an_ulp():
         assert np.abs(landed - reflect_positions(b[once].copy(), [tuple(r) for r in box])).max() <= 1e-15
 
 
+def _rooms(wall):
+    return UnionDomain(
+        [Hyperrectangle(np.array([[0.0, 0.3], [0.0, 1.0]])), Hyperrectangle(np.array([[wall, 1.0], [0.0, 1.0]]))]
+    )
+
+
 def test_a_union_whose_shared_wall_is_one_ulp_apart_is_crossed_as_one_room():
     """Review 1 of #2791, B1: 0.3 and 0.1 + 0.2 are adjacent doubles, so no point lies between the two rooms' walls and
-    `contains` holds across the seam, but the segment intervals left a stretch between them and the loop reflected every
-    crossing step there. The owner joins it (`SegmentIntervals`): every step lands at its raw end, with no contact, as
-    with the exact shared wall."""
-    rng = np.random.default_rng(0)
-    a = np.column_stack([rng.uniform(0.2, 0.299, 500), rng.uniform(0.1, 0.9, 500)])
-    b = a + np.column_stack([rng.uniform(0.02, 0.1, 500), rng.normal(0.0, 0.02, 500)])
-    assert np.sum(b[:, 0] > 0.30000000000000004) > 300
+    `contains` holds across the seam, but the segment intervals left a gap between them and the loop reflected every
+    crossing step there. The owner joins a gap no thicker than ``SEAM_ULPS`` ulps across both walls (`SegmentIntervals`):
+    every step lands at its raw end, with no contact, as with the exact shared wall, at every angle to the seam's normal
+    (review 2: a width read along the step left grazing crossings reflected)."""
+    rng = np.random.default_rng(5)
+    phi = rng.uniform(-np.pi / 2 + 1e-3, np.pi / 2 - 1e-3, 3000)
+    d = np.c_[np.cos(phi), np.sin(phi)]
+    length = rng.uniform(0.01, 0.05, 3000) / np.maximum(np.cos(phi), 0.02)
+    a = (
+        np.c_[np.full(3000, 0.3), rng.uniform(0.3, 0.7, 3000)]
+        - (rng.uniform(0.2, 0.8, 3000) * 0.5 * length)[:, None] * d
+    )
+    b = a + length[:, None] * d
+    keep = (a[:, 0] < 0.3) & (b[:, 0] > 0.30000000000000004) & (np.minimum(a[:, 1], b[:, 1]) > 0.01)
+    keep &= np.maximum(a[:, 1], b[:, 1]) < 0.99
+    a, b = a[keep], b[keep]
+    assert np.sum(np.abs(np.tan(phi[keep])) >= 16) > 20
     for wall in (0.3, 0.1 + 0.2):
-        rooms = UnionDomain(
-            [Hyperrectangle(np.array([[0.0, 0.3], [0.0, 1.0]])), Hyperrectangle(np.array([[wall, 1.0], [0.0, 1.0]]))]
-        )
-        stepped = _step(rooms, a, b)
+        stepped = _step(_rooms(wall), a, b)
         assert stepped.counts["contacts"] == 0, wall
         np.testing.assert_array_equal(stepped.positions, b)
+
+
+def test_a_step_grazing_a_one_ulp_seam_crosses_it():
+    """The seam's grazing row: a step at |tan phi| = 52.8 to the seam's normal, whose intervals at 0.3 and 0.1 + 0.2 leave
+    a gap of t-length 4.8e-15. Along the step the gap is 53 ulps of 0.3 long, across the walls one; it is joined, and
+    the step lands at its raw end."""
+    a = np.array([[0.297483089773426, 0.7144295529063409]])
+    b = np.array([[0.3091892931203627, 0.09628943179539262]])
+    stepped = _step(_rooms(0.1 + 0.2), a, b)
+    assert stepped.counts["contacts"] == 0
+    np.testing.assert_array_equal(stepped.positions, b)
+
+
+#: Two balls of radius 0.007 touching at 0.314, in [0, 1]: the domain's isolated point 0.314 lies between two solid
+#: obstacles, and a step's gap through both has it at its midpoint.
+_PINCH = DifferenceDomain(
+    Hyperrectangle(np.array([[0.0, 1.0]])),
+    UnionDomain([Hypersphere(center=[0.307], radius=0.007), Hypersphere(center=[0.321], radius=0.007)]),
+)
+
+
+def test_a_step_across_two_touching_obstacles_meets_the_first():
+    """Review 2 of #2791: where two obstacles touch at p, rounding can drop the degenerate interval at p, and the gap
+    through both, [0.3, 0.328] here, has p at its midpoint, a point of the closed domain. Reading the midpoint alone
+    joined it, and the step passed through both. The gap is 0.028 thick across the walls, far more than a seam, so the
+    step meets the first ball at x = 0.3."""
+    stepped = _step(_PINCH, [[0.278525939767154]], [[0.36341352620241907]], box=np.array([[0.0, 1.0]]))
+    assert stepped.counts["contacts"] >= 1
+    assert stepped.positions[0, 0] < 0.3
+
+
+def test_no_particle_passes_two_touching_obstacles():
+    """The solve: 2000 particles from [0.02, 0.2] drifted to 0.9 past the two touching balls in 1-D, every crossing
+    step through their touching point. None ends past them; with the midpoint-only join 1471 did (review 2 of #2791)."""
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
+    solver = FPParticleSolver(
+        _problem(grid), num_particles=2000, seed=0, implicit_domain=_PINCH, density_mode="query_only"
+    )
+    solver.solve_fp_system(
+        initial_particles=np.random.default_rng(0).uniform(0.02, 0.2, (2000, 1)),
+        drift_field=lambda t, x, m: 4.0 * (0.9 - np.asarray(x)),
+        drift_needs_density=False,
+        show_progress=False,
+    )
+    assert max(int(np.sum(np.asarray(p, dtype=float) > 0.328)) for p in solver.M_particles_trajectory) == 0
 
 
 def test_a_restart_that_rounding_puts_inside_an_obstacle_is_offset_inward():

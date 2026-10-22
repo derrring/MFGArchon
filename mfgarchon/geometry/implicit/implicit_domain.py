@@ -46,6 +46,9 @@ logger = get_logger(__name__)
 
 # An interval end that no surface bounds: a segment's own end, or the line's ends at infinity.
 _NO_SURFACE = -1
+#: A gap between two intervals no thicker than this many ulps of its largest coordinate, across both surfaces that
+#: bound it, is a seam: two walls one wall in floating point (`ImplicitDomain._join_seams`).
+SEAM_ULPS = 4
 
 
 @dataclass(frozen=True)
@@ -56,12 +59,11 @@ class SegmentIntervals:
     Each leaf solves its own form, a slab test or a quadratic, and a CSG node combines its children's intervals as Roth
     (1982) does. A complement enters as the closed set phi >= 0, not as the gaps between its child's
     intervals, so a segment that runs along an obstacle's face is in the domain there, as `contains` says.
-    Every stretch the intervals leave out, before the first, between two or after the last, is outside where
-    `contains` fails at its midpoint, and is joined to its neighbours where it holds: two surfaces one ulp apart
-    that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, leave a stretch with
-    no point `contains` can see, and the domain's own answer closes it. A stretch that grazes a face, where
-    `contains` itself flips along it, can still disagree with it, as can a segment short of the overflow and
-    underflow limits each leaf states.
+    Two surfaces that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, leave a gap
+    between two intervals that no point can occupy: one no thicker than ``SEAM_ULPS`` ulps across both surfaces, at
+    whose midpoint `contains` holds. Such a seam is joined (`_join_seams`); any other gap is outside. A segment that
+    grazes a face, where `contains` itself flips along it, can still disagree with it, as can a segment short of the
+    overflow and underflow limits each leaf states.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -687,7 +689,7 @@ class ImplicitDomain(
         kept = np.take_along_axis(kept, order, axis=1)[..., None]
         t = np.where(kept, np.take_along_axis(t, order[..., None], axis=1), np.nan)
         tag = np.where(kept, np.take_along_axis(ends, order[..., None], axis=1), _NO_SURFACE)
-        t, tag = self._join_stretches_contains_holds(a, b - a, t, tag)
+        t, tag = self._join_seams(a, b - a, t, tag)
         none = tag < 0
         return SegmentIntervals(
             t=t,
@@ -697,73 +699,59 @@ class ImplicitDomain(
             leaves=self._leaves(),
         )
 
-    def _join_stretches_contains_holds(
+    def _join_seams(
         self, a: NDArray[np.float64], extent: NDArray[np.float64], t: NDArray[np.float64], tag: NDArray[np.int64]
     ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
-        """Join each stretch the intervals ``t`` leave out to its neighbours where `contains` holds on it
-        (`SegmentIntervals`): a gap merges its two intervals, a leading or trailing stretch extends its interval to the
-        segment's end, and a segment with no interval becomes [0, 1]. An end that moves to the segment's end has no
-        surface.
+        """Join two consecutive intervals of ``t`` across a seam (`SegmentIntervals`): a gap between them no thicker
+        than ``SEAM_ULPS`` ulps of its largest coordinate, along the normal of each surface that bounds it, at whose
+        midpoint `contains` holds.
 
-        A stretch is read at its midpoint, and a leading or trailing one also at the segment's own end it holds, a
-        double `contains` sees: a start one ulp outside a face has a leading stretch whose midpoint rounds onto the face.
-        A real stretch is outside in exact arithmetic, so its midpoint fails `contains`, however short; a gap with no
-        double inside it is one no point can occupy."""
+        The width is read across the surfaces, not along the segment, so a step grazing a seam joins as one crossing it
+        square does. A gap that holds a point of the domain's exterior is wider than that, however its midpoint falls:
+        where two obstacles touch at p, rounding can drop the degenerate interval at p, and the gap through both
+        obstacles then has p, a point of the closed domain, at its midpoint. Only gaps are read: a leaf classifies
+        t = 0 and t = 1 with the same phi `contains` reads, so a segment's own ends agree with it."""
         n = t.shape[0]
         lo, hi = t[..., 0], t[..., 1]
         real = ~np.isnan(lo)
-        count = real.sum(axis=1)
-        rows = np.arange(n)
-        first_lo, last_hi = lo[:, 0], hi[rows, np.maximum(count - 1, 0)]
-        lead = (count == 0) | (first_lo > 0.0)
         gap = real[:, 1:] & real[:, :-1]
-        trail = (count > 0) & (last_hi < 1.0)
-        whole = count == 0
-        probes = [
-            (rows[lead], np.where(whole, 0.5, 0.5 * np.nan_to_num(first_lo))[lead]),
-            (rows[lead], np.zeros(int(lead.sum()))),
-            (np.nonzero(gap)[0], (0.5 * (hi[:, :-1] + lo[:, 1:]))[gap]),
-            (rows[trail], (0.5 * (np.nan_to_num(last_hi) + 1.0))[trail]),
-            (rows[trail], np.ones(int(trail.sum()))),
-            (rows[whole], np.ones(int(whole.sum()))),
-        ]
-        owners = np.concatenate([owner for owner, _ in probes])
-        if owners.size == 0:
+        if not gap.any():
             return t, tag
-        at = np.concatenate([where for _, where in probes])
-        holds = np.atleast_1d(np.asarray(self.contains(a[owners] + at[:, None] * extent[owners]), dtype=bool))
+        rows, k = np.nonzero(gap)
+        below = a[rows] + hi[rows, k][:, None] * extent[rows]
+        above = a[rows] + lo[rows, k + 1][:, None] * extent[rows]
+        limit = SEAM_ULPS * np.spacing(np.maximum(np.abs(below), np.abs(above)).max(axis=1))
+        leaves = self._leaves()
+        thin = np.ones(len(rows), dtype=bool)
+        for point, end in ((below, tag[rows, k, 1]), (above, tag[rows, k + 1, 0])):
+            normal = np.full_like(point, np.nan)
+            leaf = np.where(end >= 0, end >> 32, _NO_SURFACE)
+            face = (end & 0xFFFFFFFF) >> 1
+            for index in np.unique(leaf[leaf >= 0]):
+                at = leaf == index
+                normal[at] = leaves[index]._face_normal(point[at], face[at])
+            width = np.abs(np.sum((above - below) * normal, axis=1))
+            thin &= np.isfinite(width) & (width <= limit)
+        if not thin.any():
+            return t, tag
+        holds = np.zeros(len(rows), dtype=bool)
+        holds[thin] = np.atleast_1d(np.asarray(self.contains(0.5 * (below[thin] + above[thin])), dtype=bool))
         if not holds.any():
             return t, tag
-        lead_mid, lead_end, gap_mid, trail_mid, trail_end, whole_end = np.split(
-            holds, np.cumsum([len(owner) for owner, _ in probes])[:-1]
-        )
-        lead_holds, trail_holds = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
-        lead_holds[rows[lead]] = lead_mid & lead_end
-        lead_holds[rows[whole]] &= whole_end
-        trail_holds[rows[trail]] = trail_mid & trail_end
-        gap_holds = np.zeros_like(gap)
-        gap_holds[gap] = gap_mid
+        joined = np.zeros_like(gap)
+        joined[rows[holds], k[holds]] = True
         # Interval j keeps its start unless the gap before it is joined, and its end unless the gap after it is.
-        starts = real & np.concatenate([np.ones((n, 1), dtype=bool), ~gap_holds], axis=1)
-        ends = real & np.concatenate([~gap_holds, np.ones((n, 1), dtype=bool)], axis=1)
-        width = max(int(starts.sum(axis=1).max(initial=0)), 1)
-        pick_start = np.argsort(~starts, axis=1, kind="stable")[:, :width]
-        pick_end = np.argsort(~ends, axis=1, kind="stable")[:, :width]
+        starts = real & np.concatenate([np.ones((n, 1), dtype=bool), ~joined], axis=1)
+        ends = real & np.concatenate([~joined, np.ones((n, 1), dtype=bool)], axis=1)
+        most = max(int(starts.sum(axis=1).max(initial=0)), 1)
+        pick_start = np.argsort(~starts, axis=1, kind="stable")[:, :most]
+        pick_end = np.argsort(~ends, axis=1, kind="stable")[:, :most]
         kept = np.take_along_axis(starts, pick_start, axis=1)
         out_t = np.stack([np.take_along_axis(lo, pick_start, axis=1), np.take_along_axis(hi, pick_end, axis=1)], -1)
         out_tag = np.stack(
             [np.take_along_axis(tag[..., 0], pick_start, axis=1), np.take_along_axis(tag[..., 1], pick_end, axis=1)], -1
         )
-        out_t = np.where(kept[..., None], out_t, np.nan)
-        out_tag = np.where(kept[..., None], out_tag, _NO_SURFACE)
-        joined = lead_holds & whole
-        out_t[joined, 0], out_tag[joined, 0] = (0.0, 1.0), _NO_SURFACE
-        front = lead_holds & ~whole
-        out_t[front, 0, 0], out_tag[front, 0, 0] = 0.0, _NO_SURFACE
-        back = rows[trail_holds]
-        back_last = kept[back].sum(axis=1) - 1
-        out_t[back, back_last, 1], out_tag[back, back_last, 1] = 1.0, _NO_SURFACE
-        return out_t, out_tag
+        return np.where(kept[..., None], out_t, np.nan), np.where(kept[..., None], out_tag, _NO_SURFACE)
 
     def first_contact(self, a: NDArray[np.float64], b: NDArray[np.float64]) -> FirstContact:
         """Each segment's first contact with this domain's boundary, from `segment_intervals` (#2733 D1); see

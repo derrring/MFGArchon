@@ -566,10 +566,10 @@ def test_a_domain_or_segment_it_cannot_classify_is_refused_by_name(row, domain, 
 )
 def test_a_seam_no_point_can_occupy_is_no_gap_and_a_real_crack_is(label, east_wall, joined):
     """Review 1 of #2791, B1: two rooms meeting at 0.3 and 0.1 + 0.2, adjacent doubles, have no point between them, and
-    `contains` holds across; each leaf's interval ends at its own wall, which left a stretch of t-length 7e-16 that the
-    first contact read as an exit. Every left-out stretch is read by `contains` at its midpoint (`SegmentIntervals`), so
-    the seam joins, one interval and no contact, as the exact shared wall does; a crack of 1e-9, whose midpoint
-    `contains` rejects, stays a gap, with its contact at the crack."""
+    `contains` holds across; each leaf's interval ends at its own wall, which left a gap of t-length 7e-16 that the
+    first contact read as an exit. A gap no thicker than ``SEAM_ULPS`` ulps across both walls, at whose midpoint
+    `contains` holds, is a seam and is joined (`SegmentIntervals`): one interval and no contact, as the exact shared
+    wall gives; a crack of 1e-9 is far thicker and stays a gap, with its contact at the crack."""
     rooms = UnionDomain([_box((0, 0.3), (0, 1)), _box((east_wall, 1), (0, 1))])
     a, b = np.array([[0.2, 0.5]]), np.array([[0.4, 0.5]])
     found, contact = rooms.segment_intervals(a, b), rooms.first_contact(a, b)
@@ -580,3 +580,29 @@ def test_a_seam_no_point_can_occupy_is_no_gap_and_a_real_crack_is(label, east_wa
     else:
         assert np.sum(~np.isnan(found.t[0, :, 0])) == 2
         assert contact.point[0, 0] == 0.3
+
+
+def test_a_gap_through_two_touching_obstacles_is_no_seam():
+    """Review 2 of #2791: two balls of radius 0.007 touching at 0.314. On this step rounding drops the degenerate
+    interval at the touching point, so the gap left is [0.3, 0.328], solid obstacle, with the touching point, a point of
+    the closed domain, at its midpoint. It is 0.028 thick across both balls, no seam: the intervals stay two and the
+    first contact is the entry into the first ball, at x = 0.3."""
+    pinch = DifferenceDomain(_box((0, 1)), UnionDomain([Hypersphere([0.307], 0.007), Hypersphere([0.321], 0.007)]))
+    a, b = np.array([[0.278525939767154]]), np.array([[0.36341352620241907]])
+    found, contact = pinch.segment_intervals(a, b), pinch.first_contact(a, b)
+    assert np.sum(~np.isnan(found.t[0, :, 0])) == 2
+    np.testing.assert_allclose(found.t[0, :2], [[0.0, 0.252970559473051], [0.5828185522811953, 1.0]], rtol=1e-12)
+    assert contact.inside_at_start[0]
+    np.testing.assert_allclose(contact.point[0], [0.3], atol=1e-12)
+
+
+def test_a_face_trace_through_two_touching_discs_keeps_them_apart():
+    """B1e-2's crossability reads `face_trace`, which reads the same intervals. Two discs of radius 0.13 touching at
+    (0.5, 1 - s), on the line the y_max face is read along: the domain's trace there is [0, 0.24], the touching point
+    and [0.76, 1]. Joining the gap through the discs by its midpoint alone, the touching point, read 1.0 at b5aa013a
+    (#2791 review 2's reach), which would admit an exit no particle crosses there; it is 0.24."""
+    s = 1e-12 * np.sqrt(2.0)
+    discs = DifferenceDomain(
+        _SQUARE, UnionDomain([Hypersphere([0.37, 1.0 - s], 0.13), Hypersphere([0.63, 1.0 - s], 0.13)])
+    )
+    np.testing.assert_allclose(discs.face_trace(1, 1, np.array([[0.0, 1.0], [0.0, 1.0]]), s), 0.24, atol=1e-12)
