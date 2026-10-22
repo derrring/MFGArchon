@@ -404,6 +404,16 @@ class HJBGFDMSolver(BaseHJBSolver):
             weight_scale: Scale parameter for weight function
             max_newton_iterations: Maximum Newton iterations (new parameter name)
             newton_tolerance: Newton convergence tolerance.
+            inner_solver: The solver of each time level's equation (#1118). ``"newton"``, the default, is Newton with an
+                Armijo line search on the collocation operator. ``"howard"`` delegates the backward sweep to
+                `HJBHowardSolver`'s policy iteration, which needs a quadratic control cost.
+                **In d >= 2 the choice also changes the advection's discretisation.** Howard is handed
+                ``discretisation="upwind_projection"``, a one-sided stencil along the policy direction, which is
+                first order in space; in 1-D it is handed ``"central"``. Under
+                ``monotonicity_scheme="positive_qp_fan"``, which is 2-D only, it is handed ``"guarded_fan"`` instead
+                of either. On #2512's exact reflected solution in
+                2-D (comment 6333097202), ``monotonicity_scheme="none"`` converges at second order with Newton and at
+                first order with Howard.
             boundary_indices: Indices of boundary collocation points
             boundary_conditions: A BoundaryConditions. A dict, ``{"type": ..., "values": ...}``, is deprecated since
                 v0.22.0 (#2597) and is translated to the BoundaryConditions it spells (`_boundary_conditions_from_dict`).
