@@ -373,7 +373,7 @@ def reflect_at_first_contacts(
     uniform_action = None if uniform is None else segment_particle_action(uniform, reader)
     # Each leg runs from ``position`` to ``end``. A reflection moves the end, e' = e - 2 ((e - p) . n) n, rather than
     # the remaining vector, so a coordinate the normal does not touch is carried exactly and a box face's coordinate
-    # is e - 2 (e - h): exact where e - h is, and within an ulp of 2 h - e. The fold computes it as
+    # is e - 2 (e - h): exact where e - h is, and a few ulps of 2 h - e where it rounds. The fold computes it as
     # xmin + (2L - (x - xmin) % 2L), so on the box the two agree to rounding, and bitwise on the high faces of a box at
     # the origin.
     position, end = starts[rows].copy(), ends[rows].copy()
