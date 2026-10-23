@@ -33,13 +33,14 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from .types import BCType
+from .types import BCSegment, BCType
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from mfgarchon.geometry.implicit import ImplicitDomain
+
     from .conditions import BoundaryConditions
-    from .types import BCSegment
 
 ParticleAction = Literal["reflecting", "absorbing", "periodic"]
 
@@ -178,6 +179,89 @@ def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryC
     if bc.domain_bounds is not None:
         return bc
     return replace(bc, segments=list(bc.segments), domain_bounds=bounds)
+
+
+def on_the_box(bc: BoundaryConditions, box: NDArray[np.floating]) -> BoundaryConditions:
+    """``bc`` read on ``box``, the box a particle step was taken in, whatever ``domain_bounds`` it carries: the copy the
+    contact loop and its face check ask the owner through (`segment_at_box_contact`). A crossing is read in the box it
+    was crossed in, so a BC whose own ``domain_bounds`` differ from the step's box is no longer read on two boxes, the
+    face from one and the point from the other (#2733, the folded #2767 review 4 P1). Never a write to ``bc`` (#2738); the
+    copy keeps its geometry binding, so a marked ``region_name`` still reads the grid."""
+    return replace(bc, segments=list(bc.segments), domain_bounds=np.asarray(box, dtype=float))
+
+
+def segment_at_box_contact(
+    bc_on_box: BoundaryConditions, point: NDArray[np.floating], tolerance: float
+) -> tuple[str | None, BCSegment | None]:
+    """The face a contact at ``point`` is read on and the segment the owner governs it by, or (None, None) where the
+    point lies on no face of the box ``bc_on_box`` is read on (`on_the_box`): there every contact reflects, #2733 D2's
+    box rule. On one face it is that face, named by the owner (`BoundaryFace.to_string`), and its segment
+    (`BoundaryConditions.face_segments_at_point`); at a corner or
+    an edge no one face, and the owner resolves the faces by its corner rule (`BoundaryConditions.segment_for_point`,
+    D4), so the loop never restates that rule. The contact loop and `ParticleApplicator.refuse_segments_it_would_drop`
+    reach the owner only through this, so the check reads every face cell as the loop reads a contact there."""
+    readings = bc_on_box.face_segments_at_point(point, tolerance=tolerance)
+    if not readings:
+        return None, None
+    if len(readings) == 1:
+        return readings[0][0].to_string(), readings[0][1]
+    return None, bc_on_box.get_bc_at_point(point, tolerance=tolerance)
+
+
+#: #2733 D4's ε, relative to the box's diagonal: two contacts this close along a path are one tie, a leg's start this
+#: close to its first interval is inside it, and a face's trace is read this far inside the box. One value for the
+#: contact loop (`reflect_at_first_contacts`) and the B1e-2 check that reads where it can cross.
+CONTACT_EPS = 1e-12
+
+#: B1e-2 with a particles' domain (#2733 PR 2): half the shortest piece of the domain's trace on a box face, relative to
+#: the box's diagonal, that counts as one particles can cross (`ParticleApplicator.refuse_segments_it_would_drop`).
+CROSSABLE_HALF_WIDTH = 1e-4
+
+
+def _absorbs_somewhere(bc: BoundaryConditions, reader: str) -> bool:
+    """Whether a condition of ``bc`` absorbs a particle: a segment's, or ``default_bc``'s."""
+    if any(segment_particle_action(segment, reader) == "absorbing" for segment in bc.segments):
+        return True
+    return (
+        bc.default_bc is not None
+        and bc.default_bc != BCType.ROBIN
+        and particle_action_for_bc_type(bc.default_bc) == "absorbing"
+    )
+
+
+def _refuse_exits_no_particle_crosses(
+    cells: list[tuple[int, int, NDArray[np.float64], NDArray[np.float64]]],
+    readings: list[tuple[NDArray[np.float64], str | None, BCSegment | None]],
+    domain: ImplicitDomain,
+    box: NDArray[np.float64],
+    diagonal: float,
+    reader: str,
+) -> None:
+    """Refuse, by name, an absorbing segment that governs face cells of ``box`` and none a particle can cross (#2733 PR
+    2): one where the particles' ``domain`` has no trace on the face within the cell (`ImplicitDomain.face_trace`, read
+    ``CONTACT_EPS`` of the diagonal inside) at least ``2 * CROSSABLE_HALF_WIDTH`` of the diagonal long. Every contact
+    near such a cell reflects, so the exit would be read nowhere: a ``boundary="x_max"`` exit on a disc in its bounding
+    box, or an exit on the corridor an obstacle flush with a wall leaves. A segment that governs no cell at all is the
+    owner's check's (`refuse_segments_governing_no_point`)."""
+    shift, piece = CONTACT_EPS * diagonal, 2.0 * CROSSABLE_HALF_WIDTH * diagonal
+    governed: dict[int, tuple[BCSegment, list[str], list[bool]]] = {}
+    for (axis, side, cell, _), (_, face, segment) in zip(cells, readings, strict=True):
+        if segment is None or segment_particle_action(segment, reader) != "absorbing":
+            continue
+        entry = governed.setdefault(id(segment), (segment, [], []))
+        entry[1].append(face or "a corner")
+        entry[2].append(domain.face_trace(axis, side, box, shift, cell) >= piece)
+    unread = [(segment, sorted(set(faces))) for segment, faces, crossed in governed.values() if not any(crossed)]
+    if unread:
+        named = "; ".join(f"{segment.name!r} on {', '.join(faces)}" for segment, faces in unread)
+        raise ValueError(
+            f"{reader}: the absorbing segment(s) {named} govern only face cells no particle can cross: the particles' "
+            f"domain ({type(domain).__name__}) has no boundary there on the box's face, so every contact near them "
+            "reflects and the exit would be read nowhere (#2733). A cell counts where the domain's trace on the face, "
+            f"read {CONTACT_EPS:g} of the box's diagonal inside, has a piece at least {2 * CROSSABLE_HALF_WIDTH:g} of "
+            "the diagonal long (ImplicitDomain.face_trace). Place the exit on a part of a face the domain's boundary "
+            "covers; an exit on a curved boundary or an obstacle's surface is #2789."
+        )
 
 
 class ParticleApplicator:
@@ -412,44 +496,67 @@ class ParticleApplicator:
         return remaining_particles, absorbed_mask, exit_positions, absorbed_count
 
     def refuse_segments_it_would_drop(
-        self, bc: BoundaryConditions, bounds: list[tuple[float, float]], reader: str = "ParticleApplicator"
+        self,
+        bc: BoundaryConditions,
+        bounds: list[tuple[float, float]],
+        reader: str = "ParticleApplicator",
+        domain: ImplicitDomain | None = None,
     ) -> None:
         """Refuse, by name, a segment of ``bc`` that governs no part of the faces of ``bounds`` a particle crosses
         (#2490 B1e-2), so its condition would be dropped: the boundary owner's point-family check
         (`BoundaryConditions.refuse_segments_governing_no_point`) over this reader's own points, with its sameness,
         `same_particle_action`.
 
-        :meth:`apply` reads a particle that reached the box on the face `_get_boundary_id` names, through
-        ``get_bc_at_point``, on the BC as `_with_box` gives it. The check reads, with the same calls, one point in each
-        cell of an arrangement of each face (`BoundaryConditions.face_cell_centres`), so a segment that governs a set of
-        positive width on a face governs one of them, except where a placement read from a signed distance is sampled
-        on a lattice. A set of no width -- a corner, an edge, a range that is one coordinate on the face -- is not read:
-        a particle crossing the face meets it with probability zero. Today ``apply`` reads a particle where its step
-        ends, not where it crossed (#2733), so such a set, a BC whose ``domain_bounds`` reach past ``bounds``, or a
-        ``normal_direction`` no face's normal lies within, can catch particles; that is the end-point reading's, and
-        such a segment is refused here with its own reason."""
+        The contact loop reads a particle where its step crosses the box, on the face it crosses, through
+        `segment_at_box_contact` on `on_the_box`'s copy (#2733). The check reads, through the same function, one point
+        in each cell of an arrangement of each face (`BoundaryConditions.face_cells`), so a segment that governs a set
+        of positive width on a face governs one of them, except where a placement read from a signed distance is
+        sampled on a lattice. A set of no width -- a corner, an edge, a range that is one coordinate on the face -- is
+        not read: a crossing meets it with probability zero, so such a segment is refused here. Each cell is read
+        within ``CONTACT_EPS`` of the box's diagonal, the tolerance the loop reads a contact at.
+
+        With the particles' ``domain``, an obstacle domain or a curved one, an absorbing segment that governs face
+        cells and none a particle can cross is refused first, naming its faces and the domain
+        (`_refuse_exits_no_particle_crosses`). A cell counts where the domain's trace on the face within it
+        (`ImplicitDomain.face_trace`, read ``CONTACT_EPS`` of the box's diagonal inside) has a piece at least
+        ``2 * CROSSABLE_HALF_WIDTH`` of the diagonal long. Elsewhere -- a disc's bounding box away from its tangent
+        points, the corridor of an obstacle flush with a wall -- no particle reaches the cell and every contact near it
+        reflects. A reflecting segment there is left admitted: it is what the loop does anyway. A tangency of a ball of
+        radius ``r`` counts as crossable for ``r >= h^2 / (2 s)``, 5000 diagonals; a crossable piece shorter than ``2 h``
+        is not counted."""
         box = np.array(bounds, dtype=float)
-        bc = _with_box(bc, box)
-        points, lattice = bc.face_cell_centres(box)
-        readings = []
-        for point in points:
-            boundary_id = self._get_boundary_id(point, box[:, 0], box[:, 1], box.shape[0])
-            readings.append((point, boundary_id, bc.get_bc_at_point(point, boundary_id=boundary_id)))
-        note = (
-            f"An sdf_region, or a normal_direction read from domain_sdf, is read on a lattice of {lattice} equal parts "
-            f"along each axis of a face (FACE_LATTICE_CELLS), so a set one holds that contains no box of side "
-            f"1/{lattice} of the face's extent is missed: widen it, or place it by region"
-            if lattice is not None
-            else ""
-        )
+        # Read on the step's box, as the loop reads; explained on the BC's own box, where a region it places past the
+        # solver's box lies (#2782 review 4's reason (b)).
+        declared = _with_box(bc, box)
+        own = None if bc.domain_bounds is None else np.asarray(bc.domain_bounds, dtype=float).reshape(box.shape)
+        bc = on_the_box(bc, box)
+        cells, lattice = bc.face_cells(box)
+        diagonal = float(np.linalg.norm(box[:, 1] - box[:, 0]))
+        readings = [(point, *segment_at_box_contact(bc, point, CONTACT_EPS * diagonal)) for _, _, _, point in cells]
+        if domain is not None and _absorbs_somewhere(bc, reader):
+            _refuse_exits_no_particle_crosses(cells, readings, domain, box, diagonal, reader)
+        notes = []
+        if lattice is not None:
+            notes.append(
+                f"An sdf_region, or a normal_direction read from domain_sdf, is read on a lattice of {lattice} equal parts "
+                f"along each axis of a face (FACE_LATTICE_CELLS), so a set one holds that contains no box of side "
+                f"1/{lattice} of the face's extent is missed: widen it, or place it by region"
+            )
+        if own is not None and np.abs(own - box).max() > CONTACT_EPS * diagonal:
+            notes.append(
+                f"The BC's domain_bounds {own.tolist()} are not the solver's box {box.tolist()}: a particle crosses the "
+                "solver's box and is read where it crosses it (#2733), so a placement on a face of the BC's own box that "
+                "is not on the solver's is read nowhere. Give the BC the solver's box, and place the exit on that box's "
+                "face"
+            )
         bc.refuse_segments_governing_no_point(
             readings,
             reader,
-            f"the {len(points)} points it reads the faces of the box {box.tolist()} on, one in each cell of an "
+            f"the {len(cells)} points it reads the faces of the box {box.tolist()} on, one in each cell of an "
             "arrangement of each face",
             equivalent=same_particle_action,
-            note=note,
-            explain=lambda segment: bc.why_no_face_cell(segment, box),
+            note=". ".join(notes),
+            explain=lambda segment: declared.why_no_face_cell(segment, box),
         )
 
     def _get_boundary_id(

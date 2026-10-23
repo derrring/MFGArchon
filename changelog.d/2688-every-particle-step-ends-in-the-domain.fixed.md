@@ -3,29 +3,14 @@
   - The problem's geometry, when it is an `ImplicitDomain` other than a `Hyperrectangle` on the grid's box, is read
     as that domain too (#2708).
   - **One end of step.** The 1-D grid-drift, n-D grid-drift and callable-drift paths end each step in one place,
-    `_finish_step`.
-    - The outer boundary condition runs on the raw step first: absorption at Dirichlet segments, then reflection.
-    - Then the survivors that ended outside the domain are placed, with their positions before the step.
-    - Before, the 1-D grid-drift path never placed them. The n-D paths placed them before the wall reflection,
-      which put particles back inside an obstacle that meets the wall.
-  - **The face of entry.** A particle that the projection onto the boundary does not place is now placed by the face
-    its step crossed. This reverses part of #2687's entry.
-    - `ImplicitDomain.project_to_interior(points, previous=..., via=...)` finds the first crossing on the step's
-      path and projects the point onto that face's tangent plane. The path is the segment from `previous`, or for a
-      reflected step the polyline through its wall hits (`reflection_waypoints`), so the face is one the particle met.
-    - The crossing is found by a scan of 32 steps per leg and bisection on the sign of φ. A leg whose path inside a
-      feature is shorter than a scan step, 1/32 of the leg, can step over it: a thin feature, or a corner the leg
-      clips (#2710).
-    - The face's normal is the crossed component's own, decided by which component's φ changes sign across the
-      crossing (`ImplicitDomain.crossing_normal`, overridden by the CSG domains). Within 1e-6 of the outer box, the
-      domain's gradient normal blended the box wall's into an obstacle face's. Next to a wall, a particle stepping
-      onto the face was then either refused or placed on the obstacle's far side.
-    - On a flat face this is the projected-Euler (Skorokhod) map, which keeps the displacement along the face. Where
-      the result lands in a second face, the point is projected onto the wedge the faces bound. It meets up to 8
-      faces, and a point those faces do not place raises, naming the point and the faces.
-    - The walk toward the bounding-box centre is deleted. Without `previous`, `project_to_interior` raises at exactly
-      the points it used to walk, naming the point and the route. #2687's "always lands navigable" holds only with
-      `previous`.
+    `_finish_step`: at the step's first contacts with the domain's boundary, the box walls included (#2733's
+    fragment).
+    - Before, the 1-D grid-drift path never placed a particle that ended outside the domain. The n-D paths placed
+      them before the wall reflection, which put particles back inside an obstacle that meets the wall.
+  - **The face of entry.** A particle that ends a step outside the domain is placed by the boundary its step met, not
+    by the projection alone. #2733 replaced this stage's face-of-entry placement in the same release: its crossing scan
+    of 32 points per leg could step over a thin feature or a clipped corner (#2710), and each step now ends at its
+    exact first contact, reflected specularly (#2733's fragment). The walk toward the bounding-box centre is deleted.
   - **Initial particles are drawn navigable.**
     - `sample_from_density(..., navigable=)` redraws, within its cell, a jitter that lands where `navigable` is
       False.
@@ -40,9 +25,7 @@
   - **Refused rather than delivered wrong:**
     - an `implicit_domain` with any periodic face on the outer boundary, since a wrapped step is not the segment
       from where it started (#2704);
-    - an `implicit_domain` whose bounding box is not the grid's box. The boundary condition reflects at the grid's
-      box and the placement acts inside the domain's: where the grid's box reaches further, a particle between the
-      two is placed by neither; where the domain's does, a particle can be placed beyond the reflecting wall;
-    - an `implicit_domain` on the GPU path, whose particles never met the placement.
-  - **Known limitation,** which predates this change: a step that passes through an obstacle and ends past an
-    absorbing exit is absorbed before any placement (#2707).
+    - an `implicit_domain` whose bounding box is not the grid's box. A contact reads the boundary condition only on
+      the grid's box: where the domain's box reaches further, a particle can leave the grid's box with no contact,
+      and where the grid's does, the domain has no surface the condition is read on;
+    - an `implicit_domain` on the GPU path, whose particles never meet the domain.

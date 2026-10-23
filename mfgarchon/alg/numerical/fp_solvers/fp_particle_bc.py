@@ -4,7 +4,7 @@ Dimension-agnostic boundary condition handling for particle-based FP solvers (Is
 This module provides unified functions that work for any dimension:
 - Topology detection from boundary conditions
 - Boundary enforcement (periodic wrap, reflecting bounce)
-- Obstacle boundary handling (implicit domains)
+- The contact loop: a step's first contacts with the particles' boundary, box and obstacles together (#2733)
 - Segment-aware BC checking
 
 All functions accept both 1D and nD inputs with consistent APIs.
@@ -13,17 +13,19 @@ Usage:
     from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import (
         get_topology_per_dimension,
         apply_boundary_conditions,
-        project_to_navigable_or_defer,
+        reflect_at_first_contacts,
         needs_segment_aware_bc,
     )
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.geometry.boundary.applicator_particle import CONTACT_EPS
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions, periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
 
@@ -279,112 +281,304 @@ def apply_boundary_conditions(
 
 
 # =============================================================================
-# Obstacle Boundary Handling (unified)
+# The contact loop (#2733)
 # =============================================================================
 
+#: D2: two contact normals with 1 + n1.n2 at or below this are anti-parallel, the faces of a zero-width corridor.
+ANTI_PARALLEL = 1e-12
+#: D5: a step reflected more often than this returns to its start.
+MAX_REFLECTIONS = 20
+#: D6: an end that fails `contains` moves along the last contact's inward normal by the first of these, relative to
+#: the box's diagonal, doubling up to the second.
+OFFSET_LADDER = (1e-12, 1e-6)
 
-def project_to_navigable_or_defer(
-    particles: np.ndarray,
-    implicit_domain: ImplicitDomain | None,
-    previous: np.ndarray | None = None,
-    report: dict[str, int] | None = None,
-    via: np.ndarray | None = None,
-) -> np.ndarray:
+
+@dataclass(frozen=True)
+class SteppedParticles:
+    """One step's end for every particle (#2733): where each lands, or, for an absorbed one, where it met the exit; and
+    the step's counts, which ``FPParticleSolver.obstacle_placement_history`` records."""
+
+    positions: np.ndarray
+    absorbed: np.ndarray
+    counts: dict[str, int]
+
+
+def reflect_at_first_contacts(
+    starts: np.ndarray,
+    ends: np.ndarray,
+    domain: ImplicitDomain,
+    box: np.ndarray,
+    bc: BoundaryConditions,
+    reader: str = "FPParticleSolver",
+) -> SteppedParticles:
+    """End a particle step at its contacts with the particles' boundary, in path order (#2733 D1-D6).
+
+    ``starts`` are the positions before the step, inside ``domain`` by induction, and ``ends`` the raw Euler-Maruyama
+    ends; ``box`` is the box the step is taken in, of shape (d, 2). One search, `ImplicitDomain.first_contact`, finds
+    the first point where the path leaves ``domain``, over the obstacles and the box walls together.
+
+    - **The action at a contact.** A contact on the box's boundary reads the boundary owner there
+      (`segment_at_box_contact`); every other contact reflects (D2's box rule). An absorbing contact ends the particle
+      there. A reflecting one reflects the rest of the step specularly in the outward normal at the contact (D3) and
+      re-traces it.
+    - **Ties (D4).** A contact within ``CONTACT_EPS`` of the previous one along the path is a tie. Two reflecting
+      faces of a convex corner reflect in turn. Two whose normals are anti-parallel bound a zero-width corridor: the
+      rest of the step loses its normal component, once, and is re-traced along the corridor (D2). Past the
+      corridor's end that is a convention, not the gap's limit: the particle stays on the corridor's line. Where the
+      step has no tangential part, a 1-D corridor or an isolated point of the domain, the rule has no answer and the
+      step is refused by name.
+    - **The cap (D5).** A step reflected more than ``MAX_REFLECTIONS`` times returns to its start, and is counted.
+    - **The offset (D6).** A point the loop computed that fails ``domain.contains`` moves along the last contact's
+      inward normal, by the ladder ``OFFSET_LADDER``: a landing, and a restart, the start of a leg re-traced from a
+      contact that rounding put outside. One the ladder cannot place returns to its start, and is counted.
+    - **The skip.** A particle whose segment provably reaches no surface is not searched: on a convex domain one whose
+      end is inside, elsewhere one with ``|b - a| < |phi(a)| - eps``. ``|phi|`` is a lower bound on the distance to
+      the boundary for every domain built from `Hyperrectangle` and `Hypersphere` by the CSG nodes.
     """
-    Project obstacle-interior violations back to the navigable region; defer
-    outer-boundary violations to the caller's outer-BC layer (dimension-agnostic).
+    from mfgarchon.geometry.boundary.applicator_particle import (
+        on_the_box,
+        segment_at_box_contact,
+        segment_particle_action,
+    )
 
-    Particles past the outer bounding box are LEFT untouched for the caller's
-    outer-BC layer (segment-aware BC, topology, etc.); only particles that
-    entered an obstacle interior are corrected here. The name reflects this
-    conditional contract (Issue #1067): it is NOT comprehensive enforcement.
-
-    If an implicit domain with obstacles is defined, particles that have
-    entered obstacle regions (domain.contains() returns False AND inside outer
-    bbox) are moved back by domain.project_to_interior(), whose docstring says
-    where they land (#2679).
-
-    Issue #1064: particles past the outer bounding box are NOT projected here —
-    they are an outer-boundary concern handled by the caller's
-    BoundaryConditions (segment-aware reflect/absorb/wrap). Re-projecting
-    outer-boundary violations preempts segment-aware Dirichlet absorption.
-
-    The discriminator:
-    - inside bbox + ~contains  →  obstacle interior  →  project here
-    - outside bbox + ~contains →  outer-boundary    →  leave for outer BC
-    - outside bbox + contains  →  impossible (contains implies inside bbox)
-    - inside bbox + contains   →  navigable region  →  no-op
-
-    Parameters
-    ----------
-    particles : np.ndarray
-        Particle positions.
-        - 1D: shape (num_particles,) or (num_particles, 1)
-        - nD: shape (num_particles, dimension)
-    implicit_domain : ImplicitDomain or None
-        Domain definition with contains() and project_to_interior() methods
-    previous : np.ndarray or None
-        The particles' positions before the step, same shape as ``particles``. Forwarded to
-        ``implicit_domain.project_to_interior``, which reads it only for the particles its projection does not
-        place and refuses those without it (#2688).
-    report : dict or None
-        Forwarded to ``implicit_domain.project_to_interior``'s counter.
-    via : np.ndarray or None
-        Waypoints of each step's actual path, shape (num_particles, k, dimension), rows of NaN unused
-        (`reflection_waypoints`). Forwarded with ``previous``.
-
-    Returns
-    -------
-    particles : np.ndarray
-        Updated particle positions with obstacle violations corrected
-
-    Examples
-    --------
-    >>> from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
-    >>> domain = DifferenceDomain(Hyperrectangle(...), Hypersphere(center=[0.5, 0.5], radius=0.1))
-    >>> particles = project_to_navigable_or_defer(particles, domain)
-    """
-    if implicit_domain is None:
-        return particles
-
-    particles = np.asarray(particles)
-
-    # Handle 1D case
-    is_1d_flat = particles.ndim == 1
-    if is_1d_flat:
-        particles = particles[:, np.newaxis]
-
-    # Check which particles are outside the valid domain (inside obstacles
-    # OR past the outer boundary).
-    inside_valid = implicit_domain.contains(particles)
-
-    # Handle scalar return (single particle case)
-    if np.isscalar(inside_valid):
-        inside_valid = np.array([inside_valid])
-
-    # Issue #1064: discriminate obstacle-interior violations (we project) from
-    # outer-boundary violations (caller's segment-aware BC handles these).
-    if not np.all(inside_valid):
-        bounds = implicit_domain.get_bounding_box()  # shape (d, 2)
-        in_bbox = np.all(
-            (particles >= bounds[:, 0]) & (particles <= bounds[:, 1]),
-            axis=1,
-        )
-        # Project only particles inside the outer bbox but in an obstacle.
-        in_obstacle = in_bbox & (~inside_valid)
-        if np.any(in_obstacle):
-            obs_idx = np.where(in_obstacle)[0]
-            prev = None if previous is None else np.asarray(previous, dtype=float).reshape(particles.shape)[obs_idx]
-            waypoints = None if via is None else np.asarray(via, dtype=float)[obs_idx]
-            particles[obs_idx] = implicit_domain.project_to_interior(
-                particles[obs_idx], previous=prev, report=report, via=waypoints
+    starts = np.asarray(starts, dtype=float)
+    ends = np.asarray(ends, dtype=float).reshape(starts.shape)
+    n, dimension = starts.shape
+    box = np.asarray(box, dtype=float).reshape(dimension, 2)
+    eps = CONTACT_EPS * float(np.linalg.norm(box[:, 1] - box[:, 0]))
+    counts = dict.fromkeys(("searched", "contacts", "reflections", "corridors", "offsets", "fallbacks", "absorbed"), 0)
+    positions = ends.copy()
+    absorbed = np.zeros(n, dtype=bool)
+    if _convex(domain):
+        # A start is inside by induction, so a segment whose end is inside a convex domain meets no surface. A searched
+        # leg's start is checked where it is searched (`first_contact`'s ``inside_at_start``).
+        rows = np.flatnonzero(~np.atleast_1d(np.asarray(domain.contains(ends), dtype=bool)))
+    else:
+        phi = np.atleast_1d(np.asarray(domain.signed_distance(starts), dtype=float))
+        outside = phi > eps
+        if outside.any():
+            raise RuntimeError(
+                f"{reader}: internal error -- a particle step starts outside the particles' domain, at "
+                f"{starts[outside][0].tolist()} (phi {phi[outside][0]:.3e}). Every recorded particle is inside, so "
+                "every step starts inside (#2733)."
             )
+        length = np.linalg.norm(ends - starts, axis=1)
+        rows = np.flatnonzero((length > 0) & ~_reaches_no_surface(domain, ends, phi, length, eps))
+    counts["searched"] = int(rows.size)
+    if rows.size == 0:
+        return SteppedParticles(positions, absorbed, counts)
 
-    # Convert back to 1D if input was 1D
-    if is_1d_flat:
-        return particles.ravel()
+    owner = on_the_box(bc, box)
+    uniform = owner.uniform_segment
+    uniform_action = None if uniform is None else segment_particle_action(uniform, reader)
+    # Each leg runs from ``position`` to ``end``. A reflection moves the end, e' = e - 2 ((e - p) . n) n, rather than
+    # the remaining vector, so a coordinate the normal does not touch is carried exactly and a box face's coordinate
+    # is e - 2 (e - h): exact where e - h is, and a few ulps of 2 h - e where it rounds. The fold computes it as
+    # xmin + (2L - (x - xmin) % 2L), so on the box the two agree to rounding, and bitwise on the high faces of a box at
+    # the origin.
+    position, end = starts[rows].copy(), ends[rows].copy()
+    total = np.linalg.norm(end - position, axis=1)
+    previous_normal = np.full(
+        (rows.size, dimension), np.nan
+    )  # the last contact's normal, unless a corridor followed it
+    last_normal = np.full((rows.size, dimension), np.nan)  # the last contact's normal, for D6
+    reflections = np.zeros(rows.size, dtype=np.int64)
+    restarted = np.zeros(rows.size, dtype=bool)  # moved inside by D6 since the last search that found it inside
+    live = np.ones(rows.size, dtype=bool)
+    while live.any():
+        legs = np.flatnonzero(live)
+        a, b = position[legs], end[legs]
+        leg_length = np.linalg.norm(b - a, axis=1)
+        idle = leg_length == 0.0
+        positions[rows[legs[idle]]] = b[idle]
+        live[legs[idle]] = False
+        legs, a, b, leg_length = legs[~idle], a[~idle], b[~idle], leg_length[~idle]
+        if legs.size == 0:
+            break
+        found = domain.first_contact(a, b)
+        outside = ~found.inside_at_start
+        if outside.any():
+            # A restart, a leg from the last contact, that rounding put outside: D6 at the restart. A first leg's start is
+            # a recorded particle's, inside by induction.
+            first = outside & ~np.isfinite(last_normal[legs]).all(axis=1)
+            if first.any():
+                raise RuntimeError(
+                    f"{reader}: internal error -- a particle step starts outside the particles' domain, at "
+                    f"{a[first][0].tolist()}. Every recorded particle is inside, so every step starts inside (#2733)."
+                )
+            _offset_restarts(domain, legs[outside], position, last_normal, restarted, box, live, counts)
+            failed = legs[outside][~live[legs[outside]]]
+            positions[rows[failed]] = starts[rows[failed]]
+            inside = ~outside
+            legs, a, b, leg_length = legs[inside], a[inside], b[inside], leg_length[inside]
+            t, point, normal = found.t[inside], found.point[inside], found.normal[inside]
+        else:
+            t, point, normal = found.t, found.point, found.normal
+        restarted[legs] = False
+        clear = np.isnan(t)
+        positions[rows[legs[clear]]] = b[clear]
+        live[legs[clear]] = False
+        hit = np.flatnonzero(~clear)
+        i, p, nk, e = legs[hit], point[hit], normal[hit], b[hit]
+        counts["contacts"] += int(hit.size)
+        if uniform_action is not None:
+            # One condition everywhere: with a particle domain it reflects, an absorbing one being refused at
+            # construction off the box (`FPParticleSolver._refuse_absorbing_off_the_box`); without one every contact is
+            # on the box. Either way it is the action at every contact.
+            action = np.full(hit.size, uniform_action, dtype=object)
+        else:
+            action = np.empty(hit.size, dtype=object)
+            for j in range(hit.size):
+                _, segment = segment_at_box_contact(owner, p[j], eps)
+                action[j] = "reflecting" if segment is None else segment_particle_action(segment, reader)
+        unknown = (action != "absorbing") & (action != "reflecting")
+        if unknown.any():
+            raise RuntimeError(
+                f"{reader}: internal error -- a {action[unknown][0]} contact at {p[unknown][0].tolist()} reached the "
+                "contact loop; a BC that declares a periodic face takes the wrap, never this loop (#2733, #2704)."
+            )
+        absorb = action == "absorbing"
+        positions[rows[i[absorb]]] = p[absorb]
+        absorbed[rows[i[absorb]]] = True
+        counts["absorbed"] += int(absorb.sum())
+        live[i[absorb]] = False
+        reflect = ~absorb
+        # D4 and D2: a contact at the leg's start, against an anti-parallel last normal, is a corridor's tie.
+        tie = (
+            reflect
+            & np.isfinite(previous_normal[i]).all(axis=1)
+            & (t[hit] * leg_length[hit] <= eps)
+            & (1.0 + np.sum(nk * previous_normal[i], axis=1) <= ANTI_PARALLEL)
+        )
+        if tie.any():
+            tied = np.flatnonzero(tie)
+            corridor_end = e[tied] - np.sum((e[tied] - p[tied]) * nk[tied], axis=1)[:, None] * nk[tied]
+            trapped = np.linalg.norm(corridor_end - p[tied], axis=1) <= CONTACT_EPS * total[i[tied]]
+            if trapped.any():
+                j = tied[np.flatnonzero(trapped)[0]]
+                raise ValueError(
+                    f"{reader}: a particle at {p[j].tolist()} lies between two faces of the domain whose outward "
+                    f"normals {previous_normal[i[j]].tolist()} and {nk[j].tolist()} are opposite, with no direction "
+                    "along them, so its step has no part the two faces leave it (#2733). That is an isolated point of "
+                    "the domain, and particles were most likely started on it: in 1-D a grid node on a face of the box "
+                    "flush with an obstacle, such as x = 1 in DifferenceDomain([0, 1], [0.8, 1]), or the crack between "
+                    "two touching obstacles. Give no initial mass to that node, or place initial_particles off it."
+                )
+            counts["corridors"] += int(tied.size)
+            position[i[tied]], end[i[tied]] = p[tied], corridor_end
+            previous_normal[i[tied]] = np.nan
+            last_normal[i[tied]] = nk[tied]
+        bounce = np.flatnonzero(reflect & ~tie)
+        reflections[i[bounce]] += 1
+        capped = reflections[i[bounce]] > MAX_REFLECTIONS
+        positions[rows[i[bounce[capped]]]] = starts[rows[i[bounce[capped]]]]
+        counts["fallbacks"] += int(capped.sum())
+        live[i[bounce[capped]]] = False
+        bounce = bounce[~capped]
+        counts["reflections"] += int(bounce.size)
+        position[i[bounce]] = p[bounce]
+        end[i[bounce]] = e[bounce] - 2.0 * np.sum((e[bounce] - p[bounce]) * nk[bounce], axis=1)[:, None] * nk[bounce]
+        previous_normal[i[bounce]] = nk[bounce]
+        last_normal[i[bounce]] = nk[bounce]
 
-    return particles
+    _offset_landings(domain, starts, positions, absorbed, rows, last_normal, box, counts, reader)
+    return SteppedParticles(positions, absorbed, counts)
+
+
+def _reaches_no_surface(
+    domain: ImplicitDomain, b: np.ndarray, phi: np.ndarray, length: np.ndarray, eps: float
+) -> np.ndarray:
+    """Which segments a -> b provably reach no surface of a domain that is not convex (#2733), given ``phi`` = phi(a),
+    a start inside: one shorter than ``|phi(a)| - eps``, since ``|phi|`` bounds the distance to the boundary from below
+    for the library's leaves and CSG nodes. Never a sample: a skip by sampling or by a distance heuristic is #2707's
+    tunnelling again. (A convex domain's skip, an end inside, is read in `reflect_at_first_contacts`.)"""
+    return length < np.abs(phi) - eps
+
+
+def _convex(domain: ImplicitDomain) -> bool:
+    """Whether ``domain`` is convex by construction: a `Hyperrectangle`, a `Hypersphere`, or an intersection of convex
+    domains. A difference is an intersection with a complement, which is not convex."""
+    from mfgarchon.geometry.implicit import Hyperrectangle, Hypersphere, IntersectionDomain
+
+    if isinstance(domain, (Hyperrectangle, Hypersphere)):
+        return True
+    if type(domain) is IntersectionDomain:
+        return all(_convex(child) for child in domain.domains)
+    return False
+
+
+def _offset_restarts(
+    domain: ImplicitDomain,
+    legs: np.ndarray,
+    position: np.ndarray,
+    last_normal: np.ndarray,
+    restarted: np.ndarray,
+    box: np.ndarray,
+    live: np.ndarray,
+    counts: dict[str, int],
+) -> None:
+    """D6 at a restart: a leg from the last contact whose start rounding put outside the domain, as a contact with a
+    curved surface does about half the time, moves along that contact's inward normal by `_inward_offsets` and is
+    searched again. One moved once already, or that the ladder cannot place, ends its step (D5): the caller returns it
+    to its start."""
+    diagonal = float(np.linalg.norm(box[:, 1] - box[:, 0]))
+    again, fresh = legs[restarted[legs]], legs[~restarted[legs]]
+    moved, placed = _inward_offsets(domain, position[fresh], -last_normal[fresh], diagonal)
+    position[fresh[placed]] = moved[placed]
+    restarted[fresh[placed]] = True
+    counts["offsets"] += int(placed.sum())
+    failed = np.concatenate([again, fresh[~placed]])
+    live[failed] = False
+    counts["fallbacks"] += int(failed.size)
+
+
+def _inward_offsets(
+    domain: ImplicitDomain, points: np.ndarray, inward: np.ndarray, diagonal: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """D6: each point moved along its ``inward`` direction by ``OFFSET_LADDER[0]`` to ``OFFSET_LADDER[1]`` times
+    ``diagonal``, doubling, to the first place ``domain.contains``. Returns the moved points and which were placed; one
+    past the ladder, or with no direction to move along, is not."""
+    moved = np.array(points, dtype=float)
+    placed = np.zeros(len(moved), dtype=bool)
+    todo = np.flatnonzero(np.isfinite(inward).all(axis=1))
+    size = OFFSET_LADDER[0] * diagonal
+    while todo.size and size <= OFFSET_LADDER[1] * diagonal:
+        candidate = moved[todo] + size * inward[todo]
+        inside = np.atleast_1d(np.asarray(domain.contains(candidate), dtype=bool))
+        moved[todo[inside]] = candidate[inside]
+        placed[todo[inside]] = True
+        todo = todo[~inside]
+        size *= 2.0
+    return moved, placed
+
+
+def _offset_landings(
+    domain: ImplicitDomain,
+    starts: np.ndarray,
+    positions: np.ndarray,
+    absorbed: np.ndarray,
+    rows: np.ndarray,
+    last_normal: np.ndarray,
+    box: np.ndarray,
+    counts: dict[str, int],
+    reader: str,
+) -> None:
+    """D6 at a landing: a searched landing that fails ``domain.contains`` after a contact moves along that contact's
+    inward normal by `_inward_offsets`; past the ladder, or with no contact to read a normal from, it returns to its
+    start. A landing already inside is left where it is."""
+    landed = rows[~absorbed[rows]]
+    if landed.size == 0:
+        return
+    out = ~np.atleast_1d(np.asarray(domain.contains(positions[landed]), dtype=bool))
+    if not out.any():
+        return
+    diagonal = float(np.linalg.norm(box[:, 1] - box[:, 0]))
+    out_rows = landed[out]
+    where = np.searchsorted(rows, out_rows)
+    moved, placed = _inward_offsets(domain, positions[out_rows], -last_normal[where], diagonal)
+    positions[out_rows] = np.where(placed[:, None], moved, starts[out_rows])
+    counts["offsets"] += int(placed.sum())
+    counts["fallbacks"] += int((~placed).sum())
 
 
 # =============================================================================
@@ -544,54 +738,4 @@ if __name__ == "__main__":
     assert np.abs(spacings[1] - 0.1) < 1e-10
     print("  compute_spacings: OK")
 
-    # Test 8: Obstacle boundary (None domain - should pass through)
-    particles_obs = np.array([[0.5, 0.5], [0.3, 0.3]])
-    result_obs = project_to_navigable_or_defer(particles_obs, None)
-    assert np.allclose(result_obs, particles_obs)
-    print("  project_to_navigable_or_defer (None domain): OK")
-
     print("\nAll smoke tests passed!")
-
-
-def reflection_waypoints(previous: np.ndarray, raw: np.ndarray, bounds: list[tuple[float, float]]) -> np.ndarray | None:
-    """The wall hits of each step that left the box, folded back in: the vertices of its reflected path between
-    ``previous`` and its reflected end (#2706, review 1).
-
-    The obstacle placement names the face a step met. For a reflected step that is a face on the broken path
-    ``previous`` -> wall hit -> ... -> reflected end, not on the chord from ``previous`` to the reflected end, which
-    can cross a face the particle never approached. The hits are where the unfolded straight step crosses a wall
-    plane, folded with `reflect_positions`, the fold the boundary condition itself applies.
-
-    Returns shape (N, k, dimension), rows of NaN where a step has fewer than ``k`` hits, or None when no step left
-    the box.
-    """
-    from mfgarchon.geometry.boundary.corner import reflect_positions
-
-    lo = np.array([b[0] for b in bounds], dtype=float)
-    hi = np.array([b[1] for b in bounds], dtype=float)
-    length = hi - lo
-    prev = np.asarray(previous, dtype=float).reshape(-1, len(bounds))
-    end = np.asarray(raw, dtype=float).reshape(prev.shape)
-    left = np.flatnonzero(np.any((end < lo) | (end > hi), axis=1))
-    if left.size == 0:
-        return None
-    hits = []
-    for i in left:
-        a, b = prev[i], end[i]
-        ts = []
-        for k in range(prev.shape[1]):
-            if b[k] == a[k]:
-                continue
-            first = np.ceil((min(a[k], b[k]) - lo[k]) / length[k])
-            last = np.floor((max(a[k], b[k]) - lo[k]) / length[k])
-            for j in np.arange(first, last + 1):
-                t = (lo[k] + j * length[k] - a[k]) / (b[k] - a[k])
-                if 0.0 < t < 1.0:
-                    ts.append(t)
-        hits.append(sorted(ts))
-    via = np.full((len(prev), max(len(t) for t in hits), prev.shape[1]), np.nan)
-    for i, ts in zip(left, hits, strict=True):
-        if ts:
-            unfolded = prev[i][None, :] + np.asarray(ts)[:, None] * (end[i] - prev[i])[None, :]
-            via[i, : len(ts)] = reflect_positions(unfolded, bounds)
-    return via

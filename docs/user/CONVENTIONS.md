@@ -764,10 +764,16 @@ docstring writes the diffusion as $-\sigma^2 L m$, without the $\tfrac12$.*
 **One owner applies a particle's wall rule for each boundary type** (reflect, absorb or wrap), and a
 boundary helper never mutates the caller's array (ruled 2026-10-08). Reflection is owned by
 `reflect_positions` in `geometry/boundary/corner/position.py`, the module #521 consolidated, and
-wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. *Not yet met (#2429, #2550): absorption
+wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. *Not yet met (#2733): the particle
+solver's contact loop reflects at a step's first contacts itself, which on the box agrees with that fold to rounding
+(`test_contact_loop_2733.py`), and `reflect_positions` stays the reflection of a BC that declares a periodic
+face (#2704).* *Not yet met (#2429, #2550): absorption
 has no owner function. `corner.absorb_positions` clamps a particle to the wall and keeps it, so it must
 not be used for an absorbing wall, where the mass that leaves is lost through the wall (§ 9). The
-particle solver absorbs through `ParticleApplicator.apply`, which removes the particle;
+particle solver ends each step at its first contacts with the particles' boundary
+(`reflect_at_first_contacts`, #2733): it reflects a particle specularly at each contact, absorbs one at a contact on an
+exit, and reads the boundary condition only at a contact on the box. A BC that declares a periodic face takes
+`ParticleApplicator.apply` instead, which removes an absorbed particle;
 `ParticleApplicator.apply_with_flux_limits` and `MeshfreeApplicator`'s absorbing mode carry their own
 copies. `ParticleApplicator` and the solver's uniform periodic path wrap through `corner.wrap_positions`,
 a deprecated shim for the periodic owner, and the particle solver's 1-D GPU path uses a separate copy in
