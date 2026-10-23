@@ -67,13 +67,18 @@ class SegmentIntervals:
     Two surfaces that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, or a ball's
     end at 0.65 - 0.35, leave each leaf's interval ending at its own surface, a gap no point between them can occupy.
     Such a seam is joined by the domain's own answer (`_join_seams`): a gap at most ``SEAM_DOUBLES`` coarsest ulps wide
-    on every axis is read by `contains`, at points no more than one coarsest ulp apart, at its midpoint and at each
-    double of an axis that holds few, and joined where all hold. A one-ulp seam crossed at angle phi to its normal is
-    joined wherever |tan phi| is at most ``SEAM_DOUBLES`` times the coarsest ulp over the seam's own, which is at least
-    ``SEAM_DOUBLES``; past that the gap is a wall, unread, and the step reflects there. A real crack holds a double
-    outside the domain and stays a gap: measured, cracks two ulps wide or wider reflected at every angle below the
-    gate (#2791). A crack narrower than the segment's parameter can resolve, such as 0 | 1e-323, is merged by the union
-    before any join.
+    on every axis, the coarsest ulp being the largest spacing of its two ends' coordinates, is read by `contains` at
+    points evenly spaced in its parameter, at its midpoint and at each double of an axis that holds few, and joined
+    where all hold. The reads and the computed ends lie on the segment's own lattice a + t (b - a), whose spacing is
+    about the larger of that ulp and ulp(t) |b - a|. So a tunnel needs an exterior feature narrower than that spacing
+    lying between reads, and a seam reflects where its computed gap is wider than the gate. The lattice term is the
+    larger wherever every coordinate of the gap is smaller than about t |b - a|, and ``SEAM_DOUBLES`` times larger
+    within about |b - a| / 1000 of the origin, where it can put a seam's computed ends wider apart than the gate and a
+    crack's reads on its two ends alone. Measured away from there, a one-ulp seam reflected only above |tan phi| = 1024
+    to its normal, and cracks two ulps wide or wider reflected at every angle below that; near the origin both give way,
+    and a large coordinate on an axis the segment does not move along coarsens the gate (#2791, #2794). A crack
+    narrower than the parameter resolves can reach the join with its two ends one or two doubles of t apart, or be
+    merged by the union before it.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -713,23 +718,29 @@ class ImplicitDomain(
         self, a: NDArray[np.float64], extent: NDArray[np.float64], t: NDArray[np.float64], tag: NDArray[np.int64]
     ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
         """Join two consecutive intervals across a seam (`SegmentIntervals`). With u the coarsest ulp of the gap's two
-        computed ends, the largest spacing of any of their coordinates, a gap at most ``SEAM_DOUBLES`` u wide on every
-        axis is joined where `contains` holds at every read (`_seam_reads`): points evenly spaced in t from end to end,
-        at most u apart on every axis; the gap's midpoint; and, on every axis holding at most ``SEAM_DOUBLES`` doubles
-        from end to end, each of them, at the segment's point there with that coordinate set to the double itself.
+        computed ends, the largest spacing of any of their coordinates, an axis the segment does not move along
+        included, a gap at most ``SEAM_DOUBLES`` u wide on every axis is joined where `contains` holds at every read
+        (`_seam_reads`): about width / u points evenly spaced in t from end to end; the gap's midpoint; and, on every
+        axis holding at most ``SEAM_DOUBLES`` doubles from end to end, each of them, at the segment's point there with
+        that coordinate set to the double itself.
 
-        The bound. A one-ulp seam at x_s crossed at angle phi to its normal leaves a gap about ulp(x_s) across it and
-        |tan phi| ulp(x_s) along it. u is at least ulp(x_s), since x_s is one of the ends' coordinates, so the gap passes
-        the gate wherever |tan phi| <= SEAM_DOUBLES u / ulp(x_s), at least SEAM_DOUBLES whatever the other axes' scales;
-        and where the two surfaces have no point between them, every read holds. A tunnel needs an exterior feature that
-        no read lands in: narrower than u along the segment on every axis, holding no double of an axis read exactly,
-        and not containing the midpoint.
+        What the reads can see. They and the computed ends lie on the segment's lattice a + t(b - a), whose spacing is
+        about the larger of u and ulp(t) |b - a|. The second is the larger wherever every coordinate of the gap is
+        smaller than about t |b - a|, and SEAM_DOUBLES times larger within about |b - a| / 1000 of the origin, where a
+        gap one or two doubles of t long either passes the gate with only its two computed ends as reads or, its ends
+        put more than SEAM_DOUBLES u apart, fails it. So a tunnel needs an exterior feature narrower than that spacing
+        lying between reads, holding no double of an axis read exactly, and not containing the midpoint. A one-ulp seam
+        at x_s crossed at angle phi to its normal leaves a gap about ulp(x_s) across it and |tan phi| ulp(x_s) along it,
+        and reflects where its computed gap is wider than the gate: past |tan phi| = SEAM_DOUBLES u / ulp(x_s), or where
+        the lattice puts its ends further apart. Measured, the first held above |tan phi| = 1024 away from the origin,
+        and the second reflected a seam at 1e-5 from |tan phi| = 206 (#2791, #2794).
 
-        The exact reads catch a crack a few ulps wide on a fine axis, which the even reads, u apart, would step over. A
-        computed end can lie a double off its surface, so the ends are read too, and a read's own coordinate on that axis
-        is set, not computed (#2791). The midpoint covers a gap holding no double on an axis that runs along a crack.
-        Where two obstacles touch at p and rounding drops the degenerate interval at p, the gap through both is far wider
-        than the gate and stays a wall."""
+        The exact reads catch a crack a few ulps wide on a fine axis, which the even reads would step over. A computed
+        end can lie a double off its surface, so the ends are read too, and a read's own coordinate on that axis is set,
+        not computed (#2791). The midpoint covers a gap holding no double on an axis that runs along a crack. Where two
+        obstacles touch at p and rounding drops the degenerate interval at p, the gap through both has p, which
+        `contains` accepts, at its midpoint: it is a wall where it is wider than the gate, and the reads that land inside
+        the obstacles keep it one."""
         n = t.shape[0]
         lo, hi = t[..., 0], t[..., 1]
         real = ~np.isnan(lo)
