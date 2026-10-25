@@ -538,7 +538,10 @@ class BoundaryConditions:
             f"at a higher priority than {governing.name!r}, which governs the rest of it, and the two "
             "impose different conditions. A face-level boundary condition imposes one condition per "
             "face and cannot represent both: either reading would silently drop the other. Cover whole "
-            "faces, or use a solver that resolves boundary conditions per point (#2512 row B1, #2490)."
+            "faces, or use a solver that reads it at each boundary point: HJBGFDMSolver and FPParticleSolver do, "
+            "alone or coupled, for the conditions the boundary-conditions guide lists "
+            "(docs/user/guides/boundary_conditions.md, section 'Priority Resolution for Overlapping Regions') "
+            "(#2512 row B1, #2490)."
         )
 
     def _face_resolution(
@@ -2754,8 +2757,12 @@ def faces_covered_by_region(geometry: Any, region_name: str) -> frozenset[Bounda
         raise ValueError(
             f"Marked region {region_name!r} covers part of the {face.to_string()} face's interior. A "
             "face-level boundary condition imposes one condition per face and cannot represent a "
-            "sub-face region. Mark the region on whole faces (mark_region(name, boundary=...)) or use a "
-            "solver that resolves boundary conditions per point (Issue #2472)."
+            "sub-face region. Mark the region on whole faces (mark_region(name, boundary=...)), or place the "
+            "segment by region= or sdf_region=, which HJBGFDMSolver and FPParticleSolver read at each boundary "
+            "point for the conditions the boundary-conditions guide lists (docs/user/guides/boundary_conditions.md, "
+            "section 'Priority Resolution for Overlapping Regions'). A marked region on part of a face is refused "
+            "by HJBGFDMSolver on a cloud that holds a box corner, and by FPParticleSolver's array drift "
+            "(Issue #2472, #2795)."
         )
     if not covered:
         raise ValueError(
@@ -2931,9 +2938,12 @@ def mixed_bc_from_regions(
     how the solvers and the FDM operators read a BC (#2472). The only region, on every face, becomes
     one unrestricted (uniform) segment. A region spanning several faces gives segments named
     ``"<template name>[<face>]"``. Any other region keeps ``region_name``: a face-level reader refuses
-    it, since one condition per face cannot represent it, and a per-point reader matches it point by
-    point when given the geometry. Such a region may not be named like a face ("x_max", "top"), since
-    a reader without the geometry would read the name as that face.
+    it, since one condition per face cannot represent it. A point reader given the geometry reads it at
+    a point on a face and refuses it at every box corner, so HJBGFDMSolver refuses it on a cloud that
+    holds a corner; FPParticleSolver's array drift refuses it through its face reader (#2795). The
+    boundary-conditions guide's § Priority Resolution lists which solvers read such a region, and for
+    which conditions. Such a region may not be named like a face ("x_max", "top"), since a reader
+    without the geometry would read the name as that face.
 
     Args:
         geometry: Geometry with marked regions (must implement SupportsRegionMarking)

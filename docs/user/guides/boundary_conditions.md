@@ -152,64 +152,83 @@ only region, on every face, is a uniform condition.
 
 ### Region Marking Methods
 
-Regions can be marked using boundaries or custom predicates:
+Regions can be marked using boundaries, custom predicates or masks:
 
 ```python
 # Method 1: Mark using boundary identifier
 geometry.mark_region("left_wall", boundary="x_min")
 
 # Method 2: Mark using predicate function
-geometry.mark_region("inlet", predicate=lambda x: (x[:, 0] < 0.1) & (x[:, 1] > 0.5))
+geometry.mark_region("inlet_strip", predicate=lambda x: (x[:, 0] < 0.1) & (x[:, 1] > 0.5))
 
-# Method 3: Combine multiple boundaries in one region
-geometry.mark_region("walls", boundary="y_min")
-geometry.mark_region("walls", boundary="y_max")  # Adds to existing "walls" region
+# Method 3: Combine whole faces in one region, through the grid's union of marked regions
+geometry.mark_region("bottom", boundary="y_min")
+geometry.mark_region("top", boundary="y_max")
+geometry.mark_region("walls", mask=geometry.union_regions("bottom", "top"))
 ```
 
 Predicates receive grid points as `(N, dimension)` array and must return boolean mask of length `N`.
+A name is marked once: a second `mark_region` with the same name raises (`Region 'walls' already
+exists`), so a region over several faces is marked whole, as in Method 3.
 
 ### Priority Resolution for Overlapping Regions
 
-When regions overlap, **priority** determines which BC wins (higher number = higher precedence):
+When regions overlap on a face, **priority** decides which segment governs it (higher number = higher
+precedence). With the regions of Method 3, `walls` (both y faces) and `top` (y_max, a whole face, which
+may carry a face's name):
 
 ```python
-# Mark overlapping regions
-geometry.mark_region("broad", predicate=lambda x: x[:, 0] < 0.5)
-geometry.mark_region("narrow", predicate=lambda x: x[:, 0] < 0.1)
+from mfgarchon.geometry.boundary import BoundaryConditions
 
-# Create segments with priorities
-bc_narrow = BCSegment(
-    name="narrow_bc",
-    bc_type=BCType.DIRICHLET,
-    value=1.0,
-    region_name="narrow",
-    priority=2,  # Higher number = higher precedence
-)
-bc_broad = BCSegment(
-    name="broad_bc",
-    bc_type=BCType.NEUMANN,
-    value=0.0,
-    region_name="broad",
-    priority=1,  # Lower number = lower precedence
-)
+bc_top = BCSegment(name="top_bc", bc_type=BCType.DIRICHLET, value=1.0, region_name="top", priority=2)
+bc_walls = BCSegment(name="walls_bc", bc_type=BCType.NO_FLUX, region_name="walls", priority=1)
 
 bc = BoundaryConditions(
     dimension=2,
-    segments=[bc_narrow, bc_broad],  # Order doesn't matter
-    default_bc=BCType.PERIODIC,
-    domain_bounds=geometry.bounds,
+    segments=[bc_top, bc_walls],  # Order doesn't matter
+    default_bc=BCType.NO_FLUX,
+    domain_bounds=np.array(geometry.bounds),
 )
 
-# At x=0.05 (in both regions): narrow_bc wins due to higher priority
-# At x=0.3 (only in broad): broad_bc applies
+# y_max is in both regions: top_bc governs it, by priority
+# y_min is in walls only: walls_bc governs it
+# x_min and x_max are in neither: default_bc governs them
+padded = applicator.apply(field, bc, domain_bounds=np.array(geometry.bounds), geometry=geometry)
 ```
+
+The face-level path and the per-point reader, `bc.get_bc_at_point(point, geometry=geometry)`, give
+the same answer here. Build such an overlap from `region_name` segments, as above:
+`mixed_bc_from_regions` gives each face of `walls` its own segment, and a face-level reader then
+refuses the BC, since the one on `y_max` governs nothing.
+
+**Regions that overlap on part of a face**, such as two strips `x < 0.5` and `x < 0.1`, cannot be
+imposed by a face-level path, which refuses them (#2472). On a `TensorProductGrid` they are read per
+point, where the higher priority wins at a point both hold, by these solvers and for these conditions:
+
+| a region on part of a face, placed by | `HJBGFDMSolver` | `FPParticleSolver`, array drift (as in a coupled solve) | `FPParticleSolver`, callable drift |
+|---|---|---|---|
+| `region=` or `sdf_region` | when no condition of the BC is PERIODIC, REFLECTING, or a ROBIN with nonzero `alpha` or with `beta` other than 1 | when no condition of the BC is ROBIN or a nonzero NEUMANN, and the region and the rest of its face are both PERIODIC or both not | when no condition of the BC is ROBIN or a nonzero NEUMANN |
+| `mark_region` | refused on a cloud that holds a box corner (#2795) | refused (#2795) | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them |
+
+A coupled `HJBGFDMSolver` + `FPParticleSolver` solve reads such a region when both of its columns
+do. The conditions measured, each as the region's and as the rest's, are DIRICHLET 0, NO_FLUX,
+NEUMANN 0 and 0.5, REFLECTING, ROBIN with `alpha` 1 and 0 (and `beta` 1 and 2), and PERIODIC.
+
+The table is measured, and holds, for the problem's own BC (not one passed to `FPParticleSolver` as
+`boundary_conditions=`, which refuses any NEUMANN and a nonzero DIRICHLET), on the grid's box (no
+`implicit_domain=`, which refuses an exit placed by `region=` alone or by `sdf_region`), with
+`corner_strategy="priority"`, constant condition values, no `flux_capacity`, the array drift given
+as an array of U (not as velocities with `drift_is_precomputed=True`), and a region that holds at
+least one grid node. Outside those the table is not measured; the refusals measured there are named
+above. On a mesh, the FEM solvers read a `region=` placement per facet
+(`BoundaryConditions.segments_for_facets`).
 
 ### Boundary-Based vs Region-Based
 
 | Approach | Use When | Example |
 |----------|----------|---------|
 | **Boundary-based** | Simple geometries, entire boundaries | `boundary="x_min"` |
-| **Region-based** | Complex geometries, partial boundaries | `predicate=lambda x: x[:, 0] < 0.1` |
+| **Region-based** | Complex geometries; part of a face only per point on a grid, or per facet on a mesh (above) | `region={"x": (0.0, 0.1)}` |
 
 Both approaches can be mixed in the same BC specification.
 
