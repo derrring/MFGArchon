@@ -728,10 +728,11 @@ class BoundaryConditions:
 
         **A point at a corner is resolved at the point** (user ruling, 2026-10-14). Without ``face``, a point
         on several faces takes each face's own segment, read at the point only where a partial cover keeps the face
-        from answering (:meth:`_face_resolution`): a ``region`` or ``sdf_region`` covering part of it ahead of the
-        segment governing the rest with another condition, or covering part of a face no segment covers whole and
-        whose ``default_bc`` does not answer. Then the segment holding the point on that face (this method with
-        ``face``) stands in. Every other refusal stands, except the face owner's whole-BC check, which a point does not
+        from answering (:meth:`_face_resolution`): a ``region``, ``sdf_region`` or marked ``region_name`` covering
+        part of it ahead of the segment governing the rest with another condition, or covering part of a face no
+        segment covers whole and whose ``default_bc`` does not answer. Then the segment holding the point on that
+        face (this method with ``face``) stands in. Every other refusal stands, except the face owner's whole-BC
+        check, which a point does not
         run (#2490 B1e-2): it reads which segments govern a face on a grid's nodes, the face family's points, so a
         reader's admission of a BC depended on whether its points included a corner. A point reader checks its own
         points instead (:meth:`refuse_segments_governing_no_point`). ``corner_strategy`` then chooses among them in the
@@ -2912,9 +2913,11 @@ def mixed_bc_from_regions(
     ``"<template name>[<face>]"``. Any other region keeps ``region_name``: a face-level reader refuses
     it where it imposes another condition than the rest of its face, since one condition per face cannot
     represent both, and a point reader given the geometry reads it at every point, box corners
-    included, as it reads a ``region=`` placement (#2795). The boundary-conditions guide's § Priority
-    Resolution lists which solvers read such a region, and for which conditions. Such a region may not be named like a face ("x_max", "top"), since a reader
-    without the geometry would read the name as that face.
+    included, by the point's nearest grid node, so it reaches half a grid spacing past the marked nodes,
+    onto the adjacent face where a marked node is a corner (#2795). The boundary-conditions guide's
+    § Priority Resolution lists which solvers read such a region, and for which conditions. Such a region
+    may not be named like a face ("x_max", "top"), since a reader without the geometry would read the
+    name as that face.
 
     Args:
         geometry: Geometry with marked regions (must implement SupportsRegionMarking)

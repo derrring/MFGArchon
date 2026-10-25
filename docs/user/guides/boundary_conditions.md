@@ -146,7 +146,9 @@ face without the edges it shares with other faces. So whether a strip covers a f
 resolution.
 
 A region that covers only part of a face keeps its region name, and a face-level reader refuses it
-rather than stretching it to the whole face or dropping it. Such a region may not be named like a face
+where it imposes another condition than the rest of the face, rather than stretching it to the whole face
+or dropping it; where it imposes the same condition, the face takes that condition, as for a partial
+`region=`. Such a region may not be named like a face
 (`"top"`, `"x_max"`), because a reader without the geometry would read the name as that face. The
 only region, on every face, is a uniform condition.
 
@@ -208,7 +210,7 @@ point, where the higher priority wins at a point both hold, by these solvers and
 | a region on part of a face, placed by | `HJBGFDMSolver` | `FPParticleSolver`, array drift (as in a coupled solve) | `FPParticleSolver`, callable drift |
 |---|---|---|---|
 | `region=` or `sdf_region` | when no condition of the BC is PERIODIC, REFLECTING, or a ROBIN with nonzero `alpha` or with `beta` other than 1 | when no condition of the BC is ROBIN or a nonzero NEUMANN, and the region and the rest of its face are both PERIODIC or both not | when no condition of the BC is ROBIN or a nonzero NEUMANN |
-| `mark_region` | as for `region=` | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them | as for `region=`, with the same reach |
+| `mark_region` | as for `region=`; a marked node at a box corner also holds the adjacent face's corner | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them, onto the adjacent face at a marked corner node | as for `region=`, with the same reach |
 
 A coupled `HJBGFDMSolver` + `FPParticleSolver` solve reads such a region when both of its columns
 do. The conditions measured, each as the region's and as the rest's, are DIRICHLET 0, NO_FLUX,

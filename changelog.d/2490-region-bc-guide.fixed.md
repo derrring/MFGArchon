@@ -7,7 +7,5 @@
   - Two refusals of a sub-face cover told the user to "use a solver that resolves boundary conditions per point".
     - Both now name `HJBGFDMSolver` and `FPParticleSolver` and point to the guide's § *Priority Resolution*, which
       lists, as measured, for which conditions of the BC each reads a region on part of a face.
-    - The one for a marked region also says that `HJBGFDMSolver` refuses it on a cloud that holds a box corner, and
-      the particle FP's array drift refuses it (#2795), and that a `region=` or `sdf_region` placement is the route.
-  - `mixed_bc_from_regions`' docstring said a per-point reader matches a kept region point by point. It now says
-    where the point reader and the array drift refuse it, and points to the guide's list.
+  - `mixed_bc_from_regions`' docstring said a per-point reader matches a kept region point by point. It now says how
+    the point reader reads it, and points to the guide's list.
