@@ -174,7 +174,8 @@ exists`), so a region over several faces is marked whole, as in Method 3.
 ### Priority Resolution for Overlapping Regions
 
 When regions overlap on a face, **priority** decides which segment governs it (higher number = higher
-precedence). With the regions of Method 3, `walls` (both y faces) and `top` (y_max):
+precedence). With the regions of Method 3, `walls` (both y faces) and `top` (y_max, a whole face, which
+may carry a face's name):
 
 ```python
 from mfgarchon.geometry.boundary import BoundaryConditions
@@ -203,18 +204,21 @@ refuses the BC, since the one on `y_max` governs nothing.
 **Regions that overlap on part of a face**, such as two strips `x < 0.5` and `x < 0.1`, cannot be
 imposed by a face-level path, which refuses them (#2472). They are resolved per point:
 
-- placed by `region=` or `sdf_region`, `HJBGFDMSolver` and `FPParticleSolver` read them at each
-  boundary point, alone or coupled, and the higher priority wins where both hold;
-- marked with `mark_region` on part of a face, they are read per point only by `FPParticleSolver`
-  with a callable drift. `HJBGFDMSolver` refuses them at the box's corners, and so does an array
-  drift (#2795).
+- placed by `region=` or `sdf_region`, an exit or a wall (DIRICHLET, NO_FLUX or zero NEUMANN) is read
+  at each boundary point by `HJBGFDMSolver` and `FPParticleSolver`, alone or coupled, and the higher
+  priority wins where both hold. A PERIODIC part of a face is read only by `FPParticleSolver` with a
+  callable drift;
+- marked with `mark_region` on part of a face, they are read per point by `FPParticleSolver` with a
+  callable drift, as the cells of the marked nodes, which reach half a grid spacing past them.
+  `HJBGFDMSolver` refuses them on a cloud that holds a box corner, and so does an array drift
+  (#2795).
 
 ### Boundary-Based vs Region-Based
 
 | Approach | Use When | Example |
 |----------|----------|---------|
 | **Boundary-based** | Simple geometries, entire boundaries | `boundary="x_min"` |
-| **Region-based** | Complex geometries; part of a face only in a per-point solver (above) | `predicate=lambda x: x[:, 0] < 0.1` |
+| **Region-based** | Complex geometries; part of a face only in a per-point solver (above) | `region={"x": (0.0, 0.1)}` |
 
 Both approaches can be mixed in the same BC specification.
 
