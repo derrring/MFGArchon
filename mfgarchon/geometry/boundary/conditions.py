@@ -1112,9 +1112,7 @@ class BoundaryConditions:
     ) -> bool:
         """Whether ``segment.region`` holds a part of the box ``own`` that lies outside ``box``. Where ``face`` is given,
         the face its ``boundary`` names, only a part past ``box`` across it, or on its plane (read within ``own``) and
-        past ``box`` along another axis. That reads the face's plane, not the face `apply` assigns a particle, which is
-        the first axis whose bound it reaches (`_get_boundary_id`): a part past ``box`` along an earlier axis is never
-        read on ``face`` there. A face on an axis ``own`` does not have holds none of it."""
+        past ``box`` along another axis. A face on an axis ``own`` does not have holds none of it."""
         if segment.region is None or (face is not None and face.axis >= own.shape[0]):
             return False
         low, high = own[:, 0].copy(), own[:, 1].copy()

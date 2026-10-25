@@ -162,20 +162,11 @@ def same_particle_action(first: BCSegment, second: BCSegment) -> bool:
 
 
 def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryConditions:
-    """``bc`` as the point queries read it: itself when it carries ``domain_bounds``, else a copy that carries ``bounds``,
-    the box the step was taken in, in the ``domain_bounds`` slot where the write this replaces put it. So, for a BC with
-    no ``domain_bounds``, the face a particle leaves through (``boundary_id``, from ``bounds``) and the point a marked
-    ``region_name`` reads past the wall (its nearest point of ``domain_bounds``) come from one box, even where the BC is
-    bound to a grid whose box is not the step's. A BC that carries its own ``domain_bounds`` is read on them, as before,
-    while its face still comes from ``bounds`` (#2733). The copy keeps the BC's geometry binding, so a placement only
-    the grid can decide, a marked ``region_name``, still reads the grid.
-
-    Never a write to ``bc``. It can be the problem's own BC: on the shared route when the solver's view of it translates
-    nothing (`fp_view_of_shared_bc`), or when a caller hands the solver the grid's own BC. On the legacy route, setting
-    its ``domain_bounds`` made every later read of the problem's BC refuse it as declaring the BC twice (#2738). The
-    write also kept the first step's box for every later step; the copy reads each step in its own box, which differs
-    from the write only where one BC is stepped in two boxes in turn, as one BC object shared by two solves on
-    different domains is."""
+    """``bc`` as declared, the box `ParticleApplicator.refuse_segments_it_would_drop` explains a refusal on: itself when
+    it carries ``domain_bounds``, where a region it places past the solver's box lies, else a copy that carries
+    ``bounds``. Every particle query reads on the step's box instead (`on_the_box`, #2733). The copy keeps the BC's
+    geometry binding, so a placement only the grid can decide, a marked ``region_name``, still reads the grid. Never a
+    write to ``bc`` (#2738): it can be the problem's own BC."""
     if bc.domain_bounds is not None:
         return bc
     return replace(bc, segments=list(bc.segments), domain_bounds=bounds)
@@ -305,13 +296,13 @@ class ParticleApplicator:
         Apply segment-aware boundary conditions to particles.
 
         For each particle that has crossed or is at the boundary:
-        1. Query bc.get_bc_at_point() to determine which BC segment applies
+        1. Read the segment that governs it at its nearest point of the box (`_segment_at`)
         2. Apply the appropriate action based on bc_type
 
         Args:
             particles: Particle positions, shape (N, d)
             bc: BoundaryConditions with segment definitions. Read, never written (#2738).
-            bounds: Domain bounds per dimension [(xmin, xmax), ...] - the queries' box if bc.domain_bounds is None
+            bounds: Domain bounds per dimension [(xmin, xmax), ...] - the box every query is read on (`on_the_box`)
 
         Returns:
             Tuple of:
@@ -333,7 +324,7 @@ class ParticleApplicator:
         domain_max = bounds_arr[:, 1]
         domain_size = domain_max - domain_min
 
-        bc = _with_box(bc, bounds_arr)
+        bc = on_the_box(bc, bounds_arr)
 
         # Find particles at or beyond boundary
         at_min = particles <= domain_min + self._boundary_tolerance
@@ -351,14 +342,7 @@ class ParticleApplicator:
         for idx in boundary_indices:
             particle = result_particles[idx]
 
-            # Determine which boundary the particle is at
-            boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
-
-            # Query BC at this point (its domain_bounds, or the step's box)
-            segment = bc.get_bc_at_point(
-                particle,
-                boundary_id=boundary_id,
-            )
+            segment = self._segment_at(bc, particle, bounds_arr)
 
             if segment is None:
                 # No matching segment - use default reflecting
@@ -430,7 +414,7 @@ class ParticleApplicator:
         domain_max = bounds_arr[:, 1]
         domain_size = domain_max - domain_min
 
-        bc = _with_box(bc, bounds_arr)
+        bc = on_the_box(bc, bounds_arr)
 
         # Find boundary particles
         at_min = particles <= domain_min + self._boundary_tolerance
@@ -449,9 +433,7 @@ class ParticleApplicator:
 
         for idx in boundary_indices:
             particle = result_particles[idx]
-            boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
-
-            segment = bc.get_bc_at_point(particle, boundary_id=boundary_id)
+            segment = self._segment_at(bc, particle, bounds_arr)
 
             if segment is None:
                 result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
@@ -559,43 +541,15 @@ class ParticleApplicator:
             explain=lambda segment: declared.why_no_face_cell(segment, box),
         )
 
-    def _get_boundary_id(
-        self,
-        particle: NDArray[np.floating],
-        domain_min: NDArray[np.floating],
-        domain_max: NDArray[np.floating],
-        dimension: int,
-    ) -> str | None:
-        """
-        Determine which boundary a particle is at.
-
-        Returns boundary ID using BCSegment convention:
-        - 1D: "left", "right" (directional for 1D)
-        - 2D: "x_min", "x_max", "y_min", "y_max" (axis-based for 2D+)
-        - 3D: "x_min", "x_max", "y_min", "y_max", "z_min", "z_max"
-        - nD: "dim0_min", "dim0_max", etc. for d >= 3
-
-        Note: Different conventions for 1D vs 2D+ to match common usage patterns.
-        """
-        # Handle 1D special case (uses directional naming)
-        if dimension == 1:
-            if particle[0] <= domain_min[0] + self._boundary_tolerance:
-                return "left"
-            if particle[0] >= domain_max[0] - self._boundary_tolerance:
-                return "right"
-            return None
-
-        # 2D+ uses axis-based naming (x_min, y_max, etc.)
-        axis_names = ["x", "y", "z"] + [f"dim{i}" for i in range(3, dimension)]
-
-        for d in range(dimension):
-            axis_name = axis_names[d] if d < len(axis_names) else f"dim{d}"
-            if particle[d] <= domain_min[d] + self._boundary_tolerance:
-                return f"{axis_name}_min"
-            if particle[d] >= domain_max[d] - self._boundary_tolerance:
-                return f"{axis_name}_max"
-
-        return None
+    def _segment_at(
+        self, bc_on_box: BoundaryConditions, particle: NDArray[np.floating], box: NDArray[np.floating]
+    ) -> BCSegment | None:
+        """The segment that governs a boundary particle: read at its nearest point of ``box`` through the contact
+        loop's reader (`segment_at_box_contact`), within the tolerance that found it at the boundary. On one face that
+        is the face's segment there; past or at a corner the owner's corner rule decides (#2512 row B1, stage B1d),
+        where the first face found, x before y, used to."""
+        point = np.clip(particle, box[:, 0], box[:, 1])
+        return segment_at_box_contact(bc_on_box, point, self._boundary_tolerance)[1]
 
     def _reflect_particle(
         self,
