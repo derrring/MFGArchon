@@ -78,7 +78,7 @@ def test_a_time_dependent_dirichlet_wall_is_read_at_each_level(d, monkeypatch):
     levels = np.linspace(0.0, T, NT + 1)
     exact_levels = np.stack([exact(t, pts).reshape(shape) for t in levels])
     assert np.abs(M - exact_levels).max() < 1e-12
-    # The wall nodes, asserted on their own (#2512 comment 6041149059's bar for a wall that carries data).
+    # The wall nodes, asserted on their own (#2512 comment 6042778010, correction 4: the bar for a wall that carries data).
     idx = np.indices(shape)
     on_wall = np.any((idx == 0) | (idx == n - 1), axis=0)
     assert np.abs(M[:, on_wall] - exact_levels[:, on_wall]).max() < 1e-12

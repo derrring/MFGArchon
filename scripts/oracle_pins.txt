@@ -83,24 +83,28 @@ oracle fp_fdm/dirichlet_density_1d  tests/unit/test_alg/test_fp_fdm_dirichlet_ti
 oracle fp_fdm/dirichlet_density_2d  tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]
 # The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and the NO_FLUX oracle they solve as,
 # so they are met only while it is, and the refusal of a NEUMANN of FP-FDM's own.
-oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d]
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]
 oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fdm-1d]
 oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fdm-1d]
 oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fdm_refuses_a_neumann_of_its_own[1]
-oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d]
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]
 oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fdm-2d]
 oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fdm-2d]
 oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fdm_refuses_a_neumann_of_its_own[2]
-oracle fp_fdm/no_flux_1d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d]
-oracle fp_fdm/no_flux_2d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d]
+oracle fp_fdm/no_flux_1d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]
+oracle fp_fdm/no_flux_1d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]
+oracle fp_fdm/no_flux_2d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]
+oracle fp_fdm/no_flux_2d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]
 oracle fp_fdm/periodic_1d           tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]
 oracle fp_fdm/periodic_2d           tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]
 
 # FP-FEM: 12 cells. Dirichlet is two cells, as for every FP family that declares it: the shared exit and the explicit
 # route's prescribed density (#2532), whose route is pinned below. The density cells' oracle is drift-free and exact to
-# roundoff in P1 (a linear density), its wall dofs asserted on their own.
-# Each met cell lists its oracle (an exact density at second order) and the wall property it is named for, with a
-# rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
+# roundoff in P1 (a linear density), with no rival test of its own.
+# Every other met cell lists its oracle (an exact density at second order) and the wall property it is named for,
+# with a rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]

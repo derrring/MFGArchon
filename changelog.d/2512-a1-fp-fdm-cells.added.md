@@ -2,12 +2,14 @@
   counted** (#2512 (a)). The manifest's oracle line goes from 37/67 to 49/67.
   - New, in `tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py`, on the default scheme (`divergence_upwind`) and the
     default drift arm (`potential_field`):
-    - a drifted no-flux wall, non-stationary (the drift points into `x_max`, and dm/dn ≠ 0 at both x walls);
+    - a drifted no-flux wall, non-stationary, run with the drift's sign both ways on every axis, so each wall row's
+      upwind selection takes both branches;
     - a periodic seam crossed by the drift, with a density that is not even about the seam;
     - a 2-D exit whose shared value is nonzero.
-  - Each asserts a rate, each level against its recorded value, and the wall-node error. The rivals each fixture
-    separates are measured and recorded there: a full-cell wall volume, a dm/dn = 0 wall, the torus one cell too
-    long (#1822), the seam's U difference dropped, and the exit read literally or made a wall.
+  - Each asserts a rate and, at every level, the error on each face's interior, the corners or the seam against its
+    recorded value. The rivals each fixture separates are measured and recorded there: 13 mutants of the no-flux
+    wall row, the torus one cell too long (#1822), the seam's U difference dropped, no wrap, and the exit read
+    literally or made a wall.
   - The no-flux and periodic cells converge at first order. That is the upwind advection's: the 1-D no-flux fixture
     gives order 2 drift-free and with `divergence_centered`.
   - Counted from existing tests, each asserting its wall nodes:
