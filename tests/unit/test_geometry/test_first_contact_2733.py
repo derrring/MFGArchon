@@ -2,10 +2,11 @@
 
 `ImplicitDomain.segment_intervals(a, b)` gives the parts of each segment a -> b inside the domain, with the leaf and
 face that bound each end: a slab test on a box, a quadratic on a ball, and each CSG node combining its children's
-intervals, a complement entering as the closed set phi >= 0. `first_contact(a, b)` reads the first end. Main's crossing
-search samples phi at 32 points per leg and bisects (`_leg_crossing`), so a feature thinner than a sample step can be
-passed over, wherever no sample lands in it, as the slab case below is at d23a5c87 (#2733), and the face it names
-reads one leaf only (#2732's B1). No solver reads the new owner yet; the contact loop is PR 2."""
+intervals, a complement entering as the closed set phi >= 0. `first_contact(a, b)` reads the first end. The crossing
+search it replaced sampled phi at 32 points per leg and bisected (`_leg_crossing`, deleted by #2733 PR 2), so a feature
+thinner than a sample step could be passed over, wherever no sample landed in it, as the slab case below was at
+d23a5c87 (#2733), and the face it named read one leaf only (#2732's B1). The contact loop of PR 2 reads this owner
+(`reflect_at_first_contacts`)."""
 
 from __future__ import annotations
 
@@ -552,3 +553,83 @@ def test_a_domain_or_segment_it_cannot_classify_is_refused_by_name(row, domain, 
         domain.segment_intervals(a, b)
     with pytest.raises(error, match=match):
         domain.first_contact(a, b)
+
+
+@pytest.mark.parametrize(
+    ("label", "east_wall", "joined"),
+    [
+        ("the exact shared wall", 0.3, True),
+        ("a seam one ulp apart", 0.1 + 0.2, True),
+        ("a crack two ulps wide", float(np.nextafter(np.nextafter(0.3, 1.0), 1.0)), False),
+        ("a crack of 1e-9", 0.3 + 1e-9, False),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_a_seam_one_ulp_apart_is_joined_and_a_real_crack_is_not(label, east_wall, joined):
+    """Two rooms meeting at 0.3 and 0.1 + 0.2, adjacent doubles, have no point between them, and `contains` holds across;
+    each leaf's interval ends at its own wall, leaving a gap of t-length 2.2e-16. It is far narrower than
+    ``SEAM_DOUBLES`` coarsest ulps, every read holds, and it is joined: one interval and no contact, as for the exact
+    shared wall (`SegmentIntervals`, #2791). A crack two ulps wide holds one double, 0.3 + 1 ulp, outside both rooms,
+    which an exact read finds, and stays a gap, as a crack of 1e-9 does, wider than the gate and not read."""
+    rooms = UnionDomain([_box((0, 0.3), (0, 1)), _box((east_wall, 1), (0, 1))])
+    a, b = np.array([[0.2, 0.5]]), np.array([[0.4, 0.5]])
+    found, contact = rooms.segment_intervals(a, b), rooms.first_contact(a, b)
+    assert contact.inside_at_start[0]
+    if joined:
+        np.testing.assert_array_equal(found.t[0], [[0.0, 1.0]])
+        assert np.isnan(contact.t[0])
+    else:
+        assert np.sum(~np.isnan(found.t[0, :, 0])) == 2
+        assert contact.point[0, 0] == 0.3
+
+
+def test_a_gap_through_two_touching_obstacles_is_no_seam():
+    """Review 2 of #2791: two balls of radius 0.007 touching at 0.314. On this step rounding drops the degenerate
+    interval at the touching point, so the gap left is [0.3, 0.328], solid obstacle, with the touching point, a point of
+    the closed domain, at its midpoint. It is 0.028 wide, far wider than ``SEAM_DOUBLES`` coarsest ulps, so it is not
+    read: the intervals stay two and the first contact is the entry into the first ball, at x = 0.3."""
+    pinch = DifferenceDomain(_box((0, 1)), UnionDomain([Hypersphere([0.307], 0.007), Hypersphere([0.321], 0.007)]))
+    a, b = np.array([[0.278525939767154]]), np.array([[0.36341352620241907]])
+    found, contact = pinch.segment_intervals(a, b), pinch.first_contact(a, b)
+    assert np.sum(~np.isnan(found.t[0, :, 0])) == 2
+    np.testing.assert_allclose(found.t[0, :2], [[0.0, 0.252970559473051], [0.5828185522811953, 1.0]], rtol=1e-12)
+    assert contact.inside_at_start[0]
+    np.testing.assert_allclose(contact.point[0], [0.3], atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("point", "axis"),
+    [((0.3, 700.5), 0), ((700.5, 0.3), 1)],
+    ids=["along x beside y = 700.5", "along y beside x = 700.5"],
+)
+def test_a_gap_through_two_tiny_touching_balls_beside_a_large_coordinate_is_no_seam(point, axis):
+    """Two balls of radius 2e-11 touching at p, where the other coordinate is 700.5, and steps exactly through p along
+    the balls' axis (#2791): the gap, 8e-11, passes the gate, whose ulp is 700.5's; its own axis holds
+    far more than ``SEAM_DOUBLES`` doubles, so none is read exactly; the other axis does not move; and its midpoint is
+    p, where `contains` holds. Only the reads evenly spaced in t land in the balls, and every step meets the first.
+    Without those reads 345 of these 2,000 steps passed through both."""
+    p, e = np.array(point), np.eye(2)[axis]
+    box = np.array([[0.0, 1.0], [700.0, 701.0]]) if axis == 0 else np.array([[700.0, 701.0], [0.0, 1.0]])
+    r = 2e-11
+    balls = UnionDomain([Hypersphere(p - r * e, r), Hypersphere(p + r * e, r)])
+    domain = DifferenceDomain(Hyperrectangle(box), balls)
+    rng = np.random.default_rng(5)
+    a = p - rng.uniform(5 * r, 1e-4, 2000)[:, None] * e
+    b = p + rng.uniform(5 * r, 1e-4, 2000)[:, None] * e
+    assert np.all(np.atleast_1d(domain.contains(a)))
+    assert np.all(np.atleast_1d(domain.contains(b)))
+    contact = domain.first_contact(a, b)
+    assert not np.any(np.isnan(contact.t))
+    np.testing.assert_allclose(contact.point @ e, p @ e - 2 * r, rtol=0, atol=1e-13)
+
+
+def test_a_face_trace_through_two_touching_discs_keeps_them_apart():
+    """B1e-2's crossability reads `face_trace`, which reads the same intervals. Two discs of radius 0.13 touching at
+    (0.5, 1 - s), on the line the y_max face is read along: the domain's trace there is [0, 0.24], the touching point
+    and [0.76, 1]. Joining the gap through the discs by its midpoint alone, the touching point, read 1.0 at b5aa013a
+    (#2791 review 2's reach), which would admit an exit no particle crosses there; it is 0.24."""
+    s = 1e-12 * np.sqrt(2.0)
+    discs = DifferenceDomain(
+        _SQUARE, UnionDomain([Hypersphere([0.37, 1.0 - s], 0.13), Hypersphere([0.63, 1.0 - s], 0.13)])
+    )
+    np.testing.assert_allclose(discs.face_trace(1, 1, np.array([[0.0, 1.0], [0.0, 1.0]]), s), 0.24, atol=1e-12)
