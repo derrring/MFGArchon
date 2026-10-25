@@ -624,8 +624,8 @@ def test_fixture_c_one_wall_is_not_read_by_two_rules_in_one_solve_2624():
 # on the boundary (`segment_at_box_contact` -> `segment_for_point`), so these read what a particle does there: absorbed
 # by a DIRICHLET exit, reflected by a wall, refused. One pin per branch of `segment_for_point` and `matches_point` that
 # a particle reaches on one face. Its corners, under `corner_strategy="priority"` and the blending strategies, are
-# pinned in `test_particle_corner_is_read_by_the_owner_2512.py`. Neither file reaches a `region_name` segment (they pass
-# no geometry).
+# pinned in `test_particle_corner_is_read_by_the_owner_2512.py`. Neither these pins nor that file reach a marked
+# `region_name` segment (they pass no geometry).
 
 _BOUNDS = [(0.0, 1.0), (0.0, 1.0)]
 
