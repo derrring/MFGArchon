@@ -20,8 +20,9 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     gaussian_kde = None
     SCIPY_AVAILABLE = False
 
-from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
+from mfgarchon.geometry.boundary.applicator_particle import CONTACT_EPS, ParticleApplicator
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+from mfgarchon.geometry.boundary.conditions import periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 
@@ -40,7 +41,6 @@ from mfgarchon.utils.pde_coefficients import (
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_particle_bc import MAX_REFLECTIONS
-from .fp_particle_bc import apply_boundary_conditions as _apply_bc
 from .fp_particle_bc import get_topology_per_dimension as _get_topology
 from .fp_particle_bc import needs_segment_aware_bc as _needs_segment_bc
 from .fp_particle_bc import reflect_at_first_contacts as _reflect_at_first_contacts
@@ -1133,14 +1133,13 @@ class FPParticleSolver(BaseFPSolver):
         bounds: list[tuple[float, float]],
         use_segment_aware_bc: bool,
     ) -> tuple[np.ndarray, np.ndarray | None, int]:
-        """The one end of a particle step, for every forward path (#2688, #2733).
+        """The one end of a particle step, for every forward path on the CPU (#2688, #2733, #2704).
 
-        A BC that declares no periodic face ends each step at its first contacts with the particles' boundary
-        (`reflect_at_first_contacts`): one search over the particles' domain -- the problem's ImplicitDomain or
-        implicit_domain= (`_obstacle_domain`), else the box -- reads the boundary owner at a contact on the box and
-        reflects at every other. The step's counts go to ``obstacle_placement_history``. A BC that declares a periodic
-        face keeps the wrap and fold of the outer boundary condition (#2704); no particle domain reaches it, since
-        `_refuse_what_the_obstacle_placement_cannot_do` refuses one at the start of the solve.
+        Each step ends at its first contacts with the particles' boundary (`reflect_at_first_contacts`): one search
+        over the particles' domain -- the problem's ImplicitDomain or implicit_domain= (`_obstacle_domain`), else the
+        box -- reads the boundary owner at a contact on the box and reflects at every other. A periodic face wraps the
+        rest of the step to its image on the opposite face, so a step is read by its path and not by where it ended
+        (#2704, #2803). The step's counts go to ``obstacle_placement_history``.
 
         Parameters
         ----------
@@ -1161,12 +1160,6 @@ class FPParticleSolver(BaseFPSolver):
             Which of the N were absorbed, or None when nothing can be
         n_absorbed : int
         """
-        if declares_periodic(self.boundary_conditions):
-            if use_segment_aware_bc:
-                recorded, n_absorbed, _, absorbed_mask = self._apply_boundary_conditions_segment_aware(raw, bounds)
-                return recorded, absorbed_mask, n_absorbed
-            topologies = self._get_topology_per_dimension(raw.shape[1])
-            return self._apply_boundary_conditions_nd(raw, bounds, topologies), None, 0
         box = np.asarray(bounds, dtype=float).reshape(-1, 2)
         domain = self._particle_domain(box)
         stepped = _reflect_at_first_contacts(
@@ -1253,19 +1246,9 @@ class FPParticleSolver(BaseFPSolver):
         )
 
     def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
-        """What the contact loop cannot do, refused at the start of a solve: an obstacle with any periodic condition,
-        since a wrapped particle's straight segment from its previous position is not its path (#2688; the capability
-        is #2704); and an implicit_domain whose bounding box is not the grid's box (#2706)."""
-        # Any periodic face, not a periodic axis: a BC periodic on one face of an axis reads as a bounded topology, yet
-        # the applicator wraps a particle through that face (#2706, review 2).
-        if self._implicit_domain is not None and declares_periodic(self.boundary_conditions):
-            raise NotImplementedError(
-                "FPParticleSolver: a domain for the particles -- an ImplicitDomain geometry or implicit_domain= -- "
-                "with a periodic condition on the outer boundary (a periodic segment or default_bc) is not supported. "
-                "Each step ends at its first contacts with the particles' boundary along the straight segment from "
-                "where it started, and a wrapped particle's step is not that segment (#2733). Reflecting along the "
-                "wrapped image of its step is #2704."
-            )
+        """What the contact loop cannot do, refused at the start of a solve: an implicit_domain whose bounding box is not
+        the grid's box (#2706); and one whose boundary meets a periodic face, since there the rest of a wrapped step
+        would start inside the domain's complement (#2704), in d >= 3 any one under a periodic face (#2807)."""
         # A step ends at its contacts with the implicit_domain, and a contact reads the BC only on the grid's box (D2's
         # box rule, #2733). A domain reaching past the grid's box lets a particle leave the box with no contact; one
         # inside it has no surface on the box, so its BC is read nowhere and every contact reflects. Equal boxes give
@@ -1281,6 +1264,39 @@ class FPParticleSolver(BaseFPSolver):
                 "surface the condition is read on (#2706, #2733). Build the implicit_domain on the grid's box, e.g. "
                 "DifferenceDomain(Hyperrectangle(grid bounds), obstacle)."
             )
+        # A wrapped step goes on from its image on the opposite face (#2704). Where the domain's trace on a face of an
+        # axis that wraps, read just inside it, is not the whole face, an obstacle meets the face and the image of a
+        # wrap through the face, or through its partner, can lie inside it.
+        if declares_periodic(self.boundary_conditions):
+            # In d >= 3 `face_trace` returns the longest piece over midpoint lines, and a line clear of the obstacle
+            # reads the whole face: a ball touching x_max of the unit cube reads 1.0 (#2807).
+            if dimension >= 3:
+                raise NotImplementedError(
+                    f"FPParticleSolver: a domain for the particles -- an ImplicitDomain geometry or implicit_domain= -- "
+                    f"in {dimension}-D with a periodic condition on the outer boundary (a periodic segment or "
+                    "default_bc) is not supported. A step that wraps through a periodic face goes on from its image on "
+                    "the opposite face, so an obstacle touching a face of a periodic axis is refused, and in d >= 3 "
+                    "that touch cannot yet be told from the domain's face trace (#2807)."
+                )
+            box = np.asarray(bounds, dtype=float).reshape(dimension, 2)
+            inside = CONTACT_EPS * float(np.linalg.norm(box[:, 1] - box[:, 0]))
+            periodic = periodic_faces(self.boundary_conditions, dimension, self.problem.geometry)
+            for axis in range(dimension):
+                if not (periodic[2 * axis] or periodic[2 * axis + 1]):
+                    continue
+                along = [t for t in range(dimension) if t != axis]
+                whole = float("inf") if not along else float(box[along[-1], 1] - box[along[-1], 0])
+                for side in (0, 1):
+                    trace = self._implicit_domain.face_trace(axis, side, box, inside)
+                    if trace < whole - inside:
+                        raise NotImplementedError(
+                            f"FPParticleSolver: the particles' domain meets the {('min', 'max')[side]} face of axis "
+                            f"{axis}, an axis with a periodic face: its trace there, read {inside:.1e} inside the face, "
+                            f"is {trace:.6g} long against the face's {whole:.6g}. A step that wraps through a periodic "
+                            "face goes on from its image on the opposite face, and an obstacle touching either face can "
+                            "hold that image, which the contact loop does not place (#2704). Keep obstacles off the "
+                            "faces of a periodic axis."
+                        )
 
     def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
         """
@@ -1320,82 +1336,6 @@ class FPParticleSolver(BaseFPSolver):
         if has_reflective:
             return list(bounds)
         return None
-
-    def _apply_boundary_conditions_nd(
-        self,
-        particles: np.ndarray,
-        bounds: list[tuple[float, float]],
-        topology: str | list[str],
-    ) -> np.ndarray:
-        """
-        Apply boundary handling per dimension based on topology.
-
-        Delegates to unified apply_boundary_conditions() from fp_particle_bc module.
-
-        Parameters
-        ----------
-        particles : np.ndarray
-            Particle positions, shape (num_particles, dimension)
-        bounds : list[tuple[float, float]]
-            Bounds per dimension [(xmin, xmax), (ymin, ymax), ...]
-        topology : str or list[str]
-            Grid topology: "periodic" (wrap) or "bounded" (reflect).
-            Can be a single string (same for all dims) or per-dimension list.
-
-        Returns
-        -------
-        particles : np.ndarray
-            Updated particle positions
-        """
-        return _apply_bc(particles, bounds, topology)
-
-    def _apply_boundary_conditions_segment_aware(
-        self,
-        particles: np.ndarray,
-        bounds: list[tuple[float, float]],
-    ) -> tuple[np.ndarray, int, np.ndarray, np.ndarray]:
-        """
-        Apply segment-aware boundary conditions using the applicator.
-
-        This method handles mixed BC where different boundaries have different types:
-        - DIRICHLET segments: Absorb particles (remove from simulation)
-        - REFLECTING/NO_FLUX segments: Bounce particles back
-        - PERIODIC segments: Wrap particles
-
-        Parameters
-        ----------
-        particles : np.ndarray
-            Particle positions, shape (num_particles, dimension)
-        bounds : list[tuple[float, float]]
-            Bounds per dimension [(xmin, xmax), (ymin, ymax), ...]
-
-        Returns
-        -------
-        remaining_particles : np.ndarray
-            Particles that were not absorbed, shape (M, dimension)
-        n_absorbed : int
-            Number of particles absorbed this step
-        exit_positions : np.ndarray
-            Positions where particles exited, shape (K, dimension)
-        absorbed_mask : np.ndarray
-            Boolean mask of absorbed particles in the INPUT array, shape (N,).
-            Issue #1119: exposed for preserve_indices bookkeeping.
-        """
-        remaining, absorbed_mask, exit_positions = self._applicator.apply(
-            particles,
-            self.boundary_conditions,
-            bounds,
-        )
-
-        n_absorbed = int(np.sum(absorbed_mask))
-
-        # Update cumulative tracking
-        if n_absorbed > 0:
-            self.exit_flux_history.append(n_absorbed)
-            self.exit_positions_history.append(exit_positions)
-            self.total_absorbed += n_absorbed
-
-        return remaining, n_absorbed, exit_positions, absorbed_mask
 
     def _apply_boundary_conditions_with_flux_limits(
         self,
@@ -2301,7 +2241,7 @@ class FPParticleSolver(BaseFPSolver):
         - _compute_gradient_nd() for gradient computation
         - _interpolate_grid_to_particles_nd() for drift interpolation
         - _generate_brownian_increment_nd() for vector Brownian motion
-        - _apply_boundary_conditions_nd() for per-dimension boundary handling
+        - _finish_step() for the end of each step at its first contacts with the particles' boundary
         - _estimate_density_from_particles_nd() for KDE
 
         Args:

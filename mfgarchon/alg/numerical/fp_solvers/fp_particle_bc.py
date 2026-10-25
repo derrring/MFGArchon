@@ -3,8 +3,8 @@ Dimension-agnostic boundary condition handling for particle-based FP solvers (Is
 
 This module provides unified functions that work for any dimension:
 - Topology detection from boundary conditions
-- Boundary enforcement (periodic wrap, reflecting bounce)
-- The contact loop: a step's first contacts with the particles' boundary, box and obstacles together (#2733)
+- The contact loop: a step's first contacts with the particles' boundary, box and obstacles together (#2733), which
+  ends every CPU step, a periodic outer boundary's included (#2704)
 - Segment-aware BC checking
 
 All functions accept both 1D and nD inputs with consistent APIs.
@@ -12,7 +12,6 @@ All functions accept both 1D and nD inputs with consistent APIs.
 Usage:
     from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import (
         get_topology_per_dimension,
-        apply_boundary_conditions,
         reflect_at_first_contacts,
         needs_segment_aware_bc,
     )
@@ -174,113 +173,6 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
 
 
 # =============================================================================
-# Boundary Enforcement (unified)
-# =============================================================================
-
-
-def apply_boundary_conditions(
-    particles: np.ndarray,
-    bounds: list[tuple[float, float]] | tuple[tuple[float, float], ...],
-    topology: str | list[str] = "bounded",
-) -> np.ndarray:
-    """
-    Apply boundary handling per dimension based on topology (dimension-agnostic).
-
-    This function delegates to the canonical implementations in
-    mfgarchon.utils.numerical.particle.boundary (Issue #521).
-
-    At corners, all dimensions are processed simultaneously (not sequentially),
-    producing diagonal reflection. This is equivalent to 'average' corner
-    strategy for position-based reflection.
-
-    Parameters
-    ----------
-    particles : np.ndarray
-        Particle positions.
-        - 1D: shape (num_particles,) or (num_particles, 1)
-        - nD: shape (num_particles, dimension)
-    bounds : list of tuple or tuple of tuple
-        Bounds per dimension [(xmin, xmax), (ymin, ymax), ...]
-    topology : str or list[str]
-        Grid topology: "periodic" (wrap) or "bounded" (reflect).
-        Can be a single string (same for all dims) or per-dimension list.
-
-    Returns
-    -------
-    particles : np.ndarray
-        Updated particle positions (may be modified in place for efficiency)
-
-    Examples
-    --------
-    >>> particles_1d = np.array([1.5, -0.2, 0.5])  # Some outside [0, 1]
-    >>> apply_boundary_conditions(particles_1d, [(0, 1)], "bounded")
-    >>> # particles_1d now reflected into [0, 1]
-
-    Note
-    ----
-    See Issue #521 for corner handling architecture. Position-based reflection
-    uses fold reflection which implicitly produces diagonal corner reflection.
-    """
-    from mfgarchon.geometry.boundary.corner import reflect_positions, wrap_positions
-
-    particles = np.asarray(particles)
-    bounds_list = list(bounds)
-
-    # Handle 1D case: convert to 2D for uniform processing
-    is_1d_flat = particles.ndim == 1
-    if is_1d_flat:
-        particles = particles[:, np.newaxis]
-
-    dimension = particles.shape[1] if particles.ndim > 1 else 1
-
-    # Handle per-dimension topologies
-    if isinstance(topology, str):
-        topologies = [topology] * dimension
-    else:
-        topologies = list(topology)
-
-    # Check if all dimensions have same topology (common case)
-    all_periodic = all(t == "periodic" for t in topologies)
-    all_bounded = all(t != "periodic" for t in topologies)
-
-    if all_periodic:
-        # Fast path: all periodic
-        result = wrap_positions(particles, bounds_list)
-    elif all_bounded:
-        # Fast path: all bounded (reflecting)
-        result = reflect_positions(particles, bounds_list)
-    else:
-        # Mixed topology: process dimension by dimension
-        result = particles.copy()
-        for d in range(dimension):
-            xmin, xmax = bounds_list[d]
-            Lx = xmax - xmin
-
-            if Lx < 1e-14:
-                continue  # Skip degenerate dimension
-
-            dim_topology = topologies[d] if d < len(topologies) else "bounded"
-
-            if dim_topology == "periodic":
-                # Periodic: wrap around
-                result[:, d] = xmin + (result[:, d] - xmin) % Lx
-            else:
-                # Bounded: fold reflection
-                shifted = result[:, d] - xmin
-                period = 2 * Lx
-                pos_in_period = shifted % period
-                in_second_half = pos_in_period > Lx
-                pos_in_period[in_second_half] = period - pos_in_period[in_second_half]
-                result[:, d] = xmin + pos_in_period
-
-    # Convert back to 1D if input was 1D
-    if is_1d_flat:
-        return result.ravel()
-
-    return result
-
-
-# =============================================================================
 # The contact loop (#2733)
 # =============================================================================
 
@@ -337,6 +229,7 @@ def reflect_at_first_contacts(
     """
     from mfgarchon.geometry.boundary.applicator_particle import (
         on_the_box,
+        periodic_corner_actions,
         segment_at_box_contact,
         segment_particle_action,
     )
@@ -346,7 +239,9 @@ def reflect_at_first_contacts(
     n, dimension = starts.shape
     box = np.asarray(box, dtype=float).reshape(dimension, 2)
     eps = CONTACT_EPS * float(np.linalg.norm(box[:, 1] - box[:, 0]))
-    counts = dict.fromkeys(("searched", "contacts", "reflections", "corridors", "offsets", "fallbacks", "absorbed"), 0)
+    counts = dict.fromkeys(
+        ("searched", "contacts", "reflections", "wraps", "corridors", "offsets", "fallbacks", "absorbed"), 0
+    )
     positions = ends.copy()
     absorbed = np.zeros(n, dtype=bool)
     if _convex(domain):
@@ -421,28 +316,72 @@ def reflect_at_first_contacts(
         hit = np.flatnonzero(~clear)
         i, p, nk, e = legs[hit], point[hit], normal[hit], b[hit]
         counts["contacts"] += int(hit.size)
+        corner_faces: dict[int, list[tuple[int, int, bool]]] = {}
         if uniform_action is not None:
             # One condition everywhere: with a particle domain it reflects, an absorbing one being refused at
             # construction off the box (`FPParticleSolver._refuse_absorbing_off_the_box`); without one every contact is
-            # on the box. Either way it is the action at every contact.
+            # on the box. Either way it is the action at every contact, and on a torus a corner's faces wrap in turn.
             action = np.full(hit.size, uniform_action, dtype=object)
         else:
             action = np.empty(hit.size, dtype=object)
             for j in range(hit.size):
-                _, segment = segment_at_box_contact(owner, p[j], eps)
-                action[j] = "reflecting" if segment is None else segment_particle_action(segment, reader)
-        unknown = (action != "absorbing") & (action != "reflecting")
-        if unknown.any():
-            raise RuntimeError(
-                f"{reader}: internal error -- a {action[unknown][0]} contact at {p[unknown][0].tolist()} reached the "
-                "contact loop; a BC that declares a periodic face takes the wrap, never this loop (#2733, #2704)."
-            )
+                corner = periodic_corner_actions(owner, p[j], eps, reader)
+                if corner is None:
+                    _, segment = segment_at_box_contact(owner, p[j], eps)
+                    action[j] = "reflecting" if segment is None else segment_particle_action(segment, reader)
+                elif corner[0]:
+                    action[j] = "absorbing"
+                else:
+                    action[j], corner_faces[j] = "corner", corner[1]
         absorb = action == "absorbing"
         positions[rows[i[absorb]]] = p[absorb]
         absorbed[rows[i[absorb]]] = True
         counts["absorbed"] += int(absorb.sum())
         live[i[absorb]] = False
-        reflect = ~absorb
+        # A periodic face (#2704): the rest of the step goes on from the contact's image on the opposite face, the path
+        # in the periodic cover, so the faces it meets after the wrap act in path order. The start is set on that
+        # face's bound and the end moved by the box's span along the axis.
+        wrap = np.flatnonzero(action == "periodic")
+        if wrap.size:
+            axis = np.argmax(np.abs(nk[wrap]), axis=1)
+            high = nk[wrap, axis] > 0
+            span = box[axis, 1] - box[axis, 0]
+            rows_w = np.arange(wrap.size)
+            start, stop = p[wrap].copy(), e[wrap].copy()
+            start[rows_w, axis] = np.where(high, box[axis, 0], box[axis, 1])
+            stop[rows_w, axis] += np.where(high, -span, span)
+            position[i[wrap]], end[i[wrap]] = start, stop
+            previous_normal[i[wrap]] = np.nan
+            last_normal[i[wrap]] = -nk[wrap]
+            counts["wraps"] += int(wrap.size)
+        # The tie rule at a corner with a periodic face, not absorbed there: each face acts on its own axis at once.
+        for j, faces in corner_faces.items():
+            k = i[j]
+            start, stop, outward = p[j].copy(), e[j].copy(), np.zeros(dimension)
+            reflected = False
+            for axis_j, side, wraps in faces:
+                if wraps:
+                    start[axis_j] = box[axis_j, 1 - side]
+                    stop[axis_j] += (box[axis_j, 1] - box[axis_j, 0]) * (-1.0 if side == 1 else 1.0)
+                    outward[axis_j] = 1.0 if side == 0 else -1.0
+                    counts["wraps"] += 1
+                else:
+                    stop[axis_j] = 2.0 * box[axis_j, side] - stop[axis_j]
+                    outward[axis_j] = 1.0 if side == 1 else -1.0
+                    reflected = True
+            position[k], end[k] = start, stop
+            previous_normal[k] = np.nan
+            last_normal[k] = outward / np.linalg.norm(outward)
+            if reflected:
+                reflections[k] += 1
+                counts["reflections"] += 1
+        unknown = (action != "absorbing") & (action != "reflecting") & (action != "periodic") & (action != "corner")
+        if unknown.any():
+            raise RuntimeError(
+                f"{reader}: internal error -- a {action[unknown][0]} contact at {p[unknown][0].tolist()} reached the "
+                "contact loop, which acts only by absorbing, reflecting or wrapping (#2733, #2704)."
+            )
+        reflect = action == "reflecting"
         # D4 and D2: a contact at the leg's start, against an anti-parallel last normal, is a corridor's tie.
         tie = (
             reflect
@@ -673,54 +612,6 @@ if __name__ == "__main__":
     result = needs_segment_aware_bc(None)
     assert result is False, "None BC should not need segment-aware"
     print("  needs_segment_aware_bc (None BC): OK")
-
-    # Test 3: Boundary conditions - bounded (reflecting)
-    # Test 1D
-    particles_1d = np.array([-0.1, 0.5, 1.1, 1.5, 2.5])
-    result_1d = apply_boundary_conditions(particles_1d, [(0.0, 1.0)], "bounded")
-    assert result_1d.shape == (5,), f"Expected (5,), got {result_1d.shape}"
-    assert np.all(result_1d >= 0), f"Negative values: {result_1d}"
-    assert np.all(result_1d <= 1), f"Values > 1: {result_1d}"
-    print("  apply_boundary_conditions (1D bounded): OK")
-
-    # Test 2D
-    particles_2d = np.array(
-        [
-            [-0.1, 0.5],  # x out of bounds (left)
-            [0.5, -0.2],  # y out of bounds (bottom)
-            [1.1, 0.5],  # x out of bounds (right)
-            [0.5, 1.3],  # y out of bounds (top)
-            [0.5, 0.5],  # inside
-        ]
-    )
-    result_2d = apply_boundary_conditions(particles_2d, [(0.0, 1.0), (0.0, 1.0)], "bounded")
-    assert result_2d.shape == (5, 2), f"Expected (5, 2), got {result_2d.shape}"
-    assert np.all(result_2d >= 0), f"Negative values: {result_2d}"
-    assert np.all(result_2d <= 1), f"Values > 1: {result_2d}"
-    print("  apply_boundary_conditions (2D bounded): OK")
-
-    # Test 4: Boundary conditions - periodic
-    particles_periodic = np.array([-0.1, 0.5, 1.1, 1.5])
-    result_periodic = apply_boundary_conditions(particles_periodic, [(0.0, 1.0)], "periodic")
-    assert np.all(result_periodic >= 0), f"Negative values: {result_periodic}"
-    assert np.all(result_periodic <= 1), f"Values > 1: {result_periodic}"
-    # -0.1 should wrap to 0.9, 1.1 should wrap to 0.1
-    assert np.abs(result_periodic[0] - 0.9) < 1e-10, f"Expected 0.9, got {result_periodic[0]}"
-    assert np.abs(result_periodic[2] - 0.1) < 1e-10, f"Expected 0.1, got {result_periodic[2]}"
-    print("  apply_boundary_conditions (1D periodic): OK")
-
-    # Test 5: Mixed topology (x periodic, y bounded)
-    particles_mixed = np.array(
-        [
-            [-0.1, -0.1],  # Both out
-            [1.1, 1.1],  # Both out
-        ]
-    )
-    result_mixed = apply_boundary_conditions(particles_mixed, [(0.0, 1.0), (0.0, 1.0)], ["periodic", "bounded"])
-    # x should wrap, y should reflect
-    assert np.abs(result_mixed[0, 0] - 0.9) < 1e-10, f"x periodic: expected 0.9, got {result_mixed[0, 0]}"
-    assert np.abs(result_mixed[0, 1] - 0.1) < 1e-10, f"y bounded: expected 0.1, got {result_mixed[0, 1]}"
-    print("  apply_boundary_conditions (mixed periodic/bounded): OK")
 
     # Test 6: Coordinate array creation
     coords = create_coordinate_arrays([(0.0, 1.0), (0.0, 2.0)], (11, 21))

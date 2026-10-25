@@ -259,8 +259,9 @@ class Hyperrectangle(ImplicitDomain):
         if self._periodic_dims:
             raise NotImplementedError(
                 f"segment_intervals on a Hyperrectangle periodic in axes {self._periodic_dims}: a periodic axis has no "
-                f"face to meet, and a segment across it wraps rather than leaves. Periodic outer boundaries with "
-                f"obstacles are #2704."
+                f"face to meet, and a segment across it wraps rather than leaves. For obstacles under a periodic outer "
+                f"boundary, build the domain on a box without periodic axes and declare them on the boundary "
+                f"condition, whose periodic faces the particle solver wraps a step at (#2704)."
             )
         lo, hi = self.bounds[:, 0], self.bounds[:, 1]
         moving, forward = d != 0.0, d > 0.0
