@@ -64,8 +64,8 @@ class SegmentIntervals:
     A point of the segment is in an interval where `contains` holds there, up to rounding within about an ulp of a
     surface, in space, and short of the overflow and underflow limits each leaf states: a segment that grazes a face can
     disagree with `contains` over a long stretch of its parameter. Two further exceptions are known: a `Hypersphere`
-    much smaller than the segment's distance to it can be missed whole while `contains` rejects its centre (#2793), and
-    near a zero coordinate the seam join below can join a gap across a crack wider than an ulp (#2794).
+    much smaller than its distance from the segment's start can be missed whole while `contains` rejects its centre
+    (#2793), and near a zero coordinate the seam join below can join a gap across a crack wider than an ulp (#2794).
 
     Two surfaces that are one wall in floating point, such as a union's shared face at 0.3 and 0.1 + 0.2, or a ball's
     end at 0.65 - 0.35, leave each leaf's interval ending at its own surface, a gap no point between them can occupy.
@@ -74,9 +74,9 @@ class SegmentIntervals:
     joined where every read holds. The reads cannot see between themselves: a tunnel needs an exterior feature narrower
     than the read spacing lying between reads, and a seam reflects where its computed gap is wider than the gate. Near
     a zero coordinate on some axis, where the segment's parameter is coarser than that axis's doubles, a crack there can
-    be joined; a seam crossed steeply enough reflects, and so can one near the origin; and a large coordinate on any
-    axis coarsens the gate (#2794). A crack the parameter does not resolve can also be merged by the union before any
-    join.
+    be joined; a seam crossed at a grazing enough angle reflects, and so can one near the origin; and a large coordinate
+    on any axis coarsens the gate (#2794). A crack the parameter does not resolve can also be merged by the union before
+    any join.
 
     ``leaf[i, k, e]`` indexes ``leaves``, the domain's primitives depth first, for the surface that bounds end e of
     that interval, and is -1 where the end is the segment's own end and no surface. ``leaf_face`` is that leaf's face:
@@ -723,14 +723,14 @@ class ImplicitDomain(
         segment's point there with that coordinate set to the double itself.
 
         What the reads can see. The even reads, the midpoint and the computed ends lie on the segment's lattice
-        a + t(b - a), whose spacing is about the larger of u and ulp(t) |b - a|; an exact read sets its own coordinate
-        off it. A tunnel needs an exterior feature narrower than the read spacing lying between reads, holding no double
-        of an axis read exactly, and not containing the midpoint. A one-ulp seam at x_s crossed at angle phi to its
-        normal leaves a gap about ulp(x_s) across it and |tan phi| ulp(x_s) along it, and reflects where its computed
-        gap is wider than the gate: past |tan phi| = SEAM_DOUBLES u / ulp(x_s), or where the lattice puts its computed
-        ends further apart. Near a zero coordinate on some axis the lattice is coarser than that axis's doubles, and a
-        crack narrower than about two ulps of t times |b - a| can be joined there; near the origin a seam's computed
-        ends can fail the gate (#2794).
+        a + t(b - a), whose spacing is about the largest of u, ulp(t) |b - a| and the spacing of a's coordinates; an
+        exact read sets its own coordinate off it. A tunnel needs an exterior feature narrower than the read spacing
+        lying between reads, holding no double of an axis read exactly, and not containing the midpoint. A one-ulp seam
+        at x_s crossed at angle phi to its normal leaves a gap about ulp(x_s) across it and |tan phi| ulp(x_s) along it,
+        and reflects where its computed gap is wider than the gate: past |tan phi| = SEAM_DOUBLES u / ulp(x_s), or where
+        the lattice puts its computed ends further apart. Near a zero coordinate on some axis the lattice is coarser
+        than that axis's doubles, and a crack narrower than a few of the lattice's spacings can be joined there; near
+        the origin a seam's computed ends can fail the gate (#2794).
 
         The exact reads catch a crack a few ulps wide on a fine axis, which the even reads would step over. A computed
         end can lie a double off its surface, so the ends are read too, and a read's own coordinate on that axis is set,

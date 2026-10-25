@@ -4,9 +4,10 @@
   - **The action.** A contact on the grid's box reads the boundary condition there. Every other contact, on an
     obstacle's surface or a curved boundary, reflects. A reflection is in the outward normal at the contact, from the
     surface's own form, and the rest of the step is re-traced.
-  - **On the box alone** this agrees with the fold it replaces to rounding, and bitwise on the high faces of a box at
-    the origin. A coordinate reflected once is exact where e - h is, the end within a factor 2 of the face, and
-    otherwise a few ulps off the exact reflection.
+  - **On the box alone**, short of the cap below, this agrees with the fold it replaces to rounding, and bitwise on the
+    high faces of a box at the origin. A coordinate reflected once is the exact reflection correctly rounded where
+    e - h is exact, the end within a factor 2 of the face, and otherwise within a few ulps of the larger of the end and
+    the face.
   - **#2707's table:** the peak count of particles on an obstacle's far side is 0 in all four cases. Before this change
     it was 500, 500, 0 and 9: a step through a thin obstacle was placed past it.
   - **A slab thinner than 1/32 of a step** (#2733's thin-feature row, the folded #2710): of width 1e-3 or 1e-4, against
@@ -24,7 +25,8 @@
   - **A seam is crossed as one room.** Two rooms of a union meeting at 0.3 and 0.1 + 0.2, a ball ending at
     0.65 - 0.35 beside a room's wall at 0.3, or a disc inside a ring of inner radius 0.1 + 0.2 have no point between
     them, and a step crosses with no contact, as at one shared wall (`SegmentIntervals`). A step still reflects there
-    where the seam's computed gap is wider than the gate: crossed steeply enough, or near the origin (#2794).
+    where the seam's computed gap is wider than the gate: crossed at a grazing enough angle, or near the origin
+    (#2794).
 - **Refused at construction, where a particle domain is set** (an `ImplicitDomain` geometry or `implicit_domain=`):
   - **An absorbing condition the boundary owner can place off the box**: one placed by `region`, `sdf_region`,
     `normal_direction`, `region_name`, `boundary="all"` or nothing, and an absorbing `default_bc`.

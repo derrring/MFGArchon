@@ -435,11 +435,12 @@ def test_a_1d_step_across_a_ring_reflects_at_the_ring_and_then_the_wall():
 
 def test_the_loop_on_the_box_is_the_exact_reflection_to_an_ulp():
     """On the box alone the loop reflects the leg's end, e' = e - 2 ((e - p) . n) n, which carries a coordinate the
-    normal does not touch exactly and gives a face's as e - 2 (e - h): exact where e - h is (e within a factor 2 of h),
-    and a few ulps of 2 h - e where it rounds; this row's sample, against rational arithmetic, stays within the one ulp
-    it asserts. Today's fold computes it as xmin + (2L - (x - xmin) % 2L): it agrees bitwise on the high faces of a box
-    at the origin, as on 20000 steps from near the unit box's (1, 1) corner, and to rounding elsewhere, which this row
-    asserts to 1e-15 on its boxes."""
+    normal does not touch exactly and gives a face's as e - 2 (e - h): 2 h - e correctly rounded where e - h is exact
+    (e within a factor 2 of h), and within a few ulps of the larger of e and h otherwise; this row's sample, against
+    rational arithmetic, stays within the one ulp of the exact value it asserts. Today's fold computes it as
+    xmin + (2L - (x - xmin) % 2L): it agrees bitwise on the high faces of a box at the origin, as on 20000 steps from
+    near the unit box's (1, 1) corner, and to rounding elsewhere, short of the cap, which this row asserts to 1e-15 on
+    its boxes."""
     from fractions import Fraction
 
     rng = np.random.default_rng(0)
