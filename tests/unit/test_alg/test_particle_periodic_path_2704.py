@@ -18,7 +18,8 @@ whether the particle is absorbed, and otherwise a periodic face wraps its axis a
 the corner the step crosses with a wall opposite, or periodic) x the face crossed first (the periodic one, the other,
 both at once) x the corner crossed (all four, so both signs of the step on each axis). Then the priority row, a
 periodic axis at priority 1 beside an exit, on all four corners and orders; a 3-D edge (a wall on y beside an exit on z,
-#2800's U3), and ties at 3-D edges and vertices with a periodic face; the torus on long steps against the periodic
+#2800's U3), and ties at 3-D edges and vertices with a periodic face; steps that start at a corner or an edge and
+leave through one face, and one that meets the box just past the tie band; the torus on long steps against the periodic
 owner, and the refusal of a step past ``MAX_WRAPS``; the exit strip of 6335147485 at solve level; and an obstacle met
 after a wrap, an obstacle beside a torus however the torus is spelt, the refusal of one that touches a face of the
 periodic axis, flush, past it or on the other face, and in 3-D of any (#2807).
@@ -341,6 +342,93 @@ def test_a_torus_reflects_a_step_off_an_obstacle_however_it_is_spelt(spelling, d
     ends, absorbed = _finish(_solver(_TORI[spelling](d), d=d, implicit_domain=domain), start, raw, d=d)
     assert not absorbed.any()
     np.testing.assert_allclose(ends, expected, atol=1e-12)
+
+
+def _obstacle_2d():
+    return DifferenceDomain(
+        Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.4, 0.6], [0.4, 0.6]]))
+    )
+
+
+#: A step that starts at a corner or an edge, or meets the box near one, and leaves through one face only. Only a face
+#: the rest of the step leaves through is crossed, so only it acts; whether the particle is absorbed is the corner
+#: order's at the point. Each expected end by hand.
+_AT_A_CORNER = {
+    "channel, from corner (0, 0), out through x_min": (
+        lambda: _channel(),
+        None,
+        2,
+        [0.0, 0.0],
+        [-0.01, 0.02],
+        [0.99, 0.02],
+    ),
+    "channel, from corner (1, 1), out through the wall y_max": (
+        lambda: _channel(),
+        None,
+        2,
+        [1.0, 1.0],
+        [0.98, 1.01],
+        [0.98, 0.99],
+    ),
+    "channel, 1e-13 off corner (0, 0)": (lambda: _channel(), None, 2, [1e-13, 1e-13], [-0.01, 0.02], [0.99, 0.02]),
+    "torus by face, from corner (1, 1), out through y_max": (
+        lambda: _TORI["a segment per face"](2),
+        None,
+        2,
+        [1.0, 1.0],
+        [0.98, 1.01],
+        [0.98, 0.01],
+    ),
+    "torus beside an obstacle, from corner (0, 0)": (
+        lambda: periodic_bc(dimension=2),
+        _obstacle_2d,
+        2,
+        [0.0, 0.0],
+        [-0.01, 0.02],
+        [0.99, 0.02],
+    ),
+    "3-D, x periodic, from the edge (0, 0, z), out through x_min": (
+        lambda: BoundaryConditions(dimension=3, segments=[_on("x_min", P), _on("x_max", P)], default_bc=NF),
+        None,
+        3,
+        [0.0, 0.0, 0.5],
+        [-0.01, 0.02, 0.5],
+        [0.99, 0.02, 0.5],
+    ),
+    "an exit at the corner: the particle on it is absorbed at the point": (
+        lambda: BoundaryConditions(
+            dimension=2, segments=[_on("x_min", P), _on("x_max", P), _on("y_min", D)], default_bc=NF
+        ),
+        None,
+        2,
+        [0.0, 0.0],
+        [-0.01, 0.02],
+        None,
+    ),
+    "6e-4 from corner (1, 1), past the tie band: a face contact on x_max, then clear of the exit": (
+        lambda: BoundaryConditions(
+            dimension=2, segments=[_on("x_min", P), _on("x_max", P), _on("y_max", D)], default_bc=NF
+        ),
+        None,
+        2,
+        [0.99, 0.999],
+        [1.01, 0.9998],
+        [0.01, 0.9998],
+    ),
+}
+
+
+@pytest.mark.parametrize("row", list(_AT_A_CORNER))
+def test_a_step_at_a_corner_acts_only_by_the_faces_it_leaves_through(row):
+    """#2808 review 2: a step from a corner that leaves through one face bounced between corners until the wrap cap,
+    since every face within the contact tolerance acted, the one it moves away from included. Lattice or point-source
+    initial particles reach a corner exactly."""
+    bc, domain, d, start, raw, expected = _AT_A_CORNER[row]
+    extra = {} if domain is None else {"implicit_domain": domain()}
+    ends, absorbed = _finish(_solver(bc(), d=d, **extra), [start], [raw], d=d)
+    assert absorbed.tolist() == [expected is None]
+    if expected is not None:
+        np.testing.assert_allclose(ends[0], expected, atol=1e-12)
 
 
 def _drift_x(t, x, m):

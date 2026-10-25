@@ -2939,9 +2939,8 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama step
             new_particles = particles_t + drift * Dt + dW
 
-            # Each step ends at its first contacts with the particles' boundary (#2733), or, for a BC that declares a
-            # periodic face, at the outer boundary condition, segment-aware where it has absorbing segments (#1042):
-            # see `_finish_step`.
+            # Each step ends at its first contacts with the particles' boundary (#2733), a periodic face's included
+            # (#2704): see `_finish_step`.
             new_particles, absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles, particles_t, bounds, use_segment_aware_bc
             )

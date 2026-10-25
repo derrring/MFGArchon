@@ -368,12 +368,18 @@ def reflect_at_first_contacts(
             last_normal[i[wrap]] = -nk[wrap]
             wrapped[i[wrap]] += 1
             counts["wraps"] += int(wrap.size)
-        # The tie rule at a corner with a periodic face, not absorbed there: each face acts on its own axis at once.
+        # The tie rule at a corner with a periodic face, not absorbed there: each face the rest of the step leaves
+        # through acts on its own axis at once. A face it moves along or away from is not crossed, so it takes no
+        # action: reflecting an axis already moving inward would send it out, and a step from a corner would bounce
+        # between corners until the wrap cap.
         for j, faces in corner_faces.items():
             k = i[j]
             start, stop, outward = p[j].copy(), e[j].copy(), np.zeros(dimension)
+            leg = e[j] - p[j]
             reflected = False
             for axis_j, side, wraps in faces:
+                if not (leg[axis_j] > 0.0 if side == 1 else leg[axis_j] < 0.0):
+                    continue
                 if wraps:
                     start[axis_j] = box[axis_j, 1 - side]
                     stop[axis_j] += (box[axis_j, 1] - box[axis_j, 0]) * (-1.0 if side == 1 else 1.0)
@@ -384,6 +390,11 @@ def reflect_at_first_contacts(
                     stop[axis_j] = 2.0 * box[axis_j, side] - stop[axis_j]
                     outward[axis_j] = 1.0 if side == 1 else -1.0
                     reflected = True
+            if not outward.any():
+                raise RuntimeError(
+                    f"{reader}: internal error -- a contact at the corner {p[j].tolist()} whose step leaves through "
+                    "none of its faces, so nothing would move it and the loop would not end (#2808)."
+                )
             position[k], end[k] = start, stop
             previous_normal[k] = np.nan
             last_normal[k] = outward / np.linalg.norm(outward)
