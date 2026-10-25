@@ -18,8 +18,9 @@ whether the particle is absorbed, and otherwise a periodic face wraps its axis a
 the corner the step crosses with a wall opposite, or periodic) x the face crossed first (the periodic one, the other,
 both at once) x the corner crossed (all four, so both signs of the step on each axis). Then the priority row, a
 periodic axis at priority 1 beside an exit, on all four corners and orders; a 3-D edge (a wall on y beside an exit on z,
-#2800's U3); the torus on long steps against the periodic owner; the exit strip of 6335147485 at solve level; and an
-obstacle met after a wrap, with the refusal of one that touches a periodic face, and in 3-D of any (#2807).
+#2800's U3); the torus on long steps against the periodic owner, and the refusal of a step past ``MAX_WRAPS``; the
+exit strip of 6335147485 at solve level; and an obstacle met after a wrap, with the refusal of one that touches a
+periodic face, and in 3-D of any (#2807).
 
 **Rivals**, each a copy of the package at this commit with one replacement, run with this file: listed in the PR.
 
@@ -39,6 +40,7 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import MAX_WRAPS
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
@@ -185,6 +187,18 @@ def test_a_torus_wraps_a_long_step_as_the_periodic_owner_does():
     )
     assert not absorbed.any()
     np.testing.assert_allclose(ends, wrap_positions(raw, [(0.0, 1.0), (0.0, 1.0)]), atol=1e-9)
+
+
+def test_a_step_that_wraps_more_than_max_wraps_times_is_refused_by_name():
+    """The loop searches once per period a step crosses, and a step of about 1e17 periods never ends, since its shift
+    by one period rounds away. So a step of ``MAX_WRAPS`` wraps ends where the owner puts it, and one more is
+    refused."""
+    torus = _solver(BoundaryConditions(dimension=2, segments=[BCSegment(name="all", bc_type=P)]))
+    start = [[0.5, 0.5]]
+    ends, _ = _finish(torus, start, [[0.8 + MAX_WRAPS, 0.5]])
+    np.testing.assert_allclose(ends, [[0.8, 0.5]], atol=1e-9)
+    with pytest.raises(ValueError, match=rf"wrapped more than {MAX_WRAPS} times through periodic faces"):
+        _finish(torus, start, [[1.8 + MAX_WRAPS, 0.5]])
 
 
 def test_an_exit_strip_beside_periodic_faces_absorbs_what_its_path_crosses():

@@ -180,6 +180,9 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
 ANTI_PARALLEL = 1e-12
 #: D5: a step reflected more often than this returns to its start.
 MAX_REFLECTIONS = 20
+#: A step that wraps more often than this is refused (#2704): the loop searches once per period crossed, and a step of
+#: about 1e17 periods never ends, since its shift by one period rounds away.
+MAX_WRAPS = 1000
 #: D6: an end that fails `contains` moves along the last contact's inward normal by the first of these, relative to
 #: the box's diagonal, doubling up to the second.
 OFFSET_LADDER = (1e-12, 1e-6)
@@ -212,7 +215,10 @@ def reflect_at_first_contacts(
     - **The action at a contact.** A contact on the box's boundary reads the boundary owner there
       (`segment_at_box_contact`); every other contact reflects (D2's box rule). An absorbing contact ends the particle
       there. A reflecting one reflects the rest of the step specularly in the outward normal at the contact (D3) and
-      re-traces it.
+      re-traces it. A periodic one goes on with the rest of the step from its image on the opposite face (#2704), and
+      a step that wraps more than ``MAX_WRAPS`` times is refused by name.
+    - **A corner with a periodic face** (`periodic_corner_actions`): the owner's corner order decides only whether the
+      particle is absorbed; otherwise each face acts on its own axis, a periodic one wrapping and any other reflecting.
     - **Ties (D4).** A contact within ``CONTACT_EPS`` of the previous one along the path is a tie. Two reflecting
       faces of a convex corner reflect in turn. Two whose normals are anti-parallel bound a zero-width corridor: the
       rest of the step loses its normal component, once, and is re-traced along the corridor (D2). Past the
@@ -278,6 +284,7 @@ def reflect_at_first_contacts(
     )  # the last contact's normal, unless a corridor followed it
     last_normal = np.full((rows.size, dimension), np.nan)  # the last contact's normal, for D6
     reflections = np.zeros(rows.size, dtype=np.int64)
+    wrapped = np.zeros(rows.size, dtype=np.int64)
     restarted = np.zeros(rows.size, dtype=bool)  # moved inside by D6 since the last search that found it inside
     live = np.ones(rows.size, dtype=bool)
     while live.any():
@@ -353,6 +360,7 @@ def reflect_at_first_contacts(
             position[i[wrap]], end[i[wrap]] = start, stop
             previous_normal[i[wrap]] = np.nan
             last_normal[i[wrap]] = -nk[wrap]
+            wrapped[i[wrap]] += 1
             counts["wraps"] += int(wrap.size)
         # The tie rule at a corner with a periodic face, not absorbed there: each face acts on its own axis at once.
         for j, faces in corner_faces.items():
@@ -364,6 +372,7 @@ def reflect_at_first_contacts(
                     start[axis_j] = box[axis_j, 1 - side]
                     stop[axis_j] += (box[axis_j, 1] - box[axis_j, 0]) * (-1.0 if side == 1 else 1.0)
                     outward[axis_j] = 1.0 if side == 0 else -1.0
+                    wrapped[k] += 1
                     counts["wraps"] += 1
                 else:
                     stop[axis_j] = 2.0 * box[axis_j, side] - stop[axis_j]
@@ -375,6 +384,14 @@ def reflect_at_first_contacts(
             if reflected:
                 reflections[k] += 1
                 counts["reflections"] += 1
+        over = np.flatnonzero(wrapped > MAX_WRAPS)
+        if over.size:
+            raise ValueError(
+                f"{reader}: a particle's step from {starts[rows[over[0]]].tolist()} to {ends[rows[over[0]]].tolist()} "
+                f"wrapped more than {MAX_WRAPS} times through periodic faces (#2704). The loop searches once per "
+                "period crossed, and a step of about 1e17 periods never ends, since its shift by one period rounds "
+                "away. A step this long is a time step too large for the drift: take more time steps."
+            )
         unknown = (action != "absorbing") & (action != "reflecting") & (action != "periodic") & (action != "corner")
         if unknown.any():
             raise RuntimeError(
