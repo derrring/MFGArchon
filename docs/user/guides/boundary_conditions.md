@@ -152,64 +152,69 @@ only region, on every face, is a uniform condition.
 
 ### Region Marking Methods
 
-Regions can be marked using boundaries or custom predicates:
+Regions can be marked using boundaries, custom predicates or masks:
 
 ```python
 # Method 1: Mark using boundary identifier
 geometry.mark_region("left_wall", boundary="x_min")
 
 # Method 2: Mark using predicate function
-geometry.mark_region("inlet", predicate=lambda x: (x[:, 0] < 0.1) & (x[:, 1] > 0.5))
+geometry.mark_region("inlet_strip", predicate=lambda x: (x[:, 0] < 0.1) & (x[:, 1] > 0.5))
 
-# Method 3: Combine multiple boundaries in one region
-geometry.mark_region("walls", boundary="y_min")
-geometry.mark_region("walls", boundary="y_max")  # Adds to existing "walls" region
+# Method 3: Combine whole faces in one region, through the grid's union of marked regions
+geometry.mark_region("bottom", boundary="y_min")
+geometry.mark_region("top", boundary="y_max")
+geometry.mark_region("walls", mask=geometry.union_regions("bottom", "top"))
 ```
 
 Predicates receive grid points as `(N, dimension)` array and must return boolean mask of length `N`.
+A name is marked once: a second `mark_region` with the same name raises (`Region 'walls' already
+exists`), so a region over several faces is marked whole, as in Method 3.
 
 ### Priority Resolution for Overlapping Regions
 
-When regions overlap, **priority** determines which BC wins (higher number = higher precedence):
+When regions overlap on a face, **priority** decides which segment governs it (higher number = higher
+precedence). With the regions of Method 3, `walls` (both y faces) and `top` (y_max):
 
 ```python
-# Mark overlapping regions
-geometry.mark_region("broad", predicate=lambda x: x[:, 0] < 0.5)
-geometry.mark_region("narrow", predicate=lambda x: x[:, 0] < 0.1)
+from mfgarchon.geometry.boundary import BoundaryConditions
 
-# Create segments with priorities
-bc_narrow = BCSegment(
-    name="narrow_bc",
-    bc_type=BCType.DIRICHLET,
-    value=1.0,
-    region_name="narrow",
-    priority=2,  # Higher number = higher precedence
-)
-bc_broad = BCSegment(
-    name="broad_bc",
-    bc_type=BCType.NEUMANN,
-    value=0.0,
-    region_name="broad",
-    priority=1,  # Lower number = lower precedence
-)
+bc_top = BCSegment(name="top_bc", bc_type=BCType.DIRICHLET, value=1.0, region_name="top", priority=2)
+bc_walls = BCSegment(name="walls_bc", bc_type=BCType.NO_FLUX, region_name="walls", priority=1)
 
 bc = BoundaryConditions(
     dimension=2,
-    segments=[bc_narrow, bc_broad],  # Order doesn't matter
-    default_bc=BCType.PERIODIC,
-    domain_bounds=geometry.bounds,
+    segments=[bc_top, bc_walls],  # Order doesn't matter
+    default_bc=BCType.NO_FLUX,
+    domain_bounds=np.array(geometry.bounds),
 )
 
-# At x=0.05 (in both regions): narrow_bc wins due to higher priority
-# At x=0.3 (only in broad): broad_bc applies
+# y_max is in both regions: top_bc governs it, by priority
+# y_min is in walls only: walls_bc governs it
+# x_min and x_max are in neither: default_bc governs them
+padded = applicator.apply(field, bc, domain_bounds=np.array(geometry.bounds), geometry=geometry)
 ```
+
+The face-level path and the per-point reader, `bc.get_bc_at_point(point, geometry=geometry)`, give
+the same answer here. Build such an overlap from `region_name` segments, as above:
+`mixed_bc_from_regions` gives each face of `walls` its own segment, and a face-level reader then
+refuses the BC, since the one on `y_max` governs nothing.
+
+**Regions that overlap on part of a face**, such as two strips `x < 0.5` and `x < 0.1`, cannot be
+imposed by a face-level path, which refuses them (#2472). They are resolved per point:
+
+- placed by `region=` or `sdf_region`, `HJBGFDMSolver` and `FPParticleSolver` read them at each
+  boundary point, alone or coupled, and the higher priority wins where both hold;
+- marked with `mark_region` on part of a face, they are read per point only by `FPParticleSolver`
+  with a callable drift. `HJBGFDMSolver` refuses them at the box's corners, and so does an array
+  drift (#2795).
 
 ### Boundary-Based vs Region-Based
 
 | Approach | Use When | Example |
 |----------|----------|---------|
 | **Boundary-based** | Simple geometries, entire boundaries | `boundary="x_min"` |
-| **Region-based** | Complex geometries, partial boundaries | `predicate=lambda x: x[:, 0] < 0.1` |
+| **Region-based** | Complex geometries; part of a face only in a per-point solver (above) | `predicate=lambda x: x[:, 0] < 0.1` |
 
 Both approaches can be mixed in the same BC specification.
 

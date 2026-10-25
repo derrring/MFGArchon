@@ -538,7 +538,8 @@ class BoundaryConditions:
             f"at a higher priority than {governing.name!r}, which governs the rest of it, and the two "
             "impose different conditions. A face-level boundary condition imposes one condition per "
             "face and cannot represent both: either reading would silently drop the other. Cover whole "
-            "faces, or use a solver that resolves boundary conditions per point (#2512 row B1, #2490)."
+            "faces, or use a solver that reads a region or sdf_region placement at each boundary point: "
+            "HJBGFDMSolver and FPParticleSolver do, alone or coupled (#2512 row B1, #2490)."
         )
 
     def _face_resolution(
@@ -2754,8 +2755,10 @@ def faces_covered_by_region(geometry: Any, region_name: str) -> frozenset[Bounda
         raise ValueError(
             f"Marked region {region_name!r} covers part of the {face.to_string()} face's interior. A "
             "face-level boundary condition imposes one condition per face and cannot represent a "
-            "sub-face region. Mark the region on whole faces (mark_region(name, boundary=...)) or use a "
-            "solver that resolves boundary conditions per point (Issue #2472)."
+            "sub-face region. Mark the region on whole faces (mark_region(name, boundary=...)), or place the "
+            "segment by region= or sdf_region=, which HJBGFDMSolver and FPParticleSolver read at each boundary "
+            "point. A marked region on part of a face is read per point only by FPParticleSolver with a callable "
+            "drift: HJBGFDMSolver refuses it at the box's corners, and so does an array drift (Issue #2472, #2795)."
         )
     if not covered:
         raise ValueError(
