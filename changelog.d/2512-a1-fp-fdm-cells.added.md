@@ -6,10 +6,11 @@
       upwind selection takes both branches;
     - a periodic seam crossed by the drift, with a density that is not even about the seam;
     - a 2-D exit whose shared value is nonzero.
-  - Each asserts a rate and, at every level, the error on each face's interior, the corners or the seam against its
-    recorded value. The rivals each fixture separates are measured and recorded there: 13 mutants of the no-flux
-    wall row, the torus one cell too long (#1822), the seam's U difference dropped, no wrap, and the exit read
-    literally or made a wall.
+  - The no-flux and periodic cells assert a rate, the error at every level, and at every level the error on each
+    face's interior and on the corners, or on the seam, each against its recorded value. The exit asserts m = 0 at
+    the exit at every step, a rate, and the error at each level. The rivals each fixture separates are measured and
+    recorded there: 13 mutants of the no-flux wall row, the torus one cell too long (#1822), the seam's U difference
+    dropped, no wrap (with the repeated endpoint's constraint row), and the exit read literally or made a wall.
   - The no-flux and periodic cells converge at first order. That is the upwind advection's: the 1-D no-flux fixture
     gives order 2 drift-free and with `divergence_centered`.
   - Counted from existing tests, each asserting its wall nodes:

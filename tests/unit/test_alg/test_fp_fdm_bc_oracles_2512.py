@@ -20,31 +20,39 @@ and the default scheme, ``divergence_upwind``.
   ((pi/2)^2 + pi^2) t)]``, two decaying modes, with dt shrinking as h^2. The 1-D exit is
   `test_fp_shared_dirichlet_exit_2525`'s.
 
-**Assertions.** Per cell: the error ratio between levels in a band, and at every level the error on each face's
-interior nodes and on the corners (no flux), or on the seam nodes (periodic), within a factor of 1.25 either way of the
-value recorded here. A single global maximum is not enough: in 2-D the corner the drift enters dominates it, and a
-defect on one axis's walls alone moves no global number past the factor. The exit holds m = 0 at every step. The no-flux and periodic cells converge at first order: that is the upwind advection's, since the same
-1-D no-flux fixture gives order 2.0 with ``a = 0`` and with ``divergence_centered`` (measured at cae35fa6).
+**Assertions.** Per cell: the error ratio between levels in a band, the error at every level within a factor of 1.25
+either way of the value recorded here, and at every level the error on each face's interior nodes and on the corners
+(no flux), or on the seam nodes (periodic), within the same factor. The exit holds m = 0 at every step. The no-flux and
+periodic cells converge at first order: that is the upwind advection's, since the same 1-D no-flux fixture gives order
+2.0 with ``a = 0`` and with ``divergence_centered`` (measured at cae35fa6).
 
-**Rivals,** each measured on these inputs at cae35fa6 on a copy of the package, the finest level against the main
-line's value:
-- no flux, 13 mutants of the wall row (``fp_fdm_bc.add_boundary_no_flux_entries_conservative``), each caught by one
-  run at least, by the assertion named: the full-cell wall (``wall_vol = dx``; a face, x0.32-x1.76); the full cell on
-  the y axis alone (a face, x0.65); a ``dm/dn = 0`` wall, the drift's flux through the wall kept (the rate, ratio 1.00);
-  an x_min or x_max inflow or outflow branch dropped (the rate, in the run whose drift reaches that branch); the
-  velocity's sign flipped at the low wall, the high wall, or the y_min wall alone (the rate); the wall's advection
-  divided by ``dx`` (the rate); the low wall's upwind selection reversed (a face, x0.36-x6.90); a corner node that
-  drops its y-axis terms (the corners, x0.74).
-- periodic_1d (7.55e-3 at N = 81): the torus one cell too long (#1822: the axis span ``n`` for ``n - 1``) 6.73e-2;
-  ``U``'s seam difference dropped 3.43e-2; no wrap at all stops in the mass gate (the density goes negative).
+**Rivals,** each measured on these inputs at cae35fa6 on a copy of the package:
+- no flux, 13 mutants of the wall row (``fp_fdm_bc.add_boundary_no_flux_entries_conservative``), each failing at least
+  one run, with its largest deviation from the main line over the levels and faces, or the rate where that is what
+  moves: the full-cell wall (``wall_vol = dx``; a face, x0.32-x1.76); the full cell on the y axis alone (a face, x0.65);
+  a ``dm/dn = 0`` wall, the drift's flux through the wall kept (the rate, ratio 1.00); an x_min or x_max inflow or
+  outflow branch dropped (the rate, in the run whose drift reaches that branch); the velocity's sign flipped at the low
+  wall, the high wall, or the y_min wall alone (the rate); the wall's advection divided by ``dx`` (the rate); the low
+  wall's upwind selection reversed (a face, x0.36-x6.90); a corner node that drops its y-axis terms (the corners,
+  x0.74).
+- periodic and exit, at the finest level against the main line's value. periodic_1d (7.55e-3 at N = 81): the torus one
+  cell too long (#1822: the axis span ``n`` for ``n - 1``) 6.73e-2; ``U``'s seam difference dropped 3.43e-2; no wrap,
+  with the repeated endpoint's constraint row dropped too, stops in the mass gate (the density goes negative).
   periodic_2d (1.45e-2 at N = 41): 0.139 and 8.55e-2.
 - dirichlet_exit_2d (3.11e-3 at N = 41): the shared value read literally (m = 0.7 at the exit) 0.70; the exit made a
   wall 0.55.
 
-Held fixed: a scalar constant volatility (a tensor one is #2801), the ``potential_field`` arm (a ``drift_field`` array
-takes the face-velocity arm, which the 1-D exit and the #1822 torus tests use; a callable ``drift_field`` is #2539), a
-``U`` that does not depend on t (so which level's ``U`` a step reads is not seen), ``divergence_upwind``, implicit time
-stepping, a ``TensorProductGrid`` on the unit square. Varied: the drift's sign on every wall (no flux).
+Held fixed:
+- a scalar constant volatility (a tensor one is #2801);
+- the ``potential_field`` arm (a ``drift_field`` array takes the face-velocity arm, which the 1-D exit and the #1822
+  torus tests use; a callable ``drift_field`` is #2539);
+- a ``U`` that does not depend on t, so which level's ``U`` a step reads is not seen;
+- a no-flux ``U`` linear in x, so every face carries the same velocity and which face's velocity a wall row reads is
+  not seen; and only the drift magnitudes 0.4 and 0.3;
+- equal spacing on both axes, so a wall row that reads one axis's spacing on the other is not seen;
+- ``divergence_upwind``, implicit time stepping, a ``TensorProductGrid`` on the unit square.
+
+Varied: the drift's sign on every wall (no flux).
 """
 
 from __future__ import annotations
