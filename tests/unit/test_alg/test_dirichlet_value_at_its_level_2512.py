@@ -113,6 +113,12 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
             newton_tolerance=1e-12,
         )
     assert np.abs(np.asarray(result) - exact).max() < 1e-12
+    # The wall dofs, asserted on their own (#2512 comment 6042778010, correction 4: the bar for a wall that
+    # carries data).
+    box = np.array([[0.0, 1.0]] if d == 1 else [[0.0, 1.0], [0.0, LY]])
+    on_wall = np.any(np.isclose(X, box[:, 0]) | np.isclose(X, box[:, 1]), axis=1)
+    assert on_wall.sum() == (2 if d == 1 else 4 * n)
+    assert np.abs(np.asarray(result)[:, on_wall] - exact[:, on_wall]).max() < 1e-12
 
 
 @pytest.mark.parametrize(("d", "inner"), [(1, "newton"), (1, "howard"), (2, "newton")])

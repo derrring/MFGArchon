@@ -11,9 +11,12 @@
 #               it declares in `_SUPPORTED_BC_TYPES` x dimension 1 and 2, on its default configuration, and HJB-GFDM's
 #               cells for each distinct discrete equation it ships. (a) covers every shipped family (comment
 #               6395444642, user ruling 2026-10-25, confirming 6014400413); an off-default family -- HJB-SL, HJB-WENO,
-#               FP-FVM, FP-GFDM, FP-SL, meshless, network -- gains its cells when its batch lands (comment 6217184763,
-#               user ruling 2026-10-16). An FP family's DIRICHLET is two cells, an exit (the shared BC, m = 0) and a
-#               prescribed density (an explicit FP BC, m = g)
+#               FP-FVM, FP-SL, meshless -- gains its cells when its batch lands (comment 6217184763, user ruling
+#               2026-10-16). FP-GFDM is withdrawn (#2583) and declares no type, so it has no cells until its rebuild
+#               (#2584). The network solvers declare none either (`_SUPPORTED_BC_TYPES` is None); whether their
+#               node-level BCs form cells, a separate type system in 6014400413, is ruled when their batch comes. An FP
+#               family's DIRICHLET is two cells, an exit (the shared BC, m = 0) and a prescribed density (an explicit
+#               FP BC, m = g)
 #   row         a (b) row of #2512 (comment 6054006841), labelled <grid|network>/<row>
 #   convention  a convention ruled 2026-10-08, labelled C1-C6 as #2429 numbers them
 #   pin         a pin a batch rests on that is not a cell itself
@@ -70,37 +73,44 @@ pin    hjb_fem/whole_file     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.p
 pin    hjb_fem/boundary_tags  tests/unit/test_alg/test_fem_boundary_tags_2540.py
 
 # FP-FDM: 10 cells. Dirichlet is two cells: as an exit (a shared Dirichlet, m = 0) and as a prescribed
-# density (an explicit FP BC, m = g).
-oracle fp_fdm/dirichlet_exit_1d     -
-oracle fp_fdm/dirichlet_exit_2d     -
-oracle fp_fdm/dirichlet_density_1d  -
-oracle fp_fdm/dirichlet_density_2d  -
-# fp_fdm/neumann_1d awaits fp_fdm/no_flux_1d: its routing pin shows only that the two solve alike.
-oracle fp_fdm/neumann_1d          -
+# density (an explicit FP BC, m = g). Each cell's oracle compares the returned density with an exact one and asserts
+# its wall nodes; `test_fp_fdm_bc_oracles_2512.py` records the rival each of its fixtures separates. The exit and
+# density oracles are drift-free; the no-flux and periodic ones take the drift through `potential_field`.
+oracle fp_fdm/dirichlet_exit_1d     tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[21-10-0.001]
+oracle fp_fdm/dirichlet_exit_1d     tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[41-40-0.0003]
+oracle fp_fdm/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_the_2d_exit_absorbs_and_matches_the_decaying_modes
+oracle fp_fdm/dirichlet_density_1d  tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[1]
+oracle fp_fdm/dirichlet_density_2d  tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]
+# The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and the NO_FLUX oracle they solve as,
+# so they are met only while it is, and the refusal of a NEUMANN of FP-FDM's own.
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]
 oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fdm-1d]
 oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fdm-1d]
 oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fdm_refuses_a_neumann_of_its_own[1]
-# fp_fdm/neumann_2d awaits fp_fdm/no_flux_2d: its routing pin shows only that the two solve alike.
-oracle fp_fdm/neumann_2d          -
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]
 oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fdm-2d]
 oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fdm-2d]
 oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fdm_refuses_a_neumann_of_its_own[2]
-oracle fp_fdm/no_flux_1d            -
-oracle fp_fdm/no_flux_2d            -
-oracle fp_fdm/periodic_1d           -
-oracle fp_fdm/periodic_2d           -
+oracle fp_fdm/no_flux_1d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]
+oracle fp_fdm/no_flux_1d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]
+oracle fp_fdm/no_flux_2d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]
+oracle fp_fdm/no_flux_2d            tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]
+oracle fp_fdm/periodic_1d           tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]
+oracle fp_fdm/periodic_2d           tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]
 
-# FP-FEM: 12 cells. Dirichlet is two cells, as for every FP family that declares it: the shared exit, met below, and
-# the explicit route's prescribed density (#2532), whose route is pinned below; its two cells are `-` until an oracle
-# meets them.
-# Each met cell lists its oracle (an exact density at second order) and the wall property it is named for, with a
-# rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
+# FP-FEM: 12 cells. Dirichlet is two cells, as for every FP family that declares it: the shared exit and the explicit
+# route's prescribed density (#2532), whose route is pinned below. The density cells' oracle is drift-free and exact to
+# roundoff in P1 (a linear density), with no rival test of its own.
+# Every other met cell lists its oracle (an exact density at second order) and the wall property it is named for,
+# with a rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_2d]
-oracle fp_fem/dirichlet_density_1d  -
-oracle fp_fem/dirichlet_density_2d  -
+oracle fp_fem/dirichlet_density_1d  tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py::test_fem_reads_a_dirichlet_value_at_its_level[fp-1]
+oracle fp_fem/dirichlet_density_2d  tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py::test_fem_reads_a_dirichlet_value_at_its_level[fp-2]
 # The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and both targets of the NO_FLUX cell
 # they solve as, so they are met only while it is, and the refusal of a NEUMANN of FP-FEM's own (#2532).
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
