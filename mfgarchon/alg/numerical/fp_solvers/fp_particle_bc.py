@@ -239,6 +239,8 @@ def reflect_at_first_contacts(
         segment_at_box_contact,
         segment_particle_action,
     )
+    from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+    from mfgarchon.geometry.implicit import Hyperrectangle
 
     starts = np.asarray(starts, dtype=float)
     ends = np.asarray(ends, dtype=float).reshape(starts.shape)
@@ -272,6 +274,9 @@ def reflect_at_first_contacts(
     owner = on_the_box(bc, box)
     uniform = owner.uniform_segment
     uniform_action = None if uniform is None else segment_particle_action(uniform, reader)
+    any_periodic = declares_periodic(owner)
+    # The particles' domain is the step's box itself, so every contact is on a face of it.
+    box_only = type(domain) is Hyperrectangle and np.array_equal(np.asarray(domain.bounds, dtype=float), box)
     # Each leg runs from ``position`` to ``end``. A reflection moves the end, e' = e - 2 ((e - p) . n) n, rather than
     # the remaining vector, so a coordinate the normal does not touch is carried exactly and a box face's coordinate
     # is e - 2 (e - h): 2 h - e correctly rounded where e - h is exact, and within a few ulps of the larger of e and h
@@ -324,15 +329,16 @@ def reflect_at_first_contacts(
         i, p, nk, e = legs[hit], point[hit], normal[hit], b[hit]
         counts["contacts"] += int(hit.size)
         corner_faces: dict[int, list[tuple[int, int, bool]]] = {}
-        if uniform_action is not None:
-            # One condition everywhere: with a particle domain it reflects, an absorbing one being refused at
-            # construction off the box (`FPParticleSolver._refuse_absorbing_off_the_box`); without one every contact is
-            # on the box. Either way it is the action at every contact, and on a torus a corner's faces wrap in turn.
+        if uniform_action is not None and (uniform_action != "periodic" or box_only):
+            # One condition everywhere, the action at every contact: reflecting, on the box or off it; absorbing, where
+            # a particle domain is refused at construction (`FPParticleSolver._refuse_absorbing_off_the_box`), so
+            # every contact is on the box; periodic only on the box itself, where a corner's faces wrap in turn. A
+            # torus with a particle domain is read per contact below, so a contact on an obstacle reflects (D2).
             action = np.full(hit.size, uniform_action, dtype=object)
         else:
             action = np.empty(hit.size, dtype=object)
             for j in range(hit.size):
-                corner = periodic_corner_actions(owner, p[j], eps, reader)
+                corner = periodic_corner_actions(owner, p[j], eps, reader) if any_periodic else None
                 if corner is None:
                     _, segment = segment_at_box_contact(owner, p[j], eps)
                     action[j] = "reflecting" if segment is None else segment_particle_action(segment, reader)
@@ -390,7 +396,8 @@ def reflect_at_first_contacts(
                 f"{reader}: a particle's step from {starts[rows[over[0]]].tolist()} to {ends[rows[over[0]]].tolist()} "
                 f"wrapped more than {MAX_WRAPS} times through periodic faces (#2704). The loop searches once per "
                 "period crossed, and a step of about 1e17 periods never ends, since its shift by one period rounds "
-                "away. A step this long is a time step too large for the drift: take more time steps."
+                "away. A step this long means the time step is too large for the drift and the noise: take more time "
+                "steps."
             )
         unknown = (action != "absorbing") & (action != "reflecting") & (action != "periodic") & (action != "corner")
         if unknown.any():

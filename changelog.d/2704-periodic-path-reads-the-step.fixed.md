@@ -1,8 +1,8 @@
 - **The particle FP reads a step under a periodic boundary condition by its path** (#2704, #2803).
   `FPParticleSolver` now ends every CPU step at its first contacts with the particles' boundary
   (`reflect_at_first_contacts`, #2733), a periodic outer boundary's included: at a periodic face the rest of the step
-  goes on from its image on the opposite face. Before, a BC that declared a periodic face took
-  `ParticleApplicator.apply`, which reads where a step ended:
+  goes on from its image on the opposite face. Before, a BC that declared a periodic face and needed a per-segment
+  read (`needs_segment_aware_bc`), a channel for one, took `ParticleApplicator.apply`, which reads where a step ended:
   - at a corner it gave one action for every axis, so a step past a channel's corner wrapped through the wall, or
     reflected across the seam (#2803);
   - an exit the path crossed was read by the corner order at the end: on an exit strip beside periodic faces it

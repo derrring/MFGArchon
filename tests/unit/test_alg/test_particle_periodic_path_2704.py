@@ -18,9 +18,10 @@ whether the particle is absorbed, and otherwise a periodic face wraps its axis a
 the corner the step crosses with a wall opposite, or periodic) x the face crossed first (the periodic one, the other,
 both at once) x the corner crossed (all four, so both signs of the step on each axis). Then the priority row, a
 periodic axis at priority 1 beside an exit, on all four corners and orders; a 3-D edge (a wall on y beside an exit on z,
-#2800's U3); the torus on long steps against the periodic owner, and the refusal of a step past ``MAX_WRAPS``; the
-exit strip of 6335147485 at solve level; and an obstacle met after a wrap, with the refusal of one that touches a
-periodic face, and in 3-D of any (#2807).
+#2800's U3), and ties at 3-D edges and vertices with a periodic face; the torus on long steps against the periodic
+owner, and the refusal of a step past ``MAX_WRAPS``; the exit strip of 6335147485 at solve level; and an obstacle met
+after a wrap, an obstacle beside a torus however the torus is spelt, the refusal of one that touches a face of the
+periodic axis, flush, past it or on the other face, and in 3-D of any (#2807).
 
 **Rivals**, each a copy of the package at this commit with one replacement, run with this file: listed in the PR.
 
@@ -43,7 +44,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import MAX_WRAPS
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, periodic_bc
 from mfgarchon.geometry.boundary.periodic import wrap_positions
 from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
 
@@ -161,7 +162,8 @@ def test_a_periodic_face_that_outranks_an_exit_decides_only_a_tie(order, corner)
 
 def test_a_three_dimensional_edge_takes_its_wall_then_its_exit():
     """#2800's U3: x periodic, an exit on z_max, NO_FLUX elsewhere. The step meets y_max's wall at t = 0.25 and the exit
-    at t = 0.5, where it is absorbed; an end past the edge (0.5, 1.03, 1.02) read by its end took the wall."""
+    at t = 0.5, where it is absorbed. Main absorbs it too since #2800; it stays as the 3-D control for the path, with no
+    periodic face at its edge. The ties at a 3-D corner with a periodic face are the next test."""
     bc = BoundaryConditions(
         dimension=3,
         segments=[
@@ -173,6 +175,42 @@ def test_a_three_dimensional_edge_takes_its_wall_then_its_exit():
     )
     _, absorbed = _finish(_solver(bc, d=3), [[0.5, 0.99, 0.98]], [[0.5, 1.03, 1.02]], d=3)
     assert absorbed.tolist() == [True]
+
+
+def _on(face: str, kind: BCType, priority: int = 0) -> BCSegment:
+    return BCSegment(name=face, bc_type=kind, boundary=face, priority=priority, **({"value": 0.0} if kind is D else {}))
+
+
+#: A 3-D step 0.02 inside each face it crosses and 0.04 long on each, so it meets them all at t = 0.5: a tie. NO_FLUX
+#: elsewhere. The expected end is the tie rule's, by hand: absorbed, or each crossed face's own action on its axis.
+_TIES_3D = {
+    "edge: x periodic, y wall": ([_on("x_min", P), _on("x_max", P)], [0.98, 0.98, 0.5], [0.02, 0.98, 0.5]),
+    "corner: x periodic, y and z walls": ([_on("x_min", P), _on("x_max", P)], [0.98, 0.98, 0.98], [0.02, 0.98, 0.98]),
+    "corner: x and y periodic, z wall": (
+        [_on(f, P) for f in ("x_min", "x_max", "y_min", "y_max")],
+        [0.98, 0.02, 0.98],
+        [0.02, 0.98, 0.98],
+    ),
+    "corner: x periodic, an exit on z": ([_on("x_min", P), _on("x_max", P), _on("z_max", D)], [0.98] * 3, None),
+    "corner: x periodic at priority 1, an exit on z": (
+        [_on("x_min", P, 1), _on("x_max", P, 1), _on("z_max", D)],
+        [0.98] * 3,
+        [0.02, 0.98, 0.98],
+    ),
+}
+
+
+@pytest.mark.parametrize("row", list(_TIES_3D))
+def test_a_tie_at_a_three_dimensional_corner_with_a_periodic_face_takes_the_tie_rule(row):
+    """The corner order decides only absorption: an exit at one priority absorbs (DIRICHLET first), a periodic face at
+    priority 1 does not. Otherwise every face at the corner acts, on its own axis, each of the three at a vertex."""
+    segments, start, expected = _TIES_3D[row]
+    end = [s + (0.04 if s > 0.5 else -0.04) if s != 0.5 else s for s in start]
+    solver = _solver(BoundaryConditions(dimension=3, segments=segments, default_bc=NF), d=3)
+    ends, absorbed = _finish(solver, [start], [end], d=3)
+    assert absorbed.tolist() == [expected is None]
+    if expected is not None:
+        np.testing.assert_allclose(ends[0], expected, atol=1e-12)
 
 
 def test_a_torus_wraps_a_long_step_as_the_periodic_owner_does():
@@ -279,20 +317,67 @@ def test_a_step_that_wraps_meets_an_obstacle_on_its_image():
     np.testing.assert_allclose(ends, [[0.05, 0.5], [0.03, 0.9]], atol=1e-12)
 
 
+_TORI = {
+    "periodic_bc": lambda d: periodic_bc(dimension=d),
+    "one global segment": lambda d: BoundaryConditions(dimension=d, segments=[BCSegment(name="all", bc_type=P)]),
+    "default_bc": lambda d: BoundaryConditions(dimension=d, segments=[], default_bc=P),
+    "a segment per face": lambda d: BoundaryConditions(
+        dimension=d, segments=[_on(f"{a}_{s}", P) for a in AXES[:d] for s in ("min", "max")]
+    ),
+}
+
+
+@pytest.mark.parametrize("d", [1, 2])
+@pytest.mark.parametrize("spelling", list(_TORI))
+def test_a_torus_reflects_a_step_off_an_obstacle_however_it_is_spelt(spelling, d):
+    """D2's box rule under a torus: a contact on an obstacle, clear of every face, reflects. A torus spelt as one
+    condition has one action for every contact on the box; read at the obstacle too, it wrapped along the obstacle's
+    normal until the wrap cap refused a step 0.15 long."""
+    domain = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0]] * d)), Hyperrectangle(np.array([[0.4, 0.6]] * d)))
+    if d == 1:
+        start, raw, expected = [[0.3]], [[0.45]], [[0.35]]
+    else:
+        start, raw, expected = [[0.3, 0.5], [0.5, 0.3]], [[0.45, 0.5], [0.5, 0.45]], [[0.35, 0.5], [0.5, 0.35]]
+    ends, absorbed = _finish(_solver(_TORI[spelling](d), d=d, implicit_domain=domain), start, raw, d=d)
+    assert not absorbed.any()
+    np.testing.assert_allclose(ends, expected, atol=1e-12)
+
+
+def _drift_x(t, x, m):
+    return np.broadcast_to(np.array([2.0, 0.0]), np.shape(x))
+
+
+_TOUCHING = {  # an obstacle in the channel, and the face of the periodic axis x it meets
+    "reaching past x_max": ([[0.8, 1.1], [0.4, 0.6]], "max"),
+    "flush with x_max": ([[0.8, 1.0], [0.4, 0.6]], "max"),
+    "touching x_min only": ([[-0.1, 0.2], [0.4, 0.6]], "min"),
+}
+
+
 @pytest.mark.filterwarnings("ignore")
-def test_an_obstacle_touching_a_periodic_face_is_refused_by_name():
-    """An obstacle reaching x_max, a periodic face: a wrapped step would go on from an image the obstacle may hold,
-    which the loop does not place, so the solve is refused, naming the face. One clear of the faces solves."""
+@pytest.mark.parametrize("obstacle", list(_TOUCHING))
+def test_an_obstacle_touching_a_periodic_face_is_refused_by_name(obstacle):
+    """An obstacle touching either face of x, the periodic axis, flush or past it: a wrapped step would go on from an
+    image the obstacle may hold, which the loop does not place, so the solve is refused, naming the face."""
+    bounds, side = _TOUCHING[obstacle]
+    domain = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array(bounds)))
+    with pytest.raises(NotImplementedError, match=f"meets the {side} face of axis 0, an axis with a periodic face"):
+        _solver(_channel(), implicit_domain=domain).solve_fp_system(
+            initial_particles=np.random.default_rng(0).uniform([0.3, 0.05], [0.7, 0.3], (10, 2)),
+            drift_field=_drift_x,
+            drift_needs_density=False,
+            show_progress=False,
+        )
+
+
+@pytest.mark.filterwarnings("ignore")
+def test_an_obstacle_clear_of_the_periodic_faces_solves_with_wraps():
+    """The capability #2688 refused: an obstacle clear of the faces of x under the channel solves, and particles
+    wrap."""
     box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
-    touching = DifferenceDomain(box, Hyperrectangle(np.array([[0.8, 1.1], [0.4, 0.6]])))
     clear = DifferenceDomain(box, Hyperrectangle(np.array([[0.4, 0.6], [0.4, 0.6]])))
     particles = np.random.default_rng(0).uniform([0.7, 0.05], [0.95, 0.95], (10, 2))
-    drift = lambda t, x, m: np.broadcast_to(np.array([2.0, 0.0]), np.shape(x))  # noqa: E731
-    refused = _solver(_channel(), implicit_domain=touching)
-    with pytest.raises(NotImplementedError, match="meets the max face of axis 0, an axis with a periodic face"):
-        refused.solve_fp_system(
-            initial_particles=particles, drift_field=drift, drift_needs_density=False, show_progress=False
-        )
+    drift = _drift_x
     solver = _solver(_channel(), implicit_domain=clear)
     solver.solve_fp_system(
         initial_particles=particles, drift_field=drift, drift_needs_density=False, show_progress=False
