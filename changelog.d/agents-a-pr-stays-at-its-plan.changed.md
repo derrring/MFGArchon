@@ -6,8 +6,10 @@
     in the diff, including a defect the diff newly exposes, is fixed by the PR.
   - A finding is structural when it falsifies the plan's premise or acceptance check, concerns a convention or owner
     several implementations share, is a default-path wrong result present at the base sha in code the PR already
-    changes, or changes a denominator of #2512's counts (`scripts/oracle_pins.txt`). Its author sends it to the plan's
+    changes, or changes a denominator the gate prints for #2512 (`scripts/check_oracle_pins.py` over
+    `scripts/oracle_pins.txt`). Its author sends it to the plan's
     approver in one line and keeps working the plan. The approver rules whether the PR takes it or it goes through
-    *Before filing an issue*. A PR that takes it records this in the issue comment that holds the plan's approval, and
-    from review 1 on, its fix is a class fix with its own class line.
-  - § *Branches & PRs*: related low-risk fixes are batched into one PR when the plan is made.
+    *Before filing an issue*; anything the first paragraph has the PR fix, the PR takes. A PR that takes it records this
+    where the plan's approval is recorded, and from review 1 on, its fix is a class fix with its own class line.
+  - § *Branches & PRs*: batching related low-risk fixes into one PR stays optional; a batch is chosen when the plan is
+    made, no longer whenever convenient.

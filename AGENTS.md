@@ -418,9 +418,9 @@ A finding is **structural** when any of these holds:
 - it falsifies the plan's premise or its acceptance check;
 - it concerns a convention or an owner that several implementations share, so fixing it at one site would fork the convention;
 - it is a default-path wrong result, present at the base sha, in code the PR already changes;
-- it changes a denominator of #2512's exit counts (`scripts/oracle_pins.txt`, as the gate prints them).
+- it changes a denominator the gate prints for #2512 (`scripts/check_oracle_pins.py` over `scripts/oracle_pins.txt`).
 
-The author sends a structural finding to the plan's approver in one line and keeps working the plan. The approver rules whether the PR takes it or it goes through *Before filing an issue*. A PR that takes it records this in the issue comment that holds the plan's approval, and the PR body and its class lines follow. From review 1 on, the finding's fix is a class fix with its own class line, as § *Review before merge*'s bullet on a defect that predates the PR requires.
+The author sends a structural finding to the plan's approver in one line and keeps working the plan. The approver rules whether the PR takes it or it goes through *Before filing an issue*; anything the first paragraph has the PR fix, the PR takes. A PR that takes it records this where the plan's approval is recorded (for a defect fix, the issue comment that holds it), and the PR body and its class lines follow. From review 1 on, the finding's fix is a class fix with its own class line; for a defect present at the base sha, § *Review before merge*'s bullet on a defect that predates the PR already requires this.
 
 ### Version-bump checklist ⚠️ MANDATORY
 In a single commit:
