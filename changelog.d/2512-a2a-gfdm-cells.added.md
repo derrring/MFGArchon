@@ -11,5 +11,6 @@
     on the seam nodes, against its recorded value. Rivals are measured and recorded there: the row along the tangent,
     the normal's sign, the datum dropped, a face read for another, the corner's normal averaged, and, for the seam, no
     ghost points, mirror ghosts and a period too long.
-  - ROBIN(0, 1, g) solves as NEUMANN(g), array for array, and positive_qp_fan solves NEUMANN(0) as NO_FLUX.
+  - ROBIN(0, 1, g) on each face solves as NEUMANN(g) there, in 2-D, to the bit at t = 0; positive_qp_fan solves
+    NEUMANN(0) as NO_FLUX on its reflecting cell's box, to the bit.
   - The PERIODIC declaration's comment in `hjb_gfdm.py` no longer calls #1841 open.

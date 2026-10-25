@@ -4,13 +4,13 @@ and positive_qp_fan's NEUMANN, both by routing, and PERIODIC in 1-D and 2-D (sta
 Every solve is on the default configuration, ``monotonicity_scheme="none"`` with Newton (user ruling 2026-10-22, #2512
 comment 6333790265), except positive_qp_fan's routing pin, which is that configuration's own cell. Each fixture is
 exp17's construction, as `test_positive_qp_fan_reflecting_1689` builds it: ``u* = phi + C (T - t)`` with ``m*`` frozen
-and ``V`` absorbing the residual, so the equation holds exactly, and implicit Euler is exact in time, so the error is the
-spatial one.
+and ``V`` absorbing the residual, so the equation holds exactly, and implicit Euler is exact in time, so the error is
+the spatial one.
 
 **Fixtures.**
-- **NEUMANN, 2-D.** ``phi = a (q(x) + q(y)) + c1 x + c2 x^2 + c3 y + c4 y^2`` with ``q(s) = s^3 - 1.5 s^2``, so the outward
-  derivative is ``-c1`` on x_min, ``c1 + 2 c2`` on x_max, ``-c3`` on y_min and ``c3 + 2 c4`` on y_max, whatever ``q``
-  adds (``q'(0) = q'(1) = 0``). Two BCs:
+- **NEUMANN, 2-D.** ``phi = a (q(x) + q(y)) + c1 x + c2 x^2 + c3 y + c4 y^2`` with ``q(s) = s^3 - 1.5 s^2``, so the
+  outward derivative is ``-c1`` on x_min, ``c1 + 2 c2`` on x_max, ``-c3`` on y_min and ``c3 + 2 c4`` on y_max, whatever
+  ``q`` adds (``q'(0) = q'(1) = 0``). Two BCs:
   - per face, four NEUMANN segments with the outward data 0.3, 0.7, -0.2 and 0.5. They differ, so a face or an axis
     read for another is visible, and the mixed path (`_preclassify_boundary_points`) builds each row;
   - uniform, ``neumann_bc(value=0.4)``, the same datum on every face, which the uniform path builds.
@@ -18,39 +18,48 @@ spatial one.
   added, refined N_int 900 -> 1600 -> 2500 with ``delta = 4.5 h``, ``h = 1/sqrt(N_int)``, as #2792's reflecting cell. A
   corner takes one face's segment and normal, and ``u*`` meets each face's datum there, so a correct corner row
   converges whichever face it takes. Scrambles 3 and 7, without the corners, run in the slow tier.
-- **PERIODIC, 1-D and 2-D.** ``phi = 0.3 sin(2 pi x + 0.7) [+ 0.2 sin(2 pi y + 0.3)]``: not even about the seam, and
-  different on the two axes, so a transposed axis is visible. The problem's own periodic `TensorProductGrid` is the
-  torus, collocated at its nodes, both endpoints included: boundary detection skips its periodic axes (no boundary
-  point, #1841) and the operator's ghost points make the wrap. Levels 21/41/81 (1-D) and 11/21/41 (2-D) with
-  ``delta = 2.5 h``, ``h = 1/(n - 1)``. A fixed ``delta`` is not a refinement: at the default 0.1 the 1-D error stops
-  falling (EOC 1.07, then 0.00, measured at 63ea63dd).
+- **PERIODIC, 1-D and 2-D.** ``phi = 0.3 sin(2 pi x + 0.7) [+ 0.2 sin(2 pi y + 0.3)]``: not even about the seam. The
+  problem's own periodic `TensorProductGrid` is the torus, collocated at its nodes, both endpoints included: boundary
+  detection skips its periodic axes (no boundary point, #1841) and the operator's ghost points make the wrap. Levels
+  21/41/81 (1-D) and 11/21/41 (2-D) with ``delta = 2.5 h``, ``h = 1/(n - 1)``; in 1-D the neighbourhood falls back to
+  k nearest neighbours at most nodes, so ``delta`` sets the stencil near the seam. A fixed ``delta`` is not a
+  refinement: at the default 0.1 the 1-D error stops falling (EOC 1.07, then 0.00, measured at 63ea63dd).
 
 **Assertions.** Per cell, the order between levels in [1.7, 2.3], each level's error within a factor of 1.25 either way
 of the value recorded here, and at each level the error on each face's nodes and on the corners (NEUMANN), or on the
-seam nodes (PERIODIC), within the same factor. The routing pins assert equality, array for array.
+seam nodes (PERIODIC), within the same factor. The Robin pin asserts the t = 0 error arrays equal on the mixed path;
+the positive_qp_fan pin, the whole solutions on 1689's ``box-900`` input.
 
-**Rivals**, each a copy of the package at 63ea63dd with one replacement, run with this file (the slow tier left out):
+**Rivals**, each a copy of the package at 63ea63dd with one replacement (the corner rival, one per path), run with this
+file (the slow tier left out):
 - NEUMANN, per face / uniform, the orders over the two refinements:
   - the row read along the face's tangent: 0.02, -0.09 / -0.18, 1.30;
   - the normal's sign flipped: -0.00, -0.00 / -0.01, -0.01;
   - the datum dropped (#2513's defect): -0.00, -0.00 / -0.01, -0.01;
-  - x_min read with x_max's segment (the mixed path): -0.01, -0.01 per face; uniform passes, as it must with one datum;
+  - every face read with its opposite face's segment (the mixed path): -0.01, -0.01 per face; uniform passes, as it must
+    with one datum. Review 1 of #2806 read the lower half of x_min with x_max's segment: 0.02, -0.04;
   - the corner's normal taken as the diagonal average of its faces': 2.06, 1.31 / 1.71, 2.34, and the corner error
-    x5.9 to x12.7 / x2.7 to x5.2 of the value recorded here. On the uniform fixture the rate leaves its band by 0.04,
-    and the corner bound is what the rival cannot come near.
+    x5.9 to x12.7 / x2.7 to x5.2 of the value recorded here. On the uniform fixture the rate leaves its band by only
+    0.04, and the face and corner bounds leave theirs by x2.5 to x5.2.
 - The routing pins: ROBIN(0, 1)'s datum dropped in its arm alone fails the Robin pin; NEUMANN taken out of
   positive_qp_fan's ``reflecting_types`` makes it refuse the zero datum.
 - PERIODIC, 1-D / 2-D: no ghost points -2.66, 2.86 / 0.08, -9.83; mirror ghosts (a reflecting closure) -0.03, -0.01 /
-  -0.08, 0.02; the period 2% long 0.56, 0.20 / 1.37, 0.65. Dropping `_wrap_displacement` passes, to the digit: the ghost
-  points are already shifted, so it is an equivalent mutant, not a rival.
+  -0.08, 0.02; the period 2% long 0.56, 0.20 / 1.37, 0.65. Dropping `_wrap_displacement` passes, to the digit: on these
+  inputs every offset is below half a period and the ghost points are already shifted, so it is an equivalent mutant
+  here, not a rival.
+- Passing, by what is held fixed: the datum read at the next time level (constant data).
 
-**Branch conditions.** Varied: the mixed path (per-point segment and normal, the first face whose segment writes the
-row) against the uniform path (``uniform_segment``, the normal of `identify_boundary_face`); a corner node on both; the
-NEUMANN arm of `_bc_row_for_point`, and its ROBIN(0, 1) arm through the routing pin; positive_qp_fan's
-``reflecting_types``, which take NEUMANN(0) as a reflecting face; the periodic route, where `_detect_boundary_indices`
-skips a periodic axis. Held fixed: no local coordinate rotation, no ghost nodes (#2516); the degenerate-stencil arm of
-`_build_neumann_bc_row` (#2752) is not reached; constant data; Newton only, since Howard's value-form rows come from the
-same `_bc_row_for_point` (6333790265).
+**Branch conditions.** Varied: the mixed path (per-point segment and normal) against the uniform path
+(``uniform_segment``); a corner node on both; the NEUMANN arm of `_bc_row_for_point`, and its ROBIN(0, 1) arm through
+the routing pin; positive_qp_fan's ``reflecting_types``, which take NEUMANN(0) as a reflecting face; the periodic route,
+where `_detect_boundary_indices` skips every axis of the torus. Held fixed, as instrumented by review 1 of #2806:
+- every corner takes its x face's row on both paths (the mixed path's first matching reading);
+- the uniform path's normal comes from its legacy normals;
+- detection's per-axis ``np.abs(.) < tol`` selection is not evaluated: the NEUMANN cells pass ``boundary_indices`` and
+  the torus skips every axis, so a box periodic on one axis and walled on the other is not reached;
+- no local coordinate rotation, no ghost nodes (#2516); the degenerate-stencil arm of `_build_neumann_bc_row` (#2752)
+  is not reached; constant data; Newton only, since Howard's value-form rows come from the same `_bc_row_for_point`
+  (6333790265).
 """
 
 from __future__ import annotations
@@ -92,7 +101,8 @@ CORNERS = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
 
 
 def _hamiltonian(phi):
-    """exp17's Hamiltonian, whose ``V`` absorbs the residual of ``u* = phi + C (T - t)`` against ``m* = exp(-phi/nu)``."""
+    """exp17's Hamiltonian, whose ``V`` absorbs the residual of ``u* = phi + C (T - t)`` against
+    ``m* = exp(-phi/nu)``."""
 
     def m_star(x):
         return np.exp(-phi(x)[0] / NU) / Z_M
