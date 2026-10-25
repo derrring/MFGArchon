@@ -410,6 +410,18 @@ Urgency is not an admission: it changes the order of work, not its level. Nor is
 
 The class line is checked when the plan is approved, and again at review (§ *Review before merge*).
 
+### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
+
+The plan approved for a PR fixes its scope, as its class line (§ *Local patches are the anti-pattern*) fixes its population. A finding made during the work that is neither in the plan nor a member of the class its class line names goes through § *GitHub issue/PR management*'s *Before filing an issue*, and the work continues on the plan. Its author does not widen the PR on their own judgement. A member of that class found during the work is not such a finding: § *Local patches are the anti-pattern* decides it. Nor is anything § *Review before merge* makes a blocker in the diff, including a defect the diff newly exposes: the PR fixes it.
+
+A finding is **structural** when any of these holds:
+- it falsifies the plan's premise or its acceptance check;
+- it concerns a convention or an owner that several implementations share, so fixing it at one site would fork the convention;
+- it is a default-path wrong result, present at the base sha, in code the PR already changes;
+- it changes a denominator the gate prints for #2512 (`scripts/check_oracle_pins.py` over `scripts/oracle_pins.txt`).
+
+The author sends a structural finding to the plan's approver in one line and keeps working the plan. The approver rules whether the PR takes it or it goes through *Before filing an issue*; anything the first paragraph has the PR fix, the PR takes. A PR that takes it records this where the plan's approval is recorded (for a defect fix, the issue comment that holds it), and the PR body and its class lines follow. From review 1 on, the finding's fix is a class fix with its own class line; for a defect present at the base sha, § *Review before merge*'s bullet on a defect that predates the PR already requires this.
+
 ### Version-bump checklist ⚠️ MANDATORY
 In a single commit:
 1. `pyproject.toml:11` — `version = "X.Y.Z"` + inline `# vX.Y.Z: <one-line scope>`.
@@ -422,7 +434,7 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Branch naming (MANDATORY)**: `<type>/<short-description>` — `feature/ fix/ chore/ docs/ refactor/ test/`.
 - **Never commit directly to `main`.** ⚠️ **Nothing enforces this — not the server, and not the local hook either.** Re-check with `gh api repos/derrring/MFGArchon/rules/branches/main` (the effective-rules endpoint, which covers org rules and migrated required workflows); an empty array means no branch rule applies. The pre-push hook does not close the gap: it runs `scripts/local_ci.sh`, which contains no branch logic at all (`grep -i branch scripts/local_ci.sh` → nothing) and no `no-commit-to-branch` hook is configured — it gates *test quality*, not *which ref you are on*, so a green suite on `main` pushes cleanly. Treat this as a discipline you keep, not a wall that stops you. Create the PR when you push; delete merged branches.
 - **Prune local branches periodically**: `./scripts/prune_local_branches.sh` **classifies and prints evidence; it never deletes.** Deletion stays manual because each of its three signals can be wrong in a way that costs unmerged work — the content check reverse-applies against the *working tree* rather than `main`, so its verdict moves with the checkout and with uncommitted edits; the merged-PR check matches head-ref *names*, and a head-ref name can belong to more than one merged PR; and a 3–4 digit run in a branch name may be a grid size rather than an issue. Read the branch, record the sha, then `git branch -D`. The script aborts rather than guessing if the merged-PR fetch looks truncated. Note `git status` never reports what a worktree costs: one `??` entry at best, and nothing at all under an ignored path such as `.claude/worktrees/` (`.gitignore:77`), so use `git worktree list`.
-- **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless.
+- **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when the plan is made, to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless.
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises and re-reviewing. Local-green ≠ correct. A review blocks only on substance (user ruling, 2026-10-08):
