@@ -506,8 +506,8 @@ class BoundaryConditions:
         - ``boundary``: that face, aliases included (``parse_boundary_face``); ``"all"`` is every face.
         - ``region`` (alone, or with ``boundary``) and ``sdf_region``: the face if the placement holds
           its whole interior -- read on ``geometry``'s grid nodes when it is a grid, else (``region``
-          only) on ``domain_bounds``. ``region_name``: the geometry's mask, or a face label
-          (:func:`region_name_governs_face`).
+          only) on ``domain_bounds``. ``region_name``: the geometry's mask, read as a ``region``'s is, or a face
+          label (:func:`_region_name_cover`).
         - ``normal_direction``: the face whose outward normal is within ``normal_tolerance`` of it.
         - no placement field: every face.
 
@@ -532,7 +532,15 @@ class BoundaryConditions:
             return governing
         if governing is None:  # nothing covers the face whole, and the default does not answer: its refusal
             raise ValueError(self._default_refusal("segment_for_face", f"the {target.to_string()} face"))
-        how = "region" if part.region is not None else "sdf_region" if part.sdf_region is not None else "placement"
+        how = (
+            "region"
+            if part.region is not None
+            else "sdf_region"
+            if part.sdf_region is not None
+            else "region_name"
+            if part.region_name is not None
+            else "placement"
+        )
         raise ValueError(
             f"BC segment {part.name!r} covers part of the {target.to_string()} face (placed by `{how}`) "
             f"at a higher priority than {governing.name!r}, which governs the rest of it, and the two "
@@ -619,7 +627,7 @@ class BoundaryConditions:
         A face label -- ``boundary``, an unmarked ``region_name`` such as ``"x_max"``, or ``"all"`` -- and
         ``normal_direction`` on an axis-aligned face decide a whole face exactly. A ``region``, an ``sdf_region`` and a
         marked region, whatever its name, are decided on the grid's nodes (:meth:`segment_for_face`,
-        `region_name_governs_face`), which need not be the faces such a reader integrates; placing a condition on part
+        `_region_name_cover`), which need not be the faces such a reader integrates; placing a condition on part
         of a face is per-point resolution (#2712).
         """
         order = self._face_order()
@@ -720,10 +728,11 @@ class BoundaryConditions:
 
         **A point at a corner is resolved at the point** (user ruling, 2026-10-14). Without ``face``, a point
         on several faces takes each face's own segment, read at the point only where a partial cover keeps the face
-        from answering (:meth:`_face_resolution`): a ``region`` or ``sdf_region`` covering part of it ahead of the
-        segment governing the rest with another condition, or covering part of a face no segment covers whole and
-        whose ``default_bc`` does not answer. Then the segment holding the point on that face (this method with
-        ``face``) stands in. Every other refusal stands, except the face owner's whole-BC check, which a point does not
+        from answering (:meth:`_face_resolution`): a ``region``, ``sdf_region`` or marked ``region_name`` covering
+        part of it ahead of the segment governing the rest with another condition, or covering part of a face no
+        segment covers whole and whose ``default_bc`` does not answer. Then the segment holding the point on that
+        face (this method with ``face``) stands in. Every other refusal stands, except the face owner's whole-BC
+        check, which a point does not
         run (#2490 B1e-2): it reads which segments govern a face on a grid's nodes, the face family's points, so a
         reader's admission of a BC depended on whether its points included a corner. A point reader checks its own
         points instead (:meth:`refuse_segments_governing_no_point`). ``corner_strategy`` then chooses among them in the
@@ -1571,7 +1580,7 @@ class BoundaryConditions:
             if named != face:
                 return "none"
         if segment.region_name is not None:
-            return "whole" if region_name_governs_face(segment, face, geometry) else "none"
+            return _region_name_cover(segment, face, geometry)
         # Each placement field narrows the cover: a normal picks the face, and an sdf_region beside it (BCSegment allows
         # the pair) still decides how much of that face the segment holds.
         if segment.normal_direction is not None and not _normal_selects_face(segment, face):
@@ -2731,71 +2740,35 @@ def _region_mask_on_grid(geometry: Any, region_name: str) -> np.ndarray | None:
     return np.asarray(marked.get_region_mask(region_name)).astype(bool).reshape(tuple(marked.get_grid_shape()))
 
 
-def faces_covered_by_region(geometry: Any, region_name: str) -> frozenset[BoundaryFace]:
-    """The boundary faces a marked region governs on a path that imposes one condition per face. #2472
-
-    See :func:`_region_faces` for what "covered" means. A region covering part of a face's interior
-    is refused: one condition per face cannot represent it, and either reading would silently drop
-    the other. Whether a strip covers a face therefore depends on the resolution: a strip may hold
-    a coarse face's whole interior and only part of a finer one's.
-
-    Raises:
-        ValueError: if the geometry is not a structured grid, if the region covers part of a face's
-            interior, or if it covers no whole face.
-    """
-    mask = _region_mask_on_grid(geometry, region_name)
-    if mask is None:
-        raise ValueError(
-            f"{type(geometry).__name__} has no grid faces, so marked region {region_name!r} cannot be "
-            "resolved to a face (Issue #2472)."
-        )
-    covered, partial = _region_faces(mask)
-    if partial:
-        face = min(partial, key=lambda f: (f.axis, f.side))
-        raise ValueError(
-            f"Marked region {region_name!r} covers part of the {face.to_string()} face's interior. A "
-            "face-level boundary condition imposes one condition per face and cannot represent a "
-            "sub-face region. Mark the region on whole faces (mark_region(name, boundary=...)), or place the "
-            "segment by region= or sdf_region=, which HJBGFDMSolver and FPParticleSolver read at each boundary "
-            "point for the conditions the boundary-conditions guide lists (docs/user/guides/boundary_conditions.md, "
-            "section 'Priority Resolution for Overlapping Regions'). A marked region on part of a face is refused "
-            "by HJBGFDMSolver on a cloud that holds a box corner, and by FPParticleSolver's array drift "
-            "(Issue #2472, #2795)."
-        )
-    if not covered:
-        raise ValueError(
-            f"Marked region {region_name!r} covers no whole boundary face, so it cannot carry a boundary "
-            "condition on a face-level path (Issue #2472)."
-        )
-    return frozenset(covered)
-
-
 def _marks_region(geometry: Any, name: str) -> bool:
     """Whether ``geometry`` marks a region called ``name``. Then the region's mask places a ``region_name`` segment,
     whatever the name spells -- "x_max" included -- and a face label decides nothing (#2472, #2717)."""
     return isinstance(geometry, SupportsRegionMarking) and name in geometry.get_region_names()
 
 
-def region_name_governs_face(segment: BCSegment, face: BoundaryFace, geometry: Any = None) -> bool:
-    """Does a ``region_name`` segment govern ``face``? The one resolver for the face-level readers. #2472
+def _region_name_cover(segment: BCSegment, face: BoundaryFace, geometry: Any = None) -> str:
+    """``"whole"``, ``"partial"`` or ``"none"``: how much of ``face`` a ``region_name`` segment holds (#2472, #2795).
 
-    The geometry's region mask decides when the geometry is a structured grid that defines the region
-    (:func:`faces_covered_by_region`). Without it, a region name that is itself a face label
-    ("x_max", "left") names that face. Anything else is refused. Before, one reader let such a
-    segment cover every face and another skipped it, so they gave different answers on the same
-    object, and neither answer was the region. :func:`mixed_bc_from_regions` resolves whole-face
-    regions to named faces when it builds the BC, so this is reached by a region it kept (one covering
-    part of a face, or no whole face) or by a ``region_name`` segment built some other way.
-
-    Raises:
-        ValueError: if the region cannot be resolved to faces.
+    A region the geometry marks is read on its grid mask (:func:`_region_faces`), as a ``region`` or an ``sdf_region``
+    is (:meth:`BoundaryConditions._sub_face_cover`). So a reader built to tolerate a partial cover -- a point at a
+    corner, a consumer passing its own ``equivalent`` -- sees one, and the face family refuses it where it imposes
+    another condition than the rest of the face (:meth:`BoundaryConditions.segment_for_face`), as it refuses a partial
+    ``region``. Without a marking, a region name that is itself a face label ("x_max", "left") names that face.
+    Anything else is refused.
     """
     name = segment.region_name
     if _marks_region(geometry, name):
-        return face in faces_covered_by_region(geometry, name)
+        mask = _region_mask_on_grid(geometry, name)
+        if mask is None:
+            raise ValueError(
+                f"{type(geometry).__name__} has no grid faces, so marked region {name!r} cannot be resolved to a "
+                "face (Issue #2472)."
+            )
+        covered, partial = _region_faces(mask)
+        return "whole" if face in covered else "partial" if face in partial else "none"
     label = parse_boundary_face(name)
     if label is not None:
-        return label == face
+        return "whole" if label == face else "none"
     raise ValueError(_region_name_refusal(segment, geometry, f"governs {face.to_string()}"))
 
 
@@ -2808,7 +2781,7 @@ def region_name_holds_point(
     geometry: Any = None,
 ) -> bool:
     """Does a ``region_name`` segment hold the boundary point ``point``? The point-level reading of
-    :func:`region_name_governs_face`, in its order (#2490 B1e-1):
+    :func:`_region_name_cover`, in its order (#2490 B1e-1):
 
     - a grid that marks the region decides by its mask, at the grid node nearest the point (the first of two
       equidistant ones in the grid's order). A particle past a wall reaches it at its nearest point of the BC's box,
@@ -2936,12 +2909,13 @@ def mixed_bc_from_regions(
     how the solvers and the FDM operators read a BC (#2472). The only region, on every face, becomes
     one unrestricted (uniform) segment. A region spanning several faces gives segments named
     ``"<template name>[<face>]"``. Any other region keeps ``region_name``: a face-level reader refuses
-    it, since one condition per face cannot represent it. A point reader given the geometry reads it at
-    a point on a face and refuses it at every box corner, so HJBGFDMSolver refuses it on a cloud that
-    holds a corner; FPParticleSolver's array drift refuses it through its face reader (#2795). The
-    boundary-conditions guide's § Priority Resolution lists which solvers read such a region, and for
-    which conditions. Such a region may not be named like a face ("x_max", "top"), since a reader
-    without the geometry would read the name as that face.
+    it where it imposes another condition than the rest of its face, since one condition per face cannot
+    represent both, and a point reader given the geometry reads it at every point, box corners
+    included, by the point's nearest grid node, so it reaches half a grid spacing past the marked nodes,
+    onto the adjacent face where a marked node is a corner (#2795). The boundary-conditions guide's
+    § Priority Resolution lists which solvers read such a region, and for which conditions. Such a region
+    may not be named like a face ("x_max", "top"), since a reader without the geometry would read the
+    name as that face.
 
     Args:
         geometry: Geometry with marked regions (must implement SupportsRegionMarking)

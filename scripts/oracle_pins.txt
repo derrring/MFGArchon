@@ -7,8 +7,13 @@
 # requires every test pytest collects from that file to pass. A target of `-` declares a part nothing
 # pins yet: it counts in the denominator and keeps its label unmet. A label is met only when it has at
 # least one target, no `-` part, and every one of its targets passed. Kinds:
-#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 53 cells: BC type x dimension on each family's
-#               default configuration, and HJB-GFDM's cells for each distinct discrete equation it ships
+#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 67 cells: for each family counted so far, each BC
+#               it declares in `_SUPPORTED_BC_TYPES` x dimension 1 and 2, on its default configuration, and HJB-GFDM's
+#               cells for each distinct discrete equation it ships. (a) covers every shipped family (comment
+#               6395444642, user ruling 2026-10-25, confirming 6014400413); an off-default family -- HJB-SL, HJB-WENO,
+#               FP-FVM, FP-GFDM, FP-SL, meshless, network -- gains its cells when its batch lands (comment 6217184763,
+#               user ruling 2026-10-16). An FP family's DIRICHLET is two cells, an exit (the shared BC, m = 0) and a
+#               prescribed density (an explicit FP BC, m = g)
 #   row         a (b) row of #2512 (comment 6054006841), labelled <grid|network>/<row>
 #   convention  a convention ruled 2026-10-08, labelled C1-C6 as #2429 numbers them
 #   pin         a pin a batch rests on that is not a cell itself
@@ -85,13 +90,17 @@ oracle fp_fdm/no_flux_2d            -
 oracle fp_fdm/periodic_1d           -
 oracle fp_fdm/periodic_2d           -
 
-# FP-FEM: 10 cells. Dirichlet is the shared exit; the explicit route's prescribed density (#2532) is pinned below.
+# FP-FEM: 12 cells. Dirichlet is two cells, as for every FP family that declares it: the shared exit, met below, and
+# the explicit route's prescribed density (#2532), whose route is pinned below; its two cells are `-` until an oracle
+# meets them.
 # Each met cell lists its oracle (an exact density at second order) and the wall property it is named for, with a
 # rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_2d]
+oracle fp_fem/dirichlet_density_1d  -
+oracle fp_fem/dirichlet_density_2d  -
 # The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and both targets of the NO_FLUX cell
 # they solve as, so they are met only while it is, and the refusal of a NEUMANN of FP-FEM's own (#2532).
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
@@ -171,6 +180,23 @@ oracle hjb_gfdm_positive_qp_fan/dirichlet_2d  tests/unit/test_alg/test_positive_
 oracle hjb_gfdm_positive_qp_fan/dirichlet_2d  tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]
 oracle hjb_gfdm_positive_qp_fan/no_flux_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]
 oracle hjb_gfdm_positive_qp_fan/no_flux_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]
+
+# FP-particle (FPParticleSolver), the main pair's FP: 12 cells, each BC it declares in `_SUPPORTED_BC_TYPES` at
+# 2d4736c7 x dimension 1 and 2, on its default configuration (#2512 comment 6395444642).
+oracle fp_particle/dirichlet_exit_1d     -
+oracle fp_particle/dirichlet_exit_2d     -
+oracle fp_particle/dirichlet_density_1d  -
+oracle fp_particle/dirichlet_density_2d  -
+# fp_particle/neumann_1d awaits fp_particle/no_flux_1d.
+oracle fp_particle/neumann_1d            -
+# fp_particle/neumann_2d awaits fp_particle/no_flux_2d.
+oracle fp_particle/neumann_2d            -
+oracle fp_particle/no_flux_1d            -
+oracle fp_particle/no_flux_2d            -
+oracle fp_particle/periodic_1d           -
+oracle fp_particle/periodic_2d           -
+oracle fp_particle/reflecting_1d         -
+oracle fp_particle/reflecting_2d         -
 
 # The (b) rows
 # Row B1 (plan: #2512 comment 6124387645): the guard over every module of the library, with its planted rivals in the

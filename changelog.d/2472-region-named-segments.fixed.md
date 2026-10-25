@@ -7,7 +7,7 @@
   - `mixed_bc_from_regions` refuses a region it keeps whose name reads as a face label (`"top"`, `"x_max"`), since a reader without the geometry would take it as that whole face. As before #2472, it refuses a template that carries its own `boundary` or `region`.
   - **Behaviour change:** a single region covering only some faces is no longer read as uniform. `FPFVMSolver`, which refuses a mixed BC, now refuses that route, as it already refused the same BC written with `boundary=`.
   - A face counts as covered when the region holds its whole interior; on a two-point axis, its whole face.
-  - A region covering part of a face keeps its `region_name`. The face-level readers (`get_bc_type_at_boundary`, the FDM ghost path, `FDMApplicator.enforce_values`) share one resolver, `region_name_governs_face`, which uses the geometry's mask when given the geometry and a region name that is a face label otherwise.
+  - A region covering part of a face keeps its `region_name`. The face-level readers (`get_bc_type_at_boundary`, the FDM ghost path, `FDMApplicator.enforce_values`) share one resolver, which uses the geometry's mask when given the geometry and a region name that is a face label otherwise (`_region_name_cover` since #2795).
   - **Anything else is refused,** where it was stretched to every face or dropped.
   - `mixed_bc_from_regions` also no longer removes the `"default"` entry from the caller's dict.
 - **A uniform BC's unused `default_bc` no longer makes it mixed** (Issue #2472). `geometric_operations` counted the default even when one unrestricted segment covers every face. One periodic segment over a NO_FLUX default was therefore refused by `HJBSemiLagrangianSolver` and `FPSLSolver` as a mixed per-axis BC.
