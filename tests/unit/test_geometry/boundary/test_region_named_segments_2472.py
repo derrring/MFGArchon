@@ -165,7 +165,7 @@ def test_a_region_covering_part_of_a_face_keeps_its_name_and_is_refused_face_lev
 def test_a_region_covering_no_whole_face_is_refused():
     grid = _grid()
     grid.mark_region("centre", predicate=lambda x: np.all(np.abs(x - 0.5) < 0.2, axis=1))
-    with pytest.raises(ValueError, match="covers no whole boundary face"):
+    with pytest.raises(ValueError, match="cover no node of any face's interior"):
         pad_array_with_ghosts(np.ones((N, N)), _raw("centre"), geometry=grid)
 
 

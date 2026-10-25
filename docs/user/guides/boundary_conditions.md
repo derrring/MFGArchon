@@ -208,7 +208,7 @@ point, where the higher priority wins at a point both hold, by these solvers and
 | a region on part of a face, placed by | `HJBGFDMSolver` | `FPParticleSolver`, array drift (as in a coupled solve) | `FPParticleSolver`, callable drift |
 |---|---|---|---|
 | `region=` or `sdf_region` | when no condition of the BC is PERIODIC, REFLECTING, or a ROBIN with nonzero `alpha` or with `beta` other than 1 | when no condition of the BC is ROBIN or a nonzero NEUMANN, and the region and the rest of its face are both PERIODIC or both not | when no condition of the BC is ROBIN or a nonzero NEUMANN |
-| `mark_region` | refused on a cloud that holds a box corner (#2795) | refused (#2795) | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them |
+| `mark_region` | as for `region=` | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them | as for `region=`, with the same reach |
 
 A coupled `HJBGFDMSolver` + `FPParticleSolver` solve reads such a region when both of its columns
 do. The conditions measured, each as the region's and as the rest's, are DIRICHLET 0, NO_FLUX,
