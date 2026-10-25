@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from .tolerances import SDF_BOUNDARY_TOL
 from .types import BCSegment, BCType
 
 if TYPE_CHECKING:
@@ -545,11 +546,13 @@ class ParticleApplicator:
         self, bc_on_box: BoundaryConditions, particle: NDArray[np.floating], box: NDArray[np.floating]
     ) -> BCSegment | None:
         """The segment that governs a boundary particle: read at its nearest point of ``box`` through the contact
-        loop's reader (`segment_at_box_contact`), within the tolerance that found it at the boundary. On one face that
-        is the face's segment there; past or at a corner the owner's corner rule decides (#2512 row B1, stage B1d),
-        where the first face found, x before y, used to."""
+        loop's reader (`segment_at_box_contact`), at the owner's default tolerance (``SDF_BOUNDARY_TOL``), the one the
+        first-face read asked the owner at. On one face that is the face's segment there, and a placement holds the
+        point within that tolerance; within it of a second face too, or past both, the owner's corner rule decides
+        (#2512 row B1, stage B1d), where the first face found, x before y, used to. The applicator's own 1e-10 only
+        decides which particles are at the boundary."""
         point = np.clip(particle, box[:, 0], box[:, 1])
-        return segment_at_box_contact(bc_on_box, point, self._boundary_tolerance)[1]
+        return segment_at_box_contact(bc_on_box, point, SDF_BOUNDARY_TOL)[1]
 
     def _reflect_particle(
         self,

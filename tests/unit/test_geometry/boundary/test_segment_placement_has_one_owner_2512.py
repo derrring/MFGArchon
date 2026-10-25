@@ -158,7 +158,7 @@ PLANTED = {
         "mfgarchon/utils/numerical/tensor_calculus.py",
         "def _rival(bc):\n    segments = bc.segments\n    return segments[0]\n",
     ),
-    "a new reader in a family still allowed some": (
+    "a new reader in a family whose allowance B1b removed": (
         "mfgarchon/alg/numerical/fem/bc_adapter.py",
         "def _rival(seg):\n    return seg.region_name\n",
     ),

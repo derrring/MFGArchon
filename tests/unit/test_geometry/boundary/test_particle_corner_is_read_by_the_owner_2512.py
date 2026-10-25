@@ -2,18 +2,23 @@
 
 `ParticleApplicator.apply` and ``apply_with_flux_limits`` named the first face they found a particle on, x before y and
 min before max, and asked the owner on that face alone, so the owner's corner rule (`BoundaryConditions._corner_choice`:
-priority, then DIRICHLET before a natural condition) never saw a particle at a corner. With one axis periodic and an
-exit on the other, a particle past a corner on the periodic axis's side was wrapped, where the corner order absorbs it.
-Both methods now read each boundary particle at its nearest point of the step's box through the contact loop's reader,
-`segment_at_box_contact` (#2733), within the tolerance that found it at the boundary.
+priority, then DIRICHLET before a natural condition) never saw a particle at a corner. With x periodic and an exit on y,
+a particle past a corner the two share was wrapped, where the corner order absorbs it; with y periodic, x's exit was
+already read first. Both methods now read each boundary particle at its nearest point of the step's box through the
+contact loop's reader, `segment_at_box_contact` (#2733), at the owner's default tolerance (``SDF_BOUNDARY_TOL``), as
+the first-face read asked the owner.
 
 The particle solver reaches ``apply`` only on its periodic path: a segment-aware BC that declares a periodic face
-(`FPParticleSolver._apply_boundary_conditions_segment_aware`). ``apply_with_flux_limits`` has no library caller; C6
-(#2550) decides it.
+(`FPParticleSolver._apply_boundary_conditions_segment_aware`). ``apply_with_flux_limits`` is reached only from
+`FPParticleSolver._apply_boundary_conditions_with_flux_limits`, which has no library caller; C6 (#2550) decides both.
 
-Held fixed: ``corner_strategy="priority"``, constant values, no ``region_name``, and a BC that carries the step's box
-or no ``domain_bounds``. The other side of the first is pinned too: under a blending strategy the owner refuses a
-corner whose faces differ.
+Held fixed:
+- every segment at priority 0, placed by a face label, except the tolerance pin's ``region`` exit; no ``sdf_region``,
+  ``region_name`` or ``normal_direction``;
+- under ``corner_strategy="priority"``, every corner pairs a PERIODIC face with a DIRICHLET exit: no periodic/wall or
+  exit/wall corner. Under a blending strategy, the owner refuses a corner whose faces differ, and the control is a
+  wall/wall corner;
+- constant values, and a BC that carries the step's box or no ``domain_bounds``.
 """
 
 from __future__ import annotations
@@ -123,6 +128,24 @@ def test_a_particle_past_the_middle_of_a_face_takes_that_faces_condition(method,
 
 
 @pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+def test_a_placement_holds_a_particle_within_the_owners_default_tolerance(method):
+    """A ``region`` exit on part of x_max holds a particle past x_max within the owner's default tolerance of its ends,
+    1e-8, as the first-face read's query did, and not 2e-8 past them. Read at the applicator's own 1e-10, the particle
+    5e-9 past an end was reflected."""
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", region={"y": (0.4, 0.6)})
+        ],
+        default_bc=BCType.NO_FLUX,
+        domain_bounds=np.array(BOX),
+    )
+    points = [(1.05, 0.5), (1.05, 0.6 + 5e-9), (1.05, 0.4 - 5e-9), (1.05, 0.6 + 2e-8), (1.05, 0.4 - 2e-8)]
+    _, absorbed = _step(method, bc, points)
+    assert absorbed.tolist() == [True, True, True, False, False]
+
+
+@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
 def test_a_one_dimensional_face_named_left_and_right_reads_as_x_min_and_x_max(method):
     """The first-face read named 1-D faces "left" and "right"; the contact reader names them by their axis. A BC written
     either way steps the same particles bit for bit: the exit absorbs, the wall reflects."""
@@ -146,9 +169,9 @@ def test_a_one_dimensional_face_named_left_and_right_reads_as_x_min_and_x_max(me
 
 
 def test_the_particle_solvers_periodic_path_reads_a_corner_by_the_owner():
-    """One indirection up: the solver's periodic path hands the applicator its own BC and the grid's box. A particle past
-    the corner the periodic x faces share with the y_max exit is absorbed; past the middle of y_max it is absorbed and
-    past the middle of x_max it is wrapped, as before."""
+    """One indirection up: the solver's periodic path hands the applicator its own BC and the grid's box. A particle
+    past the corner the periodic x faces share with the y_max exit is absorbed; past the middle of y_max it is absorbed
+    and past the middle of x_max it is wrapped, as before."""
     bc = BoundaryConditions(
         dimension=2,
         segments=[
