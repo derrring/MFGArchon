@@ -849,6 +849,10 @@ class HJBFDMSolver(BaseHJBSolver):
             try:
                 U_solution, info = self.nonlinear_solver.solve(F, U_guess)
                 newton_failed = not info.converged
+            except NotImplementedError:
+                # Unsupported residual operations are a capability refusal, not a
+                # Newton convergence failure eligible for fallback (Issue #2477).
+                raise
             except (np.linalg.LinAlgError, ValueError, RuntimeError) as e:
                 newton_failed = True
                 newton_error = e
