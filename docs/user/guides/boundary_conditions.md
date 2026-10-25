@@ -207,13 +207,20 @@ point, where the higher priority wins at a point both hold, by these solvers and
 
 | a region on part of a face, placed by | `HJBGFDMSolver` | `FPParticleSolver`, array drift (as in a coupled solve) | `FPParticleSolver`, callable drift |
 |---|---|---|---|
-| `region=` or `sdf_region` | when no condition of the BC is PERIODIC, REFLECTING, or a ROBIN with nonzero `alpha` | when no condition of the BC is ROBIN or a nonzero NEUMANN, and the region and the rest of its face are both PERIODIC or both not | when no condition of the BC is ROBIN or a nonzero NEUMANN |
+| `region=` or `sdf_region` | when no condition of the BC is PERIODIC, REFLECTING, or a ROBIN with nonzero `alpha` or with `beta` other than 1 | when no condition of the BC is ROBIN or a nonzero NEUMANN, and the region and the rest of its face are both PERIODIC or both not | when no condition of the BC is ROBIN or a nonzero NEUMANN |
 | `mark_region` | refused on a cloud that holds a box corner (#2795) | refused (#2795) | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them |
 
 A coupled `HJBGFDMSolver` + `FPParticleSolver` solve reads such a region when both of its columns
 do. The conditions measured, each as the region's and as the rest's, are DIRICHLET 0, NO_FLUX,
-NEUMANN 0 and 0.5, REFLECTING, ROBIN with `alpha` 1 and 0, and PERIODIC. On a mesh, the FEM solvers
-read a `region=` placement per facet (`BoundaryConditions.segments_for_facets`).
+NEUMANN 0 and 0.5, REFLECTING, ROBIN with `alpha` 1 and 0 (and `beta` 1 and 2), and PERIODIC.
+
+The table is measured, and holds, for the problem's own BC (not one passed to `FPParticleSolver` as
+`boundary_conditions=`, which refuses any NEUMANN and a nonzero DIRICHLET), on the grid's box (no
+`implicit_domain=`, which refuses an exit placed by `region=` alone or by `sdf_region`), with
+`corner_strategy="priority"`, constant condition values, no `flux_capacity`, the array drift given
+as an array of U (not as velocities with `drift_is_precomputed=True`), and a region that holds at
+least one grid node. Outside those, other refusals apply, each naming its cause. On a mesh, the FEM
+solvers read a `region=` placement per facet (`BoundaryConditions.segments_for_facets`).
 
 ### Boundary-Based vs Region-Based
 
