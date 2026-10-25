@@ -177,12 +177,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             BCType.NEUMANN,
             BCType.NO_FLUX,  # Same as Neumann with g=0
             BCType.ROBIN,  # Robin(0,1), i.e. n.grad u = g; general-Robin sub-cases fail loud in the row builder
-            # PERIODIC is honoured, but only on a cloud whose points are not detected as
-            # boundary -- seam 2.2e-15 / 3.3e-11 / 6.7e-16 / 6.7e-16 at Nx=11/21/41/81 on a torus
-            # cloud, where the Issue #711 wrap does the work. `_detect_boundary_indices` ignores
-            # `periodic_dims`, so the default endpoint-inclusive cloud reaches the row builder
-            # instead and raises. That is the defect (#1841); the capability is real, so the
-            # declaration stays.
+            # PERIODIC: `_detect_boundary_indices` skips a periodic axis, so the problem's own periodic
+            # grid, collocated at its endpoint-inclusive nodes, has no boundary point and the Issue #711
+            # ghost points make the wrap (#1841). Its oracle cells, 1-D and 2-D, are in
+            # `test_gfdm_bc_oracles_2512.py` (#2512 (a)).
             BCType.PERIODIC,
         }
     )

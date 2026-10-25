@@ -7,7 +7,7 @@
 # requires every test pytest collects from that file to pass. A target of `-` declares a part nothing
 # pins yet: it counts in the denominator and keeps its label unmet. A label is met only when it has at
 # least one target, no `-` part, and every one of its targets passed. Kinds:
-#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 67 cells: for each family counted so far, each BC
+#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 68 cells: for each family counted so far, each BC
 #               it declares in `_SUPPORTED_BC_TYPES` x dimension 1 and 2, on its default configuration, and HJB-GFDM's
 #               cells for each distinct discrete equation it ships. (a) covers every shipped family (comment
 #               6395444642, user ruling 2026-10-25, confirming 6014400413); an off-default family -- HJB-SL, HJB-WENO,
@@ -150,7 +150,7 @@ pin    fp_fem/whole_file           tests/unit/test_alg/test_fp_fem_bc_oracles_25
 pin    fp_fem/explicit_route       tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py
 pin    fp_fem/shared_robin_refused tests/unit/test_alg/test_fp_refuses_a_shared_robin_2512.py
 
-# HJB-GFDM (user ruling 2026-10-22, #2512 comment 6333790265): 15 cells, one oracle for each distinct discrete equation.
+# HJB-GFDM (user ruling 2026-10-22, #2512 comment 6333790265): 16 cells, one oracle for each distinct discrete equation.
 # 10 BC cells, BC type x dimension, on the default configuration: monotonicity_scheme="none" with Newton.
 oracle hjb_gfdm/dirichlet_1d   tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[dirichlet-uniform-newton]
 oracle hjb_gfdm/dirichlet_1d   tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[dirichlet-per_face-newton]
@@ -158,20 +158,22 @@ oracle hjb_gfdm/dirichlet_1d   tests/unit/test_alg/test_dirichlet_value_at_its_l
 oracle hjb_gfdm/dirichlet_2d   tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py::test_gfdm_reads_a_dirichlet_value_at_its_level[2-newton]
 oracle hjb_gfdm/neumann_1d     tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[neumann-uniform-newton]
 oracle hjb_gfdm/neumann_1d     tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[neumann-per_face-newton]
-oracle hjb_gfdm/neumann_2d     -
+oracle hjb_gfdm/neumann_2d     tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[per_face]
+oracle hjb_gfdm/neumann_2d     tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[uniform]
 oracle hjb_gfdm/no_flux_1d     tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_mms_reaches_gfdm_and_it_converges
 oracle hjb_gfdm/no_flux_2d     tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-42]
 oracle hjb_gfdm/no_flux_2d     tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-3]
 oracle hjb_gfdm/no_flux_2d     tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-7]
-oracle hjb_gfdm/periodic_1d    -
-oracle hjb_gfdm/periodic_2d    -
+oracle hjb_gfdm/periodic_1d    tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_periodic_solution_that_is_not_even_about_the_seam_is_reproduced_at_second_order[1]
+oracle hjb_gfdm/periodic_2d    tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_periodic_solution_that_is_not_even_about_the_seam_is_reproduced_at_second_order[2]
 # The robin cells are ROBIN(alpha=0, beta=1), the one Robin HJB-GFDM writes a row for, the Neumann row: each lists its
 # routing pin and the targets of the neumann cell it solves as, so it is met only while that cell is.
 oracle hjb_gfdm/robin_1d       tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_a_uniform_robin_with_no_value_term_is_the_neumann_condition[newton]
 oracle hjb_gfdm/robin_1d       tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[neumann-uniform-newton]
 oracle hjb_gfdm/robin_1d       tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[neumann-per_face-newton]
-# hjb_gfdm/robin_2d awaits hjb_gfdm/neumann_2d.
-oracle hjb_gfdm/robin_2d       -
+oracle hjb_gfdm/robin_2d       tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_robin_with_alpha_0_and_beta_1_solves_as_the_neumann_row_in_2d
+oracle hjb_gfdm/robin_2d       tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[per_face]
+oracle hjb_gfdm/robin_2d       tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[uniform]
 # 3 discretisation cells on the 2-D no-flux box, one per other equation `_bc_row_for_point`'s boundary rows reach: with
 # Howard in d >= 2 the advection is a first-order upwind stencil, a different equation from Newton's.
 oracle hjb_gfdm/no_flux_2d_none_howard  tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-42]
@@ -186,10 +188,15 @@ oracle hjb_gfdm/no_flux_2d_joint_socp_newton  -
 oracle hjb_gfdm/no_flux_2d_joint_socp_howard  -
 # positive_qp_fan writes boundary rows of its own (mirror and value-copy rows), so it has its own BC cells: the ones it
 # admits, Dirichlet and homogeneous reflecting faces on a 2-D box. Its no_flux_2d cell is also its discretisation cell.
+# Its neumann_2d cell is NEUMANN with a zero datum, which it admits as a reflecting face: a routing cell, listing its
+# routing pin and no_flux_2d's targets (owed by #2512 comments 6333097202 and 6333790265, entered in stage A2a).
 oracle hjb_gfdm_positive_qp_fan/dirichlet_2d  tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[sobol]
 oracle hjb_gfdm_positive_qp_fan/dirichlet_2d  tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]
 oracle hjb_gfdm_positive_qp_fan/no_flux_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]
 oracle hjb_gfdm_positive_qp_fan/no_flux_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]
+oracle hjb_gfdm_positive_qp_fan/neumann_2d    tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_positive_qp_fan_reads_a_zero_neumann_datum_as_its_reflecting_face
+oracle hjb_gfdm_positive_qp_fan/neumann_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]
+oracle hjb_gfdm_positive_qp_fan/neumann_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]
 
 # FP-particle (FPParticleSolver), the main pair's FP: 12 cells, each BC it declares in `_SUPPORTED_BC_TYPES` at
 # 2d4736c7 x dimension 1 and 2, on its default configuration (#2512 comment 6395444642).
