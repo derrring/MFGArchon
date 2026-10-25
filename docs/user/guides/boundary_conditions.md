@@ -202,23 +202,25 @@ the same answer here. Build such an overlap from `region_name` segments, as abov
 refuses the BC, since the one on `y_max` governs nothing.
 
 **Regions that overlap on part of a face**, such as two strips `x < 0.5` and `x < 0.1`, cannot be
-imposed by a face-level path, which refuses them (#2472). They are resolved per point:
+imposed by a face-level path, which refuses them (#2472). On a `TensorProductGrid` they are read per
+point, where the higher priority wins at a point both hold, by these solvers and for these conditions:
 
-- placed by `region=` or `sdf_region`, an exit or a wall (DIRICHLET, NO_FLUX or zero NEUMANN) is read
-  at each boundary point by `HJBGFDMSolver` and `FPParticleSolver`, alone or coupled, and the higher
-  priority wins where both hold. A PERIODIC part of a face is read only by `FPParticleSolver` with a
-  callable drift;
-- marked with `mark_region` on part of a face, they are read per point by `FPParticleSolver` with a
-  callable drift, as the cells of the marked nodes, which reach half a grid spacing past them.
-  `HJBGFDMSolver` refuses them on a cloud that holds a box corner, and so does an array drift
-  (#2795).
+| a region on part of a face, placed by | `HJBGFDMSolver` | `FPParticleSolver`, array drift (as in a coupled solve) | `FPParticleSolver`, callable drift |
+|---|---|---|---|
+| `region=` or `sdf_region` | when no condition of the BC is PERIODIC, REFLECTING, or a ROBIN with nonzero `alpha` | when no condition of the BC is ROBIN or a nonzero NEUMANN, and the region and the rest of its face are both PERIODIC or both not | when no condition of the BC is ROBIN or a nonzero NEUMANN |
+| `mark_region` | refused on a cloud that holds a box corner (#2795) | refused (#2795) | as for `region=`; it reads the marked nodes' cells, which reach half a grid spacing past them |
+
+A coupled `HJBGFDMSolver` + `FPParticleSolver` solve reads such a region when both of its columns
+do. The conditions measured, each as the region's and as the rest's, are DIRICHLET 0, NO_FLUX,
+NEUMANN 0 and 0.5, REFLECTING, ROBIN with `alpha` 1 and 0, and PERIODIC. On a mesh, the FEM solvers
+read a `region=` placement per facet (`BoundaryConditions.segments_for_facets`).
 
 ### Boundary-Based vs Region-Based
 
 | Approach | Use When | Example |
 |----------|----------|---------|
 | **Boundary-based** | Simple geometries, entire boundaries | `boundary="x_min"` |
-| **Region-based** | Complex geometries; part of a face only in a per-point solver (above) | `region={"x": (0.0, 0.1)}` |
+| **Region-based** | Complex geometries; part of a face only per point on a grid, or per facet on a mesh (above) | `region={"x": (0.0, 0.1)}` |
 
 Both approaches can be mixed in the same BC specification.
 
