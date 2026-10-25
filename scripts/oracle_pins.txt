@@ -7,11 +7,13 @@
 # requires every test pytest collects from that file to pass. A target of `-` declares a part nothing
 # pins yet: it counts in the denominator and keeps its label unmet. A label is met only when it has at
 # least one target, no `-` part, and every one of its targets passed. Kinds:
-#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 109 cells: every shipped family x each BC it
-#               declares x dimension 1 and 2, on each family's default configuration (#2512 comment 6014400413, user
-#               ruling 2026-10-25), and HJB-GFDM's cells for each distinct discrete equation it ships. An FP family's
-#               DIRICHLET is two cells, an exit (the shared BC, m = 0) and a prescribed density (an explicit FP BC,
-#               m = g); where a family refuses the density route, the refusal is that cell's content
+#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 67 cells: for each family counted so far, each BC
+#               it declares in `_SUPPORTED_BC_TYPES` x dimension 1 and 2, on its default configuration, and HJB-GFDM's
+#               cells for each distinct discrete equation it ships. (a) covers every shipped family (comment
+#               6395444642, user ruling 2026-10-25, confirming 6014400413); an off-default family -- HJB-SL, HJB-WENO,
+#               FP-FVM, FP-GFDM, FP-SL, meshless, network -- gains its cells when its batch lands (comment 6217184763,
+#               user ruling 2026-10-16). An FP family's DIRICHLET is two cells, an exit (the shared BC, m = 0) and a
+#               prescribed density (an explicit FP BC, m = g)
 #   row         a (b) row of #2512 (comment 6054006841), labelled <grid|network>/<row>
 #   convention  a convention ruled 2026-10-08, labelled C1-C6 as #2429 numbers them
 #   pin         a pin a batch rests on that is not a cell itself
@@ -88,8 +90,9 @@ oracle fp_fdm/no_flux_2d            -
 oracle fp_fdm/periodic_1d           -
 oracle fp_fdm/periodic_2d           -
 
-# FP-FEM: 12 cells. Dirichlet is two cells, as for every FP family: the shared exit, met below, and the explicit
-# route's prescribed density (#2532), whose route is pinned below; its two cells are `-` until an oracle meets them.
+# FP-FEM: 12 cells. Dirichlet is two cells, as for every FP family that declares it: the shared exit, met below, and
+# the explicit route's prescribed density (#2532), whose route is pinned below; its two cells are `-` until an oracle
+# meets them.
 # Each met cell lists its oracle (an exact density at second order) and the wall property it is named for, with a
 # rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]
@@ -178,47 +181,8 @@ oracle hjb_gfdm_positive_qp_fan/dirichlet_2d  tests/unit/test_alg/test_positive_
 oracle hjb_gfdm_positive_qp_fan/no_flux_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]
 oracle hjb_gfdm_positive_qp_fan/no_flux_2d    tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]
 
-# The families not yet pinned (#2512 comment 6014400413, user ruling 2026-10-25): every BC each declares in
-# `_SUPPORTED_BC_TYPES` at 2d4736c7, x dimension 1 and 2, on its default configuration. A density cell of a family
-# that refuses that route (the particle FP, #2519; meshless Galerkin, #2532) has the refusal as its content.
-
-# HJB-SL (HJBSemiLagrangianSolver): 6 cells.
-oracle hjb_sl/neumann_1d                 -
-oracle hjb_sl/neumann_2d                 -
-oracle hjb_sl/no_flux_1d                 -
-oracle hjb_sl/no_flux_2d                 -
-oracle hjb_sl/periodic_1d                -
-oracle hjb_sl/periodic_2d                -
-
-# HJB-WENO (HJBWENOSolver): 6 cells.
-oracle hjb_weno/neumann_1d               -
-oracle hjb_weno/neumann_2d               -
-oracle hjb_weno/no_flux_1d               -
-oracle hjb_weno/no_flux_2d               -
-oracle hjb_weno/periodic_1d              -
-oracle hjb_weno/periodic_2d              -
-
-# FP-FVM (FPFVMSolver): 6 cells.
-# fp_fvm/neumann_1d awaits fp_fvm/no_flux_1d.
-oracle fp_fvm/neumann_1d                 -
-# fp_fvm/neumann_2d awaits fp_fvm/no_flux_2d.
-oracle fp_fvm/neumann_2d                 -
-oracle fp_fvm/no_flux_1d                 -
-oracle fp_fvm/no_flux_2d                 -
-oracle fp_fvm/periodic_1d                -
-oracle fp_fvm/periodic_2d                -
-
-# FP-SL (FPSLSolver): 6 cells.
-# fp_sl/neumann_1d awaits fp_sl/no_flux_1d.
-oracle fp_sl/neumann_1d                  -
-# fp_sl/neumann_2d awaits fp_sl/no_flux_2d.
-oracle fp_sl/neumann_2d                  -
-oracle fp_sl/no_flux_1d                  -
-oracle fp_sl/no_flux_2d                  -
-oracle fp_sl/periodic_1d                 -
-oracle fp_sl/periodic_2d                 -
-
-# FP-particle (FPParticleSolver): 12 cells.
+# FP-particle (FPParticleSolver), the main pair's FP: 12 cells, each BC it declares in `_SUPPORTED_BC_TYPES` at
+# 2d4736c7 x dimension 1 and 2, on its default configuration (#2512 comment 6395444642).
 oracle fp_particle/dirichlet_exit_1d     -
 oracle fp_particle/dirichlet_exit_2d     -
 oracle fp_particle/dirichlet_density_1d  -
@@ -234,29 +198,6 @@ oracle fp_particle/periodic_2d           -
 oracle fp_particle/reflecting_1d         -
 oracle fp_particle/reflecting_2d         -
 
-# Meshless Galerkin FP (MeshlessGalerkinFPSolver): 10 cells.
-oracle meshless_fp/dirichlet_exit_1d     -
-oracle meshless_fp/dirichlet_exit_2d     -
-oracle meshless_fp/dirichlet_density_1d  -
-oracle meshless_fp/dirichlet_density_2d  -
-# meshless_fp/neumann_1d awaits meshless_fp/no_flux_1d.
-oracle meshless_fp/neumann_1d            -
-# meshless_fp/neumann_2d awaits meshless_fp/no_flux_2d.
-oracle meshless_fp/neumann_2d            -
-oracle meshless_fp/no_flux_1d            -
-oracle meshless_fp/no_flux_2d            -
-oracle meshless_fp/reflecting_1d         -
-oracle meshless_fp/reflecting_2d         -
-
-# Meshless Galerkin HJB (MeshlessGalerkinHJBSolver): 8 cells.
-oracle meshless_hjb/dirichlet_1d         -
-oracle meshless_hjb/dirichlet_2d         -
-oracle meshless_hjb/neumann_1d           -
-oracle meshless_hjb/neumann_2d           -
-oracle meshless_hjb/no_flux_1d           -
-oracle meshless_hjb/no_flux_2d           -
-oracle meshless_hjb/reflecting_1d        -
-oracle meshless_hjb/reflecting_2d        -
 # The (b) rows
 row grid/B1_face_segment            -
 # Row B2 is not met by its first half (B2a): one evaluation of a segment's value is its target, and a decoder is
