@@ -219,8 +219,9 @@ The table is measured, and holds, for the problem's own BC (not one passed to `F
 `implicit_domain=`, which refuses an exit placed by `region=` alone or by `sdf_region`), with
 `corner_strategy="priority"`, constant condition values, no `flux_capacity`, the array drift given
 as an array of U (not as velocities with `drift_is_precomputed=True`), and a region that holds at
-least one grid node. Outside those, other refusals apply, each naming its cause. On a mesh, the FEM
-solvers read a `region=` placement per facet (`BoundaryConditions.segments_for_facets`).
+least one grid node. Outside those the table is not measured; the refusals measured there are named
+above. On a mesh, the FEM solvers read a `region=` placement per facet
+(`BoundaryConditions.segments_for_facets`).
 
 ### Boundary-Based vs Region-Based
 
