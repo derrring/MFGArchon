@@ -410,6 +410,18 @@ Urgency is not an admission: it changes the order of work, not its level. Nor is
 
 The class line is checked when the plan is approved, and again at review (§ *Review before merge*).
 
+### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
+
+The plan approved for a PR fixes its scope, as its class line (§ *Local patches are the anti-pattern*) fixes its population. A finding made during the work that falls outside both goes through § *GitHub issue/PR management*'s *Before filing an issue*, and the work continues on the plan. Its author does not widen the PR on their own judgement. From review 1 on, § *Review before merge*'s bullet on a defect that predates the PR applies as well.
+
+A finding is **structural** when any of these holds:
+- it falsifies the plan's premise or its acceptance check;
+- it concerns a convention or an owner that several implementations share, so fixing it at one site would fork the convention;
+- it is a default-path wrong result in code the PR already changes;
+- it changes a #2512 phase denominator.
+
+The author sends a structural finding to the plan's approver in one line and keeps working the plan. The approver rules whether to widen the PR, split the finding into an issue, or defer it. A widening is recorded beside the plan's approval, and the class line and PR body follow it.
+
 ### Version-bump checklist ⚠️ MANDATORY
 In a single commit:
 1. `pyproject.toml:11` — `version = "X.Y.Z"` + inline `# vX.Y.Z: <one-line scope>`.
