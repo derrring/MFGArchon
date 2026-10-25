@@ -1246,9 +1246,9 @@ class FPParticleSolver(BaseFPSolver):
         )
 
     def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
-        """What the contact loop cannot do, refused at the start of a solve: an implicit_domain whose bounding box is not
-        the grid's box (#2706); and one whose boundary meets a periodic face, since there the rest of a wrapped step
-        would start inside the domain's complement (#2704), in d >= 3 any one under a periodic face (#2807)."""
+        """What the contact loop cannot do, refused at the start of a solve: an implicit_domain whose bounding box is
+        not the grid's box (#2706); and one whose boundary meets a periodic face, since there the rest of a wrapped
+        step would start inside the domain's complement (#2704), in d >= 3 any one under a periodic face (#2807)."""
         # A step ends at its contacts with the implicit_domain, and a contact reads the BC only on the grid's box (D2's
         # box rule, #2733). A domain reaching past the grid's box lets a particle leave the box with no contact; one
         # inside it has no surface on the box, so its BC is read nowhere and every contact reflects. Equal boxes give
@@ -1272,8 +1272,8 @@ class FPParticleSolver(BaseFPSolver):
             # reads the whole face: a ball touching x_max of the unit cube reads 1.0 (#2807).
             if dimension >= 3:
                 raise NotImplementedError(
-                    f"FPParticleSolver: a domain for the particles -- an ImplicitDomain geometry or implicit_domain= -- "
-                    f"in {dimension}-D with a periodic condition on the outer boundary (a periodic segment or "
+                    "FPParticleSolver: a domain for the particles -- an ImplicitDomain geometry or implicit_domain= "
+                    f"-- in {dimension}-D with a periodic condition on the outer boundary (a periodic segment or "
                     "default_bc) is not supported. A step that wraps through a periodic face goes on from its image on "
                     "the opposite face, so an obstacle touching a face of a periodic axis is refused, and in d >= 3 "
                     "that touch cannot yet be told from the domain's face trace (#2807)."
@@ -1291,11 +1291,11 @@ class FPParticleSolver(BaseFPSolver):
                     if trace < whole - inside:
                         raise NotImplementedError(
                             f"FPParticleSolver: the particles' domain meets the {('min', 'max')[side]} face of axis "
-                            f"{axis}, an axis with a periodic face: its trace there, read {inside:.1e} inside the face, "
-                            f"is {trace:.6g} long against the face's {whole:.6g}. A step that wraps through a periodic "
-                            "face goes on from its image on the opposite face, and an obstacle touching either face can "
-                            "hold that image, which the contact loop does not place (#2704). Keep obstacles off the "
-                            "faces of a periodic axis."
+                            f"{axis}, an axis with a periodic face: its trace there, read {inside:.1e} inside the "
+                            f"face, is {trace:.6g} long against the face's {whole:.6g}. A step that wraps through a "
+                            "periodic face goes on from its image on the opposite face, and an obstacle touching "
+                            "either face can hold that image, which the contact loop does not place (#2704). Keep "
+                            "obstacles off the faces of a periodic axis."
                         )
 
     def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:

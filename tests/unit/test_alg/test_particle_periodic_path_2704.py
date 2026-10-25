@@ -267,8 +267,8 @@ def test_a_step_that_wraps_meets_an_obstacle_on_its_image():
 
 @pytest.mark.filterwarnings("ignore")
 def test_an_obstacle_touching_a_periodic_face_is_refused_by_name():
-    """An obstacle reaching x_max, a periodic face: a wrapped step would go on from an image the obstacle may hold, which
-    the loop does not place, so the solve is refused, naming the face. One clear of the faces solves."""
+    """An obstacle reaching x_max, a periodic face: a wrapped step would go on from an image the obstacle may hold,
+    which the loop does not place, so the solve is refused, naming the face. One clear of the faces solves."""
     box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
     touching = DifferenceDomain(box, Hyperrectangle(np.array([[0.8, 1.1], [0.4, 0.6]])))
     clear = DifferenceDomain(box, Hyperrectangle(np.array([[0.4, 0.6], [0.4, 0.6]])))
