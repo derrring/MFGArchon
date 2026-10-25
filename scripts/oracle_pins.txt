@@ -209,7 +209,12 @@ oracle fp_particle/reflecting_1d         -
 oracle fp_particle/reflecting_2d         -
 
 # The (b) rows
-row grid/B1_face_segment            -
+# Row B1 (plan: #2512 comment 6124387645): the guard over every module of the library, with its planted rivals in the
+# same file, and the particle applicator's corner pins, its last reader to name a face before asking the owner (stage
+# B1d). One listed exception (audit session ruling, 2026-10-25, as row B2 was met with #2612's five):
+# `BaseOptimizationSolver.get_domain_constraints`, deprecated (remove by v0.25.0), with no library caller.
+row grid/B1_face_segment            tests/unit/test_geometry/boundary/test_segment_placement_has_one_owner_2512.py
+row grid/B1_face_segment            tests/unit/test_geometry/boundary/test_particle_corner_is_read_by_the_owner_2512.py
 # Row B2 is not met by its first half (B2a): one evaluation of a segment's value is its target, and a decoder is
 # still allowlisted (FP-FDM's `_get_dirichlet_value_at_point`, D8). B2b-2a translates GFDM's dict channel into a
 # BoundaryConditions (#2597), removing D25/D26, and extends the guard to the census's second predicate.

@@ -14,10 +14,12 @@ with the field-level tests in `types.py` (plan: #2512 comment 6124387645).
 **Allowed, each by file and function, with its site count**, so a moved line does not reopen the question and a new
 rival inside an allowed function still fails. An allowance that covers no site fails, so a function moved onto the
 owner cannot leave its name behind. Two kinds:
-- a reader the later stages move onto the owner: B1b (FEM), B1c (GFDM, meshless), B1d (particle), B1e (the rest);
+- one listed exception, a reader that copies a placement outward and decides nothing: the deprecated
+  `BaseOptimizationSolver.get_domain_constraints`, which has no library caller and is removed by v0.25.0 (audit
+  session ruling, 2026-10-25, as row B2 was met with #2612's five);
 - a site that matches a rival form and reads no segment: another object's ``region`` mask, a table of region or
   index names, a metric's column name.
-After B1a the FDM family has no allowance at all (scan: 41 rival sites in it at 1052ec62, 0 after).
+Every other reader asks the owner: the particle applicator's last face namer went in B1d's final stage.
 
 **Known blind spots**, as the other structural guards state theirs:
 - a computed ``getattr`` name, ``vars(seg)``, ``seg.__dict__``;
@@ -47,8 +49,7 @@ FACE_NAME = re.compile(r"\}_(min|max)\b|_\{(side|lo|hi|s|end)\}")
 _NOT_A_SEGMENT = "matches a rival form and reads no segment"
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
-    ("mfgarchon/geometry/boundary/applicator_particle.py", "_get_boundary_id"): (2, "B1d: particle boundary id"),
-    ("mfgarchon/alg/base_solver.py", "get_domain_constraints"): (1, "B1e: one constraint per segment, from its region"),
+    ("mfgarchon/alg/base_solver.py", "get_domain_constraints"): (1, "deprecated, remove by v0.25.0; no library caller"),
     ("mfgarchon/alg/numerical/adjoint/diagnostics.py", "_get_boundary_indices"): (4, f"{_NOT_A_SEGMENT}: index keys"),
     ("mfgarchon/alg/numerical/adjoint/operators.py", "get_boundary_indices_from_geometry"): (
         4,
@@ -157,7 +158,7 @@ PLANTED = {
         "mfgarchon/utils/numerical/tensor_calculus.py",
         "def _rival(bc):\n    segments = bc.segments\n    return segments[0]\n",
     ),
-    "a new reader in a family still allowed some": (
+    "a new reader in a family whose allowance B1b removed": (
         "mfgarchon/alg/numerical/fem/bc_adapter.py",
         "def _rival(seg):\n    return seg.region_name\n",
     ),
@@ -179,15 +180,15 @@ def test_a_planted_rival_is_found(package_copy, form):
 
 
 def test_a_new_rival_inside_an_allowed_function_is_found(package_copy):
-    """The allowance pins its site count, so a second rival in the particle applicator's allowed function fails too."""
-    rel = "mfgarchon/geometry/boundary/applicator_particle.py"
+    """The allowance pins its site count, so a second rival in the listed exception's function fails too."""
+    rel = "mfgarchon/alg/base_solver.py"
     target = package_copy / rel
     original = target.read_text()
-    anchor = "        # Handle 1D special case (uses directional naming)\n"
+    anchor = "        # Handle segments if available\n"
     assert original.count(anchor) == 1
     try:
         target.write_text(original.replace(anchor, anchor + "        _ = [seg.priority for seg in ()]\n"))
         violations = _violations(scan(package_copy))
     finally:
         target.write_text(original)
-    assert any("_get_boundary_id" in v for v in violations), violations
+    assert any("get_domain_constraints" in v for v in violations), violations

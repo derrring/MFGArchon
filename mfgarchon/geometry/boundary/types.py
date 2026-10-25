@@ -356,13 +356,16 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
             return _BOUNDARY_STRING_TO_FACE[boundary]
         # Numeric-axis formats. Both spellings exist in the tree and mean the same thing:
         # `BoundaryEntity.to_string` emits "axis{N}_{side}" for axes past w, and `dim{N}_{side}` is
-        # emitted by `applicator_particle._get_boundary_id` and `flux_diagnostics.py`. A third emitter,
-        # `_compat._get_boundary_name_nd`, was deleted when `_compat` began asking the face owner by
-        # `BoundaryFace` (#2512 row B1, #2628). Accepting only the first
+        # emitted by `flux_diagnostics._get_boundary_names`, by `create_standard_boundary_names`
+        # below for axes past z, and by the `get_boundary_regions` tables of `geometry/base.py`,
+        # `graph/network_geometry.py` and `implicit/point_cloud.py` for axes past v. Two other
+        # emitters were deleted when their readers began asking the face owner:
+        # `_compat._get_boundary_name_nd` (#2512 row B1, #2628) and
+        # `applicator_particle._get_boundary_id` (row B1, stage B1d). Accepting only the first
         # spelling meant a segment declared on "dim3_min" resolved to axis 0 -- see below.
         #
-        # Two further spellings exist and are deliberately NOT accepted: `geometry/base.py:739`
-        # emits "v_min" for axis 4, and `adjoint/operators.py::_get_axis_name` emits "x_1_min" for
+        # Two further spellings exist and are deliberately NOT accepted: those three tables emit
+        # "v_min" for axis 4, and `adjoint/operators.py::_get_axis_name` emits "x_1_min" for
         # dim > 3. Both resolved to axis 0 before and to None now, and neither reaches this function
         # -- they are dict keys. `tensor_grid.py` carries a fifth, independent regex resolver that
         # `mark_region` uses instead of this one. So "one resolver" is true of the path this
