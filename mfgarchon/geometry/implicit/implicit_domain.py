@@ -22,7 +22,6 @@ from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,7 +37,6 @@ from mfgarchon.geometry.protocols import (
     SupportsManifold,
 )
 from mfgarchon.geometry.traits import BoundaryDef, ConnectivityType, StructureType
-from mfgarchon.utils.deprecation import deprecated
 from mfgarchon.utils.mfg_logging import get_logger
 
 # Module logger
@@ -288,58 +286,6 @@ class ImplicitDomain(
     # ComplementDomain) for the Issue #1041 fix that adds them.
 
     # Note: contains() and sample_uniform() now inherited from ImplicitGeometry
-
-    @deprecated(
-        since="v0.12.0",
-        replacement="Use MeshfreeApplicator from mfgarchon.geometry.boundary instead.",
-    )
-    def apply_boundary_conditions(
-        self,
-        particles: NDArray[np.float64],
-        bc_type: Literal["reflecting", "absorbing", "periodic"] = "reflecting",
-    ) -> NDArray[np.float64]:
-        """
-        Apply boundary conditions to particles that left the domain.
-
-        .. deprecated:: 0.12.0
-            Use :class:`MeshfreeApplicator` from ``mfgarchon.geometry.boundary`` instead.
-            This provides a unified interface for all geometry types.
-
-        Args:
-            particles: Particle positions - shape (N, d)
-            bc_type: Boundary condition type
-                - "reflecting": Reflect particles back into domain
-                - "absorbing": Remove particles outside domain
-                - "periodic": Wrap particles to opposite side (box domains only)
-
-        Returns:
-            Updated particle positions (may have fewer particles for "absorbing")
-
-        Example:
-            >>> # Deprecated usage:
-            >>> domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-            >>> particles_updated = domain.apply_boundary_conditions(particles, "reflecting")
-            >>>
-            >>> # New preferred usage:
-            >>> from mfgarchon.geometry.boundary import MeshfreeApplicator
-            >>> applicator = MeshfreeApplicator(domain)
-            >>> particles_updated = applicator.apply_particle_bc(particles, "reflecting")
-        """
-        if bc_type == "reflecting":
-            return self.project_to_interior(particles)
-
-        elif bc_type == "absorbing":
-            inside = self.contains(particles)
-            if np.isscalar(inside):
-                inside = np.array([inside])
-            return particles[inside]
-
-        elif bc_type == "periodic":
-            # Periodic BC requires special handling (only works for hyperrectangles)
-            raise NotImplementedError("Periodic BC requires Hyperrectangle-specific implementation")
-
-        else:
-            raise ValueError(f"Unknown boundary condition type: {bc_type}")
 
     def compute_volume(self, n_monte_carlo: int = 100000) -> float:
         """

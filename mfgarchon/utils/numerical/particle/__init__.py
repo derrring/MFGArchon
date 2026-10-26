@@ -29,7 +29,7 @@ Typical Usage:
         monte_carlo_integrate,
         MCConfig,
         MCResult,
-        # Boundary conditions
+        # Boundary conditions (deprecated: mfgarchon.utils.particle_utils holds the pair)
         apply_boundary_conditions_gpu,
         apply_boundary_conditions_numpy,
         # MCMC

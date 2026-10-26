@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from mfgarchon.geometry.boundary.periodic import periodic_distance
-from mfgarchon.utils.deprecation import deprecated
 
 from .implicit_domain import _NO_SURFACE, ImplicitDomain, _closed_inside, _closed_outside, _surface_tag
 
@@ -325,89 +324,6 @@ class Hyperrectangle(ImplicitDomain):
         particles = np.random.uniform(low=self.bounds[:, 0], high=self.bounds[:, 1], size=(n_samples, self.dimension))
 
         return particles
-
-    @deprecated(
-        since="v0.12.0",
-        replacement="Use MeshfreeApplicator from mfgarchon.geometry.boundary instead.",
-    )
-    def apply_boundary_conditions(
-        self,
-        particles: NDArray[np.float64],
-        bc_type: Literal["reflecting", "absorbing", "periodic"] = "reflecting",
-    ) -> NDArray[np.float64]:
-        """
-        Apply boundary conditions (specialized for hyperrectangle).
-
-        .. deprecated:: 0.12.0
-            Use :class:`MeshfreeApplicator` from ``mfgarchon.geometry.boundary`` instead.
-            This provides a unified interface for all geometry types.
-
-        Args:
-            particles: Particle positions - shape (N, d)
-            bc_type: Boundary condition type
-                - "reflecting": Reflect particles at boundaries
-                - "absorbing": Remove particles outside domain
-                - "periodic": Wrap particles to opposite side
-
-        Returns:
-            Updated particle positions
-
-        Example:
-            >>> # Deprecated usage:
-            >>> domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-            >>> particles_reflected = domain.apply_boundary_conditions(particles, "reflecting")
-            >>>
-            >>> # New preferred usage:
-            >>> from mfgarchon.geometry.boundary import MeshfreeApplicator
-            >>> applicator = MeshfreeApplicator(domain)
-            >>> particles_reflected = applicator.apply_particle_bc(particles, "reflecting")
-        """
-        particles = particles.copy()
-
-        if bc_type == "reflecting":
-            # Reflect particles using modular fold reflection
-            # This handles particles that travel multiple domain widths in one step
-            for dim in range(self.dimension):
-                xmin = self.bounds[dim, 0]
-                xmax = self.bounds[dim, 1]
-                Lx = xmax - xmin
-
-                if Lx > 1e-14:
-                    # Modular fold reflection: position bounces back and forth with period 2*Lx
-                    shifted = particles[:, dim] - xmin
-                    period = 2 * Lx
-                    pos_in_period = shifted % period
-                    in_second_half = pos_in_period > Lx
-                    pos_in_period[in_second_half] = period - pos_in_period[in_second_half]
-                    particles[:, dim] = xmin + pos_in_period
-
-            return particles
-
-        elif bc_type == "absorbing":
-            # Remove particles outside domain
-            inside = np.all(
-                (particles >= self.bounds[:, 0]) & (particles <= self.bounds[:, 1]),
-                axis=1,
-            )
-            return particles[inside]
-
-        elif bc_type == "periodic":
-            # Wrap particles to opposite side
-            for dim in range(self.dimension):
-                width = self.bounds[dim, 1] - self.bounds[dim, 0]
-
-                # Particles below lower bound
-                below = particles[:, dim] < self.bounds[dim, 0]
-                particles[below, dim] += width
-
-                # Particles above upper bound
-                above = particles[:, dim] > self.bounds[dim, 1]
-                particles[above, dim] -= width
-
-            return particles
-
-        else:
-            raise ValueError(f"Unknown boundary condition type: {bc_type}")
 
     def compute_volume(self, n_monte_carlo: int = 100000) -> float:
         """

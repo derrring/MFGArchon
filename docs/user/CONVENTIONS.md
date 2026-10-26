@@ -805,13 +805,16 @@ nearest point within `SDF_BOUNDARY_TOL` + |bound| · `BOUNDARY_REL_TOL` = 1e-8 +
 reader's tolerance is `CONTACT_EPS` = 1e-12 of the box's diagonal (#2733 D4). A non-finite position is refused by
 name, by the contact loop (`ImplicitDomain.first_contact`) and by the end readers' owner (`walls_reached`) alike.
 
+**The 1-D helpers** (`utils/particle_utils.apply_boundary_conditions_numpy` / `_gpu`). The NumPy one folds and wraps
+through the owners. The particle solver's 1-D GPU path calls the GPU one, whose fold and wrap are a device copy of the
+owners, kept because they work on NumPy arrays; `test_particle_utils.py` pins it against them. Both refuse
+"dirichlet" by name, since a function that returns positions cannot remove a particle and a clamp keeps the mass
+that should leave; both refuse a non-finite position, as the owner's reach does.
+
 *Not yet met (#2733): the contact loop reflects at a step's first contacts itself, which on the box agrees with that
-fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2550, its
-second stage): the 1-D helpers in `utils/particle_utils.py` and `utils/numerical/particle/boundary.py` fold and wrap
-with their own copies and clamp for "dirichlet", and the particle solver's 1-D GPU path calls the first. The export
-`geometry.boundary.wrap_positions` resolves to `corner.wrap_positions`, a deprecated shim for the periodic owner, and
-`Hyperrectangle.apply_boundary_conditions`, deprecated, carries its own copies. On a geometry that is not a box,
-`MeshfreeApplicator`'s particle modes read its bounding box (#2693). No helper measured mutates the caller's array.*
+fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2693): on a
+geometry that is not a box, `MeshfreeApplicator`'s particle modes read its bounding box. No helper measured mutates
+the caller's array.*
 
 ### Pointwise and bulk must agree
 
