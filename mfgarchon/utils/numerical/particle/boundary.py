@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 @deprecated(
     since="v0.22.0",
-    replacement="mfgarchon.utils.particle_utils.apply_boundary_conditions_gpu, which this calls",
+    replacement="mfgarchon.utils.particle_utils.apply_boundary_conditions_gpu",
     reason="a second copy of the particle solver's 1-D helper (#2550)",
 )
 def apply_boundary_conditions_gpu(
@@ -42,7 +42,7 @@ def apply_boundary_conditions_gpu(
 
 @deprecated(
     since="v0.22.0",
-    replacement="mfgarchon.utils.particle_utils.apply_boundary_conditions_numpy, which this calls",
+    replacement="mfgarchon.utils.particle_utils.apply_boundary_conditions_numpy",
     reason="a second copy of the particle solver's 1-D helper (#2550)",
 )
 def apply_boundary_conditions_numpy(

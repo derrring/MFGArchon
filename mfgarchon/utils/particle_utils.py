@@ -144,8 +144,9 @@ def interpolate_1d_numpy(x_query: np.ndarray, x_grid: np.ndarray, y_grid: np.nda
 _DIRICHLET_REFUSAL = (
     "bc_type 'dirichlet' is refused. This function returns positions, so it cannot remove a particle at an absorbing "
     "wall, and a clamp to the wall keeps the mass that should leave through it (#2485, #2550). Read which particles "
-    "leave with mfgarchon.geometry.boundary.corner.absorb_at_walls on (N, 1) positions; the particle solver's 1-D GPU "
-    "path refuses an absorbing BC (#1910)."
+    "leave with mfgarchon.geometry.boundary.corner.absorb_at_walls(particles[:, None], [(xmin, xmax)], tolerance), at "
+    "your reader's band (ParticleApplicator's is ONWALL_TOL, 1e-10); the particle solver's 1-D GPU path refuses an "
+    "absorbing BC (#1910)."
 )
 
 
@@ -158,7 +159,7 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
 
     The fold and the wrap are the device copy of their owners, `corner.reflect_positions` and
     `periodic.wrap_positions`, which work on NumPy arrays (CONVENTIONS.md § *Particles at a wall*); the NumPy
-    fallback below reads the owners, and `test_particle_utils.py` pins this copy against it.
+    fallback below reads the owners, and `test_particle_wall_owners_2550.py` pins this copy against them.
 
     Parameters
     ----------

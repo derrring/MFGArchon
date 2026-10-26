@@ -807,14 +807,14 @@ name, by the contact loop (`ImplicitDomain.first_contact`) and by the end reader
 
 **The 1-D helpers** (`utils/particle_utils.apply_boundary_conditions_numpy` / `_gpu`). The NumPy one folds and wraps
 through the owners. The particle solver's 1-D GPU path calls the GPU one, whose fold and wrap are a device copy of the
-owners, kept because they work on NumPy arrays; `test_particle_utils.py` pins it against them. Both refuse
+owners, kept because they work on NumPy arrays; `test_particle_wall_owners_2550.py` pins it against them. Both refuse
 "dirichlet" by name, since a function that returns positions cannot remove a particle and a clamp keeps the mass
-that should leave; both refuse a non-finite position, as the owner's reach does.
+that should leave; both refuse a non-finite position, as the owner's reach does. No helper measured mutates the caller's
+array.
 
 *Not yet met (#2733): the contact loop reflects at a step's first contacts itself, which on the box agrees with that
 fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2693): on a
-geometry that is not a box, `MeshfreeApplicator`'s particle modes read its bounding box. No helper measured mutates
-the caller's array.*
+geometry that is not a box, `MeshfreeApplicator`'s particle modes read its bounding box.*
 
 ### Pointwise and bulk must agree
 

@@ -287,3 +287,46 @@ def test_the_gpu_helper_refuses_with_the_owners_message():
             _helper(reader)(np.array([0.2, np.nan, 0.4]), 0.0, 1.0, "no_flux")
         messages.append(str(caught.value))
     assert messages[0] == messages[1], messages
+
+
+def _torch_backend():
+    pytest.importorskip("torch")
+    from mfgarchon.backends.torch_backend import TorchBackend
+
+    return TorchBackend(device="cpu")
+
+
+def test_the_deprecated_gpu_helper_is_particle_utils():
+    """The deprecated pair's GPU half warns and gives `particle_utils`' values on the torch backend, its refusal of
+    "dirichlet" included (the deprecation policy's equivalence test, the half that runs on a device)."""
+    backend = _torch_backend()
+    for kind in ("periodic", "no_flux"):
+        with pytest.warns(DeprecationWarning, match="apply_boundary_conditions_gpu is deprecated"):
+            old = deprecated_pair.apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, kind, backend)
+        new = apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, kind, backend)
+        np.testing.assert_array_equal(backend.to_numpy(old), backend.to_numpy(new))
+    with (
+        pytest.warns(DeprecationWarning, match="apply_boundary_conditions_gpu is deprecated"),
+        pytest.raises(ValueError, match="bc_type 'dirichlet' is refused"),
+    ):
+        deprecated_pair.apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, "dirichlet", backend)
+
+
+def test_the_gpu_helper_does_not_write_its_input():
+    """The device copy returns new positions and leaves the tensor it was handed as it was."""
+    import torch
+
+    backend = _torch_backend()
+    for kind in ("periodic", "no_flux"):
+        given = backend.from_numpy(ENDS_1D)
+        before = given.clone()
+        apply_boundary_conditions_gpu(given, LO, HI, kind, backend)
+        assert torch.equal(given, before), kind
+
+
+def test_the_numpy_helper_reads_an_integer_input_as_float():
+    """A non-float input is read as float64. The owners write into a copy of what they are handed, so an integer array
+    would have its wrapped positions truncated: (-1, 0, 3, 7) on (0, 2.5) would give (1, 0, 0, 2)."""
+    np.testing.assert_array_equal(
+        apply_boundary_conditions_numpy(np.array([-1, 0, 3, 7]), 0.0, 2.5, "periodic"), [1.5, 0.0, 0.5, 2.0]
+    )
