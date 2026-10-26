@@ -145,7 +145,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             particles: Particle positions - shape (N, d)
             bc_type: Boundary condition type
                 - "reflecting": Project particles back into domain
-                - "absorbing": Remove particles outside domain
+                - "absorbing": Remove particles on or past the domain's wall (`_apply_absorbing_bc`)
                 - "periodic": Wrap particles (hyperrectangle only)
 
         Returns:
@@ -202,8 +202,11 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         self,
         particles: NDArray[np.floating],
     ) -> NDArray[np.floating]:
-        """Remove particles outside domain."""
-        on_boundary = self.geometry.is_on_boundary(particles)
+        """Remove the particles an absorbing wall takes: those on or past the geometry's box, read by the absorbing
+        wall's owner with no band (`corner.absorb_at_walls`), and those its geometry puts on its boundary
+        (`is_on_boundary`, at the geometry's own band). An unbounded geometry keeps all. On a geometry that is not a
+        box, a particle outside it but inside its box is kept: #2693's shape, in this mode (#2573)."""
+        from .corner import absorb_at_walls
 
         bounds = self.geometry.get_bounds()
         if bounds is None:
@@ -211,26 +214,17 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             return particles
 
         min_coords, max_coords = bounds
-        inside = np.ones(len(particles), dtype=bool)
-
-        for d in range(self.dimension):
-            inside &= (particles[:, d] >= min_coords[d]) & (particles[:, d] <= max_coords[d])
-
-        # For absorbing BC, remove particles at boundary too
-        inside &= ~on_boundary
-
-        return particles[inside]
+        leaves, _ = absorb_at_walls(particles, np.column_stack([min_coords, max_coords]), 0.0)
+        leaves |= self.geometry.is_on_boundary(particles)
+        return particles[~leaves]
 
     def _apply_periodic_bc(
         self,
         particles: NDArray[np.floating],
     ) -> NDArray[np.floating]:
         """
-        Wrap particles around domain (periodic BC).
-
-        Uses canonical implementation from geometry.boundary.corner (Issue #521).
+        Wrap particles around domain (periodic BC), through the periodic owner, geometry.boundary.periodic (Issue #711).
         """
-        # Issue #711: Use canonical periodic.py (parallel to enforcement.py)
         from .periodic import wrap_positions
 
         bounds = self.geometry.get_bounds()

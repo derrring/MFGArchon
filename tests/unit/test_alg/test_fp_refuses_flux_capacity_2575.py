@@ -3,7 +3,8 @@
 A capped Dirichlet exit was accepted, and the cap ignored, by FDM, particle, FEM and meshless; SL, GFDM and
 FVM refuse the exit itself. On #2531's fixture at `5e4b64e4`, FP-FDM's outflow over the horizon was 0.081667
 with and without a cap of 1e-6, and the particle solver's was 0.071469 both ways. The particle path that
-would apply a cap, `_apply_boundary_conditions_with_flux_limits`, has no caller. The refusal sits in
+would apply a cap, `_apply_boundary_conditions_with_flux_limits`, had no caller and is deleted, and the applicator
+method it called is deprecated (#2550). The refusal sits in
 `BaseFPSolver._validate_bc_support`, which every FP solver that takes a segment BC reaches on the BC it
 solves with.
 

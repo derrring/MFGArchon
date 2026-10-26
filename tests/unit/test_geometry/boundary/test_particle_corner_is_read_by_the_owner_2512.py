@@ -10,8 +10,8 @@ the first-face read asked the owner.
 
 ``apply`` is public, and the particle solver no longer reaches it: every CPU step ends at its first contacts with the
 particles' boundary, a periodic outer boundary's included (#2704), and `test_particle_periodic_path_2704.py` pins that
-path. ``apply_with_flux_limits`` is reached only from `FPParticleSolver._apply_boundary_conditions_with_flux_limits`,
-which has no library caller; C6 (#2550) decides both.
+path. ``apply_with_flux_limits`` has no library caller and is deprecated (#2550). Both read one end-position rule, whose
+per-axis half at a periodic corner `test_particle_wall_owners_2550.py` pins.
 
 Held fixed:
 - every segment at priority 0, placed by a face label, except the tolerance pin's ``region`` exit; no ``sdf_region``,
@@ -66,7 +66,8 @@ def _step(method: str, bc: BoundaryConditions, points, bounds=BOX):
     if method == "apply":
         remaining, absorbed, _ = applicator.apply(points, bc, bounds)
     else:
-        remaining, absorbed, _, _ = applicator.apply_with_flux_limits(points, bc, bounds, {})
+        with pytest.warns(DeprecationWarning, match="apply_with_flux_limits is deprecated"):
+            remaining, absorbed, _, _ = applicator.apply_with_flux_limits(points, bc, bounds, {})
     return remaining, absorbed
 
 

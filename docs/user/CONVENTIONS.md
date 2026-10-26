@@ -762,9 +762,12 @@ docstring writes the diffusion as $-\sigma^2 L m$, without the $\tfrac12$.*
 ### Particles at a wall
 
 **One owner applies a particle's wall rule for each boundary type** (reflect, absorb or wrap), and a
-boundary helper never mutates the caller's array (ruled 2026-10-08). Reflection is owned by
-`reflect_positions` in `geometry/boundary/corner/position.py`, the module #521 consolidated, and
-wrapping by `wrap_positions` in `geometry/boundary/periodic.py`.
+boundary helper never mutates the caller's array (ruled 2026-10-08). On a box, reflection is owned by
+`reflect_positions` in `geometry/boundary/corner/position.py`, the module #521 consolidated; absorption by
+`absorb_at_walls` beside it; and wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. An absorbed
+particle is removed and never moved, and the mass it carried leaves through the wall (§ 9). Its exit position is where
+its reader last saw it: the contact for a reader of the path, the end for a reader of the end. `corner.absorb_positions`
+clamps a particle to the wall and keeps it, so it is not an absorbing wall; it is deprecated (#2550).
 
 **The particle solver reads a step by its path.** It ends each CPU step at its first contacts with the particles'
 boundary (`reflect_at_first_contacts`, #2733): it reflects a particle specularly at a contact, absorbs one at a
@@ -784,15 +787,29 @@ band, and a step that starts at a corner, as placed initial particles can; it is
 For a reader that has only a step's end, an end past two faces has positive probability, and the rule carries real
 weight there (#2550).
 
+**A reader that has only a step's end** (`ParticleApplicator.apply`, public and no longer on the solver's path) reads
+the end at its nearest point of the box. An end at or past a face, within the reader's reach band, is at that face. The
+segment its nearest point takes, on one face that face's and at a corner the owner's corner order, decides whether the
+particle is absorbed. If it is not, each face the end is at or past acts on its own axis by its own segment: a periodic
+face wraps the axis and any other folds it (`reflect_positions`). A face the nearest point is read on but the end has
+not reached acts on nothing. This is the tie rule above, with "the step crosses it there" read as "the end is at or
+past it" (#2550, #2803's shape).
+
+**The bands**, in one place. An end reader's reach band is its own (`walls_reached`): `ParticleApplicator` takes an end
+within `ONWALL_TOL` = 1e-10 of a face, absolute, as at it; `MeshfreeApplicator`'s absorbing mode takes a particle on or
+past its geometry's box, band 0, or on its geometry's boundary at the geometry's own band (`is_on_boundary`; for an
+`ImplicitDomain` `SDF_BOUNDARY_TOL` = 1e-8 on the signed distance). `ParticleApplicator` reads the segment at the
+nearest point within `SDF_BOUNDARY_TOL` + |bound| · `BOUNDARY_REL_TOL` = 1e-8 + |bound| · 1e-12 of a face
+(`_faces_at_point`), so it can read a face the end has not reached, and that face acts on nothing. The path reader's
+tolerance is `CONTACT_EPS` = 1e-12 of the box's diagonal (#2733 D4).
+
 *Not yet met (#2733): the contact loop reflects at a step's first contacts itself, which on the box agrees with that
-fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2429,
-#2550): absorption has no owner function. `corner.absorb_positions` clamps a particle to the wall and keeps it, so it
-must not be used for an absorbing wall, where the mass that leaves is lost through the wall (§ 9).
-`ParticleApplicator.apply`, public and no longer on the solver's path, reads a step by its end and gives a particle at
-a corner one action for every axis (#2803's shape); it, `ParticleApplicator.apply_with_flux_limits` and
-`MeshfreeApplicator`'s absorbing mode carry their own absorbing copies. `ParticleApplicator` wraps through
-`corner.wrap_positions`, a deprecated shim for the periodic owner, and the particle solver's 1-D GPU path uses a
-separate copy in `utils/particle_utils.py`. No helper measured mutates the caller's array.*
+fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2550, its
+second stage): the 1-D helpers in `utils/particle_utils.py` and `utils/numerical/particle/boundary.py` fold and wrap
+with their own copies and clamp for "dirichlet", and the particle solver's 1-D GPU path calls the first. The export
+`geometry.boundary.wrap_positions` resolves to `corner.wrap_positions`, a deprecated shim for the periodic owner, and
+`Hyperrectangle.apply_boundary_conditions`, deprecated, carries its own copies. On a geometry that is not a box,
+`MeshfreeApplicator`'s particle modes read its bounding box (#2693). No helper measured mutates the caller's array.*
 
 ### Pointwise and bulk must agree
 

@@ -13,8 +13,8 @@ Measured before the refusal, 2000 particles, `dirichlet_bc(0.0)`, seed 12345:
     torch  dirichlet(0)  absorbed 0      <- and returns a finite non-negative density of mass ~1
 
 **Only the numpy pair is evidence, and the asymmetry is the point.** `total_absorbed` is
-incremented in `_finish_step` and `_apply_boundary_conditions_with_flux_limits`, both CPU-only
-(`_apply_boundary_conditions_segment_aware` until #2704), and `_solve_fp_system_gpu` neither
+incremented only in `_finish_step`, which is CPU-only (`_apply_boundary_conditions_segment_aware`
+until #2704, `_apply_boundary_conditions_with_flux_limits` until #2550), and `_solve_fp_system_gpu` neither
 increments nor resets it. So the two torch rows read 0 whatever the wall does: they cannot
 distinguish "reflected the particles" from "does not count". What established that the torch path
 ignored the BC is the numpy contrast (0 against 4) plus the finite mass-~1 density torch returned
