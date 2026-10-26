@@ -58,7 +58,7 @@ def _wendland_c2_normalization_1d(delta: float) -> float:
 def gaussian_kde_gpu(
     particles: np.ndarray,
     grid: np.ndarray,
-    bandwidth: float,
+    bandwidth: float | str,
     backend: "BaseBackend",
     kernel: str = "gaussian",
 ) -> np.ndarray:
@@ -77,8 +77,9 @@ def gaussian_kde_gpu(
     Supported kernels (Issue #1028):
 
     - "gaussian" (default): K_h(z) = (1/(h * sqrt(2 pi))) exp(-z^2 / (2 h^2)).
-      Infinite support; bandwidth interpreted as factor * std(particles)
-      (scipy.stats.gaussian_kde compatible).
+      Infinite support; h is the kernel width `kde_kernel_covariance` gives for
+      ``bandwidth``, a factor of std(particles) or scipy's "scott" / "silverman"
+      (scipy.stats.gaussian_kde compatible; CONVENTIONS.md § 9).
 
     - "wendland_c2": K_h(r) = (3 / (2 h)) * (1 - |r|/h)_+^4 * (4 |r|/h + 1).
       Compact support [-h, h]; bandwidth h interpreted directly as support
@@ -107,8 +108,8 @@ def gaussian_kde_gpu(
         Particle positions at current timestep, shape (N,)
     grid : np.ndarray
         Grid points for density evaluation, shape (Nx,)
-    bandwidth : float
-        For "gaussian": bandwidth factor (multiplied by data std).
+    bandwidth : float or {"scott", "silverman"}
+        For "gaussian": a factor of the data's std, or a rule (`kde_factor`).
         For "wendland_c2": support radius delta (used directly).
     backend : BaseBackend
         Backend providing tensor operations (PyTorch/JAX)
@@ -133,9 +134,10 @@ def gaussian_kde_gpu(
     N = len(particles)
 
     if kernel == "gaussian":
-        # Match scipy.stats.gaussian_kde: bandwidth = factor * std
-        data_std = np.std(particles, ddof=1)
-        actual_bandwidth = bandwidth * data_std
+        # The kernel scipy.stats.gaussian_kde builds for `bandwidth` (#2556).
+        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
+
+        actual_bandwidth = float(np.sqrt(kde_kernel_covariance(particles, bandwidth)[0, 0]))
     else:  # wendland_c2
         # Bandwidth IS the support radius; no std multiplication.
         actual_bandwidth = float(bandwidth)
@@ -287,23 +289,23 @@ def gaussian_kde_gpu_internal(
 def gaussian_kde_gpu_nd(
     particles: np.ndarray,
     grid_points: np.ndarray,
-    bandwidth: float,
+    bandwidth: float | str,
     backend: "BaseBackend",
 ) -> np.ndarray:
     """
     GPU-accelerated Gaussian kernel density estimation for multi-dimensional data.
 
-    Extends gaussian_kde_gpu() to arbitrary dimensions using spherical
-    (isotropic) Gaussian kernels. Converts N particles to density estimate
-    on M grid points using vectorized GPU operations.
+    Extends gaussian_kde_gpu() to arbitrary dimensions with the Gaussian kernel
+    scipy.stats.gaussian_kde builds: covariance Σ = factor² × the sample covariance
+    (`kde_kernel_covariance`, CONVENTIONS.md § 9). Converts N particles to density
+    estimate on M grid points using vectorized GPU operations.
 
     Mathematical formulation:
-        ρ(x) = (1/N) Σ_{i=1}^N K_h(||x - X_i||)
+        ρ(x) = (1/N) Σ_{i=1}^N K_Σ(x - X_i),
+        K_Σ(v) = exp(-vᵀ Σ⁻¹ v / 2) / sqrt((2π)^d det Σ),
 
-    where K_h is the d-dimensional Gaussian kernel:
-        K_h(r) = (1/(h√(2π))^d) exp(-r²/(2h²))
-
-    and r = ||x - X_i|| is the Euclidean distance.
+    computed as a Euclidean distance after whitening particles and grid by the
+    Cholesky factor of Σ.
 
     GPU Acceleration Strategy:
         - Broadcast particles (N, d) and grid (M, d) to form (M, N, d) tensor
@@ -320,8 +322,8 @@ def gaussian_kde_gpu_nd(
         Particle positions, shape (N, d) for d dimensions
     grid_points : np.ndarray
         Grid points for density evaluation, shape (M, d)
-    bandwidth : float
-        Bandwidth factor (multiplied by average data std), matching scipy behavior
+    bandwidth : float or {"scott", "silverman"}
+        A factor of the sample's spread, or a rule (`kde_factor`), as in scipy
     backend : BaseBackend
         Backend providing tensor operations (PyTorch/JAX)
 
@@ -340,12 +342,17 @@ def gaussian_kde_gpu_nd(
     For very large problems (M × N > 10^8), consider chunking the grid
     to avoid GPU memory overflow.
     """
+    from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
+
     N, d = particles.shape
     M = len(grid_points)
 
-    # Match scipy behavior: bandwidth = factor * avg_std
-    avg_std = np.mean(np.std(particles, axis=0, ddof=1))
-    actual_bandwidth = bandwidth * avg_std
+    # The kernel scipy builds for `bandwidth` (#2556). Whitening by its Cholesky factor L turns the Mahalanobis
+    # distance into a Euclidean one: |L^{-1} v|^2 = v^T Sigma^{-1} v.
+    covariance = kde_kernel_covariance(particles, bandwidth)
+    whitening = np.linalg.inv(np.linalg.cholesky(covariance))
+    particles = particles @ whitening.T
+    grid_points = grid_points @ whitening.T
 
     # Get tensor module
     xp = backend.array_module
@@ -370,7 +377,7 @@ def gaussian_kde_gpu_nd(
         particles_3d = particles_tensor[None, :, :]  # (1, N, d)
         grid_3d = grid_tensor[:, None, :]  # (M, 1, d)
 
-    # Compute squared Euclidean distances: ||grid[i] - particles[j]||²
+    # Squared distances in whitened coordinates: (x - X_j)^T Sigma^{-1} (x - X_j)
     diff = grid_3d - particles_3d  # (M, N, d)
 
     # Backend compatibility - PyTorch dim vs NumPy/JAX axis (Issue #543 acceptable)
@@ -379,9 +386,9 @@ def gaussian_kde_gpu_nd(
     else:  # NumPy or JAX
         dist_sq = (diff**2).sum(axis=-1)  # (M, N)
 
-    # d-dimensional Gaussian kernel: K(r) = (1/(h√(2π))^d) exp(-r²/(2h²))
-    kernel_vals = xp.exp(-dist_sq / (2 * actual_bandwidth**2))
-    normalization = (actual_bandwidth * np.sqrt(2 * np.pi)) ** d
+    # d-dimensional Gaussian kernel with covariance Sigma
+    kernel_vals = xp.exp(-dist_sq / 2)
+    normalization = float(np.sqrt((2 * np.pi) ** d * np.linalg.det(covariance)))
     kernel_vals = kernel_vals / normalization
 
     # Backend compatibility - PyTorch dim vs NumPy/JAX axis (Issue #543 acceptable)
@@ -408,8 +415,8 @@ def gaussian_kde_numpy(
     scipy is not available. Much slower than GPU version for large N.
 
     Note: scipy.stats.gaussian_kde interprets numeric bandwidth as
-    a factor to multiply by data std, not absolute bandwidth.
-    Use adaptive_bandwidth_selection() for absolute bandwidth.
+    a factor to multiply by data std, not absolute bandwidth, which is
+    the library's convention for a bandwidth (CONVENTIONS.md § 9).
 
     Parameters
     ----------
@@ -478,7 +485,7 @@ def estimate_density_from_particles(
     if method == "kde":
         if backend is not None:
             # GPU-accelerated KDE
-            return gaussian_kde_gpu(particles, grid, float(bandwidth), backend)
+            return gaussian_kde_gpu(particles, grid, bandwidth, backend)
         else:
             # CPU fallback
             return gaussian_kde_numpy(particles, grid, bandwidth)
@@ -487,99 +494,6 @@ def estimate_density_from_particles(
         raise NotImplementedError("Histogram method coming in Phase 2")
     else:
         raise ValueError(f"Unknown method: {method}. Use 'kde' or 'histogram'")
-
-
-def adaptive_bandwidth_selection(particles: np.ndarray, method: str = "silverman") -> float:
-    """
-    Automatic bandwidth selection for KDE.
-
-    Implements Scott's rule and Silverman's rule of thumb for
-    bandwidth selection.
-
-    Parameters
-    ----------
-    particles : np.ndarray
-        Particle positions, shape (N,)
-    method : str
-        Selection method: 'scott' or 'silverman'
-
-    Returns
-    -------
-    float
-        Optimal bandwidth estimate
-
-    References
-    ----------
-    - Scott, D.W. (1992). Multivariate Density Estimation
-    - Silverman, B.W. (1986). Density Estimation for Statistics and Data Analysis
-    """
-    N = len(particles)
-    std = np.std(particles, ddof=1)
-
-    if method == "scott":
-        # Scott's rule: h = σ N^(-1/5)
-        return std * (N ** (-1 / 5))
-    elif method == "silverman":
-        # Silverman's rule: h = 0.9 min(σ, IQR/1.34) N^(-1/5)
-        iqr = np.percentile(particles, 75) - np.percentile(particles, 25)
-        scale = min(std, iqr / 1.34)
-        return 0.9 * scale * (N ** (-1 / 5))
-    else:
-        raise ValueError(f"Unknown method: {method}. Use 'scott' or 'silverman'")
-
-
-def adaptive_bandwidth_selection_nd(particles: np.ndarray, method: str = "silverman") -> float:
-    """
-    Automatic bandwidth selection for multi-dimensional KDE.
-
-    Extends Scott's rule and Silverman's rule to multi-dimensional case
-    using spherical (isotropic) Gaussian kernels.
-
-    Mathematical formulation:
-        h = σ̄ * N^(-1/(d+4))
-
-    where σ̄ is the average standard deviation across dimensions and
-    d is the number of dimensions.
-
-    Parameters
-    ----------
-    particles : np.ndarray
-        Particle positions, shape (N, d) for d dimensions
-    method : str
-        Selection method: 'scott' or 'silverman'
-
-    Returns
-    -------
-    float
-        Optimal bandwidth estimate (isotropic)
-
-    References
-    ----------
-    - Scott, D.W. (2015). Multivariate Density Estimation: Theory, Practice, and Visualization
-    - Silverman, B.W. (1986). Density Estimation for Statistics and Data Analysis
-    """
-    N, d = particles.shape
-
-    # Compute per-dimension statistics
-    stds = np.std(particles, axis=0, ddof=1)
-    avg_std = np.mean(stds)
-
-    if method == "scott":
-        # Scott's rule for d dimensions: h = σ̄ N^(-1/(d+4))
-        return avg_std * (N ** (-1 / (d + 4)))
-    elif method == "silverman":
-        # Silverman's rule adapted for d dimensions
-        # Use average scale across dimensions
-        scales = []
-        for dim in range(d):
-            dim_data = particles[:, dim]
-            iqr = np.percentile(dim_data, 75) - np.percentile(dim_data, 25)
-            scale = min(stds[dim], iqr / 1.34)
-            scales.append(scale)
-        avg_scale = np.mean(scales)
-        return 0.9 * avg_scale * (N ** (-1 / (d + 4)))
-    else:
-        raise ValueError(f"Unknown method: {method}. Use 'scott' or 'silverman'")
 
 
 if __name__ == "__main__":
@@ -598,16 +512,12 @@ if __name__ == "__main__":
     xx, yy = np.meshgrid(x, y, indexing="ij")
     grid_points_2d = np.column_stack([xx.ravel(), yy.ravel()])
 
-    # Adaptive bandwidth
-    bw = adaptive_bandwidth_selection_nd(particles_2d, method="silverman")
-    print(f"   Adaptive bandwidth: {bw:.4f}")
-
     # Test with numpy backend (CPU)
     from mfgarchon.backends.numpy_backend import NumPyBackend
 
     backend = NumPyBackend()
 
-    density_2d = gaussian_kde_gpu_nd(particles_2d, grid_points_2d, bandwidth=bw, backend=backend)
+    density_2d = gaussian_kde_gpu_nd(particles_2d, grid_points_2d, bandwidth="silverman", backend=backend)
 
     assert density_2d.shape == (len(grid_points_2d),), (
         f"Expected shape {(len(grid_points_2d),)}, got {density_2d.shape}"
@@ -636,10 +546,7 @@ if __name__ == "__main__":
     xx3, yy3, zz3 = np.meshgrid(x3, y3, z3, indexing="ij")
     grid_points_3d = np.column_stack([xx3.ravel(), yy3.ravel(), zz3.ravel()])
 
-    bw_3d = adaptive_bandwidth_selection_nd(particles_3d, method="scott")
-    print(f"   Adaptive bandwidth: {bw_3d:.4f}")
-
-    density_3d = gaussian_kde_gpu_nd(particles_3d, grid_points_3d, bandwidth=bw_3d, backend=backend)
+    density_3d = gaussian_kde_gpu_nd(particles_3d, grid_points_3d, bandwidth="scott", backend=backend)
 
     assert density_3d.shape == (len(grid_points_3d),), (
         f"Expected shape {(len(grid_points_3d),)}, got {density_3d.shape}"
@@ -653,14 +560,5 @@ if __name__ == "__main__":
     print(f"   Total mass (should be ~1): {total_mass_3d:.4f}")
 
     print("   ✓ 3D KDE passed")
-
-    # Test bandwidth selection
-    print("\n3. Testing bandwidth selection methods...")
-    for method in ["scott", "silverman"]:
-        bw_test = adaptive_bandwidth_selection_nd(particles_2d, method=method)
-        print(f"   {method}: {bw_test:.4f}")
-        assert bw_test > 0, f"Bandwidth must be positive for {method}"
-
-    print("   ✓ Bandwidth selection passed")
 
     print("\n✓ All smoke tests passed!")

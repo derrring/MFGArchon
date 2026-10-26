@@ -141,8 +141,10 @@ KNOWN_NOT_HONOURED = {
     # supplied. Both are fixed, and the numbers above are now what the DEFAULT cloud produces.
     # FPParticleSolver fails the ABSOLUTE seam tolerance at this one grid, and that is the whole
     # claim -- it is not a statement that the solver fails to honour PERIODIC. Under joint
-    # refinement (h -> 0 with N ~ Nx^2) its periodic residual converges, 20/20 seeds, which is why
-    # it is absent from SURFACE_NOT_HONOURED below.
+    # refinement (h -> 0 with N ~ Nx^2) its periodic residual falls, ~~20/20 seeds~~ in 28 of 30 seeds
+    # [CORRECTED 2026-10-27, #2556: measured at the C3-1 change; seeds 1822 and 26 rose 2.5% and 4.7%
+    # at the last step], which is why it is absent from SURFACE_NOT_HONOURED below and its row is
+    # judged on a mean over five seeds (SEED_AVERAGED).
     #
     # At Nx=21 the seam has a floor no particle count removes: 5.22e-01 (N=2e3), 3.95e-01 (2e4),
     # 3.32e-01 (2e5), 3.05e-01 (2e6) -- still moving, so the floor is BELOW 3e-01 and the earlier
@@ -284,7 +286,7 @@ def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
     )
 
 
-def _solver_kwargs(cls: type, x: np.ndarray, nx: int) -> dict:
+def _solver_kwargs(cls: type, x: np.ndarray, nx: int, seed: int = SEED) -> dict:
     """The constructor arguments a solver needs, resolved from its own signature.
 
     One owner, because both fixtures in this file need it and a copy that drifts splits the matrix
@@ -299,14 +301,16 @@ def _solver_kwargs(cls: type, x: np.ndarray, nx: int) -> dict:
         # A stochastic solver cannot be classified at all unless it repeats itself (#1838): three
         # trials of one configuration previously returned monotone=False, False, True, so xfail
         # asserted a failure it did not reliably have and pass asserted the opposite.
-        kwargs["seed"] = SEED
+        kwargs["seed"] = seed
     if "num_particles" in params:
         # Refine the SAMPLE with the grid, not just the grid. A particle method converges as
         # N -> inf AND h -> 0; holding N fixed leaves a Monte Carlo floor set by N, so at the fine
         # end the convergence oracle below compares noise and the verdict becomes a coin flip.
         # Measured on the PERIODIC row at a fixed 5000 particles: monotone in 6 of 12 seeds. With
         # N ~ Nx^2 -- the standard pairing, since the O(N^-1/2) sampling error has to track O(h) --
-        # every type this solver declares converges in 20 of 20 seeds.
+        # every type this solver declares ~~converges in 20 of 20 seeds~~ falls in 30 of 30 seeds,
+        # except PERIODIC in 28 of 30 [CORRECTED 2026-10-27, #2556: measured at the C3-1 change, seeds
+        # 1822 and 1-29]; the PERIODIC row is judged on a mean over five seeds (SEED_AVERAGED).
         kwargs["num_particles"] = int(PARTICLES_AT_COARSEST * (nx / NX) ** 2)
     return kwargs
 
@@ -525,7 +529,10 @@ SURFACE_NOT_HONOURED = {
     # it wrong. At a fixed 5000 particles it read 4.95e-01, 2.66e-01, 2.79e-01 -- worse at the
     # finest grid, so "not honoured". That was an artefact of refining h while holding N: the Monte
     # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
-    # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
+    # was monotone in only 6 of 12 seeds. Refining both, all four declared types ~~converge, 20/20~~
+    # fall: DIRICHLET, NEUMANN and NO_FLUX in 30 of 30 seeds, PERIODIC in 28 of 30 [CORRECTED
+    # 2026-10-27, #2556, at the C3-1 change], so the PERIODIC row is judged on a five-seed mean
+    # (SEED_AVERAGED) rather than listed here.
     # FPGFDMSolver under NEUMANN and NO_FLUX were listed here and left the declared surface in #2583:
     # FP-GFDM built no wall, so it is withdrawn, declares nothing and refuses construction. Its refusal
     # is pinned in tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py.
@@ -550,10 +557,10 @@ SURFACE_NOT_HONOURED = {
 }
 
 
-def _solve_with_bc(cls, bc_type, nx, nt):
+def _solve_with_bc(cls, bc_type, nx, nt, seed=SEED):
     x = np.linspace(0.0, 1.0, nx)
     problem = _problem_with_bc(BC_FACTORIES[bc_type](), nx, nt)
-    kwargs = _solver_kwargs(cls, x, nx)
+    kwargs = _solver_kwargs(cls, x, nx, seed)
     solver = cls(problem, **kwargs)
     if hasattr(solver, "solve_hjb_system"):
         return solver.solve_hjb_system(np.tile(_M(x), (nt + 1, 1)), _U(x), np.zeros((nt + 1, nx))), "HJB", x
@@ -577,6 +584,16 @@ def _surface_params():
             yield pytest.param(name, cls, bc_type, marks=marks, id=f"{name}-{bc_type.name}")
 
 
+# A seeded stochastic row whose single-seed verdict is a draw: its residual at each grid is the mean over these seeds,
+# and the three-point rule below is applied to the means unchanged. Measured at the C3-1 change (#2556) over seeds 1822
+# and 1-29 under joint refinement: FPParticleSolver-PERIODIC fell at every step in 28 of 30 single seeds; the last
+# step's change r81 - r41 has mean -0.0446 and sd 0.0300, so a single seed reads it as a rise about 1 time in 15
+# (normal model; 2 of 30 observed). Over five seeds that is about 4e-4, and no disjoint group of five of the 30 rose
+# (6 of 6). Five solves cost about 7 s here against 1.4 s for one. Whether the seam residual converges to zero or to
+# a floor under joint refinement is #2804's question, not this row's.
+SEED_AVERAGED = {("FPParticleSolver", "PERIODIC"): (SEED, 1, 2, 3, 4)}
+
+
 @pytest.mark.parametrize(("name", "cls", "bc_type"), list(_surface_params()))
 def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     """Declaring a BC type is a claim. This is the measurement that makes it cost something."""
@@ -585,7 +602,8 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
 
     residuals = []
     for nx, nt in ((21, 10), (41, 20), (81, 40)):
-        r = _residual_of(_solve_with_bc(cls, bc_type, nx, nt), bc_type)
+        seeds = SEED_AVERAGED.get((name, bc_type.name), (SEED,))
+        r = float(np.mean([_residual_of(_solve_with_bc(cls, bc_type, nx, nt, seed), bc_type) for seed in seeds]))
         assert np.isfinite(r), f"{name} declares {bc_type.name} and the solve produced non-finite values"
         residuals.append(r)
         if len(residuals) == 1 and r < EXACT:

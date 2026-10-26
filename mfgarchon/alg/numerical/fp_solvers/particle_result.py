@@ -96,7 +96,8 @@ class FPParticleResult:
         particle_history : list[NDArray], optional
             Particle positions at each timestep. If None, direct queries unavailable.
         bandwidth : float, optional
-            KDE bandwidth. If None, auto-computed when queries are made.
+            KDE bandwidth: a factor of each timestep's sample spread, as the solver's ``kde_bandwidth`` is
+            (CONVENTIONS.md § 9). If None, Scott's rule.
         """
         self.M_grid = M_grid
         self.time_grid = time_grid
@@ -172,12 +173,17 @@ class FPParticleResult:
         if timestep not in self._query_cache:
             particles_t = self.particle_history[timestep]
 
-            # Create query object
-            self._query_cache[timestep] = ParticleDensityQuery(
-                particles_t,
-                bandwidth=self.bandwidth,
-                bandwidth_rule="scott" if self.bandwidth is None else "fixed",
-            )
+            # Create query object. Its numeric bandwidth is an absolute isotropic width, so a factor is converted here,
+            # at this timestep, to the mean of the kernel's per-axis widths (#2556).
+            if self.bandwidth is None:
+                self._query_cache[timestep] = ParticleDensityQuery(particles_t, bandwidth_rule="scott")
+            else:
+                from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
+
+                widths = np.sqrt(np.diag(kde_kernel_covariance(particles_t, self.bandwidth)))
+                self._query_cache[timestep] = ParticleDensityQuery(
+                    particles_t, bandwidth=float(np.mean(widths)), bandwidth_rule="fixed"
+                )
 
         # Query density
         return self._query_cache[timestep].query_density(query_points, method=method, k=k)

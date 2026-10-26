@@ -437,11 +437,7 @@ class GeometryProjector:
 
         Leverages existing GPU-accelerated KDE from density_estimation.py.
         """
-        from mfgarchon.alg.numerical.density_estimation import (
-            adaptive_bandwidth_selection_nd,
-            gaussian_kde_gpu,
-            gaussian_kde_gpu_nd,
-        )
+        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
         from mfgarchon.geometry.base import CartesianGrid
 
@@ -460,36 +456,23 @@ class GeometryProjector:
 
         dimension = particle_positions.shape[1] if particle_positions.ndim > 1 else 1
 
-        # Handle bandwidth string to numeric conversion
-        if isinstance(bandwidth, str):
-            if bandwidth == "scott":
-                bw_factor = len(particle_positions) ** (-1.0 / (dimension + 4))
-            elif bandwidth == "silverman":
-                bw_factor = (len(particle_positions) * (dimension + 2) / 4.0) ** (-1.0 / (dimension + 4))
-            else:
-                bw_factor = 1.0
-        else:
-            bw_factor = bandwidth
-
+        # The bandwidth, a factor or scipy's rule, goes to the kernel as given: each estimator reads it through the
+        # owner (`kde_kernel_covariance`, CONVENTIONS.md § 9; #2556), which refuses an unknown rule by name.
         # 1D case: use optimized GPU KDE
         if dimension == 1:
             density = gaussian_kde_gpu(
                 particles=particle_positions.ravel(),
                 grid=hjb_points.ravel(),
-                bandwidth=bw_factor,
+                bandwidth=bandwidth,
                 backend=backend,
             )
             return density.reshape(grid_shape)
 
         # Multi-dimensional: use GPU-accelerated KDE
-        # Compute adaptive bandwidth if needed
-        if isinstance(bandwidth, str):
-            bw_factor = adaptive_bandwidth_selection_nd(particle_positions, method=bandwidth)
-
         density = gaussian_kde_gpu_nd(
             particles=particle_positions,
             grid_points=hjb_points,
-            bandwidth=bw_factor,
+            bandwidth=bandwidth,
             backend=backend,
         )
 
@@ -648,7 +631,7 @@ class GeometryProjector:
         from scipy.stats import gaussian_kde
 
         from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
-        from mfgarchon.utils.numerical import estimate_kde_bandwidth
+        from mfgarchon.utils.numerical.particle.interpolation import kde_factor
 
         if not isinstance(self.fp_geometry, PointCloudGeometry):
             raise ValueError("Source geometry must be PointCloudGeometry for particle-particle KDE projection")
@@ -658,11 +641,8 @@ class GeometryProjector:
         source_positions = self.fp_geometry.positions  # (N_source, dimension)
         target_positions = self.hjb_geometry.positions  # (N_target, dimension)
 
-        # Estimate bandwidth if needed
-        if isinstance(bandwidth, str):
-            bw_factor = estimate_kde_bandwidth(source_positions, method=bandwidth)
-        else:
-            bw_factor = bandwidth
+        # The factor `bandwidth` names: a rule through `estimate_kde_bandwidth`, or the number itself (#2556)
+        bw_factor = kde_factor(bandwidth, source_positions)
 
         # Create weighted KDE
         # scipy's gaussian_kde expects (dimension, N_samples)

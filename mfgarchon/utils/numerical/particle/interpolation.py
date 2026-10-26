@@ -365,8 +365,95 @@ def estimate_kde_bandwidth(
         raise ValueError(f"Unknown method: {method}. Use 'scott' or 'silverman'.")
 
 
+def kde_factor(bandwidth: float | str, particle_positions: NDArray[np.floating]) -> float:
+    """
+    The factor a KDE ``bandwidth`` names, for a sample (CONVENTIONS.md § 9, #2556).
+
+    A bandwidth is a factor of the sample's spread, as in `scipy.stats.gaussian_kde`: ``"scott"`` or ``"silverman"``
+    name scipy's rules, which `estimate_kde_bandwidth` computes, and a positive finite number is the factor itself.
+    Anything else is refused by name: an absolute width is not a bandwidth, and goes through a separately named
+    keyword at the reader that takes one.
+
+    Parameters
+    ----------
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth.
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+
+    Returns
+    -------
+    float
+        The factor.
+
+    Examples
+    --------
+    >>> particles = np.random.default_rng(0).normal(size=(100, 2))
+    >>> round(kde_factor("scott", particles), 4)  # 100 ** (-1/6)
+    0.4642
+    >>> kde_factor(0.5, particles)
+    0.5
+    """
+    points = np.asarray(particle_positions, dtype=float)
+    if points.ndim == 1:
+        points = points.reshape(-1, 1)
+    if isinstance(bandwidth, str):
+        return estimate_kde_bandwidth(points, method=bandwidth)  # type: ignore[arg-type]
+    if (
+        isinstance(bandwidth, (bool, np.bool_))
+        or not isinstance(bandwidth, (int, float, np.integer, np.floating))
+        or not np.isfinite(bandwidth)
+        or bandwidth <= 0
+    ):
+        raise ValueError(
+            f"A KDE bandwidth is a positive factor of the sample's standard deviation, or 'scott' or 'silverman', "
+            f"as in scipy.stats.gaussian_kde (CONVENTIONS.md § 9); got {bandwidth!r}."
+        )
+    return float(bandwidth)
+
+
+def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: float | str) -> NDArray[np.floating]:
+    """
+    The covariance of the Gaussian kernel a KDE of ``particle_positions`` uses, for ``bandwidth`` (CONVENTIONS.md § 9).
+
+    It is ``kde_factor(bandwidth, particle_positions) ** 2`` times the sample covariance (ddof 1), the kernel
+    `scipy.stats.gaussian_kde` builds, full in every dimension. A sample whose covariance is not positive definite (all
+    particles at one point, or on a lower-dimensional set, or fewer than two) has no kernel, and is refused by name.
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth, as `kde_factor` reads it.
+
+    Returns
+    -------
+    ndarray
+        The kernel covariance, shape (d, d).
+    """
+    points = np.asarray(particle_positions, dtype=float)
+    if points.ndim == 1:
+        points = points.reshape(-1, 1)
+    factor = kde_factor(bandwidth, points)
+    n, d = points.shape
+    covariance = np.atleast_2d(np.cov(points, rowvar=False)) if n > 1 else np.full((d, d), np.nan)
+    # Relative to the sample's own scale: n copies of 0.3 have a covariance of order 1e-33, not 0, from the mean's
+    # rounding. A spread below 1e-10 of the positions' magnitude is none.
+    scale = float(np.max(np.mean(points**2, axis=0))) if n > 0 else 0.0
+    if not np.all(np.isfinite(covariance)) or np.min(np.linalg.eigvalsh(covariance)) <= 1e-20 * max(scale, 1e-300):
+        raise ValueError(
+            f"A KDE of {n} particle(s) in {d}-D needs a sample with spread in every direction; this one has none "
+            "(its covariance is not positive definite: one point, a lower-dimensional set, or fewer than two "
+            "particles), so it has no kernel (#2556)."
+        )
+    return factor**2 * covariance
+
+
 __all__ = [
     "estimate_kde_bandwidth",
+    "kde_factor",
+    "kde_kernel_covariance",
     "interpolate_grid_to_particles",
     "interpolate_particles_to_grid",
 ]

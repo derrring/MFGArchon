@@ -340,8 +340,12 @@ class TestFPParticleSolverIntegration:
         # KDE convolves the empirical measure, adding h^2 to its variance, so widening h must widen
         # the density -- an analytic property of the estimator, not of the scheme. Same seed, so
         # both solves see identical particles (zero drift here) and the difference is purely the
-        # kernel. Measured over 25 seeds: 0.02668..0.02685, against an unclipped h2^2 - h1^2 =
-        # 0.0375; the shortfall is the domain truncation at [0,1], which can only reduce it.
+        # kernel. kde_bandwidth is a factor of the sample's std (CONVENTIONS.md § 9; #2556), so
+        # h = b * 0.05 here and the widening is (b2^2 - b1^2) * 0.05^2. The factors are chosen so
+        # both widths are resolved by the 31-node grid (0.025 and 0.1, against dx = 0.033), and the
+        # wider density stays 4.5 of its stds from each wall. Measured over 8 seeds at the change:
+        # 0.933..1.024 of that; before it, 0.314..0.316, when the default reflection estimator took
+        # a number partly as an absolute width.
         dx = problem.geometry.get_grid_spacing()[0]
         x_coords = np.linspace(0.0, 1.0, Nx_points)
         m_peaked = np.exp(-((x_coords - 0.5) ** 2) / (2 * 0.05**2))
@@ -356,8 +360,11 @@ class TestFPParticleSolverIntegration:
             mean = np.sum(x_coords * w)
             return np.sum((x_coords - mean) ** 2 * w)
 
-        widening = initial_density_variance(0.2) - initial_density_variance(0.05)
-        assert 0.02 < widening < 0.2**2 - 0.05**2, f"kde_bandwidth did not widen the density as h^2: {widening:.4f}"
+        widening = initial_density_variance(2.0) - initial_density_variance(0.5)
+        expected = (2.0**2 - 0.5**2) * 0.05**2
+        assert 0.8 < widening / expected < 1.2, (
+            f"kde_bandwidth did not widen the density as (factor * std)^2: {widening:.5f}, expected {expected:.5f}"
+        )
 
     def test_solver_with_different_boundary_conditions(self):
         """Test solver with different boundary condition types.

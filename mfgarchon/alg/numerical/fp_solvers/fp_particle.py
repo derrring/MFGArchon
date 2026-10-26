@@ -646,6 +646,13 @@ class FPParticleSolver(BaseFPSolver):
         # progress/diagnostic paths"; there are none.
         return self.kde_normalization == KDENormalization.ALL
 
+    def _kernel_widths(self, particles: np.ndarray) -> np.ndarray:
+        """The per-axis widths of the kernel scipy builds for ``kde_bandwidth`` on ``particles`` (`kde_kernel_covariance`,
+        CONVENTIONS.md § 9): what an estimator that reads an absolute width is handed."""
+        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
+
+        return np.sqrt(np.diag(kde_kernel_covariance(particles, self.kde_bandwidth)))
+
     def _apply_kde_method_1d(
         self,
         particles: np.ndarray,
@@ -675,10 +682,11 @@ class FPParticleSolver(BaseFPSolver):
         bounds_tuple = (xmin, xmax)
 
         if self.kde_method == KDEMethod.BETA:
+            # beta_kde reads an absolute width: hand it the kernel's (#2556)
             return beta_kde(
                 particles,
                 eval_points,
-                bandwidth=self.kde_bandwidth,
+                bandwidth=float(self._kernel_widths(particles)[0]),
                 bounds=bounds_tuple,
             )
         elif self.kde_method == KDEMethod.REFLECTION:
@@ -745,10 +753,11 @@ class FPParticleSolver(BaseFPSolver):
         )
 
         if self.kde_method == KDEMethod.BETA:
+            # beta_kde reads absolute per-axis widths: hand it the kernel's (#2556)
             return beta_kde(
                 particles,
                 grid_points,
-                bandwidth=self.kde_bandwidth,
+                bandwidth=self._kernel_widths(particles),
                 bounds=bounds,
             )
         elif self.kde_method == KDEMethod.REFLECTION:
@@ -2386,6 +2395,15 @@ class FPParticleSolver(BaseFPSolver):
         """
         return self._to_caller_mass(density, particles=particles)
 
+    def _gpu_kernel_width(self, positions_gpu: Any) -> float:
+        """The 1-D kernel width for one step's sample on the GPU path: the one scipy builds for ``kde_bandwidth``
+        (`kde_kernel_covariance`, CONVENTIONS.md § 9). It is recomputed every step, since the sample's spread changes;
+        the width the path once computed from X0 and reused read a factor of std(X0) at every step (#2556)."""
+        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
+
+        positions = np.asarray(self.backend.to_numpy(positions_gpu), dtype=float)
+        return float(np.sqrt(kde_kernel_covariance(positions, self.kde_bandwidth)[0, 0]))
+
     def _solve_fp_system_gpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """
         GPU pipeline - full particle evolution on GPU.
@@ -2475,23 +2493,9 @@ class FPParticleSolver(BaseFPSolver):
             seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
         )
 
-        # Compute bandwidth for KDE (do this once on CPU)
-        # Convert bandwidth parameter to absolute bandwidth value
-        if isinstance(self.kde_bandwidth, str):
-            from mfgarchon.alg.numerical.density_estimation import adaptive_bandwidth_selection
-
-            # Need numpy array for bandwidth calculation
-            X_init_np = self.backend.to_numpy(X_particles_gpu[0, :])
-            bandwidth_absolute = adaptive_bandwidth_selection(X_init_np, method=self.kde_bandwidth)
-        else:
-            # User provided factor - compute factor * std(particles)
-            X_init_np = self.backend.to_numpy(X_particles_gpu[0, :])
-            data_std = np.std(X_init_np, ddof=1)
-            bandwidth_absolute = float(self.kde_bandwidth) * data_std
-
         # Estimate initial density using internal GPU KDE (Phase 2.1)
         M_density_gpu[0, :] = gaussian_kde_gpu_internal(
-            X_particles_gpu[0, :], x_grid_gpu, bandwidth_absolute, self.backend
+            X_particles_gpu[0, :], x_grid_gpu, self._gpu_kernel_width(X_particles_gpu[0, :]), self.backend
         )
 
         # Unconditional: the guard lives inside `_normalize_density` now, because the caller's scale
@@ -2554,7 +2558,7 @@ class FPParticleSolver(BaseFPSolver):
 
             # Estimate density using internal GPU KDE (Phase 2.1 - no transfers!)
             M_density_gpu[t + 1, :] = gaussian_kde_gpu_internal(
-                X_particles_gpu[t + 1, :], x_grid_gpu, bandwidth_absolute, self.backend
+                X_particles_gpu[t + 1, :], x_grid_gpu, self._gpu_kernel_width(X_particles_gpu[t + 1, :]), self.backend
             )
 
             # Unconditional -- see the note at the t=0 site above.
