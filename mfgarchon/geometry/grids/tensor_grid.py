@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
-from mfgarchon.geometry.boundary.periodic import periodic_distance
+from mfgarchon.geometry.boundary.periodic import periodic_distance, wrap_positions
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.geometry.protocol import GeometryType
@@ -1512,7 +1512,8 @@ class TensorProductGrid(
         points: NDArray,
     ) -> NDArray:
         """
-        Wrap coordinates to canonical fundamental domain.
+        Wrap coordinates to canonical fundamental domain, by the periodic wall's owner (`periodic.wrap_positions`,
+        CONVENTIONS.md § *Particles at a wall*).
 
         For periodic dimension i: x_wrapped = xmin + (x - xmin) mod L
 
@@ -1527,22 +1528,7 @@ class TensorProductGrid(
             >>> grid = TensorProductGrid(bounds=[(0, 2*np.pi)], Nx=[100], boundary_conditions=periodic_bc(dimension=1))
             >>> float(grid.wrap_coordinates(np.array([3 * np.pi]))[0])  # 3.141592653589793
         """
-        # Handle single point
-        single_point = points.ndim == 1
-        if single_point:
-            points = points.reshape(1, -1)
-
-        wrapped = points.copy()
-        periodic_dims = self.periodic_dimensions
-
-        for dim_idx in periodic_dims:
-            xmin, xmax = self.bounds[dim_idx]
-            period = xmax - xmin
-            wrapped[:, dim_idx] = xmin + np.mod(wrapped[:, dim_idx] - xmin, period)
-
-        if single_point:
-            return wrapped[0]
-        return wrapped
+        return wrap_positions(points, self.bounds, periodic_dims=self.periodic_dimensions)
 
     def compute_periodic_distance(
         self,
