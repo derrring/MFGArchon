@@ -218,8 +218,8 @@ def reflect_at_first_contacts(
       re-traces it. A periodic one goes on with the rest of the step from its image on the opposite face (#2704), and
       a step that wraps more than ``MAX_WRAPS`` times is refused by name.
     - **A corner with a periodic face** (`periodic_corner_actions`): the owner's corner order decides only whether the
-      particle is absorbed; otherwise each face the step leaves through acts on its own axis, a periodic one wrapping
-      and any other reflecting.
+      particle is absorbed; otherwise each face the step crosses there, within the tie band along the path, acts on
+      its own axis, a periodic one wrapping and any other reflecting.
     - **Ties (D4).** A contact within ``CONTACT_EPS`` of the previous one along the path is a tie. Two reflecting
       faces of a convex corner reflect in turn. Two whose normals are anti-parallel bound a zero-width corridor: the
       rest of the step loses its normal component, once, and is re-traced along the corridor (D2). Past the
@@ -369,17 +369,21 @@ def reflect_at_first_contacts(
             last_normal[i[wrap]] = -nk[wrap]
             wrapped[i[wrap]] += 1
             counts["wraps"] += int(wrap.size)
-        # The tie rule at a corner with a periodic face, not absorbed there: each face the rest of the step leaves
-        # through acts on its own axis at once. A face it moves along or away from is not crossed, so it takes no
-        # action: reflecting an axis already moving inward would send it out, and a step from a corner would bounce
-        # between corners until the wrap cap.
+        # The tie rule at a corner with a periodic face, not absorbed there: each face the rest of the step crosses at
+        # the contact, its plane reached within the tie band along the path (D4), acts on its own axis at once. A face
+        # the step moves along or away from, or toward without reaching it, is not crossed: acting there would send an
+        # axis out of the box. One crossed further on is met by the next leg's search.
         for j, faces in corner_faces.items():
             k = i[j]
             start, stop, outward = p[j].copy(), e[j].copy(), np.zeros(dimension)
             leg = e[j] - p[j]
+            reach = float(np.linalg.norm(leg))
             reflected = False
             for axis_j, side, wraps in faces:
                 if not (leg[axis_j] > 0.0 if side == 1 else leg[axis_j] < 0.0):
+                    continue
+                crossing = (box[axis_j, side] - p[j, axis_j]) / leg[axis_j]
+                if crossing > 1.0 or max(crossing, 0.0) * reach > eps:
                     continue
                 if wraps:
                     start[axis_j] = box[axis_j, 1 - side]

@@ -208,7 +208,7 @@ def periodic_corner_actions(
     Otherwise the owner's corner order (`BoundaryConditions.segment_for_point`) decides only whether the particle is
     absorbed, the one bit a corner cannot split per axis: ``(True, [])``. If it is not, every face at the corner with
     whether its segment wraps, ``(False, [(axis, side, wraps), ...])`` with ``side`` 0 for the min face. The caller acts
-    on the faces the step leaves through: a periodic face wraps its axis, and any other returns the particle along
+    on the faces the step crosses there: a periodic face wraps its axis, and any other returns the particle along
     it."""
     readings = bc_on_box.face_segments_at_point(point, tolerance=tolerance)
     if len(readings) < 2:

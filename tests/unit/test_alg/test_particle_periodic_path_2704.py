@@ -14,15 +14,16 @@ earliest crossing of an exit, where each other axis has its coordinate at that t
 time, a tie, follows the tie rule (CONVENTIONS.md § *Particles at a wall*): the owner's corner order decides only
 whether the particle is absorbed, and otherwise a periodic face wraps its axis and any other face reflects it.
 
-**The grid**, every row through `_finish_step`: the periodic axis (x, y) x the other axis's faces (walls, an exit at
-the corner the step crosses with a wall opposite, or periodic) x the face crossed first (the periodic one, the other,
-both at once) x the corner crossed (all four, so both signs of the step on each axis). Then the priority row, a
-periodic axis at priority 1 beside an exit, on all four corners and orders; a 3-D edge (a wall on y beside an exit on z,
-#2800's U3), and ties at 3-D edges and vertices with a periodic face; steps that start at a corner or an edge and
-leave through one face, and one that meets the box just past the tie band; the torus on long steps against the periodic
-owner, and the refusal of a step past ``MAX_WRAPS``; the exit strip of 6335147485 at solve level; and an obstacle met
-after a wrap, an obstacle beside a torus however the torus is spelt, the refusal of one that touches a face of the
-periodic axis, flush, past it or on the other face, and in 3-D of any (#2807).
+**The grid**, every row through `_finish_step`: the periodic axis (x, y) x the other axis's faces (walls, an exit at the
+corner the step crosses with a wall opposite, or periodic) x the face crossed first (the periodic one, the other, both
+at once) x the corner crossed (all four, so both signs of the step on each axis). Then the priority row, a periodic axis
+at priority 1 beside an exit, on all four corners and orders; a 3-D edge (a wall on y beside an exit on z, #2800's U3),
+and ties at 3-D edges and vertices with a periodic face; steps that start at a corner or an edge and leave through one
+face, steps toward a face within the tolerance that they cross later or never, and one that meets the box just past the
+tie band; the torus on long steps against the periodic owner, and the refusal of a step past ``MAX_WRAPS``; the exit
+strip of 6335147485 at solve level; and an obstacle met after a wrap, an obstacle beside a torus however the torus is
+spelt, the refusal of one that touches a face of the periodic axis, flush, past it or on the other face, and in 3-D of
+any (#2807).
 
 **Rivals**, each a copy of the package at this commit with one replacement, run with this file: listed in the PR.
 
@@ -414,6 +415,36 @@ _AT_A_CORNER = {
         [0.99, 0.999],
         [1.01, 0.9998],
         [0.01, 0.9998],
+    ),
+    # #2808 review 3: a face within the tolerance that the step moves toward but never reaches, or reaches only far
+    # along the path, is not crossed at the contact.
+    "x periodic at priority 1 beside an exit on y_max: toward y_max, never reaching it": (
+        lambda: BoundaryConditions(
+            dimension=2, segments=[_on("x_min", P, 1), _on("x_max", P, 1), _on("y_max", D)], default_bc=NF
+        ),
+        None,
+        2,
+        [0.01, 1.0 - 1e-13],
+        [-0.01, 1.0 - 5e-14],
+        [0.99, 1.0 - 5e-14],
+    ),
+    "y_max periodic on one side only (#2713), an exit on y_min: toward y_max, never reaching it": (
+        lambda: BoundaryConditions(dimension=2, segments=[_on("y_max", P), _on("y_min", D)], default_bc=NF),
+        None,
+        2,
+        [0.99, 1.0 - 1e-13],
+        [1.01, 1.0 - 5e-14],
+        [0.99, 1.0 - 5e-14],
+    ),
+    "x periodic at priority 1 beside an exit on y_max: y_max crossed far along the path, after the wrap": (
+        lambda: BoundaryConditions(
+            dimension=2, segments=[_on("x_min", P, 1), _on("x_max", P, 1), _on("y_max", D)], default_bc=NF
+        ),
+        None,
+        2,
+        [0.01, 1.0 - 1e-13],
+        [-0.5, 1.0 + 1e-13],
+        None,
     ),
 }
 

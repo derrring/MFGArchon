@@ -9,7 +9,7 @@
     absorbed 188 particles where 196 crossed (#2704 comment 6335147485).
 
   At a corner one of whose faces is periodic, the owner's corner order decides only whether the particle is absorbed;
-  otherwise each face the step leaves through acts on its own axis (CONVENTIONS.md § *Particles at a wall*). The loop
+  otherwise each face the step crosses there acts on its own axis (CONVENTIONS.md § *Particles at a wall*). The loop
   searches once per period a step crosses, so a step that wraps more than `MAX_WRAPS` (1000) times is refused by
   name: one of about 1e17 periods would never end, since its shift by one period rounds away.
 - **Obstacles with a periodic outer boundary are placed in 1-D and 2-D**, refused since #2688. An obstacle touching a
