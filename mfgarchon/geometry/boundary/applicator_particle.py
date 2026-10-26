@@ -200,6 +200,30 @@ def segment_at_box_contact(
     return None, bc_on_box.get_bc_at_point(point, tolerance=tolerance)
 
 
+def periodic_corner_actions(
+    bc_on_box: BoundaryConditions, point: NDArray[np.floating], tolerance: float, reader: str
+) -> tuple[bool, list[tuple[int, int, bool]]] | None:
+    """The tie rule at a corner of the box one of whose faces is periodic (CONVENTIONS.md § *Particles at a wall*):
+    ``None`` where ``point`` is on fewer than two faces, or on no periodic one, and `segment_at_box_contact` decides.
+    Otherwise the owner's corner order (`BoundaryConditions.segment_for_point`) decides only whether the particle is
+    absorbed, the one bit a corner cannot split per axis: ``(True, [])``. If it is not, every face at the corner with
+    whether its segment wraps, ``(False, [(axis, side, wraps), ...])`` with ``side`` 0 for the min face. The caller acts
+    on the faces the step crosses there: a periodic face wraps its axis, and any other returns the particle along
+    it."""
+    readings = bc_on_box.face_segments_at_point(point, tolerance=tolerance)
+    if len(readings) < 2:
+        return None
+    wraps = [segment_particle_action(segment, reader) == "periodic" for _, segment, _ in readings]
+    if not any(wraps):
+        return None
+    corner = bc_on_box.get_bc_at_point(point, tolerance=tolerance)
+    if segment_particle_action(corner, reader) == "absorbing":
+        return True, []
+    return False, [
+        (face.axis, 0 if face.side == "min" else 1, wrap) for (face, _, _), wrap in zip(readings, wraps, strict=True)
+    ]
+
+
 #: #2733 D4's ε, relative to the box's diagonal: two contacts this close along a path are one tie, a leg's start this
 #: close to its first interval is inside it, and a face's trace is read this far inside the box. One value for the
 #: contact loop (`reflect_at_first_contacts`) and the B1e-2 check that reads where it can cross.

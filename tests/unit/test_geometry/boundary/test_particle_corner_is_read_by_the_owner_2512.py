@@ -8,9 +8,10 @@ already read first. Both methods now read each boundary particle at its nearest 
 contact loop's reader, `segment_at_box_contact` (#2733), at the owner's default tolerance (``SDF_BOUNDARY_TOL``), as
 the first-face read asked the owner.
 
-The particle solver reaches ``apply`` only on its periodic path: a segment-aware BC that declares a periodic face
-(`FPParticleSolver._apply_boundary_conditions_segment_aware`). ``apply_with_flux_limits`` is reached only from
-`FPParticleSolver._apply_boundary_conditions_with_flux_limits`, which has no library caller; C6 (#2550) decides both.
+``apply`` is public, and the particle solver no longer reaches it: every CPU step ends at its first contacts with the
+particles' boundary, a periodic outer boundary's included (#2704), and `test_particle_periodic_path_2704.py` pins that
+path. ``apply_with_flux_limits`` is reached only from `FPParticleSolver._apply_boundary_conditions_with_flux_limits`,
+which has no library caller; C6 (#2550) decides both.
 
 Held fixed:
 - every segment at priority 0, placed by a face label, except the tolerance pin's ``region`` exit; no ``sdf_region``,
@@ -24,16 +25,11 @@ Held fixed:
 from __future__ import annotations
 
 import itertools
-import warnings
 
 import pytest
 
 import numpy as np
 
-from mfgarchon import Conditions, MFGProblem, Model
-from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
 
@@ -166,29 +162,3 @@ def test_a_one_dimensional_face_named_left_and_right_reads_as_x_min_and_x_max(me
     assert named[1].tolist() == by_axis[1].tolist() == [True, False, False, False]
     np.testing.assert_array_equal(named[0], by_axis[0])
     np.testing.assert_allclose(named[0][:, 0], [0.98, 0.5, 1.0 - 5e-11])
-
-
-def test_the_particle_solvers_periodic_path_reads_a_corner_by_the_owner():
-    """One indirection up: the solver's periodic path hands the applicator its own BC and the grid's box. A particle
-    past the corner the periodic x faces share with the y_max exit is absorbed; past the middle of y_max it is absorbed
-    and past the middle of x_max it is wrapped, as before."""
-    bc = BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(name="periodic_x_min", bc_type=BCType.PERIODIC, boundary="x_min"),
-            BCSegment(name="periodic_x_max", bc_type=BCType.PERIODIC, boundary="x_max"),
-            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="y_max"),
-            BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="y_min"),
-        ],
-    )
-    grid = TensorProductGrid(bounds=BOX, Nx_points=[11, 11], boundary_conditions=bc)
-    model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.2)
-    conditions = Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        solver = FPParticleSolver(MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4), num_particles=50)
-    points = np.array([[1.05, 1.03], [0.5, 1.05], [1.05, 0.5]])
-    remaining, n_absorbed, _, absorbed = solver._apply_boundary_conditions_segment_aware(points, BOX)
-    assert absorbed.tolist() == [True, True, False]
-    assert n_absorbed == 2
-    np.testing.assert_allclose(remaining, [[0.05, 0.5]])

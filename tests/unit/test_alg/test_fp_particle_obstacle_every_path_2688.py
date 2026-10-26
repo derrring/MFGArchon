@@ -191,16 +191,16 @@ def test_each_particle_ends_by_its_own_path_beside_an_absorbed_one():
     ],
 )
 def test_what_the_placement_cannot_do_is_refused(case):
-    """A periodic face (a wrapped step is not a segment, #2704), initial mass inside an obstacle (moving it changes
-    the caller's measure), an implicit_domain whose box is not the grid's, and the GPU path (its particles never meet
-    the placement) are refused."""
+    """An obstacle touching a face of an axis that wraps (the image of a wrapped step can lie in it, #2704), initial
+    mass inside an obstacle (moving it changes the caller's measure), an implicit_domain whose box is not the grid's,
+    and the GPU path (its particles never meet the placement) are refused. The obstacle here reaches x_max."""
     if case.startswith("periodic"):
         with pytest.raises(
-            NotImplementedError, match=r"periodic condition on the outer boundary.*not supported.*#2704"
+            NotImplementedError, match=r"meets the max face of axis 0, an axis with a periodic face.*#2704"
         ):
             _solve(2, periodic_bc(dimension=2), "grid" if "grid" in case else "callable")
     elif case == "a periodic face on one side only":
-        # #2706 review 2: periodic on x_min alone reads as a bounded topology, yet the applicator wraps through it.
+        # #2706 review 2: periodic on x_min alone reads as a bounded topology, yet a step wraps through it, onto x_max.
         one_sided = BoundaryConditions(
             segments=[
                 BCSegment(name=b, bc_type=BCType.PERIODIC if b == "x_min" else BCType.NO_FLUX, value=0.0, boundary=b)
@@ -208,7 +208,7 @@ def test_what_the_placement_cannot_do_is_refused(case):
             ],
             dimension=2,
         )
-        with pytest.raises(NotImplementedError, match=r"periodic condition on the outer boundary.*not supported"):
+        with pytest.raises(NotImplementedError, match=r"meets the max face of axis 0, an axis with a periodic face"):
             _solve(2, one_sided, "callable", initial_particles=_navigable_start())
     elif case.startswith("initial_particles"):
         start = _navigable_start()
