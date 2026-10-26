@@ -59,8 +59,8 @@ class FPParticleResult:
         None if density_mode="grid_only".
     time_grid : NDArray
         Time points, shape (Nt+1,).
-    bandwidth : float
-        KDE bandwidth used for density estimation.
+    bandwidth : float or {"scott", "silverman"} or None
+        KDE bandwidth: a factor of each timestep's sample spread, or a rule (CONVENTIONS.md § 9).
 
     Examples
     --------

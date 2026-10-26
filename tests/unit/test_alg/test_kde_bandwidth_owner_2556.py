@@ -82,6 +82,7 @@ NO_SPREAD = {
     "copies of a point in 2-D": np.tile([0.3, 0.7], (50, 1)),
     "a line on the diagonal": np.column_stack([np.linspace(0, 1, 50), np.linspace(0, 1, 50)]),
     "a line off the axes": np.column_stack([0.2 + 0.3 * _t[:, 0], 0.7 - 0.5 * _t[:, 0]]),
+    "a short line far from the origin": np.column_stack([1.0 + 1e-10 * _t[:, 0], 1.0 + 0.7e-10 * _t[:, 0]]),
     "a plane in 3-D": np.array([0.1, 0.2, 0.3])
     + np.outer(_t[:, 0], [0.3, -0.2, 0.5])
     + np.outer(_t[:, 1], [0.1, 0.4, -0.3]),
@@ -92,8 +93,9 @@ NO_SPREAD = {
 
 @pytest.mark.parametrize("sample", NO_SPREAD.values(), ids=NO_SPREAD.keys())
 def test_a_sample_with_no_spread_is_refused(sample):
-    """No kernel exists on these, though `eigvalsh` returns a smallest eigenvalue of order 1e-17 of the largest on a line
-    or a plane, and copies of 0.3 have a covariance of order 1e-33, not 0."""
+    """No kernel exists on these, though `eigvalsh` returns a smallest eigenvalue up to about 1e-15 of the largest on a
+    line or a plane, and on a short line far from the origin one of the size of the positions' rounding (3.8e-12 of the
+    largest on the one here); copies of 0.3 have a covariance of order 1e-33, not 0."""
     assert not kde_sample_has_spread(sample)
     with pytest.raises(ValueError, match="spread in every direction"):
         kde_kernel_covariance(sample, "scott")
@@ -104,16 +106,26 @@ SMALL_SPREAD = {
     "1e6 + 1e-5 N(0, 1)": 1e6 + 1e-5 * _s.normal(size=400),
     "0.5 + 1e-6 N(0, I) in 2-D": 0.5 + 1e-6 * _s.normal(size=(400, 2)),
     "correlation 0.999": _s.multivariate_normal([0.5, 0.5], [[1.0, 0.999], [0.999, 1.0]], size=400),
+    "thin: U(0, 1) by 0.5 + 1e-7 N(0, 1)": np.column_stack([_s.uniform(size=400), 0.5 + 1e-7 * _s.normal(size=400)]),
 }
 
 
 @pytest.mark.parametrize("sample", SMALL_SPREAD.values(), ids=SMALL_SPREAD.keys())
 def test_a_small_spread_is_a_spread(sample):
-    """The permission side of the refusal: a small spread, far from the origin or nearly on a line, is scipy's kernel."""
+    """The permission side of the refusal: a small spread, far from the origin, nearly on a line, or 1e-7 of the spread
+    across it, is scipy's kernel."""
     assert kde_sample_has_spread(sample)
     np.testing.assert_allclose(
         kde_kernel_covariance(sample, "scott"), gaussian_kde(np.atleast_2d(sample.T)).covariance, rtol=1e-9
     )
+
+
+def test_a_sample_with_a_non_finite_position_is_refused():
+    """A NaN row (an absorbed particle in a `preserve_indices` history) is refused as such, not as a point."""
+    sample = np.array([[0.1, 0.2], [np.nan, np.nan], [0.5, 0.4], [0.3, 0.9]])
+    for owner in (kde_kernel_covariance, kde_kernel_widths):
+        with pytest.raises(ValueError, match="finite positions"):
+            owner(sample, "scott")
 
 
 def test_the_widths_exist_on_a_line_and_not_at_a_point():
@@ -200,7 +212,7 @@ def test_reflection_has_no_slope_across_a_wall(where, bandwidth):
 @pytest.mark.parametrize("bandwidth", BANDS)
 def test_an_integer_evaluation_point_is_read_as_a_float(bandwidth):
     """An integer point's image across a wall at 1.25 was built in the point's own dtype, so 2 * 1.25 - 1 read 1, and
-    the estimate at (1, 1) came out 2.12 against 0.63."""
+    the estimate at (1, 1) came out 2.09 against 0.63."""
     sample = np.random.default_rng(5).uniform([0.0, 0.0], [1.25, 1.25], size=(4000, 2))
     points = np.array([[1, 1], [0, 1], [1, 0]])
     bounds = [(0.0, 1.25), (0.0, 1.25)]
@@ -227,8 +239,9 @@ def test_the_wall_estimators_read_the_rule_far_from_a_wall(bandwidth):
 def test_renormalization_reads_each_axis_width_near_a_wall():
     """A uniform sample on [0, 1] x [0, 4], whose kernel is four times wider along y: one kernel width from the wall
     x = 0, and from the wall y = 0, the renormalized estimate is the density 1/4, since each axis's mass correction
-    uses that axis's width. The mean of the two widths misreads the mass inside by +28% at the first and -11% at the
-    second. One point per call: on several, the estimator rescales its output to unit mass over them as over a grid."""
+    uses that axis's width. With the mean of the two widths the estimate comes out 31% high at the first and 10% low at
+    the second. One point per call: on several, the estimator rescales its output to unit mass over them as over a
+    grid."""
     sample = np.random.default_rng(4).uniform([0.0, 0.0], [1.0, 4.0], size=(50000, 2))
     h = kde_kernel_widths(sample, "scott")
     bounds = [(0.0, 1.0), (0.0, 4.0)]
@@ -320,7 +333,7 @@ def test_the_gpu_path_reads_each_steps_spread(monkeypatch, bandwidth):
     assert handed[-1][1] > 1.5 * handed[0][1], "the sample spread under the diffusion, and the width with it"
 
 
-@pytest.mark.parametrize("bandwidth", [0.5, "silverman"])
+@pytest.mark.parametrize("bandwidth", BANDS)
 def test_the_particle_result_queries_with_the_solvers_bandwidth(monkeypatch, bandwidth):
     """`FPParticleResult` holds the solver's `kde_bandwidth`, a factor or a rule. The solver handed it None for a rule
     (the query's own Scott), and the result handed the query a factor as an absolute width. The query is handed the mean
@@ -370,33 +383,34 @@ def test_a_point_mass_initial_density_still_solves_on_the_default_path():
     assert M[-1].max() < M[0].max()
 
 
-@pytest.mark.parametrize("bandwidth", BANDS)
-def test_a_sample_on_a_line_is_deposited_on_its_nearest_nodes(bandwidth):
-    """The n-D default path on particles that stay on the line x = 0.5 (no diffusion): no kernel exists, and the
-    estimate raised. Each particle puts mass 1/N on its nearest node, in the problem's measure, so each slice has mass
-    1."""
+@pytest.mark.parametrize("kde_method", ["reflection", "standard", "renormalization", "beta", "cic"])
+def test_a_sample_on_a_line_is_refused_by_name_and_cic_deposits_it(kde_method):
+    """Particles that stay on the line x = 0.53 (no diffusion) have no kernel: the n-D path refuses them by name for every
+    kernel method, and names kde_method="cic", which needs none and deposits them as it did at the base, split between
+    the nodes 0.5 and 0.6. At the base, with 0.5, reflection spread them over the domain (mass 0.83), and standard and
+    renormalization returned 0; #2819's first correction put them all on the node 0.5."""
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.utils.numerical.particle.cic import cic_deposit_nd
 
-    problem = _problem(11, 2, volatility=0.0)
-    y = np.random.default_rng(8).uniform(size=300)
-    weights = problem.spatial_measure().weights
-    counts = np.zeros((11, 11))
-    np.add.at(counts, (5, np.rint(y * 10).astype(int)), 1.0)
-    want = counts / (300 * weights)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        logging.disable(logging.WARNING)
-        try:
-            M = np.asarray(
-                FPParticleSolver(problem, num_particles=300, seed=5, kde_bandwidth=bandwidth).solve_fp_system(
-                    M_initial=None,
-                    drift_field=lambda t, x, m: np.zeros_like(x),
-                    initial_particles=np.column_stack([np.full(300, 0.5), y]),
-                    show_progress=False,
-                )
+    particles = np.column_stack([np.full(300, 0.53), np.random.default_rng(8).uniform(size=300)])
+    solver = FPParticleSolver(_problem(11, 2, volatility=0.0), num_particles=300, seed=5, kde_method=kde_method)
+
+    def solve():
+        return np.asarray(
+            solver.solve_fp_system(
+                M_initial=None,
+                drift_field=lambda t, x, m: np.zeros_like(x),
+                initial_particles=particles,
+                show_progress=False,
             )
-        finally:
-            logging.disable(logging.NOTSET)
-    for slice_ in M[1:]:
+        )
+
+    if kde_method != "cic":
+        with pytest.raises(ValueError, match=r"no spread in some direction.*kde_method='cic'"):
+            solve()
+        return
+    want = cic_deposit_nd(particles, np.array([[0.0, 1.0], [0.0, 1.0]]), (11, 11), periodic=False)
+    for slice_ in solve()[1:]:
         np.testing.assert_allclose(slice_, want, rtol=1e-12, atol=1e-12)
-        assert np.sum(slice_ * weights) == pytest.approx(1.0, rel=1e-12)
+        assert slice_[5].sum() > 0
+        assert slice_[6].sum() > 0

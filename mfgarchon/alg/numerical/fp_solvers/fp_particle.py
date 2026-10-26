@@ -647,11 +647,11 @@ class FPParticleSolver(BaseFPSolver):
         return self.kde_normalization == KDENormalization.ALL
 
     def _kernel_widths(self, particles: np.ndarray) -> np.ndarray:
-        """The per-axis widths of the kernel scipy builds for ``kde_bandwidth`` on ``particles`` (`kde_kernel_widths`,
+        """The per-axis widths of the kernel scipy builds for ``kde_bandwidth`` on ``particles`` (`kde_kernel_covariance`,
         CONVENTIONS.md § 9): what an estimator that reads an absolute width is handed."""
-        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_widths
+        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
 
-        return kde_kernel_widths(particles, self.kde_bandwidth)
+        return np.sqrt(np.diag(kde_kernel_covariance(particles, self.kde_bandwidth)))
 
     def _apply_kde_method_1d(
         self,
@@ -1430,24 +1430,16 @@ class FPParticleSolver(BaseFPSolver):
             density[tuple(indices)] = self.num_particles
             return density
 
-        # Edge case: no spread in some direction (on a line or a plane), so no kernel (#2556): each particle puts
-        # mass 1/N on its nearest node, in the problem's own measure, so the slice has mass 1 as a KDE's has and the
-        # mass factor calibrated on a first slice stays right for the rest. Decided before any KDE by the owner's own
-        # predicate, so a failing estimate is never swapped for another one (#1513).
+        # Edge case: no spread in some direction (on a line or a plane), so a kernel method has no kernel (#2556).
+        # Refused by name, decided before any KDE by the owner's predicate; CIC needs no kernel and goes on.
         from mfgarchon.utils.numerical.particle.interpolation import kde_sample_has_spread
 
-        if not kde_sample_has_spread(particles):
-            logger.warning(
-                "FPParticleSolver (nD): %d particles have no spread in some direction (a line or a plane), so a KDE "
-                "has no kernel; each is deposited on its nearest node (#2556).",
-                len(particles),
+        if self.kde_method != KDEMethod.CIC and not kde_sample_has_spread(particles):
+            raise ValueError(
+                f"FPParticleSolver (nD): {len(particles)} particles have no spread in some direction (on a line or a "
+                f"plane, as particles placed there stay with no diffusion), so kde_method={self.kde_method.value!r} "
+                "has no kernel (#2556). kde_method='cic' deposits such a sample on the grid."
             )
-            counts = np.zeros(grid_shape)
-            nearest = tuple(
-                np.argmin(np.abs(coordinates[d][None, :] - particles[:, d][:, None]), axis=1) for d in range(dimension)
-            )
-            np.add.at(counts, nearest, 1.0)
-            return counts / (len(particles) * self.problem.spatial_measure().weights)
 
         try:
             # Issue #709: Select KDE method for boundary correction

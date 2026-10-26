@@ -416,28 +416,37 @@ def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
     """
     Whether a sample has spread in every direction, so that a KDE of it has a kernel (#2556).
 
-    False when the sample covariance (ddof 1) is not positive definite at the precision the numbers carry: its
-    smallest eigenvalue at or below 1e-12 of its largest (eigvalsh's own rounding is about 2e-16 of it, so a sample on a
-    line or a plane comes back with a tiny positive one), or its largest at or below the square of 1e-13 of the
-    positions' magnitude (n copies of 0.3 have a covariance of order 1e-33, not 0, from the mean's rounding); and for
-    fewer than two particles. A small spread far from the origin, such as 1e6 + 1e-5 N(0, 1), is a spread, as scipy
-    reads it.
+    A conditioning bound on the sample covariance (ddof 1): False when its smallest eigenvalue is at or below 1e-14 of
+    its largest, or at or below the variance the rounding of the positions alone can give, the square of 1e-13 of their
+    magnitude; and for fewer than two particles. A sample on a line or a plane comes back from `eigvalsh` with a smallest
+    eigenvalue of rounding size: up to about 1e-15 of the largest, and of the size of the positions' own rounding when
+    the line is short and far from the origin. n copies of 0.3 have a covariance of order 1e-33, not 0. A small spread far from the origin, such as
+    1e6 + 1e-5 N(0, 1), is a spread, as scipy reads it. A genuine sample whose spread in some direction is below 1e-7 of
+    its spread in another is refused too, though scipy builds a kernel for it.
 
     Parameters
     ----------
     particle_positions : ndarray
-        The sample, shape (N,) or (N, d).
+        The sample, shape (N,) or (N, d). Non-finite positions are refused by name.
     """
+    points = _sample(particle_positions)
+    if len(points) < 2:
+        return False
+    eigenvalues = np.linalg.eigvalsh(np.atleast_2d(np.cov(points, rowvar=False)))
+    return bool(eigenvalues[0] > max(1e-14 * eigenvalues[-1], _rounding_variance(points)))
+
+
+def _sample(particle_positions: NDArray[np.floating]) -> NDArray[np.floating]:
+    """The positions as a float array of shape (N, d), refusing a non-finite one by name."""
     points = np.asarray(particle_positions, dtype=float)
     if points.ndim == 1:
         points = points.reshape(-1, 1)
-    if len(points) < 2:
-        return False
-    covariance = np.atleast_2d(np.cov(points, rowvar=False))
-    if not np.all(np.isfinite(covariance)):
-        return False
-    eigenvalues = np.linalg.eigvalsh(covariance)
-    return bool(eigenvalues[0] > 1e-12 * eigenvalues[-1] and eigenvalues[-1] > _rounding_variance(points))
+    if not np.all(np.isfinite(points)):
+        raise ValueError(
+            f"A KDE sample must have finite positions; {int(np.sum(~np.isfinite(points).all(axis=1)))} of "
+            f"{len(points)} particle(s) have a NaN or infinite coordinate (#2556)."
+        )
+    return points
 
 
 def _rounding_variance(points: NDArray[np.floating]) -> float:
@@ -466,9 +475,7 @@ def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: f
     ndarray
         The kernel covariance, shape (d, d).
     """
-    points = np.asarray(particle_positions, dtype=float)
-    if points.ndim == 1:
-        points = points.reshape(-1, 1)
+    points = _sample(particle_positions)
     factor = kde_factor(bandwidth, points)
     n, d = points.shape
     if not kde_sample_has_spread(points):
@@ -487,8 +494,8 @@ def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float
     They are the square roots of `kde_kernel_covariance`'s diagonal, the factor times the sample's standard deviation
     (ddof 1) on each axis. Unlike the covariance they exist for a sample with no spread in some direction (on a line or
     a plane), whose width on that axis is zero to rounding, which is what a reader of one isotropic absolute width needs
-    (#2556). A sample with no spread on any axis (one point, or fewer than two particles) has no width, and is refused
-    by name.
+    (#2556); they exist wherever the covariance does. A sample with no spread on any axis (one point, or fewer than two
+    particles) has no width, and is refused by name.
 
     Parameters
     ----------
@@ -502,9 +509,7 @@ def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float
     ndarray
         The widths, shape (d,).
     """
-    points = np.asarray(particle_positions, dtype=float)
-    if points.ndim == 1:
-        points = points.reshape(-1, 1)
+    points = _sample(particle_positions)
     variances = np.diag(np.atleast_2d(np.cov(points, rowvar=False))) if len(points) > 1 else np.full(1, np.nan)
     if not np.max(variances) > _rounding_variance(points):
         raise ValueError(
