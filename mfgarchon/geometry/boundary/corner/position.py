@@ -112,12 +112,24 @@ def walls_reached(
     """The face of each axis each row of ``positions`` is at or past, for a reader that has only where a step ended:
     ``0`` for the min face, ``1`` for the max face, ``-1`` for neither. A row is at a face when it lies past it or within
     ``tolerance`` inside it; ``tolerance`` is the reader's band (`absorb_at_walls`). On an axis narrower than the band
-    the min face is named. ``positions`` is (N, d), or (d,) for one point, and the result has that shape."""
+    the min face is named. ``positions`` is (N, d), or (d,) for one point, and the result has that shape.
+
+    A non-finite row is refused by name: it is at no wall and past none, so a reader would keep it or drop it with
+    nothing raised. The particle solver's path refuses it too (`ImplicitDomain.first_contact`)."""
     was_1d = np.ndim(positions) == 1
     positions = np.atleast_2d(positions)
     bounds = np.asarray(bounds, dtype=float).reshape(-1, 2)
     if bounds.shape[0] != positions.shape[1]:
         raise ValueError(f"Bounds dimension {bounds.shape[0]} != positions dimension {positions.shape[1]}")
+    non_finite = np.flatnonzero(~np.isfinite(positions).all(axis=1))
+    if non_finite.size:
+        row = int(non_finite[0])
+        raise ValueError(
+            f"walls_reached: row {row} of the particle positions is not finite, {positions[row].tolist()} "
+            f"({non_finite.size} such row(s) of {positions.shape[0]}). A non-finite position is at no wall and past "
+            "none, so a wall rule cannot place it: it is refused here, as the particle solver's path refuses it "
+            "(#2550). Find the step that produced it."
+        )
     reached = np.full(positions.shape, -1, dtype=np.int8)
     reached[positions >= bounds[:, 1] - tolerance] = 1
     reached[positions <= bounds[:, 0] + tolerance] = 0
@@ -256,11 +268,11 @@ if __name__ == "__main__":
     print("   Large displacement: passed")
 
     # Test 2D absorb
-    print("\n2. absorb_positions:")
+    print("\n2. absorb_at_walls:")
     positions_absorb = np.array([[-0.5, 1.5], [0.5, 0.5]])
-    absorbed = absorb_positions(positions_absorb, bounds_2d)
-    expected_absorb = np.array([[0.0, 1.0], [0.5, 0.5]])
-    assert np.allclose(absorbed, expected_absorb), f"2D absorb failed: {absorbed}"
+    leave, exits = absorb_at_walls(positions_absorb, bounds_2d, 1e-10)
+    assert leave.tolist() == [True, False], f"2D absorb failed: {leave}"
+    assert np.array_equal(exits, positions_absorb[:1]), f"2D absorb exits: {exits}"
     print("   2D absorb: passed")
 
     print("\nAll corner/position.py tests passed!")

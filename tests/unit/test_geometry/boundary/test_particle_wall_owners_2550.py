@@ -16,7 +16,8 @@ is the owner's corner order: priority, then DIRICHLET before a natural condition
 **Rows.** A channel corner with the periodic face winning the corner and with the wall winning; a wrap of two spans
 beside a fold; an exit outranked by a periodic face, and one that wins on DIRICHLET-first; a 3-D vertex of a wall, an
 outranked exit and a periodic face; a capacity-limited exit at a periodic corner, open and then full. The absorbing
-owner at the edges of its band, and `MeshfreeApplicator`'s absorbing mode on a box and on a disc.
+owner at the edges of its band, `MeshfreeApplicator`'s absorbing mode on a box and on a disc, and both readers' refusal
+of a non-finite position.
 
 Held fixed: the unit box; constant values; every face placed by its label. The fuzz over BC kinds, priorities, global
 and default segments, bounds up to 1e5 and ends at each band's edges is the PR's, in scratch.
@@ -173,3 +174,16 @@ def test_the_two_deprecations_warn_and_keep_their_behaviour():
     ends = [(1.04, 1.02), (0.5, -0.2), (1.01, 0.5), (0.3, 0.4)]
     for old, new in zip(_step("flux", bc, ends)[:3], _step("apply", bc, ends)[:3], strict=True):
         np.testing.assert_array_equal(old, new)
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf], ids=["nan", "inf", "-inf"])
+def test_both_end_readers_refuse_a_non_finite_position(value):
+    """A non-finite position is at no wall and past none: `ParticleApplicator` kept it, a NaN unmoved and an infinite
+    coordinate folded or wrapped into NaN, and `MeshfreeApplicator`'s absorbing mode dropped it as though absorbed. The
+    owner's reach now refuses it by name for both, naming the row, as the particle solver's path refuses it."""
+    rows = np.array([[0.5, 0.5], [value, 0.5], [0.4, value]])
+    match = r"row 1 of the particle positions is not finite"
+    with pytest.raises(ValueError, match=match):
+        ParticleApplicator().apply(rows, _bc(2, CHANNEL), [(0.0, 1.0), (0.0, 1.0)])
+    with pytest.raises(ValueError, match=match):
+        MeshfreeApplicator(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))).apply_particle_bc(rows, "absorbing")

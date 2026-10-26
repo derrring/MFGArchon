@@ -334,7 +334,7 @@ class ParticleApplicator:
         segment decides whether it is absorbed, through the absorbing wall's owner (`absorb_at_walls`): removed, never
         moved, its end recorded. If it is not, each face it is at or past acts on its own axis by its own segment
         (`_act_per_face`): a periodic face wraps the axis, any other folds it. A face the nearest point is read on and
-        the particle has not reached acts on nothing.
+        the particle has not reached takes no action on its axis, though at a corner it takes part in the corner order.
 
         Args:
             particles: Particle positions, shape (N, d). Read, never written.
@@ -352,7 +352,8 @@ class ParticleApplicator:
 
     @deprecated(
         since="v0.22.0",
-        replacement="ParticleApplicator.apply",
+        replacement="ParticleApplicator.apply, which is this method with no limits; a capacity-limited exit has no "
+        "replacement (#2575)",
         reason="no FP solver honours a capacity-limited exit: each refuses a segment carrying flux_capacity (#2575), "
         "and the solver method that called this one had no caller and is deleted (#2550)",
     )
@@ -364,7 +365,8 @@ class ParticleApplicator:
         flux_limits: dict[str, float],
     ) -> tuple[NDArray[np.floating], NDArray[np.bool_], NDArray[np.floating], dict[str, int]]:
         """
-        Apply segment-aware BC with flux-limited absorption at absorbing exits. Deprecated (#2550).
+        Apply segment-aware BC with flux-limited absorption at absorbing exits. Deprecated (#2550): with no limits it is
+        `apply`, and a capacity-limited exit has no replacement, since no FP solver honours one (#2575).
 
         `apply`'s end-position rule, with one difference: a segment named in ``flux_limits`` absorbs, in particle
         order, only while its count this call is below its limit. Past it the particle is not absorbed and the faces it
@@ -523,6 +525,7 @@ class ParticleApplicator:
         wraps = None if corner is None else {(axis, side): wrap for axis, side, wrap in corner[1]}
         out = end.copy()
         for axis in np.flatnonzero(reached >= 0):
+            # A reached face is within ONWALL_TOL of its plane, so the corner read it at SDF_BOUNDARY_TOL (> ONWALL_TOL).
             face = (int(axis), int(reached[axis]))
             if (action == "periodic") if wraps is None else wraps[face]:
                 out = wrap_positions(out, box, periodic_dims=(face[0],))

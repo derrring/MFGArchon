@@ -792,16 +792,18 @@ the end at its nearest point of the box. An end at or past a face, within the re
 segment its nearest point takes, on one face that face's and at a corner the owner's corner order, decides whether the
 particle is absorbed. If it is not, each face the end is at or past acts on its own axis by its own segment: a periodic
 face wraps the axis and any other folds it (`reflect_positions`). A face the nearest point is read on but the end has
-not reached acts on nothing. This is the tie rule above, with "the step crosses it there" read as "the end is at or
-past it" (#2550, #2803's shape).
+not reached takes no action on its axis; at a corner its segment still takes part in the corner order, so it can decide
+the absorption. This is the tie rule above, with "the step crosses it there" read as "the end is at or past it"
+(#2550, #2803's shape).
 
 **The bands**, in one place. An end reader's reach band is its own (`walls_reached`): `ParticleApplicator` takes an end
 within `ONWALL_TOL` = 1e-10 of a face, absolute, as at it; `MeshfreeApplicator`'s absorbing mode takes a particle on or
 past its geometry's box, band 0, or on its geometry's boundary at the geometry's own band (`is_on_boundary`; for an
 `ImplicitDomain` `SDF_BOUNDARY_TOL` = 1e-8 on the signed distance). `ParticleApplicator` reads the segment at the
 nearest point within `SDF_BOUNDARY_TOL` + |bound| · `BOUNDARY_REL_TOL` = 1e-8 + |bound| · 1e-12 of a face
-(`_faces_at_point`), so it can read a face the end has not reached, and that face acts on nothing. The path reader's
-tolerance is `CONTACT_EPS` = 1e-12 of the box's diagonal (#2733 D4).
+(`_faces_at_point`), so it can read a face the end has not reached, which then takes no action on its axis. The path
+reader's tolerance is `CONTACT_EPS` = 1e-12 of the box's diagonal (#2733 D4). A non-finite position is refused by
+name, by the contact loop (`ImplicitDomain.first_contact`) and by the end readers' owner (`walls_reached`) alike.
 
 *Not yet met (#2733): the contact loop reflects at a step's first contacts itself, which on the box agrees with that
 fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2550, its
