@@ -167,8 +167,9 @@ def reflection_kde(
     across the walls x is near (within ``n_bandwidths`` kernel widths, on every reflected axis; at a corner, every
     combination). A particle's image across a wall carries the reflected kernel R Sigma R, which is what evaluating the
     sample's own kernel Sigma at the reflected point gives, so the estimate's derivative normal to a wall is zero on the
-    wall for any sample covariance (#2556). The kernel is the real sample's, as `scipy.stats.gaussian_kde` builds it for
-    ``bandwidth`` (`kde_kernel_covariance`, CONVENTIONS.md § 9).
+    wall for any sample covariance (#2556), for a kernel narrower than the domain: there is one image per wall, and a
+    kernel that reaches the far wall would need the images' images. The kernel is the real sample's, as
+    `scipy.stats.gaussian_kde` builds it for ``bandwidth`` (`kde_kernel_covariance`, CONVENTIONS.md § 9).
 
     This eliminates the ~50% density underestimation at boundaries
     that occurs with standard KDE.
@@ -219,8 +220,9 @@ def reflection_kde(
         raise RuntimeError("scipy is required for KDE. Install with: pip install scipy")
     from mfgarchon.utils.numerical.particle.interpolation import kde_factor, kde_kernel_covariance
 
-    particles = np.atleast_1d(particles)
-    eval_points = np.atleast_1d(eval_points)
+    # Float, so that an integer evaluation point's image across a wall is not truncated
+    particles = np.atleast_1d(np.asarray(particles, dtype=float))
+    eval_points = np.atleast_1d(np.asarray(eval_points, dtype=float))
     is_1d = particles.ndim == 1
     ndim = len(bounds)
     if is_1d:

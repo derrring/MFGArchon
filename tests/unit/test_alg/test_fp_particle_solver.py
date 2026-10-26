@@ -342,8 +342,10 @@ class TestFPParticleSolverIntegration:
         # both solves see identical particles (zero drift here) and the difference is purely the
         # kernel. kde_bandwidth is a factor of the sample's std (CONVENTIONS.md § 9; #2556), so
         # h = b * 0.05 here and the widening is (b2^2 - b1^2) * 0.05^2. The factors are chosen so
-        # both widths are resolved by the 31-node grid (0.025 and 0.1, against dx = 0.033), and the
-        # wider density stays 4.5 of its stds from each wall. Measured over 8 seeds at the change:
+        # both densities are resolved by the 31-node grid: their spreads, sqrt(0.05^2 + h^2), are
+        # 0.056 and 0.112 against dx = 0.033 (the factors 0.05 and 0.2 left spreads of about 0.05,
+        # which the grid reads at 0.06 to 0.10 of the widening), and the wider density stays 4.5 of
+        # its stds from each wall. Measured over 8 seeds at the change:
         # 0.933..1.024 of that; before it, 0.314..0.316, when the default reflection estimator took
         # a number partly as an absolute width.
         dx = problem.geometry.get_grid_spacing()[0]

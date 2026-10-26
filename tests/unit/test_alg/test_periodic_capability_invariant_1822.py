@@ -589,7 +589,8 @@ def _surface_params():
 # and 1-29 under joint refinement: FPParticleSolver-PERIODIC fell at every step in 28 of 30 single seeds; the last
 # step's change r81 - r41 has mean -0.0446 and sd 0.0300, so a single seed reads it as a rise about 1 time in 15
 # (normal model; 2 of 30 observed). Over five seeds that is about 4e-4, and no disjoint group of five of the 30 rose
-# (6 of 6). Five solves cost about 7 s here against 1.4 s for one. Whether the seam residual converges to zero or to
+# (6 of 6). Five seeds at three grids cost about 6.6 s here against 1.3 s for one seed. Whether the seam residual
+# converges to zero or to
 # a floor under joint refinement is #2804's question, not this row's.
 SEED_AVERAGED = {("FPParticleSolver", "PERIODIC"): (SEED, 1, 2, 3, 4)}
 

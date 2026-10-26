@@ -647,11 +647,11 @@ class FPParticleSolver(BaseFPSolver):
         return self.kde_normalization == KDENormalization.ALL
 
     def _kernel_widths(self, particles: np.ndarray) -> np.ndarray:
-        """The per-axis widths of the kernel scipy builds for ``kde_bandwidth`` on ``particles`` (`kde_kernel_covariance`,
+        """The per-axis widths of the kernel scipy builds for ``kde_bandwidth`` on ``particles`` (`kde_kernel_widths`,
         CONVENTIONS.md § 9): what an estimator that reads an absolute width is handed."""
-        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
+        from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_widths
 
-        return np.sqrt(np.diag(kde_kernel_covariance(particles, self.kde_bandwidth)))
+        return kde_kernel_widths(particles, self.kde_bandwidth)
 
     def _apply_kde_method_1d(
         self,
@@ -682,7 +682,8 @@ class FPParticleSolver(BaseFPSolver):
         bounds_tuple = (xmin, xmax)
 
         if self.kde_method == KDEMethod.BETA:
-            # beta_kde reads an absolute width: hand it the kernel's (#2556)
+            # beta_kde reads its smoothing parameter as an absolute width: hand it the Gaussian kernel's (#2556); the
+            # beta kernel's spread is not that width (Chen's b), which C3-2 settles with beta_kde's own keyword
             return beta_kde(
                 particles,
                 eval_points,
@@ -753,7 +754,8 @@ class FPParticleSolver(BaseFPSolver):
         )
 
         if self.kde_method == KDEMethod.BETA:
-            # beta_kde reads absolute per-axis widths: hand it the kernel's (#2556)
+            # beta_kde reads absolute per-axis smoothing parameters: hand it the Gaussian kernel's widths (#2556);
+            # the beta kernel's spread is not that width (Chen's b), which C3-2 settles with beta_kde's own keyword
             return beta_kde(
                 particles,
                 grid_points,
@@ -856,7 +858,7 @@ class FPParticleSolver(BaseFPSolver):
                 M_grid=M_density_on_grid,
                 time_grid=time_grid,
                 particle_history=self._particle_history,
-                bandwidth=self.kde_bandwidth if isinstance(self.kde_bandwidth, (int, float)) else None,
+                bandwidth=self.kde_bandwidth,  # a factor or a rule, read through the owner at each query (#2556)
             )
 
         # Backward compatible: return grid density only
@@ -1427,6 +1429,25 @@ class FPParticleSolver(BaseFPSolver):
                 indices.append(idx)
             density[tuple(indices)] = self.num_particles
             return density
+
+        # Edge case: no spread in some direction (on a line or a plane), so no kernel (#2556): each particle puts
+        # mass 1/N on its nearest node, in the problem's own measure, so the slice has mass 1 as a KDE's has and the
+        # mass factor calibrated on a first slice stays right for the rest. Decided before any KDE by the owner's own
+        # predicate, so a failing estimate is never swapped for another one (#1513).
+        from mfgarchon.utils.numerical.particle.interpolation import kde_sample_has_spread
+
+        if not kde_sample_has_spread(particles):
+            logger.warning(
+                "FPParticleSolver (nD): %d particles have no spread in some direction (a line or a plane), so a KDE "
+                "has no kernel; each is deposited on its nearest node (#2556).",
+                len(particles),
+            )
+            counts = np.zeros(grid_shape)
+            nearest = tuple(
+                np.argmin(np.abs(coordinates[d][None, :] - particles[:, d][:, None]), axis=1) for d in range(dimension)
+            )
+            np.add.at(counts, nearest, 1.0)
+            return counts / (len(particles) * self.problem.spatial_measure().weights)
 
         try:
             # Issue #709: Select KDE method for boundary correction
@@ -2409,7 +2430,8 @@ class FPParticleSolver(BaseFPSolver):
         GPU pipeline - full particle evolution on GPU.
 
         Track B Phase 2.1: Full GPU acceleration including internal KDE.
-        Eliminates all GPU↔CPU transfers during evolution loop.
+        Keeps the evolution on the device; one transfer per step takes the positions to the host for the KDE
+        kernel's width (#2556).
 
         Expected speedup:
             - Apple Silicon MPS: 1.5-2x for N≥50k particles
@@ -2556,7 +2578,8 @@ class FPParticleSolver(BaseFPSolver):
                     X_particles_gpu[t + 1, :], xmin, xmax, gpu_bc_type, self.backend
                 )
 
-            # Estimate density using internal GPU KDE (Phase 2.1 - no transfers!)
+            # Estimate density using internal GPU KDE (Phase 2.1). One transfer per step: the step's positions go to
+            # the host for the kernel's width (`_gpu_kernel_width`, #2556).
             M_density_gpu[t + 1, :] = gaussian_kde_gpu_internal(
                 X_particles_gpu[t + 1, :], x_grid_gpu, self._gpu_kernel_width(X_particles_gpu[t + 1, :]), self.backend
             )
