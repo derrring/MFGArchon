@@ -316,4 +316,10 @@ convention C2                       -
 convention C3                       -
 convention C4                       -
 convention C5                       -
-convention C6                       -
+# C6 (#2550): the end readers' and the owners' other consumers' pins, the path rule's owner's (the contact loop), and
+# the structural guard over the box wall owners with its planted rivals.
+convention C6                 tests/unit/test_geometry/boundary/test_particle_wall_owners_2550.py
+convention C6                 tests/unit/test_geometry/boundary/test_particle_corner_is_read_by_the_owner_2512.py
+convention C6                 tests/unit/test_alg/test_contact_loop_2733.py
+convention C6                 tests/unit/test_alg/test_particle_periodic_path_2704.py
+convention C6                 tests/unit/test_geometry/boundary/test_particle_wall_has_one_owner_2550.py

@@ -767,12 +767,20 @@ boundary helper never mutates the caller's array (ruled 2026-10-08). On a box, r
 `absorb_at_walls` beside it; and wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. An absorbed
 particle is removed and never moved, and the mass it carried leaves through the wall (§ 9). Its exit position is where
 its reader last saw it: the contact for a reader of the path, the end for a reader of the end. `corner.absorb_positions`
-clamps a particle to the wall and keeps it, so it is not an absorbing wall; it is deprecated (#2550).
+clamps a particle to the wall and keeps it, so it is not an absorbing wall; it is deprecated (#2550). A structural
+guard (`test_particle_wall_has_one_owner_2550.py`) fails if a function under `mfgarchon/` outside the owners applies a
+box wall rule to positions in one of the shapes its docstring lists: a modulo, a mirror or a shift by the box, or a
+clip to it. It allows by name the owners, the contact loop, the 1-D GPU helper's device copy of the owners and the
+deprecated `absorb_positions`, and code that is not a box wall rule for particles: the semi-Lagrangian
+departure-point folds (#2815), a KDE's reflection ghosts, and clips with another purpose (a control's or a field's
+bounds, a point read for its segment, the geometry API's projections).
 
 **The particle solver reads a step by its path.** It ends each CPU step at its first contacts with the particles'
 boundary (`reflect_at_first_contacts`, #2733): it reflects a particle specularly at a contact, absorbs one at a
 contact on an exit, and at a contact on a periodic face goes on with the rest of the step from its image on the
-opposite face (#2704). It reads the boundary condition only at a contact on the box.
+opposite face (#2704). It reads the boundary condition only at a contact on the box. The contact loop is the path
+rule's owner; on the box its reflections agree with `reflect_positions`'s fold to rounding, short of its cap on
+reflections per step (`test_contact_loop_2733.py`).
 
 **At a corner one of whose faces is periodic** (`applicator_particle.periodic_corner_actions`, ruled 2026-10-26), the
 owner's corner order (priority, then DIRICHLET before a natural condition, then a placed segment before a global one,
@@ -812,9 +820,7 @@ owners, kept because they work on NumPy arrays; `test_particle_wall_owners_2550.
 that should leave; both refuse a non-finite position, as the owner's reach does. No helper measured mutates the caller's
 array.
 
-*Not yet met (#2733): the contact loop reflects at a step's first contacts itself, which on the box agrees with that
-fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2693): on a
-geometry that is not a box, `MeshfreeApplicator`'s particle modes read its bounding box.*
+*Not yet met (#2693): on a geometry that is not a box, `MeshfreeApplicator`'s particle modes read its bounding box.*
 
 ### Pointwise and bulk must agree
 
