@@ -140,12 +140,26 @@ def interpolate_1d_numpy(x_query: np.ndarray, x_grid: np.ndarray, y_grid: np.nda
     return y_interp
 
 
+#: Why "dirichlet" is refused by the 1-D helpers (#2485, #2550): they return positions, so they can only clamp.
+_DIRICHLET_REFUSAL = (
+    "bc_type 'dirichlet' is refused. This function returns positions, so it cannot remove a particle at an absorbing "
+    "wall, and a clamp to the wall keeps the mass that should leave through it (#2485, #2550). Read which particles "
+    "leave with mfgarchon.geometry.boundary.corner.absorb_at_walls(particles[:, None], [(xmin, xmax)], tolerance), at "
+    "your reader's band (ParticleApplicator's is ONWALL_TOL, 1e-10); the particle solver's 1-D GPU path refuses an "
+    "absorbing BC (#1910)."
+)
+
+
 def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: str, backend: "BaseBackend"):
     """
     Apply boundary conditions to particles on GPU.
 
-    Supports periodic, no-flux (reflecting), and Dirichlet boundaries.
+    Supports periodic and no-flux (reflecting) boundaries; "dirichlet" is refused by name.
     All operations performed in parallel on GPU.
+
+    The fold and the wrap are the device copy of their owners, `corner.reflect_positions` and
+    `periodic.wrap_positions`, which work on NumPy arrays (CONVENTIONS.md § *Particles at a wall*); the NumPy
+    fallback below reads the owners, and `test_particle_wall_owners_2550.py` pins this copy against them.
 
     Parameters
     ----------
@@ -156,7 +170,7 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
     xmax : float
         Upper boundary
     bc_type : str
-        Boundary condition type: 'periodic', 'no_flux', or 'dirichlet'
+        Boundary condition type: 'periodic' or 'no_flux'
     backend : BaseBackend
         Backend providing tensor operations
 
@@ -165,12 +179,25 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
     backend tensor
         Particles with boundary conditions applied, shape (N,)
     """
+    if bc_type == "dirichlet":
+        raise ValueError(f"apply_boundary_conditions_gpu: {_DIRICHLET_REFUSAL}")
+
     xp = backend.array_module
     Lx = xmax - xmin
+    # The owner's refusal of a non-finite position (`corner.walls_reached`, #2550), on the device, with the owner's
+    # message: the check is one scalar read per call, and the 1-D GPU loop already reads its drift back every step.
+    if not bool(xp.isfinite(particles).all()):
+        from mfgarchon.geometry.boundary.corner import non_finite_refusal
+
+        finite = np.asarray(backend.to_numpy(xp.isfinite(particles)), dtype=bool).reshape(-1)
+        row = int(np.flatnonzero(~finite)[0])
+        value = float(np.asarray(backend.to_numpy(particles)).reshape(-1)[row])
+        raise non_finite_refusal(row, [value], int((~finite).sum()), finite.size)
 
     if bc_type == "periodic":
-        # Wrap around: x → xmin + (x - xmin) mod Lx
-        particles = xmin + ((particles - xmin) % Lx)
+        # Wrap around: x → xmin + (x - xmin) mod Lx; an axis with no span is left as it is, as the owner leaves it
+        if Lx > 1e-14:
+            particles = xmin + ((particles - xmin) % Lx)
 
     elif bc_type == "no_flux":
         # Reflecting boundaries using modular "fold" reflection
@@ -188,15 +215,6 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
                 xmin + pos_in_period,
             )
 
-    elif bc_type == "dirichlet":
-        # Absorbing: clamp to domain
-        # Backend compatibility - JAX uses clamp, NumPy uses clip (Issue #543 acceptable)
-        if hasattr(xp, "clip"):
-            particles = xp.clip(particles, xmin, xmax)
-        else:
-            # JAX doesn't have clip, use clamp
-            particles = xp.minimum(xp.maximum(particles, xmin), xmax)
-
     else:
         raise ValueError(f"Unknown boundary condition type: {bc_type}")
 
@@ -205,7 +223,10 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
 
 def apply_boundary_conditions_numpy(particles: np.ndarray, xmin: float, xmax: float, bc_type: str) -> np.ndarray:
     """
-    CPU fallback for applying boundary conditions.
+    CPU fallback for applying boundary conditions, through their owners (CONVENTIONS.md § *Particles at a wall*):
+    'periodic' wraps by `periodic.wrap_positions` and 'no_flux' folds by `corner.reflect_positions`. "dirichlet" is
+    refused by name, and so is a non-finite position, by the owner's reach (`corner.walls_reached`). ``particles`` is
+    not written.
 
     Parameters
     ----------
@@ -216,37 +237,32 @@ def apply_boundary_conditions_numpy(particles: np.ndarray, xmin: float, xmax: fl
     xmax : float
         Upper boundary
     bc_type : str
-        Boundary condition type
+        Boundary condition type: 'periodic' or 'no_flux'
 
     Returns
     -------
     np.ndarray
-        Particles with boundary conditions applied
+        Particles with boundary conditions applied, the input's shape; a float input keeps its dtype
     """
-    Lx = xmax - xmin
+    from mfgarchon.geometry.boundary.corner import reflect_positions, walls_reached
+    from mfgarchon.geometry.boundary.periodic import wrap_positions
+
+    if bc_type == "dirichlet":
+        raise ValueError(f"apply_boundary_conditions_numpy: {_DIRICHLET_REFUSAL}")
+    positions = np.asarray(particles)
+    if positions.dtype.kind != "f":
+        positions = positions.astype(np.float64)
+    column = positions.reshape(-1, 1)
+    walls_reached(column, [(xmin, xmax)], 0.0)  # refuses a non-finite position by name
 
     if bc_type == "periodic":
-        particles = xmin + ((particles - xmin) % Lx)
-
+        result = wrap_positions(column, [(xmin, xmax)])
     elif bc_type == "no_flux":
-        # Reflecting boundaries using modular "fold" reflection
-        # This handles particles that travel multiple domain widths in one step
-        Lx = xmax - xmin
-        if Lx > 1e-14:
-            shifted = particles - xmin
-            period = 2 * Lx
-            pos_in_period = shifted % period
-            in_second_half = pos_in_period > Lx
-            pos_in_period[in_second_half] = period - pos_in_period[in_second_half]
-            particles = xmin + pos_in_period
-
-    elif bc_type == "dirichlet":
-        particles = np.clip(particles, xmin, xmax)
-
+        result = reflect_positions(column, [(xmin, xmax)])
     else:
         raise ValueError(f"Unknown boundary condition type: {bc_type}")
 
-    return particles
+    return result.reshape(positions.shape)
 
 
 def sample_from_density_gpu(density, grid, N: int, backend: "BaseBackend", seed: int | None = None):

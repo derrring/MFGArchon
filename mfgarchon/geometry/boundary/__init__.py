@@ -240,7 +240,7 @@ def __getattr__(name: str):
         "CornerStrategyLiteral": ("corner", "CornerStrategyLiteral"),
         "DEFAULT_CORNER_STRATEGY": ("corner", "DEFAULT_CORNER_STRATEGY"),
         "validate_corner_strategy": ("corner", "validate_corner_strategy"),
-        "wrap_positions": ("corner", "wrap_positions"),
+        "wrap_positions": ("periodic", "wrap_positions"),  # the periodic owner; the corner shim is removed (#2550)
         # Ghost point utilities
         "compute_normal_from_bounds": ("ghost", "compute_normal_from_bounds"),
         "compute_normal_from_sdf": ("ghost", "compute_normal_from_sdf"),

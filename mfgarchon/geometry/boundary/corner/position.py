@@ -104,6 +104,18 @@ def reflect_positions(
     return result
 
 
+def non_finite_refusal(row: int, position: list[float], count: int, total: int) -> ValueError:
+    """The refusal of a non-finite particle position (#2550), stated once for every reader that makes it:
+    `walls_reached`, and the device check of the 1-D GPU helper (`utils.particle_utils.apply_boundary_conditions_gpu`),
+    which cannot call it on device arrays. ``row`` is the first such row, ``position`` its coordinates as a list, and
+    ``count`` how many of the ``total`` rows are such."""
+    return ValueError(
+        f"walls_reached: row {row} of the particle positions is not finite, {position} ({count} such row(s) of "
+        f"{total}). Its fold, wrap and exit are undefined, so no wall rule can place it: it is refused here, as the "
+        "particle solver's path refuses it (#2550). Find the step that produced it."
+    )
+
+
 def walls_reached(
     positions: NDArray[np.floating],
     bounds: list[tuple[float, float]] | NDArray[np.floating],
@@ -125,12 +137,7 @@ def walls_reached(
     non_finite = np.flatnonzero(~np.isfinite(positions).all(axis=1))
     if non_finite.size:
         row = int(non_finite[0])
-        raise ValueError(
-            f"walls_reached: row {row} of the particle positions is not finite, {positions[row].tolist()} "
-            f"({non_finite.size} such row(s) of {positions.shape[0]}). Its fold, wrap and exit are undefined, so no "
-            "wall rule can place it: it is refused here, as the particle solver's path refuses it (#2550). Find the "
-            "step that produced it."
-        )
+        raise non_finite_refusal(row, positions[row].tolist(), int(non_finite.size), positions.shape[0])
     reached = np.full(positions.shape, -1, dtype=np.int8)
     reached[positions >= bounds[:, 1] - tolerance] = 1
     reached[positions <= bounds[:, 0] + tolerance] = 0
@@ -199,32 +206,12 @@ def absorb_positions(
     return result
 
 
-# Backward compatibility: import from new location
-# TODO: Remove in v1.0.0 after deprecation period
-@deprecated(
-    since="v0.17.0",
-    replacement="Use mfgarchon.geometry.boundary.periodic.wrap_positions instead.",
-)
-def wrap_positions(
-    positions: NDArray[np.floating],
-    bounds: list[tuple[float, float]] | NDArray[np.floating],
-) -> NDArray[np.floating]:
-    """
-    DEPRECATED: Use mfgarchon.geometry.boundary.periodic.wrap_positions instead.
-
-    This function is kept for backward compatibility and will be removed in v1.0.0.
-    """
-    from mfgarchon.geometry.boundary.periodic import wrap_positions as _wrap
-
-    return _wrap(positions, bounds)
-
-
 __all__ = [
     "reflect_positions",
     "absorb_at_walls",
     "walls_reached",
+    "non_finite_refusal",
     "absorb_positions",
-    "wrap_positions",  # Deprecated, for backward compat
 ]
 
 

@@ -2,7 +2,7 @@
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
 **Total deprecated items**: 128
-**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
+**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11
 
 ---
 
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*87 items*
+*89 items*
 
 ### Parameters
 
@@ -57,6 +57,8 @@ It does mean a migration you read on one row **does not transfer** to another so
 - **`HamiltonianAdapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
 - **`absorb_positions()`** — use `mfgarchon.geometry.boundary.corner.absorb_at_walls for an absorbing wall, or np.clip for a clamp` instead (remove by v0.25.0)
 - **`adapt_hamiltonian()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
+- **`apply_boundary_conditions_gpu()`** — use `mfgarchon.utils.particle_utils.apply_boundary_conditions_gpu` instead (remove by v0.25.0)
+- **`apply_boundary_conditions_numpy()`** — use `mfgarchon.utils.particle_utils.apply_boundary_conditions_numpy` instead (remove by v0.25.0)
 - **`apply_with_flux_limits()`** — use `ParticleApplicator.apply, which is this method with no limits and returns its first three values; a capacity-limited exit has no replacement (#2575).` instead (remove by v0.25.0)
 - **`calculate_l2_convergence_metrics()`** — use `sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt) from mfgarchon.utils.convergence, which measures the change in the problem's own measure rather than with one scalar spacing (#2555).` instead (remove by v0.25.0)
 - **`create_hamiltonian_adapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
@@ -221,7 +223,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.17.0
 
-*20 items*
+*19 items*
 
 ### Parameters
 
@@ -250,7 +252,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 See examples/basic/three_mode_api_demo.py for details.` instead (remove by v0.25.0)
 - **`get_ghost_values_nd()`** — use `Use pad_array_with_ghosts() or PreallocatedGhostBuffer instead. See issue #577.` instead (remove by v0.25.0)
 - **`validate_adjoint_capability()`** — use `validate_scheme_pairing` instead (remove by v0.25.0)
-- **`wrap_positions()`** — use `Use mfgarchon.geometry.boundary.periodic.wrap_positions instead.` instead (remove by v0.25.0)
 
 ### Properties
 
@@ -265,16 +266,6 @@ See examples/basic/three_mode_api_demo.py for details.` instead (remove by v0.25
 ### Functions / Classes
 
 - **`__init__()`** — use `Use ZeroFluxCalculator instead for J*n = 0 (mass conservation).` instead (remove by v0.25.0)
-
----
-
-## Deprecated since v0.12.0
-
-*1 items*
-
-### Functions / Classes
-
-- **`apply_boundary_conditions()`** — use `Use MeshfreeApplicator from mfgarchon.geometry.boundary instead.` instead (remove by v0.25.0)
 
 ---
 

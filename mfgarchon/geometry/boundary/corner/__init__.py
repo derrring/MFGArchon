@@ -4,7 +4,7 @@ Corner Handling for Boundary Conditions (Issue #521).
 This module provides unified corner handling across all solver types:
 
 Position-based (implicit diagonal reflection):
-    >>> from mfgarchon.geometry.boundary.corner import reflect_positions, wrap_positions
+    >>> from mfgarchon.geometry.boundary.corner import reflect_positions
     >>> reflected = reflect_positions(particles, bounds)
 
     Position functions process all dimensions simultaneously, producing
@@ -32,7 +32,7 @@ Detection:
 Module Structure:
     corner/
     ├── __init__.py      # This file - unified exports
-    ├── position.py      # reflect_positions, absorb_at_walls, walls_reached; absorb_positions, wrap_positions (deprecated)
+    ├── position.py      # reflect_positions, absorb_at_walls, walls_reached; absorb_positions (deprecated)
     ├── velocity.py      # reflect_velocity, reflect_velocity_with_normal
     └── strategies.py    # CornerStrategy enum, validation
 
@@ -53,9 +53,9 @@ See Also:
 from .position import (
     absorb_at_walls,
     absorb_positions,  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
+    non_finite_refusal,
     reflect_positions,
     walls_reached,
-    wrap_positions,  # Deprecated - use boundary.periodic.wrap_positions
 )
 
 # =============================================================================
@@ -79,8 +79,8 @@ __all__ = [
     "reflect_positions",
     "absorb_at_walls",
     "walls_reached",
+    "non_finite_refusal",
     "absorb_positions",  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
-    "wrap_positions",  # Deprecated - use boundary.periodic.wrap_positions
     # Velocity-based (Billiard dynamics)
     "reflect_velocity",
     "reflect_velocity_with_normal",

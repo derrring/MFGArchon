@@ -131,15 +131,11 @@ class TestBoundaryConditionsNumPy:
         expected = np.array([0.2, 0.5, 0.8])  # Reflect at boundaries
         np.testing.assert_allclose(particles_bc, expected, rtol=1e-10)
 
-    def test_dirichlet_clamping(self):
-        """Dirichlet boundaries should clamp particles."""
-        particles = np.array([-0.5, 0.5, 1.5])
-        xmin, xmax = 0.0, 1.0
-
-        particles_bc = apply_boundary_conditions_numpy(particles, xmin, xmax, "dirichlet")
-
-        expected = np.array([0.0, 0.5, 1.0])  # Clamp to boundaries
-        np.testing.assert_allclose(particles_bc, expected, rtol=1e-10)
+    def test_dirichlet_is_refused(self):
+        """A function that returns positions cannot remove a particle, and the clamp it applied kept the mass that should
+        leave through an absorbing wall (#2485, #2550): "dirichlet" is refused by name."""
+        with pytest.raises(ValueError, match="bc_type 'dirichlet' is refused"):
+            apply_boundary_conditions_numpy(np.array([-0.5, 0.5, 1.5]), 0.0, 1.0, "dirichlet")
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")

@@ -19,8 +19,16 @@ outranked exit and a periodic face; a capacity-limited exit at a periodic corner
 owner at the edges of its band, `MeshfreeApplicator`'s absorbing mode on a box and on a disc, and both readers' refusal
 of a non-finite position.
 
-Held fixed: the unit box; constant values; every face placed by its label. The fuzz over BC kinds, priorities, global
-and default segments, bounds up to 1e5 and ends at each band's edges is the PR's, in scratch.
+**C6-2, the 1-D helpers** (`utils/particle_utils`). The NumPy fallback folds and wraps through the owners, and the GPU
+one, the particle solver's 1-D device path, is a device copy pinned against them here, at a nonzero lower bound whose
+span rounds, several spans past and on a degenerate span. Both refuse "dirichlet" (a function that returns positions
+cannot remove a particle; it clamped) and a non-finite position. The deprecated pair in `utils/numerical/particle/
+boundary.py` is that pair, and the export `geometry.boundary.wrap_positions` is the periodic owner, with the removed
+corner shim's values on its signature.
+
+Held fixed: the unit box; constant values; every face placed by its label. The fuzzes over BC kinds, priorities, global
+and default segments, bounds up to 1e5 and ends at each band's edges, and over the 1-D helpers, are the PRs', in
+scratch.
 """
 
 from __future__ import annotations
@@ -29,10 +37,13 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, MeshfreeApplicator
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, MeshfreeApplicator, corner
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
-from mfgarchon.geometry.boundary.corner import absorb_at_walls, absorb_positions, walls_reached
+from mfgarchon.geometry.boundary.corner import absorb_at_walls, absorb_positions, reflect_positions, walls_reached
+from mfgarchon.geometry.boundary.periodic import wrap_positions
 from mfgarchon.geometry.implicit import Hyperrectangle, Hypersphere
+from mfgarchon.utils.numerical.particle import boundary as deprecated_pair
+from mfgarchon.utils.particle_utils import apply_boundary_conditions_gpu, apply_boundary_conditions_numpy
 
 P, D, NF = BCType.PERIODIC, BCType.DIRICHLET, BCType.NO_FLUX
 FLUX_WARNING = "apply_with_flux_limits is deprecated"
@@ -188,3 +199,134 @@ def test_both_end_readers_refuse_a_non_finite_position(value):
         ParticleApplicator().apply(rows, _bc(2, CHANNEL), [(0.0, 1.0), (0.0, 1.0)])
     with pytest.raises(ValueError, match=match):
         MeshfreeApplicator(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))).apply_particle_bc(rows, "absorbing")
+
+
+LO, HI = 2.0, 2.3  # a nonzero lower bound whose span rounds: HI - LO is 0.2999999999999998
+ENDS_1D = np.array([2.1, LO, HI, HI + 1e-12, LO - 1e-12, 2.45, 1.85, LO + 2.6 * 0.3, LO - 3.4 * 0.3])
+
+
+def _helper(reader: str):
+    """A 1-D helper as a NumPy function: the NumPy fallback, or the GPU one on the torch backend (CPU)."""
+    if reader == "numpy":
+        return apply_boundary_conditions_numpy
+    pytest.importorskip("torch")
+    from mfgarchon.backends.torch_backend import TorchBackend
+
+    backend = TorchBackend(device="cpu")
+    return lambda x, lo, hi, kind: backend.to_numpy(
+        apply_boundary_conditions_gpu(backend.from_numpy(x), lo, hi, kind, backend)
+    )
+
+
+@pytest.mark.parametrize("kind", ["periodic", "no_flux"])
+@pytest.mark.parametrize("reader", ["numpy", "torch"])
+def test_the_1d_helpers_fold_and_wrap_as_the_owners_do(reader, kind):
+    """The fallback reads the owners; the GPU one's device copy gives their values, to rounding. An axis with no span is
+    left as it is, as the owners leave it (the GPU wrap returned NaN there)."""
+    help_, owner = _helper(reader), wrap_positions if kind == "periodic" else reflect_positions
+    given = ENDS_1D.copy()
+    np.testing.assert_allclose(
+        help_(given, LO, HI, kind), owner(ENDS_1D[:, None], [(LO, HI)])[:, 0], rtol=0, atol=1e-12
+    )
+    np.testing.assert_array_equal(given, ENDS_1D)
+    np.testing.assert_array_equal(help_(np.array([2.0, 2.5]), 2.0, 2.0, kind), [2.0, 2.5])
+
+
+@pytest.mark.parametrize(
+    ("ends", "kind", "match"),
+    [
+        (np.array([0.2, 1.4]), "dirichlet", "bc_type 'dirichlet' is refused"),
+        (np.array([0.2, np.nan, 0.4]), "no_flux", "row 1 of the particle positions is not finite"),
+        (np.array([0.2, -np.inf]), "periodic", "row 1 of the particle positions is not finite"),
+    ],
+    ids=["dirichlet", "nan", "-inf"],
+)
+@pytest.mark.parametrize("reader", ["numpy", "torch"])
+def test_the_1d_helpers_refuse_dirichlet_and_a_non_finite_position(reader, ends, kind, match):
+    """A function that returns positions cannot remove a particle, and the clamp it applied for "dirichlet" kept the mass
+    that should leave (#2485); a non-finite position has no fold or wrap, and the owner's reach refuses it (#2550)."""
+    with pytest.raises(ValueError, match=match):
+        _helper(reader)(ends, 0.0, 1.0, kind)
+
+
+def test_the_deprecated_pair_is_particle_utils():
+    """`utils/numerical/particle/boundary.py`'s pair warns and gives `particle_utils`' values, its refusal of "dirichlet"
+    included (the deprecation policy's equivalence test)."""
+    for kind in ("periodic", "no_flux"):
+        with pytest.warns(DeprecationWarning, match="apply_boundary_conditions_numpy is deprecated"):
+            old = deprecated_pair.apply_boundary_conditions_numpy(ENDS_1D, LO, HI, kind)
+        np.testing.assert_array_equal(old, apply_boundary_conditions_numpy(ENDS_1D, LO, HI, kind))
+    with (
+        pytest.warns(DeprecationWarning, match="apply_boundary_conditions_numpy is deprecated"),
+        pytest.raises(ValueError, match="bc_type 'dirichlet' is refused"),
+    ):
+        deprecated_pair.apply_boundary_conditions_numpy(ENDS_1D, LO, HI, "dirichlet")
+
+
+def test_the_exported_wrap_positions_is_the_periodic_owner():
+    """`geometry.boundary.wrap_positions` resolved to the deprecated `corner.wrap_positions`, which is removed; it is
+    the periodic owner now, and on the shim's own signature (positions, bounds) it gives the shim's values."""
+    from mfgarchon.geometry.boundary import wrap_positions as exported
+
+    assert exported is wrap_positions
+    assert not hasattr(corner, "wrap_positions")
+    np.testing.assert_allclose(
+        exported(np.array([[2.35, -0.2], [1.95, 1.3]]), [(LO, HI), (0.0, 1.0)]),
+        [[2.05, 0.8], [2.25, 0.3]],
+        rtol=0,
+        atol=1e-12,
+    )
+
+
+def test_the_gpu_helper_refuses_with_the_owners_message():
+    """The GPU helper's device check is a second statement of the owner's refusal, so it builds the owner's message
+    (`corner.non_finite_refusal`): the two readers raise one refusal for one row, and cannot drift apart."""
+    messages = []
+    for reader in ("numpy", "torch"):
+        with pytest.raises(ValueError) as caught:
+            _helper(reader)(np.array([0.2, np.nan, 0.4]), 0.0, 1.0, "no_flux")
+        messages.append(str(caught.value))
+    assert messages[0] == messages[1], messages
+
+
+def _torch_backend():
+    pytest.importorskip("torch")
+    from mfgarchon.backends.torch_backend import TorchBackend
+
+    return TorchBackend(device="cpu")
+
+
+def test_the_deprecated_gpu_helper_is_particle_utils():
+    """The deprecated pair's GPU half warns and gives `particle_utils`' values on the torch backend, its refusal of
+    "dirichlet" included (the deprecation policy's equivalence test, the half that runs on a device)."""
+    backend = _torch_backend()
+    for kind in ("periodic", "no_flux"):
+        with pytest.warns(DeprecationWarning, match="apply_boundary_conditions_gpu is deprecated"):
+            old = deprecated_pair.apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, kind, backend)
+        new = apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, kind, backend)
+        np.testing.assert_array_equal(backend.to_numpy(old), backend.to_numpy(new))
+    with (
+        pytest.warns(DeprecationWarning, match="apply_boundary_conditions_gpu is deprecated"),
+        pytest.raises(ValueError, match="bc_type 'dirichlet' is refused"),
+    ):
+        deprecated_pair.apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, "dirichlet", backend)
+
+
+def test_the_gpu_helper_does_not_write_its_input():
+    """The device copy returns new positions and leaves the tensor it was handed as it was."""
+    import torch
+
+    backend = _torch_backend()
+    for kind in ("periodic", "no_flux"):
+        given = backend.from_numpy(ENDS_1D)
+        before = given.clone()
+        apply_boundary_conditions_gpu(given, LO, HI, kind, backend)
+        assert torch.equal(given, before), kind
+
+
+def test_the_numpy_helper_reads_an_integer_input_as_float():
+    """A non-float input is read as float64. The owners write into a copy of what they are handed, so an integer array
+    would have its wrapped positions truncated: (-1, 0, 3, 7) on (0, 2.5) would give (1, 0, 0, 2)."""
+    np.testing.assert_array_equal(
+        apply_boundary_conditions_numpy(np.array([-1, 0, 3, 7]), 0.0, 2.5, "periodic"), [1.5, 0.0, 0.5, 2.0]
+    )
