@@ -178,9 +178,10 @@ def test_the_two_deprecations_warn_and_keep_their_behaviour():
 
 @pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf], ids=["nan", "inf", "-inf"])
 def test_both_end_readers_refuse_a_non_finite_position(value):
-    """A non-finite position is at no wall and past none: `ParticleApplicator` kept it, a NaN unmoved and an infinite
-    coordinate folded or wrapped into NaN, and `MeshfreeApplicator`'s absorbing mode dropped it as though absorbed. The
-    owner's reach now refuses it by name for both, naming the row, as the particle solver's path refuses it."""
+    """No wall rule can place a non-finite position, since its fold, wrap and exit are undefined. `ParticleApplicator`
+    kept it -- a NaN unmoved, an infinite coordinate folded or wrapped into NaN -- or counted it as an exit past an
+    absorbing face, and `MeshfreeApplicator`'s absorbing mode dropped it as though absorbed. The owner's reach now
+    refuses it by name for both, naming the row, as the particle solver's path refuses it."""
     rows = np.array([[0.5, 0.5], [value, 0.5], [0.4, value]])
     match = r"row 1 of the particle positions is not finite"
     with pytest.raises(ValueError, match=match):

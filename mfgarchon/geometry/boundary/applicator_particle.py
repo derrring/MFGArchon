@@ -352,8 +352,8 @@ class ParticleApplicator:
 
     @deprecated(
         since="v0.22.0",
-        replacement="ParticleApplicator.apply, which is this method with no limits; a capacity-limited exit has no "
-        "replacement (#2575)",
+        replacement="ParticleApplicator.apply, which is this method with no limits and returns its first three values; "
+        "a capacity-limited exit has no replacement (#2575).",
         reason="no FP solver honours a capacity-limited exit: each refuses a segment carrying flux_capacity (#2575), "
         "and the solver method that called this one had no caller and is deleted (#2550)",
     )

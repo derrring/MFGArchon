@@ -114,8 +114,9 @@ def walls_reached(
     ``tolerance`` inside it; ``tolerance`` is the reader's band (`absorb_at_walls`). On an axis narrower than the band
     the min face is named. ``positions`` is (N, d), or (d,) for one point, and the result has that shape.
 
-    A non-finite row is refused by name: it is at no wall and past none, so a reader would keep it or drop it with
-    nothing raised. The particle solver's path refuses it too (`ImplicitDomain.first_contact`)."""
+    A non-finite row is refused by name: its fold, wrap and exit are undefined, so no wall rule can place it, and a
+    reader would keep it, drop it or count it as an exit with nothing raised. The particle solver's path refuses it too
+    (`ImplicitDomain.first_contact`)."""
     was_1d = np.ndim(positions) == 1
     positions = np.atleast_2d(positions)
     bounds = np.asarray(bounds, dtype=float).reshape(-1, 2)
@@ -126,9 +127,9 @@ def walls_reached(
         row = int(non_finite[0])
         raise ValueError(
             f"walls_reached: row {row} of the particle positions is not finite, {positions[row].tolist()} "
-            f"({non_finite.size} such row(s) of {positions.shape[0]}). A non-finite position is at no wall and past "
-            "none, so a wall rule cannot place it: it is refused here, as the particle solver's path refuses it "
-            "(#2550). Find the step that produced it."
+            f"({non_finite.size} such row(s) of {positions.shape[0]}). Its fold, wrap and exit are undefined, so no "
+            "wall rule can place it: it is refused here, as the particle solver's path refuses it (#2550). Find the "
+            "step that produced it."
         )
     reached = np.full(positions.shape, -1, dtype=np.int8)
     reached[positions >= bounds[:, 1] - tolerance] = 1
