@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 126
+**Total deprecated items**: 128
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*85 items*
+*87 items*
 
 ### Parameters
 
@@ -55,7 +55,9 @@ It does mean a migration you read on one row **does not transfer** to another so
 ### Functions / Classes
 
 - **`HamiltonianAdapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
+- **`absorb_positions()`** — use `mfgarchon.geometry.boundary.corner.absorb_at_walls for an absorbing wall, or np.clip for a clamp` instead (remove by v0.25.0)
 - **`adapt_hamiltonian()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
+- **`apply_with_flux_limits()`** — use `ParticleApplicator.apply, which is this method with no limits and returns its first three values; a capacity-limited exit has no replacement (#2575).` instead (remove by v0.25.0)
 - **`calculate_l2_convergence_metrics()`** — use `sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt) from mfgarchon.utils.convergence, which measures the change in the problem's own measure rather than with one scalar spacing (#2555).` instead (remove by v0.25.0)
 - **`create_hamiltonian_adapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
 - **`get_boundary_target_values()`** — use `mfgarchon.geometry.boundary.types.segment_value` instead (remove by v0.25.0)

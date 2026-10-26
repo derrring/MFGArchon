@@ -1,9 +1,12 @@
 """
-Position-based boundary reflection (Issue #521).
+Position-based boundary rules for particles on a box (Issue #521; #2550).
 
-This module provides position transformations for NON-PERIODIC boundaries:
+The owners for NON-PERIODIC walls (CONVENTIONS.md § *Particles at a wall*):
 - reflect_positions: Fold reflection (NO_FLUX/REFLECTING BC)
-- absorb_positions: Clamp to domain (DIRICHLET BC for particles)
+- absorb_at_walls: The absorbing wall, for a reader that has only where a step ended: which particles leave, and where
+- walls_reached: The face of each axis a particle is at or past, the reach `absorb_at_walls` and `ParticleApplicator`
+  share
+- absorb_positions: Deprecated. A clamp, not absorption
 
 For PERIODIC boundaries, see: geometry/boundary/periodic.py
 
@@ -101,12 +104,75 @@ def reflect_positions(
     return result
 
 
+def walls_reached(
+    positions: NDArray[np.floating],
+    bounds: list[tuple[float, float]] | NDArray[np.floating],
+    tolerance: float,
+) -> NDArray[np.int8]:
+    """The face of each axis each row of ``positions`` is at or past, for a reader that has only where a step ended:
+    ``0`` for the min face, ``1`` for the max face, ``-1`` for neither. A row is at a face when it lies past it or within
+    ``tolerance`` inside it; ``tolerance`` is the reader's band (`absorb_at_walls`). On an axis narrower than the band
+    the min face is named. ``positions`` is (N, d), or (d,) for one point, and the result has that shape.
+
+    A non-finite row is refused by name: its fold, wrap and exit are undefined, so no wall rule can place it, and a
+    reader would keep it, drop it or count it as an exit with nothing raised. The particle solver's path refuses it too
+    (`ImplicitDomain.first_contact`)."""
+    was_1d = np.ndim(positions) == 1
+    positions = np.atleast_2d(positions)
+    bounds = np.asarray(bounds, dtype=float).reshape(-1, 2)
+    if bounds.shape[0] != positions.shape[1]:
+        raise ValueError(f"Bounds dimension {bounds.shape[0]} != positions dimension {positions.shape[1]}")
+    non_finite = np.flatnonzero(~np.isfinite(positions).all(axis=1))
+    if non_finite.size:
+        row = int(non_finite[0])
+        raise ValueError(
+            f"walls_reached: row {row} of the particle positions is not finite, {positions[row].tolist()} "
+            f"({non_finite.size} such row(s) of {positions.shape[0]}). Its fold, wrap and exit are undefined, so no "
+            "wall rule can place it: it is refused here, as the particle solver's path refuses it (#2550). Find the "
+            "step that produced it."
+        )
+    reached = np.full(positions.shape, -1, dtype=np.int8)
+    reached[positions >= bounds[:, 1] - tolerance] = 1
+    reached[positions <= bounds[:, 0] + tolerance] = 0
+    return reached[0] if was_1d else reached
+
+
+def absorb_at_walls(
+    positions: NDArray[np.floating],
+    bounds: list[tuple[float, float]] | NDArray[np.floating],
+    tolerance: float,
+    leaves: NDArray[np.bool_] | None = None,
+) -> tuple[NDArray[np.bool_], NDArray[np.floating]]:
+    """The absorbing wall's rule for a reader that has only where a step ended (CONVENTIONS.md § *Particles at a
+    wall*): a row of ``positions`` at or past a face of ``bounds``, within ``tolerance`` (`walls_reached`), leaves
+    through it. It is removed and never moved, and its exit position is that end. Returns which rows leave, shape (N,),
+    and their exit positions, shape (K, d), a copy. ``positions`` is not written.
+
+    ``leaves`` is, per row, whether the wall the reader reads it at absorbs it: a reader whose walls differ passes its
+    own reading (`ParticleApplicator.apply`, by the segment and any capacity), and without it every wall absorbs
+    (`MeshfreeApplicator`'s absorbing mode). The band is the reader's, and CONVENTIONS states each. A reader that has
+    the step's path absorbs at the contact instead, and its exit position is the contact (`reflect_at_first_contacts`).
+    """
+    positions = np.atleast_2d(positions)
+    leave = (walls_reached(positions, bounds, tolerance) >= 0).any(axis=1)
+    if leaves is not None:
+        leave &= np.asarray(leaves, dtype=bool)
+    return leave, positions[leave].copy()
+
+
+@deprecated(
+    since="v0.22.0",
+    replacement="mfgarchon.geometry.boundary.corner.absorb_at_walls for an absorbing wall, or np.clip for a clamp",
+    reason="it clamps a particle to the wall and keeps it, which is not absorption: the mass that reaches an absorbing "
+    "wall leaves through it (#2485, #2550)",
+)
 def absorb_positions(
     positions: NDArray[np.floating],
     bounds: list[tuple[float, float]] | NDArray[np.floating],
 ) -> NDArray[np.floating]:
     """
-    Clamp positions to domain boundaries (absorbing/Dirichlet BC, n-D).
+    Clamp positions to the domain's box (n-D). Deprecated: a clamp keeps every particle, so it is not an absorbing
+    wall, whose owner is `absorb_at_walls`.
 
     Args:
         positions: Particle positions, shape (N, d) or (d,) for single point
@@ -155,6 +221,8 @@ def wrap_positions(
 
 __all__ = [
     "reflect_positions",
+    "absorb_at_walls",
+    "walls_reached",
     "absorb_positions",
     "wrap_positions",  # Deprecated, for backward compat
 ]
@@ -201,11 +269,11 @@ if __name__ == "__main__":
     print("   Large displacement: passed")
 
     # Test 2D absorb
-    print("\n2. absorb_positions:")
+    print("\n2. absorb_at_walls:")
     positions_absorb = np.array([[-0.5, 1.5], [0.5, 0.5]])
-    absorbed = absorb_positions(positions_absorb, bounds_2d)
-    expected_absorb = np.array([[0.0, 1.0], [0.5, 0.5]])
-    assert np.allclose(absorbed, expected_absorb), f"2D absorb failed: {absorbed}"
+    leave, exits = absorb_at_walls(positions_absorb, bounds_2d, 1e-10)
+    assert leave.tolist() == [True, False], f"2D absorb failed: {leave}"
+    assert np.array_equal(exits, positions_absorb[:1]), f"2D absorb exits: {exits}"
     print("   2D absorb: passed")
 
     print("\nAll corner/position.py tests passed!")

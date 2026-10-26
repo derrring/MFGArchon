@@ -1337,55 +1337,6 @@ class FPParticleSolver(BaseFPSolver):
             return list(bounds)
         return None
 
-    def _apply_boundary_conditions_with_flux_limits(
-        self,
-        particles: np.ndarray,
-        bounds: list[tuple[float, float]],
-        flux_limits: dict[str, float],
-    ) -> tuple[np.ndarray, int, np.ndarray, dict[str, int]]:
-        """
-        Apply segment-aware BC with flux-limited absorption.
-
-        Particles at DIRICHLET exits are absorbed only up to the flux capacity.
-        When capacity is exceeded, particles are REFLECTED (creating queues).
-
-        Parameters
-        ----------
-        particles : np.ndarray
-            Particle positions, shape (num_particles, dimension)
-        bounds : list[tuple[float, float]]
-            Bounds per dimension [(xmin, xmax), (ymin, ymax), ...]
-        flux_limits : dict[str, float]
-            Max particles to absorb per segment this step
-            e.g., {"exit_A": 10, "exit_B": 15}
-
-        Returns
-        -------
-        remaining_particles : np.ndarray
-            Particles not absorbed
-        n_absorbed : int
-            Total particles absorbed this step
-        exit_positions : np.ndarray
-            Positions where absorbed
-        absorbed_per_segment : dict[str, int]
-            Absorbed count per segment
-        """
-        remaining, absorbed_mask, exit_positions, absorbed_per_segment = self._applicator.apply_with_flux_limits(
-            particles,
-            self.boundary_conditions,
-            bounds,
-            flux_limits,
-        )
-
-        n_absorbed = int(np.sum(absorbed_mask))
-
-        if n_absorbed > 0:
-            self.exit_flux_history.append(n_absorbed)
-            self.exit_positions_history.append(exit_positions)
-            self.total_absorbed += n_absorbed
-
-        return remaining, n_absorbed, exit_positions, absorbed_per_segment
-
     def _interpolate_grid_to_particles_nd(
         self,
         grid_values: np.ndarray,

@@ -192,10 +192,8 @@ def test_an_enum_value_is_not_a_boundary_value(package_copy):
 # Any read of ``<x>.alpha``/``<x>.beta``, or ``getattr(<x>, "alpha"|"beta", ...)``, outside the functions below fails,
 # so a reader that takes a coefficient with its own default or its own float() is found. Allowed by file and function:
 COEFFICIENT_READS_ALLOWED = {
-    # Classifiers of a segment, which read no number: validation, and the particle wall's action by the sign of beta.
+    # Classifiers of a segment, which read no number: validation.
     ("mfgarchon/geometry/boundary/conditions.py", "validate_values"): "a None check",
-    ("mfgarchon/geometry/boundary/applicator_particle.py", "apply"): "classifies the wall by beta",
-    ("mfgarchon/geometry/boundary/applicator_particle.py", "apply_with_flux_limits"): "classifies the wall by beta",
     # A `ResolvedBC`, which the owner already read (`resolution._resolve_passthrough`).
     ("mfgarchon/geometry/boundary/resolution.py", "<module>"): "ResolvedBC",
     ("mfgarchon/geometry/boundary/resolution.py", "resolved_bc_to_calculator"): "ResolvedBC",

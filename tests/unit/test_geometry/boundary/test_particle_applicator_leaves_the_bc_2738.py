@@ -55,7 +55,8 @@ def test_the_applicator_writes_nothing_into_the_bc_it_reads(method):
         applicator = ParticleApplicator()
         if method == "apply":
             return applicator.apply(particles.copy(), b, [(0.0, 1.0)])
-        return applicator.apply_with_flux_limits(particles.copy(), b, [(0.0, 1.0)], {"exit": 10})
+        with pytest.warns(DeprecationWarning, match="apply_with_flux_limits is deprecated"):
+            return applicator.apply_with_flux_limits(particles.copy(), b, [(0.0, 1.0)], {"exit": 10})
 
     got, expected = step(bc), step(boxed)
     assert bc.domain_bounds is None, f"{method} wrote domain_bounds into the BC it was handed: {bc.domain_bounds!r}"

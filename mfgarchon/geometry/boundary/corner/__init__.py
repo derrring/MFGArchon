@@ -32,7 +32,7 @@ Detection:
 Module Structure:
     corner/
     ├── __init__.py      # This file - unified exports
-    ├── position.py      # reflect_positions, wrap_positions, absorb_positions
+    ├── position.py      # reflect_positions, absorb_at_walls, walls_reached; absorb_positions, wrap_positions (deprecated)
     ├── velocity.py      # reflect_velocity, reflect_velocity_with_normal
     └── strategies.py    # CornerStrategy enum, validation
 
@@ -51,8 +51,10 @@ See Also:
 # For PERIODIC utilities, use mfgarchon.geometry.boundary.periodic instead
 # =============================================================================
 from .position import (
-    absorb_positions,
+    absorb_at_walls,
+    absorb_positions,  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
     reflect_positions,
+    walls_reached,
     wrap_positions,  # Deprecated - use boundary.periodic.wrap_positions
 )
 
@@ -75,7 +77,9 @@ __all__ = [
     # Position-based (for NON-PERIODIC boundaries)
     # For PERIODIC, use mfgarchon.geometry.boundary.periodic
     "reflect_positions",
-    "absorb_positions",
+    "absorb_at_walls",
+    "walls_reached",
+    "absorb_positions",  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
     "wrap_positions",  # Deprecated - use boundary.periodic.wrap_positions
     # Velocity-based (Billiard dynamics)
     "reflect_velocity",

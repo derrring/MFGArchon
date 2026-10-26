@@ -20,7 +20,8 @@ again and had drifted from it on four of BCType's eight members (#1956):
 Architecture:
     BoundaryConditions provides segment matching via get_bc_at_point()
     particle_action_for_bc_type interprets BCType for particle dynamics
-    ParticleApplicator executes the action, per matched segment
+    ParticleApplicator executes the action by where a step ended, through each rule's owner
+    (CONVENTIONS.md § *Particles at a wall*: the end-position rule)
 
 Created: 2025-01-03
 Part of: Unified Boundary Condition Architecture (Issue #536)
@@ -33,7 +34,11 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from .tolerances import SDF_BOUNDARY_TOL
+from mfgarchon.utils.deprecation import deprecated
+
+from .corner.position import absorb_at_walls, reflect_positions, walls_reached
+from .periodic import wrap_positions
+from .tolerances import ONWALL_TOL, SDF_BOUNDARY_TOL
 from .types import BCSegment, BCType
 
 if TYPE_CHECKING:
@@ -205,11 +210,12 @@ def periodic_corner_actions(
 ) -> tuple[bool, list[tuple[int, int, bool]]] | None:
     """The tie rule at a corner of the box one of whose faces is periodic (CONVENTIONS.md § *Particles at a wall*):
     ``None`` where ``point`` is on fewer than two faces, or on no periodic one, and `segment_at_box_contact` decides.
-    Otherwise the owner's corner order (`BoundaryConditions.segment_for_point`) decides only whether the particle is
-    absorbed, the one bit a corner cannot split per axis: ``(True, [])``. If it is not, every face at the corner with
-    whether its segment wraps, ``(False, [(axis, side, wraps), ...])`` with ``side`` 0 for the min face. The caller acts
-    on the faces the step crosses there: a periodic face wraps its axis, and any other returns the particle along
-    it."""
+    Otherwise ``(absorbed, [(axis, side, wraps), ...])``: the owner's corner order (`BoundaryConditions.segment_for_point`)
+    decides only whether the particle is absorbed, the one bit a corner cannot split per axis, and every face at the
+    corner comes with whether its segment wraps, ``side`` 0 for the min face. The faces are listed where it absorbs too,
+    for a reader whose exit can turn a particle back (`ParticleApplicator.apply_with_flux_limits`). If it is not
+    absorbed, the caller acts on the faces the step crosses there, or the end has reached: a periodic face wraps its
+    axis, and any other returns the particle along it."""
     readings = bc_on_box.face_segments_at_point(point, tolerance=tolerance)
     if len(readings) < 2:
         return None
@@ -217,9 +223,7 @@ def periodic_corner_actions(
     if not any(wraps):
         return None
     corner = bc_on_box.get_bc_at_point(point, tolerance=tolerance)
-    if segment_particle_action(corner, reader) == "absorbing":
-        return True, []
-    return False, [
+    return segment_particle_action(corner, reader) == "absorbing", [
         (face.axis, 0 if face.side == "min" else 1, wrap) for (face, _, _), wrap in zip(readings, wraps, strict=True)
     ]
 
@@ -296,6 +300,10 @@ class ParticleApplicator:
     the BoundaryConditions segment matching to support mixed BC (e.g., exits
     on some walls, reflecting on others).
 
+    It reads a particle by where its step ended, not by its path: at a corner one of whose faces is periodic, the
+    corner's segment decides only whether the particle is absorbed, and each face it reached acts on its own axis
+    (`apply`; #2550, #2803's shape). The particle solver reads the path instead (`reflect_at_first_contacts`).
+
     Examples:
         >>> from mfgarchon.geometry.boundary import mixed_bc, BCSegment, BCType
         >>> bc = mixed_bc(dimension=2, segments=[
@@ -309,7 +317,7 @@ class ParticleApplicator:
 
     def __init__(self) -> None:
         """Initialize particle applicator."""
-        self._boundary_tolerance = 1e-10
+        self._boundary_tolerance = ONWALL_TOL
 
     def apply(
         self,
@@ -318,14 +326,18 @@ class ParticleApplicator:
         bounds: list[tuple[float, float]],
     ) -> tuple[NDArray[np.floating], NDArray[np.bool_], NDArray[np.floating]]:
         """
-        Apply segment-aware boundary conditions to particles.
+        Apply segment-aware boundary conditions to particles, read by where each step ended (the end-position rule,
+        CONVENTIONS.md § *Particles at a wall*).
 
-        For each particle that has crossed or is at the boundary:
-        1. Read the segment that governs it at its nearest point of the box (`_segment_at`)
-        2. Apply the appropriate action based on bc_type
+        A particle at or past a face of ``bounds``, within ``ONWALL_TOL`` (`walls_reached`), is read at its nearest
+        point of the box (`_segment_at`): on one face that face's segment, at a corner the owner's corner order. That
+        segment decides whether it is absorbed, through the absorbing wall's owner (`absorb_at_walls`): removed, never
+        moved, its end recorded. If it is not, each face it is at or past acts on its own axis by its own segment
+        (`_act_per_face`): a periodic face wraps the axis, any other folds it. A face the nearest point is read on and
+        the particle has not reached takes no action on its axis, though at a corner it takes part in the corner order.
 
         Args:
-            particles: Particle positions, shape (N, d)
+            particles: Particle positions, shape (N, d). Read, never written.
             bc: BoundaryConditions with segment definitions. Read, never written (#2738).
             bounds: Domain bounds per dimension [(xmin, xmax), ...] - the box every query is read on (`on_the_box`)
 
@@ -333,72 +345,18 @@ class ParticleApplicator:
             Tuple of:
             - remaining_particles: Particles not absorbed, shape (M, d) where M <= N
             - absorbed_mask: Boolean mask of absorbed particles, shape (N,)
-            - exit_positions: Positions where particles were absorbed, shape (K, d)
+            - exit_positions: Positions where particles were absorbed, their ends, shape (K, d)
         """
+        remaining, absorbed_mask, exit_positions, _ = self._apply(particles, bc, bounds, {})
+        return remaining, absorbed_mask, exit_positions
 
-        particles = np.atleast_2d(particles)
-        n_particles = len(particles)
-        dimension = particles.shape[1]
-
-        if n_particles == 0:
-            return particles, np.array([], dtype=bool), np.array([]).reshape(0, dimension)
-
-        # Convert bounds to arrays for vectorized operations
-        bounds_arr = np.array(bounds)  # Shape: (d, 2)
-        domain_min = bounds_arr[:, 0]
-        domain_max = bounds_arr[:, 1]
-        domain_size = domain_max - domain_min
-
-        bc = on_the_box(bc, bounds_arr)
-
-        # Find particles at or beyond boundary
-        at_min = particles <= domain_min + self._boundary_tolerance
-        at_max = particles >= domain_max - self._boundary_tolerance
-        at_boundary = np.any(at_min | at_max, axis=1)
-
-        # Initialize output arrays
-        absorbed_mask = np.zeros(n_particles, dtype=bool)
-        exit_positions_list = []
-        result_particles = particles.copy()
-
-        # Process boundary particles
-        boundary_indices = np.where(at_boundary)[0]
-
-        for idx in boundary_indices:
-            particle = result_particles[idx]
-
-            segment = self._segment_at(bc, particle, bounds_arr)
-
-            if segment is None:
-                # No matching segment - use default reflecting
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-                continue
-
-            # alpha/beta come off the matched segment, so a mixed BC with a different
-            # Robin coefficient per wall is read per wall. The meshfree applicator's
-            # uniform path reads the BC's one condition and refuses a mixed BC
-            # (`applicator_meshfree.the_one_condition`).
-            action = particle_action_for_bc_type(segment.bc_type, segment.beta)
-
-            if action == "absorbing":
-                absorbed_mask[idx] = True
-                exit_positions_list.append(particle.copy())
-            elif action == "reflecting":
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-            else:
-                result_particles[idx] = self._wrap_particle(particle, domain_min, domain_size)
-
-        # Build exit positions array
-        if exit_positions_list:
-            exit_positions = np.array(exit_positions_list)
-        else:
-            exit_positions = np.array([]).reshape(0, dimension)
-
-        # Filter out absorbed particles
-        remaining_particles = result_particles[~absorbed_mask]
-
-        return remaining_particles, absorbed_mask, exit_positions
-
+    @deprecated(
+        since="v0.22.0",
+        replacement="ParticleApplicator.apply, which is this method with no limits and returns its first three values; "
+        "a capacity-limited exit has no replacement (#2575).",
+        reason="no FP solver honours a capacity-limited exit: each refuses a segment carrying flux_capacity (#2575), "
+        "and the solver method that called this one had no caller and is deleted (#2550)",
+    )
     def apply_with_flux_limits(
         self,
         particles: NDArray[np.floating],
@@ -407,10 +365,12 @@ class ParticleApplicator:
         flux_limits: dict[str, float],
     ) -> tuple[NDArray[np.floating], NDArray[np.bool_], NDArray[np.floating], dict[str, int]]:
         """
-        Apply segment-aware BC with flux-limited absorption at DIRICHLET exits.
+        Apply segment-aware BC with flux-limited absorption at absorbing exits. Deprecated (#2550): with no limits it is
+        `apply`, and a capacity-limited exit has no replacement, since no FP solver honours one (#2575).
 
-        When exit capacity is exceeded, particles are REFLECTED (queue) instead of
-        absorbed. This creates physical congestion at exits.
+        `apply`'s end-position rule, with one difference: a segment named in ``flux_limits`` absorbs, in particle
+        order, only while its count this call is below its limit. Past it the particle is not absorbed and the faces it
+        reached act as in `apply`, so at that exit it is folded back (a queue at the exit).
 
         Args:
             particles: Particle positions, shape (N, d)
@@ -426,81 +386,49 @@ class ParticleApplicator:
             - exit_positions: Positions where absorbed, shape (K, d)
             - absorbed_per_segment: Dict mapping segment name to absorbed count
         """
+        return self._apply(particles, bc, bounds, flux_limits)
 
+    def _apply(
+        self,
+        particles: NDArray[np.floating],
+        bc: BoundaryConditions,
+        bounds: list[tuple[float, float]],
+        flux_limits: dict[str, float],
+    ) -> tuple[NDArray[np.floating], NDArray[np.bool_], NDArray[np.floating], dict[str, int]]:
+        """`apply`'s end-position rule, with ``flux_limits`` read in particle order (`apply_with_flux_limits`): its
+        three values, and the count absorbed per limited segment."""
         particles = np.atleast_2d(particles)
-        n_particles = len(particles)
-        dimension = particles.shape[1]
-
+        n_particles, dimension = particles.shape
         if n_particles == 0:
             return particles, np.array([], dtype=bool), np.array([]).reshape(0, dimension), {}
 
-        bounds_arr = np.array(bounds)
-        domain_min = bounds_arr[:, 0]
-        domain_max = bounds_arr[:, 1]
-        domain_size = domain_max - domain_min
-
-        bc = on_the_box(bc, bounds_arr)
-
-        # Find boundary particles
-        at_min = particles <= domain_min + self._boundary_tolerance
-        at_max = particles >= domain_max - self._boundary_tolerance
-        at_boundary = np.any(at_min | at_max, axis=1)
-
-        absorbed_mask = np.zeros(n_particles, dtype=bool)
-        exit_positions_list = []
+        box = np.array(bounds, dtype=float)
+        bc = on_the_box(bc, box)
+        reached = walls_reached(particles, box, self._boundary_tolerance)
+        leaves = np.zeros(n_particles, dtype=bool)
         result_particles = particles.copy()
-
-        # Track absorption per segment for flux limiting
         absorbed_count: dict[str, int] = dict.fromkeys(flux_limits, 0)
 
-        # Process boundary particles
-        boundary_indices = np.where(at_boundary)[0]
-
-        for idx in boundary_indices:
-            particle = result_particles[idx]
-            segment = self._segment_at(bc, particle, bounds_arr)
-
-            if segment is None:
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-                continue
-
-            action = particle_action_for_bc_type(segment.bc_type, segment.beta)
-
+        for idx in np.flatnonzero((reached >= 0).any(axis=1)):
+            segment = self._segment_at(bc, particles[idx], box)
+            # The matched segment's own beta classifies a Robin wall, so a mixed BC with a different Robin coefficient
+            # per wall is read per wall; the meshfree applicator's uniform path reads the BC's one condition and refuses
+            # a mixed BC (`applicator_meshfree.the_one_condition`). No matching segment: reflect.
+            action = "reflecting" if segment is None else segment_particle_action(segment, "ParticleApplicator.apply")
             if action == "absorbing":
-                seg_name = segment.name
+                name = segment.name
+                if name not in flux_limits:
+                    leaves[idx] = True
+                    continue
+                if absorbed_count[name] < flux_limits[name]:
+                    leaves[idx] = True
+                    absorbed_count[name] += 1
+                    continue
+                # Capacity full: turned back at the exit, by the faces it reached.
+            result_particles[idx] = self._act_per_face(bc, particles[idx], box, reached[idx], action)
 
-                # Check flux capacity
-                if seg_name in flux_limits:
-                    capacity = flux_limits[seg_name]
-                    current = absorbed_count.get(seg_name, 0)
-
-                    if current < capacity:
-                        # Capacity available - absorb
-                        absorbed_mask[idx] = True
-                        exit_positions_list.append(particle.copy())
-                        absorbed_count[seg_name] = current + 1
-                    else:
-                        # Capacity full - REFLECT (queue at exit)
-                        result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-                else:
-                    # No flux limit for this segment - absorb immediately
-                    absorbed_mask[idx] = True
-                    exit_positions_list.append(particle.copy())
-
-            elif action == "reflecting":
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-
-            else:
-                result_particles[idx] = self._wrap_particle(particle, domain_min, domain_size)
-
-        if exit_positions_list:
-            exit_positions = np.array(exit_positions_list)
-        else:
-            exit_positions = np.array([]).reshape(0, dimension)
-
-        remaining_particles = result_particles[~absorbed_mask]
-
-        return remaining_particles, absorbed_mask, exit_positions, absorbed_count
+        absorbed_mask, exit_positions = absorb_at_walls(particles, box, self._boundary_tolerance, leaves)
+        return result_particles[~absorbed_mask], absorbed_mask, exit_positions, absorbed_count
 
     def refuse_segments_it_would_drop(
         self,
@@ -573,49 +501,37 @@ class ParticleApplicator:
         loop's reader (`segment_at_box_contact`), at the owner's default tolerance (``SDF_BOUNDARY_TOL``), the one the
         first-face read asked the owner at. On one face that is the face's segment there, and a placement holds the
         point within that tolerance; within it of a second face too, or past both, the owner's corner rule decides
-        (#2512 row B1, stage B1d), where the first face found, x before y, used to. The applicator's own 1e-10 only
-        decides which particles are at the boundary."""
+        (#2512 row B1, stage B1d), where the first face found, x before y, used to. The applicator's own band,
+        ``ONWALL_TOL``, only decides which particles are at the boundary (`walls_reached`)."""
         point = np.clip(particle, box[:, 0], box[:, 1])
         return segment_at_box_contact(bc_on_box, point, SDF_BOUNDARY_TOL)[1]
 
-    def _reflect_particle(
+    def _act_per_face(
         self,
-        particle: NDArray[np.floating],
-        domain_min: NDArray[np.floating],
-        domain_max: NDArray[np.floating],
-        domain_size: NDArray[np.floating],
+        bc_on_box: BoundaryConditions,
+        end: NDArray[np.floating],
+        box: NDArray[np.floating],
+        reached: NDArray[np.int8],
+        action: str,
     ) -> NDArray[np.floating]:
-        """
-        Reflect particle back into domain using modular fold reflection.
-
-        Handles particles that may have traveled multiple domain widths.
-        Uses canonical implementation from geometry.boundary.corner (Issue #521).
-
-        At corners, all dimensions are processed simultaneously, producing
-        diagonal reflection (equivalent to 'average' corner strategy).
-        """
-        from .corner import reflect_positions
-
-        # Build bounds from domain_min and domain_max
-        bounds = list(zip(domain_min, domain_max, strict=True))
-        return reflect_positions(particle, bounds)
-
-    def _wrap_particle(
-        self,
-        particle: NDArray[np.floating],
-        domain_min: NDArray[np.floating],
-        domain_size: NDArray[np.floating],
-    ) -> NDArray[np.floating]:
-        """
-        Wrap particle to opposite boundary (periodic BC).
-
-        Uses canonical implementation from geometry.boundary.corner (Issue #521).
-        """
-        from .corner import wrap_positions
-
-        # Build bounds from domain_min and domain_size
-        bounds = [(domain_min[d], domain_min[d] + domain_size[d]) for d in range(len(domain_min))]
-        return wrap_positions(particle, bounds)
+        """``end`` returned to the box by each face it is at or past (``reached``, its row of `walls_reached`), each on
+        its own axis by its own segment: a periodic face wraps the axis (`periodic.wrap_positions`), any other folds it
+        (`reflect_positions`). At a corner one of whose faces is periodic each face's segment is the owner's reading
+        there (`periodic_corner_actions`). Elsewhere each face takes the kind of ``action``, the action of the segment
+        `_segment_at` read: on one face that is the face's own, and at a corner none of whose faces wraps every face
+        folds."""
+        point = np.clip(end, box[:, 0], box[:, 1])
+        corner = periodic_corner_actions(bc_on_box, point, SDF_BOUNDARY_TOL, "ParticleApplicator.apply")
+        wraps = None if corner is None else {(axis, side): wrap for axis, side, wrap in corner[1]}
+        out = end.copy()
+        for axis in np.flatnonzero(reached >= 0):
+            # A reached face is within ONWALL_TOL of its plane, so the corner read it at SDF_BOUNDARY_TOL (> ONWALL_TOL).
+            face = (int(axis), int(reached[axis]))
+            if (action == "periodic") if wraps is None else wraps[face]:
+                out = wrap_positions(out, box, periodic_dims=(face[0],))
+            else:
+                out[axis] = reflect_positions(out[axis : axis + 1], box[axis : axis + 1])[0]
+        return out
 
 
 __all__ = ["ParticleApplicator", "same_particle_action", "segment_particle_action"]
