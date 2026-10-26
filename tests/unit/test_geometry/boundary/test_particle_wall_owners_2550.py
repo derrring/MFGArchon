@@ -26,15 +26,17 @@ cannot remove a particle; it clamped) and a non-finite position. The deprecated 
 boundary.py` is that pair, and the export `geometry.boundary.wrap_positions` is the periodic owner, with the removed
 corner shim's values on its signature.
 
-**C6-3, the owners' other consumers.** `MeshfreeApplicator`'s reflecting and periodic modes, `Hyperrectangle`'s and
-`TensorProductGrid`'s ``wrap_coordinates`` (the grid's now the periodic owner, where it had its own ``np.mod``), and
-`sample_from_scattered_density`'s periodic wrap, each against the closed form on a [0, 1] x [0, 2] box: on, past and
-several spans past each face, and a corner. No other test called any of them on positions outside the box. C6's
+**C6-3, the owners' other consumers.** `MeshfreeApplicator`'s reflecting and periodic modes, and `Hyperrectangle`'s
+and `TensorProductGrid`'s ``wrap_coordinates`` (the grid's reads the periodic owner now, where it had its own
+``np.mod``), against the closed form on a [0, 1] x [0, 2] box, one set of rows for all of them: inside, on the max
+corner and on the min corner, past one face, past a corner, and several spans past the max face on one axis and the
+min face on the other. Each ``wrap_coordinates`` leaves the caller's array as it was. `sample_from_scattered_density`'s
+periodic wrap is read against the closed-form wrap of the samples it hands the owner, on the axes it names. C6's
 structural guard is `test_particle_wall_has_one_owner_2550.py`.
 
-Held fixed: the unit box (the C6-3 rows aside); constant values; every face placed by its label. The fuzzes over BC kinds, priorities, global
-and default segments, bounds up to 1e5 and ends at each band's edges, and over the 1-D helpers, are the PRs', in
-scratch.
+Held fixed: the unit box (the C6-3 rows aside); constant values; every face placed by its label. The fuzzes over BC
+kinds, priorities, global and default segments, bounds up to 1e5 and ends at each band's edges, over the 1-D helpers,
+and over ``TensorProductGrid.wrap_coordinates``, are the PRs', in scratch.
 """
 
 from __future__ import annotations
@@ -366,29 +368,35 @@ def test_meshfree_reflecting_and_periodic_read_the_owners(mode, expected):
 
 
 def test_wrap_coordinates_wraps_only_the_periodic_axes():
-    """`Hyperrectangle.wrap_coordinates` wraps its periodic axis and leaves the other one, outside the box or not; a
-    (d,) point comes back as (d,)."""
+    """`Hyperrectangle.wrap_coordinates` wraps its periodic axis onto [lo, hi), so a point on the max face comes back on
+    the min face, and leaves the other axis as it is, inside the box or not. A (d,) point comes back as (d,), and the
+    caller's array is not written."""
     torus_x = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 2.0]]), periodic_dims=(0,))
-    points = np.array([[1.25, 2.5], [-0.25, -0.5], [3.25, 1.0]])
-    np.testing.assert_array_equal(torus_x.wrap_coordinates(points), [[0.25, 2.5], [0.75, -0.5], [0.25, 1.0]])
-    np.testing.assert_array_equal(torus_x.wrap_coordinates(points[0]), [0.25, 2.5])
+    given = OFF_THE_BOX.copy()
+    np.testing.assert_array_equal(
+        torus_x.wrap_coordinates(given), np.column_stack([np.array(WRAPPED)[:, 0], given[:, 1]])
+    )
+    np.testing.assert_array_equal(torus_x.wrap_coordinates(given[3]), [0.25, 0.5])
+    np.testing.assert_array_equal(given, OFF_THE_BOX)
 
 
 def test_the_grids_wrap_coordinates_is_the_periodic_owner():
     """`TensorProductGrid.wrap_coordinates` reads `periodic.wrap_positions` over its bounds and periodic axes. On a
-    periodic grid every axis wraps and a (d,) point stays (d,); on a no-flux grid nothing moves. It had its own
+    periodic grid every axis wraps onto [lo, hi) and a (d,) point stays (d,); on a no-flux grid nothing moves; the
+    caller's array is not written. It had its own
     ``np.mod`` in the points' dtype, and the two rows after the closed forms are where that differed from the owner:
     - a float32 point against bounds given as Python floats is wrapped in float64 and rounded once, to the exact wrap
       of 2.2 on (0, 0.3) rounded to float32. The grid's own float32 arithmetic gave 0.099999964, 11 ulps below;
     - an axis whose span is at most 1e-14, which a grid accepts, is left as it is, the owner's rule for an axis with
       no span. The grid's own body wrapped it (3e-15 on (0, 1e-15) to 1e-15)."""
     bounds = [(0.0, 1.0), (0.0, 2.0)]
-    points = np.array([[1.25, 2.5], [-0.25, -0.5], [3.25, 1.0]])
+    given = OFF_THE_BOX.copy()
     grid = TensorProductGrid(bounds=bounds, Nx=[4, 4], boundary_conditions=periodic_bc(dimension=2))
-    np.testing.assert_array_equal(grid.wrap_coordinates(points), [[0.25, 0.5], [0.75, 1.5], [0.25, 1.0]])
-    np.testing.assert_array_equal(grid.wrap_coordinates(points[0]), [0.25, 0.5])
+    np.testing.assert_array_equal(grid.wrap_coordinates(given), WRAPPED)
+    np.testing.assert_array_equal(grid.wrap_coordinates(given[4]), [0.75, 0.5])
     walls = TensorProductGrid(bounds=bounds, Nx=[4, 4], boundary_conditions=no_flux_bc(dimension=2))
-    np.testing.assert_array_equal(walls.wrap_coordinates(points), points)
+    np.testing.assert_array_equal(walls.wrap_coordinates(given), OFF_THE_BOX)
+    np.testing.assert_array_equal(given, OFF_THE_BOX)
 
     narrow = TensorProductGrid(bounds=[(0.0, 0.3), (0.0, 2.0)], Nx=[4, 4], boundary_conditions=periodic_bc(dimension=2))
     wrapped = narrow.wrap_coordinates(np.array([[2.2, 0.5]], dtype=np.float32))
@@ -401,12 +409,13 @@ def test_the_grids_wrap_coordinates_is_the_periodic_owner():
 def test_scattered_density_sampling_wraps_through_the_periodic_owner(monkeypatch):
     """`sample_from_scattered_density` with ``periodic_bounds`` samples triangles across the seam, so some samples land
     outside the box; it wraps them once, through the periodic owner. The result is the closed-form wrap of the samples
-    the owner was handed, on the periodic axis only; a density near both x faces puts samples past each."""
+    the owner was handed, on the periodic axis only, which the owner is told; a density near both x faces puts samples
+    past each."""
     handed = []
     owner = periodic.wrap_positions
 
     def recording(positions, bounds, periodic_dims=None):
-        handed.append(np.array(positions, copy=True))
+        handed.append((np.array(positions, copy=True), periodic_dims))
         return owner(positions, bounds, periodic_dims)
 
     monkeypatch.setattr(periodic, "wrap_positions", recording)
@@ -416,7 +425,8 @@ def test_scattered_density_sampling_wraps_through_the_periodic_owner(monkeypatch
         points, density, 400, seed=1, periodic_bounds=[(0.0, 1.0), (0.0, 2.0)], periodic_dims=(0,)
     )
     assert len(handed) == 1, len(handed)
-    raw = handed[0]
+    raw, dims = handed[0]
+    assert tuple(dims) == (0,), dims
     assert (raw[:, 0] < 0).any(), "no sample past the min face: the wrap had nothing to do there"
     assert (raw[:, 0] >= 1).any(), "no sample past the max face: the wrap had nothing to do there"
     np.testing.assert_array_equal(sampled, np.column_stack([np.mod(raw[:, 0], 1.0), raw[:, 1]]))

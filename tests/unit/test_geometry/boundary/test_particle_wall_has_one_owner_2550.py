@@ -15,16 +15,20 @@ with its own arithmetic, as `Hyperrectangle.apply_boundary_conditions` and both 
 - P2, a ``mod``, ``remainder`` or ``fmod`` call, from any module, whose first argument is such a difference;
 - P3, a mirror about a bound, ``2 * <bound> - x``;
 - P4, a shift by a span, ``x -= <span>`` or ``x = x + <span>``: the single-shift wrap, and the per-period loop;
-- P5, a clip to bounds, ``clip(x, <bound>, <bound>)`` or ``clamp(...)``: a clamp standing for absorption.
+- P5, a clip to bounds, ``clip(x, <bound>, <bound>)`` or ``clamp(...)``, or a nested ``minimum(maximum(x, <bound>),
+  <bound>)`` (``min``/``max`` too), as the 1-D GPU helper clamped on a backend with no ``clip``: a clamp standing for
+  absorption.
 A *bound* is a name, attribute or subscript whose name says lo, hi, min, max, low, high, lower, upper, left, right,
-wall or bound(s), alone or as a ``_``-separated part. A *span* is one named span, width, length, period, L, Lx, Ly,
-extent or box/domain size, or a difference of two bounds.
+wall, bound(s) or box, alone or as a ``_``-separated part. A *span* is one named span, width, length, period, L, Lx,
+Ly, extent or box/domain size, or a difference of two bounds.
 
-**What they keep out, by construction:** an index wrap ``(i + 1) % n``; a counter ``k % 10``; an angle
-``theta % (2 * np.pi)``; and the contact loop's reflection about a segment's normal, which mirrors about no bound.
+**What they keep out, by construction:** an index wrap ``(i + 1) % n`` or ``(i - 1) % n``; a counter ``k % 10``; an
+angle ``theta % (2 * np.pi)``; a mirror about a name outside the bound vocabulary. The contact loop, the path rule's
+owner, mirrors about a box bound at a corner, so it is a site, and is allowed by name.
 
-**Allowed**, each by file and function, so a moved line does not reopen the question. An allowance that covers no site
-fails the guard, so a function routed to an owner cannot leave its name behind for the next one.
+**Allowed**, each by file and qualified name (``Class.method``, as ``__qualname__`` spells it), so a moved line does not
+reopen the question and a function of the same name elsewhere in the file is not covered. An allowance that covers no
+site fails the guard, so a function routed to an owner cannot leave its name behind for the next one.
 
 **Known blind spots** (the census's shapes are the criterion, as for #2512's guards, since an AST guard cannot be
 complete over Python syntax):
@@ -33,9 +37,14 @@ complete over Python syntax):
   `test_particle_wall_owners_2550.py` hold it;
 - a wrap through ``floor`` (``x - L * floor((x - lo) / L)``) or ``divmod``, and a shift inside a call,
   ``np.where(x >= hi, x - (hi - lo), x)``: the consumers' behavioural pins hold these;
+- a modulo of the position itself, ``x % L`` on a box at 0 or ``x % (xmax - xmin)``: a rule for it would fire on the
+  index wraps whose counts are named span or width. Also the in-place spelling, ``x -= lo`` then ``x %= L``;
+- a mirror spelled ``lo + (lo - x)``, ``hi - (x - hi)`` or ``-x + 2 * hi``, a fold through ``abs``
+  (``lo + abs(x - lo)``), and an assignment to the opposite face, as
+  `ImplicitApplicator._wrap_to_opposite_boundary` places a field's periodic read point;
+- a clip to offset bounds, ``clip(x, lo + eps, hi - eps)``, and a clip by keyword (``np.clip(x, a_min=lo, a_max=hi)``);
 - a difference carried through a second name, a walrus or tuple unpacking;
-- a bound or a span whose name is outside the vocabulary above, ``<bound> * 2 - x``, and a clip by keyword
-  (``np.clip(x, a_min=lo, a_max=hi)``);
+- a bound or a span whose name is outside the vocabulary above, and ``<bound> * 2 - x``;
 - module-level code.
 
 **Class line B** (a reader that gives one action to every axis at a periodic corner) has no syntactic shape. It is held
@@ -59,18 +68,22 @@ if TYPE_CHECKING:
 
 PACKAGE = Path("mfgarchon")
 _BOUND = re.compile(
-    r"(^|_)(lo|hi|min|max|low|high|lower|upper|left|right|wall|bound|bounds)(_|$|\d)|^[xyz]?(min|max)$", re.I
+    r"(^|_)(lo|hi|min|max|low|high|lower|upper|left|right|wall|bound|bounds|box)(_|$|\d)|^[xyz]?(min|max)$", re.I
 )
 _SPAN = re.compile(r"^(span|width|length|period|periods|L|Lx|Ly|L_i|extent|box_size|domain_size)$")
 _MODS = frozenset({"mod", "remainder", "fmod"})
+_CLAMPS = {"minimum": "maximum", "maximum": "minimum", "min": "max", "max": "min"}
 
 _SL = "a field's departure point, not a particle: its Dirichlet arm reads g (#2815)"
+_READ_POINT = "the nearest point of the box, read for its segment; the end itself is moved by the owners"
 _KDE = "images for a density estimator; no particle moves (#2573 comment 6419124057)"
 ALLOWED = {
     # The owners, and the owners' device copy (#2811), which `test_particle_wall_owners_2550.py` pins against them.
     ("mfgarchon/geometry/boundary/corner/position.py", "reflect_positions"): "the fold's owner",
     ("mfgarchon/geometry/boundary/periodic.py", "wrap_positions"): "the wrap's owner",
     ("mfgarchon/utils/particle_utils.py", "apply_boundary_conditions_gpu"): "the owners' device copy",
+    # The path rule's owner, the contact loop (#2733): at a corner it mirrors the step's end about the box's face.
+    ("mfgarchon/alg/numerical/fp_solvers/fp_particle_bc.py", "reflect_at_first_contacts"): "the path rule's owner",
     # The clamp #2810 deprecated; it goes with its deprecation.
     ("mfgarchon/geometry/boundary/corner/position.py", "absorb_positions"): "deprecated (#2810)",
     # The semi-Lagrangian departure-point folds.
@@ -84,21 +97,29 @@ ALLOWED = {
     ("mfgarchon/utils/numerical/particle/kde_boundary.py", "create_ghost_particles"): _KDE,
     # A field's ghost value about its wall value, not a position.
     ("mfgarchon/geometry/boundary/applicator_fdm.py", "_write_wall_ghosts"): "a field ghost value",
-    # Clips to a bound that is not a box wall applied to positions: a control's bounds, a field's bounds, a query point
-    # held to the grid, a step factor, the nearest point on a segment, and the geometry API's projections.
-    ("mfgarchon/core/hamiltonian.py", "conjugate_argmax"): "a control's bounds",
-    ("mfgarchon/core/hamiltonian.py", "proximal"): "a control's bounds",
-    ("mfgarchon/core/hamiltonian.py", "__call__"): "a control's bounds",
-    ("mfgarchon/core/hamiltonian.py", "_find_optimal_alpha"): "a control's bounds",
-    ("mfgarchon/core/hamiltonian.py", "_find_optimal_p"): "a control's bounds",
-    ("mfgarchon/geometry/boundary/constraints.py", "project"): "a field's obstacle bounds",
-    ("mfgarchon/geometry/boundary/applicator_interpolation.py", "clamp_query_points"): "an interpolation query",
+    # A point's nearest point of the box, read for the segment that holds it, not a particle moved.
+    ("mfgarchon/geometry/boundary/applicator_particle.py", "ParticleApplicator._segment_at"): _READ_POINT,
+    ("mfgarchon/geometry/boundary/applicator_particle.py", "ParticleApplicator._act_per_face"): _READ_POINT,
+    ("mfgarchon/geometry/boundary/conditions.py", "BoundaryConditions._segments_holding"): _READ_POINT,
+    # Clips to a bound that is not a box wall rule on particles: a control's bounds, a field's bounds, a query point
+    # held to the grid, a step factor, a maze door's width, and the geometry API's projections.
+    ("mfgarchon/core/hamiltonian.py", "LagrangianBase.conjugate_argmax"): "a control's bounds",
+    ("mfgarchon/core/hamiltonian.py", "LagrangianBase.proximal"): "a control's bounds",
+    ("mfgarchon/core/hamiltonian.py", "DualHamiltonian.__call__"): "a control's bounds",
+    ("mfgarchon/core/hamiltonian.py", "DualHamiltonian._find_optimal_alpha"): "a control's bounds",
+    ("mfgarchon/core/hamiltonian.py", "DualLagrangian.__call__"): "a control's bounds",
+    ("mfgarchon/core/hamiltonian.py", "DualLagrangian._find_optimal_p"): "a control's bounds",
+    ("mfgarchon/geometry/boundary/constraints.py", "BilateralConstraint.project"): "a field's obstacle bounds",
+    ("mfgarchon/geometry/boundary/applicator_interpolation.py", "InterpolationApplicator.clamp_query_points"): (
+        "an interpolation query"
+    ),
     ("mfgarchon/utils/acceleration/jax_utils.py", "adaptive_time_step"): "a time-step factor",
-    ("mfgarchon/geometry/boundary/conditions.py", "_segments_holding"): "the nearest point on a segment",
+    ("mfgarchon/geometry/graph/maze_postprocessing.py", "adaptive_door_carving"): "a maze door's width",
+    ("mfgarchon/geometry/graph/maze_utils.py", "compute_adaptive_door_width"): "a maze door's width",
     ("mfgarchon/geometry/base.py", "nearest_point_on_box_boundary"): "geometry API",
-    ("mfgarchon/geometry/base.py", "project_to_interior"): "geometry API",
-    ("mfgarchon/geometry/graph/network_geometry.py", "project_to_interior"): "geometry API",
-    ("mfgarchon/geometry/implicit/point_cloud.py", "project_to_interior"): "geometry API",
+    ("mfgarchon/geometry/base.py", "Geometry.project_to_interior"): "geometry API",
+    ("mfgarchon/geometry/graph/network_geometry.py", "NetworkGeometry.project_to_interior"): "geometry API",
+    ("mfgarchon/geometry/implicit/point_cloud.py", "PointCloudGeometry.project_to_interior"): "geometry API",
 }
 
 
@@ -142,6 +163,42 @@ def _is_shift(node: ast.AST) -> bool:
     )
 
 
+def _is_nested_clamp(node: ast.AST) -> bool:
+    """``minimum(maximum(x, <bound>), <bound>)``, or ``maximum(minimum(...))``, ``min(max(...))``, from any module."""
+    outer = name_of(node.func) if isinstance(node, ast.Call) else None
+    if outer not in _CLAMPS or len(node.args) != 2:
+        return False
+    inner, bound = node.args
+    if isinstance(bound, ast.Call):
+        inner, bound = bound, inner
+    return (
+        isinstance(inner, ast.Call)
+        and name_of(inner.func) == _CLAMPS[outer]
+        and len(inner.args) == 2
+        and _is_bound(bound)
+        and any(_is_bound(arg) for arg in inner.args)
+    )
+
+
+def scopes(tree: ast.Module) -> list[tuple[str, ast.AST]]:
+    """Every function and lambda in ``tree`` with its qualified name, as ``__qualname__`` spells it."""
+    found: list[tuple[str, ast.AST]] = []
+
+    def visit(node: ast.AST, prefix: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                visit(child, [*prefix, child.name])
+            elif isinstance(child, FUNCTIONS):
+                name = [*prefix, getattr(child, "name", "<lambda>")]
+                found.append((".".join(name), child))
+                visit(child, [*name, "<locals>"])
+            else:
+                visit(child, prefix)
+
+    visit(tree, [])
+    return found
+
+
 def wall_rules(scope: ast.AST) -> list[tuple[str, int]]:
     """``(predicate, line)`` for each wall rule's arithmetic in ``scope`` itself."""
     nodes = list(own_nodes(scope))
@@ -181,22 +238,20 @@ def wall_rules(scope: ast.AST) -> list[tuple[str, int]]:
             and len(node.args) >= 3
             and _is_bound(node.args[1])
             and _is_bound(node.args[2])
-        ):
+        ) or _is_nested_clamp(node):
             hits.append(("P5", node.lineno))
     return hits
 
 
 def scan(root: Path, allowed: Mapping[tuple[str, str], str] = ALLOWED) -> tuple[list[str], list[str]]:
-    """``(population, sites)`` for the package under ``root``; a site is ``path:line: in function [P#]``."""
+    """``(population, sites)`` for the package under ``root``; a site is ``path:line: in qualname [P#]``."""
     population, sites = [], []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         population.append(rel)
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, FUNCTIONS):
-                name = getattr(node, "name", "<lambda>")
-                if (rel, name) not in allowed:
-                    sites.extend(f"{rel}:{line}: in {name} [{kind}]" for kind, line in wall_rules(node))
+        for qualname, node in scopes(ast.parse(path.read_text())):
+            if (rel, qualname) not in allowed:
+                sites.extend(f"{rel}:{line}: in {qualname} [{kind}]" for kind, line in wall_rules(node))
     return population, sorted(set(sites))
 
 
@@ -244,6 +299,9 @@ def test_every_allowance_still_covers_a_site():
         "def _rival(x, width):\n    x -= width\n    return x\n",
         "def _rival(x, xmin, xmax):\n    while x > xmax:\n        x = x - (xmax - xmin)\n    return x\n",
         "import numpy as np\n\n\ndef _rival(particles, xmin, xmax):\n    return np.clip(particles, xmin, xmax)\n",
+        "def _rival(xp, particles, xmin, xmax):\n    return xp.minimum(xp.maximum(particles, xmin), xmax)\n",
+        "def _rival(x, lo, hi):\n    return min(max(x, lo), hi)\n",
+        "def _rival(stop, box):\n    return 2.0 * box[0, 1] - stop[0]\n",
     ],
     ids=[
         "mod-difference",
@@ -260,10 +318,24 @@ def test_every_allowance_still_covers_a_site():
         "shift",
         "shift-by-bounds",
         "clip",
+        "minimum-maximum",
+        "min-max",
+        "mirror-about-box",
     ],
 )
 def test_a_planted_rival_is_found(package_copy, planted):
     assert _planted(package_copy, planted), planted
+
+
+def test_an_allowance_does_not_cover_a_namesake(package_copy):
+    """An allowance names a qualified name, so a new ``__call__`` in `core/hamiltonian.py`, a file whose two
+    control-bound ``__call__`` methods are allowed, is a site."""
+    target = package_copy / PACKAGE / "core" / "hamiltonian.py"
+    planted = (
+        "class _RivalHamiltonian:\n    def __call__(self, x, xmin, xmax):\n        return np.clip(x, xmin, xmax)\n"
+    )
+    sites = planted_scan(scan, package_copy, target, planted)
+    assert any("in _RivalHamiltonian.__call__ [P5]" in site for site in sites), sites
 
 
 # Class A's members as they stood at 95b097fe, before #2810 and #2811 routed them: the shapes the guard was written for.
@@ -287,31 +359,76 @@ def apply_boundary_conditions_numpy(particles, xmin, xmax, bc_type):
         particles = np.clip(particles, xmin, xmax)
     return particles
 """
-_OLD_DOMAIN_REFLECTION = """def apply_boundary_conditions(self, particles, bc_type="reflecting"):
-    particles = particles.copy()
-    for dim in range(self.dimension):
-        xmin = self.bounds[dim, 0]
-        xmax = self.bounds[dim, 1]
-        Lx = xmax - xmin
+_OLD_GPU_HELPER = """def apply_boundary_conditions_gpu(particles, xmin, xmax, bc_type, backend):
+    xp = backend.array_module
+    Lx = xmax - xmin
+    if bc_type == "periodic":
+        particles = xmin + ((particles - xmin) % Lx)
+    elif bc_type == "no_flux":
         if Lx > 1e-14:
-            shifted = particles[:, dim] - xmin
+            shifted = particles - xmin
             period = 2 * Lx
             pos_in_period = shifted % period
             in_second_half = pos_in_period > Lx
-            pos_in_period[in_second_half] = period - pos_in_period[in_second_half]
-            particles[:, dim] = xmin + pos_in_period
+            particles = xp.where(in_second_half, xmin + period - pos_in_period, xmin + pos_in_period)
+    elif bc_type == "dirichlet":
+        if hasattr(xp, "clip"):
+            particles = xp.clip(particles, xmin, xmax)
+        else:
+            particles = xp.minimum(xp.maximum(particles, xmin), xmax)
     return particles
+"""
+_OLD_DOMAIN_METHOD = """import numpy as np
+
+
+def apply_boundary_conditions(self, particles, bc_type="reflecting"):
+    particles = particles.copy()
+    if bc_type == "reflecting":
+        for dim in range(self.dimension):
+            xmin = self.bounds[dim, 0]
+            xmax = self.bounds[dim, 1]
+            Lx = xmax - xmin
+            if Lx > 1e-14:
+                shifted = particles[:, dim] - xmin
+                period = 2 * Lx
+                pos_in_period = shifted % period
+                in_second_half = pos_in_period > Lx
+                pos_in_period[in_second_half] = period - pos_in_period[in_second_half]
+                particles[:, dim] = xmin + pos_in_period
+        return particles
+    elif bc_type == "absorbing":
+        inside = np.all((particles >= self.bounds[:, 0]) & (particles <= self.bounds[:, 1]), axis=1)
+        return particles[inside]
+    elif bc_type == "periodic":
+        for dim in range(self.dimension):
+            width = self.bounds[dim, 1] - self.bounds[dim, 0]
+            below = particles[:, dim] < self.bounds[dim, 0]
+            particles[below, dim] += width
+            above = particles[:, dim] > self.bounds[dim, 1]
+            particles[above, dim] -= width
+        return particles
 """
 
 
 @pytest.mark.parametrize(
     ("planted", "kinds"),
-    [(_OLD_NUMPY_HELPER, {"P1", "P5"}), (_OLD_DOMAIN_REFLECTION, {"P1"})],
-    ids=["the 1-D NumPy helper", "Hyperrectangle.apply_boundary_conditions"],
+    [
+        (_OLD_NUMPY_HELPER, {"P1": 2, "P5": 1}),
+        (_OLD_GPU_HELPER, {"P1": 2, "P5": 2}),
+        (_OLD_DOMAIN_METHOD, {"P1": 1, "P4": 2}),
+    ],
+    ids=["the 1-D NumPy helper", "the 1-D GPU helper", "Hyperrectangle.apply_boundary_conditions"],
 )
 def test_a_removed_member_of_class_a_is_found(package_copy, planted, kinds):
+    """Each line of each wall rule, by its predicate: the GPU helper's clamp on a backend with no ``clip`` (a nested
+    minimum and maximum) is a site of its own, and the domain method's periodic arm (a shift by the width) is P4's
+    control from code the library shipped. Its absorbing arm, a mask, is a blind spot."""
     sites = _planted(package_copy, planted)
-    assert {site.rsplit("[", 1)[1].rstrip("]") for site in sites} == kinds, sites
+    found: dict[str, int] = {}
+    for site in sites:
+        kind = site.rsplit("[", 1)[1].rstrip("]")
+        found[kind] = found.get(kind, 0) + 1
+    assert found == kinds, sites
 
 
 @pytest.mark.parametrize(
@@ -321,9 +438,11 @@ def test_a_removed_member_of_class_a_is_found(package_copy, planted, kinds):
         "def _not_a_rival(i, n):\n    return (i - 1) % n\n",
         "def _not_a_rival(k):\n    return k % 10 == 0\n",
         "import numpy as np\n\n\ndef _not_a_rival(theta):\n    return theta % (2 * np.pi)\n",
+        # A mirror about a name outside the bound vocabulary. The library's own field ghost, ``2 * wall_value - u``,
+        # is a site, and is allowed by name.
         "def _not_a_rival(u_b, u_i):\n    return 2 * u_b - u_i\n",
     ],
-    ids=["index-wrap", "index-wrap-back", "counter", "angle", "field-ghost"],
+    ids=["index-wrap", "index-wrap-back", "counter", "angle", "mirror-about-a-value"],
 )
 def test_a_shape_that_is_not_a_wall_rule_is_not_found(package_copy, planted):
     assert not _planted(package_copy, planted), planted

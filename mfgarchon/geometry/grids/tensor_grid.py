@@ -1515,13 +1515,13 @@ class TensorProductGrid(
         Wrap coordinates to canonical fundamental domain, by the periodic wall's owner (`periodic.wrap_positions`,
         CONVENTIONS.md § *Particles at a wall*).
 
-        For periodic dimension i: x_wrapped = xmin + (x - xmin) mod L
+        For periodic dimension i with span L > 1e-14: x_wrapped = xmin + (x - xmin) mod L; else x is unchanged.
 
         Args:
             points: Points to wrap, shape (num_points, dimension) or (dimension,)
 
         Returns:
-            Wrapped coordinates in [xmin, xmax), same shape as input
+            Wrapped coordinates in [xmin, xmax), in the shape of ``points`` (one of those two)
 
         Example:
             >>> # Assuming 1D periodic domain [0, 2π)

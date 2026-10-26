@@ -768,9 +768,12 @@ boundary helper never mutates the caller's array (ruled 2026-10-08). On a box, r
 particle is removed and never moved, and the mass it carried leaves through the wall (§ 9). Its exit position is where
 its reader last saw it: the contact for a reader of the path, the end for a reader of the end. `corner.absorb_positions`
 clamps a particle to the wall and keeps it, so it is not an absorbing wall; it is deprecated (#2550). A structural
-guard (`test_particle_wall_has_one_owner_2550.py`) fails if a function under `mfgarchon/` applies a box wall rule to
-positions with arithmetic of its own; what it allows by name moves no particle, such as the semi-Lagrangian
-departure-point folds (#2815) and a KDE's reflection ghosts.
+guard (`test_particle_wall_has_one_owner_2550.py`) fails if a function under `mfgarchon/` outside the owners applies a
+box wall rule to positions in one of the shapes its docstring lists: a modulo, a mirror or a shift by the box, or a
+clip to it. It allows by name the owners, the contact loop, the 1-D GPU helper's device copy of the owners and the
+deprecated `absorb_positions`, and code that is not a box wall rule for particles: the semi-Lagrangian
+departure-point folds (#2815), a KDE's reflection ghosts, and clips with another purpose (a control's or a field's
+bounds, a point read for its segment, the geometry API's projections).
 
 **The particle solver reads a step by its path.** It ends each CPU step at its first contacts with the particles'
 boundary (`reflect_at_first_contacts`, #2733): it reflects a particle specularly at a contact, absorbs one at a
