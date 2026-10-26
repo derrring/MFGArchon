@@ -19,11 +19,11 @@ corner the step crosses with a wall opposite, or periodic) x the face crossed fi
 at once) x the corner crossed (all four, so both signs of the step on each axis). Then the priority row, a periodic axis
 at priority 1 beside an exit, on all four corners and orders; a 3-D edge (a wall on y beside an exit on z, #2800's U3),
 and ties at 3-D edges and vertices with a periodic face; steps that start at a corner or an edge and leave through one
-face, steps toward a face within the tolerance that they cross later or never, and one that meets the box just past the
-tie band; the torus on long steps against the periodic owner, and the refusal of a step past ``MAX_WRAPS``; the exit
-strip of 6335147485 at solve level; and an obstacle met after a wrap, an obstacle beside a torus however the torus is
-spelt, the refusal of one that touches a face of the periodic axis, flush, past it or on the other face, and in 3-D of
-any (#2807).
+face, steps toward a face within the tolerance that they cross later or never, a rest shorter than the band, faces met
+just inside and just outside the band, and a particle domain whose face lies a hair inside the box's; the torus on long
+steps against the periodic owner, and the refusal of a step past ``MAX_WRAPS``; the exit strip of 6335147485 at solve
+level; and an obstacle met after a wrap, an obstacle beside a torus however the torus is spelt, the refusal of one that
+touches a face of the periodic axis, flush, past it or on the other face, and in 3-D of any (#2807).
 
 **Rivals**, each a copy of the package at this commit with one replacement, run with this file: listed in the PR.
 
@@ -445,6 +445,45 @@ _AT_A_CORNER = {
         [0.01, 1.0 - 1e-13],
         [-0.5, 1.0 + 1e-13],
         None,
+    ),
+    # #2808 review 4: the rest of the step shorter than the band, the band's width on both sides, and a particle domain
+    # whose face lies a hair inside the box's.
+    "y_max periodic on one side only, an exit on y_min: a rest shorter than the band that stops short of y_max": (
+        lambda: BoundaryConditions(dimension=2, segments=[_on("y_max", P), _on("y_min", D)], default_bc=NF),
+        None,
+        2,
+        [1.0 - 1e-13, 1.0 - 2e-13],
+        [1.0 + 1e-13, 1.0 - 1e-13],
+        [1.0 - 1e-13, 1.0 - 1e-13],
+    ),
+    "y_max periodic on one side only, an exit on y_min: x_min reached 5e-13 along the path after y_max, a tie": (
+        lambda: BoundaryConditions(dimension=2, segments=[_on("y_max", P), _on("y_min", D)], default_bc=NF),
+        None,
+        2,
+        [5e-13, 1.0],
+        [-0.02, 1.0 + 1e-13],
+        [0.02, 1e-13],
+    ),
+    "x periodic at priority 1 beside an exit on y_max: y_max reached 1e-10 along the path, past the band": (
+        lambda: BoundaryConditions(
+            dimension=2, segments=[_on("x_min", P, 1), _on("x_max", P, 1), _on("y_max", D)], default_bc=NF
+        ),
+        None,
+        2,
+        [0.01, 1.0 - 1e-13 - 1e-5],
+        [-0.5, 1.0 - 1e-13 - 1e-5 + 0.51e-3],
+        None,
+    ),
+    "channel, a particle domain whose x_max lies 1e-13 inside the box's: the face met is the one crossed": (
+        lambda: _channel(),
+        lambda: DifferenceDomain(
+            Hyperrectangle(np.array([[0.0, 1.0 - 1e-13], [0.0, 1.0]])),
+            Hyperrectangle(np.array([[0.4, 0.6], [0.4, 0.6]])),
+        ),
+        2,
+        [1.0 - 1e-13 - 1e-9, 1.0 - 2e-12 - 1e-7],
+        [1.0 - 1e-13 + 1e-9, 1.0 - 2e-12 + 1e-7],
+        [1e-9 - 1e-13, 1.0 - 1e-7 + 2e-12],
     ),
 }
 

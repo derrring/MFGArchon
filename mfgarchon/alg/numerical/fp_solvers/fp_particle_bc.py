@@ -372,19 +372,24 @@ def reflect_at_first_contacts(
         # The tie rule at a corner with a periodic face, not absorbed there: each face the rest of the step crosses at
         # the contact, its plane reached within the tie band along the path (D4), acts on its own axis at once. A face
         # the step moves along or away from, or toward without reaching it, is not crossed: acting there would send an
-        # axis out of the box. One crossed further on is met by the next leg's search.
+        # axis out of the box. One crossed further on is met by the next leg's search. The face the contact was found
+        # on, the contact normal's, is crossed there by construction, even where the particles' domain puts it a hair
+        # inside the box's bound, which the crossing test measures to.
         for j, faces in corner_faces.items():
             k = i[j]
             start, stop, outward = p[j].copy(), e[j].copy(), np.zeros(dimension)
             leg = e[j] - p[j]
             reach = float(np.linalg.norm(leg))
+            met = int(np.argmax(np.abs(nk[j])))
+            found_face = (met, 1 if nk[j, met] > 0.0 else 0)
             reflected = False
             for axis_j, side, wraps in faces:
-                if not (leg[axis_j] > 0.0 if side == 1 else leg[axis_j] < 0.0):
-                    continue
-                crossing = (box[axis_j, side] - p[j, axis_j]) / leg[axis_j]
-                if crossing > 1.0 or max(crossing, 0.0) * reach > eps:
-                    continue
+                if (axis_j, side) != found_face:
+                    if not (leg[axis_j] > 0.0 if side == 1 else leg[axis_j] < 0.0):
+                        continue
+                    crossing = (box[axis_j, side] - p[j, axis_j]) / leg[axis_j]
+                    if crossing > 1.0 or max(crossing, 0.0) * reach > eps:
+                        continue
                 if wraps:
                     start[axis_j] = box[axis_j, 1 - side]
                     stop[axis_j] += (box[axis_j, 1] - box[axis_j, 0]) * (-1.0 if side == 1 else 1.0)
