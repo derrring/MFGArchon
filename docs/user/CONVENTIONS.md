@@ -774,11 +774,13 @@ opposite face (#2704). It reads the boundary condition only at a contact on the 
 **At a corner one of whose faces is periodic** (`applicator_particle.periodic_corner_actions`, ruled 2026-10-26), the
 owner's corner order (priority, then DIRICHLET before a natural condition, then a placed segment before a global one,
 then declaration order: `BoundaryConditions._corner_key`) decides only whether the particle is absorbed, the one bit a
-corner cannot split per axis. If it is not absorbed, each face at the corner acts on its own axis by its own segment: a
-periodic face wraps its axis, and any other face reflects the particle along it. Where the rule bites differs by
-reader. For a path it decides a tie, a step through a corner within the contact tolerance, which has probability zero
-outside that band; it is there so the answer is determined. For a reader that has only a step's end, an end past two
-faces has positive probability, and the rule carries real weight there (#2550).
+corner cannot split per axis. If it is not absorbed, each face at the corner that the step leaves through acts on its
+own axis by its own segment: a periodic face wraps its axis, and any other face reflects the particle along it. A face
+the step moves along or away from is not crossed and takes no action. Where the rule bites differs by reader. For a
+path it decides a tie, a step through a corner within the contact tolerance, which has probability zero outside that
+band, and a step that starts at a corner, as placed initial particles can; it is there so the answer is determined.
+For a reader that has only a step's end, an end past two faces has positive probability, and the rule carries real
+weight there (#2550).
 
 *Not yet met (#2733): the contact loop reflects at a step's first contacts itself, which on the box agrees with that
 fold to rounding short of its cap on reflections per step (`test_contact_loop_2733.py`).* *Not yet met (#2429,

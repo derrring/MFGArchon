@@ -206,9 +206,10 @@ def periodic_corner_actions(
     """The tie rule at a corner of the box one of whose faces is periodic (CONVENTIONS.md § *Particles at a wall*):
     ``None`` where ``point`` is on fewer than two faces, or on no periodic one, and `segment_at_box_contact` decides.
     Otherwise the owner's corner order (`BoundaryConditions.segment_for_point`) decides only whether the particle is
-    absorbed, the one bit a corner cannot split per axis: ``(True, [])``. If it is not, each face at the corner acts by
-    its own segment, ``(False, [(axis, side, wraps), ...])`` with ``side`` 0 for the min face: a periodic face wraps its
-    axis, and any other face returns the particle along it."""
+    absorbed, the one bit a corner cannot split per axis: ``(True, [])``. If it is not, every face at the corner with
+    whether its segment wraps, ``(False, [(axis, side, wraps), ...])`` with ``side`` 0 for the min face. The caller acts
+    on the faces the step leaves through: a periodic face wraps its axis, and any other returns the particle along
+    it."""
     readings = bc_on_box.face_segments_at_point(point, tolerance=tolerance)
     if len(readings) < 2:
         return None

@@ -218,7 +218,8 @@ def reflect_at_first_contacts(
       re-traces it. A periodic one goes on with the rest of the step from its image on the opposite face (#2704), and
       a step that wraps more than ``MAX_WRAPS`` times is refused by name.
     - **A corner with a periodic face** (`periodic_corner_actions`): the owner's corner order decides only whether the
-      particle is absorbed; otherwise each face acts on its own axis, a periodic one wrapping and any other reflecting.
+      particle is absorbed; otherwise each face the step leaves through acts on its own axis, a periodic one wrapping
+      and any other reflecting.
     - **Ties (D4).** A contact within ``CONTACT_EPS`` of the previous one along the path is a tie. Two reflecting
       faces of a convex corner reflect in turn. Two whose normals are anti-parallel bound a zero-width corridor: the
       rest of the step loses its normal component, once, and is re-traced along the corridor (D2). Past the
