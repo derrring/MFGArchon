@@ -426,6 +426,7 @@ def test_scattered_density_sampling_wraps_through_the_periodic_owner(monkeypatch
     )
     assert len(handed) == 1, len(handed)
     raw, dims = handed[0]
+    assert dims is not None, "the owner was told no periodic axes, so it wrapped every axis"
     assert tuple(dims) == (0,), dims
     assert (raw[:, 0] < 0).any(), "no sample past the min face: the wrap had nothing to do there"
     assert (raw[:, 0] >= 1).any(), "no sample past the max face: the wrap had nothing to do there"
