@@ -840,6 +840,38 @@ class TestHJBFDMSolverNewtonFallback:
         ):
             solver.solve_hjb_system(M_density, U_final, U_prev)
 
+    @pytest.mark.parametrize("policy", ["raise", "warn_and_fallback"])
+    def test_on_newton_failure_reraises_not_implemented(self, policy):
+        """Unsupported residual operations must not be treated as Newton failures."""
+        import warnings
+        from unittest.mock import patch
+
+        geometry = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
+        solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure=policy)
+        Nx, Ny = 8, 8
+        Nt_points = problem.Nt_points
+        M_density = np.ones((Nt_points, Nx, Ny)) * 0.5
+        U_final = np.zeros((Nx, Ny))
+        U_prev = np.zeros((Nt_points, Nx, Ny))
+
+        with (
+            patch.object(
+                solver,
+                "_evaluate_hamiltonian_nd",
+                side_effect=NotImplementedError("unsupported residual operation"),
+            ),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            with pytest.raises(NotImplementedError, match="unsupported residual operation"):
+                solver.solve_hjb_system(M_density, U_final, U_prev)
+
+        fallback_warnings = [str(w.message) for w in caught if "Falling back" in str(w.message)]
+        assert not fallback_warnings, fallback_warnings
+
     def test_on_newton_failure_fallback_on_divergence(self):
         """Test fallback to Value Iteration when Newton diverges with warn_and_fallback."""
         import warnings
