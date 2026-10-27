@@ -432,6 +432,8 @@ def _tent_deposit(particles, axes):
     weights = [
         np.where((np.arange(len(a)) == 0) | (np.arange(len(a)) == len(a) - 1), 0.5, 1.0) * (a[1] - a[0]) for a in axes
     ]
+    if len(axes) == 1:
+        return tents[0].sum(axis=0) / len(particles) / weights[0]
     return np.einsum("pi,pj->ij", *tents) / len(particles) / np.outer(*weights)
 
 
@@ -474,6 +476,103 @@ def test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method(kde_me
         assert len(deposited) == 1, mfg_caplog.messages
 
 
+def _narrow(centre, n=300, sd=0.005):
+    return np.asarray(centre, dtype=float) + sd * np.random.default_rng(3).standard_normal((n, len(centre)))
+
+
+def test_a_sample_narrower_than_the_grid_is_deposited_where_its_kernel_was_read_at_mass_3e_50():
+    """#2820's row: 300 particles of sd 0.005 between nodes (0.53, 0.47) on 11 x 11, no diffusion. The sample has a
+    kernel, but its bound B on the lattice is over 10%, so every level the reader builds is the tent deposit, mass 1,
+    where the default reflection estimate had mass 3.6e-50 (at 654848bc)."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    particles = _narrow([0.53, 0.47])
+    assert kde_sample_has_spread(particles)
+    solver = FPParticleSolver(_problem(11, 2, volatility=0.0), num_particles=300, seed=5)
+    M = np.asarray(
+        solver.solve_fp_system(
+            M_initial=None,
+            drift_field=lambda t, x, m: np.zeros_like(x),
+            initial_particles=particles,
+            show_progress=False,
+        )
+    )
+    want = _tent_deposit(particles, [np.linspace(0.0, 1.0, 11)] * 2)
+    for level in M[1:]:
+        np.testing.assert_allclose(level, want, rtol=1e-12, atol=1e-12)
+    assert solver.deposited_levels == list(range(1, len(M)))
+
+
+def _deposited_on(path):
+    """The levels one solve deposits, on ``path``, for a crowd at one node (no spread) under no diffusion: every level
+    the reader builds. The grid-drift paths build level 0 from the sampled particles; the callable path takes it from
+    M_initial."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    d = 1 if path == "1-D grid drift" else 2
+    problem = _problem(11, d, volatility=0.0)
+    spike = np.zeros([11] * d)
+    spike[(5,) * d] = 1.0
+    solver = FPParticleSolver(problem, num_particles=200, seed=5)
+    if path == "callable drift":
+        M = solver.solve_fp_system(
+            M_initial=spike,
+            drift_field=lambda t, x, m: np.zeros_like(x),
+            initial_particles=np.full((200, 2), 0.5),
+            drift_needs_density=False,
+            show_progress=False,
+        )
+    else:
+        M = solver.solve_fp_system(spike, drift_field=np.zeros((5, *([11] * d))), show_progress=False)
+    return solver, len(np.asarray(M))
+
+
+@pytest.mark.parametrize(
+    ("path", "first"), [("1-D grid drift", 0), ("2-D grid drift", 0), ("callable drift", 1)], ids=lambda v: str(v)
+)
+def test_the_record_names_each_deposited_level_by_its_index(path, first):
+    """Each path records the deposited levels by their time index: from the first level its reader builds to the last."""
+    solver, levels = _deposited_on(path)
+    assert solver.deposited_levels == list(range(first, levels))
+
+
+def test_the_record_is_the_last_solves_and_the_result_carries_it():
+    """`deposited_levels` is reset by each solve, and `FPParticleResult` carries the solve's record."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    solver = FPParticleSolver(_problem(11, 2, volatility=0.0), num_particles=300, seed=5, density_mode="hybrid")
+    drift = {"drift_field": lambda t, x, m: np.zeros_like(x), "show_progress": False, "M_initial": None}
+    result = solver.solve_fp_system(initial_particles=_narrow([0.53, 0.47]), **drift)
+    assert result.deposited_levels == (1, 2, 3, 4, 5)
+    result = solver.solve_fp_system(
+        initial_particles=0.5 + 0.1 * np.random.default_rng(1).standard_normal((300, 2)), **drift
+    )
+    assert solver.deposited_levels == []
+    assert result.deposited_levels == ()
+
+
+def test_the_gpu_reader_deposits_a_sample_narrower_than_the_grid():
+    """The GPU path (the torch backend, on the CPU), on a crowd sampled at one node and spread by volatility 0.01:
+    narrower than the grid at every level, so each level is the tent deposit of that level's positions, up to the
+    caller's mass."""
+    pytest.importorskip("torch")
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.backends.torch_backend import TorchBackend
+
+    axis = np.linspace(0.0, 1.0, 21)
+    m0 = np.where(np.abs(axis - 0.5) < 1e-9, 20.0, 0.0)
+    solver = FPParticleSolver(_problem(21, 1, volatility=0.01), num_particles=500, seed=5)
+    solver.backend = TorchBackend(device="cpu")
+    M = np.asarray(solver.solve_fp_system(m0, drift_field=np.zeros((5, 21)), show_progress=False))
+    assert solver.current_strategy.name != "cpu"
+    assert solver.deposited_levels == list(range(len(M)))
+    w = np.full(21, 0.05)
+    w[[0, -1]] = 0.025
+    for level, positions in zip(M, solver.M_particles_trajectory, strict=True):
+        want = _tent_deposit(np.asarray(positions, dtype=float).reshape(-1, 1), [axis])
+        np.testing.assert_allclose(level / np.sum(level * w), want, rtol=1e-10, atol=1e-12)
+
+
 @pytest.mark.parametrize("kde_method", ["reflection", "standard", "renormalization"])
 def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
     """Scaling an axis leaves scipy's KDE equivariant, and so the spread predicate must leave a sample alone: on
@@ -510,18 +609,27 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
     np.testing.assert_allclose(densities[1e-7] * 1e-7, densities[1.0], rtol=1e-12, atol=1e-12)
 
 
+_RULED_TOL = 0.1  # the user's ruling of 2026-10-27, read here as a number and not from the owner's constant
+
+
 def _poisson_bound(sample, bandwidth, h):
     """B from its definition: sum over the lattice m != 0 of |scipy's kernel transform| |the sample's characteristic
-    function| at k = 2 pi m / h, in shells of max |m_i| = r until a shell adds under 1e-16."""
+    function| at k = 2 pi m / h, in shells of max |m_i| = r until a shell's transform sums under 1e-16. A term whose
+    transform is under 1e-20 is left out (their sum is under 1e-12 here)."""
     H = gaussian_kde(sample.T, bw_method=bandwidth).covariance
     d = sample.shape[1]
     total = 0.0
     for r in range(1, 400):
         span = np.arange(-r, r + 1)
         m = np.array(np.meshgrid(*([span] * d), indexing="ij")).reshape(d, -1).T
-        k = 2.0 * np.pi * m[np.abs(m).max(axis=1) == r] / h
+        k = 2.0 * np.pi * m[np.abs(m).max(axis=1) == r] / np.asarray(h)
         g = np.exp(-0.5 * np.einsum("ij,jk,ik->i", k, H, k))
-        total += float(np.sum(g * np.abs(np.exp(1j * (sample @ k.T)).mean(axis=0))))
+        live = g > 1e-20
+        if live.any():
+            phi = np.zeros(int(live.sum()), dtype=complex)
+            for start in range(0, len(sample), 4096):
+                phi += np.exp(1j * (sample[start : start + 4096] @ k[live].T)).sum(axis=0)
+            total += float(np.sum(g[live] * np.abs(phi / len(sample))))
         if g.sum() < 1e-16:
             return total
     raise AssertionError("the oracle's sum did not converge")
@@ -530,24 +638,48 @@ def _poisson_bound(sample, bandwidth, h):
 _WIDE = 0.5 + 0.1 * np.random.default_rng(3).standard_normal((3000, 2))
 _NARROW = np.array([0.53, 0.47]) + 0.005 * np.random.default_rng(3).standard_normal((300, 2))
 _ANISO = np.random.default_rng(0).multivariate_normal([0.53, 0.47], np.diag([0.05, 0.2]) ** 2, size=300)
+# 3-D, sd 0.3, thin to 0.15 cells along (1, 2, 3)/sqrt(14): its kernel's transform reaches far along that direction
+_V = np.array([1.0, 2.0, 3.0]) / np.sqrt(14.0)
+_OBLIQUE = np.random.default_rng(1).multivariate_normal(
+    np.full(3, 0.5), 0.09 * (np.eye(3) - (1 - 0.05**2) * np.outer(_V, _V)), 3000
+)
+# 10000 particles of sd 0.1, then 20000 of sd 0.003: the narrow ones, past the first 8192, decide it
+_MIXED = np.vstack(
+    [
+        0.5 + 0.1 * np.random.default_rng(4).standard_normal((10000, 2)),
+        0.53 + 0.003 * np.random.default_rng(5).standard_normal((20000, 2)),
+    ]
+)
+
+
+def test_the_tolerance_is_the_ruled_ten_percent():
+    assert KDE_LATTICE_ALIASING_TOL == _RULED_TOL
 
 
 @pytest.mark.parametrize(
     ("sample", "bandwidth", "resolved"),
-    [(_WIDE, "scott", True), (_NARROW, "scott", False), (_ANISO, "scott", True), (_ANISO, 0.15, False)],
-    ids=["wide", "narrow off a node", "anisotropic", "anisotropic, factor 0.15"],
+    [
+        (_WIDE, "scott", True),
+        (_NARROW, "scott", False),
+        (_ANISO, "scott", True),
+        (_ANISO, 0.15, False),
+        (_OBLIQUE, "scott", True),
+        (_MIXED, "scott", False),
+    ],
+    ids=["wide", "narrow off a node", "anisotropic", "anisotropic, factor 0.15", "3-D thin obliquely", "n=3e4 mixed"],
 )
 def test_the_gate_reads_the_aliasing_bound(sample, bandwidth, resolved):
     """The gate's decision is B's against 10%, with B from its definition. A value at or under 10% bounds B from above
-    (the partial sum plus the tail bound), and one over it from below (a partial sum)."""
-    bound = _poisson_bound(sample, bandwidth, 0.1)
-    assert (bound <= KDE_LATTICE_ALIASING_TOL) is resolved
-    assert kde_resolves_on_grid(sample, bandwidth, [0.1, 0.1]) is resolved
-    value = kde_lattice_aliasing(sample, bandwidth, [0.1, 0.1])
+    (the partial sum plus the kernel's sum over the rest), and one over it from below (a partial sum)."""
+    d = sample.shape[1]
+    bound = _poisson_bound(sample, bandwidth, [0.1] * d)
+    assert (bound <= _RULED_TOL) is resolved
+    assert kde_resolves_on_grid(sample, bandwidth, [0.1] * d) is resolved
+    value = kde_lattice_aliasing(sample, bandwidth, [0.1] * d)
     if resolved:
-        assert bound - 1e-12 <= value <= KDE_LATTICE_ALIASING_TOL
+        assert bound - 1e-12 <= value <= _RULED_TOL
     else:
-        assert KDE_LATTICE_ALIASING_TOL < value <= bound + 1e-12
+        assert _RULED_TOL < value <= bound + 1e-12
 
 
 def test_the_gate_decides_either_side_of_its_tolerance():
@@ -555,27 +687,65 @@ def test_the_gate_decides_either_side_of_its_tolerance():
     lo, hi = 0.05, 3.0
     for _ in range(50):
         mid = np.sqrt(lo * hi)
-        lo, hi = (lo, mid) if _poisson_bound(_ANISO, mid, 0.1) <= KDE_LATTICE_ALIASING_TOL else (mid, hi)
+        lo, hi = (lo, mid) if _poisson_bound(_ANISO, mid, [0.1, 0.1]) <= _RULED_TOL else (mid, hi)
     for factor, resolved in ((hi * (1 + 1e-6), True), (lo * (1 - 1e-6), False)):
-        assert (_poisson_bound(_ANISO, factor, 0.1) <= KDE_LATTICE_ALIASING_TOL) is resolved
+        assert (_poisson_bound(_ANISO, factor, [0.1, 0.1]) <= _RULED_TOL) is resolved
         assert kde_resolves_on_grid(_ANISO, factor, [0.1, 0.1]) is resolved
 
 
-def test_the_tail_bound_is_over_the_kernels_tail():
-    """The tail the gate adds is at least the kernel transform's sum outside the cube max |m_i| <= r, on a correlated,
-    anisotropic kernel (correlation 0.9, widths 0.3 and 0.05 cells), summed here over the lattice to |m_i| <= 120."""
-    h = np.array([0.1, 0.1])
-    H = np.array([[1.0, 0.9], [0.9, 1.0]]) * np.outer([0.03, 0.005], [0.03, 0.005])
-    span = np.arange(-120, 121)
-    m = np.array(np.meshgrid(span, span, indexing="ij")).reshape(2, -1).T
-    k = 2.0 * np.pi * m / h
-    g = np.exp(-0.5 * np.einsum("ij,jk,ik->i", k, H, k))
-    assert g[np.abs(m).max(axis=1) == 120].max() < 1e-30
-    a = kde_owner._tail_rates(H, h)
-    inner = np.ones(2)
-    for r in range(1, 30):
-        inner += 2.0 * np.exp(-0.5 * a * r**2)
-        assert kde_owner._kernel_tail_bound(a, inner, r) >= float(g[np.abs(m).max(axis=1) > r].sum())
+def _kernel(widths, correlation):
+    """K = diag(2 pi / h) H diag(2 pi / h) for a kernel of these widths in cells and this correlation matrix (h = 1)."""
+    w = 2.0 * np.pi * np.asarray(widths, dtype=float)
+    return np.asarray(correlation, dtype=float) * np.outer(w, w)
+
+
+@pytest.mark.parametrize(
+    "K",
+    [
+        _kernel([0.03, 0.05], np.eye(2)),
+        _kernel([0.3, 0.3], [[1.0, 0.9999], [0.9999, 1.0]]),
+        _kernel(
+            [0.2] * 3,
+            (np.eye(3) - (1 - 0.05**2) * np.outer(_V, _V))
+            / (1 - (1 - 0.05**2) * np.outer(_V, _V).diagonal())[:, None] ** 0.5
+            / (1 - (1 - 0.05**2) * np.outer(_V, _V).diagonal())[None, :] ** 0.5,
+        ),
+        _kernel([0.1], np.eye(1)),
+    ],
+    ids=["diagonal, narrow", "correlation 0.9999", "3-D thin obliquely", "1-D"],
+)
+def test_the_ellipsoid_holds_the_kernel(K):
+    """The points the gate sums are the half-lattice points with m^T K m <= c, a brute-force cube's; and the kernel's
+    transform outside them sums to at most 1e-13 over the whole lattice."""
+    c = kde_owner._ellipsoid_radius(K)
+    got = {tuple(p) for p in kde_owner._half_lattice_in_ellipsoid(K, c)}
+    d = len(K)
+    reach = int(np.ceil(np.sqrt(c / np.linalg.eigvalsh(K)[0]))) + 1
+    span = np.arange(-reach, reach + 1)
+    m = np.array(np.meshgrid(*([span] * d), indexing="ij")).reshape(d, -1).T
+    q = np.einsum("ij,jk,ik->i", m.astype(float), K, m.astype(float))
+    inside = m[(q <= c) & np.any(m != 0, axis=1)]
+    first = inside[np.arange(len(inside)), np.argmax(inside != 0, axis=1)]
+    assert got == {tuple(p) for p in inside[first > 0]}
+    assert float(np.exp(-0.5 * q[q > c]).sum()) <= 1e-13
+
+
+def test_a_sample_with_no_kernel_has_no_bound():
+    """A 3-D sample on a plane, and a single particle, have no kernel: the gate returns None and the grid cannot read
+    them."""
+    rng = np.random.default_rng(6)
+    plane = np.column_stack([rng.uniform(0.2, 0.8, 200), rng.uniform(0.2, 0.8, 200), np.full(200, 0.53)])
+    for sample in (plane, np.array([[0.5, 0.5]])):
+        assert kde_lattice_aliasing(sample, "scott", [0.1] * sample.shape[1]) is None
+        assert kde_resolves_on_grid(sample, "scott", [0.1] * sample.shape[1]) is False
+
+
+def test_a_kernel_too_narrow_for_the_point_budget_is_still_decided_past_tol():
+    """A 3-D kernel about 0.003 cells wide has more lattice points in its ellipsoid than the budget. The largest
+    ellipsoid that fits is summed, and the sample is decided past 10% there with a finite partial sum."""
+    sample = 0.53 + 0.1 * np.random.default_rng(7).standard_normal((300, 3))
+    value = kde_lattice_aliasing(sample, 0.01, [0.1, 0.1, 0.1])
+    assert _RULED_TOL < value < np.inf
 
 
 def _trapezoid(axis):
@@ -601,8 +771,9 @@ def _hats(x, axis):
 
 def test_the_deposit_is_the_tents_of_a_graded_grid():
     """On a graded axis beside a uniform one, particles on nodes, on walls, at a corner and inside are deposited by their
-    cells' hat functions over the trapezoid weights: mass 1 and the sample's mean on those weights. A position 1e-12
-    outside the box, and an axis of one node, are refused by name."""
+    cells' hat functions over the trapezoid weights: mass 1 and the sample's mean on those weights. Refused by name: a
+    position 1e-12 outside the box, an axis of one node or not increasing, weights not shaped like the grid or not
+    finite and positive at a node, and an empty sample."""
     graded = np.concatenate([np.linspace(0.0, 0.2, 6), np.linspace(0.3, 1.0, 8)])
     uniform = np.linspace(0.0, 1.0, 6)
     rng = np.random.default_rng(5)
@@ -619,6 +790,17 @@ def test_the_deposit_is_the_tents_of_a_graded_grid():
         deposit_on_nodes(np.array([[1.0 + 1e-12, 0.5]]), [graded, uniform], weights)
     with pytest.raises(ValueError, match="at least two strictly increasing nodes"):
         deposit_on_nodes(np.array([0.0]), [np.array([0.0])], np.ones(1))
+    with pytest.raises(ValueError, match="at least two strictly increasing nodes"):
+        deposit_on_nodes(np.array([[0.5, 0.5]]), [graded[::-1], uniform], weights)
+    with pytest.raises(ValueError, match="is not the grid's"):
+        deposit_on_nodes(np.array([[0.5, 0.5]]), [graded, uniform], weights[:, 0])
+    for bad in (0.0, -1.0, np.nan):
+        spoiled = weights.copy()
+        spoiled[3, 2] = bad
+        with pytest.raises(ValueError, match="finite and positive"):
+            deposit_on_nodes(np.array([[0.5, 0.5]]), [graded, uniform], spoiled)
+    with pytest.raises(ValueError, match="the sample is empty"):
+        deposit_on_nodes(np.empty((0, 2)), [graded, uniform], weights)
 
 
 def test_the_projector_deposits_a_sample_its_grid_cannot_read():
@@ -649,3 +831,165 @@ def test_the_projector_deposits_a_sample_its_grid_cannot_read():
                 11, 11
             )
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
+
+
+def test_the_interpolation_utility_deposits_on_its_own_lattice():
+    """`interpolate_particles_to_grid(method="kde")` on the lattice it lays out itself: #2820's narrow sample is its tent
+    deposit, mass 1 (3.6e-50 at 654848bc), and a wide one is still scipy's KDE at the nodes."""
+    from mfgarchon.utils.numerical.particle.interpolation import interpolate_particles_to_grid
+
+    axis = np.linspace(0.0, 1.0, 11)
+    nodes = np.array(np.meshgrid(axis, axis, indexing="ij")).reshape(2, -1)
+    wide = np.clip(_WIDE, 0.0, 1.0)
+    for sample, want in (
+        (_NARROW, _tent_deposit(_NARROW, [axis, axis])),
+        (wide, gaussian_kde(wide.T)(nodes).reshape(11, 11)),
+    ):
+        got = interpolate_particles_to_grid(
+            np.ones(len(sample)), sample, (11, 11), ((0.0, 1.0), (0.0, 1.0)), method="kde"
+        )
+        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
+
+
+def test_the_projector_deposits_the_samples_restriction_to_its_box():
+    """A narrow sample with 30 of its 300 particles past x = 1 is deposited by the 270 inside, each carrying 1/300, so
+    the density's mass is 0.9; the 30 and their share are recorded. A sample wholly outside gives 0 and records all."""
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
+    from mfgarchon.operators.interpolation.projection import GeometryProjector
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2))
+    axis = np.linspace(0.0, 1.0, 11)
+    sample = _NARROW.copy()
+    sample[:30, 0] = 1.2
+    projector = GeometryProjector(grid, PointCloudGeometry(sample), projection_method="kde")
+    got = np.asarray(projector.project_fp_to_hjb(np.ones(300), bandwidth="scott"))
+    np.testing.assert_allclose(got, _tent_deposit(sample[30:], [axis, axis]) * 270 / 300, rtol=1e-12, atol=1e-12)
+    assert projector.particles_outside_last_deposit == (30, pytest.approx(0.1, abs=1e-12))
+    projector = GeometryProjector(grid, PointCloudGeometry(_NARROW + 1.5), projection_method="kde")
+    assert not np.any(projector.project_fp_to_hjb(np.ones(300), bandwidth="scott"))
+    assert projector.particles_outside_last_deposit == (300, 1.0)
+
+
+def test_a_position_on_a_float32_wall_is_deposited_on_the_wall():
+    """float32 holds the wall 0.3 as 0.30000001: with the positions' dtype named, a particle there lies on the wall and
+    is deposited as one at 0.3. Read as float64 it is past the wall and refused; one float32 step further it is past
+    the wall in float32 too, and refused, or left out under outside="drop"."""
+    axis = np.linspace(0.0, 0.3, 4)
+    weights = np.array([0.05, 0.1, 0.1, 0.05])
+    on_wall = np.array([float(np.float32(0.3)), 0.12])
+    np.testing.assert_allclose(
+        deposit_on_nodes(on_wall, [axis], weights, dtype=np.float32),
+        deposit_on_nodes(np.array([0.3, 0.12]), [axis], weights),
+        rtol=1e-15,
+    )
+    with pytest.raises(ValueError, match="outside the grid on axis 0"):
+        deposit_on_nodes(on_wall, [axis], weights)
+    past = np.array([float(np.nextafter(np.float32(0.3), np.float32(1.0))), 0.12])
+    with pytest.raises(ValueError, match="outside the grid on axis 0"):
+        deposit_on_nodes(past, [axis], weights, dtype=np.float32)
+    kept = deposit_on_nodes(past, [axis], weights, dtype=np.float32, outside="drop")
+    assert float(np.sum(kept * weights)) == pytest.approx(0.5, abs=1e-15)
+
+
+def _evacuation(seed):
+    """A 2-D grid-drift solve onto an absorbing x_max (the 2490 fixture's): 400 particles from a bump at 0.6, drift 1.5
+    onto the wall, sigma 0.2, Nt 20; at seed 5 its levels 13-17 have one or two survivors and are deposited."""
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    faces = ["x_min", "x_max", "y_min", "y_max"]
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name=f, bc_type=BCType.DIRICHLET if f == "x_max" else BCType.NO_FLUX, value=0.0, boundary=f)
+            for f in faces
+        ],
+        dimension=2,
+    )
+    grid = TensorProductGrid([(0.0, 1.0), (0.0, 0.5)], Nx_points=[21, 11], boundary_conditions=bc)
+
+    def m0(x):
+        return float(np.exp(-20 * np.sum((np.asarray(x, dtype=float) - 0.6) ** 2)))
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass")
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.2
+            ),
+            domain=grid,
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=m0, T=1.0),
+            Nt=20,
+        )
+    solver = FPParticleSolver(problem, num_particles=400, density_mode="grid_only", boundary_conditions=bc, seed=seed)
+    x = np.asarray(grid.get_spatial_grid(), dtype=float)[:, 0].reshape(21, 11)
+    M_initial = np.asarray([m0(p) for p in grid.get_spatial_grid()]).reshape(21, 11)
+    M = np.asarray(
+        solver.solve_fp_system(
+            M_initial=M_initial, drift_field=np.broadcast_to(-1.5 * x, (21, 21, 11)).copy(), show_progress=False
+        )
+    )
+    w = problem.spatial_measure().weights
+    target = float(np.sum(M_initial * w))
+    share = [len(level) / 400 for level in solver.M_particles_trajectory]
+    return solver, [float(np.sum(M[k] * w)) / (target * share[k]) if share[k] else None for k in range(len(M))]
+
+
+def test_a_deposited_level_carries_the_callers_mass():
+    """Under the default carried factor, a level deposited after kernel levels carries the caller's mass times the
+    survivors' share exactly: the factor corrects a kernel reconstruction's drift, which a deposit does not have. At
+    bc6dcbde the evacuation's deposited levels 13-17 carried 1.2519 of it, the factor calibrated on level 0's kernel."""
+    solver, ratio = _evacuation(5)
+    assert solver.deposited_levels == [13, 14, 15, 16, 17]
+    for level in solver.deposited_levels:
+        assert ratio[level] == pytest.approx(1.0, abs=1e-12)
+
+
+def test_a_kernel_level_after_a_deposited_one_calibrates_the_factor():
+    """The reverse order, at a wall where the reflection estimate loses mass: a crowd at the node next to x = 0 is
+    deposited at first and later read by the kernel; the first kernel level calibrates the carried factor, so it
+    carries the caller's mass exactly. At bc6dcbde the factor came from the level-0 deposit, and the first kernel level
+    carried the estimate's raw mass there (0.77 of the caller's on this fixture at Nt 6)."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    problem = _problem(21, 1, volatility=0.1)
+    spike = np.zeros(21)
+    spike[1] = 3.0
+    solver = FPParticleSolver(problem, num_particles=2000, seed=5)
+    M = np.asarray(solver.solve_fp_system(spike, drift_field=np.zeros((5, 21)), show_progress=False))
+    kernel_levels = [k for k in range(len(M)) if k not in solver.deposited_levels]
+    assert solver.deposited_levels[0] == 0
+    assert kernel_levels
+    w = problem.spatial_measure().weights
+    assert float(np.sum(M[kernel_levels[0]] * w)) == pytest.approx(float(np.sum(spike * w)), rel=1e-12)
+
+
+def test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall():
+    """On a float32 device the GPU sampler puts a crowd at the wall 0.3 at float32(0.3) = 0.30000001; the reader
+    deposits it there, mass on the caller's (it raised at bc6dcbde: the deposit read the positions as float64)."""
+    pytest.importorskip("torch")
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.backends.torch_backend import TorchBackend
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    grid = TensorProductGrid(bounds=[(0.0, 0.3)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
+    model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=1e-4)
+    problem = MFGProblem(
+        model=model, domain=grid, conditions=Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.1), Nt=4
+    )
+    m0 = np.zeros(31)
+    m0[-2:] = 1.0
+    solver = FPParticleSolver(problem, num_particles=500, seed=3)
+    solver.backend = TorchBackend(device="cpu", precision="float32")
+    M = np.asarray(solver.solve_fp_system(m0, np.zeros((5, 31)), show_progress=False))
+    assert np.asarray(solver.backend.to_numpy(solver.backend.zeros(1))).dtype == np.float32
+    assert solver.deposited_levels == list(range(len(M)))
+    w = problem.spatial_measure().weights
+    np.testing.assert_allclose([float(np.sum(level * w)) for level in M], float(np.sum(m0 * w)), rtol=1e-6)
