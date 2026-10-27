@@ -433,8 +433,8 @@ def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
     [0, 1e-7] x [0, 1], or 1e6 + 1e-5 N(0, I), is a spread, as scipy reads it, and so is an axis near its floor beside a
     thin direction that does not involve it. The bound's cost: a genuine sample is refused, though scipy builds a kernel
     for it, when its variance in some direction, in the axes' own units, does not exceed the rounding floor there by
-    1e-14 of its largest: a spread in some direction below about 1e-7 of another, or within that floor (on an axis,
-    1e-13 of its magnitude).
+    1e-14 of its largest: a spread in some direction below about 1e-7 of another, within that floor (on an axis, 1e-13
+    of its magnitude), or the two together.
 
     Parameters
     ----------
@@ -477,7 +477,7 @@ def _spread_covariance(points: NDArray[np.floating]) -> NDArray[np.floating]:
 
 def _rounding_variances(points: NDArray[np.floating]) -> NDArray[np.floating]:
     """Per axis, the floor below which a variance is taken for the positions' rounding: the square of 1e-13 of their
-    magnitude there, about 450 units in the last place."""
+    magnitude there, 450 to 900 units in the last place."""
     return (1e-13 * np.abs(np.mean(points, axis=0))) ** 2
 
 
@@ -509,8 +509,8 @@ def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: f
         raise ValueError(
             f"A KDE of {n} particle(s) in {d}-D needs a sample with spread in every direction; this one has none at "
             "the conditioning bound `kde_sample_has_spread` states (one point, a line or a plane, fewer than two "
-            "particles, or a spread in some direction below about 1e-7 of another in the axes' own units, or within "
-            "the positions' rounding floor there), so it has no kernel (#2556)."
+            "particles, or a spread in some direction below about 1e-7 of another in the axes' own units, within the "
+            "positions' rounding floor there, or the two together), so it has no kernel (#2556)."
         )
     return factor**2 * np.atleast_2d(np.cov(points, rowvar=False))
 

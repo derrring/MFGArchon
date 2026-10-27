@@ -84,6 +84,7 @@ NO_SPREAD = {
     "a line on the diagonal": np.column_stack([np.linspace(0, 1, 50), np.linspace(0, 1, 50)]),
     "a line off the axes": np.column_stack([0.2 + 0.3 * _t[:, 0], 0.7 - 0.5 * _t[:, 0]]),
     "a short line far from the origin": np.column_stack([1.0 + 1e-10 * _t[:, 0], 1.0 + 0.7e-10 * _t[:, 0]]),
+    "a short line far from the origin on one axis": np.column_stack([1e6 + 1e-6 * _t[:, 0], 0.7e-6 * _t[:, 0]]),
     "a long line": np.column_stack([0.1 + 0.8 * _u, 0.2 + 0.55 * _u]),
     "a line on an axis, 100000 particles": np.column_stack([np.linspace(0, 1, 100000), np.full(100000, 0.53)]),
     "a plane in 3-D": np.array([0.1, 0.2, 0.3])
@@ -98,9 +99,10 @@ NO_SPREAD = {
 def test_a_sample_with_no_spread_is_refused(sample):
     """No kernel exists on these. On a line or a plane `eigvalsh` returns a smallest eigenvalue of rounding size, a few
     1e-15 of the largest at most (5.6e-16 in the correlation's units, about the first particle, on the long line here
-    of 1000 points); on a short line far from the origin, one of the size of the positions' rounding. `np.cov` gives the
-    axis of 100000 particles at 0.53 a variance over its floor, from its mean's accumulated rounding, which in the
-    correlation's units is a spread."""
+    of 1000 points). On a short line far from the origin it is of the size of the positions' rounding, and the floor
+    refuses it; on a line far from the origin on one axis only, the thin direction carries half that axis's floor.
+    `np.cov` gives the axis of 100000 particles at 0.53 a variance over its floor, from its mean's accumulated rounding,
+    which in the correlation's units is a spread."""
     assert not kde_sample_has_spread(sample)
     with pytest.raises(ValueError, match="spread in every direction"):
         kde_kernel_covariance(sample, "scott")
