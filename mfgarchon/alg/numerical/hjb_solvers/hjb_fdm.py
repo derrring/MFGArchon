@@ -548,9 +548,9 @@ class HJBFDMSolver(BaseHJBSolver):
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
         self._inner_solve_failures = []
-        # The accessor refuses a BC this solver cannot honour (#1699). Read it here, before any work: on a first
-        # solve, or with a tensor volatility, the nD path first reads it inside the Newton residual, whose
-        # handler retypes a NotImplementedError as a ConvergenceError (#2477).
+        # The accessor refuses a BC this solver cannot honour (#1699). Read it here, before any work;
+        # the nD Newton handler also preserves this NotImplementedError rather than treating it as a
+        # convergence failure (#2477).
         self.get_boundary_conditions()
         # Issue #2036: every computed step is projected onto the constraint set, but the terminal slice is the
         # caller's data and is returned as given, so it must already lie in the set. One that does not is refused,

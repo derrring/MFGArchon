@@ -843,6 +843,7 @@ class TestHJBFDMSolverNewtonFallback:
     @pytest.mark.parametrize("policy", ["raise", "warn_and_fallback"])
     def test_on_newton_failure_reraises_not_implemented(self, policy):
         """Unsupported residual operations must not be treated as Newton failures."""
+        import warnings
         from unittest.mock import patch
 
         geometry = TensorProductGrid(
@@ -862,12 +863,14 @@ class TestHJBFDMSolverNewtonFallback:
                 "_evaluate_hamiltonian_nd",
                 side_effect=NotImplementedError("unsupported residual operation"),
             ),
-            patch("mfgarchon.alg.numerical.hjb_solvers.hjb_fdm.FixedPointSolver") as fallback,
-            pytest.raises(NotImplementedError, match="unsupported residual operation"),
+            warnings.catch_warnings(record=True) as caught,
         ):
-            solver.solve_hjb_system(M_density, U_final, U_prev)
+            warnings.simplefilter("always")
+            with pytest.raises(NotImplementedError, match="unsupported residual operation"):
+                solver.solve_hjb_system(M_density, U_final, U_prev)
 
-        fallback.assert_not_called()
+        fallback_warnings = [str(w.message) for w in caught if "Falling back" in str(w.message)]
+        assert not fallback_warnings, fallback_warnings
 
     def test_on_newton_failure_fallback_on_divergence(self):
         """Test fallback to Value Iteration when Newton diverges with warn_and_fallback."""
