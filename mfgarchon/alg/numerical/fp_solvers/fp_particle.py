@@ -2426,11 +2426,13 @@ class FPParticleSolver(BaseFPSolver):
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu_internal
         from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
 
-        positions = np.asarray(self.backend.to_numpy(positions_gpu), dtype=float)
+        backend = self.backend
+        assert backend is not None, "the GPU path is selected only with a backend (strategy_selector)"
+        positions = np.asarray(backend.to_numpy(positions_gpu), dtype=float)
         if self._kernel_unresolved(positions, level):
-            return self.backend.from_numpy(self._deposit(positions, [x_grid]))
+            return backend.from_numpy(self._deposit(positions, [x_grid]))
         width = float(np.sqrt(kde_kernel_covariance(positions, self.kde_bandwidth)[0, 0]))
-        return gaussian_kde_gpu_internal(positions_gpu, x_grid_gpu, width, self.backend)
+        return gaussian_kde_gpu_internal(positions_gpu, x_grid_gpu, width, backend)
 
     def _solve_fp_system_gpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """

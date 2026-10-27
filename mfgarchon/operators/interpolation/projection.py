@@ -446,8 +446,7 @@ class GeometryProjector:
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
-        from mfgarchon.geometry.base import CartesianGrid
-        from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
+        from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, geometry_grid_axes
         from mfgarchon.utils.numerical.particle.interpolation import (
             KDE_LATTICE_ALIASING_TOL,
             deposit_on_nodes,
@@ -457,8 +456,10 @@ class GeometryProjector:
         if backend is None:
             backend = create_backend("numpy")
 
-        if not isinstance(self.hjb_geometry, CartesianGrid):
-            raise ValueError("Target geometry must be CartesianGrid for KDE projection")
+        # TensorProductGrid, CartesianGrid's one subclass, is the geometry that owns `measure_weights`, which the deposit
+        # reads.
+        if not isinstance(self.hjb_geometry, TensorProductGrid):
+            raise ValueError("Target geometry must be a TensorProductGrid for KDE projection")
 
         # Get particle positions
         particle_positions = self.fp_geometry.get_spatial_grid()  # (N_particles, d)
