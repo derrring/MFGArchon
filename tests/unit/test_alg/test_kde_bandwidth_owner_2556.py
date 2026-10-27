@@ -444,7 +444,7 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
             bounds=[(0.0, width), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
         )
         model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.0)
-        conditions = Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.1)
+        conditions = Conditions(m_initial=lambda z, width=width: 1.0 / width, u_terminal=lambda z: 0.0, T=0.1)
         solver = FPParticleSolver(
             MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4),
             num_particles=600,
