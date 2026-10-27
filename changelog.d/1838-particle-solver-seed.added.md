@@ -29,8 +29,10 @@ passes `seed=None` there unconditionally — and now stated where it was previou
 **What this unblocks.** The #1822 capability matrix could not classify this solver in *either*
 direction — three trials of one identical configuration returned `monotone = False, False, True`.
 It was skipped by name in `STOCHASTIC_UNSEEDED`, which is now empty. With a seed, all four of its
-declared boundary types converge under refinement, **20 of 20 seeds**, so none is listed as
-unhonoured.
+declared boundary types converge under refinement, **20 of 20 seeds** as measured then, so none is
+listed as unhonoured. Since #2556's C3-1 changed the default reflection estimator, PERIODIC falls at
+every step in 28 of 30 single seeds and the other three types in 30 of 30, so the PERIODIC row is
+judged on the mean over five seeds.
 
 That verdict required fixing the refinement path as well as the seed. A particle method converges
 as `N → ∞` *and* `h → 0`; the matrix refined only the grid, leaving a Monte Carlo floor set by `N`,

@@ -697,14 +697,23 @@ set's weights.*
 **In kernel density estimation, a `bandwidth` argument is a factor multiplied by the sample standard
 deviation**, as in `scipy.stats.gaussian_kde`, and an absolute width goes through a separately named
 keyword. `"scott"` and `"silverman"` mean scipy's definitions: $n^{-1/(d+4)}$ and
-$\left(n(d+2)/4\right)^{-1/(d+4)}$ (ruled 2026-10-08). A kernel length scale that is not a density
-estimate, such as a graphon's, is not covered. No single owner applies the rule yet. *Not yet met
-(#2429, #2556): several density paths read the bandwidth another way. Some take a number as an absolute
-width; `FPParticleSolver`'s default reflection path takes it as a factor of the standard deviation of the
-sample with its ghost particles, and its GPU path as a factor of the initial sample's standard deviation,
-held fixed; and the particle-to-grid projection for $d \ge 2$ turns a string rule, including its default
-`"scott"`, into an absolute width and then multiplies by the standard deviation again. #2429 lists the
-sites.*
+$\left(n(d+2)/4\right)^{-1/(d+4)}$ (ruled 2026-10-08). The kernel is a Gaussian with covariance
+factor² × the sample covariance, full in every dimension, as scipy builds it. A kernel length scale that is
+not a density estimate, such as a graphon's, is not covered. The owner is
+`utils/numerical/particle/interpolation.py`: `estimate_kde_bandwidth` states the rules; `kde_factor`,
+`kde_kernel_covariance` and `kde_kernel_widths` turn a bandwidth into a factor, a kernel and the kernel's per-axis
+widths, refusing anything else by name; and `kde_sample_has_spread` decides, at the conditioning bound it states,
+whether a sample has a kernel (#2556).
+The library's own estimators read it there. The reflection estimator adds the sample's kernel at each image
+of the evaluation point across a nearby wall, which is the method of images with each particle's image
+carrying the reflected kernel; so its derivative normal to a wall vanishes on the wall for any sample covariance,
+for a kernel narrower than the domain (one image per wall: a kernel that reaches the far wall would need the images'
+images).
+*Not yet met (#2556): public readers that take a number as an absolute width (`ParticleMeasure.to_density`,
+`torch_utils.GaussianKDE`, `ParticleDensityQuery(bandwidth=)`, `beta_kde`, `create_ghost_particles`, and the
+Wendland kernel of `gaussian_kde_gpu`), and `ParticleDensityQuery`, which states the rules itself, so
+`FPParticleSolver`'s meshfree density query (a callable drift with no initial density) reads its Scott rule whatever
+`kde_bandwidth` is.*
 
 ---
 

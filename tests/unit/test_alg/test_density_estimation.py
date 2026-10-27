@@ -10,7 +10,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.density_estimation import (
-    adaptive_bandwidth_selection,
     gaussian_kde_gpu,
     gaussian_kde_numpy,
 )
@@ -35,30 +34,6 @@ try:
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
-
-
-class TestAdaptiveBandwidthSelection:
-    """Test automatic bandwidth selection methods."""
-
-    def test_scott_rule(self):
-        """Scott's rule should give reasonable bandwidth for standard normal."""
-        np.random.seed(42)
-        particles = np.random.randn(1000)
-
-        bandwidth = adaptive_bandwidth_selection(particles, method="scott")
-
-        # For N=1000, Scott's rule: h = σ N^(-1/5) ≈ 1.0 × 1000^(-0.2) ≈ 0.25
-        assert 0.2 < bandwidth < 0.3
-
-    def test_silverman_rule(self):
-        """Silverman's rule should give similar bandwidth to Scott."""
-        np.random.seed(42)
-        particles = np.random.randn(1000)
-
-        bandwidth = adaptive_bandwidth_selection(particles, method="silverman")
-
-        # Should be close to Scott's rule for normal distribution
-        assert 0.15 < bandwidth < 0.3
 
 
 @pytest.mark.skipif(not SCIPY_AVAILABLE, reason="scipy not available")

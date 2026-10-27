@@ -7,8 +7,8 @@ standard KDE.
 
 Three methods are provided:
 
-1. **Reflection KDE** (Schuster 1985): Creates ghost particles by mirroring
-   across boundaries. Simple but has boundary/adjacent redistribution issue.
+1. **Reflection KDE** (Schuster 1985): the method of images. The estimate adds
+   the sample's KDE at each image of the evaluation point across nearby walls.
 
 2. **Renormalization KDE**: Normalizes truncated kernel at each evaluation
    point. More uniform near boundaries but computationally more expensive.
@@ -22,7 +22,7 @@ Example:
     >>> particles = np.random.uniform(-0.5, 0.5, 5000)
     >>> x_eval = np.linspace(-0.5, 0.5, 51)
     >>> # Reflection method (works in nD)
-    >>> density_ref = reflection_kde(particles, x_eval, bandwidth=0.05,
+    >>> density_ref = reflection_kde(particles, x_eval, bandwidth="scott",
     ...                              bounds=[(-0.5, 0.5)])
     >>> # Beta kernel method (1D only, most accurate)
     >>> density_beta = beta_kde(particles, x_eval, bandwidth=0.05,
@@ -155,16 +155,21 @@ def create_ghost_particles(
 def reflection_kde(
     particles: NDArray[np.floating],
     eval_points: NDArray[np.floating],
-    bandwidth: float | str | NDArray[np.floating],
+    bandwidth: float | str,
     bounds: list[tuple[float, float]],
     n_bandwidths: float = 3.0,
     normalize: bool = True,
 ) -> NDArray[np.floating]:
     """
-    Boundary-corrected KDE using reflection method (dimension-agnostic).
+    Boundary-corrected KDE using the reflection method (dimension-agnostic).
 
-    Creates ghost particles by reflecting particles near boundaries,
-    then applies standard KDE to the augmented particle set.
+    The method of images: the estimate at x is the sample's Gaussian KDE at x, plus the same KDE at each image of x
+    across the walls x is near (within ``n_bandwidths`` kernel widths, on every reflected axis; at a corner, every
+    combination). A particle's image across a wall carries the reflected kernel R Sigma R, which is what evaluating the
+    sample's own kernel Sigma at the reflected point gives, so the estimate's derivative normal to a wall is zero on the
+    wall for any sample covariance (#2556), for a kernel narrower than the domain: there is one image per wall, and a
+    kernel that reaches the far wall would need the images' images. The kernel is the real sample's, as
+    `scipy.stats.gaussian_kde` builds it for ``bandwidth`` (`kde_kernel_covariance`, CONVENTIONS.md § 9).
 
     This eliminates the ~50% density underestimation at boundaries
     that occurs with standard KDE.
@@ -174,9 +179,10 @@ def reflection_kde(
         eval_points: Points at which to evaluate density
             - 1D: shape (M,)
             - nD: shape (M, d)
-        bandwidth: KDE bandwidth - float, 'scott', 'silverman', or per-dim array
+        bandwidth: KDE bandwidth: a positive factor of the sample's standard deviation, or 'scott' or 'silverman'
+            (`kde_factor`)
         bounds: Domain bounds [(xmin, xmax), ...] - length determines dimension
-        n_bandwidths: Number of bandwidths for reflection zone (default: 3.0)
+        n_bandwidths: Kernel widths from a wall within which a point's image across it is added (default: 3.0)
         normalize: If True (default), normalize density to integrate to 1 using
             grid-based quadrature (assumes eval_points form a regular grid).
             Set to False for scattered/meshfree points and normalize externally
@@ -185,20 +191,24 @@ def reflection_kde(
     Returns:
         Density estimates at eval_points, shape (M,)
 
+    Raises:
+        ValueError: for a bandwidth that is not a positive factor or a rule, and for a sample with no spread
+            (`kde_kernel_covariance`).
+
     Example (1D):
         >>> particles = np.random.uniform(-0.5, 0.5, 5000)
         >>> x_eval = np.linspace(-0.5, 0.5, 51)
-        >>> density = reflection_kde(particles, x_eval, bandwidth=0.05,
+        >>> density = reflection_kde(particles, x_eval, bandwidth="scott",
         ...                          bounds=[(-0.5, 0.5)])
 
     Example (2D, regular grid):
         >>> particles = np.random.uniform([0, 0], [1, 1], (2000, 2))
         >>> grid = np.column_stack([XX.ravel(), YY.ravel()])
-        >>> density = reflection_kde(particles, grid, bandwidth=0.1,
+        >>> density = reflection_kde(particles, grid, bandwidth="scott",
         ...                          bounds=[(0, 1), (0, 1)])
 
     Example (2D, scattered points with Voronoi normalization):
-        >>> raw_kde = reflection_kde(particles, scattered_pts, bandwidth=0.1,
+        >>> raw_kde = reflection_kde(particles, scattered_pts, bandwidth="scott",
         ...                          bounds=[(0, 1), (0, 1)], normalize=False)
         >>> density = raw_kde / np.sum(raw_kde * voronoi_volumes)
 
@@ -208,72 +218,43 @@ def reflection_kde(
     """
     if not SCIPY_AVAILABLE:
         raise RuntimeError("scipy is required for KDE. Install with: pip install scipy")
+    from mfgarchon.utils.numerical.particle.interpolation import kde_factor, kde_kernel_covariance
 
-    # Normalize arrays
-    particles = np.atleast_1d(particles)
-    eval_points = np.atleast_1d(eval_points)
+    # Float, so that an integer evaluation point's image across a wall is not truncated
+    particles = np.atleast_1d(np.asarray(particles, dtype=float))
+    eval_points = np.atleast_1d(np.asarray(eval_points, dtype=float))
     is_1d = particles.ndim == 1
     ndim = len(bounds)
-
     if is_1d:
         particles = particles.reshape(-1, 1)
         eval_points = eval_points.reshape(-1, 1)
 
-    # Handle bandwidth selection
-    if isinstance(bandwidth, str):
-        bw_method = bandwidth
-        # Estimate bandwidth value for ghost particle creation
-        kde_temp = gaussian_kde(particles.T, bw_method=bw_method)
-        if ndim == 1:
-            bandwidth_value = kde_temp.factor * np.std(particles, ddof=1)
-        else:
-            bandwidth_value = np.mean(np.diag(kde_temp.covariance)) ** 0.5
-    else:
-        bw_method = bandwidth if np.isscalar(bandwidth) else None
-        bandwidth_value = bandwidth
-
-    # Create ghost particles
-    ghost_particles = create_ghost_particles(particles, bounds, bandwidth_value, n_bandwidths)
-
-    # Augmented particle set
-    n_real = len(particles)
-    if len(ghost_particles) > 0:
-        if is_1d:
-            ghost_particles = ghost_particles.reshape(-1, 1)
-        particles_augmented = np.vstack([particles, ghost_particles])
-    else:
-        particles_augmented = particles
-
-    n_augmented = len(particles_augmented)
-
-    # Standard KDE on augmented set (scipy expects shape (d, N))
-    if bw_method is not None:
-        kde = gaussian_kde(particles_augmented.T, bw_method=bw_method)
-    else:
-        kde = gaussian_kde(particles_augmented.T)
+    # The real sample's kernel (refusing a sample with no spread by name), and its per-axis widths for the zone.
+    widths = np.sqrt(np.diag(kde_kernel_covariance(particles, bandwidth)))
+    kde = gaussian_kde(particles.T, bw_method=kde_factor(bandwidth, particles))
+    zone = n_bandwidths * widths
 
     density = kde(eval_points.T)
+    # Each image of a point across the walls it is near: on each axis none, the lower wall, or the upper wall.
+    for pattern in product((None, 0, 1), repeat=ndim):
+        if all(side is None for side in pattern):
+            continue
+        image = eval_points.copy()
+        near = np.ones(len(eval_points), dtype=bool)
+        for d, side in enumerate(pattern):
+            if side is None:
+                continue
+            wall = bounds[d][side]
+            near &= np.abs(eval_points[:, d] - wall) < zone[d]
+            image[:, d] = 2.0 * wall - eval_points[:, d]
+        if np.any(near):
+            density[near] += kde(image[near].T)
 
-    # CRITICAL FIX (Issue #711): scipy KDE normalizes by 1/(N+M) where M is ghost count.
-    # Ghost particles complete boundary mass but shouldn't dilute density.
-    # Correct by multiplying by (N+M)/N to restore proper normalization.
-    if n_augmented > n_real:
-        density = density * (n_augmented / n_real)
-
-    # Clip points outside domain to zero
     for d in range(ndim):
         xmin, xmax = bounds[d]
         outside_mask = (eval_points[:, d] < xmin) | (eval_points[:, d] > xmax)
         density[outside_mask] = 0
 
-    # Domain normalization: ensure density integrates to 1 over the domain.
-    # The (N+M)/N correction above is approximate — in nD, corner particles get
-    # more ghosts than edge particles, making the uniform factor imprecise.
-    # Explicit normalization corrects residual mass error. (Issue #718)
-    #
-    # NOTE: This grid-based normalization assumes eval_points form a regular grid.
-    # For scattered/meshfree points, set normalize=False and use external
-    # normalization with appropriate integration weights (e.g., Voronoi volumes).
     if normalize and eval_points.shape[0] > 1:
         dV = 1.0
         for d in range(ndim):
@@ -285,11 +266,6 @@ def reflection_kde(
             density = density / total_mass
 
     return density
-
-
-# =============================================================================
-# Beta Kernel KDE (Chen 1999)
-# =============================================================================
 
 
 def beta_kde(
@@ -447,7 +423,7 @@ def beta_kde(
 def renormalization_kde(
     particles: NDArray[np.floating],
     eval_points: NDArray[np.floating],
-    bandwidth: float,
+    bandwidth: float | str,
     bounds: list[tuple[float, float]],
 ) -> NDArray[np.floating]:
     """
@@ -460,7 +436,8 @@ def renormalization_kde(
     Args:
         particles: Particle positions, shape (N,) for 1D or (N, d) for nD
         eval_points: Points at which to evaluate density
-        bandwidth: KDE bandwidth (scalar)
+        bandwidth: KDE bandwidth: a positive factor of the sample's standard deviation, or 'scott' or
+            'silverman' (`kde_factor`); the renormalization reads the same kernel's per-axis widths
         bounds: Domain bounds [(xmin, xmax), ...] - length determines dimension
 
     Returns:
@@ -493,23 +470,25 @@ def renormalization_kde(
 
     m = len(eval_points)
 
-    # Standard KDE (scipy expects shape (d, N))
-    kde = gaussian_kde(particles.T, bw_method=bandwidth)
+    # The real sample's kernel, as scipy builds it for `bandwidth` (CONVENTIONS.md § 9; #2556).
+    from mfgarchon.utils.numerical.particle.interpolation import kde_factor, kde_kernel_covariance
+
+    widths = np.sqrt(np.diag(kde_kernel_covariance(particles, bandwidth)))
+    kde = gaussian_kde(particles.T, bw_method=kde_factor(bandwidth, particles))
 
     # Get raw density values
     density_raw = kde(eval_points.T)
 
     # Compute normalization factors for each eval point
-    # Z(x) = product over dimensions of [Phi((U-x)/h) - Phi((L-x)/h)]
-    h = bandwidth
+    # Z(x) = product over dimensions of [Phi((U-x)/h_d) - Phi((L-x)/h_d)], h_d the kernel's width on axis d
     normalization = np.ones(m)
 
     for d in range(ndim):
         xmin, xmax = bounds[d]
         # For each eval point, compute the integral of Gaussian kernel over [xmin, xmax]
-        # Integral = Phi((xmax - x)/h) - Phi((xmin - x)/h)
-        z_right = norm.cdf((xmax - eval_points[:, d]) / h)
-        z_left = norm.cdf((xmin - eval_points[:, d]) / h)
+        # Integral = Phi((xmax - x)/h_d) - Phi((xmin - x)/h_d)
+        z_right = norm.cdf((xmax - eval_points[:, d]) / widths[d])
+        z_left = norm.cdf((xmin - eval_points[:, d]) / widths[d])
         normalization *= z_right - z_left
 
     # Avoid division by zero at boundaries

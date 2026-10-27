@@ -365,8 +365,193 @@ def estimate_kde_bandwidth(
         raise ValueError(f"Unknown method: {method}. Use 'scott' or 'silverman'.")
 
 
+def kde_factor(bandwidth: float | str, particle_positions: NDArray[np.floating]) -> float:
+    """
+    The factor a KDE ``bandwidth`` names, for a sample (CONVENTIONS.md § 9, #2556).
+
+    A bandwidth is a factor of the sample's spread, as in `scipy.stats.gaussian_kde`: ``"scott"`` or ``"silverman"``
+    name scipy's rules, which `estimate_kde_bandwidth` computes, and a positive finite number is the factor itself.
+    Anything else is refused by name: an absolute width is not a bandwidth, and goes through a separately named
+    keyword at the reader that takes one.
+
+    Parameters
+    ----------
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth.
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+
+    Returns
+    -------
+    float
+        The factor.
+
+    Examples
+    --------
+    >>> particles = np.random.default_rng(0).normal(size=(100, 2))
+    >>> round(kde_factor("scott", particles), 4)  # 100 ** (-1/6)
+    0.4642
+    >>> kde_factor(0.5, particles)
+    0.5
+    """
+    points = np.asarray(particle_positions, dtype=float)
+    if points.ndim == 1:
+        points = points.reshape(-1, 1)
+    if isinstance(bandwidth, str):
+        return estimate_kde_bandwidth(points, method=bandwidth)  # type: ignore[arg-type]
+    if (
+        isinstance(bandwidth, (bool, np.bool_))
+        or not isinstance(bandwidth, (int, float, np.integer, np.floating))
+        or not np.isfinite(bandwidth)
+        or bandwidth <= 0
+    ):
+        raise ValueError(
+            f"A KDE bandwidth is a positive factor of the sample's standard deviation, or 'scott' or 'silverman', "
+            f"as in scipy.stats.gaussian_kde (CONVENTIONS.md § 9); got {bandwidth!r}."
+        )
+    return float(bandwidth)
+
+
+def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
+    """
+    Whether a sample has spread in every direction, so that a KDE of it has a kernel (#2556).
+
+    A conditioning bound read in the sample's own units, so that scaling an axis leaves it unchanged, as it leaves
+    scipy's KDE: in every direction, the sample's variance in the axes' own units must exceed the floor the positions'
+    rounding sets there by 1e-14 of its largest variance. The floor on an axis is the square of 1e-13 of the positions'
+    magnitude there (450 to 900 units in the last place); in the correlation's units it is that floor over the axis's
+    variance, and a direction takes each axis's share of it. So the correlation matrix less those floors on its diagonal
+    must have its smallest eigenvalue above 1e-14 of the correlation matrix's largest. The diagonal of that condition,
+    each axis's variance above its floor, is checked first only because the correlation exists for positive variances
+    alone. The covariance (ddof 1) is taken about the first particle, which leaves it unchanged and puts an axis on
+    which every particle has one position at 0: `np.cov` gives such an axis, in more than one dimension, the square of
+    its mean's accumulated rounding, which passes the floor from about 1e4 particles. False also for fewer than two
+    particles.
+
+    So a sample on a line or a plane is refused: `eigvalsh` returns its correlation's smallest eigenvalue as rounding,
+    and when the line is short and far from the origin, as the positions' own rounding. A uniform sample on
+    [0, 1e-7] x [0, 1], or 1e6 + 1e-5 N(0, I), is a spread, as scipy reads it, and so is an axis near its floor beside a
+    thin direction that does not involve it. The bound's cost: a genuine sample is refused, though scipy builds a kernel
+    for it, when its variance in some direction, in the axes' own units, does not exceed the rounding floor there by
+    1e-14 of its largest: a spread in some direction below about 1e-7 of another, within that floor (on an axis, 1e-13
+    of its magnitude), or the two together.
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d). Non-finite positions are refused by name.
+    """
+    points = _sample(particle_positions)
+    if len(points) < 2:
+        return False
+    covariance = _spread_covariance(points)
+    variances = np.diag(covariance)
+    floors = _rounding_variances(points)
+    if not np.all(variances > floors):
+        return False
+    scale = np.sqrt(variances)
+    correlation = covariance / np.outer(scale, scale)
+    largest = np.linalg.eigvalsh(correlation)[-1]
+    return bool(np.linalg.eigvalsh(correlation - np.diag(floors / variances))[0] > 1e-14 * largest)
+
+
+def _sample(particle_positions: NDArray[np.floating]) -> NDArray[np.floating]:
+    """The positions as a float array of shape (N, d), refusing a non-finite one by name."""
+    points = np.asarray(particle_positions, dtype=float)
+    if points.ndim == 1:
+        points = points.reshape(-1, 1)
+    if not np.all(np.isfinite(points)):
+        raise ValueError(
+            f"A KDE sample must have finite positions; {int(np.sum(~np.isfinite(points).all(axis=1)))} of "
+            f"{len(points)} particle(s) have a NaN or infinite coordinate (#2556)."
+        )
+    return points
+
+
+def _spread_covariance(points: NDArray[np.floating]) -> NDArray[np.floating]:
+    """The sample covariance (ddof 1) taken about the first particle, which leaves it unchanged and puts an axis on
+    which every particle has one position at 0, where `np.cov` gives it the square of its mean's accumulated
+    rounding."""
+    return np.atleast_2d(np.cov(points - points[0], rowvar=False))
+
+
+def _rounding_variances(points: NDArray[np.floating]) -> NDArray[np.floating]:
+    """Per axis, the floor below which a variance is taken for the positions' rounding: the square of 1e-13 of their
+    magnitude there, 450 to 900 units in the last place."""
+    return (1e-13 * np.abs(np.mean(points, axis=0))) ** 2
+
+
+def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: float | str) -> NDArray[np.floating]:
+    """
+    The covariance of the Gaussian kernel a KDE of ``particle_positions`` uses, for ``bandwidth`` (CONVENTIONS.md § 9).
+
+    It is ``kde_factor(bandwidth, particle_positions) ** 2`` times the sample covariance (ddof 1), the kernel
+    `scipy.stats.gaussian_kde` builds, full in every dimension. A sample with no spread in some direction (all
+    particles at one point, or on a line or a plane, or fewer than two: `kde_sample_has_spread`) has no kernel, and is
+    refused by name.
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth, as `kde_factor` reads it.
+
+    Returns
+    -------
+    ndarray
+        The kernel covariance, shape (d, d).
+    """
+    points = _sample(particle_positions)
+    factor = kde_factor(bandwidth, points)
+    n, d = points.shape
+    if not kde_sample_has_spread(points):
+        raise ValueError(
+            f"A KDE of {n} particle(s) in {d}-D needs a sample with spread in every direction; this one has none at "
+            "the conditioning bound `kde_sample_has_spread` states (one point, a line or a plane, fewer than two "
+            "particles, or a spread in some direction below about 1e-7 of another in the axes' own units, within the "
+            "positions' rounding floor there, or the two together), so it has no kernel (#2556)."
+        )
+    return factor**2 * np.atleast_2d(np.cov(points, rowvar=False))
+
+
+def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float | str) -> NDArray[np.floating]:
+    """
+    The per-axis widths of the kernel a KDE of ``particle_positions`` uses, for ``bandwidth`` (CONVENTIONS.md § 9).
+
+    They are the square roots of `kde_kernel_covariance`'s diagonal, the factor times the sample's standard deviation
+    (ddof 1) on each axis. Unlike the covariance they exist for a sample with no spread in some direction (on a line or
+    a plane), whose width on that axis is zero to rounding, which is what a reader of one isotropic absolute width needs
+    (#2556); they exist wherever the covariance does. A sample with no spread on any axis (one point, or fewer than two
+    particles) has no width, and is refused by name.
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth, as `kde_factor` reads it.
+
+    Returns
+    -------
+    ndarray
+        The widths, shape (d,).
+    """
+    points = _sample(particle_positions)
+    if len(points) < 2 or not np.any(np.diag(_spread_covariance(points)) > _rounding_variances(points)):
+        raise ValueError(
+            f"A KDE of {len(points)} particle(s) has no kernel width: the sample has no spread on any axis (one point, "
+            "or fewer than two particles) (#2556)."
+        )
+    return kde_factor(bandwidth, points) * np.sqrt(np.diag(np.atleast_2d(np.cov(points, rowvar=False))))
+
+
 __all__ = [
     "estimate_kde_bandwidth",
+    "kde_factor",
+    "kde_kernel_covariance",
+    "kde_kernel_widths",
+    "kde_sample_has_spread",
     "interpolate_grid_to_particles",
     "interpolate_particles_to_grid",
 ]

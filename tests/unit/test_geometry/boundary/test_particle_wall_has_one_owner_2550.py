@@ -95,6 +95,8 @@ ALLOWED = {
     ("mfgarchon/geometry/boundary/ghost.py", "create_ghost_points_for_kde"): _KDE,
     ("mfgarchon/geometry/boundary/periodic.py", "create_reflection_ghost_points"): _KDE,
     ("mfgarchon/utils/numerical/particle/kde_boundary.py", "create_ghost_particles"): _KDE,
+    # The reflection KDE's images of an evaluation point across a wall (#2556), the same images for an estimator.
+    ("mfgarchon/utils/numerical/particle/kde_boundary.py", "reflection_kde"): _KDE,
     # A field's ghost value about its wall value, not a position.
     ("mfgarchon/geometry/boundary/applicator_fdm.py", "_write_wall_ghosts"): "a field ghost value",
     # A point's nearest point of the box, read for the segment that holds it, not a particle moved.

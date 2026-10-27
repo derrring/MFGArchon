@@ -30,10 +30,11 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
 
-# Seed 8, not 7: #2733 PR 2's initial sampling redraws a jitter outside the box, which moves the stream, and under seed 7
-# the absorbing 2-D grid-drift solve then reaches a step with exactly 2 survivors, where the density estimate raises
-# on a singular covariance (#2790). Seeds 9 and 10 do too; 8, 11 and 12 pass every row.
-_N, _NT, _T, _SEED = 400, 20, 1.0, 8
+# Seed 11: neither absorbing 2-D grid-drift solve here (sigma 0.2, and sigma 0 for the row-following test) may reach a
+# step with exactly 2 survivors, which have no kernel (#2790). At #2556's C3-1 the density reader refuses such a step by
+# name. Of seeds 5 to 20, those that reach one are 5-9, 12, 14, 16 and 20 at sigma 0.2 and 10 and 17 at sigma 0; the
+# base raised on all of them but 8 and 12, which it passed through its ghost refit.
+_N, _NT, _T, _SEED = 400, 20, 1.0, 11
 
 
 def _m0(x):

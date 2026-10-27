@@ -59,8 +59,8 @@ class FPParticleResult:
         None if density_mode="grid_only".
     time_grid : NDArray
         Time points, shape (Nt+1,).
-    bandwidth : float
-        KDE bandwidth used for density estimation.
+    bandwidth : float or {"scott", "silverman"} or None
+        KDE bandwidth: a factor of each timestep's sample spread, or a rule (CONVENTIONS.md § 9).
 
     Examples
     --------
@@ -82,7 +82,7 @@ class FPParticleResult:
         M_grid: NDArray[np.float64],
         time_grid: NDArray[np.float64],
         particle_history: list[NDArray[np.float64]] | None = None,
-        bandwidth: float | None = None,
+        bandwidth: float | str | None = None,
     ):
         """
         Initialize particle result container.
@@ -95,8 +95,9 @@ class FPParticleResult:
             Time points, shape (Nt+1,).
         particle_history : list[NDArray], optional
             Particle positions at each timestep. If None, direct queries unavailable.
-        bandwidth : float, optional
-            KDE bandwidth. If None, auto-computed when queries are made.
+        bandwidth : float or {"scott", "silverman"}, optional
+            KDE bandwidth: a factor of each timestep's sample spread, or a rule, as the solver's ``kde_bandwidth`` is
+            (CONVENTIONS.md § 9). If None, the query's own Scott rule.
         """
         self.M_grid = M_grid
         self.time_grid = time_grid
@@ -172,12 +173,18 @@ class FPParticleResult:
         if timestep not in self._query_cache:
             particles_t = self.particle_history[timestep]
 
-            # Create query object
-            self._query_cache[timestep] = ParticleDensityQuery(
-                particles_t,
-                bandwidth=self.bandwidth,
-                bandwidth_rule="scott" if self.bandwidth is None else "fixed",
-            )
+            # Create query object. Its numeric bandwidth is an absolute isotropic width, so a factor or a rule is
+            # converted here, at this timestep, to the mean of the kernel's per-axis widths (#2556).
+            if self.bandwidth is None:
+                self._query_cache[timestep] = ParticleDensityQuery(particles_t, bandwidth_rule="scott")
+            else:
+                from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_widths
+
+                self._query_cache[timestep] = ParticleDensityQuery(
+                    particles_t,
+                    bandwidth=float(np.mean(kde_kernel_widths(particles_t, self.bandwidth))),
+                    bandwidth_rule="fixed",
+                )
 
         # Query density
         return self._query_cache[timestep].query_density(query_points, method=method, k=k)
