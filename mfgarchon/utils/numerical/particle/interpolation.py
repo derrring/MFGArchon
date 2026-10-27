@@ -563,8 +563,10 @@ _OUTSIDE_ELLIPSOID = 1e-13
 # A backstop on the lattice points enumerated. Past it the points of the largest ellipsoid that fits are summed, so a
 # sample past tol there is still decided as such; one still undecided is read as unresolved.
 _ALIASING_MAX_POINTS = 2_000_000
-# Points are summed in batches of this many, in order of decreasing kernel transform.
+# Points are summed in batches of 1, 2, 4, ... up to this many, in order of decreasing kernel transform.
 _ALIASING_BATCH = 256
+# The first, small ellipsoid m^T K m <= 16 (transforms of at least exp(-8)), where a sample past tol is decided.
+_FIRST_RADIUS = 16.0
 
 
 def kde_lattice_aliasing(
@@ -587,9 +589,10 @@ def kde_lattice_aliasing(
     whose outside sums to under 1e-13 (`_ellipsoid_radius`), one of each pair m, -m (the two terms are equal), in order
     of decreasing g. It returns once it is decided against ``tol``: the partial sum once it passes ``tol`` (B is larger),
     or the partial sum plus the kernel's own sum over the points not yet summed and the outside (|phi| <= 1), once that
-    is at or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, to within 1e-13. An ellipsoid
-    of more than 2e6 points is summed over the largest one that fits, and a sample still undecided there is returned as
-    infinity: read as unresolved (a backstop).
+    is at or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, to within 1e-13. The points
+    with m^T K m <= 16 are summed first, for the exit past tol alone, so that a sample past it is decided before a large
+    ellipsoid is enumerated. An ellipsoid of more than 2e6 points is summed over the largest one that fits, for that
+    exit, and a sample still undecided there is returned as infinity: read as unresolved (a backstop).
 
     None for a sample with no kernel: fewer than two particles, or one `kde_sample_has_spread` refuses (its sum does
     not decay along the direction it lacks).
@@ -624,32 +627,59 @@ def kde_lattice_aliasing(
     H = _kernel_covariance(points, factor)
     K = H * np.outer(2.0 * np.pi / h, 2.0 * np.pi / h)
     c = _ellipsoid_radius(K)
+    if c > _FIRST_RADIUS:
+        # The points whose transform is at least exp(-8) first: a sample past tol is decided there, before the whole
+        # ellipsoid is enumerated (a narrow kernel's holds millions of points). Their outside is not bounded tightly,
+        # so only the exit past tol is taken from them.
+        first = _half_lattice_in_ellipsoid(K, _FIRST_RADIUS)
+        if first is not None:
+            value, decided = _sum_in_order(points, K, h, first, tol, outside=None)
+            if decided:
+                return value
     m = _half_lattice_in_ellipsoid(K, c)
-    backstop = m is None
-    if backstop:
-        # The largest ellipsoid that fits: its point count scales as c^(d/2)
-        m = _half_lattice_in_ellipsoid(K, c * (0.5 * _ALIASING_MAX_POINTS / _ellipsoid_points(K, c)) ** (2.0 / d))
-        if m is None:
-            return float("inf")
+    if m is not None:
+        value, decided = _sum_in_order(points, K, h, m, tol, outside=_OUTSIDE_ELLIPSOID)
+        return value if decided else value + _OUTSIDE_ELLIPSOID
+    # The backstop: the largest ellipsoid that fits (its point count scales as c^(d/2)), past tol only.
+    shrunk = _half_lattice_in_ellipsoid(K, c * (0.5 * _ALIASING_MAX_POINTS / _ellipsoid_points(K, c)) ** (2.0 / d))
+    if shrunk is not None:
+        value, decided = _sum_in_order(points, K, h, shrunk, tol, outside=None)
+        if decided:
+            return value
+    return float("inf")
+
+
+def _sum_in_order(
+    points: NDArray[np.floating],
+    K: NDArray[np.floating],
+    h: NDArray[np.floating],
+    m: NDArray[np.integer],
+    tol: float,
+    outside: float | None,
+) -> tuple[float, bool]:
+    """B's terms at the half-lattice points ``m``, in order of decreasing kernel transform, in batches of 1, 2, 4, ...
+    up to `_ALIASING_BATCH` points, with each exit tried after each batch: the partial sum once it passes ``tol``; or,
+    unless ``outside`` is None, the partial sum plus the kernel's own sum over the points not yet summed (both halves)
+    and ``outside``, once that is at or under ``tol``. Returns (value, whether an exit was taken); undecided, the value
+    is the sum over all of ``m``."""
     mf = m.astype(float)
     q = np.einsum("ij,jk,ik->i", mf, K, mf)
     order = np.argsort(q, kind="stable")
     mf, q = mf[order], q[order]
     g = np.exp(-0.5 * q)
-    # The kernel's sum past each point, both halves, plus the outside: what |phi| <= 1 allows B beyond the point.
-    rest = 2.0 * (float(np.sum(g)) - np.cumsum(g)) + _OUTSIDE_ELLIPSOID
+    rest = 2.0 * (float(np.sum(g)) - np.cumsum(g))
     k = 2.0 * np.pi * mf / h
     total = 0.0
-    for start in range(0, len(mf), _ALIASING_BATCH):
-        stop = min(start + _ALIASING_BATCH, len(mf))
+    start, size = 0, 1
+    while start < len(mf):
+        stop = min(start + size, len(mf))
         total += 2.0 * float(np.sum(g[start:stop] * np.abs(_characteristic(points, k[start:stop]))))
         if total > tol:
-            return total
-        if not backstop and total + rest[stop - 1] <= tol:
-            return total + float(rest[stop - 1])
-    if backstop:
-        return float("inf")
-    return total + _OUTSIDE_ELLIPSOID
+            return total, True
+        if outside is not None and total + float(rest[stop - 1]) + outside <= tol:
+            return total + float(rest[stop - 1]) + outside, True
+        start, size = stop, min(2 * size, _ALIASING_BATCH)
+    return total, False
 
 
 def kde_resolves_on_grid(
