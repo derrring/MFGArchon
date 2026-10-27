@@ -32,6 +32,7 @@ import warnings
 import pytest
 
 import numpy as np
+from scipy import special
 from scipy.stats import gaussian_kde
 
 from mfgarchon.alg.numerical import density_estimation as de
@@ -612,17 +613,22 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
 _RULED_TOL = 0.1  # the user's ruling of 2026-10-27, read here as a number and not from the owner's constant
 
 
-def _poisson_bound(sample, bandwidth, h):
+def _poisson_bound(sample, bandwidth, h, stop_above=np.inf):
     """B from its definition: sum over the lattice m != 0 of |scipy's kernel transform| |the sample's characteristic
-    function| at k = 2 pi m / h, in shells of max |m_i| = r until a shell's transform sums under 1e-16. A term whose
-    transform is under 1e-20 is left out (their sum is under 1e-12 here)."""
+    function| at k = 2 pi m / h, in shells of max |m_i| = r. It stops once B passes ``stop_above`` (B only grows), or once
+    the transform's sum outside the shells summed is under 1e-13, bounded through lam = lambda_min(K) (m^T K m >=
+    lam |m|^2) by (S + e)^d - S^d, S the 1-D terms |j| <= r and e = sqrt(2 pi / lam) erfc(r sqrt(lam / 2)) the rest.
+    A shell's own sum is not a stopping rule: for a correlated kernel the first shells can miss its transform's reach
+    entirely. A term whose transform is under 1e-20 is left out (their sum is under 1e-12 here)."""
     H = gaussian_kde(sample.T, bw_method=bandwidth).covariance
     d = sample.shape[1]
+    scale = 2.0 * np.pi / np.asarray(h, dtype=float)
+    lam = float(np.linalg.eigvalsh(H * np.outer(scale, scale))[0])
     total = 0.0
-    for r in range(1, 400):
+    for r in range(1, 2000):
         span = np.arange(-r, r + 1)
         m = np.array(np.meshgrid(*([span] * d), indexing="ij")).reshape(d, -1).T
-        k = 2.0 * np.pi * m[np.abs(m).max(axis=1) == r] / np.asarray(h)
+        k = scale * m[np.abs(m).max(axis=1) == r]
         g = np.exp(-0.5 * np.einsum("ij,jk,ik->i", k, H, k))
         live = g > 1e-20
         if live.any():
@@ -630,7 +636,11 @@ def _poisson_bound(sample, bandwidth, h):
             for start in range(0, len(sample), 4096):
                 phi += np.exp(1j * (sample[start : start + 4096] @ k[live].T)).sum(axis=0)
             total += float(np.sum(g[live] * np.abs(phi / len(sample))))
-        if g.sum() < 1e-16:
+        if total > stop_above:
+            return total
+        inner = 1.0 + 2.0 * float(np.sum(np.exp(-0.5 * lam * np.arange(1, r + 1) ** 2)))
+        rest = float(np.sqrt(2.0 * np.pi / lam) * special.erfc(r * np.sqrt(lam / 2.0)))
+        if (inner + rest) ** d - inner**d < 1e-13:
             return total
     raise AssertionError("the oracle's sum did not converge")
 
@@ -687,9 +697,9 @@ def test_the_gate_decides_either_side_of_its_tolerance():
     lo, hi = 0.05, 3.0
     for _ in range(50):
         mid = np.sqrt(lo * hi)
-        lo, hi = (lo, mid) if _poisson_bound(_ANISO, mid, [0.1, 0.1]) <= _RULED_TOL else (mid, hi)
+        lo, hi = (lo, mid) if _poisson_bound(_ANISO, mid, [0.1, 0.1], _RULED_TOL) <= _RULED_TOL else (mid, hi)
     for factor, resolved in ((hi * (1 + 1e-6), True), (lo * (1 - 1e-6), False)):
-        assert (_poisson_bound(_ANISO, factor, [0.1, 0.1]) <= _RULED_TOL) is resolved
+        assert (_poisson_bound(_ANISO, factor, [0.1, 0.1], _RULED_TOL) <= _RULED_TOL) is resolved
         assert kde_resolves_on_grid(_ANISO, factor, [0.1, 0.1]) is resolved
 
 
