@@ -4,5 +4,7 @@
   sum over the lattice's nodes misses its mass, against a tolerance. It returns a value above the tolerance exactly
   when B is, summed only until that is decided, or None for a sample with no kernel. `kde_resolves_on_grid` decides it
   against `KDE_LATTICE_ALIASING_TOL` (0.1). `deposit_on_nodes` shares each particle's mass among the nodes of its cell
-  by their tent functions and divides by the grid's quadrature weights. It refuses by name a position outside the box,
-  an empty sample, and weights that are not finite and positive at every node.
+  by their tent functions and divides by the grid's quadrature weights. A position past a wall by at most the spacing
+  of its bound in ``dtype`` (the positions' own) is on the wall; one past it by more is refused by name, or left out
+  with ``outside="drop"``. It refuses by name an empty sample and weights that are not finite and positive at every
+  node.

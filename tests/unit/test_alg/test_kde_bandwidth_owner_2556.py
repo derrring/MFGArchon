@@ -761,9 +761,10 @@ def test_the_gate_refuses_an_unknown_rule_and_a_lattice_that_is_not_one():
             kde_lattice_aliasing(_WIDE, "scott", spacings)
 
 
-def test_a_kernel_too_narrow_for_the_point_budget_is_still_decided_past_tol():
-    """A 3-D kernel about 0.003 cells wide has more lattice points in its ellipsoid than the budget. The largest
-    ellipsoid that fits is summed, and the sample is decided past 10% there with a finite partial sum."""
+def test_a_kernel_too_narrow_for_the_point_budget_is_decided_past_tol_before_it():
+    """A 3-D kernel about 0.003 cells wide has more lattice points in its ellipsoid than the budget; the points with
+    m^T K m <= 16, summed first, decide it past 10% with a finite partial sum, before the whole ellipsoid is
+    enumerated (without them it would meet the backstop, infinity)."""
     sample = 0.53 + 0.1 * np.random.default_rng(7).standard_normal((300, 3))
     value = kde_lattice_aliasing(sample, 0.01, [0.1, 0.1, 0.1])
     assert _RULED_TOL < value < np.inf

@@ -35,7 +35,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from scipy import special
 from scipy.interpolate import RBFInterpolator, RegularGridInterpolator
 from scipy.stats import gaussian_kde
 
@@ -560,8 +559,8 @@ KDE_LATTICE_ALIASING_TOL = 0.1
 # B's terms outside the ellipsoid it is summed over sum to at most this (`_ellipsoid_radius`), which is what the two
 # exits allow for beyond the points summed.
 _OUTSIDE_ELLIPSOID = 1e-13
-# A backstop on the lattice points enumerated. Past it the points of the largest ellipsoid that fits are summed, so a
-# sample past tol there is still decided as such; one still undecided is read as unresolved.
+# A backstop on the lattice points enumerated: an ellipsoid holding more, after the first, small one has not decided
+# the sample, is read as unresolved. No sample of the gate's fuzz reached it.
 _ALIASING_MAX_POINTS = 2_000_000
 # Points are summed in batches of 1, 2, 4, ... up to this many, in order of decreasing kernel transform.
 _ALIASING_BATCH = 256
@@ -591,8 +590,8 @@ def kde_lattice_aliasing(
     or the partial sum plus the kernel's own sum over the points not yet summed and the outside (|phi| <= 1), once that
     is at or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, to within 1e-13. The points
     with m^T K m <= 16 are summed first, for the exit past tol alone, so that a sample past it is decided before a large
-    ellipsoid is enumerated. An ellipsoid of more than 2e6 points is summed over the largest one that fits, for that
-    exit, and a sample still undecided there is returned as infinity: read as unresolved (a backstop).
+    ellipsoid is enumerated. A sample those leave undecided whose ellipsoid holds more than 2e6 points is returned as
+    infinity: read as unresolved (a backstop).
 
     None for a sample with no kernel: fewer than two particles, or one `kde_sample_has_spread` refuses (its sum does
     not decay along the direction it lacks).
@@ -637,16 +636,10 @@ def kde_lattice_aliasing(
             if decided:
                 return value
     m = _half_lattice_in_ellipsoid(K, c)
-    if m is not None:
-        value, decided = _sum_in_order(points, K, h, m, tol, outside=_OUTSIDE_ELLIPSOID)
-        return value if decided else value + _OUTSIDE_ELLIPSOID
-    # The backstop: the largest ellipsoid that fits (its point count scales as c^(d/2)), past tol only.
-    shrunk = _half_lattice_in_ellipsoid(K, c * (0.5 * _ALIASING_MAX_POINTS / _ellipsoid_points(K, c)) ** (2.0 / d))
-    if shrunk is not None:
-        value, decided = _sum_in_order(points, K, h, shrunk, tol, outside=None)
-        if decided:
-            return value
-    return float("inf")
+    if m is None:
+        return float("inf")  # the backstop: more points than `_ALIASING_MAX_POINTS`, read as unresolved
+    value, decided = _sum_in_order(points, K, h, m, tol, outside=_OUTSIDE_ELLIPSOID)
+    return value if decided else value + _OUTSIDE_ELLIPSOID
 
 
 def _sum_in_order(
@@ -713,12 +706,6 @@ def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
     if not np.all(a > 0):
         return float("inf")
     return 4.0 * (float(np.sum(np.log1p(np.sqrt(4.0 * np.pi / a)))) - float(np.log(_OUTSIDE_ELLIPSOID)))
-
-
-def _ellipsoid_points(K: NDArray[np.floating], c: float) -> float:
-    """The volume of {m^T K m <= c}, about its lattice point count: V_d c^(d/2) / sqrt(det K)."""
-    d = len(K)
-    return float(np.pi ** (d / 2) / special.gamma(d / 2 + 1) * c ** (d / 2) / np.sqrt(np.linalg.det(K)))
 
 
 def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.integer] | None:
