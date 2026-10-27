@@ -442,7 +442,7 @@ class GeometryProjector:
         Leverages existing GPU-accelerated KDE from density_estimation.py. On a target whose axes are uniform, a sample
         whose kernel the grid cannot read is deposited on its nodes instead (`kde_resolves_on_grid`,
         `deposit_on_nodes`; #2556). The gate needs a lattice, so a target the grid declares non-uniform
-        (`get_grid_spacing` refuses it) has none and reads the KDE as before.
+        (`get_grid_spacing` refuses it) has none and reads the KDE as before (#2827).
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
