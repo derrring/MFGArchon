@@ -740,6 +740,17 @@ def test_a_sample_with_no_kernel_has_no_bound():
         assert kde_resolves_on_grid(sample, "scott", [0.1] * sample.shape[1]) is False
 
 
+def test_the_gate_refuses_an_unknown_rule_and_a_lattice_that_is_not_one():
+    """An unknown bandwidth rule is refused for a sample with no kernel too, and a spacing must be finite and
+    positive."""
+    point = np.full((5, 2), 0.5)
+    with pytest.raises(ValueError, match="Unknown method: bogus"):
+        kde_lattice_aliasing(point, "bogus", [0.1, 0.1])
+    for spacings in ([0.1, np.inf], [0.1, 0.0], [0.1]):
+        with pytest.raises(ValueError, match="finite positive spacings"):
+            kde_lattice_aliasing(_WIDE, "scott", spacings)
+
+
 def test_a_kernel_too_narrow_for_the_point_budget_is_still_decided_past_tol():
     """A 3-D kernel about 0.003 cells wide has more lattice points in its ellipsoid than the budget. The largest
     ellipsoid that fits is summed, and the sample is decided past 10% there with a finite partial sum."""
