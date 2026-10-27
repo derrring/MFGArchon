@@ -96,11 +96,11 @@ NO_SPREAD = {
 
 @pytest.mark.parametrize("sample", NO_SPREAD.values(), ids=NO_SPREAD.keys())
 def test_a_sample_with_no_spread_is_refused(sample):
-    """No kernel exists on these, though `eigvalsh` returns a smallest eigenvalue up to about 1e-15 of the largest on a
-    line or a plane (6.7e-16 of the largest, in the correlation's units, on the long line here of 1000 points), and on a
-    short line far from the origin one of the size of the positions' rounding; and `np.cov` gives the axis of 100000
-    particles at 0.53 a variance over its floor, from its mean's accumulated rounding, which in the correlation's units
-    is a spread."""
+    """No kernel exists on these. On a line or a plane `eigvalsh` returns a smallest eigenvalue of rounding size, a few
+    1e-15 of the largest at most (5.6e-16 in the correlation's units, about the first particle, on the long line here
+    of 1000 points); on a short line far from the origin, one of the size of the positions' rounding. `np.cov` gives the
+    axis of 100000 particles at 0.53 a variance over its floor, from its mean's accumulated rounding, which in the
+    correlation's units is a spread."""
     assert not kde_sample_has_spread(sample)
     with pytest.raises(ValueError, match="spread in every direction"):
         kde_kernel_covariance(sample, "scott")
@@ -127,6 +127,21 @@ def test_a_small_spread_is_a_spread(sample):
     np.testing.assert_allclose(
         kde_kernel_covariance(sample, "scott"), gaussian_kde(np.atleast_2d(sample.T)).covariance, rtol=1e-9
     )
+
+
+def test_an_axis_near_its_floor_leaves_a_thin_direction_without_it_alone():
+    """The rounding floor is read per direction. x at 1e6 spreads 1e-11 of its magnitude, so its floor is 9.4e-5 of its
+    variance, above the correlation's smallest eigenvalue, 9.8e-6; but that thin direction is y - z, which does not
+    involve x, and the sample is scipy's kernel. #2819's review-3 correction took the largest axis's floor in every
+    direction and refused it."""
+    rng = np.random.default_rng(12)
+    y = rng.normal(size=400)
+    z = (1 - 1e-5) * y + np.sqrt(1 - (1 - 1e-5) ** 2) * rng.normal(size=400)
+    sample = np.column_stack([1e6 + 1e-5 * rng.normal(size=400), y, z])
+    assert kde_sample_has_spread(sample)
+    want = gaussian_kde(sample.T).covariance
+    scale = np.sqrt(np.outer(np.diag(want), np.diag(want)))
+    np.testing.assert_allclose(kde_kernel_covariance(sample, "scott") / scale, want / scale, rtol=0, atol=1e-9)
 
 
 def test_a_sample_with_a_non_finite_position_is_refused():

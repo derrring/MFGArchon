@@ -1436,9 +1436,11 @@ class FPParticleSolver(BaseFPSolver):
 
         if self.kde_method != KDEMethod.CIC and not kde_sample_has_spread(particles):
             raise ValueError(
-                f"FPParticleSolver (nD): {len(particles)} particles have no spread in some direction (on a line or a "
-                "plane: placed there with no diffusion, collapsed there by the drift, or as few survivors as "
-                f"dimensions), so kde_method={self.kde_method.value!r} has no kernel (#2556). "
+                f"FPParticleSolver (nD): {len(particles)} particles have no spread in some direction at the bound "
+                "`kde_sample_has_spread` states: on a line or a plane (placed there with no diffusion, collapsed there "
+                "by the drift, or no more survivors than dimensions), or thinner in some direction than about 1e-7 of "
+                "their spread in the axes' own units, or than the positions' rounding floor there. So "
+                f"kde_method={self.kde_method.value!r} has no kernel (#2556). "
                 "kde_method='cic' deposits such a sample on the grid."
             )
 

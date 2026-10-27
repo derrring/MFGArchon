@@ -417,19 +417,24 @@ def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
     Whether a sample has spread in every direction, so that a KDE of it has a kernel (#2556).
 
     A conditioning bound read in the sample's own units, so that scaling an axis leaves it unchanged, as it leaves
-    scipy's KDE. The covariance (ddof 1) is taken about the first particle, which leaves it unchanged and puts an axis
-    on which every particle has one position at 0: `np.cov` gives such an axis, in more than one dimension, the square
-    of its mean's accumulated rounding, which passes the floor below from about 1e4 particles. Each axis's variance must
-    exceed the floor its positions' rounding sets there, the square of 1e-13 of their magnitude on that axis; and the
-    correlation matrix's smallest eigenvalue must exceed 1e-14 of its largest, and that floor in the same units. False
-    also for fewer than two particles.
+    scipy's KDE: in every direction, the sample's variance in the axes' own units must exceed the floor the positions'
+    rounding sets there by 1e-14 of its largest variance. The floor on an axis is the square of 1e-13 of the positions'
+    magnitude there (450 to 900 units in the last place); in the correlation's units it is that floor over the axis's
+    variance, and a direction takes each axis's share of it. So the correlation matrix less those floors on its diagonal
+    must have its smallest eigenvalue above 1e-14 of the correlation matrix's largest. The diagonal of that condition,
+    each axis's variance above its floor, is checked first only because the correlation exists for positive variances
+    alone. The covariance (ddof 1) is taken about the first particle, which leaves it unchanged and puts an axis on
+    which every particle has one position at 0: `np.cov` gives such an axis, in more than one dimension, the square of
+    its mean's accumulated rounding, which passes the floor from about 1e4 particles. False also for fewer than two
+    particles.
 
     So a sample on a line or a plane is refused: `eigvalsh` returns its correlation's smallest eigenvalue as rounding,
     and when the line is short and far from the origin, as the positions' own rounding. A uniform sample on
-    [0, 1e-7] x [0, 1], or 1e6 + 1e-5 N(0, I), is a spread, as scipy reads it. The bound's cost: a genuine sample whose
-    spread in some direction is below 1e-7 of its spread in another, in the axes' own units, is refused, and so is a
-    spread on an axis below 1e-13 of its magnitude there (about 450 units in the last place), though scipy builds a
-    kernel for each.
+    [0, 1e-7] x [0, 1], or 1e6 + 1e-5 N(0, I), is a spread, as scipy reads it, and so is an axis near its floor beside a
+    thin direction that does not involve it. The bound's cost: a genuine sample is refused, though scipy builds a kernel
+    for it, when its variance in some direction, in the axes' own units, does not exceed the rounding floor there by
+    1e-14 of its largest: a spread in some direction below about 1e-7 of another, or within that floor (on an axis,
+    1e-13 of its magnitude).
 
     Parameters
     ----------
@@ -445,8 +450,9 @@ def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
     if not np.all(variances > floors):
         return False
     scale = np.sqrt(variances)
-    eigenvalues = np.linalg.eigvalsh(covariance / np.outer(scale, scale))
-    return bool(eigenvalues[0] > max(1e-14 * eigenvalues[-1], float(np.max(floors / variances))))
+    correlation = covariance / np.outer(scale, scale)
+    largest = np.linalg.eigvalsh(correlation)[-1]
+    return bool(np.linalg.eigvalsh(correlation - np.diag(floors / variances))[0] > 1e-14 * largest)
 
 
 def _sample(particle_positions: NDArray[np.floating]) -> NDArray[np.floating]:
@@ -503,8 +509,8 @@ def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: f
         raise ValueError(
             f"A KDE of {n} particle(s) in {d}-D needs a sample with spread in every direction; this one has none at "
             "the conditioning bound `kde_sample_has_spread` states (one point, a line or a plane, fewer than two "
-            "particles, or a spread in some direction below 1e-7 of another in the axes' own units), so it has no "
-            "kernel (#2556)."
+            "particles, or a spread in some direction below about 1e-7 of another in the axes' own units, or within "
+            "the positions' rounding floor there), so it has no kernel (#2556)."
         )
     return factor**2 * np.atleast_2d(np.cov(points, rowvar=False))
 
