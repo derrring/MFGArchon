@@ -333,8 +333,7 @@ def test_the_deprecated_gpu_helper_is_particle_utils():
 
 def test_the_gpu_helper_does_not_write_its_input():
     """The device copy returns new positions and leaves the tensor it was handed as it was."""
-    import torch
-
+    torch = pytest.importorskip("torch")
     backend = _torch_backend()
     for kind in ("periodic", "no_flux"):
         given = backend.from_numpy(ENDS_1D)
