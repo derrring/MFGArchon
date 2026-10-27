@@ -15,6 +15,13 @@ density of a uniform sample one kernel width from a wall.
 reflection and renormalization estimators, the particle solver's beta, GPU and n-D default paths, and `FPParticleResult`'s
 query. The fuzz over n, d, sample shape, bandwidth and refused inputs, with a rival for each misreading, is the PR's, in
 scratch.
+
+**The no-kernel member** (C3-2): a grid reader reads the kernel only where the grid's lattice can, and deposits the
+sample on the nodes elsewhere. Its oracles: B, the Poisson sum over the lattice of |the kernel's transform| |the
+sample's characteristic function| at k = 2 pi m / h, m != 0, which bounds the estimate's mass error on the nodes and is
+decided against 10%; and the tent deposit from its definition, the hat functions of each particle's cell divided by the
+trapezoid weights. Pinned: the gate on both sides of B = 10%, its tail bound, the deposit on a graded axis, and the
+solver and projector depositing.
 """
 
 from __future__ import annotations
@@ -29,12 +36,17 @@ from scipy.stats import gaussian_kde
 
 from mfgarchon.alg.numerical import density_estimation as de
 from mfgarchon.backends import create_backend
+from mfgarchon.utils.numerical.particle import interpolation as kde_owner
 from mfgarchon.utils.numerical.particle import kde_boundary as kb
 from mfgarchon.utils.numerical.particle.interpolation import (
+    KDE_LATTICE_ALIASING_TOL,
+    deposit_on_nodes,
     estimate_kde_bandwidth,
     kde_factor,
     kde_kernel_covariance,
     kde_kernel_widths,
+    kde_lattice_aliasing,
+    kde_resolves_on_grid,
     kde_sample_has_spread,
 )
 
@@ -496,3 +508,144 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
             )
         )[1:]
     np.testing.assert_allclose(densities[1e-7] * 1e-7, densities[1.0], rtol=1e-12, atol=1e-12)
+
+
+def _poisson_bound(sample, bandwidth, h):
+    """B from its definition: sum over the lattice m != 0 of |scipy's kernel transform| |the sample's characteristic
+    function| at k = 2 pi m / h, in shells of max |m_i| = r until a shell adds under 1e-16."""
+    H = gaussian_kde(sample.T, bw_method=bandwidth).covariance
+    d = sample.shape[1]
+    total = 0.0
+    for r in range(1, 400):
+        span = np.arange(-r, r + 1)
+        m = np.array(np.meshgrid(*([span] * d), indexing="ij")).reshape(d, -1).T
+        k = 2.0 * np.pi * m[np.abs(m).max(axis=1) == r] / h
+        g = np.exp(-0.5 * np.einsum("ij,jk,ik->i", k, H, k))
+        total += float(np.sum(g * np.abs(np.exp(1j * (sample @ k.T)).mean(axis=0))))
+        if g.sum() < 1e-16:
+            return total
+    raise AssertionError("the oracle's sum did not converge")
+
+
+_WIDE = 0.5 + 0.1 * np.random.default_rng(3).standard_normal((3000, 2))
+_NARROW = np.array([0.53, 0.47]) + 0.005 * np.random.default_rng(3).standard_normal((300, 2))
+_ANISO = np.random.default_rng(0).multivariate_normal([0.53, 0.47], np.diag([0.05, 0.2]) ** 2, size=300)
+
+
+@pytest.mark.parametrize(
+    ("sample", "bandwidth", "resolved"),
+    [(_WIDE, "scott", True), (_NARROW, "scott", False), (_ANISO, "scott", True), (_ANISO, 0.15, False)],
+    ids=["wide", "narrow off a node", "anisotropic", "anisotropic, factor 0.15"],
+)
+def test_the_gate_reads_the_aliasing_bound(sample, bandwidth, resolved):
+    """The gate's decision is B's against 10%, with B from its definition. A value at or under 10% bounds B from above
+    (the partial sum plus the tail bound), and one over it from below (a partial sum)."""
+    bound = _poisson_bound(sample, bandwidth, 0.1)
+    assert (bound <= KDE_LATTICE_ALIASING_TOL) is resolved
+    assert kde_resolves_on_grid(sample, bandwidth, [0.1, 0.1]) is resolved
+    value = kde_lattice_aliasing(sample, bandwidth, [0.1, 0.1])
+    if resolved:
+        assert bound - 1e-12 <= value <= KDE_LATTICE_ALIASING_TOL
+    else:
+        assert KDE_LATTICE_ALIASING_TOL < value <= bound + 1e-12
+
+
+def test_the_gate_decides_either_side_of_its_tolerance():
+    """Factors either side of the one where B is 10%, found by bisection on the oracle, are decided as B is."""
+    lo, hi = 0.05, 3.0
+    for _ in range(50):
+        mid = np.sqrt(lo * hi)
+        lo, hi = (lo, mid) if _poisson_bound(_ANISO, mid, 0.1) <= KDE_LATTICE_ALIASING_TOL else (mid, hi)
+    for factor, resolved in ((hi * (1 + 1e-6), True), (lo * (1 - 1e-6), False)):
+        assert (_poisson_bound(_ANISO, factor, 0.1) <= KDE_LATTICE_ALIASING_TOL) is resolved
+        assert kde_resolves_on_grid(_ANISO, factor, [0.1, 0.1]) is resolved
+
+
+def test_the_tail_bound_is_over_the_kernels_tail():
+    """The tail the gate adds is at least the kernel transform's sum outside the cube max |m_i| <= r, on a correlated,
+    anisotropic kernel (correlation 0.9, widths 0.3 and 0.05 cells), summed here over the lattice to |m_i| <= 120."""
+    h = np.array([0.1, 0.1])
+    H = np.array([[1.0, 0.9], [0.9, 1.0]]) * np.outer([0.03, 0.005], [0.03, 0.005])
+    span = np.arange(-120, 121)
+    m = np.array(np.meshgrid(span, span, indexing="ij")).reshape(2, -1).T
+    k = 2.0 * np.pi * m / h
+    g = np.exp(-0.5 * np.einsum("ij,jk,ik->i", k, H, k))
+    assert g[np.abs(m).max(axis=1) == 120].max() < 1e-30
+    a = kde_owner._tail_rates(H, h)
+    inner = np.ones(2)
+    for r in range(1, 30):
+        inner += 2.0 * np.exp(-0.5 * a * r**2)
+        assert kde_owner._kernel_tail_bound(a, inner, r) >= float(g[np.abs(m).max(axis=1) > r].sum())
+
+
+def _trapezoid(axis):
+    w = np.empty_like(axis)
+    w[1:-1] = (axis[2:] - axis[:-2]) / 2
+    w[0], w[-1] = (axis[1] - axis[0]) / 2, (axis[-1] - axis[-2]) / 2
+    return w
+
+
+def _hats(x, axis):
+    """(particles, nodes): each node's hat function at x, rising over the cell to its left and falling over the one to
+    its right."""
+    out = np.zeros((len(x), len(axis)))
+    for i in range(len(axis)):
+        if i > 0:
+            on = (x >= axis[i - 1]) & (x <= axis[i])
+            out[on, i] = (x[on] - axis[i - 1]) / (axis[i] - axis[i - 1])
+        if i < len(axis) - 1:
+            on = (x >= axis[i]) & (x <= axis[i + 1])
+            out[on, i] = np.maximum(out[on, i], (axis[i + 1] - x[on]) / (axis[i + 1] - axis[i]))
+    return out
+
+
+def test_the_deposit_is_the_tents_of_a_graded_grid():
+    """On a graded axis beside a uniform one, particles on nodes, on walls, at a corner and inside are deposited by their
+    cells' hat functions over the trapezoid weights: mass 1 and the sample's mean on those weights. A position 1e-12
+    outside the box, and an axis of one node, are refused by name."""
+    graded = np.concatenate([np.linspace(0.0, 0.2, 6), np.linspace(0.3, 1.0, 8)])
+    uniform = np.linspace(0.0, 1.0, 6)
+    rng = np.random.default_rng(5)
+    x = np.concatenate([graded[[0, 3, 5, 6, 13]], [0.0, 1.0, 0.25, 0.97], rng.uniform(0, 1, 40)])
+    y = np.concatenate([uniform[[0, 2, 5, 1, 4]], [1.0, 1.0, 0.0, 0.33], rng.uniform(0, 1, 40)])
+    weights = np.outer(_trapezoid(graded), _trapezoid(uniform))
+    want = np.einsum("pi,pj->ij", _hats(x, graded), _hats(y, uniform)) / len(x) / weights
+    got = deposit_on_nodes(np.column_stack([x, y]), [graded, uniform], weights)
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=0)
+    assert np.sum(got * weights) == pytest.approx(1.0, abs=1e-13)
+    assert np.sum(got * weights * graded[:, None]) == pytest.approx(x.mean(), abs=1e-13)
+    assert np.sum(got * weights * uniform[None, :]) == pytest.approx(y.mean(), abs=1e-13)
+    with pytest.raises(ValueError, match="outside the grid on axis 0"):
+        deposit_on_nodes(np.array([[1.0 + 1e-12, 0.5]]), [graded, uniform], weights)
+    with pytest.raises(ValueError, match="at least two strictly increasing nodes"):
+        deposit_on_nodes(np.array([0.0]), [np.array([0.0])], np.ones(1))
+
+
+def test_the_projector_deposits_a_sample_its_grid_cannot_read():
+    """The particle-to-grid projector on a uniform grid: the narrow sample is its tent deposit, mass 1 on the grid's
+    weights, where the KDE at the nodes had mass 0; the wide one is still scipy's KDE at the nodes."""
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
+    from mfgarchon.operators.interpolation.projection import GeometryProjector
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2))
+    axis = np.linspace(0.0, 1.0, 11)
+    weights = np.outer(_trapezoid(axis), _trapezoid(axis))
+    for sample in (_NARROW, np.clip(_WIDE, 0.0, 1.0)):
+        projector = GeometryProjector(grid, PointCloudGeometry(sample), projection_method="kde")
+        got = np.asarray(projector.project_fp_to_hjb(np.ones(len(sample)), bandwidth="scott"))
+        if sample is _NARROW:
+            want = np.einsum("pi,pj->ij", _hats(sample[:, 0], axis), _hats(sample[:, 1], axis)) / len(sample) / weights
+            assert (
+                np.sum(
+                    gaussian_kde(sample.T)(np.array(np.meshgrid(axis, axis, indexing="ij")).reshape(2, -1))
+                    * weights.ravel()
+                )
+                < 1e-10
+            )
+        else:
+            want = gaussian_kde(sample.T)(np.array(np.meshgrid(axis, axis, indexing="ij")).reshape(2, -1)).reshape(
+                11, 11
+            )
+        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)

@@ -30,10 +30,9 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
 
-# Seed 11: neither absorbing 2-D grid-drift solve here (sigma 0.2, and sigma 0 for the row-following test) may reach a
-# step with exactly 2 survivors, which have no kernel (#2790). At #2556's C3-1 the density reader refuses such a step by
-# name. Of seeds 5 to 20, those that reach one are 5-9, 12, 14, 16 and 20 at sigma 0.2 and 10 and 17 at sigma 0; the
-# base raised on all of them but 8 and 12, which it passed through its ghost refit.
+# Seed 11: neither absorbing 2-D grid-drift solve here (sigma 0.2, and sigma 0 for the row-following test) reaches a
+# step with exactly 2 survivors, which have no kernel (#2790); the density reader deposits such a step on the grid's
+# nodes (#2556). Of seeds 5 to 20, those that reach one are 5-9, 12, 14, 16 and 20 at sigma 0.2 and 10 and 17 at sigma 0.
 _N, _NT, _T, _SEED = 400, 20, 1.0, 11
 
 
