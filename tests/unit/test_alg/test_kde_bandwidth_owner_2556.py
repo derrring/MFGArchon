@@ -77,12 +77,15 @@ def test_the_kernel_is_scipys(sample, bandwidth):
 
 
 _t = np.random.default_rng(6).uniform(size=(60, 2))
+_u = np.random.default_rng(25).uniform(size=1000)
 NO_SPREAD = {
     "one point": np.full(50, 0.3),
     "copies of a point in 2-D": np.tile([0.3, 0.7], (50, 1)),
     "a line on the diagonal": np.column_stack([np.linspace(0, 1, 50), np.linspace(0, 1, 50)]),
     "a line off the axes": np.column_stack([0.2 + 0.3 * _t[:, 0], 0.7 - 0.5 * _t[:, 0]]),
     "a short line far from the origin": np.column_stack([1.0 + 1e-10 * _t[:, 0], 1.0 + 0.7e-10 * _t[:, 0]]),
+    "a long line": np.column_stack([0.1 + 0.8 * _u, 0.2 + 0.55 * _u]),
+    "a line on an axis, 100000 particles": np.column_stack([np.linspace(0, 1, 100000), np.full(100000, 0.53)]),
     "a plane in 3-D": np.array([0.1, 0.2, 0.3])
     + np.outer(_t[:, 0], [0.3, -0.2, 0.5])
     + np.outer(_t[:, 1], [0.1, 0.4, -0.3]),
@@ -94,26 +97,32 @@ NO_SPREAD = {
 @pytest.mark.parametrize("sample", NO_SPREAD.values(), ids=NO_SPREAD.keys())
 def test_a_sample_with_no_spread_is_refused(sample):
     """No kernel exists on these, though `eigvalsh` returns a smallest eigenvalue up to about 1e-15 of the largest on a
-    line or a plane, and on a short line far from the origin one of the size of the positions' rounding (3.8e-12 of the
-    largest on the one here); copies of 0.3 have a covariance of order 1e-33, not 0."""
+    line or a plane (6.7e-16 of the largest, in the correlation's units, on the long line here of 1000 points), and on a
+    short line far from the origin one of the size of the positions' rounding; and `np.cov` gives the axis of 100000
+    particles at 0.53 a variance over its floor, from its mean's accumulated rounding, which in the correlation's units
+    is a spread."""
     assert not kde_sample_has_spread(sample)
     with pytest.raises(ValueError, match="spread in every direction"):
         kde_kernel_covariance(sample, "scott")
 
 
 _s = np.random.default_rng(7)
+_a, _v = np.random.default_rng(10).uniform(-0.5, 0.5, 400), 1e-7 * np.random.default_rng(11).normal(size=400)
 SMALL_SPREAD = {
     "1e6 + 1e-5 N(0, 1)": 1e6 + 1e-5 * _s.normal(size=400),
     "0.5 + 1e-6 N(0, I) in 2-D": 0.5 + 1e-6 * _s.normal(size=(400, 2)),
     "correlation 0.999": _s.multivariate_normal([0.5, 0.5], [[1.0, 0.999], [0.999, 1.0]], size=400),
     "thin: U(0, 1) by 0.5 + 1e-7 N(0, 1)": np.column_stack([_s.uniform(size=400), 0.5 + 1e-7 * _s.normal(size=400)]),
+    "U(0, 1e-7) by U(0, 1)": np.column_stack([1e-7 * _s.uniform(size=400), _s.uniform(size=400)]),
+    "thin, rotated 30 degrees": np.column_stack([0.5 + 0.866 * _a - 0.5 * _v, 0.5 + 0.5 * _a + 0.866 * _v]),
 }
 
 
 @pytest.mark.parametrize("sample", SMALL_SPREAD.values(), ids=SMALL_SPREAD.keys())
 def test_a_small_spread_is_a_spread(sample):
-    """The permission side of the refusal: a small spread, far from the origin, nearly on a line, or 1e-7 of the spread
-    across it, is scipy's kernel."""
+    """The permission side of the refusal: a small spread, far from the origin, nearly on a line, 0.5 + 1e-7 N(0, 1)
+    across U(0, 1) (a standard deviation 3.4e-7 of the other), on a domain 1e-7 wide, or 1e-7 thin across a rotated
+    line, is scipy's kernel."""
     assert kde_sample_has_spread(sample)
     np.testing.assert_allclose(
         kde_kernel_covariance(sample, "scott"), gaussian_kde(np.atleast_2d(sample.T)).covariance, rtol=1e-9
@@ -138,7 +147,8 @@ def test_the_widths_exist_on_a_line_and_not_at_a_point():
             _scipy_factor(bandwidth, *line.shape) * np.std(line, axis=0, ddof=1),
             rtol=1e-12,
         )
-    for point in (NO_SPREAD["copies of a point in 2-D"], NO_SPREAD["one point"], NO_SPREAD["one particle"]):
+    many = np.tile([0.3, 0.7], (20000, 1))  # `np.cov` gives each axis a variance over its floor
+    for point in (NO_SPREAD["copies of a point in 2-D"], many, NO_SPREAD["one point"], NO_SPREAD["one particle"]):
         with pytest.raises(ValueError, match="no kernel width"):
             kde_kernel_widths(point, "scott")
 
@@ -414,3 +424,39 @@ def test_a_sample_on_a_line_is_refused_by_name_and_cic_deposits_it(kde_method):
         np.testing.assert_allclose(slice_, want, rtol=1e-12, atol=1e-12)
         assert slice_[5].sum() > 0
         assert slice_[6].sum() > 0
+
+
+@pytest.mark.parametrize("kde_method", ["reflection", "standard", "renormalization"])
+def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
+    """Scaling an axis leaves scipy's KDE equivariant, and so the spread predicate must leave a sample alone: on
+    [0, 1e-7] x [0, 1] the default path's density is the unit square's, with the same particles rescaled, times 1e7.
+    #2819's first bound read the eigenvalue ratio in absolute units and refused this sample as one on a line."""
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    unit = np.random.default_rng(9).uniform(size=(600, 2))
+    densities = {}
+    for width in (1.0, 1e-7):
+        grid = TensorProductGrid(
+            bounds=[(0.0, width), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.0)
+        conditions = Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.1)
+        solver = FPParticleSolver(
+            MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4),
+            num_particles=600,
+            seed=5,
+            kde_method=kde_method,
+        )
+        densities[width] = np.asarray(
+            solver.solve_fp_system(
+                M_initial=None,
+                drift_field=lambda t, x, m: np.zeros_like(x),
+                initial_particles=unit * [width, 1.0],
+                show_progress=False,
+            )
+        )[1:]
+    np.testing.assert_allclose(densities[1e-7] * 1e-7, densities[1.0], rtol=1e-12, atol=1e-12)

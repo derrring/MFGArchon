@@ -416,13 +416,20 @@ def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
     """
     Whether a sample has spread in every direction, so that a KDE of it has a kernel (#2556).
 
-    A conditioning bound on the sample covariance (ddof 1): False when its smallest eigenvalue is at or below 1e-14 of
-    its largest, or at or below the variance the rounding of the positions alone can give, the square of 1e-13 of their
-    magnitude; and for fewer than two particles. A sample on a line or a plane comes back from `eigvalsh` with a smallest
-    eigenvalue of rounding size: up to about 1e-15 of the largest, and of the size of the positions' own rounding when
-    the line is short and far from the origin. n copies of 0.3 have a covariance of order 1e-33, not 0. A small spread far from the origin, such as
-    1e6 + 1e-5 N(0, 1), is a spread, as scipy reads it. A genuine sample whose spread in some direction is below 1e-7 of
-    its spread in another is refused too, though scipy builds a kernel for it.
+    A conditioning bound read in the sample's own units, so that scaling an axis leaves it unchanged, as it leaves
+    scipy's KDE. The covariance (ddof 1) is taken about the first particle, which leaves it unchanged and puts an axis
+    on which every particle has one position at 0: `np.cov` gives such an axis, in more than one dimension, the square
+    of its mean's accumulated rounding, which passes the floor below from about 1e4 particles. Each axis's variance must
+    exceed the floor its positions' rounding sets there, the square of 1e-13 of their magnitude on that axis; and the
+    correlation matrix's smallest eigenvalue must exceed 1e-14 of its largest, and that floor in the same units. False
+    also for fewer than two particles.
+
+    So a sample on a line or a plane is refused: `eigvalsh` returns its correlation's smallest eigenvalue as rounding,
+    and when the line is short and far from the origin, as the positions' own rounding. A uniform sample on
+    [0, 1e-7] x [0, 1], or 1e6 + 1e-5 N(0, I), is a spread, as scipy reads it. The bound's cost: a genuine sample whose
+    spread in some direction is below 1e-7 of its spread in another, in the axes' own units, is refused, and so is a
+    spread on an axis below 1e-13 of its magnitude there (about 450 units in the last place), though scipy builds a
+    kernel for each.
 
     Parameters
     ----------
@@ -432,8 +439,14 @@ def kde_sample_has_spread(particle_positions: NDArray[np.floating]) -> bool:
     points = _sample(particle_positions)
     if len(points) < 2:
         return False
-    eigenvalues = np.linalg.eigvalsh(np.atleast_2d(np.cov(points, rowvar=False)))
-    return bool(eigenvalues[0] > max(1e-14 * eigenvalues[-1], _rounding_variance(points)))
+    covariance = _spread_covariance(points)
+    variances = np.diag(covariance)
+    floors = _rounding_variances(points)
+    if not np.all(variances > floors):
+        return False
+    scale = np.sqrt(variances)
+    eigenvalues = np.linalg.eigvalsh(covariance / np.outer(scale, scale))
+    return bool(eigenvalues[0] > max(1e-14 * eigenvalues[-1], float(np.max(floors / variances))))
 
 
 def _sample(particle_positions: NDArray[np.floating]) -> NDArray[np.floating]:
@@ -449,9 +462,17 @@ def _sample(particle_positions: NDArray[np.floating]) -> NDArray[np.floating]:
     return points
 
 
-def _rounding_variance(points: NDArray[np.floating]) -> float:
-    """The variance the rounding of the positions alone can produce: the square of 1e-13 of their magnitude."""
-    return (1e-13 * float(np.max(np.abs(np.mean(points, axis=0))))) ** 2
+def _spread_covariance(points: NDArray[np.floating]) -> NDArray[np.floating]:
+    """The sample covariance (ddof 1) taken about the first particle, which leaves it unchanged and puts an axis on
+    which every particle has one position at 0, where `np.cov` gives it the square of its mean's accumulated
+    rounding."""
+    return np.atleast_2d(np.cov(points - points[0], rowvar=False))
+
+
+def _rounding_variances(points: NDArray[np.floating]) -> NDArray[np.floating]:
+    """Per axis, the floor below which a variance is taken for the positions' rounding: the square of 1e-13 of their
+    magnitude there, about 450 units in the last place."""
+    return (1e-13 * np.abs(np.mean(points, axis=0))) ** 2
 
 
 def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: float | str) -> NDArray[np.floating]:
@@ -480,9 +501,10 @@ def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: f
     n, d = points.shape
     if not kde_sample_has_spread(points):
         raise ValueError(
-            f"A KDE of {n} particle(s) in {d}-D needs a sample with spread in every direction; this one has none "
-            "(its covariance is not positive definite: one point, a lower-dimensional set, or fewer than two "
-            "particles), so it has no kernel (#2556)."
+            f"A KDE of {n} particle(s) in {d}-D needs a sample with spread in every direction; this one has none at "
+            "the conditioning bound `kde_sample_has_spread` states (one point, a line or a plane, fewer than two "
+            "particles, or a spread in some direction below 1e-7 of another in the axes' own units), so it has no "
+            "kernel (#2556)."
         )
     return factor**2 * np.atleast_2d(np.cov(points, rowvar=False))
 
@@ -510,13 +532,12 @@ def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float
         The widths, shape (d,).
     """
     points = _sample(particle_positions)
-    variances = np.diag(np.atleast_2d(np.cov(points, rowvar=False))) if len(points) > 1 else np.full(1, np.nan)
-    if not np.max(variances) > _rounding_variance(points):
+    if len(points) < 2 or not np.any(np.diag(_spread_covariance(points)) > _rounding_variances(points)):
         raise ValueError(
             f"A KDE of {len(points)} particle(s) has no kernel width: the sample has no spread on any axis (one point, "
             "or fewer than two particles) (#2556)."
         )
-    return kde_factor(bandwidth, points) * np.sqrt(variances)
+    return kde_factor(bandwidth, points) * np.sqrt(np.diag(np.atleast_2d(np.cov(points, rowvar=False))))
 
 
 __all__ = [

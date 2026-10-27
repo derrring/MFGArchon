@@ -21,7 +21,8 @@
     - Its n-D density reader refuses by name, for every kernel method, a sample with no spread in some direction: on
       a line or a plane, as particles placed there stay at volatility 0 or under a drift that collapses them, and 2
       to d survivors of an absorbing exit (#2790). The message names `kde_method="cic"`, which needs no kernel and
-      deposits such a sample as before. Such a sample got a wrong density, or scipy's `LinAlgError`: on a line at
+      deposits such a sample as before. Such a sample got a wrong density, or a `RuntimeError` wrapping scipy's
+      `LinAlgError`: on a line at
       x = 0.53 with 0.5, reflection spread it over the domain (mass 0.83), standard and renormalization returned mass
       0, and beta read 0.5 as an absolute width; a step with 2 survivors in 2-D raised, or read the spread of the
       reflection's ghost particles. A sample at one point is deposited on its nearest node, as before.
@@ -29,7 +30,9 @@
     and the solver hands it either; its query took a number as an absolute width, and the solver handed it no rule, so
     the query's own Scott rule took its place. A query at a timestep whose sample is at one point refuses by name: it
     returned NaN for a rule, and read a number as the width.
-  - Called directly, every estimator above refuses by name a sample with no spread in some direction, at the
-    conditioning bound `kde_sample_has_spread` states. Before, some raised scipy's `LinAlgError`, some returned NaN,
-    and `reflection_kde` returned a density from the spread its ghost particles added: for a 1-D point with a number,
-    for a 2-D point with either bandwidth, and on some 2-D lines (on others it raised `LinAlgError`).
+  - Called directly, every estimator above that builds a kernel refuses by name a sample with no spread in some
+    direction, at the conditioning bound `kde_sample_has_spread` states (`FPParticleResult`'s query, which reads only
+    per-axis widths, answers on a line). Before, some raised scipy's `LinAlgError`, some returned NaN, and
+    `reflection_kde` returned a density from the spread its ghost particles added: for a 1-D or 2-D point with a
+    number, and on some 2-D lines (on others it raised `LinAlgError`). On a 2-D point with "scott", scipy raised
+    `LinAlgError` or, at some sample sizes, accepted a covariance of order 1e-30.
