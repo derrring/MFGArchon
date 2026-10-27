@@ -50,6 +50,8 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 
 import numpy as np
 
+from mfgarchon.utils.mfg_logging import get_logger
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -57,6 +59,8 @@ if TYPE_CHECKING:
 
     from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.geometry.base import BaseGeometry
+
+logger = get_logger(__name__)
 
 
 class ProjectionRegistry:
@@ -435,11 +439,20 @@ class GeometryProjector:
         """
         Project particle density to grid using kernel density estimation.
 
-        Leverages existing GPU-accelerated KDE from density_estimation.py.
+        Leverages existing GPU-accelerated KDE from density_estimation.py. On a target whose axes are uniform, a sample
+        whose kernel the grid cannot read is deposited on its nodes instead (`kde_resolves_on_grid`,
+        `deposit_on_nodes`; #2556). The gate needs a lattice, so a target the grid declares non-uniform
+        (`get_grid_spacing` refuses it) has none and reads the KDE as before.
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
         from mfgarchon.geometry.base import CartesianGrid
+        from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
+        from mfgarchon.utils.numerical.particle.interpolation import (
+            KDE_LATTICE_ALIASING_TOL,
+            deposit_on_nodes,
+            kde_resolves_on_grid,
+        )
 
         if backend is None:
             backend = create_backend("numpy")
@@ -455,6 +468,22 @@ class GeometryProjector:
         hjb_points = self.hjb_geometry.get_spatial_grid()  # (N_grid, d)
 
         dimension = particle_positions.shape[1] if particle_positions.ndim > 1 else 1
+
+        try:
+            spacings = self.hjb_geometry.get_grid_spacing()
+        except ValueError:
+            spacings = None
+        if spacings is not None and not kde_resolves_on_grid(particle_positions, bandwidth, spacings):
+            logger.warning(
+                "GeometryProjector: the sample of %d particles had no kernel the grid can read for bandwidth=%r: no "
+                "spread in some direction, or a kernel the grid's lattice aliases by more than %g of its mass "
+                "(#2556). It is deposited on the grid's nodes, by their tents.",
+                len(particle_positions),
+                bandwidth,
+                KDE_LATTICE_ALIASING_TOL,
+            )
+            axes = geometry_grid_axes(self.hjb_geometry)
+            return deposit_on_nodes(particle_positions, axes, self.hjb_geometry.measure_weights())
 
         # The bandwidth, a factor or scipy's rule, goes to the kernel as given: each estimator reads it through the
         # owner (`kde_kernel_covariance`, CONVENTIONS.md § 9; #2556), which refuses an unknown rule by name.

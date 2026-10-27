@@ -81,7 +81,18 @@ class TestFPParticleSolverBasic:
         """Issue #1513: an nD KDE failure must raise RuntimeError (matching the 1D twin
         _estimate_density_from_particles), not silently substitute a histogram estimate. Dimension
         must not decide raise-vs-swallow."""
-        problem = Simple2DMFGProblem()
+        # The reader reads its grid's spacing from the problem (#2556), so the problem is the 2-D grid of the axes below
+        # (Simple2DMFGProblem is a 1-D grid).
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
+            ),
+            T=1.0,
+            Nt=10,
+            volatility=0.1,
+            coupling_coefficient=0.5,
+            components=_default_components_2d(),
+        )
         solver = FPParticleSolver(problem, num_particles=50)
 
         def _boom(*args, **kwargs):
@@ -92,7 +103,7 @@ class TestFPParticleSolverBasic:
         coords = [np.linspace(0.0, 1.0, 11), np.linspace(0.0, 1.0, 11)]
         bounds = [(0.0, 1.0), (0.0, 1.0)]
         with pytest.raises(RuntimeError, match="KDE density estimation failed"):
-            solver._estimate_density_from_particles_nd(particles, coords, bounds)
+            solver._estimate_density_from_particles_nd(particles, coords, bounds, level=0)
 
     def test_output_shape(self):
         """Test that solver outputs density on grid."""

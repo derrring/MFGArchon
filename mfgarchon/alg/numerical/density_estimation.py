@@ -211,7 +211,7 @@ def gaussian_kde_gpu_internal(
     Internal GPU KDE that accepts GPU tensors directly (Phase 2.1).
 
     It keeps the KDE on the device inside the particle evolution loop; the loop takes one step's positions to the
-    host for the kernel's width (`_gpu_kernel_width`, #2556). Used by _solve_fp_system_gpu().
+    host for the kernel's width (`FPParticleSolver._gpu_density`, #2556). Used by _solve_fp_system_gpu().
 
     Key difference from gaussian_kde_gpu():
     - Accepts backend tensors (not numpy arrays)

@@ -410,20 +410,33 @@ def test_a_point_mass_initial_density_still_solves_on_the_default_path():
     assert M[-1].max() < M[0].max()
 
 
+def _tent_deposit(particles, axes):
+    """The tent deposit from its definition, the oracle for the solver's: node (i, j) takes each particle's
+    prod_axis max(0, 1 - |x - node| / h) of its mass 1/N, divided by the node's trapezoid weight (half a cell on a wall,
+    a cell inside, per axis)."""
+    tents = [
+        np.maximum(0.0, 1.0 - np.abs(particles[:, k, None] - a[None, :]) / (a[1] - a[0])) for k, a in enumerate(axes)
+    ]
+    weights = [
+        np.where((np.arange(len(a)) == 0) | (np.arange(len(a)) == len(a) - 1), 0.5, 1.0) * (a[1] - a[0]) for a in axes
+    ]
+    return np.einsum("pi,pj->ij", *tents) / len(particles) / np.outer(*weights)
+
+
 @pytest.mark.parametrize("kde_method", ["reflection", "standard", "renormalization", "beta", "cic"])
-def test_a_sample_on_a_line_is_refused_by_name_and_cic_deposits_it(kde_method):
-    """Particles that stay on the line x = 0.53 (no diffusion) have no kernel: the n-D path refuses them by name for every
-    kernel method, and names kde_method="cic", which needs none and deposits them as it did at the base, split between
-    the nodes 0.5 and 0.6. At the base, with 0.5, reflection spread them over the domain (mass 0.83), and standard and
-    renormalization returned 0; #2819's first correction put them all on the node 0.5."""
+def test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method(kde_method, mfg_caplog):
+    """Particles that stay on the line x = 0.53 (no diffusion) have no kernel, and every kde_method gives their tent
+    deposit on the grid's nodes, split between the nodes 0.5 and 0.6 (#2556). A kernel method records the levels it
+    deposited and the solve logs them once; cic deposits every level and records none. At 654848bc the kernel methods
+    refused this sample by name (C3-1) and cic read a cell-centred deposit at the nodes (mass n/(n-1))."""
+    import logging
+
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-    from mfgarchon.utils.numerical.particle.cic import cic_deposit_nd
 
     particles = np.column_stack([np.full(300, 0.53), np.random.default_rng(8).uniform(size=300)])
     solver = FPParticleSolver(_problem(11, 2, volatility=0.0), num_particles=300, seed=5, kde_method=kde_method)
-
-    def solve():
-        return np.asarray(
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_particle"):
+        M = np.asarray(
             solver.solve_fp_system(
                 M_initial=None,
                 drift_field=lambda t, x, m: np.zeros_like(x),
@@ -431,16 +444,22 @@ def test_a_sample_on_a_line_is_refused_by_name_and_cic_deposits_it(kde_method):
                 show_progress=False,
             )
         )
-
-    if kde_method != "cic":
-        with pytest.raises(ValueError, match=r"no spread in some direction.*kde_method='cic'"):
-            solve()
-        return
-    want = cic_deposit_nd(particles, np.array([[0.0, 1.0], [0.0, 1.0]]), (11, 11), periodic=False)
-    for slice_ in solve()[1:]:
+    axes = [np.linspace(0.0, 1.0, 11)] * 2
+    want = _tent_deposit(particles, axes)
+    w = np.outer(*[np.where((np.arange(11) == 0) | (np.arange(11) == 10), 0.05, 0.1)] * 2)
+    assert np.sum(want * w) == pytest.approx(1.0, abs=1e-12)
+    assert np.sum(want * w * axes[0][:, None]) == pytest.approx(0.53, abs=1e-12)
+    for slice_ in M[1:]:
         np.testing.assert_allclose(slice_, want, rtol=1e-12, atol=1e-12)
         assert slice_[5].sum() > 0
         assert slice_[6].sum() > 0
+    deposited = [r for r in mfg_caplog.messages if "deposited on the grid's nodes" in r]
+    if kde_method == "cic":
+        assert solver.deposited_levels == []
+        assert deposited == []
+    else:
+        assert solver.deposited_levels == list(range(1, len(M)))
+        assert len(deposited) == 1, mfg_caplog.messages
 
 
 @pytest.mark.parametrize("kde_method", ["reflection", "standard", "renormalization"])

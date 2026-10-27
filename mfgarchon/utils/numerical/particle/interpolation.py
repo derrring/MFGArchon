@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+from scipy import special
 from scipy.interpolate import RBFInterpolator, RegularGridInterpolator
 from scipy.stats import gaussian_kde
 
@@ -512,7 +513,216 @@ def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: f
             "particles, or a spread in some direction below about 1e-7 of another in the axes' own units, within the "
             "positions' rounding floor there, or the two together), so it has no kernel (#2556)."
         )
+    return _kernel_covariance(points, factor)
+
+
+def _kernel_covariance(points: NDArray[np.floating], factor: float) -> NDArray[np.floating]:
+    """factor^2 times the sample covariance (ddof 1), as scipy builds it, without the refusal: the one computation
+    `kde_kernel_covariance` and `kde_lattice_aliasing` read."""
     return factor**2 * np.atleast_2d(np.cov(points, rowvar=False))
+
+
+#: The aliasing bound a grid reader's estimate must stay at or under to be read on the grid's nodes (#2556, user ruling
+#: 2026-10-27). A resolved estimate's node sum then misses its mass by at most 10%.
+KDE_LATTICE_ALIASING_TOL = 0.1
+
+# A backstop: past this many terms a sample still undecided is read as unresolved. None of the gate's fuzz reached it;
+# a spread sample under a narrow kernel passes tol within a few shells on its |phi| noise, about N^(-1/2) a term.
+_ALIASING_MAX_TERMS = 20000
+
+
+def kde_lattice_aliasing(
+    particle_positions: NDArray[np.floating],
+    bandwidth: float | str,
+    spacings: NDArray[np.floating] | list[float],
+    tol: float = KDE_LATTICE_ALIASING_TOL,
+) -> float | None:
+    """
+    How far a KDE of ``particle_positions`` can miss its mass on a lattice of ``spacings``, or None if it has no kernel.
+
+    Poisson summation: the estimate's sum over the lattice's nodes, times the cell volume, is 1 + E with
+    E = sum_{m != 0} g(k_m) phi(k_m), k_m = 2 pi m / h on each axis, g the kernel's characteristic function
+    exp(-k^T H k / 2) (H from `kde_kernel_covariance`) and phi the sample's, (1/N) sum_j exp(i k . X_j). E can pass
+    through 0 while the estimate on the nodes is far from the sample (a narrow sample sliding from a node to a
+    midpoint), so the bound B = sum_{m != 0} |g(k_m)| |phi(k_m)|, which cannot cancel, is what is returned.
+
+    It is summed in shells of growing max |m_i|, half of each (the term at -m equals the one at m), and returns once it
+    is decided against ``tol``: the partial sum once it passes ``tol`` (B is larger), or the partial sum plus a bound on
+    the kernel's own tail, the sum of g outside the shells summed (`_kernel_tail_bound`; |phi| <= 1), once that is at
+    or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, but for a sample still undecided
+    after 20000 terms, which is returned as above ``tol`` (a backstop).
+
+    None for a sample with no kernel: fewer than two particles, or one `kde_sample_has_spread` refuses (its sum does
+    not decay along the direction it lacks).
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth, as `kde_factor` reads it.
+    spacings : array-like
+        The lattice's spacing on each axis, shape (d,).
+    tol : float
+        The value the bound is decided against.
+
+    Returns
+    -------
+    float or None
+        The bound, decided against ``tol`` as above, or None.
+    """
+    points = _sample(particle_positions)
+    n, d = points.shape
+    if n < 2 or not kde_sample_has_spread(points):
+        return None
+    h = np.asarray(spacings, dtype=float).reshape(-1)
+    if h.shape != (d,) or not np.all(h > 0):
+        raise ValueError(f"A lattice for a {d}-D sample needs {d} positive spacings; got {spacings!r} (#2556).")
+    H = _kernel_covariance(points, kde_factor(bandwidth, points))
+    a = _tail_rates(H, h)
+    inner = np.ones(d)
+    total = 0.0
+    terms = 0
+    r = 0
+    while True:
+        r += 1
+        k, g = _shell_transform(H, h, d, r)
+        live = g > 1e-300
+        if live.any():
+            total += 2.0 * float(np.sum(g[live] * np.abs(_characteristic(points, k[live]))))
+        terms += 2 * len(g)
+        if total > tol:
+            return total
+        inner += 2.0 * np.exp(-0.5 * a * r**2)
+        tail = _kernel_tail_bound(a, inner, r)
+        if total + tail <= tol:
+            return total + tail
+        if terms >= _ALIASING_MAX_TERMS:
+            return max(total + tail, np.nextafter(tol, np.inf))
+
+
+def kde_resolves_on_grid(
+    particle_positions: NDArray[np.floating],
+    bandwidth: float | str,
+    spacings: NDArray[np.floating] | list[float],
+) -> bool:
+    """Whether a KDE of the sample is read on a lattice of ``spacings``: it has a kernel, and `kde_lattice_aliasing`
+    is at or under `KDE_LATTICE_ALIASING_TOL` (#2556). A grid reader deposits a sample that is not
+    (`deposit_on_nodes`)."""
+    bound = kde_lattice_aliasing(particle_positions, bandwidth, spacings)
+    return bound is not None and bound <= KDE_LATTICE_ALIASING_TOL
+
+
+def _shell(d: int, r: int) -> NDArray[np.integer]:
+    """Half of the shell max |m_i| = r of the integer lattice: one of each pair m, -m (its first nonzero entry > 0)."""
+    span = np.arange(-r, r + 1)
+    m = np.array(np.meshgrid(*([span] * d), indexing="ij")).reshape(d, -1).T
+    m = m[np.abs(m).max(axis=1) == r]
+    first = m[np.arange(len(m)), np.argmax(m != 0, axis=1)]
+    return m[first > 0]
+
+
+def _shell_transform(
+    H: NDArray[np.floating], h: NDArray[np.floating], d: int, r: int
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    """The shell's frequencies k = 2 pi m / h and the kernel's transform there, exp(-k^T H k / 2)."""
+    k = 2.0 * np.pi * _shell(d, r) / h
+    return k, np.exp(-0.5 * np.einsum("ij,jk,ik->i", k, H, k))
+
+
+def _tail_rates(H: NDArray[np.floating], h: NDArray[np.floating]) -> NDArray[np.floating]:
+    """Rates a_i with exp(-k^T H k / 2) <= prod_i exp(-a_i m_i^2 / 2) on the whole lattice, k = 2 pi m / h.
+
+    With K = diag(2 pi / h) H diag(2 pi / h), so that k^T H k = m^T K m, D = diag(K) and R = D^(-1/2) K D^(-1/2) the
+    correlation matrix of K (it is H's): m^T K m = y^T R y with y = D^(1/2) m, and y^T R y >= lambda_min(R) |y|^2 (the
+    Rayleigh quotient), which is lambda_min(R) sum_i K_ii m_i^2. So a_i = lambda_min(R) K_ii, exact for a diagonal H."""
+    K = H * np.outer(2.0 * np.pi / h, 2.0 * np.pi / h)
+    sd = np.sqrt(np.diag(K))
+    return max(float(np.linalg.eigvalsh(K / np.outer(sd, sd))[0]), 0.0) * np.diag(K)
+
+
+def _kernel_tail_bound(a: NDArray[np.floating], inner: NDArray[np.floating], r: int) -> float:
+    """An upper bound on the sum of the kernel's transform over the lattice outside the cube max |m_i| <= r.
+
+    By `_tail_rates` the sum is at most prod_i T_i - prod_i S_i, T_i = sum_{j in Z} exp(-a_i j^2 / 2) and ``inner``
+    S_i its terms with |j| <= r. T_i <= U_i = S_i + sqrt(2 pi / a_i) erfc(r sqrt(a_i / 2)), the terms past r being under
+    the integral from r, and prod U - prod S is summed as sum_i (prod_{j<i} S_j) (U_i - S_i) (prod_{j>i} U_j), which has
+    no cancellation."""
+    excess = np.sqrt(2.0 * np.pi / a) * special.erfc(r * np.sqrt(a / 2.0))
+    upper = inner + excess
+    bound = 0.0
+    for i in range(len(a)):
+        bound += float(np.prod(inner[:i]) * excess[i] * np.prod(upper[i + 1 :]))
+    return bound
+
+
+def _characteristic(points: NDArray[np.floating], k: NDArray[np.floating]) -> NDArray[np.complexfloating]:
+    """The sample's characteristic function at the frequencies k, (1/N) sum_j exp(i k . X_j), in chunks of particles."""
+    acc: NDArray[np.complexfloating] = np.zeros(len(k), dtype=complex)
+    for start in range(0, len(points), 8192):
+        acc += np.exp(1j * (points[start : start + 8192] @ k.T)).sum(axis=0)
+    return acc / len(points)
+
+
+def deposit_on_nodes(
+    particle_positions: NDArray[np.floating],
+    axes: list[NDArray[np.floating]],
+    weights: NDArray[np.floating],
+) -> NDArray[np.floating]:
+    """
+    The sample deposited on a grid's own nodes (#2556).
+
+    Each particle's mass 1/N is shared among the nodes of the cell it lies in by the tent (piecewise-linear hat)
+    functions of the grid's axes, a product over the axes, and each node's share is divided by its quadrature weight.
+    The tents sum to 1 and reproduce linear functions, so the density integrates to 1 on ``weights`` and its first
+    moment is the sample's mean: on the whole box, walls included, and on non-uniform axes. This is the deposit a grid
+    reader uses where a kernel cannot be read on the grid (`kde_resolves_on_grid`).
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d). A position outside the box the axes span is refused by name.
+    axes : list of ndarray
+        The grid's nodes on each axis, strictly increasing, at least two each.
+    weights : ndarray
+        The grid's quadrature weights, shape (len(axes[0]), ..., len(axes[-1])).
+
+    Returns
+    -------
+    ndarray
+        The density at the nodes, shape of ``weights``.
+    """
+    points = _sample(particle_positions)
+    n, d = points.shape
+    if len(axes) != d:
+        raise ValueError(f"A deposit of a {d}-D sample needs {d} axes; got {len(axes)} (#2556).")
+    shape = tuple(len(a) for a in axes)
+    w = np.asarray(weights, dtype=float)
+    if w.shape != shape:
+        raise ValueError(f"The weights' shape {w.shape} is not the grid's {shape} (#2556).")
+    lower = np.empty((n, d), dtype=int)
+    frac = np.empty((n, d))
+    for i, a in enumerate(axes):
+        a = np.asarray(a, dtype=float)
+        if a.ndim != 1 or len(a) < 2 or not np.all(np.diff(a) > 0):
+            raise ValueError(f"Axis {i} of a deposit needs at least two strictly increasing nodes; got {a!r} (#2556).")
+        x = points[:, i]
+        outside = (x < a[0]) | (x > a[-1])
+        if outside.any():
+            raise ValueError(
+                f"{int(outside.sum())} of {n} particle(s) lie outside the grid on axis {i}, [{a[0]}, {a[-1]}], so the "
+                "deposit has no node for them (#2556)."
+            )
+        j = np.minimum(np.searchsorted(a, x, side="right") - 1, len(a) - 2)
+        lower[:, i] = j
+        frac[:, i] = (x - a[j]) / (a[j + 1] - a[j])
+    acc = np.zeros(int(np.prod(shape)))
+    strides = np.array([int(np.prod(shape[i + 1 :])) for i in range(d)])
+    for corner in np.ndindex(*([2] * d)):
+        c = np.array(corner)
+        share = np.prod(np.where(c == 1, frac, 1.0 - frac), axis=1)
+        np.add.at(acc, (lower + c) @ strides, share)
+    return acc.reshape(shape) / (n * w)
 
 
 def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float | str) -> NDArray[np.floating]:
@@ -547,10 +757,14 @@ def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float
 
 
 __all__ = [
+    "KDE_LATTICE_ALIASING_TOL",
+    "deposit_on_nodes",
     "estimate_kde_bandwidth",
     "kde_factor",
     "kde_kernel_covariance",
     "kde_kernel_widths",
+    "kde_lattice_aliasing",
+    "kde_resolves_on_grid",
     "kde_sample_has_spread",
     "interpolate_grid_to_particles",
     "interpolate_particles_to_grid",
