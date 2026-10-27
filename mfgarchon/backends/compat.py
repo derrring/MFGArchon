@@ -179,7 +179,7 @@ def backend_aware_zeros_like(array, backend: BaseBackend | None = None):
         return backend.zeros_like(array)
 
     # Fallback
-    if hasattr(array, "device"):  # PyTorch
+    if type(array).__module__.split(".", maxsplit=1)[0] == "torch":
         import torch
 
         return torch.zeros_like(array)
@@ -205,7 +205,7 @@ def backend_aware_ones_like(array, backend: BaseBackend | None = None):
         return backend.ones_like(array)
 
     # Fallback
-    if hasattr(array, "device"):  # PyTorch
+    if type(array).__module__.split(".", maxsplit=1)[0] == "torch":
         import torch
 
         return torch.ones_like(array)
