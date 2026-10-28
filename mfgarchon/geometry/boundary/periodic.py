@@ -100,7 +100,7 @@ def wrap_positions(
 def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> Any:
     """
     One axis of the wrap: positions taken into [lo, hi) modulo L = hi - lo, on any array namespace with ``%``,
-    ``where``, ``maximum``, ``abs``, ``asarray``, ``nextafter`` and ``finfo`` (NumPy, or torch through a backend's
+    ``where``, ``abs``, ``asarray``, ``nextafter`` and ``finfo`` (NumPy, or torch through a backend's
     ``array_module``). It is the one wrap `wrap_positions` and the 1-D GPU helper both read (#2830).
 
     lo + ((x - lo) % L) leaves [lo, hi) by rounding: it reaches hi when L = fl(hi - lo) rounds above the span, or when
@@ -136,8 +136,11 @@ def _into_half_open(values: Any, lo: float, hi: float, xp: Any) -> Any:
     lo to lo; where the dtype holds lo and hi as one value, to it."""
     low = xp.asarray(lo, dtype=values.dtype, device=values.device)
     high = xp.asarray(hi, dtype=values.dtype, device=values.device)
-    below_high = xp.maximum(xp.nextafter(high, xp.asarray(-xp.inf, dtype=values.dtype, device=values.device)), low)
-    values = xp.where(values >= high, below_high, values)
+    values = xp.where(
+        values >= high, xp.nextafter(high, xp.asarray(-xp.inf, dtype=values.dtype, device=values.device)), values
+    )
+    # after the upper side, so that on a box that is one point in the dtype, where the value below hi is below lo, every
+    # value goes to lo
     return xp.where(values < low, low, values)
 
 

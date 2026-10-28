@@ -242,8 +242,8 @@ def _helper(reader: str):
 @pytest.mark.parametrize("kind", ["periodic", "no_flux"])
 @pytest.mark.parametrize("reader", ["numpy", "torch"])
 def test_the_1d_helpers_fold_and_wrap_as_the_owners_do(reader, kind):
-    """The fallback reads the owners; the GPU one's device copy gives their values, to rounding. An axis with no span is
-    left as it is, as the owners leave it (the GPU wrap returned NaN there)."""
+    """The fallback reads the owners; the GPU one reads their per-axis rules on the device and gives their values, to
+    rounding. An axis with no span is left as it is, as the owners leave it (the GPU wrap returned NaN there)."""
     help_, owner = _helper(reader), wrap_positions if kind == "periodic" else reflect_positions
     given = ENDS_1D.copy()
     np.testing.assert_allclose(
@@ -295,7 +295,23 @@ def _exact(kind, x, lo, hi):
         ("GPU, cpu float32", "periodic", 0.1, 1.1, _just_below(0.1, np.float32, 40), None),
         ("owner", "periodic", 0.0, 1.0, _just_below(0.0, np.float32, 1), _just_below(1.0, np.float32, 1)),
         pytest.param("GPU, mps float32", "no_flux", 0.0, 0.7, np.array([-7.0], dtype=np.float32), None, marks=_MPS),
-        pytest.param("GPU, mps float32", "periodic", 0.0, 0.7, np.array([-3.5], dtype=np.float32), None, marks=_MPS),
+        pytest.param(
+            "GPU, mps float32",
+            "periodic",
+            0.0,
+            0.7,
+            np.array([-3.5], dtype=np.float32),
+            np.zeros(1, np.float32),
+            marks=_MPS,
+        ),
+        (
+            "GPU, cpu float32",
+            "periodic",
+            1e5,
+            1e5 + 3e-3,
+            np.array([1e5, 1e5 + 1.0, 1e5 - 0.5, 1e5 + 7.25], dtype=np.float32),
+            np.full(4, 1e5, dtype=np.float32),
+        ),
     ],
     ids=[
         "fold, GPU float32, lower wall",
@@ -305,6 +321,7 @@ def _exact(kind, x, lo, hi):
         "wrap, owner, float32 array",
         "fold, MPS, lower wall",
         "wrap, MPS, lower wall",
+        "wrap, a box one point in float32",
     ],
 )
 def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expected):
@@ -321,7 +338,9 @@ def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expec
     - the GPU wrap of the float32 positions just below 0.1 on [0.1, 1.1] gave float32(1.1) for 4 of them;
     - the owners' wrap of a float32 array just below 0 on [0, 1], computed in float64 and rounded once, gave 1.0;
     - on MPS, torch's float32 remainder comes back negative: the fold of -7.0 on [0, 0.7] landed below 0 without the
-      fold's lower clip, and the wrap of -3.5 gave -5.96e-8."""
+      fold's lower clip, and the wrap of -3.5 gave -5.96e-8; it is now 0, the ruled lower residue;
+    - [1e5, 1e5 + 3e-3] is one point in float32: every position wraps to it. At 662da442 the wrap took them one
+      float32 spacing below it."""
     if reader == "owner":
         owner = reflect_positions if kind == "no_flux" else wrap_positions
         got = owner(ends[:, None], [(lo, hi)])[:, 0]
@@ -336,7 +355,10 @@ def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expec
     dtype = got.dtype.type
     assert dtype is ends.dtype.type
     assert np.all(got >= dtype(lo)), got
-    assert np.all(got <= dtype(hi) if kind == "no_flux" else got < dtype(hi)), got
+    if kind == "no_flux":
+        assert np.all(got <= dtype(hi)), got
+    else:  # [lo, hi) is empty on a box that is one point in the dtype, and the wrap returns that point
+        assert np.all(got < dtype(hi) if dtype(lo) < dtype(hi) else got == dtype(lo)), got
     eps = float(np.finfo(dtype).eps)
     for x, g in zip(ends, got, strict=True):
         off = abs(float(g) - float(_exact(kind, x, lo, hi)))
@@ -428,7 +450,7 @@ def test_the_deprecated_gpu_helper_is_particle_utils():
 
 
 def test_the_gpu_helper_does_not_write_its_input():
-    """The device copy returns new positions and leaves the tensor it was handed as it was."""
+    """The GPU helper returns new positions and leaves the tensor it was handed as it was."""
     torch = pytest.importorskip("torch")
     backend = _torch_backend()
     for kind in ("periodic", "no_flux"):

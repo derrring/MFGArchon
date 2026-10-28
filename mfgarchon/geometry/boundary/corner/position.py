@@ -71,7 +71,9 @@ def fold_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
                 f"{float(moved.max())}, more than its own rounding (#2830)."
             )
     if dtype is not None and inside.dtype != dtype:
-        inside = xp.clip(xp.asarray(inside, dtype=dtype), lo, hi)
+        # No clip after this rounding: the result is in [lo, hi] in its own dtype, and rounding to ``dtype`` is
+        # monotone, so it is in [dtype(lo), dtype(hi)]
+        inside = xp.asarray(inside, dtype=dtype)
     return inside
 
 
