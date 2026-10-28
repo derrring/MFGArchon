@@ -38,19 +38,25 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-def fold_axis(x: Any, lo: float, hi: float, xp: Any = np) -> Any:
+def fold_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> Any:
     """
     One axis of the fold: positions reflected into [lo, hi], with period 2 (hi - lo), on any array namespace with ``%``,
-    ``where``, ``clip``, ``abs`` and ``finfo`` (NumPy, or torch through a backend's ``array_module``). It is the one fold
-    `reflect_positions` and the 1-D GPU helper both read (#2830).
+    ``where``, ``clip``, ``abs``, ``asarray`` and ``finfo`` (NumPy, or torch through a backend's ``array_module``). It is
+    the one fold `reflect_positions` and the 1-D GPU helper both read (#2830).
 
-    The second half of a period maps back as lo + (period - pos), which cannot land below lo. Rounding can still leave
-    a result past a wall: lo + pos, for pos <= L, lands past hi when L = fl(hi - lo) rounds up, and in float32 that is
-    more than a float32 spacing of a wall near 0. That residue is clipped onto the wall, so the result lies in
-    [dtype(lo), dtype(hi)], and a position the arithmetic left inside keeps its bits. The clip is bounded by a
+    The second half of a period maps back as lo + (period - pos), which cannot land below lo where the remainder is
+    nonnegative. Rounding can still leave a result past a wall: lo + pos, for pos <= L, lands past hi when
+    L = fl(hi - lo) rounds up, and in float32 that is more than a float32 spacing of a wall near 0; and torch's float32
+    remainder on MPS can come back negative, which lands below lo. That residue is clipped onto the wall, so the result
+    lies in [dtype(lo), dtype(hi)], and a position the arithmetic left inside keeps its bits. The clip is bounded by a
     refusal: a position it would move by more than the fold's own rounding, 4 eps (|x - lo| + |lo| + 2 (hi - lo)),
-    raises, since that is a defect of the fold and not rounding.
+    raises, since that is a defect of the fold and not rounding; the |x - lo| term is the remainder's, which rounds at
+    that scale on MPS.
+
+    ``dtype``, when given, is the dtype the result is returned in, as `periodic.wrap_axis` takes it; rounding is
+    monotone, so the closed interval survives it.
     """
+    x = xp.asarray(x)
     span = hi - lo
     period = 2 * span
     pos = (x - lo) % period
@@ -64,6 +70,8 @@ def fold_axis(x: Any, lo: float, hi: float, xp: Any = np) -> Any:
                 f"fold_axis: internal error -- the fold left a position outside [{lo}, {hi}] by "
                 f"{float(moved.max())}, more than its own rounding (#2830)."
             )
+    if dtype is not None and inside.dtype != dtype:
+        inside = xp.clip(xp.asarray(inside, dtype=dtype), lo, hi)
     return inside
 
 
@@ -122,7 +130,7 @@ def reflect_positions(
         Lx = xmax - xmin
 
         if Lx > 1e-14:
-            result[:, d] = fold_axis(result[:, d], xmin, xmax)
+            result[:, d] = fold_axis(result[:, d], xmin, xmax, dtype=result.dtype if result.dtype.kind == "f" else None)
 
     if was_1d:
         return result[0]

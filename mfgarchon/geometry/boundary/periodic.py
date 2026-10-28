@@ -90,41 +90,55 @@ def wrap_positions(
         xmin, xmax = bounds[d, 0], bounds[d, 1]
         Lx = xmax - xmin
         if Lx > 1e-14:
-            result[:, d] = wrap_axis(result[:, d], xmin, xmax)
+            result[:, d] = wrap_axis(result[:, d], xmin, xmax, dtype=result.dtype if result.dtype.kind == "f" else None)
 
     if was_1d:
         return result[0]
     return result
 
 
-def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np) -> Any:
+def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> Any:
     """
     One axis of the wrap: positions taken into [lo, hi) modulo L = hi - lo, on any array namespace with ``%``,
-    ``where``, ``abs``, ``asarray``, ``nextafter`` and ``finfo`` (NumPy, or torch through a backend's
+    ``where``, ``maximum``, ``abs``, ``asarray``, ``nextafter`` and ``finfo`` (NumPy, or torch through a backend's
     ``array_module``). It is the one wrap `wrap_positions` and the 1-D GPU helper both read (#2830).
 
-    lo + ((x - lo) % L) cannot land below lo, but it lands at or past hi when L = fl(hi - lo) rounds above the span,
-    or when the remainder of a position just below lo rounds up to L. Such a result is taken to the largest value below
-    hi in its dtype: the wrap's codomain is half-open, and that is its nearest point, a move of rounding size, where lo
-    would move the coordinate by a whole period. The move is bounded by a refusal, as the fold's is (`corner.fold_axis`):
-    one larger than the wrap's own rounding, 4 eps (|x - lo| + |lo| + L), raises.
+    lo + ((x - lo) % L) leaves [lo, hi) by rounding: it reaches hi when L = fl(hi - lo) rounds above the span, or when
+    the remainder of a position just below lo rounds up to L; and it lands below lo where the remainder comes back
+    negative, as torch's float32 remainder does on MPS. A result at or past hi is taken to the largest value below hi,
+    and one below lo to lo, in its dtype: the nearest points of the half-open interval to the result computed, either
+    a move of rounding size on the circle. On a box that is one point in the dtype, every position goes to that point.
+    The move is bounded by a refusal, as the fold's is (`corner.fold_axis`): one larger than the wrap's own rounding,
+    4 eps (|x - lo| + |lo| + L), raises; the |x - lo| term is the remainder's, which rounds at that scale on MPS.
+
+    ``dtype``, when given, is the dtype the result is returned in: an owner that computes a float32 array in float64
+    and rounds once (C6-3) passes the array's, and the half-open interval is kept after that rounding too.
     """
+    x = xp.asarray(x)
     span = hi - lo
     wrapped = lo + ((x - lo) % span)
-    below_hi = xp.nextafter(
-        xp.asarray(hi, dtype=wrapped.dtype, device=wrapped.device),
-        xp.asarray(-xp.inf, dtype=wrapped.dtype, device=wrapped.device),
-    )
-    inside = xp.where(wrapped >= hi, below_hi, wrapped)
+    inside = _into_half_open(wrapped, lo, hi, xp)
     moved = xp.abs(wrapped - inside)
     if bool((moved > 0).any()):
         rounding = 4 * float(xp.finfo(wrapped.dtype).eps) * (xp.abs(x - lo) + abs(lo) + span)
         if bool((moved > rounding).any()):
             raise RuntimeError(
-                f"wrap_axis: internal error -- the wrap left a position at or past {hi} by {float(moved.max())}, more "
-                "than its own rounding (#2830)."
+                f"wrap_axis: internal error -- the wrap left a position outside [{lo}, {hi}) by "
+                f"{float(moved.max())}, more than its own rounding (#2830)."
             )
+    if dtype is not None and inside.dtype != dtype:
+        inside = _into_half_open(xp.asarray(inside, dtype=dtype), lo, hi, xp)
     return inside
+
+
+def _into_half_open(values: Any, lo: float, hi: float, xp: Any) -> Any:
+    """``values`` taken into [lo, hi) as their dtype holds the bounds: at or past hi to the largest value below hi, below
+    lo to lo; where the dtype holds lo and hi as one value, to it."""
+    low = xp.asarray(lo, dtype=values.dtype, device=values.device)
+    high = xp.asarray(hi, dtype=values.dtype, device=values.device)
+    below_high = xp.maximum(xp.nextafter(high, xp.asarray(-xp.inf, dtype=values.dtype, device=values.device)), low)
+    values = xp.where(values >= high, below_high, values)
+    return xp.where(values < low, low, values)
 
 
 def wrap_displacement(
@@ -387,6 +401,7 @@ def create_reflection_ghost_points(
 
 __all__ = [
     "wrap_positions",
+    "wrap_axis",
     "wrap_displacement",
     "create_periodic_ghost_points",
     "create_reflection_ghost_points",
