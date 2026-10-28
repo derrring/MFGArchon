@@ -317,13 +317,18 @@ def interpolate_particles_to_grid(
         if bandwidth is None:
             bandwidth = estimate_kde_bandwidth(particle_positions)
 
-        # On the lattice this function lays out itself (no ``grid_axes``), a sample whose kernel the lattice cannot
-        # read is deposited on its nodes instead (#2556): the sample's restriction to the box, as the kernel estimate
-        # is, with the axes' own quadrature weights. Caller's axes declare no lattice, so they keep the kernel (#2827).
-        if grid_axes is None:
-            axes = [x] if ndim == 1 else [x, y] if ndim == 2 else [x, y, z]
-            spacings = [float(a[1] - a[0]) for a in axes]
-            if not kde_resolves_on_grid(particle_positions, bandwidth, spacings):
+        # A sample whose kernel the grid's lattice cannot read is deposited on its nodes instead (#2556): the sample's
+        # restriction to the box, as the kernel estimate is, with the axes' own quadrature weights. The gate needs a
+        # lattice, so axes that are not one (a caller's non-uniform axes, an axis of one node, bounds with no span)
+        # keep the kernel estimate (#2827). A callable bandwidth is read through scipy's own estimate, which raises
+        # for a sample with no kernel.
+        axes = [x] if ndim == 1 else [x, y] if ndim == 2 else [x, y, z]
+        spacings = _lattice_spacings(axes)
+        if spacings is not None:
+            factor = (
+                gaussian_kde(particle_positions.T, bw_method=bandwidth).factor if callable(bandwidth) else bandwidth
+            )
+            if not kde_resolves_on_grid(particle_positions, factor, spacings):
                 from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 
                 weights = quadrature_weights_nd(tuple(axes))
@@ -356,6 +361,21 @@ def interpolate_particles_to_grid(
         raise ValueError(f"Unknown method: {method}. Use 'rbf', 'kde', or 'nearest'.")
 
     return grid_values.reshape(grid_shape)
+
+
+def _lattice_spacings(axes: Sequence[NDArray[np.floating]]) -> list[float] | None:
+    """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read: each axis of at least two
+    nodes whose steps all equal its spacing to within 1e-9 of it. None otherwise."""
+    spacings = []
+    for axis in axes:
+        a = np.asarray(axis, dtype=float)
+        if a.ndim != 1 or len(a) < 2:
+            return None
+        h = float(a[-1] - a[0]) / (len(a) - 1)
+        if not h > 0 or float(np.max(np.abs(np.diff(a) - h))) > 1e-9 * h:
+            return None
+        spacings.append(h)
+    return spacings
 
 
 def estimate_kde_bandwidth(
@@ -559,8 +579,8 @@ KDE_LATTICE_ALIASING_TOL = 0.1
 # B's terms outside the ellipsoid it is summed over sum to at most this (`_ellipsoid_radius`), which is what the two
 # exits allow for beyond the points summed.
 _OUTSIDE_ELLIPSOID = 1e-13
-# A backstop on the lattice points enumerated: an ellipsoid holding more, after the first, small one has not decided
-# the sample, is read as unresolved. No sample of the gate's fuzz reached it.
+# A backstop on the lattice points enumerated, per level of the enumeration (`_half_lattice_in_ellipsoid`): an
+# ellipsoid past it, once the first, small one has not decided the sample, is read as unresolved.
 _ALIASING_MAX_POINTS = 2_000_000
 # Points are summed in batches of 1, 2, 4, ... up to this many, in order of decreasing kernel transform.
 _ALIASING_BATCH = 256
@@ -588,10 +608,11 @@ def kde_lattice_aliasing(
     whose outside sums to under 1e-13 (`_ellipsoid_radius`), one of each pair m, -m (the two terms are equal), in order
     of decreasing g. It returns once it is decided against ``tol``: the partial sum once it passes ``tol`` (B is larger),
     or the partial sum plus the kernel's own sum over the points not yet summed and the outside (|phi| <= 1), once that
-    is at or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, to within 1e-13. The points
-    with m^T K m <= 16 are summed first, for the exit past tol alone, so that a sample past it is decided before a large
-    ellipsoid is enumerated. A sample those leave undecided whose ellipsoid holds more than 2e6 points is returned as
-    infinity: read as unresolved (a backstop).
+    is at or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, to within 1e-13 and the
+    rounding of the sums. The points with m^T K m <= 16 are summed first, for the exit past tol alone, so that a sample
+    past it is decided before a large ellipsoid is enumerated. A sample those leave undecided whose ellipsoid
+    `_half_lattice_in_ellipsoid` does not enumerate (more than 4e6 points on a level of the enumeration, or K not
+    positive definite in floating point) is returned as infinity: read as unresolved (a backstop).
 
     None for a sample with no kernel: fewer than two particles, or one `kde_sample_has_spread` refuses (its sum does
     not decay along the direction it lacks).
@@ -626,18 +647,17 @@ def kde_lattice_aliasing(
     H = _kernel_covariance(points, factor)
     K = H * np.outer(2.0 * np.pi / h, 2.0 * np.pi / h)
     c = _ellipsoid_radius(K)
-    if c > _FIRST_RADIUS:
-        # The points whose transform is at least exp(-8) first: a sample past tol is decided there, before the whole
-        # ellipsoid is enumerated (a narrow kernel's holds millions of points). Their outside is not bounded tightly,
-        # so only the exit past tol is taken from them.
-        first = _half_lattice_in_ellipsoid(K, _FIRST_RADIUS)
-        if first is not None:
-            value, decided = _sum_in_order(points, K, h, first, tol, outside=None)
-            if decided:
-                return value
+    # The points whose transform is at least exp(-8) first (c is at least 4 ln(1e13), past 16): a sample past tol is
+    # decided there, before the whole ellipsoid is enumerated (a narrow kernel's holds millions of points). Their
+    # outside is not bounded tightly, so only the exit past tol is taken from them.
+    first = _half_lattice_in_ellipsoid(K, _FIRST_RADIUS)
+    if first is not None:
+        value, decided = _sum_in_order(points, K, h, first, tol, outside=None)
+        if decided:
+            return value
     m = _half_lattice_in_ellipsoid(K, c)
     if m is None:
-        return float("inf")  # the backstop: more points than `_ALIASING_MAX_POINTS`, read as unresolved
+        return float("inf")  # the backstop: the ellipsoid could not be enumerated, read as unresolved
     value, decided = _sum_in_order(points, K, h, m, tol, outside=_OUTSIDE_ELLIPSOID)
     return value if decided else value + _OUTSIDE_ELLIPSOID
 
@@ -709,8 +729,10 @@ def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
 
 
 def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.integer] | None:
-    """The lattice points m != 0 with m^T K m <= c, one of each pair m, -m (its first nonzero entry > 0), or None when
-    there are more than `_ALIASING_MAX_POINTS` (or c is infinite).
+    """The lattice points m != 0 with m^T K m <= c, one of each pair m, -m (its first nonzero entry > 0); or None when
+    a level of the enumeration below holds more than 2 `_ALIASING_MAX_POINTS` + 1 points (so whenever the ellipsoid
+    does, and sometimes when only its shadow on the coordinates enumerated so far does), when a coordinate passes 2^62,
+    when K is not positive definite in floating point, or when c is infinite.
 
     Enumerated coordinate by coordinate from the last (Fincke-Pohst): with K = U^T U, U upper triangular,
     m^T K m = sum_i (U_ii m_i + sum_{j>i} U_ij m_j)^2, so once m_{i+1}, ..., m_{d-1} are fixed the remaining budget bounds
@@ -718,18 +740,26 @@ def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.
     if not np.isfinite(c):
         return None
     d = len(K)
-    U = np.linalg.cholesky(K).T
+    try:
+        U = np.linalg.cholesky(K).T
+    except np.linalg.LinAlgError:
+        return None  # K is not positive definite in floating point (a kernel width underflowed)
     ms = np.zeros((1, 0), dtype=np.int64)
     budget = np.array([c * (1.0 + 1e-12)])
     for i in range(d - 1, -1, -1):
         shift = ms.astype(float) @ U[i, i + 1 :]
         half = np.sqrt(np.maximum(budget, 0.0)) / U[i, i]
-        lo = np.ceil(-shift / U[i, i] - half).astype(np.int64)
-        hi = np.floor(-shift / U[i, i] + half).astype(np.int64)
-        counts = np.maximum(hi - lo + 1, 0)
-        count = int(counts.sum())
-        if count > 2 * _ALIASING_MAX_POINTS + 1:
+        # The interval ends and counts in float first: past 2^63 an int64 cast is undefined and the counts wrap, which
+        # would return an empty ellipsoid, read as resolved, for a kernel narrower than about 1e-19 cells.
+        lo = np.ceil(-shift / U[i, i] - half)
+        hi = np.floor(-shift / U[i, i] + half)
+        counts = np.maximum(hi - lo + 1, 0.0)
+        count = float(counts.sum())
+        live = counts > 0
+        if not count <= 2 * _ALIASING_MAX_POINTS + 1 or np.any(np.maximum(-lo[live], hi[live]) >= 2.0**62):
             return None
+        lo, counts = lo.astype(np.int64), counts.astype(np.int64)
+        count = int(count)
         parent = np.repeat(np.arange(len(ms)), counts)
         mi = lo[parent] + (np.arange(count) - np.repeat(np.cumsum(counts) - counts, counts))
         budget = budget[parent] - (U[i, i] * mi + shift[parent]) ** 2

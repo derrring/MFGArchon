@@ -57,8 +57,9 @@ class KDENormalization(StrEnum):
     reintroduced at every reconstruction (#2181), always. This chooses only whether the
     reconstruction's per-step drift is ALSO corrected:
 
-    - ``NONE`` -- multiply every slice by one factor, calibrated on the first. The reconstruction's
-      own drift stays visible. **The default.**
+    - ``NONE`` -- multiply every kernel slice by one factor, calibrated on the solve's first kernel
+      slice. The reconstruction's own drift stays visible. A deposited slice (#2556) has no drift and
+      is pinned, as under ``ALL``. **The default.**
     - ``ALL`` -- pin every slice to the caller's mass times the surviving fraction N_t/N_0 (#2519).
       Conservation then holds BY FIAT on a closed domain.
 
@@ -1566,12 +1567,13 @@ class FPParticleSolver(BaseFPSolver):
 
         A particle method carries no mass: sampling keeps the density's SHAPE, positions have no
         scale, and the reconstruction returns whatever constant its kernel happens to conserve. Two
-        modes of putting it back, and `kde_normalization` chooses per slice:
+        modes of putting it back: `kde_normalization` chooses for a kernel slice, and a deposited slice
+        (``deposited``, #2556) is always pinned, since a deposit has no drift to keep:
 
         - **pinned** -- divide by this slice's own mass and multiply by the target, so the slice
           carries the target exactly and the reconstruction's drift is corrected;
-        - **carried** -- multiply by ONE factor, calibrated on the first slice of this solve and
-          reused, so the reconstruction's drift stays visible at the caller's scale.
+        - **carried** -- multiply by ONE factor, calibrated on the first kernel slice of this solve
+          and reused, so the reconstruction's drift stays visible at the caller's scale.
 
         WHY BOTH, AND WHY NOT ONE OF THEM EVERYWHERE. Pinning every slice erases the drift, which is
         information about the reconstruction and the point of `kde_normalization=NONE`. Carrying
@@ -1597,7 +1599,7 @@ class FPParticleSolver(BaseFPSolver):
         The reconstruction integrates to about 1 whatever particle count built it, so an absorbing
         wall that removed 92% of the particles returned a density of mass 1.07. Each particle carries
         mass/N_0; the slice's mass is the survivors' share. N_0 is the count behind the first slice of
-        the solve, calibrated with the mass factor. A row with any NaN coordinate is absorbed (the
+        the solve, deposited or not. A row with any NaN coordinate is absorbed (the
         `preserve_indices` representation)."""
         if particles is None:
             return density

@@ -447,11 +447,12 @@ class GeometryProjector:
         `deposit_on_nodes`; #2556). The deposit is the sample's restriction to the target box, as the kernel estimate
         is: a particle outside the box is left out and each particle kept carries 1/N of the whole sample; the count
         left out and their share of the mass are logged and recorded (`particles_outside_last_deposit`). The gate needs
-        a lattice, so a target the grid declares non-uniform (`get_grid_spacing` refuses it) has none and reads the KDE
-        as before (#2827).
+        a lattice, so a target the grid declares non-uniform (`get_grid_spacing` refuses it), or a CartesianGrid that is
+        not a TensorProductGrid, has none and reads the KDE as before (#2827).
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
+        from mfgarchon.geometry.base import CartesianGrid
         from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, geometry_grid_axes
         from mfgarchon.utils.numerical.particle.interpolation import (
             KDE_LATTICE_ALIASING_TOL,
@@ -462,10 +463,8 @@ class GeometryProjector:
         if backend is None:
             backend = create_backend("numpy")
 
-        # TensorProductGrid, CartesianGrid's one subclass, is the geometry that owns `measure_weights`, which the deposit
-        # reads.
-        if not isinstance(self.hjb_geometry, TensorProductGrid):
-            raise ValueError("Target geometry must be a TensorProductGrid for KDE projection")
+        if not isinstance(self.hjb_geometry, CartesianGrid):
+            raise ValueError("Target geometry must be CartesianGrid for KDE projection")
 
         # Get particle positions
         particle_positions = self.fp_geometry.get_spatial_grid()  # (N_particles, d)
@@ -476,10 +475,14 @@ class GeometryProjector:
 
         dimension = particle_positions.shape[1] if particle_positions.ndim > 1 else 1
 
-        try:
-            spacings = self.hjb_geometry.get_grid_spacing()
-        except ValueError:
-            spacings = None
+        # The gate needs a lattice and the deposit the grid's `measure_weights`: TensorProductGrid owns both, on axes it
+        # declares uniform. Any other target reads the KDE as before (#2827).
+        spacings = None
+        if isinstance(self.hjb_geometry, TensorProductGrid):
+            try:
+                spacings = self.hjb_geometry.get_grid_spacing()
+            except ValueError:
+                spacings = None
         self.particles_outside_last_deposit = None
         if spacings is not None and not kde_resolves_on_grid(particle_positions, bandwidth, spacings):
             weights = self.hjb_geometry.measure_weights()
