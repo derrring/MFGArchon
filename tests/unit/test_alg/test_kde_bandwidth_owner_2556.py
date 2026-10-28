@@ -798,19 +798,20 @@ _COLLAPSED = 1e-20 * np.random.default_rng(2).standard_normal((500, 1))
 
 @pytest.mark.parametrize(
     ("sample", "bandwidth"),
-    [(_THINNER, 0.08), (_PRESSED, "scott"), (_COLLAPSED, "scott"), (_WIDE, 1e-170)],
+    [(_THINNER, 0.08), (_PRESSED, "scott"), (_COLLAPSED, "scott"), (_WIDE, 1e-170), (_OBLIQUE, 1e-200)],
     ids=[
         "first ellipsoid past the budget",
         "a crowd pressed onto the wall at 0",
         "a crowd collapsed at 0",
         "factor 1e-170",
+        "3-D, factor 1e-200",
     ],
 )
 def test_a_kernel_the_enumeration_cannot_hold_meets_the_backstop(sample, bandwidth):
     """Where the lattice points cannot be enumerated, the gate returns the backstop's infinity, the deposit's side, and
     B from its definition is past 10%: at factor 0.08 even _THINNER's points with m^T K m <= 16 are about 3.3e6, past
     the budget; a kernel about 1e-20 cells wide has an ellipsoid whose extent passes the int64 range; and a factor of
-    1e-170 underflows K to a matrix that is not positive definite."""
+    1e-170 or below underflows K to a matrix that is not positive definite, or to 0."""
     h = [0.1] * sample.shape[1]
     assert kde_lattice_aliasing(sample, bandwidth, h) == np.inf
     assert not kde_resolves_on_grid(sample, bandwidth, h)

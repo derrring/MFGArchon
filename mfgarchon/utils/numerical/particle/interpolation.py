@@ -720,7 +720,10 @@ def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
     3. sum_{j in Z} exp(-a j^2 / 4) <= 1 + sqrt(4 pi / a): the terms j >= 1 of the decreasing exp(-a x^2 / 4) sum to at
        most its integral from 0, sqrt(pi / a), and the terms j <= -1 likewise.
 
-    c is where exp(-c / 4) prod_i (1 + sqrt(4 pi / a_i)) is the bound."""
+    c is where exp(-c / 4) prod_i (1 + sqrt(4 pi / a_i)) is the bound. Infinite where K is not finite or a diagonal
+    entry is not positive (a factor of 1e-170 underflows K to 0, and its correlation matrix would be 0 / 0)."""
+    if not np.all(np.isfinite(K)) or not np.all(np.diag(K) > 0):
+        return float("inf")
     sd = np.sqrt(np.diag(K))
     a = float(np.linalg.eigvalsh(K / np.outer(sd, sd))[0]) * np.diag(K)
     if not np.all(a > 0):
