@@ -770,6 +770,18 @@ def test_a_kernel_too_narrow_for_the_point_budget_is_decided_past_tol_before_it(
     assert _RULED_TOL < value < np.inf
 
 
+def test_a_kernel_whose_first_ellipsoid_passes_the_point_budget_meets_the_backstop():
+    """A 3-D sample of sd 0.04 thin to 0.002 cells along _V: at factor 0.08 even the points with m^T K m <= 16 are
+    about 3.3e6, past the budget, so neither stage is enumerated and the gate returns the backstop's infinity, the
+    deposit's side. B from its definition is past 10% there."""
+    sample = np.random.default_rng(1).multivariate_normal(
+        np.full(3, 0.5), 0.04**2 * (np.eye(3) - (1 - 0.005**2) * np.outer(_V, _V)), 3000
+    )
+    assert kde_lattice_aliasing(sample, 0.08, [0.1, 0.1, 0.1]) == np.inf
+    assert not kde_resolves_on_grid(sample, 0.08, [0.1, 0.1, 0.1])
+    assert _poisson_bound(sample, 0.08, [0.1, 0.1, 0.1], stop_above=_RULED_TOL) > _RULED_TOL
+
+
 def _trapezoid(axis):
     w = np.empty_like(axis)
     w[1:-1] = (axis[2:] - axis[:-2]) / 2
