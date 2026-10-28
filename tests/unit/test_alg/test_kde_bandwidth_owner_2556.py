@@ -875,8 +875,11 @@ def test_the_deposit_is_the_tents_of_a_graded_grid():
 
 def test_the_projector_deposits_a_sample_its_grid_cannot_read():
     """The particle-to-grid projector on a uniform grid: the narrow sample is its tent deposit, mass 1 on the grid's
-    weights, where the KDE at the nodes had mass 0; the wide one is still scipy's KDE at the nodes."""
+    weights, where the KDE at the nodes had mass 0; the wide one is still scipy's KDE at the nodes. A CartesianGrid
+    that is not a TensorProductGrid has no lattice the gate reads, so the narrow sample is scipy's KDE there (#2827),
+    as before #2556; 52ccefad refused that target."""
     from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.base import CartesianGrid
     from mfgarchon.geometry.boundary import no_flux_bc
     from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
     from mfgarchon.operators.interpolation.projection import GeometryProjector
@@ -901,6 +904,19 @@ def test_the_projector_deposits_a_sample_its_grid_cannot_read():
                 11, 11
             )
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
+
+    # the library's one CartesianGrid is the TensorProductGrid, so the other kind delegates to `grid`
+    members = {"__init__": lambda self: None, "__getattr__": lambda self, name: getattr(grid, name)}
+    for name in CartesianGrid.__abstractmethods__:
+        if isinstance(getattr(TensorProductGrid, name), property):
+            members[name] = property(lambda self, name=name: getattr(grid, name))
+        else:
+            members[name] = lambda self, *args, name=name, **kwargs: getattr(grid, name)(*args, **kwargs)
+    other = type("DelegatingGrid", (CartesianGrid,), members)()
+    projector = GeometryProjector(other, PointCloudGeometry(_NARROW), projection_method="kde")
+    got = np.asarray(projector.project_fp_to_hjb(np.ones(len(_NARROW)), bandwidth="scott"))
+    want = gaussian_kde(_NARROW.T)(np.array(np.meshgrid(axis, axis, indexing="ij")).reshape(2, -1)).reshape(11, 11)
+    np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
 
 
 _AXIS = np.linspace(0.0, 1.0, 11)
