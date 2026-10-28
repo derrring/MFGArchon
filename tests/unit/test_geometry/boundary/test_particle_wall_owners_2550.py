@@ -20,11 +20,13 @@ owner at the edges of its band, `MeshfreeApplicator`'s absorbing mode on a box a
 of a non-finite position.
 
 **C6-2, the 1-D helpers** (`utils/particle_utils`). The NumPy fallback folds and wraps through the owners, and the GPU
-one, the particle solver's 1-D device path, is a device copy pinned against them here, at a nonzero lower bound whose
-span rounds, several spans past and on a degenerate span. Both refuse "dirichlet" (a function that returns positions
-cannot remove a particle; it clamped) and a non-finite position. The deprecated pair in `utils/numerical/particle/
-boundary.py` is that pair, and the export `geometry.boundary.wrap_positions` is the periodic owner, with the removed
-corner shim's values on its signature.
+one, the particle solver's 1-D device path, is pinned against them here, at a nonzero lower bound whose span rounds,
+several spans past and on a degenerate span. Both call the owners' per-axis fold and wrap, which keep a result on the
+box where rounding took it off: at either wall, for a float32 array given to the owners, and on the device in float32,
+on the CPU and on MPS (#2830; CI has no MPS). Both refuse "dirichlet" (a function that returns positions cannot remove
+a particle; it clamped) and a non-finite position. The deprecated pair in `utils/numerical/particle/boundary.py` is
+that pair, and the export `geometry.boundary.wrap_positions` is the periodic owner, with the removed corner shim's
+values on its signature.
 
 **C6-3, the owners' other consumers.** `MeshfreeApplicator`'s reflecting and periodic modes, and `Hyperrectangle`'s
 and `TensorProductGrid`'s ``wrap_coordinates`` (the grid's reads the periodic owner now, where it had its own
@@ -57,8 +59,14 @@ from mfgarchon.geometry.boundary import (
     periodic_bc,
 )
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
-from mfgarchon.geometry.boundary.corner import absorb_at_walls, absorb_positions, reflect_positions, walls_reached
-from mfgarchon.geometry.boundary.periodic import wrap_positions
+from mfgarchon.geometry.boundary.corner import (
+    absorb_at_walls,
+    absorb_positions,
+    fold_axis,
+    reflect_positions,
+    walls_reached,
+)
+from mfgarchon.geometry.boundary.periodic import wrap_axis, wrap_positions
 from mfgarchon.geometry.implicit import Hyperrectangle, Hypersphere
 from mfgarchon.utils.numerical.particle import boundary as deprecated_pair
 from mfgarchon.utils.numerical.particle.sampling import sample_from_scattered_density
@@ -240,8 +248,8 @@ def _helper(reader: str):
 @pytest.mark.parametrize("kind", ["periodic", "no_flux"])
 @pytest.mark.parametrize("reader", ["numpy", "torch"])
 def test_the_1d_helpers_fold_and_wrap_as_the_owners_do(reader, kind):
-    """The fallback reads the owners; the GPU one's device copy gives their values, to rounding. An axis with no span is
-    left as it is, as the owners leave it (the GPU wrap returned NaN there)."""
+    """The fallback reads the owners; the GPU one reads their per-axis rules on the device and gives their values, to
+    rounding. An axis with no span is left as it is, as the owners leave it (the GPU wrap returned NaN there)."""
     help_, owner = _helper(reader), wrap_positions if kind == "periodic" else reflect_positions
     given = ENDS_1D.copy()
     np.testing.assert_allclose(
@@ -249,6 +257,146 @@ def test_the_1d_helpers_fold_and_wrap_as_the_owners_do(reader, kind):
     )
     np.testing.assert_array_equal(given, ENDS_1D)
     np.testing.assert_array_equal(help_(np.array([2.0, 2.5]), 2.0, 2.0, kind), [2.0, 2.5])
+
+
+def _just_below(value, dtype, count):
+    """The ``count`` values just below ``value`` as ``dtype`` holds it."""
+    out = [dtype(value)]
+    for _ in range(count):
+        out.append(np.nextafter(out[-1], dtype(-np.inf)))
+    return np.array(out[1:], dtype=dtype)
+
+
+def _has_mps() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    return bool(torch.backends.mps.is_available())
+
+
+_MPS = pytest.mark.skipif(
+    not _has_mps(), reason="no MPS device: CI has none, so these run in the local gate on an Apple GPU"
+)
+
+
+def _exact(kind, x, lo, hi):
+    """The rule's value, in rationals on the position as its dtype holds it and the bounds as given: the fold
+    r = (x - lo) mod 2L, lo + r for r <= L, else lo + 2L - r; the wrap lo + (x - lo) mod L."""
+    from fractions import Fraction
+
+    X, LO, L = Fraction(float(x)), Fraction(lo), Fraction(hi) - Fraction(lo)
+    if kind == "periodic":
+        return LO + (X - LO) % L
+    r = (X - LO) % (2 * L)
+    return LO + r if r <= L else LO + 2 * L - r
+
+
+@pytest.mark.parametrize(
+    ("reader", "kind", "lo", "hi", "ends", "expected"),
+    [
+        ("GPU, cpu float32", "no_flux", 0.1, 1.1, np.append(_just_below(0.1, np.float32, 40), np.float32(1.4)), None),
+        ("owner", "no_flux", -0.3, 0.1, np.array([0.1]), np.array([0.1])),
+        ("owner", "periodic", -0.9, 0.2, _just_below(-0.9, np.float64, 1), _just_below(0.2, np.float64, 1)),
+        ("GPU, cpu float32", "periodic", 0.1, 1.1, _just_below(0.1, np.float32, 40), None),
+        ("owner", "periodic", 0.0, 1.0, _just_below(0.0, np.float32, 1), _just_below(1.0, np.float32, 1)),
+        pytest.param("GPU, mps float32", "no_flux", 0.0, 0.7, np.array([-7.0], dtype=np.float32), None, marks=_MPS),
+        pytest.param(
+            "GPU, mps float32",
+            "periodic",
+            0.0,
+            0.7,
+            np.array([-3.5], dtype=np.float32),
+            np.zeros(1, np.float32),
+            marks=_MPS,
+        ),
+        (
+            "GPU, cpu float32",
+            "periodic",
+            1e5,
+            1e5 + 3e-3,
+            np.array([1e5, 1e5 + 1.0, 1e5 - 0.5, 1e5 + 7.25], dtype=np.float32),
+            np.full(4, 1e5, dtype=np.float32),
+        ),
+        ("fold_axis to float64", "no_flux", 0.1, 1.1, np.array([1.1, 0.05, 0.7], dtype=np.float32), None),
+        ("fold_axis to float32, float64 bounds", "no_flux", 0.1, 1.1, np.array([1.1, 0.05], dtype=np.float32), None),
+        ("wrap_axis to float64", "periodic", 0.1, 1.1, np.array([1.1, 0.05, 0.7], dtype=np.float32), None),
+        ("fold_axis to float16", "no_flux", 0.0, 1.0014648428186774, np.array([1.00146484375], dtype=np.float32), None),
+    ],
+    ids=[
+        "fold, GPU float32, lower wall",
+        "fold, owner, upper wall",
+        "wrap, owner, upper wall",
+        "wrap, GPU float32",
+        "wrap, owner, float32 array",
+        "fold, MPS, lower wall",
+        "wrap, MPS, lower wall",
+        "wrap, a box one point in float32",
+        "fold_axis, a wider dtype",
+        "fold_axis, a narrower dtype",
+        "wrap_axis, a wider dtype",
+        "fold_axis, a narrower dtype that rounds a wall twice",
+    ],
+)
+def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expected):
+    """The fold lands in [lo, hi] and the wrap in [lo, hi), as the result's dtype holds them, at the rule's value to
+    within its rounding (the wrap's on the circle, where lo and hi are one point) (#2830).
+
+    The first eight cases are inputs where rounding took main's or a review's arithmetic off the box:
+    - the GPU fold of the float32 positions just below 0.1 on [0.1, 1.1] landed 9.5e-8 below 0.1, past the one float32
+      spacing within which a reader takes a position to be on the wall (1.4 there, clear of the walls, folds to 0.8,
+      which a clamp standing for the fold would not give);
+    - the owner's fold of 0.1 on [-0.3, 0.1] gave 0.10000000000000003, since fl(0.1 + 0.3) rounds above the span; it
+      is now the wall;
+    - the owner's wrap of the float64 just below -0.9 on [-0.9, 0.2] gave 0.20000000000000007; it is now the largest
+      value below 0.2, the ruled residue;
+    - the GPU wrap of the float32 positions just below 0.1 on [0.1, 1.1] gave float32(1.1) for 4 of them;
+    - the owners' wrap of a float32 array just below 0 on [0, 1], computed in float64 and rounded once, gave 1.0;
+    - on MPS, torch's float32 remainder comes back negative: the fold of -7.0 on [0, 0.7] landed below 0 without the
+      fold's lower clip, and the wrap of -3.5 gave -5.96e-8; it is now 0, the ruled lower residue;
+    - [1e5, 1e5 + 3e-3] is one point in float32: every position wraps to it. At 662da442 the wrap took them one
+      float32 spacing below it.
+
+    The last four call the per-axis rules with a ``dtype`` and pin what that argument promises:
+    - a wider dtype is computed in: computed in float32 and widened, the fold kept float32(1.1), past 1.1, and the
+      wrap's value carried float32's rounding;
+    - a narrower dtype is returned, here float32 under NumPy float64 walls, where float64 had come back;
+    - a narrower dtype is clipped onto its own walls: narrowed from float32 to float16, a fold result at float32(hi),
+      a float16 tie that hi does not round to, landed one float16 step past float16(hi)."""
+    want_dtype = ends.dtype.type
+    if reader == "owner":
+        owner = reflect_positions if kind == "no_flux" else wrap_positions
+        got = owner(ends[:, None], [(lo, hi)])[:, 0]
+    elif reader.startswith(("fold_axis", "wrap_axis")):
+        rule = fold_axis if reader.startswith("fold_axis") else wrap_axis
+        want_dtype = {"float64": np.float64, "float32": np.float32, "float16": np.float16}[
+            reader.split(",")[0].split()[-1]
+        ]
+        bounds = (np.float64(lo), np.float64(hi)) if "float64 bounds" in reader else (lo, hi)
+        got = rule(ends, *bounds, np, dtype=want_dtype)
+    else:
+        pytest.importorskip("torch")
+        from mfgarchon.backends.torch_backend import TorchBackend
+
+        backend = TorchBackend(device=reader.split()[1], precision="float32")
+        got = np.asarray(
+            backend.to_numpy(apply_boundary_conditions_gpu(backend.from_numpy(ends), lo, hi, kind, backend))
+        )
+    dtype = got.dtype.type
+    assert dtype is want_dtype
+    assert np.all(got >= dtype(lo)), got
+    if kind == "no_flux":
+        assert np.all(got <= dtype(hi)), got
+    else:  # [lo, hi) is empty on a box that is one point in the dtype, and the wrap returns that point
+        assert np.all(got < dtype(hi) if dtype(lo) < dtype(hi) else got == dtype(lo)), got
+    eps = float(np.finfo(dtype).eps)
+    for x, g in zip(ends, got, strict=True):
+        off = abs(float(g) - float(_exact(kind, x, lo, hi)))
+        if kind == "periodic":
+            off = min(off, abs((hi - lo) - off))
+        assert off <= 4 * eps * (abs(float(x) - lo) + abs(lo) + 2 * (hi - lo)), (x, g)
+    if expected is not None:
+        np.testing.assert_array_equal(got, expected)
 
 
 @pytest.mark.parametrize(
@@ -332,7 +480,7 @@ def test_the_deprecated_gpu_helper_is_particle_utils():
 
 
 def test_the_gpu_helper_does_not_write_its_input():
-    """The device copy returns new positions and leaves the tensor it was handed as it was."""
+    """The GPU helper returns new positions and leaves the tensor it was handed as it was."""
     torch = pytest.importorskip("torch")
     backend = _torch_backend()
     for kind in ("periodic", "no_flux"):
