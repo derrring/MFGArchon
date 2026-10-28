@@ -1016,7 +1016,10 @@ def test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall():
     grid = TensorProductGrid(bounds=[(0.0, 0.3)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=1e-4)
     problem = MFGProblem(
-        model=model, domain=grid, conditions=Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.1), Nt=4
+        model=model,
+        domain=grid,
+        conditions=Conditions(m_initial=lambda z: 1 / 0.3, u_terminal=lambda z: 0.0, T=0.1),
+        Nt=4,
     )
     m0 = np.zeros(31)
     m0[-2:] = 1.0
