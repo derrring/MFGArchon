@@ -208,10 +208,12 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
             period = 2 * Lx
             pos_in_period = shifted % period
             in_second_half = pos_in_period > Lx
-            # Reflect back: positions in [Lx, 2*Lx] map to [Lx, 0]
+            # Reflect back: positions in [Lx, 2*Lx] map to [Lx, 0]. The owner's order, xmin + (period - pos): period -
+            # pos is nonnegative, so the fold cannot land below xmin; (xmin + period) - pos can, by an ulp of xmin +
+            # period, which in float32 passes a nonzero lower wall (#2830).
             particles = xp.where(
                 in_second_half,
-                xmin + period - pos_in_period,
+                xmin + (period - pos_in_period),
                 xmin + pos_in_period,
             )
 
