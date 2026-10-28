@@ -59,8 +59,14 @@ from mfgarchon.geometry.boundary import (
     periodic_bc,
 )
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
-from mfgarchon.geometry.boundary.corner import absorb_at_walls, absorb_positions, reflect_positions, walls_reached
-from mfgarchon.geometry.boundary.periodic import wrap_positions
+from mfgarchon.geometry.boundary.corner import (
+    absorb_at_walls,
+    absorb_positions,
+    fold_axis,
+    reflect_positions,
+    walls_reached,
+)
+from mfgarchon.geometry.boundary.periodic import wrap_axis, wrap_positions
 from mfgarchon.geometry.implicit import Hyperrectangle, Hypersphere
 from mfgarchon.utils.numerical.particle import boundary as deprecated_pair
 from mfgarchon.utils.numerical.particle.sampling import sample_from_scattered_density
@@ -312,6 +318,9 @@ def _exact(kind, x, lo, hi):
             np.array([1e5, 1e5 + 1.0, 1e5 - 0.5, 1e5 + 7.25], dtype=np.float32),
             np.full(4, 1e5, dtype=np.float32),
         ),
+        ("fold_axis to float64", "no_flux", 0.1, 1.1, np.array([1.1, 0.05, 0.7], dtype=np.float32), None),
+        ("fold_axis to float32, float64 bounds", "no_flux", 0.1, 1.1, np.array([1.1, 0.05], dtype=np.float32), None),
+        ("wrap_axis to float64", "periodic", 0.1, 1.1, np.array([1.1, 0.05, 0.7], dtype=np.float32), None),
     ],
     ids=[
         "fold, GPU float32, lower wall",
@@ -322,6 +331,9 @@ def _exact(kind, x, lo, hi):
         "fold, MPS, lower wall",
         "wrap, MPS, lower wall",
         "wrap, a box one point in float32",
+        "fold_axis, a wider dtype",
+        "fold_axis, a narrower dtype",
+        "wrap_axis, a wider dtype",
     ],
 )
 def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expected):
@@ -340,10 +352,19 @@ def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expec
     - on MPS, torch's float32 remainder comes back negative: the fold of -7.0 on [0, 0.7] landed below 0 without the
       fold's lower clip, and the wrap of -3.5 gave -5.96e-8; it is now 0, the ruled lower residue;
     - [1e5, 1e5 + 3e-3] is one point in float32: every position wraps to it. At 662da442 the wrap took them one
-      float32 spacing below it."""
+      float32 spacing below it;
+    - the per-axis rules return the dtype asked for, on the box as that dtype holds it: computed in float32 and widened
+      afterwards, float32(1.1) stayed 1.1000000238 > 1.1 in float64; and under NumPy float64 bounds a float32 result
+      came back as float64."""
+    want_dtype = ends.dtype.type
     if reader == "owner":
         owner = reflect_positions if kind == "no_flux" else wrap_positions
         got = owner(ends[:, None], [(lo, hi)])[:, 0]
+    elif reader.startswith(("fold_axis", "wrap_axis")):
+        rule = fold_axis if reader.startswith("fold_axis") else wrap_axis
+        want_dtype = np.float64 if "float64" in reader.split(",")[0] else np.float32
+        bounds = (np.float64(lo), np.float64(hi)) if "float64 bounds" in reader else (lo, hi)
+        got = rule(ends, *bounds, np, dtype=want_dtype)
     else:
         pytest.importorskip("torch")
         from mfgarchon.backends.torch_backend import TorchBackend
@@ -353,7 +374,7 @@ def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expec
             backend.to_numpy(apply_boundary_conditions_gpu(backend.from_numpy(ends), lo, hi, kind, backend))
         )
     dtype = got.dtype.type
-    assert dtype is ends.dtype.type
+    assert dtype is want_dtype
     assert np.all(got >= dtype(lo)), got
     if kind == "no_flux":
         assert np.all(got <= dtype(hi)), got

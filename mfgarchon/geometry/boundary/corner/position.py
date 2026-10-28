@@ -53,10 +53,10 @@ def fold_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
     raises, since that is a defect of the fold and not rounding; the |x - lo| term is the remainder's, which rounds at
     that scale on MPS.
 
-    ``dtype``, when given, is the dtype the result is returned in, as `periodic.wrap_axis` takes it; rounding is
-    monotone, so the closed interval survives it.
+    ``dtype``, when given, is the dtype the result is returned in, as `periodic.wrap_axis` takes it (`_widened`): a
+    wider one is computed in, and a narrower one is rounded to afterwards.
     """
-    x = xp.asarray(x)
+    x = _widened(xp.asarray(x), dtype, xp)
     span = hi - lo
     period = 2 * span
     pos = (x - lo) % period
@@ -71,10 +71,24 @@ def fold_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
                 f"{float(moved.max())}, more than its own rounding (#2830)."
             )
     if dtype is not None and inside.dtype != dtype:
-        # No clip after this rounding: the result is in [lo, hi] in its own dtype, and rounding to ``dtype`` is
-        # monotone, so it is in [dtype(lo), dtype(hi)]
+        # ``dtype`` is narrower here (`_widened` took a wider one first). The result is in [lo, hi] as the arithmetic's
+        # dtype holds them, and rounding to a narrower dtype is monotone, so no clip is needed after it.
         inside = xp.asarray(inside, dtype=dtype)
     return inside
+
+
+def _widened(x: Any, dtype: Any, xp: Any) -> Any:
+    """``x`` taken to ``dtype`` when that holds more than ``x``'s own dtype (a non-float ``x`` holds less), so that a
+    per-axis rule (`fold_axis`, `periodic.wrap_axis`) never computes in a narrower dtype than it returns. Computed
+    narrower and widened afterwards, the result would keep the narrower dtype's bounds, which can lie outside [lo, hi]:
+    float32(1.1) is past 1.1 (#2830)."""
+    if dtype is None:
+        return x
+    try:
+        wider = xp.finfo(dtype).eps < xp.finfo(x.dtype).eps
+    except (TypeError, ValueError):  # x is not floating point
+        wider = True
+    return xp.asarray(x, dtype=dtype) if wider else x
 
 
 def reflect_positions(

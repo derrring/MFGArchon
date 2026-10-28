@@ -111,10 +111,13 @@ def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
     The move is bounded by a refusal, as the fold's is (`corner.fold_axis`): one larger than the wrap's own rounding,
     4 eps (|x - lo| + |lo| + L), raises; the |x - lo| term is the remainder's, which rounds at that scale on MPS.
 
-    ``dtype``, when given, is the dtype the result is returned in: an owner that computes a float32 array in float64
-    and rounds once (C6-3) passes the array's, and the half-open interval is kept after that rounding too.
+    ``dtype``, when given, is the dtype the result is returned in: a wider one is computed in (`corner.position._widened`),
+    and a narrower one is rounded to afterwards, as by an owner that computes a float32 array in float64 and rounds once
+    (C6-3). The half-open interval is kept after that rounding too.
     """
-    x = xp.asarray(x)
+    from mfgarchon.geometry.boundary.corner.position import _widened
+
+    x = _widened(xp.asarray(x), dtype, xp)
     span = hi - lo
     wrapped = lo + ((x - lo) % span)
     inside = _into_half_open(wrapped, lo, hi, xp)
