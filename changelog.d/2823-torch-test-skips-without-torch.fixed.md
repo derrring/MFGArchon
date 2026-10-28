@@ -1,0 +1,1 @@
+- **A GPU-helper test skips where torch is not installed** (Issue #2823). `test_the_gpu_helper_does_not_write_its_input` imported torch before its skip guard, so on the nightly's runner, which has no torch, it failed with `ModuleNotFoundError` instead of skipping; it now takes torch from `pytest.importorskip`.

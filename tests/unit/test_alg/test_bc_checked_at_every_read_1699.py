@@ -7,11 +7,11 @@ ROBIN moved HJB-FDM's answer by 4.27e-01 and a Dirichlet moved HJB-SL's by 4.00e
 moved FP-SL's by 0: FP-SL drops it.
 
 The check now sits in `get_boundary_conditions`, so it runs at every read. HJB-FDM also reads the accessor
-once at its solve entry. Otherwise, on a first solve, the n-D path's first read is inside the Newton
-residual, whose handler retypes the refusal as a ConvergenceError (#2477).
+once at its solve entry, refusing before any numerical work. The n-D Newton handler also preserves
+NotImplementedError if a capability refusal arises inside its residual (#2477).
 
-Each case is refused twice: once before the first solve, which is the order that reaches that residual
-read, and once after solves have succeeded. In between, it swaps to a SUPPORTED BC that changes the answer.
+Each case is refused twice: once before the first solve, and once after solves have succeeded.
+In between, it swaps to a SUPPORTED BC that changes the answer.
 This confirms the solver reads the geometry's BC live, and it rules out a refusal that fires on every swap.
 """
 
