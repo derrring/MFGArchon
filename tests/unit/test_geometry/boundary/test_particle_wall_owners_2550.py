@@ -321,6 +321,7 @@ def _exact(kind, x, lo, hi):
         ("fold_axis to float64", "no_flux", 0.1, 1.1, np.array([1.1, 0.05, 0.7], dtype=np.float32), None),
         ("fold_axis to float32, float64 bounds", "no_flux", 0.1, 1.1, np.array([1.1, 0.05], dtype=np.float32), None),
         ("wrap_axis to float64", "periodic", 0.1, 1.1, np.array([1.1, 0.05, 0.7], dtype=np.float32), None),
+        ("fold_axis to float16", "no_flux", 0.0, 1.0014648428186774, np.array([1.00146484375], dtype=np.float32), None),
     ],
     ids=[
         "fold, GPU float32, lower wall",
@@ -334,12 +335,14 @@ def _exact(kind, x, lo, hi):
         "fold_axis, a wider dtype",
         "fold_axis, a narrower dtype",
         "wrap_axis, a wider dtype",
+        "fold_axis, a narrower dtype that rounds a wall twice",
     ],
 )
 def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expected):
-    """The fold lands in [lo, hi] and the wrap in [lo, hi), as the array's dtype holds them, at the rule's value to
-    within its rounding (the wrap's on the circle, where lo and hi are one point), on inputs where rounding took main's
-    arithmetic off the box (#2830):
+    """The fold lands in [lo, hi] and the wrap in [lo, hi), as the result's dtype holds them, at the rule's value to
+    within its rounding (the wrap's on the circle, where lo and hi are one point) (#2830).
+
+    The first eight cases are inputs where rounding took main's or a review's arithmetic off the box:
     - the GPU fold of the float32 positions just below 0.1 on [0.1, 1.1] landed 9.5e-8 below 0.1, past the one float32
       spacing within which a reader takes a position to be on the wall (1.4 there, clear of the walls, folds to 0.8,
       which a clamp standing for the fold would not give);
@@ -352,17 +355,23 @@ def test_the_fold_and_the_wrap_stay_on_the_box(reader, kind, lo, hi, ends, expec
     - on MPS, torch's float32 remainder comes back negative: the fold of -7.0 on [0, 0.7] landed below 0 without the
       fold's lower clip, and the wrap of -3.5 gave -5.96e-8; it is now 0, the ruled lower residue;
     - [1e5, 1e5 + 3e-3] is one point in float32: every position wraps to it. At 662da442 the wrap took them one
-      float32 spacing below it;
-    - the per-axis rules return the dtype asked for, on the box as that dtype holds it: computed in float32 and widened
-      afterwards, float32(1.1) stayed 1.1000000238 > 1.1 in float64; and under NumPy float64 bounds a float32 result
-      came back as float64."""
+      float32 spacing below it.
+
+    The last four call the per-axis rules with a ``dtype`` and pin what that argument promises:
+    - a wider dtype is computed in: computed in float32 and widened, the fold kept float32(1.1), past 1.1, and the
+      wrap's value carried float32's rounding;
+    - a narrower dtype is returned, here float32 under NumPy float64 walls, where float64 had come back;
+    - a narrower dtype is clipped onto its own walls: narrowed from float32 to float16, a fold result at float32(hi),
+      a float16 tie that hi does not round to, landed one float16 step past float16(hi)."""
     want_dtype = ends.dtype.type
     if reader == "owner":
         owner = reflect_positions if kind == "no_flux" else wrap_positions
         got = owner(ends[:, None], [(lo, hi)])[:, 0]
     elif reader.startswith(("fold_axis", "wrap_axis")):
         rule = fold_axis if reader.startswith("fold_axis") else wrap_axis
-        want_dtype = np.float64 if "float64" in reader.split(",")[0] else np.float32
+        want_dtype = {"float64": np.float64, "float32": np.float32, "float16": np.float16}[
+            reader.split(",")[0].split()[-1]
+        ]
         bounds = (np.float64(lo), np.float64(hi)) if "float64 bounds" in reader else (lo, hi)
         got = rule(ends, *bounds, np, dtype=want_dtype)
     else:

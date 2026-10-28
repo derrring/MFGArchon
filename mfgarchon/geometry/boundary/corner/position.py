@@ -53,8 +53,9 @@ def fold_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
     raises, since that is a defect of the fold and not rounding; the |x - lo| term is the remainder's, which rounds at
     that scale on MPS.
 
-    ``dtype``, when given, is the dtype the result is returned in, as `periodic.wrap_axis` takes it (`_widened`): a
-    wider one is computed in, and a narrower one is rounded to afterwards.
+    ``dtype``, when given, is the dtype the result is returned in, as `periodic.wrap_axis` takes it: a wider one is
+    computed in (`_widened`), and a narrower one is rounded to afterwards and clipped onto [dtype(lo), dtype(hi)] once
+    more, under a refusal at one spacing of ``dtype`` at a wall (`_within_a_spacing`).
     """
     x = _widened(xp.asarray(x), dtype, xp)
     span = hi - lo
@@ -71,10 +72,27 @@ def fold_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
                 f"{float(moved.max())}, more than its own rounding (#2830)."
             )
     if dtype is not None and inside.dtype != dtype:
-        # ``dtype`` is narrower here (`_widened` took a wider one first). The result is in [lo, hi] as the arithmetic's
-        # dtype holds them, and rounding to a narrower dtype is monotone, so no clip is needed after it.
-        inside = xp.asarray(inside, dtype=dtype)
+        # ``dtype`` is narrower here (`_widened` took a wider one first): the clip, with the walls as ``dtype`` holds
+        # them, keeps the result on the box after the rounding
+        narrowed = xp.asarray(inside, dtype=dtype)
+        low = xp.asarray(lo, dtype=dtype, device=narrowed.device)
+        high = xp.asarray(hi, dtype=dtype, device=narrowed.device)
+        inside = xp.clip(narrowed, low, high)
+        _within_a_spacing(narrowed, inside, low, high, xp, "fold_axis")
     return inside
+
+
+def _within_a_spacing(before: Any, after: Any, low: Any, high: Any, xp: Any, rule: str) -> None:
+    """The refusal that bounds a per-axis rule's correction after it rounds to a narrower dtype: no position moves by
+    more than one spacing of that dtype at a wall, the most that rounding twice can carry a wall (float32(hi) can be a
+    float16 tie that hi does not round to)."""
+    inf = xp.asarray(xp.inf, dtype=low.dtype, device=low.device)
+    step = xp.maximum(xp.abs(xp.nextafter(low, inf) - low), xp.abs(xp.nextafter(high, inf) - high))
+    if bool((xp.abs(after - before) > step).any()):
+        raise RuntimeError(
+            f"{rule}: internal error -- after rounding to {low.dtype} a position moved by more than one spacing of it "
+            "at a wall (#2830)."
+        )
 
 
 def _widened(x: Any, dtype: Any, xp: Any) -> Any:

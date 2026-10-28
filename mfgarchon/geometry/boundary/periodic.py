@@ -113,7 +113,8 @@ def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
 
     ``dtype``, when given, is the dtype the result is returned in: a wider one is computed in (`corner.position._widened`),
     and a narrower one is rounded to afterwards, as by an owner that computes a float32 array in float64 and rounds once
-    (C6-3). The half-open interval is kept after that rounding too.
+    (C6-3); the half-open mapping runs again after that rounding, under a refusal at one spacing of ``dtype`` at a wall
+    (`corner.position._within_a_spacing`).
     """
     from mfgarchon.geometry.boundary.corner.position import _widened
 
@@ -130,7 +131,18 @@ def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np, dtype: Any = None) -> 
                 f"{float(moved.max())}, more than its own rounding (#2830)."
             )
     if dtype is not None and inside.dtype != dtype:
-        inside = _into_half_open(xp.asarray(inside, dtype=dtype), lo, hi, xp)
+        from mfgarchon.geometry.boundary.corner.position import _within_a_spacing
+
+        narrowed = xp.asarray(inside, dtype=dtype)
+        inside = _into_half_open(narrowed, lo, hi, xp)
+        _within_a_spacing(
+            narrowed,
+            inside,
+            xp.asarray(lo, dtype=dtype, device=narrowed.device),
+            xp.asarray(hi, dtype=dtype, device=narrowed.device),
+            xp,
+            "wrap_axis",
+        )
     return inside
 
 
