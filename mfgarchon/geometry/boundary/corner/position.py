@@ -2,7 +2,8 @@
 Position-based boundary rules for particles on a box (Issue #521; #2550).
 
 The owners for NON-PERIODIC walls (CONVENTIONS.md § *Particles at a wall*):
-- reflect_positions: Fold reflection (NO_FLUX/REFLECTING BC)
+- reflect_positions: Fold reflection (NO_FLUX/REFLECTING BC), through fold_axis, the per-axis fold the 1-D GPU helper
+  reads too
 - absorb_at_walls: The absorbing wall, for a reader that has only where a step ended: which particles leave, and where
 - walls_reached: The face of each axis a particle is at or past, the reach `absorb_at_walls` and `ParticleApplicator`
   share
@@ -27,7 +28,7 @@ Refactored: 2026-01-29 (Issue #711 - moved periodic to boundary/periodic.py)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -35,6 +36,35 @@ from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+def fold_axis(x: Any, lo: float, hi: float, xp: Any = np) -> Any:
+    """
+    One axis of the fold: positions reflected into [lo, hi], with period 2 (hi - lo), on any array namespace with ``%``,
+    ``where``, ``clip``, ``abs`` and ``finfo`` (NumPy, or torch through a backend's ``array_module``). It is the one fold
+    `reflect_positions` and the 1-D GPU helper both read (#2830).
+
+    The second half of a period maps back as lo + (period - pos), which cannot land below lo. Rounding can still leave
+    a result past a wall: lo + pos, for pos <= L, lands past hi when L = fl(hi - lo) rounds up, and in float32 that is
+    more than a float32 spacing of a wall near 0. That residue is clipped onto the wall, so the result lies in
+    [dtype(lo), dtype(hi)], and a position the arithmetic left inside keeps its bits. The clip is bounded by a
+    refusal: a position it would move by more than the fold's own rounding, 4 eps (|x - lo| + |lo| + 2 (hi - lo)),
+    raises, since that is a defect of the fold and not rounding.
+    """
+    span = hi - lo
+    period = 2 * span
+    pos = (x - lo) % period
+    folded = xp.where(pos > span, lo + (period - pos), lo + pos)
+    inside = xp.clip(folded, lo, hi)
+    moved = xp.abs(folded - inside)
+    if bool((moved > 0).any()):
+        rounding = 4 * float(xp.finfo(folded.dtype).eps) * (xp.abs(x - lo) + abs(lo) + 2 * span)
+        if bool((moved > rounding).any()):
+            raise RuntimeError(
+                f"fold_axis: internal error -- the fold left a position outside [{lo}, {hi}] by "
+                f"{float(moved.max())}, more than its own rounding (#2830)."
+            )
+    return inside
 
 
 def reflect_positions(
@@ -92,12 +122,7 @@ def reflect_positions(
         Lx = xmax - xmin
 
         if Lx > 1e-14:
-            shifted = result[:, d] - xmin
-            period = 2 * Lx
-            pos_in_period = shifted % period
-            in_second_half = pos_in_period > Lx
-            pos_in_period[in_second_half] = period - pos_in_period[in_second_half]
-            result[:, d] = xmin + pos_in_period
+            result[:, d] = fold_axis(result[:, d], xmin, xmax)
 
     if was_1d:
         return result[0]

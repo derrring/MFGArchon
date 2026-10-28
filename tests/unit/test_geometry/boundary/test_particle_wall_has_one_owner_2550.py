@@ -1,8 +1,9 @@
 """C6's structural guard: a box wall rule on positions has one owner per rule (#2550; CONVENTIONS.md § *Particles at a
 wall*).
 
-The owners are `corner.reflect_positions` (the fold), `periodic.wrap_positions` (the wrap) and `corner.absorb_at_walls`
-with `corner.walls_reached` (the absorbing wall). This guard fails if a function applies a box wall rule to positions
+The owners are `corner.reflect_positions` (the fold, per axis `corner.fold_axis`), `periodic.wrap_positions` (the
+wrap, per axis `periodic.wrap_axis`) and `corner.absorb_at_walls` with `corner.walls_reached` (the absorbing wall); the
+1-D GPU helper calls the per-axis rules on the device (#2830). This guard fails if a function applies a box wall rule to positions
 with its own arithmetic, as `Hyperrectangle.apply_boundary_conditions` and both 1-D helper pairs did before #2810 and
 #2811 (the manifest rule, `scripts/oracle_pins.txt`; #2512 comment 6073690080).
 
@@ -78,10 +79,9 @@ _SL = "a field's departure point, not a particle: its Dirichlet arm reads g (#28
 _READ_POINT = "the nearest point of the box, read for its segment; the end itself is moved by the owners"
 _KDE = "images for a density estimator; no particle moves (#2573 comment 6419124057)"
 ALLOWED = {
-    # The owners, and the owners' device copy (#2811), which `test_particle_wall_owners_2550.py` pins against them.
-    ("mfgarchon/geometry/boundary/corner/position.py", "reflect_positions"): "the fold's owner",
-    ("mfgarchon/geometry/boundary/periodic.py", "wrap_positions"): "the wrap's owner",
-    ("mfgarchon/utils/particle_utils.py", "apply_boundary_conditions_gpu"): "the owners' device copy",
+    # The owners' per-axis rules, which the owners and the 1-D GPU helper call (#2830).
+    ("mfgarchon/geometry/boundary/corner/position.py", "fold_axis"): "the fold's owner",
+    ("mfgarchon/geometry/boundary/periodic.py", "wrap_axis"): "the wrap's owner",
     # The path rule's owner, the contact loop (#2733): at a corner it mirrors the step's end about the box's face.
     ("mfgarchon/alg/numerical/fp_solvers/fp_particle_bc.py", "reflect_at_first_contacts"): "the path rule's owner",
     # The clamp #2810 deprecated; it goes with its deprecation.

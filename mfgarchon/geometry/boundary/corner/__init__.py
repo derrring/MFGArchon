@@ -53,6 +53,7 @@ See Also:
 from .position import (
     absorb_at_walls,
     absorb_positions,  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
+    fold_axis,
     non_finite_refusal,
     reflect_positions,
     walls_reached,
@@ -77,6 +78,7 @@ __all__ = [
     # Position-based (for NON-PERIODIC boundaries)
     # For PERIODIC, use mfgarchon.geometry.boundary.periodic
     "reflect_positions",
+    "fold_axis",
     "absorb_at_walls",
     "walls_reached",
     "non_finite_refusal",

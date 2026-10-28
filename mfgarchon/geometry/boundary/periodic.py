@@ -27,7 +27,7 @@ Created: 2026-01-29 (Issue #711 refactor)
 from __future__ import annotations
 
 import itertools
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -45,6 +45,8 @@ def wrap_positions(
 
     For periodic dimension i with period L_i = xmax_i - xmin_i:
         x_wrapped = xmin + (x - xmin) mod L
+
+    through `wrap_axis`, which takes a result rounding left at or past xmax to the largest value below it.
 
     Args:
         positions: Particle positions, shape (N, d) or (d,) for single point
@@ -88,11 +90,41 @@ def wrap_positions(
         xmin, xmax = bounds[d, 0], bounds[d, 1]
         Lx = xmax - xmin
         if Lx > 1e-14:
-            result[:, d] = xmin + ((result[:, d] - xmin) % Lx)
+            result[:, d] = wrap_axis(result[:, d], xmin, xmax)
 
     if was_1d:
         return result[0]
     return result
+
+
+def wrap_axis(x: Any, lo: float, hi: float, xp: Any = np) -> Any:
+    """
+    One axis of the wrap: positions taken into [lo, hi) modulo L = hi - lo, on any array namespace with ``%``,
+    ``where``, ``abs``, ``asarray``, ``nextafter`` and ``finfo`` (NumPy, or torch through a backend's
+    ``array_module``). It is the one wrap `wrap_positions` and the 1-D GPU helper both read (#2830).
+
+    lo + ((x - lo) % L) cannot land below lo, but it lands at or past hi when L = fl(hi - lo) rounds above the span,
+    or when the remainder of a position just below lo rounds up to L. Such a result is taken to the largest value below
+    hi in its dtype: the wrap's codomain is half-open, and that is its nearest point, a move of rounding size, where lo
+    would move the coordinate by a whole period. The move is bounded by a refusal, as the fold's is (`corner.fold_axis`):
+    one larger than the wrap's own rounding, 4 eps (|x - lo| + |lo| + L), raises.
+    """
+    span = hi - lo
+    wrapped = lo + ((x - lo) % span)
+    below_hi = xp.nextafter(
+        xp.asarray(hi, dtype=wrapped.dtype, device=wrapped.device),
+        xp.asarray(-xp.inf, dtype=wrapped.dtype, device=wrapped.device),
+    )
+    inside = xp.where(wrapped >= hi, below_hi, wrapped)
+    moved = xp.abs(wrapped - inside)
+    if bool((moved > 0).any()):
+        rounding = 4 * float(xp.finfo(wrapped.dtype).eps) * (xp.abs(x - lo) + abs(lo) + span)
+        if bool((moved > rounding).any()):
+            raise RuntimeError(
+                f"wrap_axis: internal error -- the wrap left a position at or past {hi} by {float(moved.max())}, more "
+                "than its own rounding (#2830)."
+            )
+    return inside
 
 
 def wrap_displacement(

@@ -157,9 +157,9 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
     Supports periodic and no-flux (reflecting) boundaries; "dirichlet" is refused by name.
     All operations performed in parallel on GPU.
 
-    The fold and the wrap are the device copy of their owners, `corner.reflect_positions` and
-    `periodic.wrap_positions`, which work on NumPy arrays (CONVENTIONS.md § *Particles at a wall*); the NumPy
-    fallback below reads the owners, and `test_particle_wall_owners_2550.py` pins this copy against them.
+    The fold and the wrap are the owners' own per-axis rules, `corner.fold_axis` and `periodic.wrap_axis`, on the
+    device (CONVENTIONS.md § *Particles at a wall*; #2830). The NumPy fallback below reads the owners, and
+    `test_particle_wall_owners_2550.py` pins this helper against them.
 
     Parameters
     ----------
@@ -195,27 +195,18 @@ def apply_boundary_conditions_gpu(particles, xmin: float, xmax: float, bc_type: 
         raise non_finite_refusal(row, [value], int((~finite).sum()), finite.size)
 
     if bc_type == "periodic":
-        # Wrap around: x → xmin + (x - xmin) mod Lx; an axis with no span is left as it is, as the owner leaves it
+        # The owner's per-axis wrap, on the device (#2830); an axis with no span is left as it is, as the owner leaves it
         if Lx > 1e-14:
-            particles = xmin + ((particles - xmin) % Lx)
+            from mfgarchon.geometry.boundary.periodic import wrap_axis
+
+            particles = wrap_axis(particles, xmin, xmax, xp)
 
     elif bc_type == "no_flux":
-        # Reflecting boundaries using modular "fold" reflection
-        # This handles particles that travel multiple domain widths in one step
-        # Algorithm: position bounces back and forth with period 2*Lx
+        # The owner's per-axis fold, on the device (#2830)
         if Lx > 1e-14:
-            shifted = particles - xmin
-            period = 2 * Lx
-            pos_in_period = shifted % period
-            in_second_half = pos_in_period > Lx
-            # Reflect back: positions in [Lx, 2*Lx] map to [Lx, 0]. The owner's order, xmin + (period - pos): period -
-            # pos is nonnegative, so the fold cannot land below xmin; (xmin + period) - pos can, by an ulp of xmin +
-            # period, which in float32 passes a nonzero lower wall (#2830).
-            particles = xp.where(
-                in_second_half,
-                xmin + (period - pos_in_period),
-                xmin + pos_in_period,
-            )
+            from mfgarchon.geometry.boundary.corner import fold_axis
+
+            particles = fold_axis(particles, xmin, xmax, xp)
 
     else:
         raise ValueError(f"Unknown boundary condition type: {bc_type}")
