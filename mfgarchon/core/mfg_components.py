@@ -787,13 +787,8 @@ class ConditionsMixin:
         A FLUX in the BC it returns is refused (`refuse_shared_flux`): it is the FP's alone, given to the FP solver as
         its own BC (#2581, user ruling 2026-10-09, B-2).
         """
-        from mfgarchon.geometry.boundary.bc_utils import refuse_shared_flux
-
-        return refuse_shared_flux(self._declared_boundary_conditions(), consumer="MFGProblem.get_boundary_conditions")
-
-    def _declared_boundary_conditions(self) -> BoundaryConditions | Any:
-        """The channel resolution `get_boundary_conditions` describes, before its FLUX refusal."""
         from mfgarchon.geometry.base import Geometry, GraphGeometry
+        from mfgarchon.geometry.boundary.bc_utils import refuse_shared_flux
         from mfgarchon.geometry.boundary.conditions import periodic_bc
         from mfgarchon.geometry.protocols import SupportsPeriodic
 
@@ -836,12 +831,12 @@ class ConditionsMixin:
                     "differ. Both solvers read one BC, so one of the two would be dropped. Declare it once, on the "
                     "geometry, or give components the same BC (#2530)."
                 )
-            return on_geometry
+            return refuse_shared_flux(on_geometry, consumer="MFGProblem.get_boundary_conditions")
         if declared is not None:
-            return declared
+            return refuse_shared_flux(declared, consumer="MFGProblem.get_boundary_conditions")
         own = geometry.get_boundary_conditions() if geometry is not None else None
         if own is not None:
-            return own
+            return refuse_shared_flux(own, consumer="MFGProblem.get_boundary_conditions")
         dimension = geometry.dimension if geometry is not None else None
         if isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == dimension:
             return periodic_bc(dimension=dimension)
