@@ -287,6 +287,25 @@ def test_a_zero_flux_solves_as_no_flux_bit_for_bit(family: str, dim: int):
         assert np.array_equal(_fem(dim, 8, zero)[2], _fem(dim, 8, wall)[2])
 
 
+@pytest.mark.parametrize(("family", "dim"), [("fdm", 1), ("fdm", 2), ("fem", 1), ("fem", 2)])
+def test_a_uniform_flux_bc_takes_q_through_every_face(family: str, dim: int):
+    """``flux_bc(q)``, the form the shared BC's refusal tells the caller to pass: the mass leaves at q times the
+    boundary's measure. On arrival FP-FDM cached a Laplacian for every uniform BC, which has no reading of FLUX, and
+    so refused it on the step that reads it. q is a quarter of the mass tests': every face drains, a corner from two
+    sides, and B-3 refuses the 2-D FP-FEM corner at QM before T."""
+    q = QM / 4
+    bc = flux_bc(q, dimension=dim)
+    boundary = 2.0 if dim == 1 else 2.0 * (1.0 + LY)
+    if family == "fdm":
+        grid = _grid(dim, 21)
+        _, m = _fdm(dim, 21, bc)
+        mass = [float(np.sum(level * grid.measure_weights())) for level in m]
+    else:
+        solver, _, m = _fem(dim, 10, bc)
+        mass = [float((solver._M @ level).sum()) for level in m]
+    assert np.max(np.abs(np.diff(mass) + q * boundary * T / NT)) < 1e-12, (family, dim)
+
+
 # ------------------------------------------------------------------------------------------------------------- B-3
 
 

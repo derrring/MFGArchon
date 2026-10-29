@@ -1117,9 +1117,10 @@ def solve_fp_nd_full_system(
     _is_constant_sigma = not callable(getattr(problem, "volatility", None)) and not isinstance(
         getattr(problem, "volatility", None), np.ndarray
     )
-    # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet)
+    # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet). A FLUX never reaches the cache's
+    # one reader, the explicit step, which refuses it above (#2581).
     _bc_is_uniform = getattr(boundary_conditions, "is_uniform", False) if boundary_conditions is not None else False
-    if _is_constant_sigma and _bc_is_uniform:
+    if _is_constant_sigma and _bc_is_uniform and not _declares_flux(boundary_conditions):
         try:
             from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
