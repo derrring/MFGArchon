@@ -132,6 +132,15 @@ __all__ = [
 MAX_CLIP_MASS_FABRICATION = 1e-8
 
 
+def _part_mass(part: NDArray[np.floating], where: NDArray[np.bool_], weights: NDArray[np.floating] | None) -> float:
+    """The mass of ``part`` on the nodes ``where`` selects, on the caller's measure: the plain sum over those nodes for a
+    uniform quadrature (``weights=None``), else the integral on ``weights`` through its one sum (#1642). The one form
+    `mass_fabricated_by_clip` and B-3's owner measure with, so the owner's ``s0 <= threshold`` is the gate's own."""
+    if weights is None:
+        return float(part[where].sum())
+    return float(integrate_on_weights(np.where(where, part, 0.0), np.asarray(weights)))
+
+
 def mass_fabricated_by_clip(
     density: NDArray[np.floating],
     *,
@@ -145,16 +154,10 @@ def mass_fabricated_by_clip(
     negatives = density < 0
     if not negatives.any():
         return 0.0
-    if weights is None:
-        negative_mass = -float(density[negatives].sum())
-        positive_mass = float(density[density > 0].sum())
-    else:
-        w = np.asarray(weights)
-        if w.shape != density.shape:
-            raise ValueError(f"weights shape {w.shape} does not match density shape {density.shape}")
-        # The integrals of the negative and the positive part on the caller's measure, through its one sum (#1642).
-        negative_mass = float(integrate_on_weights(np.where(negatives, -density, 0.0), w))
-        positive_mass = float(integrate_on_weights(np.where(density > 0, density, 0.0), w))
+    if weights is not None and np.asarray(weights).shape != density.shape:
+        raise ValueError(f"weights shape {np.asarray(weights).shape} does not match density shape {density.shape}")
+    negative_mass = _part_mass(-density, negatives, weights)
+    positive_mass = _part_mass(density, density > 0, weights)
     if positive_mass <= 0:
         return float("inf")
     return negative_mass / positive_mass
@@ -213,41 +216,46 @@ def refuse_what_a_flux_takes_negative(
     The step is linear in its right-hand side, so ``m0`` is the step without the flux and ``m_q`` the flux's own part.
     Refused when
 
-    1. a node ``m0`` leaves non-negative goes negative with the flux: the flux alone takes it there; or
-    2. the step without the flux passes this gate, ``s0 = mass_fabricated_by_clip(m0) <= threshold``, and the depth
-       the flux adds at the nodes ``m0`` takes negative, ``s_q``, takes it past: ``s0 + s_q > threshold``. ``s_q`` is
-       ``sum over m0_i < 0 of w_i max(-m_q_i, 0)`` over the same positive mass, each node's deepening counted and none
-       netted against a node the flux fills.
+    1. a node ``m0`` leaves non-negative goes negative with the flux: the flux alone takes it there, whatever the
+       rest of the step does; or
+    2. the step without the flux passes this gate, ``s0 = mass_fabricated_by_clip(m0) <= threshold``, and the step
+       with it does not: ``N > threshold``, where ``N`` is the gate's fraction of the step that will be clipped,
+       ``(neg(m0) + sum over m0_i < 0 of w_i max(-m_q_i, 0)) / pos(m0 + m_q)``, each node's deepening counted and none
+       netted against a node the flux fills. ``N`` bounds the clip's own fraction of ``m0 + m_q`` from above, so a
+       flux that drains the positive mass is caught as one that deepens a negative is.
 
-    A step whose own clip is past the threshold, ``s0 > threshold``, is the scheme's: the caller's clip decides it as
-    it would without the flux, the flux's share included. The returned step is not clipped. ``weights`` are those of
+    Otherwise a step whose own clip is past the threshold, ``s0 > threshold``, is the scheme's: the caller's clip
+    decides the step with the flux as it decides any step. The returned step is not clipped. ``weights`` are those of
     the caller's own clip, so that ``s0 <= threshold`` is that clip's verdict on the step without the flux.
     """
     step = m0 + m_q
-    w = np.ones_like(m0) if weights is None else np.asarray(weights)
-    positive = float(integrate_on_weights(np.maximum(m0, 0.0), w))
+    step_positive = _part_mass(step, step > 0, weights)
+    own = mass_fabricated_by_clip(m0, weights=weights)
     taken = (step < 0) & (m0 >= 0)
     if np.any(taken):
         worst = int(np.argmin(np.where(taken, step, np.inf)))
-        fabricated = (
-            float(integrate_on_weights(np.where(taken, -step, 0.0), w)) / positive if positive > 0 else float("inf")
+        fabricated = _part_mass(-step, taken, weights) / step_positive if step_positive > 0 else float("inf")
+        own_too = (
+            f" The step without the flux would itself fabricate {own:.3e}, past the threshold {threshold:.0e}."
+            if own > threshold
+            else ""
         )
         raise ValueError(
             f"{context}: the prescribed flux's part of the step would take the density negative at {int(taken.sum())} "
             f"{unit}(s) in the step to t={time}, the most at {locate(worst)} (m = {step[worst]:.3e}), where the step "
             f"without it is non-negative. Clipping that would fabricate {fabricated:.3e} of the mass, which the flux "
-            f"alone decides, so the step is refused (#2581, user ruling 2026-10-09, B-3). {remedy}"
+            f"alone decides, so the step is refused (#2581, user ruling 2026-10-09, B-3).{own_too} {remedy}"
         )
-    own = mass_fabricated_by_clip(m0, weights=weights)
     if own <= threshold:
-        deepening = np.where(m0 < 0, np.maximum(-m_q, 0.0), 0.0)
-        deepened = float(integrate_on_weights(deepening, w)) / positive if positive > 0 else 0.0
-        if own + deepened > threshold:
+        negative = _part_mass(-m0, m0 < 0, weights) + _part_mass(np.maximum(-m_q, 0.0), m0 < 0, weights)
+        clipped = 0.0 if negative == 0 else (negative / step_positive if step_positive > 0 else float("inf"))
+        if clipped > threshold:
             raise ValueError(
                 f"{context}: in the step to t={time}, clipping the step without the prescribed flux would fabricate "
-                f"{own:.3e} of the mass, within the threshold {threshold:.0e}, and the flux's part deepens its "
-                f"negatives by {deepened:.3e} more, past it. The flux decides the clip, so the step is refused rather "
-                f"than clipped (#2581, user ruling 2026-10-09, B-3). {remedy}"
+                f"{own:.3e} of the mass, within the threshold {threshold:.0e}, and clipping the step with it would "
+                f"fabricate {clipped:.3e}, past it (its negatives deepened by the flux, counted without netting, over "
+                f"its own mass). The flux decides the clip, so the step is refused rather than clipped (#2581, user "
+                f"ruling 2026-10-09, B-3). {remedy}"
             )
     return step
 

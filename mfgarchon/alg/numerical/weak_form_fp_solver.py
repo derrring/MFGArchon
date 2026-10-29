@@ -309,8 +309,9 @@ class WeakFormFPSolver(BaseFPSolver):
                 if flux_load is not None:
                     m_flux[interior] = spsolve(A_bc, flux_load[interior])
             if m_flux is not None:
-                # B-3's owner, with the weights of the clip below; a step whose own clip is past the threshold is left
-                # to that clip, which warns, as before, the flux's share included (#2581).
+                # B-3's owner, with the weights of the clip below; otherwise a step whose own clip is past the threshold
+                # is left to that clip, which clips it with the flux's share, as any step, warning only above 1e-6 of
+                # the mass (#2581).
                 M[n + 1] = refuse_what_a_flux_takes_negative(
                     M[n + 1],
                     m_flux,

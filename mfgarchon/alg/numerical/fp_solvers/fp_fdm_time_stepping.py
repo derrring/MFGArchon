@@ -1668,8 +1668,10 @@ def solve_timestep_full_nd(
 
     # A prescribed flux (#2581) enters by linearity, m = m0 + A^-1 b_q with m0 the step without it: one more solve on
     # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. B-3's owner refuses the step
-    # where the clip would fabricate mass the flux decides, with the post-step guard's weights; a step whose own clip is
-    # past the guard's threshold is left to that guard, under the scheme's name, as before.
+    # where the clip would fabricate mass the flux decides, with the post-step guard's weights; otherwise a step whose
+    # own clip is past the guard's threshold is the guard's, which decides the step with the flux as it decides any.
+    # Upwind's matrix is an M-matrix (w^T A = w^T/dt), so an inflow's part is non-negative and only an outflow is
+    # refused there; each remedy below was run on refused rows before it was written (the approver's ruling on #2840).
     flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
     if flux_sources is not None and np.any(flux_sources):
         m_flux = sparse.linalg.spsolve(A_matrix, flux_sources)
@@ -1680,7 +1682,13 @@ def solve_timestep_full_nd(
             time=time,
             unit="node",
             locate=lambda i: f"node {tuple(int(j) for j in grid.get_multi_index(i))}",
-            remedy="Lower q, or end the outflow before the mass runs out.",
+            remedy=(
+                "Lower q, or end the outflow before the mass runs out."
+                if advection_scheme == "divergence_upwind"
+                else "'divergence_centered' is not monotone, so the flux's part of the step can be negative away from "
+                "the wall: for an inflow, use advection_scheme='divergence_upwind', whose step is monotone; for an "
+                "outflow, lower q or end it before the mass runs out."
+            ),
         )
 
     # Reshape back to multi-dimensional array

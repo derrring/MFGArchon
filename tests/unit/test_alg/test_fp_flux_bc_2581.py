@@ -20,12 +20,14 @@ reads, ``t_{k+1}``, and on the scheme's own face quadrature: FP-FDM's nodal valu
 FP-FEM's facet quadrature. ``q = 0`` solves as NO_FLUX bit for bit.
 
 **A manufactured solution** carries FLUX on every face, with q the exact ``J.n`` in t and along each face, through each
-face's own q at the corners: the mass tests integrate q over a face and cannot see where along it q is read.
+face's own q at the corners: the mass tests integrate q over a face, so a q read at a place along it that keeps the
+integral -- reflected along the face -- passes them.
 
 **B-3** (user ruling 2026-10-09; the approver's rulings on #2581's plan, Q3, and on #2840): a step is refused, not
-clipped, where the clip would fabricate mass the flux decides -- (1) the flux's part of it takes the density negative at
-a node the step without it leaves non-negative, or (2) the step without it passes the clip gate and the depth the flux
-adds at that step's negative nodes takes it past. A step whose own clip is past the gate is the scheme's, flux included.
+clipped, where the clip would fabricate mass the flux decides -- first, (1) the flux's part of it takes the density
+negative at a node the step without it leaves non-negative; else (2) the step without it passes the clip gate and the
+step with it does not: its negatives deepened by the flux, counted without netting, over its own positive mass. Any other
+step whose own clip is past the gate is the scheme's, flux included.
 One owner reads it for both families (`refuse_what_a_flux_takes_negative`). On ``divergence_upwind`` the step's matrix
 A has non-positive off-diagonals and, as the step conserves the trapezoid mass, ``w^T A = w^T/dt > 0`` on the
 trapezoid weights w: it is an M-matrix, so the step without the flux, right-hand side ``m_old/dt >= 0``, is
@@ -406,7 +408,8 @@ def _mms_error(family: str, n: int) -> float:
 @pytest.mark.parametrize("family", sorted(MMS))
 def test_a_manufactured_solution_with_a_flux_on_every_face_converges(family: str):
     """FLUX on all four faces, q the exact ``J.n`` varying in t and along each face, dt proportional to h. The mass tests
-    integrate q over a face and cannot see where along it q is read; this solution can (review 1 of #2840)."""
+    integrate q over a face, so a q read reflected along it passes them; this solution does not (reviews 1 and 2 of
+    #2840)."""
     levels, _, recorded, (low, high) = MMS[family]
     errors = [_mms_error(family, n) for n in levels]
     ratios = [errors[i] / errors[i + 1] for i in range(len(errors) - 1)]
@@ -419,27 +422,77 @@ def test_a_manufactured_solution_with_a_flux_on_every_face_converges(family: str
 
 
 def test_the_b3_owner_refuses_the_clip_the_flux_decides_and_leaves_the_scheme_its_own():
-    """B-3's one owner, read by both families (the approver's ruling on #2840), on steps whose verdict the rule fixes. With
-    s0 the gate's fraction of the step without the flux and s_q the depth the flux adds at its negative nodes: (1) a
-    node that step leaves non-negative goes negative; (2) s0 passes the gate and s0 + s_q does not, each node's
-    deepening counted and none netted against a node the flux fills, on the caller's weights; a step whose s0 is past
-    the gate is the scheme's, returned unclipped. No row of the fuzz or of review 1's scan reaches (2) (body of #2840)."""
+    """B-3's one owner, read by both families (the approver's rulings on #2840), on steps whose verdict the rule fixes.
+    (1) first: a node the step without the flux leaves non-negative goes negative. (2) that step passes the gate,
+    s0 <= thr, and N > thr, N the gate's fraction of the step with the flux -- its negatives deepened by the flux,
+    counted without netting, over its own positive mass -- on the caller's weights. Otherwise the step is the scheme's,
+    returned unclipped. Each step below is chosen so that one wrong reading gives the other verdict."""
     from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative as owner
 
     kw = {"context": "C", "time": 0.1, "unit": "node", "locate": lambda i: f"node {i}", "remedy": "R"}
-    with pytest.raises(ValueError, match=r"at 1 node\(s\) in the step to t=0\.1, the most at node 1 .*B-3"):
+    with pytest.raises(ValueError, match=r"at 1 node\(s\) in the step to t=0\.1, the most at node 1 .*B-3\)\. R$"):
         owner(np.array([1.0, 0.0, 1.0]), np.array([0.0, -1e-3, 0.0]), **kw)
-    # (2): s0 = 3e-9, and the flux deepens node 1 by 1e-6 of the mass
-    with pytest.raises(ValueError, match=r"deepens its negatives by 3\.333e-07 more, past it.*B-3"):
-        owner(np.array([1.0, -9e-9, 1.0, 1.0]), np.array([0.0, -1e-6, 0.0, 0.0]), **kw)
-    # no netting: filling node 2 by as much as node 1 is deepened leaves s_q = 5e-7, not 0
-    with pytest.raises(ValueError, match=r"deepens its negatives by 5\.000e-07 more"):
+    # strict: a node the flux takes to zero, not below it, is not refused
+    assert np.array_equal(owner(np.array([1.0, 0.0]), np.array([0.0, 0.0]), **kw), np.array([1.0, 0.0]))
+    # (1) before the scheme: s0 = 1e-3 is past the gate, and the flux alone takes node 1 negative
+    with pytest.raises(
+        ValueError, match=r"at 1 node\(s\).*B-3\)\. The step without the flux would itself fabricate 1\.000e-03"
+    ):
+        owner(np.array([1.0, 0.0, -1e-3]), np.array([0.0, -1e-3, 0.0]), **kw)
+    # (2) at the gate: s0 = thr exactly is the owner's, and N = 1.0001e-8 is past it
+    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 1\.000e-08, past it.*B-3"):
+        owner(np.array([1.0, -1e-8]), np.array([0.0, -1e-12]), **kw)
+    # N = thr exactly is not past it
+    assert np.array_equal(owner(np.array([1.0, -1e-8]), np.array([0.0, 0.0]), **kw), np.array([1.0, -1e-8]))
+    assert np.array_equal(owner(np.array([1.0, -5e-9]), np.array([0.0, -5e-9]), **kw), np.array([1.0, -1e-8]))
+    # N's own denominator: a flux that drains 60% of the positive mass, deepening nothing, takes 5e-9 to 1.25e-8
+    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 1\.250e-08, past it"):
+        owner(np.array([1.0, -5e-9]), np.array([-0.6, 0.0]), **kw)
+    # no netting: filling node 2 by as much as node 1 is deepened leaves N = 5.03e-7, not 3e-9
+    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 5\.030e-07"):
         owner(np.array([1.0, -3e-9, -3e-9, 1.0]), np.array([0.0, -1e-6, 1e-6, 0.0]), **kw)
     # the caller's weights: uniform, s0 = 3.3e-7 is past the gate and the step is the scheme's; weighted, s0 = 3.3e-10
     m0, m_q = np.array([1.0, -1e-6, 1.0, 1.0]), np.array([0.0, -1e-3, 0.0, 0.0])
     assert np.array_equal(owner(m0, m_q, **kw), m0 + m_q)
-    with pytest.raises(ValueError, match=r"deepens its negatives by 3\.333e-07 more"):
+    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 3\.337e-07"):
         owner(m0, m_q, weights=np.array([1.0, 1e-3, 1.0, 1.0]), **kw)
+
+
+@pytest.mark.parametrize("family", ["fdm", "fem"])
+def test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate(family: str):
+    """Clause (2) at the solver level (review 2 of #2840). FP-FDM centered: an outflow drains 32% of the positive mass,
+    deepening nothing, and takes the step's clip from s0 = 8.8e-9 past the gate; with q = 0 the step solves. FP-FEM P1:
+    an inflow deepens the Galerkin step's own negatives, s0 = 7.3e-10, by 4.2e-6 of the mass."""
+    if family == "fdm":
+        n, dt = 14, 0.1
+        grid = _grid(1, n)
+        x = np.asarray(grid.coordinates[0])
+        m_init = np.exp(-((x - 0.19) ** 2) / 0.044) + 3e-10
+        u = np.broadcast_to(x, (2, n)).copy()  # v = -1
+        for q, refused in ((0.6, True), (0.0, False)):
+            solver = FPFDMSolver(
+                _problem(grid, nt=1, t_end=dt, sigma=0.2),
+                boundary_conditions=_segments(1, {"x_min": q}),
+                advection_scheme="divergence_centered",
+            )
+            if refused:
+                with pytest.raises(
+                    ValueError, match=r"clipping the step with it would fabricate 1\.2\d\de-08, past it.*B-3"
+                ):
+                    solver.solve_fp_system(m_init, potential_field=u, show_progress=False)
+            else:
+                solver.solve_fp_system(m_init, potential_field=u, show_progress=False)
+    else:
+        n, dt, q = 24, 0.01, -0.0012558296355453854
+        solver = FPFEMSolver(
+            _problem(_mesh(1, n), nt=1, t_end=dt, sigma=0.1), boundary_conditions=_segments(1, {"x_min": q})
+        )
+        x = solver._disc.dof_coordinates[:, 0]
+        m_init = np.exp(-((x - 0.605) ** 2) / 0.0078) + 2.1057829607576184e-12
+        with pytest.raises(
+            ValueError, match=r"would fabricate 7\.27\de-10 of the mass, within the threshold.*4\.20\de-06, past it"
+        ):
+            solver.solve_fp_system(M_initial=m_init, potential_field=np.broadcast_to(-x, (2, x.size)).copy())
 
 
 def test_an_outflow_that_drains_the_wall_is_refused_on_upwind():
@@ -508,9 +561,10 @@ def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
     """A ghost layer, a ghost calculator and a geometric fold read a condition on the field; FLUX is on the total flux.
     On arrival the ghost layer wrote a reflection (mixed) or zeros (uniform), the calculator route a zero gradient, the
     fold a clamp, the legacy ghost values a mirror and the nD tensor diffusion a zero wall value (review 1 of #2840);
-    each now refuses by name (#2581)."""
+    each now refuses by name (#2581), as the particle action does, saying what FLUX is."""
     from mfgarchon.geometry.boundary._compat import get_ghost_values_nd
     from mfgarchon.geometry.boundary.applicator_fdm import bc_to_topology_calculator
+    from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type
     from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
     from mfgarchon.operators.differential import DiffusionOperator
     from mfgarchon.operators.differential.laplacian import LaplacianOperator
@@ -533,19 +587,26 @@ def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
         NotImplementedError, match=r"nD tensor diffusion's ghost padding has no reading of BCType\.FLUX"
     ):
         tensor @ np.ones(216)
+    with pytest.raises(
+        ValueError, match=r"BCType\.FLUX \(a prescribed mass flux J\.n = q\) has no per-particle action"
+    ):
+        particle_action_for_bc_type(BCType.FLUX)
 
 
 def test_a_flux_needs_its_q():
-    """A FLUX's value is q, and a None constant reads as 0: a FLUX with no q solved as NO_FLUX on both families
-    (review 1 of #2840). It is refused where its segment is built -- a segment, and the one a FLUX ``default_bc`` or
-    ``flux_bc(None)`` makes when a solver reads a face -- and by ``validate_values`` for a value reassigned after."""
-    with pytest.raises(ValueError, match=r"Segment 'out' with flux BC requires a value"):
-        BCSegment(name="out", bc_type=BCType.FLUX, value=None, boundary="x_max")
+    """A FLUX's value is q, and a None constant reads as 0: a FLUX with no q solved as NO_FLUX on both families (reviews
+    1 and 2 of #2840). It is refused at the read every FLUX reader makes (`segment_value`), however and whenever the
+    value became None: on a segment, by ``flux_bc(None)``, on a FLUX ``default_bc``, or reassigned after the BC was
+    built."""
+    with pytest.raises(ValueError, match=r"Segment 'x_max' with flux BC requires a value"):
+        _fdm(1, 11, _segments(1, {"x_max": None}))
     with pytest.raises(ValueError, match=r"Segment 'uniform' with flux BC requires a value"):
         _fdm(1, 11, flux_bc(None, dimension=1))
     with pytest.raises(ValueError, match=r"Segment 'default' with flux BC requires a value"):
         _fem(1, 8, BoundaryConditions(dimension=1, segments=[], default_bc=BCType.FLUX, default_value=None))
-    segment = BCSegment(name="out", bc_type=BCType.FLUX, value=0.2, boundary="x_max")
-    segment.value = None
-    with pytest.raises(ValueError, match=r"Segment 'out' with flux BC requires a value"):
-        BoundaryConditions(dimension=1, segments=[segment]).validate_values()
+    reassigned = _segments(1, {"x_max": 0.2})
+    reassigned.segments[1].value = None
+    with pytest.raises(ValueError, match=r"Segment 'x_max' with flux BC requires a value"):
+        _fem(1, 8, reassigned)
+    with pytest.raises(ValueError, match=r"Segment 'x_max' with flux BC requires a value"):
+        reassigned.validate_values()
