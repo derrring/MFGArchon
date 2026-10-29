@@ -106,7 +106,8 @@ def _refuse_what_fem_has_no_imposition_for(groups: list[tuple[BCSegment, NDArray
     """Refuse a facet governed by a condition this path cannot impose: PERIODIC, and any type with no arm here."""
     from mfgarchon.geometry.boundary.types import BCType
 
-    imposable = {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
+    # FLUX is the FP's prescribed total flux, a load (`assemble_flux_load`, #2581); only FP-FEM declares it.
+    imposable = {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN, BCType.FLUX}
     for segment, _ in groups:
         if segment.bc_type == BCType.PERIODIC:
             raise NotImplementedError(
@@ -285,8 +286,9 @@ def refuse_what_fem_cannot_impose(basis: skfem.Basis, bc: BoundaryConditions | N
         return
     groups = _facet_groups(basis.mesh, bc)
     for segment, _ in groups:
-        if segment.bc_type == BCType.DIRICHLET and not callable(segment.value):
-            segment_value(segment, t=None, x=None, where=f"{consumer}, Dirichlet segment {segment.name!r}")
+        if segment.bc_type in (BCType.DIRICHLET, BCType.FLUX) and not callable(segment.value):
+            kind = segment.bc_type.name.title()
+            segment_value(segment, t=None, x=None, where=f"{consumer}, {kind} segment {segment.name!r}")
     _refuse_what_fem_has_no_imposition_for(groups)
     _dirichlet_segments_at_dofs(basis, bc)  # every node shared by differently governed facets
 
@@ -313,6 +315,46 @@ def _evaluate_segment_values(
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
         return [segment_value(segment, t=t, x=x, where=where, time_keyword="t") for x in coords]
     return [segment_value(segment, t=t, x=None, where=where, time_keyword="t")] * len(dofs)
+
+
+def assemble_flux_load(basis: skfem.Basis, bc: BoundaryConditions | None, t: float | None) -> NDArray | None:
+    r"""The load a prescribed flux puts on the FP's weak form, :math:`-\int_\Gamma q\,\phi_i\,dS`, or None when no
+    facet is FLUX (#2581).
+
+    The FP weak form integrates the whole flux by parts and leaves :math:`J\cdot n` on the boundary (its natural
+    condition, `FPFEMSolver`), so ``J.n = q`` (outward positive) enters as this load with the operator unchanged:
+    the load ``ROBIN(alpha=0, beta=1, -q/D)`` would assemble, for a q that may vary. Summed over the facets each FLUX
+    segment governs (`BoundaryConditions.segments_for_facets`), with q read by the value owner a Dirichlet value
+    goes through (`segment_value`, #2512 row B2) at each facet quadrature point and at ``t``, the level solved for.
+    """
+    if bc is None:
+        return None
+
+    import skfem
+    from skfem import FacetBasis, LinearForm
+
+    from mfgarchon.geometry.boundary.types import BCType, segment_value
+
+    groups = [(segment, facets) for segment, facets in _facet_groups(basis.mesh, bc) if segment.bc_type == BCType.FLUX]
+    if not groups:
+        return None
+    load = np.zeros(int(basis.N))
+    for segment, facets in groups:
+        where = f"the FEM FLUX load of segment {segment.name!r}"
+
+        def q_at(x: NDArray, segment=segment, where=where) -> NDArray:
+            if not callable(segment.value):
+                return np.full(x.shape[1:], float(segment_value(segment, t=t, x=None, where=where, time_keyword="t")))
+            points = x.reshape(x.shape[0], -1).T
+            values = [float(segment_value(segment, t=t, x=p, where=where, time_keyword="t")) for p in points]
+            return np.asarray(values).reshape(x.shape[1:])
+
+        @LinearForm
+        def flux_load(v, w, q_at=q_at):
+            return -q_at(np.asarray(w.x)) * v
+
+        load += skfem.asm(flux_load, FacetBasis(basis.mesh, basis.elem, facets=facets))
+    return load
 
 
 def assemble_robin_terms(

@@ -137,6 +137,10 @@ class WeakFormFPSolver(BaseFPSolver):
         return None, None
 
     # --- Advection from drift (subclass-supplied) -----------------------------
+    def _flux_load(self, t: float | None):
+        """The load of a prescribed flux (FLUX, #2581) at the level ``t``, or None. Only FP-FEM declares FLUX."""
+        return None
+
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
         r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form.
 
@@ -257,18 +261,45 @@ class WeakFormFPSolver(BaseFPSolver):
             else:
                 A_system = A_base
 
+            # A prescribed flux (#2581) enters by linearity, m = m0 + m_q: m0 is the step as it was, and m_q the
+            # flux's load alone on the same matrix, with the Dirichlet values homogeneous; none when every q is zero.
+            flux_load = self._flux_load((n + 1) * dt)
+            if flux_load is not None and not np.any(flux_load):
+                flux_load = None
+            m_flux = np.zeros(N) if flux_load is not None else None
             if weak_bc:
                 if rhs_extra is not None:
                     rhs = rhs + rhs_extra
                 M[n + 1] = spsolve(A_system, rhs)
+                if flux_load is not None:
+                    m_flux = spsolve(A_system, flux_load)
             elif pure_neumann:
                 M[n + 1] = spsolve(A_system, rhs)
+                if flux_load is not None:
+                    m_flux = spsolve(A_system, flux_load)
             else:
                 A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs, t=(n + 1) * dt)
                 d_dofs, d_vals = self._dirichlet_dofs_and_values((n + 1) * dt)
                 interior = np.setdiff1d(np.arange(N), d_dofs)
                 M[n + 1, interior] = spsolve(A_bc, rhs_bc)
                 M[n + 1, d_dofs] = d_vals
+                if flux_load is not None:
+                    m_flux[interior] = spsolve(A_bc, flux_load[interior])
+            if m_flux is not None:
+                # B-3 (user ruling 2026-10-09): refused where the flux's part takes a DOF negative that m0 leaves
+                # non-negative, never clipped. The clip below stays for the negatives m0 makes on its own.
+                m_step = M[n + 1] + m_flux
+                taken = (m_step < 0) & (M[n + 1] >= 0)
+                if np.any(taken):
+                    worst = int(np.argmin(np.where(taken, m_step, np.inf)))
+                    raise ValueError(
+                        f"{type(self).__name__}: the prescribed flux would take the density negative at "
+                        f"{int(taken.sum())} DOF(s) in the step to t={(n + 1) * dt}, the most at DOF {worst} "
+                        f"(m = {m_step[worst]:.3e}): the FLUX outflow over the step exceeds the mass there. Refused "
+                        "rather than clipped, which would fabricate mass (#2581, user ruling 2026-10-09, B-3). Lower q "
+                        "or the time step, or end the outflow before the mass runs out."
+                    )
+                M[n + 1] = m_step
 
             # Positivity clip. The Galerkin/MLS advection is not an M-matrix, so the
             # solve can produce density undershoots; the clip deletes them, which INJECTS
@@ -339,6 +370,12 @@ class WeakFormFPSolver(BaseFPSolver):
         # owner gives a DIRICHLET segment (FEM, `bc_adapter.has_dirichlet_dofs`). This step does neither, so it would
         # drop the wall in silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value; `time`
         # is passed to nothing.
+        if self._flux_load(time) is not None:
+            raise NotImplementedError(
+                f"{type(self).__name__}.solve_fp_step_adjoint_mode builds no prescribed-flux load, so a FLUX facet would "
+                "be solved as a no-flux wall (#2581). With BlockIterator, adjoint_mode='off' solves the FP side through "
+                "solve_fp_system, which does."
+            )
         if self._imposes_dirichlet():
             raise NotImplementedError(
                 f"{type(self).__name__}.solve_fp_step_adjoint_mode imposes no Dirichlet wall, so an absorbing exit "

@@ -52,18 +52,20 @@ class FPFEMSolver(WeakFormFPSolver):
     _scheme_family = SchemeFamily.FEM
 
     #: What `fem/bc_adapter.py:apply_bc_to_fem_system` actually branches on: DIRICHLET condenses,
-    #: NEUMANN/NO_FLUX/REFLECTING are the natural BC, ROBIN augments the operator. PERIODIC and the
+    #: NEUMANN/NO_FLUX/REFLECTING are the natural BC, ROBIN augments the operator, FLUX is a load
+    #: (`assemble_flux_load`, #2581). PERIODIC and the
     #: EXTRAPOLATION_* pair fall to explicit `NotImplementedError`s there. Declaring the set moves
     #: that refusal from assembly time to construction, which is what the #1456 gate is for (#1977).
     _SUPPORTED_BC_TYPES: frozenset = frozenset(
-        {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
+        {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN, BCType.FLUX}
     )
 
     def __init__(
         self, problem: MFGProblem, order: int = 1, boundary_conditions: BoundaryConditions | None = None
     ) -> None:
         """``boundary_conditions``, if given, is the FP's own BC (#2532): a DIRICHLET(g) is a prescribed
-        density m = g, a ROBIN the FP's total-flux Robin, and a NEUMANN is refused. Without it the solver
+        density m = g, a ROBIN the FP's total-flux Robin, a FLUX the prescribed flux J.n = q (#2581), and a NEUMANN is
+        refused. Without it the solver
         reads the problem's shared BC, where a DIRICHLET is an absorbing exit (#2512, row B3)."""
         # Issue #1489: a non-mesh geometry (e.g. TensorProductGrid) has no `mesh_data` attribute at all,
         # so a direct `.mesh_data` access raised AttributeError BEFORE this guard — the message naming
@@ -122,6 +124,12 @@ class FPFEMSolver(WeakFormFPSolver):
         from .bc_adapter import apply_bc_to_fem_system
 
         return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, t=t)
+
+    def _flux_load(self, t: float | None):
+        """The prescribed flux's load at ``t`` (`assemble_flux_load`, #2581), or None when no facet is FLUX."""
+        from .bc_adapter import assemble_flux_load
+
+        return assemble_flux_load(self._basis, self._bc, t)
 
     #: Issue #2294. This solver's natural boundary condition is the total flux ``J.n = 0``, not
     #: ``dm/dn = 0``, because ``_build_advection`` never integrates ``div(v m)`` by parts onto the
