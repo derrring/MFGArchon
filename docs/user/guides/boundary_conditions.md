@@ -42,6 +42,7 @@ is a Neumann condition for the value function.
 | `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - D*grad(m)` | Reflecting / insulating wall; the mass-conserving choice |
 | `ROBIN` | `alpha*u + beta*du/dn = g` | shared BC: refused; a BC passed to the FP solver itself: **`J.n = (D/beta)(alpha*m - g)`** (FP-FEM only) | Mixed condition; a finite-rate exit |
 | `PERIODIC` | `u(x_min) = u(x_max)` | `m(x_min) = m(x_max)` | Wrap-around domain |
+| `FLUX` | none: refused on a shared BC | a BC passed to the FP solver itself: **`J.n = q`**, outward positive (FP-FDM's implicit step, FP-FEM) | A prescribed inflow or outflow |
 
 **`DIRICHLET` on a shared BC is an exit** (#2512, convention row 5). One `DIRICHLET(g)` on the
 problem or geometry cannot mean `u = g` and `m = g` at once: the HJB reads the exit cost `u = g`,
@@ -51,6 +52,8 @@ DIRICHLET at any `g`, shared or explicit. A BC passed to an FP solver explicitly
 where `DIRICHLET(g)` is a prescribed density `m = g`: `FPFDMSolver(boundary_conditions=...)` and
 `FPFEMSolver(boundary_conditions=...)` impose one; the particle FP and meshless Galerkin refuse a nonzero
 `g` there ([Issue #2532](https://github.com/derrring/MFGArchon/issues/2532)).
+
+**`FLUX` is the FP's alone** ([Issue #2581](https://github.com/derrring/MFGArchon/issues/2581)). `flux_bc(q)` prescribes the total flux through the wall, `J.n = q`, outward positive: `q > 0` takes mass out, `q < 0` puts it in, and `q = 0` is NO_FLUX. `q` is a constant or a callable `q(t, x)`, read at the level being solved, as a Dirichlet value is. It is not a Neumann condition: where the drift crosses the wall, `J.n = q` is not `-D dm/dn = q`. It has no HJB reading, so a FLUX on the problem or its geometry is refused; give it to the FP solver, `FPFDMSolver(problem, boundary_conditions=flux_bc(...))` (its implicit step) or `FPFEMSolver(...)`, and keep the HJB's condition on the geometry. A step whose outflow would take the density negative is refused by name, never clipped. Every other solver refuses FLUX.
 
 **`NO_FLUX` on the FP side is zero *total* flux, not zero gradient.** With drift at the wall the
 two differ: `J.n = 0` gives `D dm/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM
