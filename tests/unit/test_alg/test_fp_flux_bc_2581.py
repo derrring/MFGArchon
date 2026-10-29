@@ -19,6 +19,9 @@ control: with ``v = 0`` the rival and the FLUX solve coincide bit for bit, which
 reads, ``t_{k+1}``, and on the scheme's own face quadrature: FP-FDM's nodal values on the trapezoid face weights,
 FP-FEM's facet quadrature. ``q = 0`` solves as NO_FLUX bit for bit.
 
+**A manufactured solution** carries FLUX on every face, with q the exact ``J.n`` in t and along each face, through each
+face's own q at the corners: the mass tests integrate q over a face and cannot see where along it q is read.
+
 **B-3** (user ruling 2026-10-09; the audit's ruling on the test, #2581's plan, Q3): a step is refused where its flux part
 takes the density negative at a node that the step without it leaves non-negative, never clipped. On
 ``divergence_upwind`` the matrix is an M-matrix, the step's right-hand side without the flux is ``m_old/dt >= 0``, and
@@ -175,7 +178,8 @@ class _FemWallDropsTheDrift(FPFEMSolver):
 
 def _fdm_wall_drops_the_drift(monkeypatch) -> None:
     """The rival FP-FDM wall: each wall row also takes the advective flux through the wall, ``v_out m``, with ``v_out``
-    the first face's outward velocity, so the FLUX source imposes the diffusive flux alone."""
+    that wall's outward velocity, so the FLUX source imposes the diffusive flux alone. Its mass then moves at
+    ``v (m(x_min) - m(x_max))`` per unit time beside the FLUX's, as FP-FEM's rival's does."""
     original = fp_fdm_time_stepping._BOUNDARY_HANDLERS["divergence_upwind"]
 
     def handler(rows, cols, data, flat, index, shape, ndim, dt, sigma, c, spacing, u, grid, interface_velocity=None):
@@ -183,10 +187,10 @@ def _fdm_wall_drops_the_drift(monkeypatch) -> None:
         for d in range(ndim):
             dx = spacing[d]
             if index[d] in (0, shape[d] - 1):
-                step = 1 if index[d] == 0 else -1
                 neighbour = list(index)
-                neighbour[d] += step
-                v_out = step * c * (u[grid.get_index(tuple(neighbour))] - u[flat]) / dx
+                neighbour[d] += 1 if index[d] == 0 else -1
+                # alpha.n = -c du/dn, one-sided: (u_neighbour - u_wall)/dx at either wall
+                v_out = c * (u[grid.get_index(tuple(neighbour))] - u[flat]) / dx
                 rows.append(flat)
                 cols.append(flat)
                 data.append(v_out / (dx / 2))
@@ -215,9 +219,11 @@ def test_the_flux_read_with_the_drift_dropped_at_the_wall_misses(name: str, monk
         errors = [_cell_error(name, n) for n in levels]
     else:
         errors = [_cell_error(name, n, fem_cls=_FemWallDropsTheDrift) for n in levels]
-    # Measured: 1.6 (1-D) and 3.5 (2-D) at every level, flat, against the cell's own 0.02 to 0.09.
-    assert all(e > 1.0 for e in errors), (name, errors)
-    assert errors[-1] > 0.9 * errors[0], (name, errors)
+    # Measured, both families: 1.58 to 1.65 (1-D) and 3.47 to 3.48 (2-D) at every level, flat, against the cell's own
+    # 5.8e-4 to 0.44. A rival built with the wrong sign at one wall grew from 829 to 2459 and passed a bare `> 1`.
+    low, high = (1.4, 1.8) if CELLS[name][1] == 1 else (3.2, 3.8)
+    assert all(low < e < high for e in errors), (name, errors)
+    assert max(errors) < 1.1 * min(errors), (name, errors)
 
 
 @pytest.mark.parametrize("family", ["fdm", "fem"])
@@ -331,6 +337,77 @@ def test_a_uniform_flux_bc_takes_q_through_every_face(family: str, dim: int):
         solver, _, m = _fem(dim, 10, bc)
         mass = [float((solver._M @ level).sum()) for level in m]
     assert np.max(np.abs(np.diff(mass) + q * boundary * T / NT)) < 1e-12, (family, dim)
+
+
+# ---------------------------------------------------------------------------------------------- a manufactured solution
+
+#: ``m = (1.2 + sin(pi x/2 + 0.3) cos(pi y + 0.2)) e^{-0.3 t}`` under the drift ``(0.7, -0.4)``, with sigma 0.4: no
+#: symmetry in y, so a q read at the wrong place along a face, at the wrong level, or a corner given one face's q, is
+#: off the solution. (family, levels, steps per level, errors at T recorded at this file's commit, ratio band)
+MMS_DRIFT, MMS_SIGMA, MMS_T = (0.7, -0.4), 0.4, 0.5
+MMS = {
+    "fdm": ((11, 21, 41), lambda n: 2 * (n - 1), (1.9973e-01, 1.1046e-01, 5.7990e-02), (1.6, 2.2)),
+    "fem": ((8, 16, 32), lambda n: 2 * n, (6.7995e-02, 1.6598e-02, 3.3813e-03), (3.5, 5.5)),
+}
+
+
+def _mms(t, x, y):
+    """(m, dm/dx, dm/dy, laplacian of m)."""
+    e = np.exp(-0.3 * t)
+    sx, cx = np.sin(np.pi * x / 2 + 0.3), np.cos(np.pi * x / 2 + 0.3)
+    sy, cy = np.sin(np.pi * y + 0.2), np.cos(np.pi * y + 0.2)
+    return (1.2 + sx * cy) * e, (np.pi / 2) * cx * cy * e, -np.pi * sx * sy * e, -1.25 * np.pi**2 * sx * cy * e
+
+
+def _mms_source(t, x):
+    """``S = m_t + alpha . grad m - D lap m``, for a constant alpha."""
+    x = np.asarray(x)
+    m, mx, my, lap = _mms(t, x[:, 0], x[:, 1])
+    return -0.3 * m + MMS_DRIFT[0] * mx + MMS_DRIFT[1] * my - (MMS_SIGMA**2 / 2) * lap
+
+
+def _mms_flux(face: str):
+    """``q = (alpha m - D grad m) . n`` on ``face``, n outward: the exact flux, each face its own at a corner."""
+    normal = {"x_min": (-1.0, 0.0), "x_max": (1.0, 0.0), "y_min": (0.0, -1.0), "y_max": (0.0, 1.0)}[face]
+
+    def q(t, x):
+        m, mx, my, _ = _mms(t, float(x[0]), float(x[1]))
+        d = MMS_SIGMA**2 / 2
+        return (MMS_DRIFT[0] * m - d * mx) * normal[0] + (MMS_DRIFT[1] * m - d * my) * normal[1]
+
+    return q
+
+
+def _mms_error(family: str, n: int) -> float:
+    _, steps, _, _ = MMS[family]
+    nt = steps(n)
+    bc = BoundaryConditions(
+        dimension=2, segments=[BCSegment(name=f, bc_type=BCType.FLUX, value=_mms_flux(f), boundary=f) for f in FACES[2]]
+    )
+    if family == "fdm":
+        grid = _grid(2, n)
+        x, y = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")
+        u = np.broadcast_to(-(MMS_DRIFT[0] * x + MMS_DRIFT[1] * y), (nt + 1, *x.shape)).copy()
+        solver = FPFDMSolver(_problem(grid, nt=nt, t_end=MMS_T, sigma=MMS_SIGMA), boundary_conditions=bc)
+        m = solver.solve_fp_system(_mms(0.0, x, y)[0], potential_field=u, source_term=_mms_source, show_progress=False)
+    else:
+        solver = FPFEMSolver(_problem(_mesh(2, n), nt=nt, t_end=MMS_T, sigma=MMS_SIGMA), boundary_conditions=bc)
+        x, y = solver._disc.dof_coordinates[:, 0], solver._disc.dof_coordinates[:, 1]
+        u = np.broadcast_to(-(MMS_DRIFT[0] * x + MMS_DRIFT[1] * y), (nt + 1, x.size)).copy()
+        m = solver.solve_fp_system(M_initial=_mms(0.0, x, y)[0], potential_field=u, source_term=_mms_source)
+    return float(np.abs(np.asarray(m)[-1] - _mms(MMS_T, x, y)[0]).max())
+
+
+@pytest.mark.parametrize("family", sorted(MMS))
+def test_a_manufactured_solution_with_a_flux_on_every_face_converges(family: str):
+    """FLUX on all four faces, q the exact ``J.n`` varying in t and along each face, dt proportional to h. The mass tests
+    integrate q over a face and cannot see where along it q is read; this solution can (review 1 of #2840)."""
+    levels, _, recorded, (low, high) = MMS[family]
+    errors = [_mms_error(family, n) for n in levels]
+    ratios = [errors[i] / errors[i + 1] for i in range(len(errors) - 1)]
+    assert all(low < r < high for r in ratios), (family, errors, ratios)
+    for got, want in zip(errors, recorded, strict=True):
+        assert want / LEVEL_FACTOR < got < want * LEVEL_FACTOR, (family, errors)
 
 
 # ------------------------------------------------------------------------------------------------------------- B-3
