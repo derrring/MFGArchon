@@ -131,6 +131,15 @@ class FPFEMSolver(WeakFormFPSolver):
 
         return assemble_flux_load(self._basis, self._bc, t)
 
+    def _declares_flux(self) -> bool:
+        from mfgarchon.geometry.boundary.types import BCType
+
+        from .bc_adapter import _facet_groups
+
+        return self._bc is not None and any(
+            segment.bc_type == BCType.FLUX for segment, _ in _facet_groups(self._skfem_mesh, self._bc)
+        )
+
     #: Issue #2294. This solver's natural boundary condition is the total flux ``J.n = 0``, not
     #: ``dm/dn = 0``, because ``_build_advection`` never integrates ``div(v m)`` by parts onto the
     #: facets. So it cannot express ``dm/dn = g`` and does not claim to. It is not reached with one: a

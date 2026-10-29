@@ -141,6 +141,10 @@ class WeakFormFPSolver(BaseFPSolver):
         """The load of a prescribed flux (FLUX, #2581) at the level ``t``, or None. Only FP-FEM declares FLUX."""
         return None
 
+    def _declares_flux(self) -> bool:
+        """Whether a facet is FLUX (#2581), read from the types alone, with no value read and so no time."""
+        return False
+
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
         r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form.
 
@@ -370,7 +374,7 @@ class WeakFormFPSolver(BaseFPSolver):
         # owner gives a DIRICHLET segment (FEM, `bc_adapter.has_dirichlet_dofs`). This step does neither, so it would
         # drop the wall in silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value; `time`
         # is passed to nothing.
-        if self._flux_load(time) is not None:
+        if self._declares_flux():
             raise NotImplementedError(
                 f"{type(self).__name__}.solve_fp_step_adjoint_mode builds no prescribed-flux load, so a FLUX facet would "
                 "be solved as a no-flux wall (#2581). With BlockIterator, adjoint_mode='off' solves the FP side through "
