@@ -865,14 +865,19 @@ def test_a_kernel_the_enumeration_cannot_hold_meets_the_backstop(sample, bandwid
 
 @pytest.mark.parametrize("d", [1, 2, 3])
 def test_a_kernel_whose_k_overflows_is_refused_by_name(d):
-    """Where K = H (2 pi / h)^2 overflows float64, the gate refuses by name: a kernel wider than 1.3e154 spacings (a
-    factor of 1e154 on a sample of sd 0.1, h = 0.1), or a spacing under 4.7e-154 (1e-156, the sample scaled to it).
-    The enumeration raised an unnamed ValueError in 1-D and 2-D and a LinAlgError in 3-D there (da35f1df)."""
+    """Where K = H (2 pi / h)^2 overflows float64, a kernel wider than 1.3e154 spacings, the gate refuses by name: a
+    factor of 1e154 on a sample of sd 0.1 at h = 0.1, and Scott's kernel at h = 1e-160 (about 2e159 spacings). The
+    enumeration raised an unnamed ValueError in 1-D and 2-D and a LinAlgError in 3-D there (da35f1df). A spacing under
+    4.7e-154, where (2 pi / h)^2 alone overflows, is not refused when K is finite: the sample scaled by 1e-155 on
+    spacings of 1e-156 reads the unscaled sample's value on 0.1, to the rounding of its subnormal H (2e-11 to 5e-11
+    here); 78ff7279 refused it."""
     sample = 0.5 + 0.1 * np.random.default_rng(0).standard_normal((300, d))
     with pytest.raises(ValueError, match="overflows float64"):
         kde_lattice_aliasing(sample, 1e154, [0.1] * d)
     with pytest.raises(ValueError, match="overflows float64"):
-        kde_lattice_aliasing(1e-155 * sample, "scott", [1e-156] * d)
+        kde_lattice_aliasing(sample, "scott", [1e-160] * d)
+    unscaled = kde_lattice_aliasing(sample, "scott", [0.1] * d)
+    assert kde_lattice_aliasing(1e-155 * sample, "scott", [1e-156] * d) == pytest.approx(unscaled, rel=1e-9)
 
 
 def _trapezoid(axis):

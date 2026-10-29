@@ -653,7 +653,7 @@ def kde_lattice_aliasing(
     ------
     ValueError
         For spacings that are not finite and positive, and where K overflows float64: a kernel wider than 1.3e154
-        spacings (2 pi sigma / h) on some axis, or a spacing under 4.7e-154.
+        spacings (2 pi sigma / h) on some axis.
     """
     points = _sample(particle_positions)
     n, d = points.shape
@@ -666,13 +666,16 @@ def kde_lattice_aliasing(
     if n < 2 or not kde_sample_has_spread(points):
         return None
     H = _kernel_covariance(points, factor)
-    with np.errstate(over="ignore", invalid="ignore"):  # an overflow is refused by name just below
-        K = H * np.outer(2.0 * np.pi / h, 2.0 * np.pi / h)
+    # K as (2 pi)^2 (H / h_i) / h_j: no step overflows unless K does, where (2 pi / h)^2 alone overflows below a
+    # spacing of 4.7e-154 whatever the kernel's width in spacings.
+    with np.errstate(over="ignore"):  # an overflow is refused by name just below
+        K = (2.0 * np.pi) ** 2 * ((H / h[:, None]) / h[None, :])
+        widths = 2.0 * np.pi * (np.sqrt(np.diag(H)) / h)
     if not np.all(np.isfinite(K)):
         raise ValueError(
             f"A kernel's aliasing bound on a lattice of spacings {h.tolist()} cannot be computed: K = H (2 pi / h)^2 "
-            "overflows float64, which a kernel wider than 1.3e154 spacings (2 pi sigma / h) or a spacing under 4.7e-154 "
-            f"does; 2 pi sigma / h is {(2.0 * np.pi * np.sqrt(np.diag(H)) / h).tolist()} here (#2556)."
+            "overflows float64, which a kernel wider than 1.3e154 spacings (2 pi sigma / h) on some axis does; "
+            f"2 pi sigma / h is {widths.tolist()} here (#2556)."
         )
     c = _ellipsoid_radius(K)
     # The points whose transform is at least exp(-8) first (c is at least 4 ln(1e13), past 16): a sample past tol is
