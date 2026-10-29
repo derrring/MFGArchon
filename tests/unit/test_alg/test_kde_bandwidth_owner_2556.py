@@ -298,13 +298,13 @@ def _problem(nx=21, d=1, volatility=0.3, bounds=None):
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
-    grid = TensorProductGrid(
-        bounds=bounds or [(0.0, 1.0)] * d, Nx_points=[nx] * d, boundary_conditions=no_flux_bc(dimension=d)
-    )
+    bounds = bounds or [(0.0, 1.0)] * d
+    grid = TensorProductGrid(bounds=bounds, Nx_points=[nx] * d, boundary_conditions=no_flux_bc(dimension=d))
     model = Model(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=volatility
     )
-    conditions = Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.1)
+    volume = float(np.prod([float(hi) - float(lo) for lo, hi in bounds]))  # in float: integer bounds may wrap
+    conditions = Conditions(m_initial=lambda z: 1.0 / volume, u_terminal=lambda z: 0.0, T=0.1)
     return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4)
 
 
