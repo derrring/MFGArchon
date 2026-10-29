@@ -287,6 +287,33 @@ def test_a_zero_flux_solves_as_no_flux_bit_for_bit(family: str, dim: int):
         assert np.array_equal(_fem(dim, 8, zero)[2], _fem(dim, 8, wall)[2])
 
 
+@pytest.mark.parametrize("family", ["fdm", "fem"])
+def test_a_dirichlet_face_beside_a_flux_face_takes_nothing_from_it(family: str):
+    """Dirichlet 0.3 on y_min, FLUX on x_max, meeting at a corner. The corner is the Dirichlet face's -- FP-FDM's
+    identity row takes no FLUX source, and FP-FEM solves the flux's part with the Dirichlet values homogeneous -- so
+    every node on y_min holds, bit for bit, what it holds with q = 0: 0.3 to round-off."""
+
+    def bc(q: float) -> BoundaryConditions:
+        kinds = {"x_min": BCType.NO_FLUX, "x_max": BCType.FLUX, "y_min": BCType.DIRICHLET, "y_max": BCType.NO_FLUX}
+        values = {"x_max": q, "y_min": 0.3}
+        return BoundaryConditions(
+            dimension=2,
+            segments=[BCSegment(name=f, bc_type=k, value=values.get(f, 0.0), boundary=f) for f, k in kinds.items()],
+        )
+
+    if family == "fdm":
+        axes, m = _fdm(2, 11, bc(QM))
+        on_wall = np.isclose(axes[1], 0.0)
+        held, without = m[1:, on_wall], _fdm(2, 11, bc(0.0))[1][1:, on_wall]
+    else:
+        _, x, m = _fem(2, 8, bc(QM))
+        on_wall = np.isclose(x[:, 1], 0.0)
+        held, without = m[1:, on_wall], _fem(2, 8, bc(0.0))[2][1:, on_wall]
+    assert held.size > 0
+    assert np.array_equal(held, without), float(np.abs(held - without).max())
+    assert np.abs(held - 0.3).max() < 1e-12
+
+
 @pytest.mark.parametrize(("family", "dim"), [("fdm", 1), ("fdm", 2), ("fem", 1), ("fem", 2)])
 def test_a_uniform_flux_bc_takes_q_through_every_face(family: str, dim: int):
     """``flux_bc(q)``, the form the shared BC's refusal tells the caller to pass: the mass leaves at q times the
