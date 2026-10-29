@@ -836,16 +836,17 @@ class ConditionsMixin:
             bc = declared
         elif geometry is not None and (own := geometry.get_boundary_conditions()) is not None:
             bc = own
-        elif isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == geometry.dimension:
-            bc = periodic_bc(dimension=geometry.dimension)
         else:
-            raise ValueError(
-                "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
-                f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare them "
-                "on the geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = "
-                "bc -- or, on a geometry that holds none (an implicit domain, a point cloud), in "
-                "components.boundary_conditions (#2589)."
-            )
+            dimension = geometry.dimension if geometry is not None else None
+            if not (isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == dimension):
+                raise ValueError(
+                    "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
+                    f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare "
+                    "them on the geometry -- TensorProductGrid(..., boundary_conditions=bc), or "
+                    "mesh.boundary_conditions = bc -- or, on a geometry that holds none (an implicit domain, a point "
+                    "cloud), in components.boundary_conditions (#2589)."
+                )
+            bc = periodic_bc(dimension=dimension)
         return refuse_shared_flux(bc, consumer="MFGProblem.get_boundary_conditions")
 
     @contextlib.contextmanager
