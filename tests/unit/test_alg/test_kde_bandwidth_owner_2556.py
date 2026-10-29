@@ -292,13 +292,15 @@ def test_renormalization_reads_each_axis_width_near_a_wall():
     assert np.mean(near_y) == pytest.approx(0.25, rel=0.05)
 
 
-def _problem(nx=21, d=1, volatility=0.3):
+def _problem(nx=21, d=1, volatility=0.3, bounds=None):
     from mfgarchon import Conditions, MFGProblem, Model
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[nx] * d, boundary_conditions=no_flux_bc(dimension=d))
+    grid = TensorProductGrid(
+        bounds=bounds or [(0.0, 1.0)] * d, Nx_points=[nx] * d, boundary_conditions=no_flux_bc(dimension=d)
+    )
     model = Model(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=volatility
     )
@@ -503,6 +505,49 @@ def test_a_sample_narrower_than_the_grid_is_deposited_where_its_kernel_was_read_
     for level in M[1:]:
         np.testing.assert_allclose(level, want, rtol=1e-12, atol=1e-12)
     assert solver.deposited_levels == list(range(1, len(M)))
+
+
+@pytest.mark.parametrize(
+    ("bounds", "nx", "sd"),
+    [
+        ([(np.float32(1e3), np.float32(1e3 + 1.0))] * 2, 51, 0.0),
+        ([(np.float32(1e3), np.float32(1e3 + 1.0))] * 2, 51, 0.001),
+        ([(np.float32(100.0), np.float32(101.0))], 1001, 0.0),
+    ],
+    ids=["2-D float32 at 1e3, a point", "2-D float32 at 1e3, sd 0.001", "1-D float32 at 100, a point"],
+)
+def test_the_solver_gates_a_grid_declared_uniform_at_its_spacing_whatever_its_rounding(bounds, nx, sd):
+    """A grid declared uniform whose float32 nodes sit further from a lattice than the lattice test's 1e-3 spacings:
+    the solver gates it at the spacing it declares, so 300 particles at one point, or a narrow sample between nodes,
+    are deposited at every level the reader builds, mass 1 on the grid's measure. Gated by the test's spacings
+    (da35f1df), the points raised and the narrow sample kept a kernel of mass 1.8e-149, as on main."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
+    from mfgarchon.utils.numerical.particle.interpolation import _lattice_spacings
+
+    d = len(bounds)
+    grid = TensorProductGrid(bounds=bounds, Nx_points=[nx] * d, boundary_conditions=no_flux_bc(dimension=d))
+    assert grid.is_uniform
+    assert _lattice_spacings(geometry_grid_axes(grid)) is None
+    problem = _problem(nx, d, volatility=0.0, bounds=bounds)
+    centre = np.array([float(lo) for lo, _ in bounds]) + np.array([0.53, 0.47][:d])
+    particles = centre + sd * np.random.default_rng(3).standard_normal((300, d))
+    solver = FPParticleSolver(problem, num_particles=300, seed=5)
+    M = np.asarray(
+        solver.solve_fp_system(
+            M_initial=None,
+            drift_field=lambda t, x, m: np.zeros_like(x),
+            initial_particles=particles,
+            drift_needs_density=False,
+            show_progress=False,
+        )
+    )
+    assert solver.deposited_levels == list(range(1, len(M)))
+    weights = problem.spatial_measure().weights
+    for level in M[1:]:
+        assert float(np.sum(level * weights)) == pytest.approx(1.0, rel=1e-6)
 
 
 def _deposited_on(path):
@@ -818,6 +863,18 @@ def test_a_kernel_the_enumeration_cannot_hold_meets_the_backstop(sample, bandwid
     assert _poisson_bound(sample, bandwidth, h, stop_above=_RULED_TOL) > _RULED_TOL
 
 
+@pytest.mark.parametrize("d", [1, 2, 3])
+def test_a_kernel_whose_k_overflows_is_refused_by_name(d):
+    """Where K = H (2 pi / h)^2 overflows float64, the gate refuses by name: a kernel wider than 1.3e154 spacings (a
+    factor of 1e154 on a sample of sd 0.1, h = 0.1), or a spacing under 4.7e-154 (1e-156, the sample scaled to it).
+    The enumeration raised an unnamed ValueError in 1-D and 2-D and a LinAlgError in 3-D there (da35f1df)."""
+    sample = 0.5 + 0.1 * np.random.default_rng(0).standard_normal((300, d))
+    with pytest.raises(ValueError, match="overflows float64"):
+        kde_lattice_aliasing(sample, 1e154, [0.1] * d)
+    with pytest.raises(ValueError, match="overflows float64"):
+        kde_lattice_aliasing(1e-155 * sample, "scott", [1e-156] * d)
+
+
 def _trapezoid(axis):
     w = np.empty_like(axis)
     w[1:-1] = (axis[2:] - axis[:-2]) / 2
@@ -876,7 +933,9 @@ def test_the_deposit_is_the_tents_of_a_graded_grid():
 def test_the_projector_deposits_a_sample_its_grid_cannot_read():
     """The particle-to-grid projector on a uniform grid, and on the same lattice declared custom: the narrow sample is
     its tent deposit, mass 1 on the grid's weights, where the KDE at the nodes had mass 0 (b1727062 read the KDE on the
-    custom one); the wide one is still scipy's KDE at the nodes. A CartesianGrid
+    custom one); the wide one is still scipy's KDE at the nodes. A grid declared uniform is gated at the spacing it
+    declares, whatever its nodes' rounding: on float32 bounds at 1e3, whose nodes the lattice test refuses, the narrow
+    sample is the deposit too (da35f1df read the KDE there). A CartesianGrid
     that is not a TensorProductGrid, and a TensorProductGrid with an axis of one node, have no lattice the gate reads,
     so the narrow sample is scipy's KDE there (#2827), as before #2556; 52ccefad refused the first and raised on the
     second."""
@@ -915,6 +974,19 @@ def test_the_projector_deposits_a_sample_its_grid_cannot_read():
                 11, 11
             )
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
+
+    from mfgarchon.utils.numerical.particle.interpolation import _lattice_spacings
+
+    rounded = TensorProductGrid(
+        bounds=[(_F32(1e3), _F32(1e3 + 1.0))] * 2, Nx_points=[51, 51], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    assert _lattice_spacings(geometry_grid_axes(rounded)) is None
+    x, y = (np.asarray(a, dtype=float) for a in geometry_grid_axes(rounded))
+    sample = _NARROW + 1e3
+    projector = GeometryProjector(rounded, PointCloudGeometry(sample), projection_method="kde")
+    got = np.asarray(projector.project_fp_to_hjb(np.ones(len(sample)), bandwidth="scott"))
+    want = np.einsum("pi,pj->ij", _hats(sample[:, 0], x), _hats(sample[:, 1], y)) / len(sample)
+    np.testing.assert_allclose(got, want / np.outer(_trapezoid(x), _trapezoid(y)), rtol=1e-6, atol=1e-12)
 
     # the library's one CartesianGrid is the TensorProductGrid, so the other kind delegates to `grid`
     members = {"__init__": lambda self: None, "__getattr__": lambda self, name: getattr(grid, name)}
@@ -974,6 +1046,12 @@ def _off_the_lattice(by):
         (np.clip(_WIDE, 0.0, 1.0), (11, 11), {}, "kernel"),
         (_NARROW, (11, 11), {"grid_axes": [_GRADED, _AXIS]}, "kernel"),
         (_NARROW, (11, 11), {"grid_axes": [_off_the_lattice(2e-3), _AXIS]}, "kernel"),
+        (
+            _NARROW + 1e3,
+            (51, 51),
+            {"grid_bounds": ((1e3, 1e3 + 1.0),) * 2, "grid_axes": [np.linspace(_F32(1e3), _F32(1e3 + 1.0), 51)] * 2},
+            "kernel",
+        ),
         (_NARROW, (11, 1), {}, "kernel"),
     ],
     ids=[
@@ -989,6 +1067,7 @@ def _off_the_lattice(by):
         "a wide sample",
         "a caller's graded axis",
         "a caller's axis off a lattice by 2e-3 spacings",
+        "a caller's float32 axes at 1e3, rounded past 1e-3 spacings",
         "an axis of one node",
     ],
 )
@@ -998,7 +1077,8 @@ def test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read(sam
     with float32 bounds or axes and far from 0 too (b1727062 kept the kernel there); a sample at a corner is the
     deposit of its restriction to the box, each particle inside carrying 1/N. A callable bandwidth decides by its own
     factor, which here moves the verdict both ways from Scott's. A wide sample is still scipy's KDE at the nodes, and
-    so is any sample on axes that are not a lattice (#2827)."""
+    so is any sample on axes that are not a lattice (#2827): among them float32 axes at 1e3 whose rounding passes
+    1e-3 spacings, with no allowance for their dtype, though a grid declaring the same nodes uniform is gated."""
     from mfgarchon.utils.numerical.particle.interpolation import interpolate_particles_to_grid
 
     kwargs = dict(kwargs)

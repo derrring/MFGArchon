@@ -442,14 +442,15 @@ class GeometryProjector:
         """
         Project particle density to grid using kernel density estimation.
 
-        Leverages existing GPU-accelerated KDE from density_estimation.py. On a target whose axes are uniform, a sample
+        Leverages existing GPU-accelerated KDE from density_estimation.py. On a target with a lattice, a sample
         whose kernel the grid cannot read is deposited on its nodes instead (`kde_resolves_on_grid`,
         `deposit_on_nodes`; #2556). The deposit is the sample's restriction to the target box, as the kernel estimate
         is: a particle outside the box is left out and each particle kept carries 1/N of the whole sample; the count
         left out and their share of the mass are logged and recorded (`particles_outside_last_deposit`). The gate needs
-        a lattice: a TensorProductGrid whose axes are one by the grid readers' one test is gated, declared uniform or
-        custom. A non-uniform axis, an axis of one node, or a CartesianGrid that is not a TensorProductGrid has none
-        and reads the KDE as before (#2827).
+        a lattice: a TensorProductGrid declared uniform has its declared spacing, whatever its nodes' rounding, and
+        one declared custom has one where its axes are a lattice by the grid readers' one test. An axis of one node, a
+        custom axis that is not a lattice, or a CartesianGrid that is not a TensorProductGrid has none and reads the
+        KDE as before (#2827).
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
@@ -477,12 +478,17 @@ class GeometryProjector:
 
         dimension = particle_positions.shape[1] if particle_positions.ndim > 1 else 1
 
-        # The gate needs a lattice and the deposit the grid's `measure_weights`: TensorProductGrid owns both, where its
-        # axes are a lattice by the grid readers' one test (not a non-uniform axis, nor an axis of one node). Any other
-        # target reads the KDE as before (#2827).
+        # The gate needs a lattice and the deposit the grid's `measure_weights`: TensorProductGrid owns both. On axes it
+        # declares uniform the lattice is its declared spacing, whatever its nodes' rounding, since it built them; on
+        # axes declared custom the grid readers' one test decides. An axis of one node, a custom axis that is not a
+        # lattice, or any other target reads the KDE as before (#2827).
         spacings = None
         if isinstance(self.hjb_geometry, TensorProductGrid):
-            spacings = _lattice_spacings(geometry_grid_axes(self.hjb_geometry))
+            grid = self.hjb_geometry
+            if grid.is_uniform and all(0 < s < np.inf for s in grid.get_grid_spacing()):
+                spacings = grid.get_grid_spacing()
+            else:
+                spacings = _lattice_spacings(geometry_grid_axes(grid))
         self.particles_outside_last_deposit = None
         if spacings is not None and not kde_resolves_on_grid(particle_positions, bandwidth, spacings):
             # `spacings` is set above only for a TensorProductGrid

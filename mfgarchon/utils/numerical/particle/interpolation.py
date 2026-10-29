@@ -364,12 +364,13 @@ def interpolate_particles_to_grid(
 
 
 def _lattice_spacings(axes: Sequence[NDArray[np.floating]]) -> list[float] | None:
-    """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read, the one test of that for
-    the grid readers (this utility, the projector and the particle solver): each axis of at least two finite nodes
-    lies on the lattice of finite spacing h = (last - first) / (n - 1) through its first node, to within
-    `_LATTICE_NODE_TOL` h. The nodes are measured from the first, so the test's own rounding does not add an offset's
-    to the nodes', and an axis rounded to float32 passes while its rounding stays under that tolerance. None
-    otherwise."""
+    """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read, the one test of that for axes
+    no grid declares a spacing for: this utility's own and a caller's, and the projector's on a TensorProductGrid
+    declared custom (a grid declared uniform is read at the spacing it declares). Each axis of at least two finite
+    nodes, whose span last - first is finite in float64, lies on the lattice of positive spacing
+    h = (last - first) / (n - 1) through its first node, to within `_LATTICE_NODE_TOL` h. The nodes are measured from
+    the first, so the test's own rounding does not add an offset's to the nodes', and an axis rounded to float32 passes
+    while its rounding stays under that tolerance. None otherwise."""
     spacings = []
     for axis in axes:
         a = np.asarray(axis, dtype=float)
@@ -593,10 +594,12 @@ _ALIASING_BATCH = 256
 _FIRST_RADIUS = 16.0
 # How far, in spacings, an axis's nodes may sit from a lattice's for a reader to gate it as one (`_lattice_spacings`).
 # Moving a lattice's nodes by up to c h moves a KDE's node sum on them, at the gate's boundary, by K c in the worst
-# direction: K up to 5.4 measured on clusters in d = 1 to 3, and growing as a spread sample's kernel narrows, to 20 on
-# 3e5 particles spread over a 1-D box (a kernel of 0.007 cells at the boundary). So an axis gated here is read to within
-# the gate's tolerance of 0.1 plus 5.4e-3 on those clusters, and 2.0e-2 on that sample. An axis refused keeps the
-# kernel estimate ungated (#2827), so a larger c only gates more axes.
+# direction. K was measured up to 6.3 on clusters of 300 in d = 1 to 3. On a sample spread uniformly over a box whose
+# edges sit on nodes it has no bound: it grows as n grows and the kernel narrows, in 1-D to 19, 39 and 144 at n 3e3, 3e4
+# and 3e5 (a kernel of 0.005 cells), in 2-D to 20 at 3e4, in 3-D to 11 at 3e3; with the box's edges between nodes it
+# stayed under 2.5. So an axis gated here is read to within the gate's tolerance of 0.1 plus K c: 6.3e-3 on those
+# clusters, 0.14 on that 1-D sample. An axis refused keeps main's ungated kernel estimate (#2827), so for this test's
+# readers (the utility, and the projector on a grid declared custom) a larger c only gates more axes.
 _LATTICE_NODE_TOL = 1e-3
 
 
@@ -645,6 +648,12 @@ def kde_lattice_aliasing(
     float or None
         A value above ``tol`` exactly when B is (a partial sum of B past it, or an upper bound on B at or under it),
         except infinity from the backstop, which reads the sample as unresolved whatever its B; or None.
+
+    Raises
+    ------
+    ValueError
+        For spacings that are not finite and positive, and where K overflows float64: a kernel wider than 1.3e154
+        spacings (2 pi sigma / h) on some axis, or a spacing under 4.7e-154.
     """
     points = _sample(particle_positions)
     n, d = points.shape
@@ -657,7 +666,14 @@ def kde_lattice_aliasing(
     if n < 2 or not kde_sample_has_spread(points):
         return None
     H = _kernel_covariance(points, factor)
-    K = H * np.outer(2.0 * np.pi / h, 2.0 * np.pi / h)
+    with np.errstate(over="ignore", invalid="ignore"):  # an overflow is refused by name just below
+        K = H * np.outer(2.0 * np.pi / h, 2.0 * np.pi / h)
+    if not np.all(np.isfinite(K)):
+        raise ValueError(
+            f"A kernel's aliasing bound on a lattice of spacings {h.tolist()} cannot be computed: K = H (2 pi / h)^2 "
+            "overflows float64, which a kernel wider than 1.3e154 spacings (2 pi sigma / h) or a spacing under 4.7e-154 "
+            f"does; 2 pi sigma / h is {(2.0 * np.pi * np.sqrt(np.diag(H)) / h).tolist()} here (#2556)."
+        )
     c = _ellipsoid_radius(K)
     # The points whose transform is at least exp(-8) first (c is at least 4 ln(1e13), past 16): a sample past tol is
     # decided there, before the whole ellipsoid is enumerated (a narrow kernel's holds millions of points). Their
@@ -744,10 +760,11 @@ def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
 
 
 def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.integer] | None:
-    """The lattice points m != 0 with m^T K m <= c, one of each pair m, -m (its first nonzero entry > 0); or None when
-    a level of the enumeration below holds more than 2 `_ALIASING_MAX_POINTS` + 1 points (so whenever the ellipsoid
-    does, sometimes when only its shadow on the coordinates enumerated so far does, and always when c is infinite), or
-    when K is not positive definite in floating point.
+    """The lattice points m != 0 with m^T K m <= c, for a finite K (the gate refuses one that overflows), one of each
+    pair m, -m (its first nonzero entry > 0); or None when a level of the enumeration below holds more than
+    2 `_ALIASING_MAX_POINTS` + 1 points (so whenever the ellipsoid does, sometimes when only its shadow on the
+    coordinates enumerated so far does, and always when c is infinite), or when K is not positive definite in floating
+    point.
 
     Enumerated coordinate by coordinate from the last (Fincke-Pohst): with K = U^T U, U upper triangular,
     m^T K m = sum_i (U_ii m_i + sum_{j>i} U_ij m_j)^2, so once m_{i+1}, ..., m_{d-1} are fixed the remaining budget bounds
