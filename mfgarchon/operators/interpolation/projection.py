@@ -46,7 +46,7 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 import numpy as np
 
@@ -485,7 +485,8 @@ class GeometryProjector:
                 spacings = None
         self.particles_outside_last_deposit = None
         if spacings is not None and not kde_resolves_on_grid(particle_positions, bandwidth, spacings):
-            weights = self.hjb_geometry.measure_weights()
+            # `spacings` is set above only for a TensorProductGrid
+            weights = cast("TensorProductGrid", self.hjb_geometry).measure_weights()
             density = deposit_on_nodes(
                 particle_positions,
                 geometry_grid_axes(self.hjb_geometry),
