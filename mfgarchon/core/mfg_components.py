@@ -783,7 +783,16 @@ class ConditionsMixin:
         - Otherwise no channel declares a BC, and it is refused by name (#2589).
 
         Reading the components BC warns: that channel is deprecated in favour of the geometry's.
+
+        A FLUX in the BC it returns is refused (`refuse_shared_flux`): it is the FP's alone, given to the FP solver as
+        its own BC (#2581, user ruling 2026-10-09, B-2).
         """
+        from mfgarchon.geometry.boundary.bc_utils import refuse_shared_flux
+
+        return refuse_shared_flux(self._declared_boundary_conditions(), consumer="MFGProblem.get_boundary_conditions")
+
+    def _declared_boundary_conditions(self) -> BoundaryConditions | Any:
+        """The channel resolution `get_boundary_conditions` describes, before its FLUX refusal."""
         from mfgarchon.geometry.base import Geometry, GraphGeometry
         from mfgarchon.geometry.boundary.conditions import periodic_bc
         from mfgarchon.geometry.protocols import SupportsPeriodic

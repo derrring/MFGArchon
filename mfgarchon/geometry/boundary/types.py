@@ -153,6 +153,11 @@ class BCType(Enum):
             An FP solver refuses a NEUMANN handed to it explicitly, which would mean dm/dn = g (#2512, row B3).
         ROBIN: Mixed condition (alpha*u + beta*du/dn = g)
         PERIODIC: Wrap-around boundaries (u(x_min) = u(x_max))
+        FLUX: A prescribed total flux, J.n = q with J = alpha*m - D*grad(m), for a Fokker-Planck solver's own BC
+            (#2581). q is mass per unit time per unit boundary measure, outward positive, and q = 0 is NO_FLUX. It
+            is not NEUMANN: where the drift crosses the wall, J.n = q is not D*dm/dn = -q. FP-side only, so it is
+            refused on a BC the HJB and FP share, and a step whose outflow would take the density negative is
+            refused, never clipped (#2581, user rulings 2026-10-09).
 
     Impermeable Boundary Types (NO_FLUX and REFLECTING):
         These represent the SAME physical concept - an impermeable wall where
@@ -190,6 +195,7 @@ class BCType(Enum):
     PERIODIC = "periodic"
     REFLECTING = "reflecting"
     NO_FLUX = "no_flux"
+    FLUX = "flux"
     EXTRAPOLATION_LINEAR = "extrapolation_linear"
     EXTRAPOLATION_QUADRATIC = "extrapolation_quadratic"
 

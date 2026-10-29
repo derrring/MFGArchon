@@ -364,6 +364,37 @@ def _refuse_a_shared_robin(boundary_conditions: Any, consumer: str) -> NoReturn:
     )
 
 
+def refuse_shared_flux(boundary_conditions: Any, consumer: str) -> Any:
+    """Refuse a FLUX in the BC the HJB and the FP of a problem share, and return the BC otherwise (#2581, B-2).
+
+    A FLUX is a prescribed mass flux through the wall, ``J.n = q``: a condition on the Fokker-Planck equation alone,
+    with no meaning for the HJB. The two equations' BCs are specified separately (user ruling 2026-10-09), so a BC
+    on the problem or its geometry, which both read, carries none: every FLUX segment or ``default_bc`` in it is
+    refused. An FP solver takes a FLUX as its own ``boundary_conditions``, a standalone FP solve included. Anything
+    that is not a ``BoundaryConditions`` (``None``, a graph geometry's node BCs) is returned as is.
+    """
+    from .conditions import BoundaryConditions
+    from .types import BCType
+
+    if not isinstance(boundary_conditions, BoundaryConditions):
+        return boundary_conditions
+    where = (
+        [f"segment(s) {names}"]
+        if (names := [seg.name for seg in boundary_conditions.segments if seg.bc_type == BCType.FLUX])
+        else []
+    )
+    if boundary_conditions.default_bc == BCType.FLUX:
+        where.append("default_bc=FLUX")
+    if where:
+        raise ValueError(
+            f"{consumer}: a FLUX boundary condition (a prescribed mass flux J.n = q) is the Fokker-Planck solver's "
+            f"alone, and a BC on the problem or its geometry is the one the HJB and the FP share (#2581, user ruling "
+            f"2026-10-09, B-2). Found: {'; '.join(where)}. Keep the HJB's condition on the geometry and pass "
+            "flux_bc(...) to the FP solver as its own boundary_conditions; a standalone FP solve takes it there too."
+        )
+    return boundary_conditions
+
+
 def refuse_explicit_fp_neumann(boundary_conditions: Any, consumer: str) -> Any:
     """Refuse a NEUMANN in a BC handed to an FP solver, and return the BC otherwise (#2512, row B3).
 
