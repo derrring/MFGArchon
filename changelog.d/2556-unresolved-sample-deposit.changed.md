@@ -2,8 +2,10 @@
   kernel, each of these readers asks whether the grid's lattice can read it: `FPParticleSolver`'s 1-D, n-D and GPU
   density readers, the particle-to-grid projector on a `TensorProductGrid`, and `interpolate_particles_to_grid(method="kde")`
   on a lattice, the one it lays out itself or a caller's `grid_axes` (a callable bandwidth is read through scipy's own
-  estimate). A grid declared uniform is read at the spacing it declares, whatever its nodes' rounding: the solver's
-  grid, and a `TensorProductGrid` the projector reads. Axes no grid declares a spacing for (the utility's own and a
+  estimate). A grid's own spacing is read whatever its nodes' rounding: the one the solver's grid declares, or the one
+  made up from a geometry's bounds where it has no grid (#2757), and the one a `TensorProductGrid` declared uniform
+  gives the projector. A declared spacing that is not positive and finite, as integer bounds whose span wraps in their
+  dtype give (#2836), is replaced by the nodes' own lattice in both. Axes no grid declares a spacing for (the utility's own and a
   caller's, and a `TensorProductGrid` declared custom) are a lattice where their nodes lie on one to within 1e-3 of its
   spacing, so an axis rounded to float32 or far from 0 is one while its rounding stays under that. The sample must
   have a kernel

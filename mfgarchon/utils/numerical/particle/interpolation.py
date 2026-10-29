@@ -365,8 +365,10 @@ def interpolate_particles_to_grid(
 
 def _lattice_spacings(axes: Sequence[NDArray[np.floating]]) -> list[float] | None:
     """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read, the one test of that for axes
-    no grid declares a spacing for: this utility's own and a caller's, and the projector's on a TensorProductGrid
-    declared custom (a grid declared uniform is read at the spacing it declares). Each axis of at least two finite
+    no grid declares a usable spacing for: this utility's own and a caller's; the projector's on a TensorProductGrid
+    declared custom, or declared uniform with a spacing that is not positive and finite (an axis of one node, or
+    integer bounds whose span wraps in their dtype, #2836); and the solver's on such a declared spacing. A grid
+    declared uniform otherwise is read at the spacing it declares. Each axis of at least two finite
     nodes, whose span last - first is finite in float64, lies on the lattice of positive spacing
     h = (last - first) / (n - 1) through its first node, to within `_LATTICE_NODE_TOL` h. The nodes are measured from
     the first, so the test's own rounding does not add an offset's to the nodes', and an axis rounded to float32 passes
@@ -652,8 +654,8 @@ def kde_lattice_aliasing(
     Raises
     ------
     ValueError
-        For spacings that are not finite and positive, and where K overflows float64: a kernel wider than 1.3e154
-        spacings (2 pi sigma / h) on some axis.
+        For spacings that are not finite and positive, and where K overflows float64: where 2 pi sigma / h passes
+        1.3408e154, the square root of float64's largest value, on some axis.
     """
     points = _sample(particle_positions)
     n, d = points.shape
@@ -667,14 +669,14 @@ def kde_lattice_aliasing(
         return None
     H = _kernel_covariance(points, factor)
     # K as (2 pi)^2 (H / h_i) / h_j: no step overflows unless K does, where (2 pi / h)^2 alone overflows below a
-    # spacing of 4.7e-154 whatever the kernel's width in spacings.
+    # spacing of 4.686e-154 whatever the kernel's width in spacings.
     with np.errstate(over="ignore"):  # an overflow is refused by name just below
         K = (2.0 * np.pi) ** 2 * ((H / h[:, None]) / h[None, :])
         widths = 2.0 * np.pi * (np.sqrt(np.diag(H)) / h)
     if not np.all(np.isfinite(K)):
         raise ValueError(
             f"A kernel's aliasing bound on a lattice of spacings {h.tolist()} cannot be computed: K = H (2 pi / h)^2 "
-            "overflows float64, which a kernel wider than 1.3e154 spacings (2 pi sigma / h) on some axis does; "
+            "overflows float64, which 2 pi sigma / h past 1.3408e154 on some axis does; "
             f"2 pi sigma / h is {widths.tolist()} here (#2556)."
         )
     c = _ellipsoid_radius(K)

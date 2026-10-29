@@ -667,11 +667,17 @@ class FPParticleSolver(BaseFPSolver):
         """Whether the kernel of ``kde_bandwidth`` on this level's sample cannot be read on the grid's nodes: the
         sample has none, or its aliasing bound on the grid's lattice is over `KDE_LATTICE_ALIASING_TOL`
         (`kde_resolves_on_grid`, #2556). Such a level is deposited instead, and recorded in `deposited_levels`, which
-        `solve_fp_system` logs once. The lattice is the spacing the grid declares, whatever its nodes' rounding, since
-        the grid built them."""
-        from mfgarchon.utils.numerical.particle.interpolation import kde_resolves_on_grid
+        `solve_fp_system` logs once. The lattice is the spacing the grid parameters carry, whatever its nodes' rounding:
+        the one a `TensorProductGrid` declares, or the one made up from a geometry's bounds (#2757). One that is not
+        positive and finite (integer bounds whose span overflows their dtype, #2836) is replaced by the nodes' own
+        lattice, as the projector reads it; nodes that are not a lattice either are refused by name."""
+        from mfgarchon.utils.numerical.particle.interpolation import _lattice_spacings, kde_resolves_on_grid
 
-        if kde_resolves_on_grid(particles, self.kde_bandwidth, self._get_grid_params()["spacings"]):
+        params = self._get_grid_params()
+        spacings = params["spacings"]
+        if not all(0 < s < np.inf for s in spacings):
+            spacings = _lattice_spacings(params["coordinates"]) or spacings
+        if kde_resolves_on_grid(particles, self.kde_bandwidth, spacings):
             return False
         self.deposited_levels.append(level)
         return True

@@ -550,6 +550,34 @@ def test_the_solver_gates_a_grid_declared_uniform_at_its_spacing_whatever_its_ro
         assert float(np.sum(level * weights)) == pytest.approx(1.0, rel=1e-6)
 
 
+@pytest.mark.parametrize(("sd", "deposited"), [(0.0, True), (20.0, False)], ids=["a point", "a wide sample"])
+def test_the_solver_reads_the_nodes_lattice_where_the_declared_spacing_is_not_positive(sd, deposited):
+    """int8 bounds (-100, 100), whose span wraps in their dtype, declare a spacing of -5.6 (#2836) while the nodes are
+    20 apart: the solver gates at the nodes' lattice, as the projector does, so 300 particles at one point are
+    deposited at every level and a wide sample keeps its kernel, each of mass 1 on the grid's measure. Read at the
+    declared spacing (78ff7279), every sample was refused by name; main returned mass 1 on the wide sample."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    with np.errstate(over="ignore"):  # the grid's own span wraps in int8 (#2836)
+        problem = _problem(11, 1, volatility=0.0, bounds=[(np.int8(-100), np.int8(100))])
+    assert problem.geometry.get_grid_spacing()[0] < 0
+    particles = 6.0 + sd * np.random.default_rng(3).standard_normal((300, 1))
+    solver = FPParticleSolver(problem, num_particles=300, seed=5)
+    M = np.asarray(
+        solver.solve_fp_system(
+            M_initial=None,
+            drift_field=lambda t, x, m: np.zeros_like(x),
+            initial_particles=particles,
+            drift_needs_density=False,
+            show_progress=False,
+        )
+    )
+    assert solver.deposited_levels == (list(range(1, len(M))) if deposited else [])
+    weights = problem.spatial_measure().weights
+    for level in M[1:]:
+        assert float(np.sum(level * weights)) == pytest.approx(1.0, rel=1e-6)
+
+
 def _deposited_on(path):
     """The levels one solve deposits, on ``path``, for a crowd at one node (no spread) under no diffusion: every level
     the reader builds. The grid-drift paths build level 0 from the sampled particles; the callable path takes it from
@@ -865,10 +893,10 @@ def test_a_kernel_the_enumeration_cannot_hold_meets_the_backstop(sample, bandwid
 
 @pytest.mark.parametrize("d", [1, 2, 3])
 def test_a_kernel_whose_k_overflows_is_refused_by_name(d):
-    """Where K = H (2 pi / h)^2 overflows float64, a kernel wider than 1.3e154 spacings, the gate refuses by name: a
-    factor of 1e154 on a sample of sd 0.1 at h = 0.1, and Scott's kernel at h = 1e-160 (about 2e159 spacings). The
+    """Where K = H (2 pi / h)^2 overflows float64, 2 pi sigma / h past 1.3408e154 on some axis, the gate refuses by name:
+    a factor of 1e154 on a sample of sd 0.1 at h = 0.1, and Scott's kernel at h = 1e-160 (about 2e159 spacings). The
     enumeration raised an unnamed ValueError in 1-D and 2-D and a LinAlgError in 3-D there (da35f1df). A spacing under
-    4.7e-154, where (2 pi / h)^2 alone overflows, is not refused when K is finite: the sample scaled by 1e-155 on
+    4.686e-154, where (2 pi / h)^2 alone overflows, is not refused when K is finite: the sample scaled by 1e-155 on
     spacings of 1e-156 reads the unscaled sample's value on 0.1, to the rounding of its subnormal H (2e-11 to 5e-11
     here); 78ff7279 refused it."""
     sample = 0.5 + 0.1 * np.random.default_rng(0).standard_normal((300, d))
