@@ -665,7 +665,7 @@ def test_the_three_point_check_can_fail(residuals, refusal):
 
 
 def test_every_declared_pair_is_either_measured_or_named_uncovered():
-    """A declared BC with no oracle must be visible as uncovered, not absent.
+    """A declared (solver, BC) pair this matrix has no fixture for must be visible as uncovered, not absent.
 
     ROBIN and REFLECTING are each declared once and have no fixture here. Absent, they would read
     as covered; named, they are a gap someone can close. FP-FDM's FLUX (#2581) has no fixture here
@@ -678,7 +678,7 @@ def test_every_declared_pair_is_either_measured_or_named_uncovered():
         if t not in BC_FACTORIES
     }
     assert uncovered == {("HJBGFDMSolver", "ROBIN"), ("FPParticleSolver", "REFLECTING"), ("FPFDMSolver", "FLUX")}, (
-        f"the set of declared-but-unmeasured (solver, BC) pairs changed: {sorted(uncovered)}"
+        f"the set of declared (solver, BC) pairs this matrix has no fixture for changed: {sorted(uncovered)}"
     )
 
 

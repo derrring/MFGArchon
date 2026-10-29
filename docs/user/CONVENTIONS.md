@@ -877,9 +877,13 @@ mass per unit time per unit boundary measure, outward positive, and $q = 0$ is N
 B-1). It is a condition on the FP alone. A BC the HJB and the FP share carries none, and
 `MFGProblem.get_boundary_conditions` refuses one there (B-2); an FP solver takes it as its own
 `boundary_conditions`. FP-FDM's implicit step puts $-q/(\Delta x/2)$ on the half cell of each wall node per FLUX
-face, and FP-FEM the load $-\int_\Gamma q\,\varphi\,dS$, each with its operator unchanged, so the mass changes by
-exactly $-\int_\Gamma q\,dS$ per unit time. A step whose flux part would take the density negative where the step
-without it is non-negative is refused, never clipped (B-3). Every other solver refuses FLUX by name (#2581).
+face, and FP-FEM the load $-\int_\Gamma q\,\varphi\,dS$, each with its operator unchanged. So on a domain with no
+Dirichlet face, whose rows exchange mass of their own, the mass changes by exactly $-\int_\Gamma q\,dS$ per unit time
+on every step the solver's positivity clip leaves alone. FP-FDM's clip takes only round-off and refuses a larger
+negative; FP-FEM's Galerkin advection is not monotone, and where its step undershoots, flux or no flux, the clip raises
+the density to zero and adds mass. A step whose flux part would take the density negative where the step without it
+is non-negative is refused, never clipped (B-3); a negative the step without the flux makes on its own is handled as
+before. Every other solver refuses FLUX by name (#2581).
 
 ### What is not settled here
 

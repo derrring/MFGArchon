@@ -1117,10 +1117,11 @@ def solve_fp_nd_full_system(
     _is_constant_sigma = not callable(getattr(problem, "volatility", None)) and not isinstance(
         getattr(problem, "volatility", None), np.ndarray
     )
-    # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet). A FLUX never reaches the cache's
-    # one reader, the explicit step, which refuses it above (#2581).
+    # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet), and only where the cache's one
+    # reader runs: the explicit step for a callable drift with scalar diffusion (the time loop's second arm). The
+    # implicit step builds its own operator and never reads it.
     _bc_is_uniform = getattr(boundary_conditions, "is_uniform", False) if boundary_conditions is not None else False
-    if _is_constant_sigma and _bc_is_uniform and not _declares_flux(boundary_conditions):
+    if _is_constant_sigma and _bc_is_uniform and drift.is_callable() and not use_tensor_diffusion:
         try:
             from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
