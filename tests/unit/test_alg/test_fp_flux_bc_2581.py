@@ -350,3 +350,31 @@ def test_fp_fem_refuses_a_flux_on_its_adjoint_step():
     solver = FPFEMSolver(_problem(_mesh(1, 8)), boundary_conditions=_segments(1, {"x_max": Q}))
     with pytest.raises(NotImplementedError, match=r"builds no prescribed-flux load"):
         solver.solve_fp_step_adjoint_mode(np.ones(solver.n_dof), np.zeros((solver.n_dof, solver.n_dof)))
+
+
+def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
+    """A ghost layer, a ghost calculator and a geometric fold read a condition on the field; FLUX is on the total flux.
+    On arrival the ghost layer wrote a reflection (mixed) or zeros (uniform), the calculator route a zero gradient, the
+    fold a clamp and the legacy ghost values a mirror; each now refuses by name (#2581)."""
+    from mfgarchon.geometry.boundary._compat import get_ghost_values_nd
+    from mfgarchon.geometry.boundary.applicator_fdm import bc_to_topology_calculator
+    from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
+    from mfgarchon.operators.differential.laplacian import LaplacianOperator
+
+    bc = flux_bc(0.3, dimension=1)
+    with pytest.raises(NotImplementedError, match=r"The FDM ghost layer has no reading of BCType\.FLUX"):
+        LaplacianOperator(spacings=[0.1], field_shape=(11,), bc=bc) @ np.ones(11)
+    with pytest.raises(NotImplementedError, match=r"calculator route .* no reading of BCType\.FLUX"):
+        bc_to_topology_calculator(bc, (11,))
+    with pytest.raises(NotImplementedError, match=r"FLUX boundary .* has no geometric operation"):
+        bc_type_to_geometric_operation("flux")
+    with pytest.raises(NotImplementedError, match=r"A ghost value has no reading of BCType\.FLUX"):
+        get_ghost_values_nd(np.ones(11), bc, spacing=(0.1,))
+
+
+def test_a_flux_segment_needs_a_value():
+    bc = BoundaryConditions(
+        dimension=1, segments=[BCSegment(name="out", bc_type=BCType.FLUX, value=None, boundary="x_max")]
+    )
+    with pytest.raises(ValueError, match=r"Segment 'out' with flux BC requires a value"):
+        bc.validate_values()

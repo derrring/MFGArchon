@@ -71,7 +71,7 @@ Usage:
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
@@ -455,8 +455,8 @@ def bc_to_topology_calculator(
         # Reflecting BC for particles - use zero gradient for field solvers
         return BoundedTopology(dimension, shape), _get_no_flux_calculator()
     else:
-        # Unknown type - default to zero gradient
-        return BoundedTopology(dimension, shape), _get_no_flux_calculator()
+        # A type with no calculator here was once given the zero-gradient one, another condition (#2581).
+        _refuse_a_type_with_no_ghost(bc_type, "The FDM calculator route (bc_to_topology_calculator)")
 
 
 def create_ghost_buffer_from_bc(
@@ -1044,16 +1044,17 @@ def dirichlet_wall_rows(
     return mask, values
 
 
-def _refuse_a_type_with_no_ghost(bc_type: BCType) -> None:
-    """A type this ghost layer has no arm for is refused, not written as some other condition (#1456, #2581).
+def _refuse_a_type_with_no_ghost(bc_type: BCType, reader: str = "The FDM ghost layer") -> NoReturn:
+    """A type this module's readers have no arm for is refused, not written as some other condition (#1456, #2581).
 
-    FLUX (``J.n = q``) is the one today: a condition on the total flux, which needs the drift, so a ghost layer of
-    the field cannot impose it. It is a Fokker-Planck solver's own BC, read by FP-FDM's implicit step and by FP-FEM.
+    FLUX (``J.n = q``) is the one today: a condition on the total flux, which needs the drift, so a ghost layer, a
+    calculator or a value written on the field cannot impose it. It is a Fokker-Planck solver's own BC, read by
+    FP-FDM's implicit step and by FP-FEM.
     """
     raise NotImplementedError(
-        f"The FDM ghost layer has no reading of BCType.{bc_type.name}. A prescribed total flux J.n = q (FLUX) "
-        "involves the drift, which a ghost cell of the field does not see, so an operator padding a field cannot "
-        "impose it; it is the FP solver's own BC, read by FP-FDM's implicit step and by FP-FEM (#2581)."
+        f"{reader} has no reading of BCType.{bc_type.name}. A prescribed total flux J.n = q (FLUX) "
+        "involves the drift, which a condition written on the field does not see, so it cannot be imposed here; it "
+        "is the FP solver's own BC, read by FP-FDM's implicit step and by FP-FEM (#2581)."
     )
 
 

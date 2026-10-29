@@ -24,7 +24,7 @@ unrecognised type and three of which fell through silently.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
@@ -247,6 +247,15 @@ def _face_condition(
     return segment.bc_type, value, 1.0, 0.0
 
 
+def _refuse_flux_ghost() -> NoReturn:
+    """FLUX (J.n = q) is on the total flux, which needs the drift: a ghost value of the field cannot impose it (#2581)."""
+    raise NotImplementedError(
+        "A ghost value has no reading of BCType.FLUX: a prescribed total flux J.n = q involves the drift, which a "
+        "ghost cell of the field does not see; it is the FP solver's own BC, read by FP-FDM's implicit step and by "
+        "FP-FEM (#2581)."
+    )
+
+
 def _compute_ghost_pair(
     bc_type: BCType,
     bc_value: float | None,
@@ -295,6 +304,9 @@ def _compute_ghost_pair(
             ghost_cell_robin(u_int_left, g, alpha, beta, dx, grid_type=config.grid_type),
             ghost_cell_robin(u_int_right, g, alpha, beta, dx, grid_type=config.grid_type),
         )
+
+    elif bc_type == BCType.FLUX:
+        _refuse_flux_ghost()
 
     else:
         return u_next_left.copy(), u_prev_right.copy()
@@ -347,6 +359,9 @@ def _compute_single_ghost(
         # #1961: this returned the adjacent interior cell for every coefficient pair. See the
         # sibling branch in `_compute_ghost_pair`.
         return ghost_cell_robin(u_int, g, alpha, beta, dx, grid_type=config.grid_type)
+
+    elif bc_type == BCType.FLUX:
+        _refuse_flux_ghost()
 
     else:
         return u_neighbor.copy()

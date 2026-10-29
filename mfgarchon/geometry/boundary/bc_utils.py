@@ -84,6 +84,12 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
         return "periodic"
     elif bc_type_lower in ("neumann", "no_flux", "robin"):
         return "reflect"
+    elif bc_type_lower == "flux":
+        # A prescribed mass flux has no geometric reading: neither a fold nor a stop at the wall imposes J.n = q (#2581).
+        raise NotImplementedError(
+            "bc_type_to_geometric_operation: a FLUX boundary (a prescribed mass flux J.n = q) has no geometric "
+            "operation; it is a Fokker-Planck solver's own BC, read by FP-FDM's implicit step and by FP-FEM (#2581)."
+        )
     else:  # dirichlet, absorbing, or unknown
         return "clamp"
 

@@ -2017,7 +2017,7 @@ class BoundaryConditions:
         for segment in self.segments:
             bc_type = segment.bc_type
 
-            if bc_type in (BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX):
+            if bc_type in (BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.FLUX):
                 # These types require a value (can be 0.0 which is valid)
                 if segment.value is None:
                     raise ValueError(f"Segment '{segment.name}' with {bc_type.value} BC requires a value")
