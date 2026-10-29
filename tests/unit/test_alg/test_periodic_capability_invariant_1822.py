@@ -492,6 +492,8 @@ def test_the_known_broken_list_names_only_solvers_that_exist():
 #
 # ROBIN and REFLECTING are declared once each and have no constructor in `mfgarchon.geometry.
 # boundary` reachable from this fixture, so they are reported as uncovered rather than passed.
+# FP-FDM's FLUX (#2581) has a constructor but no invariant here; it is reported the same way and
+# measured in test_fp_flux_bc_2581.py.
 BC_FACTORIES = {
     BCType.NO_FLUX: lambda: no_flux_bc(dimension=1),
     BCType.NEUMANN: lambda: neumann_bc(dimension=1),
@@ -573,7 +575,7 @@ def _surface_params():
         declared = getattr(cls, "_SUPPORTED_BC_TYPES", None) or getattr(cls, "supported_bc_types", None) or ()
         for bc_type in sorted(declared, key=lambda t: t.name):
             if bc_type not in BC_FACTORIES:
-                continue  # ROBIN / REFLECTING: reported by the coverage test below, not passed
+                continue  # ROBIN / REFLECTING / FLUX: reported by the coverage test below, not passed
             marks = []
             key = (name, bc_type.name)
             if key in SURFACE_NOT_HONOURED:
@@ -666,7 +668,8 @@ def test_every_declared_pair_is_either_measured_or_named_uncovered():
     """A declared BC with no oracle must be visible as uncovered, not absent.
 
     ROBIN and REFLECTING are each declared once and have no fixture here. Absent, they would read
-    as covered; named, they are a gap someone can close.
+    as covered; named, they are a gap someone can close. FP-FDM's FLUX (#2581) has no fixture here
+    either: its oracles, the steady profile and the mass leaving at q, are in test_fp_flux_bc_2581.py.
     """
     uncovered = {
         (name, t.name)
@@ -674,7 +677,7 @@ def test_every_declared_pair_is_either_measured_or_named_uncovered():
         for t in (getattr(cls, "_SUPPORTED_BC_TYPES", None) or ())
         if t not in BC_FACTORIES
     }
-    assert uncovered == {("HJBGFDMSolver", "ROBIN"), ("FPParticleSolver", "REFLECTING")}, (
+    assert uncovered == {("HJBGFDMSolver", "ROBIN"), ("FPParticleSolver", "REFLECTING"), ("FPFDMSolver", "FLUX")}, (
         f"the set of declared-but-unmeasured (solver, BC) pairs changed: {sorted(uncovered)}"
     )
 

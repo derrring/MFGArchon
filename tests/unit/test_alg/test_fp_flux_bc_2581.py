@@ -414,7 +414,11 @@ def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
         bc_to_topology_calculator(bc, (11,))
     with pytest.raises(NotImplementedError, match=r"FLUX boundary .* has no geometric operation"):
         bc_type_to_geometric_operation("flux")
-    with pytest.raises(NotImplementedError, match=r"A ghost value has no reading of BCType\.FLUX"):
+    # the legacy ghost values are deprecated, and warn so before they refuse
+    with (
+        pytest.deprecated_call(),
+        pytest.raises(NotImplementedError, match=r"A ghost value has no reading of BCType\.FLUX"),
+    ):
         get_ghost_values_nd(np.ones(11), bc, spacing=(0.1,))
 
 

@@ -125,7 +125,7 @@ class FPFEMSolver(WeakFormFPSolver):
 
         return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, t=t)
 
-    def _flux_load(self, t: float | None):
+    def _flux_load(self, t: float | None) -> NDArray | None:
         """The prescribed flux's load at ``t`` (`assemble_flux_load`, #2581), or None when no facet is FLUX."""
         from .bc_adapter import assemble_flux_load
 

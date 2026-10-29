@@ -342,7 +342,7 @@ def assemble_flux_load(basis: skfem.Basis, bc: BoundaryConditions | None, t: flo
     for segment, facets in groups:
         where = f"the FEM FLUX load of segment {segment.name!r}"
 
-        def q_at(x: NDArray, segment=segment, where=where) -> NDArray:
+        def q_at(x: NDArray, segment: BCSegment = segment, where: str = where) -> NDArray:
             if not callable(segment.value):
                 return np.full(x.shape[1:], float(segment_value(segment, t=t, x=None, where=where, time_keyword="t")))
             points = x.reshape(x.shape[0], -1).T

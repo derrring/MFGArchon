@@ -145,7 +145,7 @@ class WeakFormFPSolver(BaseFPSolver):
         return None, None
 
     # --- Advection from drift (subclass-supplied) -----------------------------
-    def _flux_load(self, t: float | None):
+    def _flux_load(self, t: float | None) -> NDArray | None:
         """The load of a prescribed flux (FLUX, #2581) at the level ``t``, or None. Only FP-FEM's override builds one;
         a class that inherits this one refuses a FLUX at construction."""
         return None
