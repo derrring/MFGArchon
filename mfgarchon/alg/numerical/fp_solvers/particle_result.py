@@ -61,6 +61,9 @@ class FPParticleResult:
         Time points, shape (Nt+1,).
     bandwidth : float or {"scott", "silverman"} or None
         KDE bandwidth: a factor of each timestep's sample spread, or a rule (CONVENTIONS.md § 9).
+    deposited_levels : tuple[int, ...]
+        The time levels whose `M_grid` slice is the sample deposited on the grid's nodes, because the grid could not
+        read its kernel (`FPParticleSolver.deposited_levels`, #2556).
 
     Examples
     --------
@@ -83,6 +86,7 @@ class FPParticleResult:
         time_grid: NDArray[np.float64],
         particle_history: list[NDArray[np.float64]] | None = None,
         bandwidth: float | str | None = None,
+        deposited_levels: tuple[int, ...] = (),
     ):
         """
         Initialize particle result container.
@@ -98,11 +102,14 @@ class FPParticleResult:
         bandwidth : float or {"scott", "silverman"}, optional
             KDE bandwidth: a factor of each timestep's sample spread, or a rule, as the solver's ``kde_bandwidth`` is
             (CONVENTIONS.md § 9). If None, the query's own Scott rule.
+        deposited_levels : tuple[int, ...], optional
+            The time levels whose slice is a deposit rather than a kernel estimate (#2556). Empty if none.
         """
         self.M_grid = M_grid
         self.time_grid = time_grid
         self.particle_history = particle_history
         self.bandwidth = bandwidth
+        self.deposited_levels = deposited_levels
 
         # Cache for density query objects (one per timestep)
         self._query_cache: dict[int, ParticleDensityQuery] = {}

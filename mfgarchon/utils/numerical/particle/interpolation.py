@@ -38,10 +38,14 @@ import numpy as np
 from scipy.interpolate import RBFInterpolator, RegularGridInterpolator
 from scipy.stats import gaussian_kde
 
+from mfgarchon.utils.mfg_logging import get_logger
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from numpy.typing import NDArray
+    from numpy.typing import DTypeLike, NDArray
+
+logger = get_logger(__name__)
 
 InterpolationMethod = Literal["linear", "cubic", "rbf", "kde", "nearest"]
 
@@ -313,6 +317,36 @@ def interpolate_particles_to_grid(
         if bandwidth is None:
             bandwidth = estimate_kde_bandwidth(particle_positions)
 
+        # A sample whose kernel the grid's lattice cannot read is deposited on its nodes instead (#2556): the sample's
+        # restriction to the box, as the kernel estimate is, with the axes' own quadrature weights. The gate needs a
+        # lattice, so axes that are not one (a caller's non-uniform axes, an axis of one node, bounds with no span)
+        # keep the kernel estimate (#2827). A callable bandwidth is read through scipy's own estimate, which raises
+        # for a sample with no kernel.
+        axes = [x] if ndim == 1 else [x, y] if ndim == 2 else [x, y, z]
+        spacings = _lattice_spacings(axes)
+        if spacings is not None:
+            factor = (
+                gaussian_kde(particle_positions.T, bw_method=bandwidth).factor if callable(bandwidth) else bandwidth
+            )
+            if not kde_resolves_on_grid(particle_positions, factor, spacings):
+                from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
+
+                weights = quadrature_weights_nd(tuple(axes))
+                deposit = deposit_on_nodes(
+                    particle_positions, axes, weights, dtype=particle_positions.dtype, outside="drop"
+                )
+                n = len(particle_positions)
+                left_out = n - round(float(np.sum(deposit * weights)) * n)
+                logger.warning(
+                    "interpolate_particles_to_grid: the sample of %d particles had no kernel the grid can read for "
+                    "bandwidth=%r (#2556); it is deposited on the grid's nodes, by their tents, and %d particle(s) "
+                    "outside the box are left out.",
+                    n,
+                    bandwidth,
+                    left_out,
+                )
+                return deposit.reshape(grid_shape)
+
         kde = gaussian_kde(particle_positions.T, bw_method=bandwidth)
         grid_values = kde(grid_points.T)
 
@@ -327,6 +361,29 @@ def interpolate_particles_to_grid(
         raise ValueError(f"Unknown method: {method}. Use 'rbf', 'kde', or 'nearest'.")
 
     return grid_values.reshape(grid_shape)
+
+
+def _lattice_spacings(axes: Sequence[NDArray[np.floating]]) -> list[float] | None:
+    """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read, the one test of that for axes
+    no grid declares a usable spacing for: this utility's own and a caller's; the projector's on a TensorProductGrid
+    declared custom, or declared uniform with a spacing that is not positive and finite (an axis of one node, or
+    integer bounds whose span wraps in their dtype, #2836); and the solver's on such a declared spacing. A grid
+    declared uniform otherwise is read at the spacing it declares. Each axis of at least two finite
+    nodes, whose span last - first is finite in float64, lies on the lattice of positive spacing
+    h = (last - first) / (n - 1) through its first node, to within `_LATTICE_NODE_TOL` h. The nodes are measured from
+    the first, so the test's own rounding does not add an offset's to the nodes', and an axis rounded to float32 passes
+    while its rounding stays under that tolerance. None otherwise."""
+    spacings = []
+    for axis in axes:
+        a = np.asarray(axis, dtype=float)
+        if a.ndim != 1 or len(a) < 2 or not np.all(np.isfinite(a)):
+            return None
+        offsets = a - a[0]
+        h = float(offsets[-1]) / (len(a) - 1)
+        if not 0 < h < np.inf or not float(np.max(np.abs(offsets - h * np.arange(len(a))))) <= _LATTICE_NODE_TOL * h:
+            return None
+        spacings.append(h)
+    return spacings
 
 
 def estimate_kde_bandwidth(
@@ -512,7 +569,337 @@ def kde_kernel_covariance(particle_positions: NDArray[np.floating], bandwidth: f
             "particles, or a spread in some direction below about 1e-7 of another in the axes' own units, within the "
             "positions' rounding floor there, or the two together), so it has no kernel (#2556)."
         )
+    return _kernel_covariance(points, factor)
+
+
+def _kernel_covariance(points: NDArray[np.floating], factor: float) -> NDArray[np.floating]:
+    """factor^2 times the sample covariance (ddof 1), as scipy builds it, without the refusal: the one computation
+    `kde_kernel_covariance` and `kde_lattice_aliasing` read."""
     return factor**2 * np.atleast_2d(np.cov(points, rowvar=False))
+
+
+#: The aliasing bound a grid reader's estimate must stay at or under to be read on the grid's nodes (#2556, user ruling
+#: 2026-10-27). On the infinite lattice of the grid's nodes, or a periodic box's lattice of whole cells, a resolved
+#: estimate's node sum then misses its mass by at most 10%; on a box with walls, the mass the kernel puts past a wall is
+#: a separate matter, the boundary estimator's.
+KDE_LATTICE_ALIASING_TOL = 0.1
+
+# B's terms outside the ellipsoid it is summed over sum to at most this (`_ellipsoid_radius`), which is what the two
+# exits allow for beyond the points summed.
+_OUTSIDE_ELLIPSOID = 1e-13
+# A backstop on the lattice points enumerated, per level of the enumeration (`_half_lattice_in_ellipsoid`): an
+# ellipsoid past it, once the first, small one has not decided the sample, is read as unresolved.
+_ALIASING_MAX_POINTS = 2_000_000
+# Points are summed in batches of 1, 2, 4, ... up to this many, in order of decreasing kernel transform.
+_ALIASING_BATCH = 256
+# The first, small ellipsoid m^T K m <= 16 (transforms of at least exp(-8)), where a sample past tol is decided.
+_FIRST_RADIUS = 16.0
+# How far, in spacings, an axis's nodes may sit from a lattice's for a reader to gate it as one (`_lattice_spacings`).
+# Moving a lattice's nodes by up to c h moves a KDE's node sum on them, at the gate's boundary, by K c in the worst
+# direction. K was measured up to 6.3 on clusters of 300 in d = 1 to 3. On a sample spread uniformly over a box whose
+# edges sit on nodes it has no bound: it grows as n grows and the kernel narrows, in 1-D to 19, 39 and 144 at n 3e3, 3e4
+# and 3e5 (a kernel of 0.005 cells), in 2-D to 20 at 3e4, in 3-D to 11 at 3e3; with the box's edges between nodes it
+# stayed under 2.5. So an axis gated here is read to within the gate's tolerance of 0.1 plus K c: 6.3e-3 on those
+# clusters, 0.14 on that 1-D sample. An axis refused keeps main's ungated kernel estimate (#2827), so for this test's
+# readers (the utility, and the projector on a grid declared custom) a larger c only gates more axes.
+_LATTICE_NODE_TOL = 1e-3
+
+
+def kde_lattice_aliasing(
+    particle_positions: NDArray[np.floating],
+    bandwidth: float | str,
+    spacings: NDArray[np.floating] | list[float],
+    tol: float = KDE_LATTICE_ALIASING_TOL,
+) -> float | None:
+    """
+    How far a KDE of ``particle_positions`` can miss its mass on a lattice of ``spacings``, decided against ``tol``; or
+    None if the sample has no kernel.
+
+    Poisson summation: on the infinite lattice of spacing h (at any offset), the estimate's sum over the nodes, times
+    the cell volume, is 1 + E with E = sum_{m != 0} g(k_m) phi(k_m), k_m = 2 pi m / h on each axis, g the kernel's
+    characteristic function exp(-k^T H k / 2) (H from `kde_kernel_covariance`) and phi the sample's,
+    (1/N) sum_j exp(i k . X_j). E can pass through 0 while the estimate on the nodes is far from the sample (a narrow
+    sample sliding from a node to a midpoint), so the gate is B = sum_{m != 0} |g(k_m)| |phi(k_m)|, which cannot cancel.
+
+    B is summed over the lattice points m inside the ellipsoid m^T K m <= c (K = diag(2 pi / h) H diag(2 pi / h)),
+    whose outside sums to under 1e-13 (`_ellipsoid_radius`), one of each pair m, -m (the two terms are equal), in order
+    of decreasing g. It returns once it is decided against ``tol``: the partial sum once it passes ``tol`` (B is larger),
+    or the partial sum plus the kernel's own sum over the points not yet summed and the outside (|phi| <= 1), once that
+    is at or under ``tol`` (B is smaller). So the value is above ``tol`` exactly when B is, to within 1e-13 and the
+    rounding of the sums. The points with m^T K m <= 16 are summed first, for the exit past tol alone, so that a sample
+    past it is decided before a large ellipsoid is enumerated. A sample those leave undecided whose ellipsoid
+    `_half_lattice_in_ellipsoid` does not enumerate (more than 4e6 points on a level of the enumeration, or K not
+    positive definite in floating point) is returned as infinity: read as unresolved (a backstop).
+
+    None for a sample with no kernel: fewer than two particles, or one `kde_sample_has_spread` refuses (its sum does
+    not decay along the direction it lacks).
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d).
+    bandwidth : float or {"scott", "silverman"}
+        The bandwidth, as `kde_factor` reads it.
+    spacings : array-like
+        The lattice's spacing on each axis, shape (d,), finite and positive.
+    tol : float
+        The value the bound is decided against.
+
+    Returns
+    -------
+    float or None
+        A value above ``tol`` exactly when B is (a partial sum of B past it, or an upper bound on B at or under it),
+        except infinity from the backstop, which reads the sample as unresolved whatever its B; or None.
+
+    Raises
+    ------
+    ValueError
+        For spacings that are not finite and positive, and where K overflows float64: where 2 pi sigma / h passes
+        1.3408e154, the square root of float64's largest value, on some axis.
+    """
+    points = _sample(particle_positions)
+    n, d = points.shape
+    # The bandwidth is read before the no-kernel return, so an unknown rule is refused for every sample (an empty one
+    # is read as one particle, since a rule's factor is not defined at n = 0).
+    factor = kde_factor(bandwidth, points if n else np.zeros((1, d)))
+    h = np.asarray(spacings, dtype=float).reshape(-1)
+    if h.shape != (d,) or not np.all(np.isfinite(h) & (h > 0)):
+        raise ValueError(f"A lattice for a {d}-D sample needs {d} finite positive spacings; got {spacings!r} (#2556).")
+    if n < 2 or not kde_sample_has_spread(points):
+        return None
+    H = _kernel_covariance(points, factor)
+    # K as (2 pi)^2 (H / h_i) / h_j: no step overflows unless K does, where (2 pi / h)^2 alone overflows below a
+    # spacing of 4.686e-154 whatever the kernel's width in spacings.
+    with np.errstate(over="ignore"):  # an overflow is refused by name just below
+        K = (2.0 * np.pi) ** 2 * ((H / h[:, None]) / h[None, :])
+        widths = 2.0 * np.pi * (np.sqrt(np.diag(H)) / h)
+    if not np.all(np.isfinite(K)):
+        raise ValueError(
+            f"A kernel's aliasing bound on a lattice of spacings {h.tolist()} cannot be computed: K = H (2 pi / h)^2 "
+            "overflows float64, which 2 pi sigma / h past 1.3408e154 on some axis does; "
+            f"2 pi sigma / h is {widths.tolist()} here (#2556)."
+        )
+    c = _ellipsoid_radius(K)
+    # The points whose transform is at least exp(-8) first (c is at least 4 ln(1e13), past 16): a sample past tol is
+    # decided there, before the whole ellipsoid is enumerated (a narrow kernel's holds millions of points). Their
+    # outside is not bounded tightly, so only the exit past tol is taken from them.
+    first = _half_lattice_in_ellipsoid(K, _FIRST_RADIUS)
+    if first is not None:
+        value, decided = _sum_in_order(points, K, h, first, tol, outside=None)
+        if decided:
+            return value
+    m = _half_lattice_in_ellipsoid(K, c)
+    if m is None:
+        return float("inf")  # the backstop: the ellipsoid could not be enumerated, read as unresolved
+    value, decided = _sum_in_order(points, K, h, m, tol, outside=_OUTSIDE_ELLIPSOID)
+    return value if decided else value + _OUTSIDE_ELLIPSOID
+
+
+def _sum_in_order(
+    points: NDArray[np.floating],
+    K: NDArray[np.floating],
+    h: NDArray[np.floating],
+    m: NDArray[np.integer],
+    tol: float,
+    outside: float | None,
+) -> tuple[float, bool]:
+    """B's terms at the half-lattice points ``m``, in order of decreasing kernel transform, in batches of 1, 2, 4, ...
+    up to `_ALIASING_BATCH` points, with each exit tried after each batch: the partial sum once it passes ``tol``; or,
+    unless ``outside`` is None, the partial sum plus the kernel's own sum over the points not yet summed (both halves)
+    and ``outside``, once that is at or under ``tol``. Returns (value, whether an exit was taken); undecided, the value
+    is the sum over all of ``m``."""
+    mf = m.astype(float)
+    q = np.einsum("ij,jk,ik->i", mf, K, mf)
+    order = np.argsort(q, kind="stable")
+    mf, q = mf[order], q[order]
+    g = np.exp(-0.5 * q)
+    rest = 2.0 * (float(np.sum(g)) - np.cumsum(g))
+    k = 2.0 * np.pi * mf / h
+    total = 0.0
+    start, size = 0, 1
+    while start < len(mf):
+        stop = min(start + size, len(mf))
+        total += 2.0 * float(np.sum(g[start:stop] * np.abs(_characteristic(points, k[start:stop]))))
+        if total > tol:
+            return total, True
+        if outside is not None and total + float(rest[stop - 1]) + outside <= tol:
+            return total + float(rest[stop - 1]) + outside, True
+        start, size = stop, min(2 * size, _ALIASING_BATCH)
+    return total, False
+
+
+def kde_resolves_on_grid(
+    particle_positions: NDArray[np.floating],
+    bandwidth: float | str,
+    spacings: NDArray[np.floating] | list[float],
+) -> bool:
+    """Whether a KDE of the sample is read on a lattice of ``spacings``: it has a kernel, and `kde_lattice_aliasing`
+    is at or under `KDE_LATTICE_ALIASING_TOL` (#2556). A grid reader deposits a sample that is not
+    (`deposit_on_nodes`)."""
+    bound = kde_lattice_aliasing(particle_positions, bandwidth, spacings)
+    return bound is not None and bound <= KDE_LATTICE_ALIASING_TOL
+
+
+def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
+    """c with sum over the whole lattice of exp(-m^T K m / 2) on {m^T K m > c} at most `_OUTSIDE_ELLIPSOID`.
+
+    Three steps, with q = m^T K m:
+
+    1. For q > c, exp(-q / 2) = exp(-q / 4) exp(-q / 4) <= exp(-c / 4) exp(-q / 4), so the sum outside is at most
+       exp(-c / 4) sum_m exp(-q / 4), the sum now over the whole lattice.
+    2. With D = diag(K) and R = D^(-1/2) K D^(-1/2), its correlation matrix, q = y^T R y for y = D^(1/2) m, and
+       y^T R y >= lambda_min(R) |y|^2 (the Rayleigh quotient), so q >= sum_i a_i m_i^2 with a_i = lambda_min(R) K_ii,
+       and sum_m exp(-q / 4) <= prod_i sum_{j in Z} exp(-a_i j^2 / 4).
+    3. sum_{j in Z} exp(-a j^2 / 4) <= 1 + sqrt(4 pi / a): the terms j >= 1 of the decreasing exp(-a x^2 / 4) sum to at
+       most its integral from 0, sqrt(pi / a), and the terms j <= -1 likewise.
+
+    c is where exp(-c / 4) prod_i (1 + sqrt(4 pi / a_i)) is the bound. Infinite where a diagonal entry of K is not
+    positive (a factor of 1e-170 underflows K to 0, and its correlation matrix would be 0 / 0)."""
+    if not np.all(np.diag(K) > 0):
+        return float("inf")
+    sd = np.sqrt(np.diag(K))
+    a = float(np.linalg.eigvalsh(K / np.outer(sd, sd))[0]) * np.diag(K)
+    if not np.all(a > 0):
+        return float("inf")
+    return 4.0 * (float(np.sum(np.log1p(np.sqrt(4.0 * np.pi / a)))) - float(np.log(_OUTSIDE_ELLIPSOID)))
+
+
+def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.integer] | None:
+    """The lattice points m != 0 with m^T K m <= c, for a finite K (the gate refuses one that overflows), one of each
+    pair m, -m (its first nonzero entry > 0); or None when a level of the enumeration below holds more than
+    2 `_ALIASING_MAX_POINTS` + 1 points (so whenever the ellipsoid does, sometimes when only its shadow on the
+    coordinates enumerated so far does, and always when c is infinite), or when K is not positive definite in floating
+    point.
+
+    Enumerated coordinate by coordinate from the last (Fincke-Pohst): with K = U^T U, U upper triangular,
+    m^T K m = sum_i (U_ii m_i + sum_{j>i} U_ij m_j)^2, so once m_{i+1}, ..., m_{d-1} are fixed the remaining budget bounds
+    m_i to an interval."""
+    d = len(K)
+    try:
+        U = np.linalg.cholesky(K).T
+    except np.linalg.LinAlgError:
+        return None  # K is not positive definite in floating point (a kernel width underflowed)
+    ms = np.zeros((1, 0), dtype=np.int64)
+    budget = np.array([c * (1.0 + 1e-12)])
+    for i in range(d - 1, -1, -1):
+        shift = ms.astype(float) @ U[i, i + 1 :]
+        half = np.sqrt(np.maximum(budget, 0.0)) / U[i, i]
+        # The interval ends and counts in float first: past 2^63 an int64 cast is undefined and the counts wrap, which
+        # would return an empty ellipsoid, read as resolved, for a kernel narrower than about 1e-19 cells.
+        lo = np.ceil(-shift / U[i, i] - half)
+        hi = np.floor(-shift / U[i, i] + half)
+        counts = np.maximum(hi - lo + 1, 0.0)
+        count = float(counts.sum())
+        if count > 2 * _ALIASING_MAX_POINTS + 1:
+            return None
+        lo, counts = lo.astype(np.int64), counts.astype(np.int64)
+        count = int(count)
+        parent = np.repeat(np.arange(len(ms)), counts)
+        mi = lo[parent] + (np.arange(count) - np.repeat(np.cumsum(counts) - counts, counts))
+        budget = budget[parent] - (U[i, i] * mi + shift[parent]) ** 2
+        ms = np.column_stack([mi, ms[parent]])
+    ms = ms[np.any(ms != 0, axis=1)]
+    first = ms[np.arange(len(ms)), np.argmax(ms != 0, axis=1)]
+    return ms[first > 0]
+
+
+def _characteristic(points: NDArray[np.floating], k: NDArray[np.floating]) -> NDArray[np.complexfloating]:
+    """The sample's characteristic function at the frequencies k, (1/N) sum_j exp(i k . X_j), in chunks of particles."""
+    acc: NDArray[np.complexfloating] = np.zeros(len(k), dtype=complex)
+    for start in range(0, len(points), 8192):
+        acc += np.exp(1j * (points[start : start + 8192] @ k.T)).sum(axis=0)
+    return acc / len(points)
+
+
+def deposit_on_nodes(
+    particle_positions: NDArray[np.floating],
+    axes: list[NDArray[np.floating]],
+    weights: NDArray[np.floating],
+    *,
+    dtype: DTypeLike = np.float64,
+    outside: Literal["refuse", "drop"] = "refuse",
+) -> NDArray[np.floating]:
+    """
+    The sample deposited on a grid's own nodes (#2556).
+
+    Each particle's mass 1/N is shared among the nodes of the cell it lies in by the tent (piecewise-linear hat)
+    functions of the grid's axes, a product over the axes, and each node's share is divided by its quadrature weight.
+    The tents sum to 1 and reproduce linear functions, so the density integrates to 1 on ``weights`` and its first
+    moment is the sample's mean: on the whole box, walls included, and on non-uniform axes. This is the deposit a grid
+    reader uses where a kernel cannot be read on the grid (`kde_resolves_on_grid`).
+
+    A position past a wall by at most the spacing of that wall's bound in ``dtype``, the dtype the positions were
+    computed in, lies on the wall and is deposited there: a float32 device holds the bound 0.3 as 0.30000001, so a
+    particle it places on that wall arrives that far past it. A position past a wall by more is outside:
+    ``outside="refuse"`` refuses it by name, and ``outside="drop"`` leaves it out, each particle kept carrying 1/N of the
+    whole sample, so that the density is the sample's restriction to the box and its mass the share inside. A position
+    that is not finite is refused by name either way.
+
+    Parameters
+    ----------
+    particle_positions : ndarray
+        The sample, shape (N,) or (N, d), N >= 1.
+    axes : list of ndarray
+        The grid's nodes on each axis, strictly increasing, at least two each.
+    weights : ndarray
+        The grid's quadrature weights, shape (len(axes[0]), ..., len(axes[-1])), finite and positive.
+    dtype : dtype
+        The dtype the positions were computed in, which decides how far past a wall a position on it can lie.
+    outside : {"refuse", "drop"}
+        What a position outside the box gets.
+
+    Returns
+    -------
+    ndarray
+        The density at the nodes, shape of ``weights``.
+    """
+    if outside not in ("refuse", "drop"):
+        raise ValueError(f"outside must be 'refuse' or 'drop'; got {outside!r} (#2556).")
+    points = _sample(particle_positions).copy()
+    n, d = points.shape
+    if n == 0:
+        raise ValueError("A deposit needs at least one particle; the sample is empty (#2556).")
+    if len(axes) != d:
+        raise ValueError(f"A deposit of a {d}-D sample needs {d} axes; got {len(axes)} (#2556).")
+    shape = tuple(len(a) for a in axes)
+    w = np.asarray(weights, dtype=float)
+    if w.shape != shape:
+        raise ValueError(f"The weights' shape {w.shape} is not the grid's {shape} (#2556).")
+    if not np.all(np.isfinite(w) & (w > 0)):
+        raise ValueError("A deposit's quadrature weights must be finite and positive at every node (#2556).")
+    inside = np.ones(n, dtype=bool)
+    grid_axes = []
+    for i, a in enumerate(axes):
+        a = np.asarray(a, dtype=float)
+        if a.ndim != 1 or len(a) < 2 or not np.all(np.diff(a) > 0):
+            raise ValueError(f"Axis {i} of a deposit needs at least two strictly increasing nodes; got {a!r} (#2556).")
+        x = points[:, i]
+        low = float(np.abs(np.spacing(np.asarray(a[0], dtype=dtype))))
+        high = float(np.abs(np.spacing(np.asarray(a[-1], dtype=dtype))))
+        x[(x < a[0]) & (x >= a[0] - low)] = a[0]
+        x[(x > a[-1]) & (x <= a[-1] + high)] = a[-1]
+        off = (x < a[0]) | (x > a[-1])
+        if outside == "refuse" and off.any():
+            raise ValueError(
+                f"{int(off.sum())} of {n} particle(s) lie outside the grid on axis {i}, [{a[0]}, {a[-1]}], so the "
+                "deposit has no node for them (#2556)."
+            )
+        inside &= ~off
+        grid_axes.append(a)
+    kept = points[inside]
+    lower = np.empty((len(kept), d), dtype=int)
+    frac = np.empty((len(kept), d))
+    for i, a in enumerate(grid_axes):
+        j = np.minimum(np.searchsorted(a, kept[:, i], side="right") - 1, len(a) - 2)
+        lower[:, i] = j
+        frac[:, i] = (kept[:, i] - a[j]) / (a[j + 1] - a[j])
+    acc = np.zeros(int(np.prod(shape)))
+    strides = np.array([int(np.prod(shape[i + 1 :])) for i in range(d)])
+    for corner in np.ndindex(*([2] * d)):
+        c = np.array(corner)
+        share = np.prod(np.where(c == 1, frac, 1.0 - frac), axis=1)
+        np.add.at(acc, (lower + c) @ strides, share)
+    return acc.reshape(shape) / (n * w)
 
 
 def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float | str) -> NDArray[np.floating]:
@@ -547,10 +934,14 @@ def kde_kernel_widths(particle_positions: NDArray[np.floating], bandwidth: float
 
 
 __all__ = [
+    "KDE_LATTICE_ALIASING_TOL",
+    "deposit_on_nodes",
     "estimate_kde_bandwidth",
     "kde_factor",
     "kde_kernel_covariance",
     "kde_kernel_widths",
+    "kde_lattice_aliasing",
+    "kde_resolves_on_grid",
     "kde_sample_has_spread",
     "interpolate_grid_to_particles",
     "interpolate_particles_to_grid",

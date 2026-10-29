@@ -57,8 +57,9 @@ class KDENormalization(StrEnum):
     reintroduced at every reconstruction (#2181), always. This chooses only whether the
     reconstruction's per-step drift is ALSO corrected:
 
-    - ``NONE`` -- multiply every slice by one factor, calibrated on the first. The reconstruction's
-      own drift stays visible. **The default.**
+    - ``NONE`` -- multiply every kernel slice by one factor, calibrated on the solve's first kernel
+      slice. The reconstruction's own drift stays visible. A deposited slice (#2556) has no drift and
+      is pinned, as under ``ALL``. **The default.**
     - ``ALL`` -- pin every slice to the caller's mass times the surviving fraction N_t/N_0 (#2519).
       Conservation then holds BY FIAT on a closed domain.
 
@@ -274,6 +275,9 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_factor: float | None = None
         self._n_particles_initial: int | None = None
         self.M_particles_trajectory: np.ndarray | list | None = None
+        # The time levels of the last solve whose sample's kernel the grid could not read, which were deposited on the
+        # grid's nodes instead (`_kernel_unresolved`, #2556). Reset and logged by `solve_fp_system`.
+        self.deposited_levels: list[int] = []
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
         # paths use), set by solve_fp_system instead of mutating the shared problem.
         # None => the problem's own volatility. Explicit init for object-shape stability (CLAUDE.md).
@@ -653,6 +657,45 @@ class FPParticleSolver(BaseFPSolver):
 
         return np.sqrt(np.diag(kde_kernel_covariance(particles, self.kde_bandwidth)))
 
+    def _reads_by_deposit(self, particles: np.ndarray, level: int) -> bool:
+        """Whether a CPU reader's density for this level is the sample deposited on the grid's nodes (`_deposit`)
+        rather than the ``kde_method`` estimate there: always for ``kde_method='cic'``, and for a kernel method whose
+        kernel the grid cannot read (`_kernel_unresolved`, #2556)."""
+        return self.kde_method == KDEMethod.CIC or self._kernel_unresolved(particles, level)
+
+    def _kernel_unresolved(self, particles: np.ndarray, level: int) -> bool:
+        """Whether the kernel of ``kde_bandwidth`` on this level's sample cannot be read on the grid's nodes: the
+        sample has none, or its aliasing bound on the grid's lattice is over `KDE_LATTICE_ALIASING_TOL`
+        (`kde_resolves_on_grid`, #2556). Such a level is deposited instead, and recorded in `deposited_levels`, which
+        `solve_fp_system` logs once. The lattice is the spacing the grid parameters carry, whatever its nodes' rounding:
+        the one a `TensorProductGrid` declares, or the one made up from a geometry's bounds (#2757). One that is not
+        positive and finite (integer bounds whose span overflows their dtype, #2836) is replaced by the nodes' own
+        lattice, as the projector reads it; nodes that are not a lattice either are refused by name."""
+        from mfgarchon.utils.numerical.particle.interpolation import _lattice_spacings, kde_resolves_on_grid
+
+        params = self._get_grid_params()
+        spacings = params["spacings"]
+        if not all(0 < s < np.inf for s in spacings):
+            spacings = _lattice_spacings(params["coordinates"]) or spacings
+        if kde_resolves_on_grid(particles, self.kde_bandwidth, spacings):
+            return False
+        self.deposited_levels.append(level)
+        return True
+
+    def _deposit(self, particles: np.ndarray, axes: list[np.ndarray], dtype: Any = np.float64) -> np.ndarray:
+        """The sample deposited on the grid's nodes by their tents (`deposit_on_nodes`, #2556), on the problem's
+        measure when it is the grid's (`MFGProblem.spatial_measure`). A geometry with no grid has its density on axes
+        made up from its bounds (#2757), which no measure owns, so there the weights are those axes' own tensor
+        quadrature (`quadrature_weights_nd`, which `TensorProductGrid.measure_weights` reads). ``dtype`` is the one the
+        positions were computed in: a position past a wall by its spacing there lies on the wall, and one past it by
+        more is refused by name."""
+        from mfgarchon.utils.numerical.particle.interpolation import deposit_on_nodes
+        from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
+
+        measure = self.problem.spatial_measure()
+        weights = measure.weights if measure.name == "grid" else quadrature_weights_nd(tuple(axes))
+        return deposit_on_nodes(particles, list(axes), weights, dtype=dtype)
+
     def _apply_kde_method_1d(
         self,
         particles: np.ndarray,
@@ -716,14 +759,7 @@ class FPParticleSolver(BaseFPSolver):
                 bandwidth=self.kde_bandwidth,
                 bounds=bounds_1d,
             )
-        elif self.kde_method == KDEMethod.CIC:
-            from mfgarchon.utils.numerical.particle.cic import cic_deposit_nd
-
-            bounds_arr = np.array([[xmin, xmax]])
-            n_grid = len(eval_points)
-            density_grid = cic_deposit_nd(particles.reshape(-1, 1), bounds_arr, (n_grid,), periodic=False)
-            return density_grid.ravel()
-        else:  # KDEMethod.STANDARD
+        else:  # KDEMethod.STANDARD; CIC is deposited before this is reached (`_reads_by_deposit`)
             kde = gaussian_kde(particles, bw_method=self.kde_bandwidth)
             density = kde(eval_points)
             density[eval_points < xmin] = 0
@@ -780,16 +816,7 @@ class FPParticleSolver(BaseFPSolver):
                 bandwidth=self.kde_bandwidth,
                 bounds=bounds,
             )
-        elif self.kde_method == KDEMethod.CIC:
-            from mfgarchon.utils.numerical.particle.cic import cic_deposit_nd
-
-            bounds_arr = np.array(bounds)
-            ndim = len(bounds)
-            grid_shape = tuple(len(np.unique(grid_points[:, d])) for d in range(ndim))
-            # CIC uses reflecting (clipped) BC for bounded domains
-            density_grid = cic_deposit_nd(particles, bounds_arr, grid_shape, periodic=False)
-            return density_grid.ravel()
-        else:  # KDEMethod.STANDARD
+        else:  # KDEMethod.STANDARD; CIC is deposited before this is reached (`_reads_by_deposit`)
             kde = gaussian_kde(particles.T, bw_method=self.kde_bandwidth)
             density = kde(grid_points.T)
             # Clip outside domain to zero
@@ -859,6 +886,7 @@ class FPParticleSolver(BaseFPSolver):
                 time_grid=time_grid,
                 particle_history=self._particle_history,
                 bandwidth=self.kde_bandwidth,  # a factor or a rule, read through the owner at each query (#2556)
+                deposited_levels=tuple(self.deposited_levels),
             )
 
         # Backward compatible: return grid density only
@@ -953,7 +981,7 @@ class FPParticleSolver(BaseFPSolver):
             desc=desc,
         )
 
-    def _normalize_density(self, M_array, Dx: float, use_backend: bool = False):
+    def _normalize_density(self, M_array, Dx: float, use_backend: bool = False, deposited: bool = False):
         """
         Put the caller's mass on one reconstructed slice; see `_to_caller_mass` (#2181).
 
@@ -976,7 +1004,7 @@ class FPParticleSolver(BaseFPSolver):
         -------
         Normalized density array (same type as input)
         """
-        return self._to_caller_mass(M_array, use_backend=use_backend)
+        return self._to_caller_mass(M_array, use_backend=use_backend, deposited=deposited)
 
     # =========================================================================
     # nD Helper Methods
@@ -1391,12 +1419,12 @@ class FPParticleSolver(BaseFPSolver):
         particles: np.ndarray,
         coordinates: list[np.ndarray],
         bounds: list[tuple[float, float]],
+        *,
+        level: int,
     ) -> np.ndarray:
         """
-        Estimate density from particles using KDE on nD grid.
-
-        Delegates to utils.numerical.particle.interpolate_particles_to_grid()
-        for the core KDE computation, with additional edge case handling.
+        The density of one time level's particles on the nD grid: the ``kde_method`` estimate at the grid's nodes, or
+        the sample deposited on them (`_reads_by_deposit`, #2556).
 
         Parameters
         ----------
@@ -1406,6 +1434,8 @@ class FPParticleSolver(BaseFPSolver):
             List of 1D coordinate arrays per dimension
         bounds : list[tuple[float, float]]
             Bounds per dimension
+        level : int
+            The time level, which `deposited_levels` records if the level is deposited.
 
         Returns
         -------
@@ -1419,31 +1449,8 @@ class FPParticleSolver(BaseFPSolver):
         if self.num_particles == 0 or len(particles) == 0:
             return np.zeros(grid_shape)
 
-        # Edge case: degenerate particle distribution (all at same location)
-        if len(np.unique(particles, axis=0)) < 2:
-            density = np.zeros(grid_shape)
-            mean_pos = np.mean(particles, axis=0)
-            indices = []
-            for d in range(dimension):
-                idx = np.argmin(np.abs(coordinates[d] - mean_pos[d]))
-                indices.append(idx)
-            density[tuple(indices)] = self.num_particles
-            return density
-
-        # Edge case: no spread in some direction (on a line or a plane), so a kernel method has no kernel (#2556).
-        # Refused by name, decided before any KDE by the owner's predicate; CIC needs no kernel and goes on.
-        from mfgarchon.utils.numerical.particle.interpolation import kde_sample_has_spread
-
-        if self.kde_method != KDEMethod.CIC and not kde_sample_has_spread(particles):
-            raise ValueError(
-                f"FPParticleSolver (nD): {len(particles)} particles have no spread in some direction at the bound "
-                "`kde_sample_has_spread` states: on a line or a plane (placed there with no diffusion, collapsed there "
-                "by the drift, or no more survivors than dimensions), or thinner in some direction than about 1e-7 of "
-                "their spread in the axes' own units, than the positions' rounding floor there, or than the two "
-                "together. So "
-                f"kde_method={self.kde_method.value!r} has no kernel (#2556). "
-                "kde_method='cic' deposits such a sample on the grid."
-            )
+        if self._reads_by_deposit(particles, level):
+            return self._deposit(particles, coordinates)
 
         try:
             # Issue #709: Select KDE method for boundary correction
@@ -1490,30 +1497,21 @@ class FPParticleSolver(BaseFPSolver):
                 "  - Use fixed bandwidth: kde_bandwidth=0.1"
             ) from e
 
-    def _estimate_density_from_particles(self, particles_at_time_t: np.ndarray) -> np.ndarray:
+    def _estimate_density_from_particles(self, particles_at_time_t: np.ndarray, *, level: int) -> np.ndarray:
+        """The density of one time level's particles on the 1D grid: the ``kde_method`` estimate at the grid's nodes,
+        or the sample deposited on them (`_reads_by_deposit`, #2556); ``level`` is what `deposited_levels` records."""
         # Use geometry-aware parameter extraction
         params = self._get_grid_params()
         Nx = params["Nx"]
         xSpace = params["xSpace"]
         xmin = params["xmin"]
         xmax = params["xmax"]
-        Dx = params["Dx"]
 
         if self.num_particles == 0 or len(particles_at_time_t) == 0:
             return np.zeros(Nx)
 
-        unique_particles = np.unique(particles_at_time_t)
-        if len(unique_particles) < 2 or np.std(particles_at_time_t) < 1e-9 * (xmax - xmin):
-            m_density_estimated = np.zeros(Nx)
-            if len(particles_at_time_t) > 0:
-                mean_pos = np.mean(particles_at_time_t)
-                closest_idx = np.argmin(np.abs(xSpace - mean_pos))
-                if Dx > 1e-14:
-                    m_density_estimated[closest_idx] = 1.0 / Dx
-                elif Nx == 1:
-                    m_density_estimated[closest_idx] = 1.0
-
-            # Normalization logic will apply below per self.kde_normalization strategy
+        if self._reads_by_deposit(particles_at_time_t, level):
+            m_density_estimated = self._deposit(particles_at_time_t, [xSpace])
         else:
             try:
                 # Issue #709: Use CPU path with boundary-corrected KDE
@@ -1543,7 +1541,9 @@ class FPParticleSolver(BaseFPSolver):
 
         # This slice is handed to the drift callable, so its mass has to be right HERE and not on
         # the returned history -- see `_to_caller_mass`.
-        return self._to_caller_mass(m_density_estimated, particles=particles_at_time_t)
+        return self._to_caller_mass(
+            m_density_estimated, particles=particles_at_time_t, deposited=level in self.deposited_levels
+        )
 
     def _measure(self, density, use_backend: bool = False) -> float | None:
         """This slice's mass, on the GEOMETRY'S OWN measure. The only place that answers that.
@@ -1566,18 +1566,21 @@ class FPParticleSolver(BaseFPSolver):
         mass = float(integrate_on_weights(arr, w))
         return mass if np.isfinite(mass) and mass > 0.0 else None
 
-    def _to_caller_mass(self, density: Any, use_backend: bool = False, particles: Any = None) -> Any:
+    def _to_caller_mass(
+        self, density: Any, use_backend: bool = False, particles: Any = None, deposited: bool = False
+    ) -> Any:
         """Put the caller's mass on one reconstructed slice. One owner for both jobs (#2181), and the
         survivor scaling N_t/N_0 on top of either (#2519, `_scale_by_survivors`).
 
         A particle method carries no mass: sampling keeps the density's SHAPE, positions have no
         scale, and the reconstruction returns whatever constant its kernel happens to conserve. Two
-        modes of putting it back, and `kde_normalization` chooses per slice:
+        modes of putting it back: `kde_normalization` chooses for a kernel slice, and a deposited slice
+        (``deposited``, #2556) is always pinned, since a deposit has no drift to keep:
 
         - **pinned** -- divide by this slice's own mass and multiply by the target, so the slice
           carries the target exactly and the reconstruction's drift is corrected;
-        - **carried** -- multiply by ONE factor, calibrated on the first slice of this solve and
-          reused, so the reconstruction's drift stays visible at the caller's scale.
+        - **carried** -- multiply by ONE factor, calibrated on the first kernel slice of this solve
+          and reused, so the reconstruction's drift stays visible at the caller's scale.
 
         WHY BOTH, AND WHY NOT ONE OF THEM EVERYWHERE. Pinning every slice erases the drift, which is
         information about the reconstruction and the point of `kde_normalization=NONE`. Carrying
@@ -1590,13 +1593,12 @@ class FPParticleSolver(BaseFPSolver):
         WHY THE MEASURE IS THE GEOMETRY'S. `sum(m) * dx` is the rectangle rule and is not the mass on
         an endpoint-inclusive grid (#2145). Using it here would make this solver conserve a different
         functional from the one `problem.initial_mass` reports, which is the defect #2181 is about,
-        one layer down. It is also what hid the CIC problem below: CIC deposits into CELLS, so its
-        raw reconstruction integrates to exactly `n/(n-1)` -- 1.100000 at n=11, 1.050000 at n=21,
-        1.025000 at n=41 -- and not to 1, despite `KDEMethod.CIC` claiming "exact mass conservation".
-        The calibration absorbs that constant, but only because every slice is now measured the same
-        way.
+        one layer down. A deposit (`kde_method='cic'`, or a level `_kernel_unresolved`) is divided by
+        this measure's weights, so its raw reconstruction integrates to 1 on it exactly (#2556); the
+        cell-centred CIC it replaced, read at the nodes, integrated to `n/(n-1)` per axis away from the
+        walls (1.21 on 11 x 11) and to less near them (0.3025 for a sample at a corner).
         """
-        return self._scale_by_survivors(self._restore_mass(density, use_backend), particles)
+        return self._scale_by_survivors(self._restore_mass(density, use_backend, deposited), particles)
 
     def _scale_by_survivors(self, density: Any, particles: Any) -> Any:
         """Multiply by N_t / N_0, the fraction of this solve's particles still alive (#2519).
@@ -1604,7 +1606,7 @@ class FPParticleSolver(BaseFPSolver):
         The reconstruction integrates to about 1 whatever particle count built it, so an absorbing
         wall that removed 92% of the particles returned a density of mass 1.07. Each particle carries
         mass/N_0; the slice's mass is the survivors' share. N_0 is the count behind the first slice of
-        the solve, calibrated with the mass factor. A row with any NaN coordinate is absorbed (the
+        the solve, deposited or not. A row with any NaN coordinate is absorbed (the
         `preserve_indices` representation)."""
         if particles is None:
             return density
@@ -1622,10 +1624,14 @@ class FPParticleSolver(BaseFPSolver):
             return 0
         return int(np.isfinite(arr.reshape(arr.shape[0], -1)).all(axis=1).sum())
 
-    def _restore_mass(self, density: Any, use_backend: bool = False) -> Any:
+    def _restore_mass(self, density: Any, use_backend: bool = False, deposited: bool = False) -> Any:
+        """The target's mass on one slice: pinned under ALL, carried by one factor under NONE. A deposited level
+        (`_kernel_unresolved`, #2556) is put on the target through its own mass, which is 1 on the measure, and
+        calibrates nothing: the carried factor corrects a kernel reconstruction's drift, which a deposit does not have,
+        so the first kernel level of the solve calibrates it whichever order the two come in."""
         if self._mass_target is None:
             return density
-        if self._should_normalize_density():
+        if deposited or self._should_normalize_density():
             mass = self._measure(density, use_backend)
             if mass is None:
                 return density
@@ -1637,7 +1643,7 @@ class FPParticleSolver(BaseFPSolver):
             # periodic convergence oracle went from ratio 0.626 (passing, as on main) to 1.058
             # (failing), which I then filed as a solver defect -- #2186, closed as invalid. Found by
             # round 5 of the PR #2185 review.
-            if self._mass_factor is None:
+            if self._mass_factor is None and not deposited:
                 self._mass_factor = self._mass_target / mass
             return density * (self._mass_target / mass)
         if self._mass_factor is None:
@@ -1718,17 +1724,20 @@ class FPParticleSolver(BaseFPSolver):
         instead of at 1, which is the same defect wearing a better number.
 
         WHAT `kde_normalization` MEANS, measured. Before #2181 all three of the then-members meant
-        "the mass is 1", which is not what any of their names said. Two members remain and they are
-        distinguishable on each of the three `KDEMethod` values that run:
+        "the mass is 1", which is not what any of their names said. Two members remain. On
+        `test_ALL_pins_and_NONE_carries`' fixture they are distinguishable on each kernel method, and
+        not on `cic`, whose deposit has mass 1 on the measure exactly, as does any level a kernel method
+        deposits (#2556):
 
-            kde_method      max |ALL - NONE|      (absolute in the density, so it
-            reflection      8.007e-03              scales with the caller's mass;
-            cic             7.694e-03              0.3 on the fixture measured)
-            standard        4.300e-02
+            kde_method        max |ALL - NONE|      (absolute in the density, so it
+            reflection        8.008e-03              scales with the caller's mass;
+            standard          4.300e-02              0.3 on the fixture measured)
+            renormalization   7.828e-03
+            beta              7.139e-03
+            cic               2.220e-16
 
-        `RENORMALIZATION` and `BETA` raise inside `kde_boundary` before this code is reached --
-        pre-existing, and unmeasurable rather than indistinguishable. The GPU path calls
-        `gaussian_kde_gpu_internal` unconditionally and never reads `kde_method`.
+        The GPU path calls `gaussian_kde_gpu_internal` on every level it does not deposit
+        (`_gpu_density`) and never reads `kde_method`.
 
         Three earlier versions of this table were wrong, each measured on less than it claimed: the
         first said the modes were separated, the second retracted that from one of three mode-pairs,
@@ -1772,6 +1781,7 @@ class FPParticleSolver(BaseFPSolver):
         # pass a callable drift. Round 5 of the PR #2185 review; round 3 saw it and called it
         # latent.
         self.obstacle_placement_history = []
+        self.deposited_levels = []
         if self._implicit_domain is not None:
             params = self._get_grid_params()
             self._refuse_what_the_obstacle_placement_cannot_do(params["dimension"], params["bounds"])
@@ -1795,6 +1805,19 @@ class FPParticleSolver(BaseFPSolver):
                 "dt reduces it. Counts per step: obstacle_placement_history.",
                 fallbacks,
                 MAX_REFLECTIONS,
+            )
+        if self.deposited_levels:
+            from mfgarchon.utils.numerical.particle.interpolation import KDE_LATTICE_ALIASING_TOL
+
+            logger.warning(
+                "FPParticleSolver: at %d time level(s) of this solve the sample had no kernel the grid can read for "
+                "kde_bandwidth=%r: no spread in some direction, or a bound over %g on its estimate's aliasing on the "
+                "grid's lattice (#2556). Those levels are the sample deposited on the grid's nodes, by their tents. "
+                "Levels (deposited_levels): %s.",
+                len(self.deposited_levels),
+                self.kde_bandwidth,
+                KDE_LATTICE_ALIASING_TOL,
+                self.deposited_levels,
             )
         return M
 
@@ -2115,7 +2138,7 @@ class FPParticleSolver(BaseFPSolver):
             current_M_particles_t[0, :] = initial_particle_positions
             init_particles = current_M_particles_t[0, :]
 
-        M_density_on_grid[0, :] = self._estimate_density_from_particles(init_particles)
+        M_density_on_grid[0, :] = self._estimate_density_from_particles(init_particles, level=0)
         # preserve_indices under a segment-aware BC (#1119, #2490); otherwise nothing is absorbed, and the trajectory
         # already keeps every row
         preserved = (
@@ -2197,7 +2220,9 @@ class FPParticleSolver(BaseFPSolver):
             else:
                 current_M_particles_t[n_time_idx + 1, :] = new_particles
 
-            M_density_on_grid[n_time_idx + 1, :] = self._estimate_density_from_particles(new_particles)
+            M_density_on_grid[n_time_idx + 1, :] = self._estimate_density_from_particles(
+                new_particles, level=n_time_idx + 1
+            )
 
         # Finalize: store trajectory, build history, return result
         trajectory: list[np.ndarray] | np.ndarray
@@ -2281,10 +2306,12 @@ class FPParticleSolver(BaseFPSolver):
         init_particles = particles_list[0] if use_segment_aware_bc else current_particles[0]
 
         # Estimate initial density using KDE
-        M_density_on_grid[0] = self._estimate_density_from_particles_nd(init_particles, coordinates, bounds)
+        M_density_on_grid[0] = self._estimate_density_from_particles_nd(init_particles, coordinates, bounds, level=0)
 
         # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
-        M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings, particles=init_particles)
+        M_density_on_grid[0] = self._normalize_density_nd(
+            M_density_on_grid[0], spacings, particles=init_particles, deposited=0 in self.deposited_levels
+        )
         # preserve_indices under a segment-aware BC (#1119, #2490); otherwise nothing is absorbed, and the trajectory
         # already keeps every row
         preserved = (
@@ -2378,11 +2405,16 @@ class FPParticleSolver(BaseFPSolver):
                 current_particles[t_idx + 1] = new_particles
 
             # Estimate density from particles
-            M_density_on_grid[t_idx + 1] = self._estimate_density_from_particles_nd(new_particles, coordinates, bounds)
+            M_density_on_grid[t_idx + 1] = self._estimate_density_from_particles_nd(
+                new_particles, coordinates, bounds, level=t_idx + 1
+            )
 
             # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked (#2181).
             M_density_on_grid[t_idx + 1] = self._normalize_density_nd(
-                M_density_on_grid[t_idx + 1], spacings, particles=new_particles
+                M_density_on_grid[t_idx + 1],
+                spacings,
+                particles=new_particles,
+                deposited=t_idx + 1 in self.deposited_levels,
             )
 
         # Finalize: store trajectory, build history, return result
@@ -2395,7 +2427,9 @@ class FPParticleSolver(BaseFPSolver):
             M_density_on_grid, trajectory, Nt, dimension=dimension, use_segment_aware_bc=use_segment_aware_bc
         )
 
-    def _normalize_density_nd(self, density: np.ndarray, spacings: list[float], particles: Any = None) -> np.ndarray:
+    def _normalize_density_nd(
+        self, density: np.ndarray, spacings: list[float], particles: Any = None, deposited: bool = False
+    ) -> np.ndarray:
         """
         Put the caller's mass on one reconstructed nD slice; see `_to_caller_mass` (#2181).
 
@@ -2410,16 +2444,26 @@ class FPParticleSolver(BaseFPSolver):
         Returns:
             Normalized density array
         """
-        return self._to_caller_mass(density, particles=particles)
+        return self._to_caller_mass(density, particles=particles, deposited=deposited)
 
-    def _gpu_kernel_width(self, positions_gpu: Any) -> float:
-        """The 1-D kernel width for one step's sample on the GPU path: the one scipy builds for ``kde_bandwidth``
-        (`kde_kernel_covariance`, CONVENTIONS.md § 9). It is recomputed every step, since the sample's spread changes;
-        the width the path once computed from X0 and reused read a factor of std(X0) at every step (#2556)."""
+    def _gpu_density(self, positions_gpu: Any, x_grid: np.ndarray, x_grid_gpu: Any, *, level: int) -> Any:
+        """One level's density on the GPU path: the internal GPU KDE at the grid's nodes with the 1-D kernel width
+        scipy builds for ``kde_bandwidth`` (`kde_kernel_covariance`, CONVENTIONS.md § 9), or, for a sample whose kernel
+        the grid cannot read (`_kernel_unresolved`), its deposit on the nodes, moved to the device (#2556). Both are
+        decided on the step's positions on the host, one transfer per step. The width is recomputed every step, since
+        the sample's spread changes; the width the path once computed from X0 and reused read a factor of std(X0) at
+        every step (#2556)."""
+        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu_internal
         from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
 
-        positions = np.asarray(self.backend.to_numpy(positions_gpu), dtype=float)
-        return float(np.sqrt(kde_kernel_covariance(positions, self.kde_bandwidth)[0, 0]))
+        backend = self.backend
+        assert backend is not None, "the GPU path is selected only with a backend (strategy_selector)"
+        on_device = np.asarray(backend.to_numpy(positions_gpu))
+        positions = on_device.astype(float)
+        if self._kernel_unresolved(positions, level):
+            return backend.from_numpy(self._deposit(positions, [x_grid], dtype=on_device.dtype))
+        width = float(np.sqrt(kde_kernel_covariance(positions, self.kde_bandwidth)[0, 0]))
+        return gaussian_kde_gpu_internal(positions_gpu, x_grid_gpu, width, backend)
 
     def _solve_fp_system_gpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """
@@ -2470,7 +2514,6 @@ class FPParticleSolver(BaseFPSolver):
                 "outside. Use backend='numpy' with such a domain."
             )
 
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu_internal
         from mfgarchon.utils.particle_utils import (
             apply_boundary_conditions_gpu,
             interpolate_1d_gpu,
@@ -2511,16 +2554,16 @@ class FPParticleSolver(BaseFPSolver):
             seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
         )
 
-        # Estimate initial density using internal GPU KDE (Phase 2.1)
-        M_density_gpu[0, :] = gaussian_kde_gpu_internal(
-            X_particles_gpu[0, :], x_grid_gpu, self._gpu_kernel_width(X_particles_gpu[0, :]), self.backend
-        )
+        # Estimate initial density using internal GPU KDE (Phase 2.1), or the deposit (`_gpu_density`)
+        M_density_gpu[0, :] = self._gpu_density(X_particles_gpu[0, :], x_grid, x_grid_gpu, level=0)
 
         # Unconditional: the guard lives inside `_normalize_density` now, because the caller's scale
         # must be restored even under NONE (#2181). These two GPU sites spell the guard differently
         # from the CPU ones and were missed by the first sweep -- found by review of PR #2185, and
         # the cost was a 3.63x CPU/GPU disagreement on exactly the quantity this change is about.
-        M_density_gpu[0, :] = self._normalize_density(M_density_gpu[0, :], Dx, use_backend=True)
+        M_density_gpu[0, :] = self._normalize_density(
+            M_density_gpu[0, :], Dx, use_backend=True, deposited=0 in self.deposited_levels
+        )
 
         if Nt == 1:
             self.M_particles_trajectory = self.backend.to_numpy(X_particles_gpu)
@@ -2574,14 +2617,14 @@ class FPParticleSolver(BaseFPSolver):
                     X_particles_gpu[t + 1, :], xmin, xmax, gpu_bc_type, self.backend
                 )
 
-            # Estimate density using internal GPU KDE (Phase 2.1). One transfer per step: the step's positions go to
-            # the host for the kernel's width (`_gpu_kernel_width`, #2556).
-            M_density_gpu[t + 1, :] = gaussian_kde_gpu_internal(
-                X_particles_gpu[t + 1, :], x_grid_gpu, self._gpu_kernel_width(X_particles_gpu[t + 1, :]), self.backend
-            )
+            # Estimate density using internal GPU KDE (Phase 2.1), or the deposit. One transfer per step: the step's
+            # positions go to the host for the kernel's width and the gate (`_gpu_density`, #2556).
+            M_density_gpu[t + 1, :] = self._gpu_density(X_particles_gpu[t + 1, :], x_grid, x_grid_gpu, level=t + 1)
 
             # Unconditional -- see the note at the t=0 site above.
-            M_density_gpu[t + 1, :] = self._normalize_density(M_density_gpu[t + 1, :], Dx, use_backend=True)
+            M_density_gpu[t + 1, :] = self._normalize_density(
+                M_density_gpu[t + 1, :], Dx, use_backend=True, deposited=t + 1 in self.deposited_levels
+            )
 
         # Store trajectory and convert to NumPy ONCE at end
         X_particles_np = self.backend.to_numpy(X_particles_gpu)
@@ -2930,12 +2973,15 @@ class FPParticleSolver(BaseFPSolver):
             # at arbitrary points via particle history. Skipping KDE saves ~60s per iteration.
             if self.density_mode != "query_only":
                 M_density_on_grid[t_idx + 1] = self._estimate_density_from_particles_nd(
-                    new_particles, coordinates, bounds
+                    new_particles, coordinates, bounds, level=t_idx + 1
                 )
 
                 # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked.
                 M_density_on_grid[t_idx + 1] = self._normalize_density_nd(
-                    M_density_on_grid[t_idx + 1], spacings, particles=new_particles
+                    M_density_on_grid[t_idx + 1],
+                    spacings,
+                    particles=new_particles,
+                    deposited=t_idx + 1 in self.deposited_levels,
                 )
 
         # Finalize: store trajectory, build history, return result
