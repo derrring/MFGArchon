@@ -78,6 +78,14 @@ class WeakFormFPSolver(BaseFPSolver):
         # is zero flux, and a nonzero NEUMANN or any ROBIN is refused (#2512, row B3). Condensed literally, a
         # shared Dirichlet pinned the FEM exit wall at m = g (#2525); an explicit DIRICHLET(g) is that density.
         self._bc = self.get_boundary_conditions()
+        # A FLUX needs the load `_flux_load` builds, which only FP-FEM's override does. This base declares no
+        # ``_SUPPORTED_BC_TYPES``, so its gate passes a FLUX; a class that inherits the base's load refuses it here,
+        # rather than solve it as a no-flux wall (#2581).
+        if self._declares_flux() and type(self)._flux_load is WeakFormFPSolver._flux_load:
+            raise NotImplementedError(
+                f"{type(self).__name__} builds no prescribed-flux load, so a FLUX boundary would be solved as a no-flux "
+                "wall (#2581). FPFEMSolver honours FLUX."
+            )
         # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
         # path is stateless per call, so the latch lives on the solver to warn once per solve).
         self._adjoint_clip_warned = False
@@ -138,12 +146,21 @@ class WeakFormFPSolver(BaseFPSolver):
 
     # --- Advection from drift (subclass-supplied) -----------------------------
     def _flux_load(self, t: float | None):
-        """The load of a prescribed flux (FLUX, #2581) at the level ``t``, or None. Only FP-FEM declares FLUX."""
+        """The load of a prescribed flux (FLUX, #2581) at the level ``t``, or None. Only FP-FEM's override builds one;
+        a class that inherits this one refuses a FLUX at construction."""
         return None
 
     def _declares_flux(self) -> bool:
-        """Whether a facet is FLUX (#2581), read from the types alone, with no value read and so no time."""
-        return False
+        """Whether the BC holds a FLUX segment or ``default_bc`` (#2581), read from the types alone, with no value read
+        and so no time."""
+        from mfgarchon.geometry.boundary.types import BCType
+
+        bc = self._bc
+        if bc is None:
+            return False
+        return any(segment.bc_type == BCType.FLUX for segment in getattr(bc, "segments", None) or []) or (
+            getattr(bc, "default_bc", None) == BCType.FLUX
+        )
 
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
         r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form.
