@@ -3,9 +3,11 @@
 The population is derived, not listed: every concrete subclass of `BaseMFGSolver` the package defines, found by walking
 the subclasses after importing every module of ``mfgarchon.alg``. A class added later joins it by itself.
 
-- A class that declares ``_SUPPORTED_BC_TYPES`` declares FLUX exactly when it honours it -- FP-FDM's implicit step and
-  FP-FEM -- and the base gate (`BaseMFGSolver._validate_bc_support`) refuses a FLUX for every other one. The planted
-  rival, a subclass that declares FLUX with nothing behind it, must be caught.
+- A class that declares ``_SUPPORTED_BC_TYPES`` declares FLUX exactly when it is one of ``HONOUR`` -- FP-FDM's
+  implicit step and FP-FEM -- and the base gate (`BaseMFGSolver._validate_bc_support`) refuses a FLUX for every other
+  one. ``HONOUR`` is a list, not a measurement: the planted rival, a subclass that declares FLUX, is caught for not
+  being on it, and a subclass inheriting a real FLUX route would be caught the same way. That the two on it honour
+  FLUX is pinned by test_fp_flux_bc_2581.py (review 1 of #2840).
 - A class that declares none passes the gate, so each is recorded with what a FLUX meets there; a class that joins the
   population undeclared turns the record test red until its outcome is written down (the audit's ruling on #2581's plan,
   finding 2).

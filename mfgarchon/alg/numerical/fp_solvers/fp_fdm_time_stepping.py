@@ -72,6 +72,7 @@ from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_e
 from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
+from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     _DriftDispatcher,
@@ -1666,25 +1667,21 @@ def solve_timestep_full_nd(
     m_next_flat = sparse.linalg.spsolve(A_matrix, b_rhs)
 
     # A prescribed flux (#2581) enters by linearity, m = m0 + A^-1 b_q with m0 the step without it: one more solve on
-    # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. The step is refused where
-    # the flux's part takes a node negative that m0 leaves non-negative: B-3, never a clip (user ruling 2026-10-09).
-    # A^-1 reaches every node, so that node need not be on the FLUX face. Negatives m0 makes on its own (the centered
-    # scheme's) are not the flux's, and are left to the clip guard below the step, as before.
+    # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. B-3's owner refuses the step
+    # where the clip would fabricate mass the flux decides, with the post-step guard's weights; a step whose own clip is
+    # past the guard's threshold is left to that guard, under the scheme's name, as before.
     flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
     if flux_sources is not None and np.any(flux_sources):
         m_flux = sparse.linalg.spsolve(A_matrix, flux_sources)
-        m_step = m_next_flat + m_flux
-        taken = (m_step < 0) & (m_next_flat >= 0)
-        if np.any(taken):
-            worst = int(np.argmin(np.where(taken, m_step, np.inf)))
-            raise ValueError(
-                f"FP-FDM: the prescribed flux would take the density negative at {int(taken.sum())} node(s) in the step "
-                f"to t={time}, the most at node {tuple(int(i) for i in grid.get_multi_index(worst))} "
-                f"(m = {m_step[worst]:.3e}): the FLUX outflow over the step exceeds the mass there. Refused rather "
-                "than clipped, which would fabricate mass (#2581, user ruling 2026-10-09, B-3). Lower q or the time "
-                "step, or end the outflow before the mass runs out."
-            )
-        m_next_flat = m_step
+        m_next_flat = refuse_what_a_flux_takes_negative(
+            m_next_flat,
+            m_flux,
+            context="FP-FDM",
+            time=time,
+            unit="node",
+            locate=lambda i: f"node {tuple(int(j) for j in grid.get_multi_index(i))}",
+            remedy="Lower q, or end the outflow before the mass runs out.",
+        )
 
     # Reshape back to multi-dimensional array
     m_next = m_next_flat.reshape(shape)

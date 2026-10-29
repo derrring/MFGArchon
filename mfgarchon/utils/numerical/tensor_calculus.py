@@ -1115,6 +1115,12 @@ def _tensor_diffusion_nd(
             u_padded = np.pad(u, 1, mode="wrap")
         elif bc_type in ["no_flux", "neumann"]:
             u_padded = np.pad(u, 1, mode="edge")
+        elif bc_type == "flux":
+            from mfgarchon.geometry.boundary.applicator_fdm import _refuse_a_type_with_no_ghost
+            from mfgarchon.geometry.boundary.types import BCType
+
+            # the zero padding below would read a prescribed flux as a zero wall value (#2581)
+            _refuse_a_type_with_no_ghost(BCType.FLUX, reader="The nD tensor diffusion's ghost padding")
         else:
             u_padded = np.pad(u, 1, mode="constant", constant_values=0.0)
     else:

@@ -115,9 +115,17 @@ import numpy as np
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
-__all__ = ["MAX_CLIP_MASS_FABRICATION", "clip_nonnegative_or_raise", "leave_out_or_raise", "mass_fabricated_by_clip"]
+__all__ = [
+    "MAX_CLIP_MASS_FABRICATION",
+    "clip_nonnegative_or_raise",
+    "leave_out_or_raise",
+    "mass_fabricated_by_clip",
+    "refuse_what_a_flux_takes_negative",
+]
 
 # The largest fraction of the present mass a non-negativity clip may create before the
 # solve is stopped. Round-off is ~1e-15; a failed scheme is O(1) (Issue #1671).
@@ -185,6 +193,63 @@ def clip_nonnegative_or_raise(
             f"mass, so the solve is stopped rather than reporting a conserved density it did not compute. {remedy}"
         )
     return np.maximum(density, 0.0)
+
+
+def refuse_what_a_flux_takes_negative(
+    m0: NDArray[np.floating],
+    m_q: NDArray[np.floating],
+    *,
+    context: str,
+    time: float | None,
+    unit: str,
+    locate: Callable[[int], str],
+    remedy: str,
+    weights: NDArray[np.floating] | None = None,
+    threshold: float = MAX_CLIP_MASS_FABRICATION,
+) -> NDArray[np.floating]:
+    """A step with a prescribed flux, ``m0 + m_q``, or its refusal where clipping it would fabricate mass the flux
+    decides: B-3 of #2581 (user ruling 2026-10-09), as the approver ruled its test on #2581's plan (Q3) and on #2840.
+
+    The step is linear in its right-hand side, so ``m0`` is the step without the flux and ``m_q`` the flux's own part.
+    Refused when
+
+    1. a node ``m0`` leaves non-negative goes negative with the flux: the flux alone takes it there; or
+    2. the step without the flux passes this gate, ``s0 = mass_fabricated_by_clip(m0) <= threshold``, and the depth
+       the flux adds at the nodes ``m0`` takes negative, ``s_q``, takes it past: ``s0 + s_q > threshold``. ``s_q`` is
+       ``sum over m0_i < 0 of w_i max(-m_q_i, 0)`` over the same positive mass, each node's deepening counted and none
+       netted against a node the flux fills.
+
+    A step whose own clip is past the threshold, ``s0 > threshold``, is the scheme's: the caller's clip decides it as
+    it would without the flux, the flux's share included. The returned step is not clipped. ``weights`` are those of
+    the caller's own clip, so that ``s0 <= threshold`` is that clip's verdict on the step without the flux.
+    """
+    step = m0 + m_q
+    w = np.ones_like(m0) if weights is None else np.asarray(weights)
+    positive = float(integrate_on_weights(np.maximum(m0, 0.0), w))
+    taken = (step < 0) & (m0 >= 0)
+    if np.any(taken):
+        worst = int(np.argmin(np.where(taken, step, np.inf)))
+        fabricated = (
+            float(integrate_on_weights(np.where(taken, -step, 0.0), w)) / positive if positive > 0 else float("inf")
+        )
+        raise ValueError(
+            f"{context}: the prescribed flux's part of the step would take the density negative at {int(taken.sum())} "
+            f"{unit}(s) in the step to t={time}, the most at {locate(worst)} (m = {step[worst]:.3e}), where the step "
+            f"without it is non-negative. Clipping that would fabricate {fabricated:.3e} of the mass, which the flux "
+            f"alone decides, so the step is refused (#2581, user ruling 2026-10-09, B-3). {remedy}"
+        )
+    own = mass_fabricated_by_clip(m0, weights=weights)
+    if own <= threshold:
+        deepening = np.where(m0 < 0, np.maximum(-m_q, 0.0), 0.0)
+        deepened = float(integrate_on_weights(deepening, w)) / positive if positive > 0 else 0.0
+        if own + deepened > threshold:
+            raise ValueError(
+                f"{context}: in the step to t={time}, clipping the step without the prescribed flux would fabricate "
+                f"{own:.3e} of the mass, within the threshold {threshold:.0e}, and the flux's part deepens its "
+                f"negatives by {deepened:.3e} more, past it. The flux decides the clip, so the step is refused rather "
+                f"than clipped (#2581, user ruling 2026-10-09, B-3). {remedy}"
+            )
+    return step
 
 
 def leave_out_or_raise(

@@ -136,6 +136,12 @@ def particle_action_for_bc_type(
             return "absorbing"
         return "reflecting"
 
+    if bc_type == BCType.FLUX:
+        raise ValueError(
+            "particle_action_for_bc_type: BCType.FLUX (a prescribed mass flux J.n = q) has no per-particle action: "
+            "it moves mass q per unit time through the wall, which no particle-by-particle rule imposes (#2581)."
+        )
+
     raise ValueError(
         f"particle_action_for_bc_type: {bc_type} has no particle interpretation. "
         "EXTRAPOLATION_LINEAR and EXTRAPOLATION_QUADRATIC describe how to continue a "

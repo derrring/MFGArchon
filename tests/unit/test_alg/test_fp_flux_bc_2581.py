@@ -22,13 +22,18 @@ FP-FEM's facet quadrature. ``q = 0`` solves as NO_FLUX bit for bit.
 **A manufactured solution** carries FLUX on every face, with q the exact ``J.n`` in t and along each face, through each
 face's own q at the corners: the mass tests integrate q over a face and cannot see where along it q is read.
 
-**B-3** (user ruling 2026-10-09; the audit's ruling on the test, #2581's plan, Q3): a step is refused where its flux part
-takes the density negative at a node that the step without it leaves non-negative, never clipped. On
-``divergence_upwind`` the matrix is an M-matrix, the step's right-hand side without the flux is ``m_old/dt >= 0``, and
-the flux's right-hand side is zero off the FLUX faces; under those three conditions the first node to go negative is on a
-FLUX face or ties with one (a discrete maximum principle), so there a check of the FLUX nodes alone refuses at the same
-step. ``divergence_centered`` and FP-FEM have no M-matrix, and the rows below take a step whose first negative is off
-the face, at the opposite wall, while every FLUX node stays non-negative: there a FLUX-node check would solve on.
+**B-3** (user ruling 2026-10-09; the approver's rulings on #2581's plan, Q3, and on #2840): a step is refused, not
+clipped, where the clip would fabricate mass the flux decides -- (1) the flux's part of it takes the density negative at
+a node the step without it leaves non-negative, or (2) the step without it passes the clip gate and the depth the flux
+adds at that step's negative nodes takes it past. A step whose own clip is past the gate is the scheme's, flux included.
+One owner reads it for both families (`refuse_what_a_flux_takes_negative`). On ``divergence_upwind`` the step's matrix
+A has non-positive off-diagonals and, as the step conserves the trapezoid mass, ``w^T A = w^T/dt > 0`` on the
+trapezoid weights w: it is an M-matrix, so the step without the flux, right-hand side ``m_old/dt >= 0``, is
+non-negative. Its rows need not be dominant (a row sum of -132 under a drift that piles mass up), so no discrete
+maximum principle puts the first negative on a FLUX face. Measured, not proved: none off the face in a seeded 1-D scan
+of 300 steps (review 1 of #2840), against 3 on ``divergence_centered``. ``divergence_centered`` and FP-FEM
+are not M-matrices, and the rows below take a step whose first negative is off the face, at the opposite wall, while
+every FLUX node stays non-negative: there a check of the FLUX nodes alone would solve on.
 
 Held fixed: a constant scalar volatility; a ``U`` linear in x and constant in t; FLUX on whole box faces (FP-FDM reads one
 condition per face, #2512 row B1). The fuzz before review 1 covers the rest.
@@ -413,6 +418,30 @@ def test_a_manufactured_solution_with_a_flux_on_every_face_converges(family: str
 # ------------------------------------------------------------------------------------------------------------- B-3
 
 
+def test_the_b3_owner_refuses_the_clip_the_flux_decides_and_leaves_the_scheme_its_own():
+    """B-3's one owner, read by both families (the approver's ruling on #2840), on steps whose verdict the rule fixes. With
+    s0 the gate's fraction of the step without the flux and s_q the depth the flux adds at its negative nodes: (1) a
+    node that step leaves non-negative goes negative; (2) s0 passes the gate and s0 + s_q does not, each node's
+    deepening counted and none netted against a node the flux fills, on the caller's weights; a step whose s0 is past
+    the gate is the scheme's, returned unclipped. No row of the fuzz or of review 1's scan reaches (2) (body of #2840)."""
+    from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative as owner
+
+    kw = {"context": "C", "time": 0.1, "unit": "node", "locate": lambda i: f"node {i}", "remedy": "R"}
+    with pytest.raises(ValueError, match=r"at 1 node\(s\) in the step to t=0\.1, the most at node 1 .*B-3"):
+        owner(np.array([1.0, 0.0, 1.0]), np.array([0.0, -1e-3, 0.0]), **kw)
+    # (2): s0 = 3e-9, and the flux deepens node 1 by 1e-6 of the mass
+    with pytest.raises(ValueError, match=r"deepens its negatives by 3\.333e-07 more, past it.*B-3"):
+        owner(np.array([1.0, -9e-9, 1.0, 1.0]), np.array([0.0, -1e-6, 0.0, 0.0]), **kw)
+    # no netting: filling node 2 by as much as node 1 is deepened leaves s_q = 5e-7, not 0
+    with pytest.raises(ValueError, match=r"deepens its negatives by 5\.000e-07 more"):
+        owner(np.array([1.0, -3e-9, -3e-9, 1.0]), np.array([0.0, -1e-6, 1e-6, 0.0]), **kw)
+    # the caller's weights: uniform, s0 = 3.3e-7 is past the gate and the step is the scheme's; weighted, s0 = 3.3e-10
+    m0, m_q = np.array([1.0, -1e-6, 1.0, 1.0]), np.array([0.0, -1e-3, 0.0, 0.0])
+    assert np.array_equal(owner(m0, m_q, **kw), m0 + m_q)
+    with pytest.raises(ValueError, match=r"deepens its negatives by 3\.333e-07 more"):
+        owner(m0, m_q, weights=np.array([1.0, 1e-3, 1.0, 1.0]), **kw)
+
+
 def test_an_outflow_that_drains_the_wall_is_refused_on_upwind():
     bc = _segments(1, {"x_max": 10.0})
     with pytest.raises(ValueError, match=r"B-3"):
@@ -478,10 +507,12 @@ def test_fp_fem_refuses_a_flux_on_its_adjoint_step():
 def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
     """A ghost layer, a ghost calculator and a geometric fold read a condition on the field; FLUX is on the total flux.
     On arrival the ghost layer wrote a reflection (mixed) or zeros (uniform), the calculator route a zero gradient, the
-    fold a clamp and the legacy ghost values a mirror; each now refuses by name (#2581)."""
+    fold a clamp, the legacy ghost values a mirror and the nD tensor diffusion a zero wall value (review 1 of #2840);
+    each now refuses by name (#2581)."""
     from mfgarchon.geometry.boundary._compat import get_ghost_values_nd
     from mfgarchon.geometry.boundary.applicator_fdm import bc_to_topology_calculator
     from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
+    from mfgarchon.operators.differential import DiffusionOperator
     from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
     bc = flux_bc(0.3, dimension=1)
@@ -497,11 +528,24 @@ def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
         pytest.raises(NotImplementedError, match=r"A ghost value has no reading of BCType\.FLUX"),
     ):
         get_ghost_values_nd(np.ones(11), bc, spacing=(0.1,))
+    tensor = DiffusionOperator(coefficient=0.1 * np.eye(3), spacings=[0.2] * 3, field_shape=(6, 6, 6), bc=flux_bc(0.3))
+    with pytest.raises(
+        NotImplementedError, match=r"nD tensor diffusion's ghost padding has no reading of BCType\.FLUX"
+    ):
+        tensor @ np.ones(216)
 
 
-def test_a_flux_segment_needs_a_value():
-    bc = BoundaryConditions(
-        dimension=1, segments=[BCSegment(name="out", bc_type=BCType.FLUX, value=None, boundary="x_max")]
-    )
+def test_a_flux_needs_its_q():
+    """A FLUX's value is q, and a None constant reads as 0: a FLUX with no q solved as NO_FLUX on both families
+    (review 1 of #2840). It is refused where its segment is built -- a segment, and the one a FLUX ``default_bc`` or
+    ``flux_bc(None)`` makes when a solver reads a face -- and by ``validate_values`` for a value reassigned after."""
     with pytest.raises(ValueError, match=r"Segment 'out' with flux BC requires a value"):
-        bc.validate_values()
+        BCSegment(name="out", bc_type=BCType.FLUX, value=None, boundary="x_max")
+    with pytest.raises(ValueError, match=r"Segment 'uniform' with flux BC requires a value"):
+        _fdm(1, 11, flux_bc(None, dimension=1))
+    with pytest.raises(ValueError, match=r"Segment 'default' with flux BC requires a value"):
+        _fem(1, 8, BoundaryConditions(dimension=1, segments=[], default_bc=BCType.FLUX, default_value=None))
+    segment = BCSegment(name="out", bc_type=BCType.FLUX, value=0.2, boundary="x_max")
+    segment.value = None
+    with pytest.raises(ValueError, match=r"Segment 'out' with flux BC requires a value"):
+        BoundaryConditions(dimension=1, segments=[segment]).validate_values()

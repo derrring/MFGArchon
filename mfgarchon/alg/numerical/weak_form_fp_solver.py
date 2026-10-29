@@ -26,6 +26,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -257,6 +258,7 @@ class WeakFormFPSolver(BaseFPSolver):
         clip_injected_max = 0.0
         clip_max_step = -1
         m0_mass = float((self._M @ M[0]).sum())
+        clip_weights = np.asarray(self._M.sum(axis=1)).ravel()  # what the clip below measures mass with
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
             if source_term is not None:
@@ -307,20 +309,21 @@ class WeakFormFPSolver(BaseFPSolver):
                 if flux_load is not None:
                     m_flux[interior] = spsolve(A_bc, flux_load[interior])
             if m_flux is not None:
-                # B-3 (user ruling 2026-10-09): refused where the flux's part takes a DOF negative that m0 leaves
-                # non-negative, never clipped. The clip below stays for the negatives m0 makes on its own.
-                m_step = M[n + 1] + m_flux
-                taken = (m_step < 0) & (M[n + 1] >= 0)
-                if np.any(taken):
-                    worst = int(np.argmin(np.where(taken, m_step, np.inf)))
-                    raise ValueError(
-                        f"{type(self).__name__}: the prescribed flux would take the density negative at "
-                        f"{int(taken.sum())} DOF(s) in the step to t={(n + 1) * dt}, the most at DOF {worst} "
-                        f"(m = {m_step[worst]:.3e}): the FLUX outflow over the step exceeds the mass there. Refused "
-                        "rather than clipped, which would fabricate mass (#2581, user ruling 2026-10-09, B-3). Lower q "
-                        "or the time step, or end the outflow before the mass runs out."
-                    )
-                M[n + 1] = m_step
+                # B-3's owner, with the weights of the clip below; a step whose own clip is past the threshold is left
+                # to that clip, which warns, as before, the flux's share included (#2581).
+                M[n + 1] = refuse_what_a_flux_takes_negative(
+                    M[n + 1],
+                    m_flux,
+                    context=type(self).__name__,
+                    time=(n + 1) * dt,
+                    unit="DOF",
+                    locate=lambda i: f"DOF {i}",
+                    weights=clip_weights,
+                    remedy=(
+                        "The Galerkin step is not monotone, so the flux's part of it can be negative away from the "
+                        "wall, an inflow's included."
+                    ),
+                )
 
             # Positivity clip. The Galerkin/MLS advection is not an M-matrix, so the
             # solve can produce density undershoots; the clip deletes them, which INJECTS

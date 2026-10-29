@@ -2420,8 +2420,9 @@ def flux_bc(
 
     Pass it to the FP solver as its own ``boundary_conditions``. It is FP-side only, so a problem or geometry
     carrying it is refused, since that BC is shared with the HJB (user ruling 2026-10-09, B-2). ``FPFDMSolver``
-    (its implicit step) and ``FPFEMSolver`` honour it; every other solver refuses it. A step whose outflow would
-    take the density negative is refused by name, never clipped (B-3).
+    (its implicit step) and ``FPFEMSolver`` honour it; every other solver refuses it. A step is refused by name rather
+    than clipped where the clip would fabricate mass the flux decides (B-3, `refuse_what_a_flux_takes_negative`); a
+    step whose own clip is past the gate is the scheme's, the flux included (FP-FEM clips it with a warning).
 
     Args:
         value: The outward flux q (constant, or a callable q(t, x) named by its parameters: (t, x), (x) or (t)),

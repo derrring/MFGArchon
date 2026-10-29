@@ -156,8 +156,9 @@ class BCType(Enum):
         FLUX: A prescribed total flux, J.n = q with J = alpha*m - D*grad(m), for a Fokker-Planck solver's own BC
             (#2581). q is mass per unit time per unit boundary measure, outward positive, and q = 0 is NO_FLUX. It
             is not NEUMANN: where the drift crosses the wall, J.n = q is not D*dm/dn = -q. FP-side only, so it is
-            refused on a BC the HJB and FP share, and a step whose outflow would take the density negative is
-            refused, never clipped (#2581, user rulings 2026-10-09).
+            refused on a BC the HJB and FP share, and a step is refused rather than clipped where the clip would
+            fabricate mass the flux decides (B-3, `refuse_what_a_flux_takes_negative`; a step whose own clip is past
+            the gate is the scheme's, flux included) (#2581, user rulings 2026-10-09).
 
     Impermeable Boundary Types (NO_FLUX and REFLECTING):
         These represent the SAME physical concept - an impermeable wall where
@@ -648,6 +649,13 @@ class BCSegment:
         # built, not when a solver first reads it (#2512 row B2, user ruling).
         if callable(self.value) and not is_provider(self.value):
             self.value_binding()
+        # A FLUX's value is q itself, and a None constant reads as 0 (`boundary_value`): refused here, where every
+        # FLUX reader's segment is built, a default_bc's included, rather than solved as NO_FLUX (#2581).
+        if self.bc_type == BCType.FLUX and self.value is None:
+            raise ValueError(
+                f"Segment '{self.name}' with flux BC requires a value: q, the prescribed mass flux J.n through it, "
+                "outward positive (q = 0 is NO_FLUX) (#2581)."
+            )
 
     def value_binding(self) -> BoundCallable:
         """The binding of this segment's callable value to ``(t, x)``, made once per value object.
