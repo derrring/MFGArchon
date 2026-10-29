@@ -874,8 +874,9 @@ def test_the_deposit_is_the_tents_of_a_graded_grid():
 
 
 def test_the_projector_deposits_a_sample_its_grid_cannot_read():
-    """The particle-to-grid projector on a uniform grid: the narrow sample is its tent deposit, mass 1 on the grid's
-    weights, where the KDE at the nodes had mass 0; the wide one is still scipy's KDE at the nodes. A CartesianGrid
+    """The particle-to-grid projector on a uniform grid, and on the same lattice declared custom: the narrow sample is
+    its tent deposit, mass 1 on the grid's weights, where the KDE at the nodes had mass 0 (b1727062 read the KDE on the
+    custom one); the wide one is still scipy's KDE at the nodes. A CartesianGrid
     that is not a TensorProductGrid, and a TensorProductGrid with an axis of one node, have no lattice the gate reads,
     so the narrow sample is scipy's KDE there (#2827), as before #2556; 52ccefad refused the first and raised on the
     second."""
@@ -888,9 +889,17 @@ def test_the_projector_deposits_a_sample_its_grid_cannot_read():
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2))
     axis = np.linspace(0.0, 1.0, 11)
+    custom = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * 2,
+        Nx_points=[11, 11],
+        spacing_type="custom",
+        custom_coordinates=[axis.copy(), axis.copy()],
+        boundary_conditions=no_flux_bc(dimension=2),
+    )
+    assert not custom.is_uniform
     weights = np.outer(_trapezoid(axis), _trapezoid(axis))
-    for sample in (_NARROW, np.clip(_WIDE, 0.0, 1.0)):
-        projector = GeometryProjector(grid, PointCloudGeometry(sample), projection_method="kde")
+    for target, sample in ((grid, _NARROW), (custom, _NARROW), (grid, np.clip(_WIDE, 0.0, 1.0))):
+        projector = GeometryProjector(target, PointCloudGeometry(sample), projection_method="kde")
         got = np.asarray(projector.project_fp_to_hjb(np.ones(len(sample)), bandwidth="scott"))
         if sample is _NARROW:
             want = np.einsum("pi,pj->ij", _hats(sample[:, 0], axis), _hats(sample[:, 1], axis)) / len(sample) / weights

@@ -447,8 +447,9 @@ class GeometryProjector:
         `deposit_on_nodes`; #2556). The deposit is the sample's restriction to the target box, as the kernel estimate
         is: a particle outside the box is left out and each particle kept carries 1/N of the whole sample; the count
         left out and their share of the mass are logged and recorded (`particles_outside_last_deposit`). The gate needs
-        a lattice, so a target the grid declares non-uniform, one with an axis of one node, or a CartesianGrid that is
-        not a TensorProductGrid, has none and reads the KDE as before (#2827).
+        a lattice: a TensorProductGrid whose axes are one by the grid readers' one test is gated, declared uniform or
+        custom. A non-uniform axis, an axis of one node, or a CartesianGrid that is not a TensorProductGrid has none
+        and reads the KDE as before (#2827).
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
