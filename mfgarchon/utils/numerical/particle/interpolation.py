@@ -364,15 +364,20 @@ def interpolate_particles_to_grid(
 
 
 def _lattice_spacings(axes: Sequence[NDArray[np.floating]]) -> list[float] | None:
-    """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read: each axis of at least two
-    nodes whose steps all equal its spacing to within 1e-9 of it. None otherwise."""
+    """The spacings of ``axes`` when they are a lattice `kde_resolves_on_grid` can read, the one test of that for
+    the grid readers (this utility, the projector and the particle solver): each axis of at least two finite nodes
+    lies on the lattice of finite spacing h = (last - first) / (n - 1) through its first node, to within
+    `_LATTICE_NODE_TOL` h. The nodes are measured from the first, so the test's own rounding does not add an offset's
+    to the nodes', and an axis rounded to float32 passes while its rounding stays under that tolerance. None
+    otherwise."""
     spacings = []
     for axis in axes:
         a = np.asarray(axis, dtype=float)
-        if a.ndim != 1 or len(a) < 2:
+        if a.ndim != 1 or len(a) < 2 or not np.all(np.isfinite(a)):
             return None
-        h = float(a[-1] - a[0]) / (len(a) - 1)
-        if not h > 0 or float(np.max(np.abs(np.diff(a) - h))) > 1e-9 * h:
+        offsets = a - a[0]
+        h = float(offsets[-1]) / (len(a) - 1)
+        if not 0 < h < np.inf or not float(np.max(np.abs(offsets - h * np.arange(len(a))))) <= _LATTICE_NODE_TOL * h:
             return None
         spacings.append(h)
     return spacings
@@ -586,6 +591,13 @@ _ALIASING_MAX_POINTS = 2_000_000
 _ALIASING_BATCH = 256
 # The first, small ellipsoid m^T K m <= 16 (transforms of at least exp(-8)), where a sample past tol is decided.
 _FIRST_RADIUS = 16.0
+# How far, in spacings, an axis's nodes may sit from a lattice's for a reader to gate it as one (`_lattice_spacings`).
+# Moving a lattice's nodes by up to c h moves a KDE's node sum on them, at the gate's boundary, by K c in the worst
+# direction: K up to 5.4 measured on clusters in d = 1 to 3, and growing as a spread sample's kernel narrows, to 20 on
+# 3e5 particles spread over a 1-D box (a kernel of 0.007 cells at the boundary). So an axis gated here is read to within
+# the gate's tolerance of 0.1 plus 5.4e-3 on those clusters, and 2.0e-2 on that sample. An axis refused keeps the
+# kernel estimate ungated (#2827), so a larger c only gates more axes.
+_LATTICE_NODE_TOL = 1e-3
 
 
 def kde_lattice_aliasing(
@@ -631,8 +643,8 @@ def kde_lattice_aliasing(
     Returns
     -------
     float or None
-        A value above ``tol`` exactly when B is (a partial sum of B past it, an upper bound on B at or under it, or
-        infinity from the backstop), or None.
+        A value above ``tol`` exactly when B is (a partial sum of B past it, or an upper bound on B at or under it),
+        except infinity from the backstop, which reads the sample as unresolved whatever its B; or None.
     """
     points = _sample(particle_positions)
     n, d = points.shape
@@ -720,9 +732,9 @@ def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
     3. sum_{j in Z} exp(-a j^2 / 4) <= 1 + sqrt(4 pi / a): the terms j >= 1 of the decreasing exp(-a x^2 / 4) sum to at
        most its integral from 0, sqrt(pi / a), and the terms j <= -1 likewise.
 
-    c is where exp(-c / 4) prod_i (1 + sqrt(4 pi / a_i)) is the bound. Infinite where K is not finite or a diagonal
-    entry is not positive (a factor of 1e-170 underflows K to 0, and its correlation matrix would be 0 / 0)."""
-    if not np.all(np.isfinite(K)) or not np.all(np.diag(K) > 0):
+    c is where exp(-c / 4) prod_i (1 + sqrt(4 pi / a_i)) is the bound. Infinite where a diagonal entry of K is not
+    positive (a factor of 1e-170 underflows K to 0, and its correlation matrix would be 0 / 0)."""
+    if not np.all(np.diag(K) > 0):
         return float("inf")
     sd = np.sqrt(np.diag(K))
     a = float(np.linalg.eigvalsh(K / np.outer(sd, sd))[0]) * np.diag(K)
@@ -734,14 +746,12 @@ def _ellipsoid_radius(K: NDArray[np.floating]) -> float:
 def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.integer] | None:
     """The lattice points m != 0 with m^T K m <= c, one of each pair m, -m (its first nonzero entry > 0); or None when
     a level of the enumeration below holds more than 2 `_ALIASING_MAX_POINTS` + 1 points (so whenever the ellipsoid
-    does, and sometimes when only its shadow on the coordinates enumerated so far does), when a coordinate passes 2^62,
-    when K is not positive definite in floating point, or when c is infinite.
+    does, sometimes when only its shadow on the coordinates enumerated so far does, and always when c is infinite), or
+    when K is not positive definite in floating point.
 
     Enumerated coordinate by coordinate from the last (Fincke-Pohst): with K = U^T U, U upper triangular,
     m^T K m = sum_i (U_ii m_i + sum_{j>i} U_ij m_j)^2, so once m_{i+1}, ..., m_{d-1} are fixed the remaining budget bounds
     m_i to an interval."""
-    if not np.isfinite(c):
-        return None
     d = len(K)
     try:
         U = np.linalg.cholesky(K).T
@@ -758,8 +768,7 @@ def _half_lattice_in_ellipsoid(K: NDArray[np.floating], c: float) -> NDArray[np.
         hi = np.floor(-shift / U[i, i] + half)
         counts = np.maximum(hi - lo + 1, 0.0)
         count = float(counts.sum())
-        live = counts > 0
-        if not count <= 2 * _ALIASING_MAX_POINTS + 1 or np.any(np.maximum(-lo[live], hi[live]) >= 2.0**62):
+        if count > 2 * _ALIASING_MAX_POINTS + 1:
             return None
         lo, counts = lo.astype(np.int64), counts.astype(np.int64)
         count = int(count)

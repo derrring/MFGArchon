@@ -1,8 +1,9 @@
 - **A grid density reader deposits a sample whose kernel the grid cannot read** (#2556, C3-2, #2820). Before it builds a
   kernel, each of these readers asks whether the grid's lattice can read it: `FPParticleSolver`'s 1-D, n-D and GPU
   density readers, the particle-to-grid projector on a uniform grid, and `interpolate_particles_to_grid(method="kde")`
-  on a lattice, the one it lays out itself or a caller's uniform `grid_axes` (a callable bandwidth is read through
-  scipy's own estimate). The sample must have a kernel
+  on a lattice, the one it lays out itself or a caller's `grid_axes` (a callable bandwidth is read through scipy's own
+  estimate). A lattice here is axes whose nodes lie on one to within 1e-3 of its spacing, so an axis rounded to float32
+  or far from 0 is one. The sample must have a kernel
   (`kde_sample_has_spread`). The bound B = Σ_{m≠0} |ĝ_H(k_m)| |φ̂_N(k_m)|, k_m = 2πm/h, on the kernel estimate's
   aliasing on the lattice must also be at or under 10% (`kde_lattice_aliasing`, `kde_resolves_on_grid`,
   `KDE_LATTICE_ALIASING_TOL`). By Poisson summation, B bounds how far the estimate's sum over the nodes misses its mass
@@ -32,5 +33,5 @@
     (0.3025 for a sample at a corner). The GPU path does not read `kde_method`.
   - A sample the lattice can read still gets the kernel estimate.
   - The check needs a lattice, so these keep the kernel estimate (#2827): a projector target with a non-uniform axis
-    or one that is not a `TensorProductGrid`, and axes handed to `interpolate_particles_to_grid` that are not a lattice
-    (a non-uniform axis, an axis of one node, bounds with no span).
+    or an axis of one node, or one that is not a `TensorProductGrid`, and axes of `interpolate_particles_to_grid`, its
+    own or a caller's, that are not a lattice (a non-uniform axis, an axis of one node, bounds with no span).

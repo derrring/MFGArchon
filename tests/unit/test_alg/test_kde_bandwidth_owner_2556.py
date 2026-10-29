@@ -876,11 +876,13 @@ def test_the_deposit_is_the_tents_of_a_graded_grid():
 def test_the_projector_deposits_a_sample_its_grid_cannot_read():
     """The particle-to-grid projector on a uniform grid: the narrow sample is its tent deposit, mass 1 on the grid's
     weights, where the KDE at the nodes had mass 0; the wide one is still scipy's KDE at the nodes. A CartesianGrid
-    that is not a TensorProductGrid has no lattice the gate reads, so the narrow sample is scipy's KDE there (#2827),
-    as before #2556; 52ccefad refused that target."""
+    that is not a TensorProductGrid, and a TensorProductGrid with an axis of one node, have no lattice the gate reads,
+    so the narrow sample is scipy's KDE there (#2827), as before #2556; 52ccefad refused the first and raised on the
+    second."""
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.base import CartesianGrid
     from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
     from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
     from mfgarchon.operators.interpolation.projection import GeometryProjector
 
@@ -918,51 +920,93 @@ def test_the_projector_deposits_a_sample_its_grid_cannot_read():
     want = gaussian_kde(_NARROW.T)(np.array(np.meshgrid(axis, axis, indexing="ij")).reshape(2, -1)).reshape(11, 11)
     np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
 
+    # an axis of one node is not a lattice either: scipy's KDE at the nodes, through the sample (b1727062 raised)
+    on_a_node = _NARROW - [0.03, 0.0]
+    for bounds, shape, sample in (
+        ([(0.0, 1.0), (0.47, 1.0)], (11, 1), on_a_node),
+        ([(0.53, 1.0)], (1,), _NARROW[:, :1]),
+    ):
+        one = TensorProductGrid(
+            bounds=bounds, Nx_points=list(shape), boundary_conditions=no_flux_bc(dimension=len(shape))
+        )
+        projector = GeometryProjector(one, PointCloudGeometry(sample), projection_method="kde")
+        got = np.asarray(projector.project_fp_to_hjb(np.ones(len(sample)), bandwidth="scott"))
+        nodes = np.array(np.meshgrid(*geometry_grid_axes(one), indexing="ij")).reshape(len(shape), -1)
+        want = gaussian_kde(sample.T)(nodes).reshape(shape)
+        assert np.max(want) > 1.0
+        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
+
 
 _AXIS = np.linspace(0.0, 1.0, 11)
 _GRADED = np.concatenate([np.linspace(0.0, 0.2, 6), np.linspace(0.36, 1.0, 5)])
 _AT_CORNER = 0.005 * np.random.default_rng(4).standard_normal((300, 2))
+_F32 = np.float32
+
+
+def _off_the_lattice(by):
+    """`_AXIS` with its middle node moved by ``by`` spacings."""
+    axis = _AXIS.copy()
+    axis[5] += by * 0.1
+    return axis
 
 
 @pytest.mark.parametrize(
     ("sample", "shape", "kwargs", "reads"),
     [
         (_NARROW, (11, 11), {}, "deposit"),
+        (_NARROW, (11, 11), {"grid_bounds": ((_F32(0.0), _F32(1.0)),) * 2}, "deposit"),
+        (_NARROW + 1e7, (11, 11), {"grid_bounds": ((1e7, 1e7 + 1.0),) * 2}, "deposit"),
         (_NARROW, (11, 11), {"grid_axes": [_AXIS, _AXIS]}, "deposit"),
-        (_NARROW, (11, 11), {"bandwidth": lambda kde: kde.scotts_factor()}, "deposit"),
+        (_NARROW, (11, 11), {"grid_axes": [_AXIS.astype(_F32)] * 2}, "deposit"),
+        (_NARROW, (11, 11), {"grid_axes": [_off_the_lattice(5e-4), _AXIS]}, "deposit"),
+        (np.clip(_WIDE, 0.0, 1.0), (11, 11), {"bandwidth": lambda kde: 0.05 * kde.scotts_factor()}, "deposit"),
+        (_NARROW, (11, 11), {"bandwidth": lambda kde: 40.0 * kde.scotts_factor()}, "kernel"),
         (_AT_CORNER, (11, 11), {}, "deposit"),
         (np.clip(_WIDE, 0.0, 1.0), (11, 11), {}, "kernel"),
         (_NARROW, (11, 11), {"grid_axes": [_GRADED, _AXIS]}, "kernel"),
+        (_NARROW, (11, 11), {"grid_axes": [_off_the_lattice(2e-3), _AXIS]}, "kernel"),
         (_NARROW, (11, 1), {}, "kernel"),
     ],
     ids=[
         "its own lattice",
+        "its own lattice, float32 bounds",
+        "its own lattice, far from 0",
         "a caller's uniform axes",
-        "a callable bandwidth",
+        "a caller's float32 uniform axes",
+        "a caller's axis off a lattice by 5e-4 spacings",
+        "a callable bandwidth, 0.05 times Scott's",
+        "a callable bandwidth, 40 times Scott's",
         "at a corner, three quarters outside",
         "a wide sample",
         "a caller's graded axis",
+        "a caller's axis off a lattice by 2e-3 spacings",
         "an axis of one node",
     ],
 )
 def test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read(sample, shape, kwargs, reads):
-    """`interpolate_particles_to_grid(method="kde")` on a lattice, its own or a caller's uniform axes: #2820's narrow
-    sample is its tent deposit, mass 1 on the trapezoid weights (3.6e-50 at 654848bc), with a callable bandwidth too;
-    a sample at a corner is the deposit of its restriction to the box, each particle inside carrying 1/N. A wide sample
-    is still scipy's KDE at the nodes, and so is any sample on axes that are not a lattice (#2827)."""
+    """`interpolate_particles_to_grid(method="kde")` on a lattice, its own or a caller's axes on one to within 1e-3 of
+    a spacing: #2820's narrow sample is its tent deposit, mass 1 on the trapezoid weights (3.6e-50 at 654848bc),
+    with float32 bounds or axes and far from 0 too (b1727062 kept the kernel there); a sample at a corner is the
+    deposit of its restriction to the box, each particle inside carrying 1/N. A callable bandwidth decides by its own
+    factor, which here moves the verdict both ways from Scott's. A wide sample is still scipy's KDE at the nodes, and
+    so is any sample on axes that are not a lattice (#2827)."""
     from mfgarchon.utils.numerical.particle.interpolation import interpolate_particles_to_grid
 
-    axes = kwargs.get("grid_axes", [np.linspace(0.0, 1.0, n) for n in shape])
-    got = interpolate_particles_to_grid(
-        np.ones(len(sample)), sample, shape, ((0.0, 1.0), (0.0, 1.0)), method="kde", **kwargs
-    )
+    kwargs = dict(kwargs)
+    bounds = kwargs.pop("grid_bounds", ((0.0, 1.0), (0.0, 1.0)))
+    axes = kwargs.get("grid_axes", [np.linspace(lo, hi, n) for (lo, hi), n in zip(bounds, shape, strict=True)])
+    got = interpolate_particles_to_grid(np.ones(len(sample)), sample, shape, bounds, method="kde", **kwargs)
+    x, y = (np.asarray(a, dtype=float) for a in axes)
     if reads == "deposit":
-        inside = np.all((sample >= 0.0) & (sample <= 1.0), axis=1)
-        want = _tent_deposit(sample[inside], axes) * inside.mean()
+        kept = sample[np.all((sample >= [lo for lo, _ in bounds]) & (sample <= [hi for _, hi in bounds]), axis=1)]
+        want = np.einsum("pi,pj->ij", _hats(kept[:, 0], x), _hats(kept[:, 1], y)) / len(sample)
+        want /= np.outer(_trapezoid(x), _trapezoid(y))
     else:
-        nodes = np.array(np.meshgrid(*axes, indexing="ij")).reshape(2, -1)
-        want = gaussian_kde(sample.T)(nodes).reshape(shape)
-    np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-12)
+        nodes = np.array(np.meshgrid(x, y, indexing="ij")).reshape(2, -1)
+        want = gaussian_kde(sample.T, bw_method=kwargs.get("bandwidth"))(nodes).reshape(shape)
+    # a float32 grid's quadrature weights are float32, so its deposit carries their rounding
+    rtol = 1e-6 if any(np.asarray(a).dtype == np.float32 for a in axes) else 1e-10
+    np.testing.assert_allclose(got, want, rtol=rtol, atol=1e-12)
 
 
 def test_the_projector_deposits_the_samples_restriction_to_its_box():

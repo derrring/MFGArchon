@@ -447,7 +447,7 @@ class GeometryProjector:
         `deposit_on_nodes`; #2556). The deposit is the sample's restriction to the target box, as the kernel estimate
         is: a particle outside the box is left out and each particle kept carries 1/N of the whole sample; the count
         left out and their share of the mass are logged and recorded (`particles_outside_last_deposit`). The gate needs
-        a lattice, so a target the grid declares non-uniform (`get_grid_spacing` refuses it), or a CartesianGrid that is
+        a lattice, so a target the grid declares non-uniform, one with an axis of one node, or a CartesianGrid that is
         not a TensorProductGrid, has none and reads the KDE as before (#2827).
         """
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
@@ -456,6 +456,7 @@ class GeometryProjector:
         from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, geometry_grid_axes
         from mfgarchon.utils.numerical.particle.interpolation import (
             KDE_LATTICE_ALIASING_TOL,
+            _lattice_spacings,
             deposit_on_nodes,
             kde_resolves_on_grid,
         )
@@ -475,14 +476,12 @@ class GeometryProjector:
 
         dimension = particle_positions.shape[1] if particle_positions.ndim > 1 else 1
 
-        # The gate needs a lattice and the deposit the grid's `measure_weights`: TensorProductGrid owns both, on axes it
-        # declares uniform. Any other target reads the KDE as before (#2827).
+        # The gate needs a lattice and the deposit the grid's `measure_weights`: TensorProductGrid owns both, where its
+        # axes are a lattice by the grid readers' one test (not a non-uniform axis, nor an axis of one node). Any other
+        # target reads the KDE as before (#2827).
         spacings = None
         if isinstance(self.hjb_geometry, TensorProductGrid):
-            try:
-                spacings = self.hjb_geometry.get_grid_spacing()
-            except ValueError:
-                spacings = None
+            spacings = _lattice_spacings(geometry_grid_axes(self.hjb_geometry))
         self.particles_outside_last_deposit = None
         if spacings is not None and not kde_resolves_on_grid(particle_positions, bandwidth, spacings):
             # `spacings` is set above only for a TensorProductGrid

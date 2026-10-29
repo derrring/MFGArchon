@@ -667,10 +667,12 @@ class FPParticleSolver(BaseFPSolver):
         """Whether the kernel of ``kde_bandwidth`` on this level's sample cannot be read on the grid's nodes: the
         sample has none, or its aliasing bound on the grid's lattice is over `KDE_LATTICE_ALIASING_TOL`
         (`kde_resolves_on_grid`, #2556). Such a level is deposited instead, and recorded in `deposited_levels`, which
-        `solve_fp_system` logs once."""
-        from mfgarchon.utils.numerical.particle.interpolation import kde_resolves_on_grid
+        `solve_fp_system` logs once. The lattice is the grid's own axes, by the test the other grid readers use
+        (`_lattice_spacings`); axes that are not one keep the estimate, as theirs do (#2827)."""
+        from mfgarchon.utils.numerical.particle.interpolation import _lattice_spacings, kde_resolves_on_grid
 
-        if kde_resolves_on_grid(particles, self.kde_bandwidth, self._get_grid_params()["spacings"]):
+        spacings = _lattice_spacings(self._get_grid_params()["coordinates"])
+        if spacings is None or kde_resolves_on_grid(particles, self.kde_bandwidth, spacings):
             return False
         self.deposited_levels.append(level)
         return True
