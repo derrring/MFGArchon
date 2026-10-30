@@ -17,7 +17,7 @@ Note:
     - fp_fdm_alg_divergence_centered.py: add_boundary_no_flux_entries_divergence_centered
 
 Mathematical Background:
-    No-flux BC for FP: J.n = 0 where J = v*m - D*grad(m)
+    No-flux BC for FP: J.n = 0 where J = v*m - grad(D*m) (v*m - D*grad(m) for a constant D, #2841)
     This ensures mass conservation at domain boundaries.
 """
 
