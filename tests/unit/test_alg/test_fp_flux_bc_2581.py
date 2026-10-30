@@ -454,7 +454,7 @@ def test_the_b3_owner_refuses_the_clip_the_flux_decides_and_leaves_the_scheme_it
     # (1) before the scheme: s0 = 1e-3 is past the gate; the caller's clip decides what a change of q does there
     with pytest.raises(ValueError, match=r"The step without the flux would itself fabricate 1\.000e-03") as caught:
         owner(np.array([1.0, 0.0, -1e-3]), np.array([0.0, -1e-3, 0.0]), **kw)
-    assert str(caught.value).endswith("before the flux is added. P")
+    assert str(caught.value).endswith("before this step's flux is added. P")
     # s0 = thr exactly is not past the gate, so (1)'s message names the flux's remedy
     with pytest.raises(ValueError, match=r"fabricate 1\.000e-03 of the mass, past the threshold.*B-3\)\. R$"):
         owner(np.array([1.0, 0.0, -1e-8]), np.array([0.0, -1e-3, 0.0]), **kw)
@@ -471,6 +471,10 @@ def test_the_b3_owner_refuses_the_clip_the_flux_decides_and_leaves_the_scheme_it
     # s_step = 5.5e-9, within the gate; on pos(m0), withdrawn, it was 1.1e-8 (the user's ruling, review 4 of #2840)
     m0, m_q = np.array([1.0, -0.5e-8]), np.array([1.0, -0.6e-8])
     assert np.array_equal(owner(m0, m_q, **kw), m0 + m_q)
+    # and where the flux drains the step: D = 3e-9 on pos(step) = 0.5 takes s0 = 6e-9 to 1.2e-8, though s_step = 8e-9;
+    # on pos(m0) it was 9e-9 (review 5 of #2840)
+    with pytest.raises(ValueError, match=adds.format(r"6\.000e-09")):
+        owner(np.array([1.0, -1e-9, -5e-9]), np.array([-0.5, -3e-9, 5e-9]), **kw)
     # D on a step with no positive mass is infinite, as F is
     with pytest.raises(ValueError, match=adds.format("inf")):
         owner(np.array([1.0, -1e-9]), np.array([-1.0, -1e-9]), **kw)
@@ -630,7 +634,9 @@ def test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face()
     assert "hands the step to FP-FDM's guard, which refuses it unless the step with the flux passes the gate" in str(
         caught.value
     )
-    assert str(caught.value).endswith("at q = 0 it does not.")
+    assert "at q = 0 on this step it does not. The state this step starts from holds what the flux did" in str(
+        caught.value
+    )
     unfluxed = FPFDMSolver(
         _problem(grid, nt=2, t_end=0.2, sigma=0.05),
         boundary_conditions=_segments(1, {"x_max": 0.0}),
@@ -652,8 +658,9 @@ def test_fem_is_refused_where_the_first_negative_is_off_the_flux_face():
         solver.solve_fp_system(M_initial=_bump(x), potential_field=u)
     # the step without the flux is past the gate (s0 = 0.10): lowering q below q* hands the step to FP-FEM's clip, as the
     # message says, and the solve runs (review 3 of #2840)
-    assert "A q with which the flux takes no node negative past the threshold hands the step to FP-FEM's clip" in str(
-        caught.value
+    assert (
+        "A q on this step with which the flux takes no DOF negative past the threshold hands the step to FP-FEM's"
+        in str(caught.value)
     )
     lowered = FPFEMSolver(_problem(mesh, nt=2, t_end=0.2, sigma=0.3), boundary_conditions=_segments(1, {"x_max": 0.2}))
     assert float(np.min(lowered.solve_fp_system(M_initial=_bump(x), potential_field=u))) >= 0.0

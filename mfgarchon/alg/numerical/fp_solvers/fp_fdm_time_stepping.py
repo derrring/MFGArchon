@@ -1691,10 +1691,12 @@ def solve_timestep_full_nd(
                 "the wall: for an inflow, use advection_scheme='divergence_upwind', whose step is monotone; for an "
                 "outflow, lower |q| or end it before the mass runs out."
             ),
-            # the guard reads the step on these weights, and at q = 0 the step is m0, whose clip is past the gate here
+            # the guard reads the step on these weights, and at this step's q = 0 the step is m0, whose clip is past
+            # the gate here; q = 0 on every step is another run, whose state the flux never touched (review 5 of #2840)
             remedy_past_gate=(
-                "A q with which the flux takes no node negative past the threshold hands the step to FP-FDM's guard, "
-                "which refuses it unless the step with the flux passes the gate; at q = 0 it does not."
+                "A q on this step with which the flux takes no node negative past the threshold hands the step to "
+                "FP-FDM's guard, which refuses it unless the step with the flux passes the gate; at q = 0 on this step "
+                "it does not. The state this step starts from holds what the flux did on the earlier steps."
             ),
         )
 

@@ -325,8 +325,8 @@ class WeakFormFPSolver(BaseFPSolver):
                         "wall, an inflow's included."
                     ),
                     remedy_past_gate=(
-                        "A q with which the flux takes no node negative past the threshold hands the step to "
-                        "FP-FEM's clip, which clips it as any step, warning only above 1e-6 of the mass."
+                        "A q on this step with which the flux takes no DOF negative past the threshold hands the step "
+                        "to FP-FEM's clip, which clips it as any step, warning only above 1e-6 of the mass."
                     ),
                 )
 

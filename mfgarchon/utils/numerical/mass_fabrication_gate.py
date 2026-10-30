@@ -228,13 +228,15 @@ def refuse_what_a_flux_takes_negative(
 
     Neither refuses a step with no negative (``s_step = 0`` leaves ``F = D = 0``). ``F`` and ``D`` are measured on the
     step that holds them, a zero ``F`` or ``D`` as 0 and any other on a step with no positive mass as infinite;
-    ``pos(m0)`` enters only through ``s0``, which decides whether (2) applies. ``F`` is counted once, by (1). So neither
-    depends on how little mass the step without the flux holds: an inflow's round-off negatives in a nearly empty
-    domain are measured against the mass the inflow brings. Otherwise a step whose own clip is past the threshold is
-    the scheme's: the caller's clip decides the step with the flux as it decides any step.
+    ``pos(m0)`` enters only through ``s0``, which decides whether (2) applies. ``F`` is not added to (2a); ``s_step``
+    counts it with the step's other negatives. So neither depends on how little mass the step without the flux holds:
+    an inflow's round-off negatives in a nearly empty domain are measured against the mass the inflow brings.
+    Otherwise a step whose own clip is past the threshold is the scheme's: the caller's clip decides the step with the
+    flux as it decides any step.
     ``weights`` are those of that clip, so that ``s0 <= threshold`` is its verdict on the step without the flux.
     ``remedy`` follows a refusal; ``remedy_past_gate`` follows clause (1)'s when the step without the flux is itself
-    past the gate, where the caller's clip, not the flux, decides what a change of q does. The step is not clipped.
+    past the gate, where the caller's clip, not the flux, decides what a change of this step's q does. The state the
+    step starts from holds what the flux did on the earlier steps. The step is not clipped.
     """
     step = m0 + m_q
     step_positive = _part_mass(step, step > 0, weights)
@@ -247,7 +249,7 @@ def refuse_what_a_flux_takes_negative(
         if own > threshold:
             tail = (
                 f" The step without the flux would itself fabricate {own:.3e}, past the threshold {threshold:.0e}: the "
-                f"scheme's own step fails there before the flux is added. {remedy_past_gate}"
+                f"scheme's own step from this state fails there before this step's flux is added. {remedy_past_gate}"
             )
         else:
             tail = f" {remedy}"
