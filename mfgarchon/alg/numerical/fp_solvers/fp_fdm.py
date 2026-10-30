@@ -715,7 +715,7 @@ class FPFDMSolver(BaseFPSolver):
         # The system below is I/dt + A^T - D with right-hand side m/dt and no Dirichlet row: the Laplacian's
         # Dirichlet stencil puts g = 0 one cell outside the wall (first order) and drops any other g -- a
         # uniform 0.7 solved identically to 0 (#2531). Refused rather than solved as something else.
-        from .fp_fdm_operators import is_boundary_point, ito_diffusion
+        from .fp_fdm_operators import is_boundary_point, ito_diffusion, shared_at_repeated_endpoints
         from .fp_fdm_time_stepping import (
             _declares_dirichlet,
             _is_dirichlet_at_point,
@@ -740,8 +740,9 @@ class FPFDMSolver(BaseFPSolver):
         # Build the diffusion matrix.
         if varying_sigma:
             # Per-point sigma (#1183), as Ito diffusion Delta(D m) (#2841): the unit Laplacian acting on D m, the same
-            # owner the time stepping reads, rather than the face-averaged div(D grad m).
-            d_field = diffusion_from_volatility(sigma_arr, kind="field")
+            # owner the time stepping reads. It replaced the face-averaged div(D grad m) under NO_FLUX and, on a
+            # periodic grid, where LaplacianOperator read no coefficient_field, a diffusion with D = 1.
+            d_field = shared_at_repeated_endpoints(diffusion_from_volatility(sigma_arr, kind="field"), bc, shape)
             unit = LaplacianOperator(spacings=spacing, field_shape=shape, bc=bc).as_scipy_sparse()
             diffusion_matrix = ito_diffusion({"laplacian": unit}, {"laplacian": d_field})
         else:

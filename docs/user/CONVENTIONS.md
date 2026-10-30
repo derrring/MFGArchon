@@ -332,12 +332,14 @@ From the Itô dynamics $\mathrm{d}X_t = \alpha_t\,\mathrm{d}t + \Sigma\,\mathrm{
 
 In one dimension this is $D = \sigma^2/2$. That is not a separate rule; it is the scalar case.
 
-The Fokker-Planck equation of those dynamics is its adjoint, in Itô form:
+The Fokker-Planck equation of those dynamics, the adjoint of the HJB term $\operatorname{tr}(A\,D^2u)$, is in Itô form:
 $\partial_t m + \nabla\cdot(\alpha m) = \partial_i \partial_j (A_{ij}\, m)$, with the total flux
-$J_i = \alpha_i m - \partial_j(A_{ij}\, m)$ (user ruling 2026-10-30, #2841). For a field, $A = D(x)\, I$, it is
-$\Delta(D m)$: neither $D\,\Delta m$ nor $\nabla\cdot(D \nabla m)$, which differ from it wherever $D$ varies. Only for a
-constant $A$ does it reduce to $\nabla\cdot(A \nabla m)$ and $J = \alpha m - A \nabla m$. Under NO_FLUX with no drift its
-stationary density is $m \propto 1/D$. FP-FDM reads every varying $A$ through one owner, `ito_diffusion`, and the
+$J_i = \alpha_i m - \partial_j(A_{ij}\, m)$ (user ruling 2026-10-30, #2841). Since
+$\partial_i \partial_j (A_{ij}\, m) = \nabla\cdot(A \nabla m) + \nabla\cdot(m\, \nabla\cdot A)$, with
+$(\nabla\cdot A)_i = \partial_j A_{ij}$, it is $\nabla\cdot(A \nabla m)$, and $J = \alpha m - A \nabla m$, exactly where
+every row of $A$ is divergence-free, as for a constant $A$. For a field, $A = D(x)\, I$, it is $\Delta(D m)$: neither
+$D\,\Delta m$ nor $\nabla\cdot(D \nabla m)$, which differ from it wherever $D$ varies, and under NO_FLUX with no drift
+its stationary density is $m \propto 1/D$. FP-FDM reads every varying $A$ through one owner, `ito_diffusion`, and the
 particle FP's Euler-Maruyama step solves the same equation.
 
 $\Sigma\Sigma^{\mathsf{T}}$, **not** $\Sigma^{\mathsf{T}}\Sigma$. For a square $\Sigma$ the two
@@ -865,7 +867,8 @@ refused, $g = 0$ included; a reflecting FP wall is `NO_FLUX` (#2512, row B3).
 
 ### A Robin condition at the FP
 
-An FP Robin condition is a condition on the total flux $J = v m - \nabla(D m)$ (§ 5): `ROBIN(alpha, beta, g)`
+An FP Robin condition, for a constant $D$ (FP-FEM, its one consumer, refuses a varying one), is a condition on the
+total flux $J = v m - D \nabla m$: `ROBIN(alpha, beta, g)`
 means $J \cdot n = (D / \beta)(\alpha m - g)$, equivalently $\alpha m - (\beta / D)\, J \cdot n = g$ (user
 ruling 2026-10-10). It is not $\alpha m + \beta\, \partial m / \partial n = g$ where the drift crosses the
 wall: written as conditions equal to $g$, the two differ by $(\beta / D)(v \cdot n)\, m$. With $g = 0$ it is
@@ -887,8 +890,8 @@ B-1). It is a condition on the FP alone. A BC the HJB and the FP share carries n
 `boundary_conditions`. FP-FDM's implicit step puts $-q/(\Delta x/2)$ on the half cell of each wall node per FLUX
 face, and FP-FEM the load $-\int_\Gamma q\,\varphi\,dS$, each with its operator unchanged. So each step changes the
 mass by exactly $-\Delta t \int_\Gamma q(t_{k+1})\,dS$, the integral on the scheme's own face quadrature (FP-FDM's
-nodal values on the trapezoid face weights, FP-FEM's facet quadrature), on a step that conserves mass under NO_FLUX
-(FP-FDM's with a volatility field does not, #2841), with no Dirichlet face (a Dirichlet row exchanges mass of its own),
+nodal values on the trapezoid face weights, FP-FEM's facet quadrature), on a step that conserves mass under NO_FLUX,
+with no Dirichlet face (a Dirichlet row exchanges mass of its own),
 and where the solver's positivity clip leaves the step alone.
 
 B-3 refuses a step, rather than clip it past the gate, where the clip would fabricate mass the flux decides

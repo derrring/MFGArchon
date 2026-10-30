@@ -120,7 +120,7 @@ def add_boundary_no_flux_entries(
             # Left boundary: ghost point approach for no-flux BC
             #
             # For no-flux: J.n = 0 where J = alpha*m - grad(D*m)
-            # This gives: dm/dn = (alpha.n)*m / D at boundary
+            # This gives: d(D m)/dn = (alpha.n)*m at boundary
             #
             # Using ghost point: m_ghost = m_0 (reflection for pure diffusion)
             # But for advection-diffusion, we need to adjust.

@@ -98,7 +98,7 @@ from .fp_fdm_alg_divergence_centered import (
 )
 from .fp_fdm_alg_divergence_upwind import add_interior_entries_divergence_upwind
 from .fp_fdm_bc import add_boundary_no_flux_entries_divergence_upwind
-from .fp_fdm_operators import is_boundary_point, ito_diffusion
+from .fp_fdm_operators import is_boundary_point, ito_diffusion, shared_at_repeated_endpoints
 
 logger = get_logger(__name__)
 
@@ -649,9 +649,12 @@ def solve_timestep_explicit_with_drift(
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
     if varying_sigma:
         # Per-point sigma (#1183), as Ito diffusion Delta(D m) (#2841): the unit mass-conservative Laplacian acting on
-        # D m, so w^T L = 0 (the weighted statement since #2145) carries over to any D. The face-averaged div(D grad m)
-        # this replaced conserved mass too, but is the FP of another SDE.
-        d_field = diffusion_from_volatility(sigma_arr, kind="field")
+        # D m, so w^T L = 0 (the weighted statement since #2145) carries over to any D. It replaced, under NO_FLUX, the
+        # face-averaged div(D grad m), which conserved mass too but is the FP of another SDE; on a periodic grid
+        # LaplacianOperator read no coefficient_field, so the step had diffused with D = 1 whatever sigma was.
+        d_field = shared_at_repeated_endpoints(
+            diffusion_from_volatility(sigma_arr, kind="field"), boundary_conditions, shape
+        )
         unit = LaplacianOperator(
             spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
         ).as_scipy_sparse()
@@ -1401,19 +1404,22 @@ def solve_timestep_tensor_explicit(
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
     D_tensor = np.asarray(diffusion_from_volatility(Sigma, kind="tensor"))
+    if D_tensor.ndim > 2:
+        D_tensor = shared_at_repeated_endpoints(D_tensor, boundary_conditions, shape)
     if D_tensor.ndim == 2:
         # a constant A: d_i d_j(A_ij m) is div(A grad m), the kernel's own form
         diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions, geometry=grid)
     else:
         # A per point, or read from a callable: Ito diffusion d_i d_j(A_ij m) (#2841), each component's unit operator
-        # (the kernel at the unit tensor e_i e_j^T + e_j e_i^T, both off-diagonal entries for i < j) acting on A_ij m
+        # (the kernel at e_i e_i^T for i = j, at e_i e_j^T + e_j e_i^T for i < j, both off-diagonal entries) acting on
+        # A_ij m; an off-diagonal that is zero everywhere contributes nothing and is not passed to the kernel
         def unit_operator(i: int, j: int) -> Callable[[np.ndarray], np.ndarray]:
             e = np.zeros((ndim, ndim))
             e[i, j] = e[j, i] = 1.0
             tensor = np.broadcast_to(e, (*shape, ndim, ndim))
             return lambda u: apply_diffusion(u, tensor, list(spacing), bc=boundary_conditions, geometry=grid)
 
-        pairs = [(i, j) for i in range(ndim) for j in range(i, ndim)]
+        pairs = [(i, j) for i in range(ndim) for j in range(i, ndim) if i == j or np.any(D_tensor[..., i, j])]
         diffusion_term = ito_diffusion(
             {pair: unit_operator(*pair) for pair in pairs}, {(i, j): D_tensor[..., i, j] for i, j in pairs}
         )(M_current)

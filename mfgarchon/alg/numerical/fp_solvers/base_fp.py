@@ -39,7 +39,7 @@ class BaseFPSolver(BaseNumericalSolver):
     Abstract Base Class for Fokker-Planck (FP) equation solvers.
 
     The FP equation describes density evolution:
-        ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Aᵢⱼ m)
+        ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)
     in Itô form, Δ(D m) for a field and D Δm only for a constant D (CONVENTIONS § 5, #2841).
 
     where:
@@ -311,7 +311,7 @@ class BaseFPSolver(BaseNumericalSolver):
         the specified drift and diffusion.
 
         General FP Equation:
-            ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Aᵢⱼ m)   (Itô; Δ(D m) for a field, #2841)
+            ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)   (Itô; Δ(D m) for a field, #2841)
 
             where:
             - α(t,x,m): drift field (controlled by drift_field)

@@ -17,7 +17,7 @@ import scipy.sparse as sparse
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.geometry import TensorProductGrid, no_flux_bc
+from mfgarchon.geometry import TensorProductGrid, no_flux_bc, periodic_bc
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
 
@@ -84,7 +84,9 @@ def test_a_varying_volatility_conserves_mass_under_no_flux(path: str):
 
 def test_the_coupled_solve_conserves_mass_with_a_field_volatility():
     """The issue's coupled row: problem.solve() on the default FDM pair returned a density 6.96e-2 heavier, with no
-    warning. Its m0 varies where sigma does; from a constant one the row-scaled step gained nothing."""
+    warning. Its m0 varies where sigma does; from a constant one the row-scaled step gained nothing. U is 0 on this row
+    (no coupling cost, a zero terminal cost), so it checks that the coupled route reaches the fixed step, not a drifted
+    coupled step; the drifted rows are in the mass test."""
     grid = _grid(1, 21)
     x = _nodes(grid)[0]
     problem = _problem(
@@ -99,11 +101,12 @@ def test_the_coupled_solve_conserves_mass_with_a_field_volatility():
     assert abs(mass[-1] / mass[0] - 1) < 1e-12, mass[-1] / mass[0] - 1
 
 
-@pytest.mark.parametrize("path", ["implicit", "explicit_callable_drift", "adjoint_mode", "tensor"])
+@pytest.mark.parametrize("path", ["implicit", "implicit_2d", "explicit_callable_drift", "adjoint_mode", "tensor"])
 def test_one_over_d_is_a_fixed_point_of_every_fdm_path(path: str):
     """With no drift, Ito's Delta(D m) takes m = c / D to 0 exactly (the unit stencil takes a constant to 0), so one step
-    returns it; D Delta m and div(D grad m) move it. The tensor is sigma(x) I, a field written as a per-point tensor."""
-    dim, n, dt = (2, 9, 0.01) if path == "tensor" else (1, 21, 0.1)
+    returns it; D Delta m and div(D grad m) move it. The tensor is sigma(x) I, a field written as a per-point tensor; in
+    2-D, D varies along the first axis only, so a coefficient laid out in the other order is not a fixed point."""
+    dim, n, dt = (2, 9, 0.01) if path in ("tensor", "implicit_2d") else (1, 21, 0.1)
     grid = _grid(dim, n)
     x = _nodes(grid)
     sigma = 0.3 + 0.2 * x[0]
@@ -193,3 +196,98 @@ def test_the_boundary_flux_of_a_varying_diffusion_is_its_ito_flux(dim: int):
         1.0 / d, velocity_field=np.zeros_like(d), diffusion=d
     )
     assert max(abs(f) for f in result.boundary_fluxes.values()) < 1e-12, result.boundary_fluxes
+    # and its size: a uniform array is the scalar, on a density and a drift that carry flux through every face
+    m = 1 + 0.5 * np.cos(np.pi * axes[0]) + 0.2 * axes[-1]
+    diag = FluxDiagnostics(dimension=dim, spacing=(1.0 / (n - 1),) * dim)
+    alpha = 0.3 * np.ones_like(m) if dim == 1 else np.stack([0.3 * np.ones_like(m)] * dim, axis=-1)
+    scalar = diag.compute_boundary_flux(m, velocity_field=alpha, diffusion=0.08).boundary_fluxes
+    uniform = diag.compute_boundary_flux(m, velocity_field=alpha, diffusion=np.full(m.shape, 0.08)).boundary_fluxes
+    assert all(abs(uniform[k] - scalar[k]) < 1e-12 for k in scalar), (uniform, scalar)
+
+
+def _one_solve(grid, path: str, m0: np.ndarray, nt: int, dt: float, bc, **volatility) -> np.ndarray:
+    solver = FPFDMSolver(_problem(grid, nt, nt * dt), boundary_conditions=bc)
+    if path == "adjoint_mode":
+        n = m0.size
+        steps = [m0]
+        for _ in range(nt):
+            steps.append(solver.solve_fp_step_adjoint_mode(steps[-1], sparse.csr_matrix((n, n)), **volatility))
+        return np.asarray(steps)
+    if path == "explicit_callable_drift":
+        return np.asarray(
+            solver.solve_fp_system(
+                m0, drift_field=lambda t, xx, mm: 0.2 * np.ones_like(mm), show_progress=False, **volatility
+            )
+        )
+    u = np.broadcast_to(0.1 * np.cos(2 * np.pi * _nodes(grid)[0]), (nt + 1, *m0.shape)).copy()
+    return np.asarray(solver.solve_fp_system(m0, potential_field=u, show_progress=False, **volatility))
+
+
+@pytest.mark.parametrize(
+    ("path", "dim", "wall"),
+    [
+        ("implicit", 1, "no_flux"),
+        ("implicit", 2, "no_flux"),
+        ("explicit_callable_drift", 1, "no_flux"),
+        ("adjoint_mode", 1, "no_flux"),
+        ("explicit_callable_drift", 1, "periodic"),
+        ("adjoint_mode", 1, "periodic"),
+    ],
+)
+def test_a_nearly_uniform_field_is_the_scalar_step(path: str, dim: int, wall: str):
+    """sigma = 0.4 + 1e-11 x goes through the owner and 0.4 through the scalar path, so the two must agree to the
+    field's own variation: this pins D's size on each field path, which mass and the fixed point c / D cannot see (both hold
+    for any multiple of D, zero included). On a periodic grid, main's callable-drift step and adjoint mode had read no
+    coefficient there and diffused with D = 1 whatever sigma was."""
+    n = 9 if dim == 2 else 21
+    bc = (no_flux_bc if wall == "no_flux" else periodic_bc)(dimension=dim)
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=bc)
+    x = _nodes(grid)
+    m0 = 1 + 0.5 * np.cos(2 * np.pi * x[0]) + (0.3 * np.cos(np.pi * x[1]) if dim == 2 else 0.0)
+    field = _one_solve(grid, path, m0, 3, 0.05, bc, volatility=0.4 + 1e-11 * x[0], volatility_kind="field")
+    scalar = _one_solve(grid, path, m0, 3, 0.05, bc, volatility=0.4)
+    assert np.max(np.abs(field - scalar)) < 1e-9 * np.max(m0), np.max(np.abs(field - scalar))
+
+
+def test_a_dirichlet_wall_holds_its_value_under_a_field_volatility():
+    """The implicit step's Dirichlet rows are constraints, m = g, and carry no diffusion of their own (the owner drops
+    them from the unit stencil); under a field the wall still reads g at every step."""
+    n, nt, dt, g = 21, 5, 0.05, 0.3
+    grid = _grid(1, n)
+    x = _nodes(grid)[0]
+    bc = BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.DIRICHLET, value=g, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_max"),
+        ],
+    )
+    m = FPFDMSolver(_problem(grid, nt, nt * dt), boundary_conditions=bc).solve_fp_system(
+        1 + 0.5 * np.cos(np.pi * x),
+        potential_field=np.zeros((nt + 1, n)),
+        volatility=0.3 + 0.2 * x,
+        volatility_kind="field",
+        show_progress=False,
+    )
+    assert np.allclose(np.asarray(m)[1:, 0], g, rtol=0, atol=1e-13), np.asarray(m)[1:, 0]
+
+
+@pytest.mark.parametrize("path", ["implicit", "explicit_callable_drift", "adjoint_mode", "tensor"])
+def test_a_periodic_grid_keeps_its_seam_and_its_mass_under_a_field(path: str):
+    """On an endpoint-inclusive periodic grid the last node is the first, so it has one coefficient: a sigma that
+    differs at its two copies (0.3 + 0.2x) is read at the first, and the step conserves mass and keeps the copies equal. The
+    tensor is a per-point anisotropic Sigma, 2-D."""
+    dim, n, nt, dt = (2, 9, 10, 0.002) if path == "tensor" else (1, 21, 10, 0.05)
+    bc = periodic_bc(dimension=dim)
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=bc)
+    x = _nodes(grid)
+    m0 = 1 + 0.5 * np.cos(2 * np.pi * x[0]) + (0.3 * np.cos(2 * np.pi * x[1]) if dim == 2 else 0.0)
+    sigma = 0.3 + 0.2 * x[0]
+    if path == "tensor":
+        volatility = {"volatility": _tensor(sigma, 0.25 + 0.1 * x[1], 0.05), "volatility_kind": "tensor"}
+        m = _one_solve(grid, "implicit", m0, nt, dt, bc, **volatility)
+    else:
+        m = _one_solve(grid, path, m0, nt, dt, bc, volatility=sigma, volatility_kind="field")
+    mass = _mass(grid, m)
+    assert np.max(np.abs(mass / mass[0] - 1)) < 1e-12, mass / mass[0] - 1
+    assert np.max(np.abs(np.take(m[-1], -1, axis=0) - np.take(m[-1], 0, axis=0))) < 1e-12

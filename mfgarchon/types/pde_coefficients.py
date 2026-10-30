@@ -96,7 +96,7 @@ class DiffusionCallable(Protocol):
     Protocol for state-dependent diffusion coefficient D(t, x, m).
 
     Convention (Issue #811, physics/PDE standard):
-        PDE:  dm/dt + div(alpha m) = D Laplacian(m)    (D appears directly)
+        PDE:  dm/dt + div(alpha m) = Laplacian(D m)    (D appears directly; Ito, #2841)
         SDE:  dX = alpha dt + sigma dW,  where sigma = sqrt(2D)
 
     The callable returns the PDE diffusion coefficient D = sigma^2/2,

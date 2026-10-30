@@ -363,8 +363,8 @@ class DiffusionFieldCallable(Protocol):
     """
     Protocol for callable diffusion field σ(t, x, m).
 
-    A diffusion field specifies spatially/temporally/state-varying diffusion coefficient:
-        ∂m/∂t + ∇·(α m) = (1/2) ∇·(σ(t,x,m)² ∇m)
+    A diffusion field specifies spatially/temporally/state-varying diffusion coefficient, in Itô form (#2841):
+        ∂m/∂t + ∇·(α m) = Δ((1/2) σ(t,x,m)² m)
 
     Signature:
         σ(t, x, m) -> diffusion coefficient(s)

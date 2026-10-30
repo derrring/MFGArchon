@@ -74,6 +74,27 @@ def ito_diffusion(unit: Mapping[Any, Any], coefficients: Mapping[Any, float | np
     return apply
 
 
+def shared_at_repeated_endpoints(values: np.ndarray, boundary_conditions: Any, shape: tuple[int, ...]) -> np.ndarray:
+    """``values`` on the grid (grid axes leading), each repeated endpoint of an inclusive periodic grid given the value
+    at the node it repeats (#1822, #2841).
+
+    The node is the same point, so it has one coefficient; a sigma that differs at its two copies would otherwise reach
+    the unit operator's row for the repeated node and split the seam. On any other grid ``values`` is returned as is.
+    """
+    from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+    from mfgarchon.geometry.boundary.conditions import repeated_endpoint_mirror
+
+    if boundary_conditions is None or not declares_periodic(boundary_conditions):
+        return values
+    shared = np.array(values, dtype=float, copy=True)
+    for idx in np.ndindex(*shape):
+        if is_boundary_point(idx, shape, len(shape)):
+            mirror = repeated_endpoint_mirror(boundary_conditions, idx, shape)
+            if mirror is not None:
+                shared[idx] = shared[tuple(mirror)]
+    return shared
+
+
 def is_boundary_point(multi_idx: tuple[int, ...], shape: tuple[int, ...], ndim: int) -> bool:
     """Check if a grid point is on the boundary."""
     return any(multi_idx[d] == 0 or multi_idx[d] == shape[d] - 1 for d in range(ndim))

@@ -321,7 +321,7 @@ class FluxDiagnostics:
         J_left = advection_left + diffusion_left
 
         # Right boundary flux (positive = leaving domain)
-        # J_right = α[-1]*m[-1] - D*∂m/∂x|_L
+        # J_right = α[-1]*m[-1] - ∂(D m)/∂x|_L
         dm_dx_right = (q[-1] - q[-2]) / dx
         advection_right = alpha[-1] * m[-1]
         diffusion_right = -D_right * dm_dx_right
@@ -390,7 +390,7 @@ class FluxDiagnostics:
         # Left boundary (x=0): integrate over y, outward normal = (-1, 0)
         dm_dx_left = (q[1, :] - q[0, :]) / dx
         adv_left = -alpha_x[0, :] * m[0, :]  # -α_x because normal is -x
-        diff_left = D_val * dm_dx_left  # D*∂m/∂x, outward is -x so sign flips
+        diff_left = D_val * dm_dx_left  # ∂(D m)/∂x, outward is -x so sign flips
         J_left = float(integrate_on_weights(adv_left + diff_left, w_y))
         boundary_fluxes["left"] = J_left
         total_advection += float(integrate_on_weights(adv_left, w_y))
@@ -492,7 +492,7 @@ class FluxDiagnostics:
             hi_prev_slice[d] = -2
 
             # Low boundary (x_d = min): outward normal = -e_d
-            # J_lo = -α_d * m - D * (-∂m/∂x_d) = -α_d * m + D * ∂m/∂x_d
+            # J_lo = -α_d * m - (-∂(D m)/∂x_d) = -α_d * m + ∂(D m)/∂x_d
             dm_lo = (q[tuple(lo_next_slice)] - q[tuple(lo_slice)]) / h_d
             m_lo = m[tuple(lo_slice)]
             alpha_lo = alpha_d[tuple(lo_slice)]
@@ -507,7 +507,7 @@ class FluxDiagnostics:
             total_diffusion += float(np.sum(diff_lo) * face_area)
 
             # High boundary (x_d = max): outward normal = +e_d
-            # J_hi = α_d * m - D * ∂m/∂x_d
+            # J_hi = α_d * m - ∂(D m)/∂x_d
             dm_hi = (q[tuple(hi_slice)] - q[tuple(hi_prev_slice)]) / h_d
             m_hi = m[tuple(hi_slice)]
             alpha_hi = alpha_d[tuple(hi_slice)]
