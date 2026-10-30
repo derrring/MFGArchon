@@ -222,15 +222,16 @@ def refuse_what_a_flux_takes_negative(
 
     1. ``F / pos(m0 + m_q) > threshold``, whatever the rest of the step does: the flux alone takes those nodes
        negative; round-off within the gate is clipped, as any clip's is; or
-    2. ``s0 <= threshold`` and either (a) ``s0 + D / pos(m0) > threshold``: the flux deepens the step's own negatives,
-       on the measure of the step without it; or (b) ``s_step > threshold``: the step with the flux fails the gate
-       itself, as a flux that drains the positive mass makes it, F, D and the step's own negatives counted together.
+    2. ``s0 <= threshold`` and either (a) ``s0 + D / pos(m0 + m_q) > threshold``: the flux deepens the step's own
+       negatives; or (b) ``s_step > threshold``: the step with the flux fails the gate itself, as a flux that drains the
+       positive mass makes it, F, D and the step's own negatives counted together.
 
-    Neither refuses a step with no negative (``s_step = 0`` leaves ``F = D = 0``). ``F`` is measured once, by (1), on
-    the step that holds it, so a sub-gate ``F`` and a sub-gate ``D`` that an inflow's own mass dilutes are clipped
-    within the gate; ``D`` is measured on ``pos(m0)``, so a step whose mass without the flux is itself at round-off
-    scale, deepened at its own negatives, is refused. Otherwise a step whose own clip is past the threshold is the
-    scheme's: the caller's clip decides the step with the flux as it decides any step.
+    Neither refuses a step with no negative (``s_step = 0`` leaves ``F = D = 0``). ``F`` and ``D`` are measured on the
+    step that holds them, a zero ``F`` or ``D`` as 0 and any other on a step with no positive mass as infinite;
+    ``pos(m0)`` enters only through ``s0``, which decides whether (2) applies. ``F`` is counted once, by (1). So neither
+    depends on how little mass the step without the flux holds: an inflow's round-off negatives in a nearly empty
+    domain are measured against the mass the inflow brings. Otherwise a step whose own clip is past the threshold is
+    the scheme's: the caller's clip decides the step with the flux as it decides any step.
     ``weights`` are those of that clip, so that ``s0 <= threshold`` is its verdict on the step without the flux.
     ``remedy`` follows a refusal; ``remedy_past_gate`` follows clause (1)'s when the step without the flux is itself
     past the gate, where the caller's clip, not the flux, decides what a change of q does. The step is not clipped.
@@ -258,9 +259,8 @@ def refuse_what_a_flux_takes_negative(
             f"user rulings 2026-10-09 and 2026-10-30, B-3).{tail}"
         )
     if own <= threshold:
-        # a deepened node has m0 < 0, and own <= threshold then leaves positive > 0
         deepened = _part_mass(np.maximum(-m_q, 0.0), m0 < 0, weights)
-        added = 0.0 if deepened == 0 else deepened / _part_mass(m0, m0 > 0, weights)
+        added = 0.0 if deepened == 0 else (deepened / step_positive if step_positive > 0 else float("inf"))
         if own + added > threshold:
             raise ValueError(
                 f"{context}: in the step to t={time}, clipping the step without the prescribed flux would fabricate "

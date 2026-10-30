@@ -888,10 +888,10 @@ B-3 refuses a step, rather than clip it past the gate, where the clip would fabr
 where the negatives the flux's part makes, at nodes the step without it leaves non-negative, would fabricate more than
 `MAX_CLIP_MASS_FABRICATION` of the step's mass; round-off within the gate is clipped, as any clip's is. Otherwise,
 where the step without it passes the clip gate and either the flux's part deepens that step's negatives past it,
-counted without netting on the mass of the step without it, or the step with the flux fails the gate itself, as a flux
-that drains the positive mass makes it; neither refuses a step with no negative. Any other step whose own clip is past
-the gate is the scheme's, the flux's share included, and its clip decides it as it decides any step: FP-FDM's guard
-refuses it where clipping would fabricate more than the gate allows, and FP-FEM, whose Galerkin advection is not
+counted without netting on the mass of the step that holds them, or the step with the flux fails the gate itself, as a
+flux that drains the positive mass makes it; neither refuses a step with no negative. Any other step whose own clip is
+past the gate is the scheme's, the flux's share included, and its clip decides it as it decides any step: FP-FDM's
+guard refuses it where clipping would fabricate more than the gate allows, and FP-FEM, whose Galerkin advection is not
 monotone, clips it, warning above $10^{-6}$ of the mass. Every other solver refuses FLUX by name (#2581).
 
 ### What is not settled here

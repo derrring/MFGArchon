@@ -1670,9 +1670,10 @@ def solve_timestep_full_nd(
     # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. B-3's owner refuses the step
     # where the clip would fabricate mass the flux decides, with the post-step guard's weights; otherwise a step whose
     # own clip is past the guard's threshold is the guard's, which decides the step with the flux as it decides any.
-    # Upwind's matrix is an M-matrix (w^T A = w^T/dt): an inflow's part is non-negative in exact arithmetic, and its
-    # round-off is within the gate, so only an outflow is refused there. Each remedy below was run on refused rows before
-    # it was written (the approver's rulings on #2840).
+    # Upwind's matrix is an M-matrix (w^T A = w^T/dt), so an inflow's part is non-negative in exact arithmetic;
+    # spsolve's round-off negatives are measured on the step that holds them, and no upwind inflow row measured under
+    # this rule is refused (a 1152-row scan, and review 4's pulse and ramp into a nearly empty domain, on #2840). Each
+    # remedy below was run on refused rows before it was written (the approver's rulings on #2840).
     flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
     if flux_sources is not None and np.any(flux_sources):
         m_flux = sparse.linalg.spsolve(A_matrix, flux_sources)
@@ -1684,14 +1685,17 @@ def solve_timestep_full_nd(
             unit="node",
             locate=lambda i: f"node {tuple(int(j) for j in grid.get_multi_index(i))}",
             remedy=(
-                "Lower q, or end the outflow before the mass runs out."
+                "Lower |q|, or end the outflow before the mass runs out."
                 if advection_scheme == "divergence_upwind"
                 else "'divergence_centered' is not monotone, so the flux's part of the step can be negative away from "
                 "the wall: for an inflow, use advection_scheme='divergence_upwind', whose step is monotone; for an "
-                "outflow, lower q or end it before the mass runs out."
+                "outflow, lower |q| or end it before the mass runs out."
             ),
-            # q = 0 met the guard on every such row measured; the guard's own message then names its remedies
-            remedy_past_gate="At q = 0 FP-FDM's guard refuses that step on its own, so the scheme's step must change first.",
+            # the guard reads the step on these weights, and at q = 0 the step is m0, whose clip is past the gate here
+            remedy_past_gate=(
+                "A q with which the flux takes no node negative past the threshold hands the step to FP-FDM's guard, "
+                "which refuses it unless the step with the flux passes the gate; at q = 0 it does not."
+            ),
         )
 
     # Reshape back to multi-dimensional array
