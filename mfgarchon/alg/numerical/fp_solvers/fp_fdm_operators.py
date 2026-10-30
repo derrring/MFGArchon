@@ -57,20 +57,21 @@ def ito_diffusion(unit: Mapping[Any, Any], coefficients: Mapping[Any, float | np
         raise ValueError(
             f"ito_diffusion: unit keys {sorted(map(str, unit))} != coefficient keys {sorted(map(str, coefficients))}"
         )
-    if all(sparse.issparse(op) for op in unit.values()):
+    sparse_ops = [sparse.issparse(op) for op in unit.values()]
+    if all(sparse_ops):
         terms = [op @ sparse.diags(np.asarray(coefficients[k], dtype=float).ravel()) for k, op in unit.items()]
         return sparse.csr_matrix(sum(terms[1:], terms[0]))
-    if all(callable(op) for op in unit.values()):
-        ops: dict[Any, Callable[[np.ndarray], np.ndarray]] = dict(unit)
+    if any(sparse_ops):
+        raise TypeError("ito_diffusion: the unit operators must all be sparse matrices or all be callables")
+    ops: dict[Any, Callable[[np.ndarray], np.ndarray]] = dict(unit)
 
-        def apply(m: np.ndarray) -> np.ndarray:
-            total = np.zeros(np.shape(m))
-            for k, op in ops.items():
-                total = total + op(np.asarray(coefficients[k], dtype=float) * m)
-            return total
+    def apply(m: np.ndarray) -> np.ndarray:
+        total = np.zeros(np.shape(m))
+        for k, op in ops.items():
+            total = total + op(np.asarray(coefficients[k], dtype=float) * m)
+        return total
 
-        return apply
-    raise TypeError("ito_diffusion: the unit operators must all be sparse matrices or all be callables")
+    return apply
 
 
 def is_boundary_point(multi_idx: tuple[int, ...], shape: tuple[int, ...], ndim: int) -> bool:
