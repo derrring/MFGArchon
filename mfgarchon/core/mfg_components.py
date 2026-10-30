@@ -783,21 +783,23 @@ class ConditionsMixin:
         - Otherwise no channel declares a BC, and it is refused by name (#2589).
 
         Reading the components BC warns: that channel is deprecated in favour of the geometry's.
+
+        A FLUX in the BC it returns is refused (`refuse_shared_flux`): it is the FP's alone, given to the FP solver as
+        its own BC (#2581, user ruling 2026-10-09, B-2).
         """
         from mfgarchon.geometry.base import Geometry, GraphGeometry
+        from mfgarchon.geometry.boundary.bc_utils import refuse_shared_flux
         from mfgarchon.geometry.boundary.conditions import periodic_bc
         from mfgarchon.geometry.protocols import SupportsPeriodic
 
         geometry = self.geometry
         declared = self.components.boundary_conditions if self.components is not None else None
-        if isinstance(geometry, GraphGeometry):
-            if declared is not None:
-                raise ValueError(
-                    "MFGProblem.get_boundary_conditions: a network's node boundary conditions are declared on its "
-                    "graph geometry (#1471), and components.boundary_conditions is not read on a network. Remove it, "
-                    "or set the node BCs on the geometry (set_boundary_conditions)."
-                )
-            return geometry.get_boundary_conditions()
+        if isinstance(geometry, GraphGeometry) and declared is not None:
+            raise ValueError(
+                "MFGProblem.get_boundary_conditions: a network's node boundary conditions are declared on its "
+                "graph geometry (#1471), and components.boundary_conditions is not read on a network. Remove it, "
+                "or set the node BCs on the geometry (set_boundary_conditions)."
+            )
         if declared is not None:
             import warnings
 
@@ -818,31 +820,34 @@ class ConditionsMixin:
             geometry_declares = geometry.has_explicit_boundary_conditions()
         else:
             geometry_declares = geometry is not None and geometry.get_boundary_conditions() is not None
-        if geometry_declares:
-            on_geometry = geometry.get_boundary_conditions()
-            if declared is not None and not declared.declares_the_same_as(on_geometry):
+        # One exit: every channel's BC leaves through the FLUX refusal (B-2), which passes a network's node BCs through.
+        if isinstance(geometry, GraphGeometry):
+            bc = geometry.get_boundary_conditions()
+        elif geometry_declares:
+            bc = geometry.get_boundary_conditions()
+            if declared is not None and not declared.declares_the_same_as(bc):
                 raise ValueError(
                     "MFGProblem.get_boundary_conditions: the problem declares its boundary conditions twice, on "
                     f"the geometry ({type(geometry).__name__}) and in components.boundary_conditions, and the two "
                     "differ. Both solvers read one BC, so one of the two would be dropped. Declare it once, on the "
                     "geometry, or give components the same BC (#2530)."
                 )
-            return on_geometry
-        if declared is not None:
-            return declared
-        own = geometry.get_boundary_conditions() if geometry is not None else None
-        if own is not None:
-            return own
-        dimension = geometry.dimension if geometry is not None else None
-        if isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == dimension:
-            return periodic_bc(dimension=dimension)
-        raise ValueError(
-            "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
-            f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare them on "
-            "the geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = bc -- or, "
-            "on a geometry that holds none (an implicit domain, a point cloud), in components.boundary_conditions "
-            "(#2589)."
-        )
+        elif declared is not None:
+            bc = declared
+        elif geometry is not None and (own := geometry.get_boundary_conditions()) is not None:
+            bc = own
+        else:
+            dimension = geometry.dimension if geometry is not None else None
+            if not (isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == dimension):
+                raise ValueError(
+                    "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
+                    f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare "
+                    "them on the geometry -- TensorProductGrid(..., boundary_conditions=bc), or "
+                    "mesh.boundary_conditions = bc -- or, on a geometry that holds none (an implicit domain, a point "
+                    "cloud), in components.boundary_conditions (#2589)."
+                )
+            bc = periodic_bc(dimension=dimension)
+        return refuse_shared_flux(bc, consumer="MFGProblem.get_boundary_conditions")
 
     @contextlib.contextmanager
     def using_resolved_bc(self, state: dict[str, Any]):

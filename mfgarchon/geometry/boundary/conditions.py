@@ -2017,7 +2017,7 @@ class BoundaryConditions:
         for segment in self.segments:
             bc_type = segment.bc_type
 
-            if bc_type in (BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX):
+            if bc_type in (BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.FLUX):
                 # These types require a value (can be 0.0 which is valid)
                 if segment.value is None:
                     raise ValueError(f"Segment '{segment.name}' with {bc_type.value} BC requires a value")
@@ -2403,6 +2403,39 @@ def no_flux_bc(dimension: int | None = None, domain_bounds: np.ndarray | None = 
         Uniform no-flux BC
     """
     return uniform_bc(BCType.NO_FLUX, value=0.0, dimension=dimension, domain_bounds=domain_bounds)
+
+
+def flux_bc(
+    value: float | Callable = 0.0,
+    dimension: int | None = None,
+    domain_bounds: np.ndarray | None = None,
+) -> BoundaryConditions:
+    """
+    Create prescribed-flux boundary conditions for a Fokker-Planck solver: ``J.n = value`` (#2581).
+
+    ``J = alpha*m - D*grad(m)`` is the total flux and ``n`` the outward normal, so ``value`` (q) is mass per unit
+    time per unit boundary measure, **outward positive**: ``q > 0`` takes mass out, ``q < 0`` puts it in, and
+    ``q = 0`` is ``no_flux_bc``. It is not ``neumann_bc``: where the drift crosses the wall, ``J.n = q`` is not
+    ``-D*dm/dn = q``.
+
+    Pass it to the FP solver as its own ``boundary_conditions``. It is FP-side only, so a problem or geometry
+    carrying it is refused, since that BC is shared with the HJB (user ruling 2026-10-09, B-2). ``FPFDMSolver``
+    (its implicit step) and ``FPFEMSolver`` honour it; every other solver refuses it. A step is refused by name rather
+    than clipped past the gate where the clip would fabricate mass the flux decides (B-3,
+    `refuse_what_a_flux_takes_negative`); any other step whose own clip is past the gate is the scheme's, the flux
+    included (FP-FEM clips it).
+
+    Args:
+        value: The outward flux q (constant, or a callable q(t, x) named by its parameters: (t, x), (x) or (t)),
+            read at the time of the level being solved, as a Dirichlet value is.
+        dimension: Spatial dimension. If None, dimension will be inferred when
+            BC is attached to a Geometry (lazy binding).
+        domain_bounds: Optional domain bounds
+
+    Returns:
+        Uniform prescribed-flux BC
+    """
+    return uniform_bc(BCType.FLUX, value=value, dimension=dimension, domain_bounds=domain_bounds)
 
 
 def robin_bc(

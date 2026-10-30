@@ -54,9 +54,11 @@ _GATED = {
     # #1977: the FEM pair joined on 2026-08-17. Declaring was not enough -- the gate reads the
     # `supported_bc_types` property and had to be CALLED; both were added with the declaration.
     # Behavioural cover: tests/unit/test_alg/test_bc_gate_fires_behaviourally_1977.py
-    "FPFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN"},
+    # #2581: the FP pair (FDM's implicit step, FEM) declares FLUX, a prescribed mass flux. Behavioural cover:
+    # tests/unit/test_alg/test_fp_flux_bc_2581.py, and test_flux_bc_class_check_2581.py for every other class.
+    "FPFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN", "FLUX"},
     "HJBFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN"},
-    "FPFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
+    "FPFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "FLUX"},
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     # Withdrawn: FP-GFDM built no wall, so it declares nothing and refuses construction (#2583).
     "FPGFDMSolver": set(),

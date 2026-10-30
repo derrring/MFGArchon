@@ -71,7 +71,7 @@ Usage:
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
@@ -455,8 +455,8 @@ def bc_to_topology_calculator(
         # Reflecting BC for particles - use zero gradient for field solvers
         return BoundedTopology(dimension, shape), _get_no_flux_calculator()
     else:
-        # Unknown type - default to zero gradient
-        return BoundedTopology(dimension, shape), _get_no_flux_calculator()
+        # A type with no calculator here was once given the zero-gradient one, another condition (#2581).
+        _refuse_a_type_with_no_ghost(bc_type, "The FDM calculator route (bc_to_topology_calculator)")
 
 
 def create_ghost_buffer_from_bc(
@@ -1044,6 +1044,20 @@ def dirichlet_wall_rows(
     return mask, values
 
 
+def _refuse_a_type_with_no_ghost(bc_type: BCType, reader: str = "The FDM ghost layer") -> NoReturn:
+    """A type this module's readers have no arm for is refused, not written as some other condition (#1456, #2581).
+
+    FLUX (``J.n = q``) is the one today: a condition on the total flux, which needs the drift, so a ghost layer, a
+    calculator or a value written on the field cannot impose it. It is a Fokker-Planck solver's own BC, read by
+    FP-FDM's implicit step and by FP-FEM.
+    """
+    raise NotImplementedError(
+        f"{reader} has no reading of BCType.{bc_type.name}. A prescribed total flux J.n = q (FLUX) "
+        "involves the drift, which a condition written on the field does not see, so it cannot be imposed here; it "
+        "is the FP solver's own BC, read by FP-FDM's implicit step and by FP-FEM (#2581)."
+    )
+
+
 class PreallocatedGhostBuffer:
     """
     Pre-allocated buffer for zero-copy ghost cell boundary conditions.
@@ -1363,6 +1377,10 @@ class PreallocatedGhostBuffer:
                 for k in range(g):
                     buf[_slice(g - 1 - k)] = lo_value
                     buf[_slice(-(g - k))] = hi_value
+
+        else:
+            # With no arm, the ghosts kept the buffer's zeros (#1958's class): refused instead (#2581).
+            _refuse_a_type_with_no_ghost(bc_type)
 
     def _apply_poly_extrapolation(
         self,
@@ -1711,17 +1729,8 @@ class PreallocatedGhostBuffer:
                 buf[_slice(g - 1 - k if side == "min" else -(g - k))] = ghost_value
 
         else:
-            # Fallback for unknown BC types: use reflection
-            for k in range(g):
-                single_ghost = [slice(None)] * d
-                single_interior = [slice(None)] * d
-                if side == "min":
-                    single_ghost[axis] = k
-                    single_interior[axis] = 2 * g - k
-                else:
-                    single_ghost[axis] = -(k + 1)
-                    single_interior[axis] = -(2 * g + k + 1)
-                buf[tuple(single_ghost)] = buf[tuple(single_interior)]
+            # A type with no arm here was once written as a reflection, which is another condition (#2581).
+            _refuse_a_type_with_no_ghost(bc_type)
 
     def reset(self, fill_value: float = 0.0) -> None:
         """Reset buffer to a constant value."""

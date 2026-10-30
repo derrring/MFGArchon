@@ -153,6 +153,13 @@ class BCType(Enum):
             An FP solver refuses a NEUMANN handed to it explicitly, which would mean dm/dn = g (#2512, row B3).
         ROBIN: Mixed condition (alpha*u + beta*du/dn = g)
         PERIODIC: Wrap-around boundaries (u(x_min) = u(x_max))
+        FLUX: A prescribed total flux, J.n = q with J = alpha*m - D*grad(m), for a Fokker-Planck solver's own BC
+            (#2581). q is mass per unit time per unit boundary measure, outward positive, and q = 0 is NO_FLUX. It
+            is not NEUMANN: where the drift crosses the wall, J.n = q is not D*dm/dn = -q. FP-side only, so it is
+            refused on a BC the HJB and FP share, and a step is refused rather than clipped past the gate where the
+            clip would fabricate mass the flux decides (B-3, `refuse_what_a_flux_takes_negative`; any other step
+            whose own clip is past the gate is the scheme's, flux included) (#2581, user rulings 2026-10-09 and
+            2026-10-30).
 
     Impermeable Boundary Types (NO_FLUX and REFLECTING):
         These represent the SAME physical concept - an impermeable wall where
@@ -190,6 +197,7 @@ class BCType(Enum):
     PERIODIC = "periodic"
     REFLECTING = "reflecting"
     NO_FLUX = "no_flux"
+    FLUX = "flux"
     EXTRAPOLATION_LINEAR = "extrapolation_linear"
     EXTRAPOLATION_QUADRATIC = "extrapolation_quadratic"
 
@@ -930,7 +938,15 @@ def segment_value(
     time_keyword: str | None = None,
 ) -> Any:
     """The one reading of a boundary segment's value, for every reader (#2512 row B2): `boundary_value`, with the
-    binding the segment made of a callable value when it was built."""
+    binding the segment made of a callable value when it was built.
+
+    A FLUX's value is q itself, which a None constant would read as 0 and solve as NO_FLUX: it is refused here, the read
+    every FLUX reader makes, whenever and however the value became None (#2581)."""
+    if segment.bc_type == BCType.FLUX and segment.value is None:
+        raise ValueError(
+            f"Segment '{segment.name}' with flux BC requires a value: q, the prescribed mass flux J.n through it, "
+            f"outward positive (q = 0 is NO_FLUX); read by {where} (#2581)."
+        )
     return boundary_value(
         segment.value,
         kind=f"{segment.bc_type.name.replace('_', ' ').title()} segment '{segment.name}'",

@@ -72,6 +72,7 @@ from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_e
 from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
+from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     _DriftDispatcher,
@@ -214,6 +215,63 @@ def _declares_dirichlet(boundary_conditions: Any) -> bool:
         return True
     default = getattr(boundary_conditions, "default_bc", None)
     return getattr(default, "value", None) == "dirichlet"
+
+
+def _declares_flux(boundary_conditions: Any) -> bool:
+    """Could a face be FLUX: a uniform FLUX, a FLUX segment, or a FLUX ``default_bc`` fall-through (#2581)."""
+    if _get_bc_type(boundary_conditions) == "flux":
+        return True
+    if any(seg.bc_type == BCType.FLUX for seg in getattr(boundary_conditions, "segments", None) or []):
+        return True
+    return getattr(boundary_conditions, "default_bc", None) == BCType.FLUX
+
+
+def _flux_sources(
+    boundary_conditions: Any, grid: Any, shape: tuple[int, ...], spacing: tuple[float, ...], time: float | None
+) -> np.ndarray | None:
+    """The right-hand side a prescribed flux puts on the implicit step, or None when no face is FLUX (#2581).
+
+    A FLUX face imposes J.n = q, outward positive. The wall node owns half a cell along the face's axis (the no-flux
+    handler's volume, #1904), so the face's flux enters its balance as -q/(dx/2), with the operator unchanged: the
+    trapezoid mass then changes by exactly -q|face| per unit time. A flux is a face quantity, so a corner node takes
+    each FLUX face's q over that face's piece. Each face is read through the face owner, as the Dirichlet rows read
+    it (#2512 row B1), and its q at the node and at ``time``, the level solved for, by the value owner a Dirichlet
+    value goes through (row B2). A node a Dirichlet face takes keeps its identity row and gets nothing here.
+    """
+    if not _declares_flux(boundary_conditions):
+        return None
+    ndim = len(shape)
+    flux_faces = []
+    for axis in range(ndim):
+        for side in ("min", "max"):
+            face = BoundaryFace(axis, side)
+            segment = boundary_conditions.segment_for_face(face, grid)
+            if segment.bc_type == BCType.FLUX:
+                flux_faces.append((face, segment))
+    if not flux_faces:
+        return None
+    sources = np.zeros(int(np.prod(shape)))
+    for face, segment in flux_faces:
+        wall_index = 0 if face.side == "min" else shape[face.axis] - 1
+        half_cell = spacing[face.axis] / 2.0
+        for multi_idx in np.ndindex(*shape):
+            if multi_idx[face.axis] != wall_index or _is_dirichlet_at_point(
+                boundary_conditions, multi_idx, shape, grid
+            ):
+                continue
+            where = f"FP-FDM's FLUX face {face.to_string()} at node {tuple(int(i) for i in multi_idx)}"
+            q = float(segment_value(segment, t=time, x=_node(grid, multi_idx), where=where, time_keyword="time"))
+            sources[grid.get_index(multi_idx)] -= q / half_cell
+    return sources
+
+
+def _refuse_flux_off_the_implicit_step(boundary_conditions: Any, path: str) -> None:
+    """A step that builds no FLUX source refuses a FLUX face rather than solve it as a no-flux wall (#2581)."""
+    if _declares_flux(boundary_conditions):
+        raise NotImplementedError(
+            f"FP-FDM's {path} builds no prescribed-flux source, so a FLUX face would be solved as a no-flux wall "
+            "(#2581). The implicit step (a U-derived or velocity drift with a scalar volatility) honours FLUX."
+        )
 
 
 def _faces_of_node(multi_idx: tuple[int, ...], shape: tuple[int, ...]) -> list[BoundaryFace]:
@@ -892,6 +950,10 @@ def solve_fp_nd_full_system(
         velocity_field is not None and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES and not use_tensor_diffusion
     )
     _refuse_provider_wall_coefficients(boundary_conditions)
+    if use_tensor_diffusion:
+        _refuse_flux_off_the_implicit_step(boundary_conditions, "explicit tensor-diffusion step")
+    elif use_callable_drift:
+        _refuse_flux_off_the_implicit_step(boundary_conditions, "explicit step for a callable drift")
 
     # Issue #1632. Two hazards, and the first belongs to the WHOLE chain below, not to one arm.
     #
@@ -1056,9 +1118,11 @@ def solve_fp_nd_full_system(
     _is_constant_sigma = not callable(getattr(problem, "volatility", None)) and not isinstance(
         getattr(problem, "volatility", None), np.ndarray
     )
-    # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet)
+    # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet), and only where the cache's one
+    # reader runs: the explicit step for a callable drift with scalar diffusion (the time loop's second arm). The
+    # implicit step builds its own operator and never reads it.
     _bc_is_uniform = getattr(boundary_conditions, "is_uniform", False) if boundary_conditions is not None else False
-    if _is_constant_sigma and _bc_is_uniform:
+    if _is_constant_sigma and _bc_is_uniform and drift.is_callable() and not use_tensor_diffusion:
         try:
             from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
@@ -1506,9 +1570,11 @@ def solve_timestep_full_nd(
         # to 'no_flux' for the FP equation; the operator paths already treat them identically
         # (laplacian.py:307, advection.py:316).  Route to the same no-flux boundary handler.
         try:
+            # A FLUX wall is the no-flux row with its flux on the right-hand side (`_flux_sources`, #2581).
             is_no_flux = boundary_conditions.is_uniform and boundary_conditions.type in (
                 "no_flux",
                 "neumann",
+                "flux",
             )
             is_uniform = boundary_conditions.is_uniform
         except AttributeError:
@@ -1599,6 +1665,40 @@ def solve_timestep_full_nd(
 
     # Solve linear system
     m_next_flat = sparse.linalg.spsolve(A_matrix, b_rhs)
+
+    # A prescribed flux (#2581) enters by linearity, m = m0 + A^-1 b_q with m0 the step without it: one more solve on
+    # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. B-3's owner refuses the step
+    # where the clip would fabricate mass the flux decides, with the post-step guard's weights; otherwise a step whose
+    # own clip is past the guard's threshold is the guard's, which decides the step with the flux as it decides any.
+    # Upwind's matrix is an M-matrix (w^T A = w^T/dt), so an inflow's part is non-negative in exact arithmetic;
+    # spsolve's round-off negatives are measured on the step that holds them, and no upwind inflow row measured under
+    # this rule is refused (a 1152-row scan, and review 4's pulse and ramp into a nearly empty domain, on #2840). Each
+    # remedy below was run on refused rows before it was written (the approver's rulings on #2840).
+    flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
+    if flux_sources is not None and np.any(flux_sources):
+        m_flux = sparse.linalg.spsolve(A_matrix, flux_sources)
+        m_next_flat = refuse_what_a_flux_takes_negative(
+            m_next_flat,
+            m_flux,
+            context="FP-FDM",
+            time=time,
+            unit="node",
+            locate=lambda i: f"node {tuple(int(j) for j in grid.get_multi_index(i))}",
+            remedy=(
+                "Lower |q|, or end the outflow before the mass runs out."
+                if advection_scheme == "divergence_upwind"
+                else "'divergence_centered' is not monotone, so the flux's part of the step can be negative away from "
+                "the wall: for an inflow, use advection_scheme='divergence_upwind', whose step is monotone; for an "
+                "outflow, lower |q| or end it before the mass runs out."
+            ),
+            # the guard reads the step on these weights, and at this step's q = 0 the step is m0, whose clip is past
+            # the gate here; q = 0 on every step is another run, whose state the flux never touched (review 5 of #2840)
+            remedy_past_gate=(
+                "A q on this step with which the flux takes no node negative past the threshold hands the step to "
+                "FP-FDM's guard, which refuses it unless the step with the flux passes the gate; at q = 0 on this step "
+                "it does not. The state this step starts from holds what the flux did on the earlier steps."
+            ),
+        )
 
     # Reshape back to multi-dimensional array
     m_next = m_next_flat.reshape(shape)

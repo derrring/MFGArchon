@@ -174,6 +174,12 @@ def test_every_other_member_is_untouched(build, bc_type):
         ("uniform", "ROBIN"): (-3.1, -5.2),
     }
     kind = "mixed" if build is _mixed else "uniform"
+    if bc_type == BCType.FLUX:
+        # FLUX (J.n = q) has no ghost reading: it needs the drift, so the layer refuses it rather than writing the
+        # mixed path's reflection or the uniform path's zeros, which is what it did on arrival (#2581).
+        with pytest.raises(NotImplementedError, match=r"no reading of BCType\.FLUX"):
+            pad_array_with_ghosts(_U, build(bc_type), spacing=_DX)
+        return
     lo, hi = _BEFORE[(kind, bc_type.name)]
     padded = pad_array_with_ghosts(_U, build(bc_type), spacing=_DX)
 

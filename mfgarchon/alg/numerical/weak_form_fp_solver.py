@@ -26,6 +26,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -78,6 +79,14 @@ class WeakFormFPSolver(BaseFPSolver):
         # is zero flux, and a nonzero NEUMANN or any ROBIN is refused (#2512, row B3). Condensed literally, a
         # shared Dirichlet pinned the FEM exit wall at m = g (#2525); an explicit DIRICHLET(g) is that density.
         self._bc = self.get_boundary_conditions()
+        # A FLUX needs the load `_flux_load` builds, which only FP-FEM's override does. This base declares no
+        # ``_SUPPORTED_BC_TYPES``, so its gate passes a FLUX; a class that inherits the base's load refuses it here,
+        # rather than solve it as a no-flux wall (#2581).
+        if self._declares_flux() and type(self)._flux_load is WeakFormFPSolver._flux_load:
+            raise NotImplementedError(
+                f"{type(self).__name__} builds no prescribed-flux load, so a FLUX boundary would be solved as a no-flux "
+                "wall (#2581). FPFEMSolver honours FLUX."
+            )
         # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
         # path is stateless per call, so the latch lives on the solver to warn once per solve).
         self._adjoint_clip_warned = False
@@ -137,6 +146,23 @@ class WeakFormFPSolver(BaseFPSolver):
         return None, None
 
     # --- Advection from drift (subclass-supplied) -----------------------------
+    def _flux_load(self, t: float | None) -> NDArray | None:
+        """The load of a prescribed flux (FLUX, #2581) at the level ``t``, or None. Only FP-FEM's override builds one;
+        a class that inherits this one refuses a FLUX at construction."""
+        return None
+
+    def _declares_flux(self) -> bool:
+        """Whether the BC holds a FLUX segment or ``default_bc`` (#2581), read from the types alone, with no value read
+        and so no time."""
+        from mfgarchon.geometry.boundary.types import BCType
+
+        bc = self._bc
+        if bc is None:
+            return False
+        return any(segment.bc_type == BCType.FLUX for segment in getattr(bc, "segments", None) or []) or (
+            getattr(bc, "default_bc", None) == BCType.FLUX
+        )
+
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
         r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form.
 
@@ -232,6 +258,7 @@ class WeakFormFPSolver(BaseFPSolver):
         clip_injected_max = 0.0
         clip_max_step = -1
         m0_mass = float((self._M @ M[0]).sum())
+        clip_weights = np.asarray(self._M.sum(axis=1)).ravel()  # what the clip below measures mass with
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
             if source_term is not None:
@@ -257,18 +284,51 @@ class WeakFormFPSolver(BaseFPSolver):
             else:
                 A_system = A_base
 
+            # A prescribed flux (#2581) enters by linearity, m = m0 + m_q: m0 is the step as it was, and m_q the
+            # flux's load alone on the same matrix, with the Dirichlet values homogeneous; none when every q is zero.
+            flux_load = self._flux_load((n + 1) * dt)
+            if flux_load is not None and not np.any(flux_load):
+                flux_load = None
+            m_flux = np.zeros(N) if flux_load is not None else None
             if weak_bc:
                 if rhs_extra is not None:
                     rhs = rhs + rhs_extra
                 M[n + 1] = spsolve(A_system, rhs)
+                if flux_load is not None:
+                    m_flux = spsolve(A_system, flux_load)
             elif pure_neumann:
                 M[n + 1] = spsolve(A_system, rhs)
+                if flux_load is not None:
+                    m_flux = spsolve(A_system, flux_load)
             else:
                 A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs, t=(n + 1) * dt)
                 d_dofs, d_vals = self._dirichlet_dofs_and_values((n + 1) * dt)
                 interior = np.setdiff1d(np.arange(N), d_dofs)
                 M[n + 1, interior] = spsolve(A_bc, rhs_bc)
                 M[n + 1, d_dofs] = d_vals
+                if flux_load is not None:
+                    m_flux[interior] = spsolve(A_bc, flux_load[interior])
+            if m_flux is not None:
+                # B-3's owner, with the weights of the clip below; otherwise a step whose own clip is past the threshold
+                # is left to that clip, which clips it with the flux's share, as any step, warning only above 1e-6 of
+                # the mass (#2581).
+                M[n + 1] = refuse_what_a_flux_takes_negative(
+                    M[n + 1],
+                    m_flux,
+                    context=type(self).__name__,
+                    time=(n + 1) * dt,
+                    unit="DOF",
+                    locate=lambda i: f"DOF {i}",
+                    weights=clip_weights,
+                    remedy=(
+                        "The Galerkin step is not monotone, so the flux's part of it can be negative away from the "
+                        "wall, an inflow's included."
+                    ),
+                    remedy_past_gate=(
+                        "A q on this step with which the flux takes no DOF negative past the threshold hands the step "
+                        "to FP-FEM's clip, which clips it as any step, warning only above 1e-6 of the mass."
+                    ),
+                )
 
             # Positivity clip. The Galerkin/MLS advection is not an M-matrix, so the
             # solve can produce density undershoots; the clip deletes them, which INJECTS
@@ -339,6 +399,12 @@ class WeakFormFPSolver(BaseFPSolver):
         # owner gives a DIRICHLET segment (FEM, `bc_adapter.has_dirichlet_dofs`). This step does neither, so it would
         # drop the wall in silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value; `time`
         # is passed to nothing.
+        if self._declares_flux():
+            raise NotImplementedError(
+                f"{type(self).__name__}.solve_fp_step_adjoint_mode builds no prescribed-flux load, so a FLUX facet would "
+                "be solved as a no-flux wall (#2581). With BlockIterator, adjoint_mode='off' solves the FP side through "
+                "solve_fp_system, which does."
+            )
         if self._imposes_dirichlet():
             raise NotImplementedError(
                 f"{type(self).__name__}.solve_fp_step_adjoint_mode imposes no Dirichlet wall, so an absorbing exit "

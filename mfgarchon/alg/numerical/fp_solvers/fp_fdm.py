@@ -108,9 +108,11 @@ class FPFDMSolver(BaseFPSolver):
     _scheme_family = SchemeFamily.FDM
 
     # BoundaryCapable protocol (Issue #1456): FP-FDM assembles Dirichlet / Neumann / no-flux /
-    # periodic boundary rows; Robin has no stencil (fails loud — Issue #1250), and
-    # Reflecting/Extrapolation are not field-BC types it handles.
-    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
+    # periodic boundary rows, and a prescribed flux on its implicit step (FLUX, #2581); Robin has no
+    # stencil (fails loud — Issue #1250), and Reflecting/Extrapolation are not field-BC types it handles.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset(
+        {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC, BCType.FLUX}
+    )
 
     #: Issue #1686: no FP solver applies a Neumann value, so this stays False. It is no longer reached
     #: with one: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared NEUMANN(g != 0) and an
@@ -711,7 +713,13 @@ class FPFDMSolver(BaseFPSolver):
         # Dirichlet stencil puts g = 0 one cell outside the wall (first order) and drops any other g -- a
         # uniform 0.7 solved identically to 0 (#2531). Refused rather than solved as something else.
         from .fp_fdm_operators import is_boundary_point
-        from .fp_fdm_time_stepping import _declares_dirichlet, _is_dirichlet_at_point
+        from .fp_fdm_time_stepping import (
+            _declares_dirichlet,
+            _is_dirichlet_at_point,
+            _refuse_flux_off_the_implicit_step,
+        )
+
+        _refuse_flux_off_the_implicit_step(bc, "solve_fp_step_adjoint_mode")
 
         if _declares_dirichlet(bc) and any(
             is_boundary_point(idx, shape, len(shape)) and _is_dirichlet_at_point(bc, idx, shape, self.problem.geometry)

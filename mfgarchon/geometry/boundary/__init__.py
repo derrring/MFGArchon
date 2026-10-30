@@ -44,6 +44,7 @@ from .applicator_fdm import (
 from .conditions import (
     BoundaryConditions,
     dirichlet_bc,
+    flux_bc,
     mixed_bc,
     mixed_bc_from_regions,
     neumann_bc,
@@ -120,6 +121,7 @@ __all__ = [
     "dirichlet_bc",
     "neumann_bc",
     "no_flux_bc",
+    "flux_bc",
     "robin_bc",
     "mixed_bc",
     "mixed_bc_from_regions",

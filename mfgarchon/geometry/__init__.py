@@ -45,6 +45,7 @@ from .boundary import (
     MixedBoundaryConditions,
     create_standard_boundary_names,
     dirichlet_bc,
+    flux_bc,
     neumann_bc,
     no_flux_bc,
     periodic_bc,
@@ -164,6 +165,7 @@ __all__ = [
     "dirichlet_bc",
     "neumann_bc",
     "no_flux_bc",
+    "flux_bc",
     "periodic_bc",
     "robin_bc",
     # Geometry components

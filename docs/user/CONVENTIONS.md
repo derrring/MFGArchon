@@ -870,6 +870,30 @@ and it is refused at the FP whatever its coefficients: they do not say what the 
 shared Neumann value, the shared BC keeps the ROBIN for the HJB, and the FP solver is given its own
 `boundary_conditions`. `bc_utils.fp_view_of_shared_bc` owns the refusal (#2512).
 
+### A prescribed flux at the FP
+
+`FLUX` prescribes the total flux, $J \cdot n = q$ with $J = v m - D \nabla m$ and $n$ the outward normal: $q$ is
+mass per unit time per unit boundary measure, outward positive, and $q = 0$ is NO_FLUX (user ruling 2026-10-09,
+B-1). It is a condition on the FP alone. A BC the HJB and the FP share carries none, and
+`MFGProblem.get_boundary_conditions` refuses one there (B-2); an FP solver takes it as its own
+`boundary_conditions`. FP-FDM's implicit step puts $-q/(\Delta x/2)$ on the half cell of each wall node per FLUX
+face, and FP-FEM the load $-\int_\Gamma q\,\varphi\,dS$, each with its operator unchanged. So each step changes the
+mass by exactly $-\Delta t \int_\Gamma q(t_{k+1})\,dS$, the integral on the scheme's own face quadrature (FP-FDM's
+nodal values on the trapezoid face weights, FP-FEM's facet quadrature), on a step that conserves mass under NO_FLUX
+(FP-FDM's with a volatility field does not, #2841), with no Dirichlet face (a Dirichlet row exchanges mass of its own),
+and where the solver's positivity clip leaves the step alone.
+
+B-3 refuses a step, rather than clip it past the gate, where the clip would fabricate mass the flux decides
+(`refuse_what_a_flux_takes_negative`, one owner for both solvers; user rulings 2026-10-09 and 2026-10-30). First,
+where the negatives the flux's part makes, at nodes the step without it leaves non-negative, would fabricate more than
+`MAX_CLIP_MASS_FABRICATION` of the step's mass; round-off within the gate is clipped, as any clip's is. Otherwise,
+where the step without it passes the clip gate and either the flux's part deepens that step's negatives past it,
+counted without netting on the mass of the step that holds them, or the step with the flux fails the gate itself, as a
+flux that drains the positive mass makes it; neither refuses a step with no negative. Any other step whose own clip is
+past the gate is the scheme's, the flux's share included, and its clip decides it as it decides any step: FP-FDM's
+guard refuses it where clipping would fabricate more than the gate allows, and FP-FEM, whose Galerkin advection is not
+monotone, clips it, warning above $10^{-6}$ of the mass. Every other solver refuses FLUX by name (#2581).
+
 ### What is not settled here
 
 The remaining boundary-condition convention — ghost-cell placement on vertex- versus cell-centred grids —
