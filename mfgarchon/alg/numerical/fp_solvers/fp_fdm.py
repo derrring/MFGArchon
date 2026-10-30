@@ -742,7 +742,9 @@ class FPFDMSolver(BaseFPSolver):
             # Per-point sigma (#1183), as Ito diffusion Delta(D m) (#2841): the unit Laplacian acting on D m, the same
             # owner the time stepping reads. It replaced the face-averaged div(D grad m) under NO_FLUX and, on a
             # periodic grid, where LaplacianOperator read no coefficient_field, a diffusion with D = 1.
-            d_field = shared_at_repeated_endpoints(diffusion_from_volatility(sigma_arr, kind="field"), bc, shape)
+            d_field = shared_at_repeated_endpoints(
+                np.asarray(diffusion_from_volatility(sigma_arr, kind="field")), bc, shape
+            )
             unit = LaplacianOperator(spacings=spacing, field_shape=shape, bc=bc).as_scipy_sparse()
             diffusion_matrix = ito_diffusion({"laplacian": unit}, {"laplacian": d_field})
         else:

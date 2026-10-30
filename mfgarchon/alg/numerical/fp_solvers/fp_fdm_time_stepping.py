@@ -653,7 +653,7 @@ def solve_timestep_explicit_with_drift(
         # face-averaged div(D grad m), which conserved mass too but is the FP of another SDE; on a periodic grid
         # LaplacianOperator read no coefficient_field, so the step had diffused with D = 1 whatever sigma was.
         d_field = shared_at_repeated_endpoints(
-            diffusion_from_volatility(sigma_arr, kind="field"), boundary_conditions, shape
+            np.asarray(diffusion_from_volatility(sigma_arr, kind="field")), boundary_conditions, shape
         )
         unit = LaplacianOperator(
             spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
