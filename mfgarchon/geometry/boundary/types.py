@@ -156,9 +156,10 @@ class BCType(Enum):
         FLUX: A prescribed total flux, J.n = q with J = alpha*m - D*grad(m), for a Fokker-Planck solver's own BC
             (#2581). q is mass per unit time per unit boundary measure, outward positive, and q = 0 is NO_FLUX. It
             is not NEUMANN: where the drift crosses the wall, J.n = q is not D*dm/dn = -q. FP-side only, so it is
-            refused on a BC the HJB and FP share, and a step is refused rather than clipped where the clip would
-            fabricate mass the flux decides (B-3, `refuse_what_a_flux_takes_negative`; any other step whose own clip
-            is past the gate is the scheme's, flux included) (#2581, user rulings 2026-10-09).
+            refused on a BC the HJB and FP share, and a step is refused rather than clipped past the gate where the
+            clip would fabricate mass the flux decides (B-3, `refuse_what_a_flux_takes_negative`; any other step
+            whose own clip is past the gate is the scheme's, flux included) (#2581, user rulings 2026-10-09 and
+            2026-10-30).
 
     Impermeable Boundary Types (NO_FLUX and REFLECTING):
         These represent the SAME physical concept - an impermeable wall where

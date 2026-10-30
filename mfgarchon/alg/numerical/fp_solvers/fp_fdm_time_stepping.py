@@ -1670,8 +1670,9 @@ def solve_timestep_full_nd(
     # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. B-3's owner refuses the step
     # where the clip would fabricate mass the flux decides, with the post-step guard's weights; otherwise a step whose
     # own clip is past the guard's threshold is the guard's, which decides the step with the flux as it decides any.
-    # Upwind's matrix is an M-matrix (w^T A = w^T/dt), so an inflow's part is non-negative and only an outflow is
-    # refused there; each remedy below was run on refused rows before it was written (the approver's ruling on #2840).
+    # Upwind's matrix is an M-matrix (w^T A = w^T/dt): an inflow's part is non-negative in exact arithmetic, and its
+    # round-off is within the gate, so only an outflow is refused there. Each remedy below was run on refused rows before
+    # it was written (the approver's rulings on #2840).
     flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
     if flux_sources is not None and np.any(flux_sources):
         m_flux = sparse.linalg.spsolve(A_matrix, flux_sources)
@@ -1689,6 +1690,8 @@ def solve_timestep_full_nd(
                 "the wall: for an inflow, use advection_scheme='divergence_upwind', whose step is monotone; for an "
                 "outflow, lower q or end it before the mass runs out."
             ),
+            # q = 0 met the guard on every such row measured; the guard's own message then names its remedies
+            remedy_past_gate="At q = 0 FP-FDM's guard refuses that step on its own, so the scheme's step must change first.",
         )
 
     # Reshape back to multi-dimensional array

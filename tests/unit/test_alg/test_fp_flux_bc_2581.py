@@ -23,11 +23,12 @@ FP-FEM's facet quadrature. ``q = 0`` solves as NO_FLUX bit for bit.
 face's own q at the corners: the mass tests integrate q over a face, so a q read at a place along it that keeps the
 integral -- reflected along the face -- passes them.
 
-**B-3** (user ruling 2026-10-09; the approver's rulings on #2581's plan, Q3, and on #2840): a step is refused, not
-clipped, where the clip would fabricate mass the flux decides -- first, (1) the flux's part of it takes the density
-negative at a node the step without it leaves non-negative; else (2) the step without it passes the clip gate and the
-step with it does not: its negatives deepened by the flux, counted without netting, over its own positive mass. Any other
-step whose own clip is past the gate is the scheme's, flux included.
+**B-3** (user rulings 2026-10-09 and 2026-10-30; the approver's on #2581's plan, Q3, and on #2840): a step is refused,
+not clipped past the gate, where the clip would fabricate mass the flux decides -- first, (1) the negatives the flux's
+part makes at nodes the step without it leaves non-negative fabricate more than the gate allows; else (2) the step
+without it passes the clip gate and either (a) the flux deepens its negatives past it, counted without netting, on the
+measure of the step without the flux, or (b) the step with the flux fails the gate itself. Any other step whose own clip
+is past the gate is the scheme's, flux included.
 One owner reads it for both families (`refuse_what_a_flux_takes_negative`). On ``divergence_upwind`` the step's matrix
 A has non-positive off-diagonals and, as the step conserves the trapezoid mass, ``w^T A = w^T/dt > 0`` on the
 trapezoid weights w: it is an M-matrix, so the step without the flux, right-hand side ``m_old/dt >= 0``, is
@@ -422,47 +423,128 @@ def test_a_manufactured_solution_with_a_flux_on_every_face_converges(family: str
 
 
 def test_the_b3_owner_refuses_the_clip_the_flux_decides_and_leaves_the_scheme_its_own():
-    """B-3's one owner, read by both families (the approver's rulings on #2840), on steps whose verdict the rule fixes.
-    (1) first: a node the step without the flux leaves non-negative goes negative. (2) that step passes the gate,
-    s0 <= thr, and N > thr, N the gate's fraction of the step with the flux -- its negatives deepened by the flux,
-    counted without netting, over its own positive mass -- on the caller's weights. Otherwise the step is the scheme's,
-    returned unclipped. Each step below is chosen so that one wrong reading gives the other verdict."""
+    """B-3's one owner, read by both families (user rulings 2026-10-09 and 2026-10-30; the approver's on #2840), on steps
+    whose verdict the rule fixes. With F the negatives the flux alone makes, D its deepening of the step's own, both on
+    the caller's weights: (1) F / pos(step) > thr, first; (2) s0 <= thr and either (a) s0 + D / pos(m0) > thr, or (b)
+    the step with the flux fails the gate itself. Otherwise the step is the scheme's, returned unclipped. Each step
+    below is chosen so that one wrong reading gives the other verdict."""
     from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative as owner
 
-    kw = {"context": "C", "time": 0.1, "unit": "node", "locate": lambda i: f"node {i}", "remedy": "R"}
+    kw = {
+        "context": "C",
+        "time": 0.1,
+        "unit": "node",
+        "locate": lambda i: f"node {i}",
+        "remedy": "R",
+        "remedy_past_gate": "P",
+    }
+    adds = r"the flux's part deepens its negatives by {} more, past it.*B-3"
+    fails = r"clipping the step with it would fabricate {}, past it.*B-3"
+    # node 3, which the flux takes to 0 and not below it, is not counted
     with pytest.raises(ValueError, match=r"at 1 node\(s\) in the step to t=0\.1, the most at node 1 .*B-3\)\. R$"):
-        owner(np.array([1.0, 0.0, 1.0]), np.array([0.0, -1e-3, 0.0]), **kw)
-    # strict: a node the flux takes to zero, not below it, is not refused
-    assert np.array_equal(owner(np.array([1.0, 0.0]), np.array([0.0, 0.0]), **kw), np.array([1.0, 0.0]))
-    # (1) before the scheme: s0 = 1e-3 is past the gate, and the flux alone takes node 1 negative
-    with pytest.raises(
-        ValueError, match=r"at 1 node\(s\).*B-3\)\. The step without the flux would itself fabricate 1\.000e-03"
-    ):
+        owner(np.array([1.0, 0.0, 1.0, 1e-3]), np.array([0.0, -1e-3, 0.0, -1e-3]), **kw)
+    # (1) at its boundary: F / pos(step) = thr exactly is not past it (nor are (2a) and (2b)); 2e-8 is
+    assert np.array_equal(owner(np.array([1.0, 0.0]), np.array([0.0, -1e-8]), **kw), np.array([1.0, -1e-8]))
+    with pytest.raises(ValueError, match=r"fabricate 2\.000e-08 of the mass, past the threshold.*B-3\)\. R$"):
+        owner(np.array([1.0, 0.0]), np.array([0.0, -2e-8]), **kw)
+    # round-off at a node the step without the flux leaves at 0 is within the gate, and clipped as any round-off
+    assert np.array_equal(owner(np.array([1.0, 0.0]), np.array([0.0, -1e-22]), **kw), np.array([1.0, -1e-22]))
+    # a node the flux takes to zero, not below it (1e-3 - 1e-3 is 0.0 exactly)
+    assert np.array_equal(owner(np.array([1.0, 1e-3]), np.array([0.0, -1e-3]), **kw), np.array([1.0, 0.0]))
+    # (1) before the scheme: s0 = 1e-3 is past the gate; the caller's clip decides what a change of q does there
+    with pytest.raises(ValueError, match=r"The step without the flux would itself fabricate 1\.000e-03") as caught:
         owner(np.array([1.0, 0.0, -1e-3]), np.array([0.0, -1e-3, 0.0]), **kw)
-    # (2) at the gate: s0 = thr exactly is the owner's, and N = 1.0001e-8 is past it
-    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 1\.000e-08, past it.*B-3"):
+    assert str(caught.value).endswith("before the flux is added. P")
+    # (2a) at the gate: s0 = thr exactly is the owner's, and the flux's 1e-12 takes it past
+    with pytest.raises(ValueError, match=adds.format(r"1\.000e-12")):
         owner(np.array([1.0, -1e-8]), np.array([0.0, -1e-12]), **kw)
-    # N = thr exactly is not past it
+    # exactly at the gate is not past it, by either branch
     assert np.array_equal(owner(np.array([1.0, -1e-8]), np.array([0.0, 0.0]), **kw), np.array([1.0, -1e-8]))
     assert np.array_equal(owner(np.array([1.0, -5e-9]), np.array([0.0, -5e-9]), **kw), np.array([1.0, -1e-8]))
-    # N's own denominator: a flux that drains 60% of the positive mass, deepening nothing, takes 5e-9 to 1.25e-8
-    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 1\.250e-08, past it"):
+    # (2a) alone: deepening by 6e-9 while adding mass leaves the step's own clip at 5.5e-9, within the gate
+    with pytest.raises(ValueError, match=adds.format(r"6\.000e-09")):
+        owner(np.array([1.0, -0.5e-8]), np.array([1.0, -0.6e-8]), **kw)
+    # F is measured once, by (1), on the step that holds it: F / pos(step) = 0.2e-8, s0 + D / pos(m0) = 0.8e-8 and
+    # s_step = 0.6e-8 are each within the gate; F in (2a) too would make it 1.2e-8 (the approver's ruling on #2840)
+    m0, m_q = np.array([1.0, -0.4e-8, 0.0]), np.array([1.0, -0.4e-8, -0.4e-8])
+    assert np.array_equal(owner(m0, m_q, **kw), m0 + m_q)
+    # (2b) alone: a flux that drains 60% of the positive mass, deepening nothing (s0 + D = 5e-9), fails the gate
+    with pytest.raises(ValueError, match=fails.format(r"1\.250e-08")):
         owner(np.array([1.0, -5e-9]), np.array([-0.6, 0.0]), **kw)
-    # no netting: filling node 2 by as much as node 1 is deepened leaves N = 5.03e-7, not 3e-9
-    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 5\.030e-07"):
+    # neither: a flux that fills the negative and drains the rest leaves nothing to clip; nor does an empty step
+    m0, m_q = np.array([1.0, -0.9e-8]), np.array([-0.2, 1e-8])
+    assert np.array_equal(owner(m0, m_q, **kw), m0 + m_q)
+    assert np.array_equal(owner(np.zeros(2), np.zeros(2), **kw), np.zeros(2))
+    # no netting: filling node 2 by as much as node 1 is deepened leaves 5e-7, not 0
+    with pytest.raises(ValueError, match=adds.format(r"5\.000e-07")):
         owner(np.array([1.0, -3e-9, -3e-9, 1.0]), np.array([0.0, -1e-6, 1e-6, 0.0]), **kw)
     # the caller's weights: uniform, s0 = 3.3e-7 is past the gate and the step is the scheme's; weighted, s0 = 3.3e-10
     m0, m_q = np.array([1.0, -1e-6, 1.0, 1.0]), np.array([0.0, -1e-3, 0.0, 0.0])
     assert np.array_equal(owner(m0, m_q, **kw), m0 + m_q)
-    with pytest.raises(ValueError, match=r"clipping the step with it would fabricate 3\.337e-07"):
+    with pytest.raises(ValueError, match=adds.format(r"3\.333e-07")):
         owner(m0, m_q, weights=np.array([1.0, 1e-3, 1.0, 1.0]), **kw)
+
+
+def test_b3_lets_an_upwind_inflow_round_off_pass_within_the_gate():
+    """Upwind's matrix is an M-matrix, so an inflow's part is non-negative in exact arithmetic; spsolve's carries
+    round-off negatives, 4.7e-38 at a node the step without the flux leaves at 0, which strict clause (1) refused (review
+    3 of #2840). Within the gate (user ruling 2026-10-30) the step solves, and the inflow adds its mass."""
+    n, sigma, dt, nt = 41, 0.05, 0.2, 3
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    x, y = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")
+    m_init = np.where(np.abs(x - 0.5) + np.abs(y - 0.5) < 0.15, 1.0, 0.0)
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(
+                name=f,
+                bc_type=BCType.FLUX if f == "x_min" else BCType.NO_FLUX,
+                value=-1.0 if f == "x_min" else 0.0,
+                boundary=f,
+            )
+            for f in FACES[2]
+        ],
+    )
+    conditions = Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=nt * dt)
+    problem = MFGProblem(model=_model(sigma), domain=grid, conditions=conditions, Nt=nt)
+    m = np.asarray(
+        FPFDMSolver(problem, boundary_conditions=bc).solve_fp_system(
+            m_init, potential_field=np.broadcast_to(3.0 * y, (nt + 1, n, n)).copy(), show_progress=False
+        )
+    )
+    mass = np.array([float(np.sum(level * grid.measure_weights())) for level in m])
+    assert np.allclose(np.diff(mass), 1.0 * 1.0 * dt, rtol=0, atol=1e-12), np.diff(mass)
+
+
+@pytest.mark.parametrize("level", [0.0, 1e-20])
+def test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve(level: float):
+    """An inflow into a domain left empty, or at 1e-20: the flux's round-off negatives, 6.8e-15 of the first step's 321
+    on the guard's uniform weights, measured on the step without the flux, whose mass is 0 or 2e-17, were refused at
+    any q. (1) measures them on the step that holds them and (2a) counts only the deepening (the approver's rows on
+    #2840, 2026-10-30), so the step solves and the inflow adds its mass."""
+    n, dt, nt = 41, 0.1, 2
+    grid = _grid(2, n)
+    x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
+    solver = FPFDMSolver(
+        _problem(grid, nt=nt, t_end=nt * dt, sigma=0.05), boundary_conditions=_segments(2, {"x_min": -1.0})
+    )
+    m = np.asarray(
+        solver.solve_fp_system(
+            np.full((n, n), level), potential_field=np.broadcast_to(2.0 * x, (nt + 1, n, n)).copy(), show_progress=False
+        )
+    )  # v = -2
+    mass = np.array([float(np.sum(m_k * grid.measure_weights())) for m_k in m])
+    assert np.allclose(np.diff(mass), 1.0 * LY * dt, rtol=0, atol=1e-12), np.diff(mass)
 
 
 @pytest.mark.parametrize("family", ["fdm", "fem"])
 def test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate(family: str):
-    """Clause (2) at the solver level (review 2 of #2840). FP-FDM centered: an outflow drains 32% of the positive mass,
-    deepening nothing, and takes the step's clip from s0 = 8.8e-9 past the gate; with q = 0 the step solves. FP-FEM P1:
-    an inflow deepens the Galerkin step's own negatives, s0 = 7.3e-10, by 4.2e-6 of the mass."""
+    """Clause (2) at the solver level (reviews 2 and 3 of #2840). FP-FDM centered, branch (b): an outflow drains 32% of
+    the positive mass, deepening nothing, and takes the step's own clip from s0 = 8.8e-9 past the gate; with q = 0 the
+    step solves. FP-FEM P1, branch (a): an inflow deepens the Galerkin step's own negatives, s0 = 7.3e-10, by 4.2e-6 of
+    the mass."""
     if family == "fdm":
         n, dt = 14, 0.1
         grid = _grid(1, n)
@@ -490,14 +572,16 @@ def test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate(family: str):
         x = solver._disc.dof_coordinates[:, 0]
         m_init = np.exp(-((x - 0.605) ** 2) / 0.0078) + 2.1057829607576184e-12
         with pytest.raises(
-            ValueError, match=r"would fabricate 7\.27\de-10 of the mass, within the threshold.*4\.20\de-06, past it"
+            ValueError,
+            match=r"would fabricate 7\.27\de-10 of the mass, within the threshold.*deepens its negatives by 4\.20\de-06 more",
         ):
             solver.solve_fp_system(M_initial=m_init, potential_field=np.broadcast_to(-x, (2, x.size)).copy())
 
 
 def test_an_outflow_that_drains_the_wall_is_refused_on_upwind():
     bc = _segments(1, {"x_max": 10.0})
-    with pytest.raises(ValueError, match=r"B-3"):
+    # upwind's remedy is the outflow's: its step is an M-matrix, and an outflow is what it refuses (review 3 of #2840)
+    with pytest.raises(ValueError, match=r"B-3\)\. Lower q, or end the outflow before the mass runs out\.$"):
         _fdm(1, 21, bc, m0=np.ones(21))
     _, m = _fdm(1, 21, _segments(1, {"x_max": 0.05}), m0=np.ones(21))
     assert float(m.min()) >= 0.0
@@ -517,9 +601,20 @@ def test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face()
         boundary_conditions=_segments(1, {"x_max": 0.25}),
         advection_scheme="divergence_centered",
     )
+    u = np.broadcast_to(-2.0 * x, (3, 11)).copy()
     with pytest.raises(ValueError, match=r"at 1 node\(s\) in the step to t=0\.1, the most at node \(0,\)") as caught:
-        solver.solve_fp_system(_bump(x), potential_field=np.broadcast_to(-2.0 * x, (3, 11)).copy(), show_progress=False)
+        solver.solve_fp_system(_bump(x), potential_field=u, show_progress=False)
+    # the step without the flux is past the gate (s0 = 0.23): the message says so and names the scheme's remedy, and at
+    # q = 0 the guard refuses that step on its own, as it says (review 3 of #2840)
     assert "B-3" in str(caught.value)
+    assert "At q = 0 FP-FDM's guard refuses that step on its own" in str(caught.value)
+    unfluxed = FPFDMSolver(
+        _problem(grid, nt=2, t_end=0.2, sigma=0.05),
+        boundary_conditions=_segments(1, {"x_max": 0.0}),
+        advection_scheme="divergence_centered",
+    )
+    with pytest.raises(ValueError, match=r"advection_scheme='divergence_centered': density went to"):
+        unfluxed.solve_fp_system(_bump(x), potential_field=u, show_progress=False)
 
 
 def test_fem_is_refused_where_the_first_negative_is_off_the_flux_face():
@@ -529,8 +624,40 @@ def test_fem_is_refused_where_the_first_negative_is_off_the_flux_face():
     solver = FPFEMSolver(_problem(mesh, nt=2, t_end=0.2, sigma=0.3), boundary_conditions=_segments(1, {"x_max": 0.285}))
     x = solver._disc.dof_coordinates[:, 0]
     first = int(np.argmin(x))
-    with pytest.raises(ValueError, match=rf"at 1 DOF\(s\) in the step to t=0\.1, the most at DOF {first} "):
-        solver.solve_fp_system(M_initial=_bump(x), potential_field=np.broadcast_to(-2.0 * x, (3, x.size)).copy())
+    u = np.broadcast_to(-2.0 * x, (3, x.size)).copy()
+    with pytest.raises(ValueError, match=rf"at 1 DOF\(s\) in the step to t=0\.1, the most at DOF {first} ") as caught:
+        solver.solve_fp_system(M_initial=_bump(x), potential_field=u)
+    # the step without the flux is past the gate (s0 = 0.10): lowering q below q* hands the step to FP-FEM's clip, as the
+    # message says, and the solve runs (review 3 of #2840)
+    assert "Lowering q until the flux takes no node negative past the threshold hands the step to FP-FEM's clip" in str(
+        caught.value
+    )
+    lowered = FPFEMSolver(_problem(mesh, nt=2, t_end=0.2, sigma=0.3), boundary_conditions=_segments(1, {"x_max": 0.2}))
+    assert float(np.min(lowered.solve_fp_system(M_initial=_bump(x), potential_field=u))) >= 0.0
+
+
+def test_fp_fdm_names_the_inflow_remedy_on_centered_and_it_clears_the_row():
+    """An inflow, q = -3, into x_max on centered: its flux part goes negative off the wall, the step without it within
+    the gate, so B-3 names the scheme's switch to upwind; on upwind the same row solves (review 3 of #2840)."""
+    grid = _grid(1, 11)
+    x = np.asarray(grid.coordinates[0])
+    m_init = 1.0 + np.exp(-((x - 0.5) ** 2) / 0.02)
+    u = np.broadcast_to(-2.0 * x, (2, 11)).copy()
+
+    def solve(scheme):
+        solver = FPFDMSolver(
+            _problem(grid, nt=1, t_end=0.05, sigma=0.3),
+            boundary_conditions=_segments(1, {"x_max": -3.0}),
+            advection_scheme=scheme,
+        )
+        return solver.solve_fp_system(m_init, potential_field=u, show_progress=False)
+
+    with pytest.raises(
+        ValueError,
+        match=r"B-3\)\. 'divergence_centered' is not monotone.*for an inflow, use advection_scheme='divergence_upwind'",
+    ):
+        solve("divergence_centered")
+    assert float(np.min(solve("divergence_upwind"))) >= 0.0
 
 
 # ------------------------------------------------------------------------------------------------------ the refusals
