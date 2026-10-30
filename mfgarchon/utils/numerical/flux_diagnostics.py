@@ -8,7 +8,7 @@ For the Fokker-Planck equation:
     ∂m/∂t + ∇·J = 0
 
 where the probability flux is:
-    J = αm - D∇m  (advection + diffusion)
+    J = αm - ∇(D m)  (advection + diffusion; αm - D∇m for a constant D, #2841)
 
 Mass conservation requires:
     ∫_Ω ∂m/∂t dx = -∮_∂Ω J·n dS = 0  (for no-flux BC)
@@ -62,7 +62,7 @@ class BoundaryFluxResult:
             Positive = outward (leaving domain)
         net_flux: Total net flux out of domain (sum of all boundaries)
         advection_flux: Advection component of net flux (αm term)
-        diffusion_flux: Diffusion component of net flux (-D∇m term)
+        diffusion_flux: Diffusion component of net flux (the -∇(D m) term)
         is_conserved: Whether net_flux ≈ 0 within tolerance
     """
 
@@ -111,7 +111,7 @@ class FluxSummary:
 class FluxDiagnostics:
     """Flux diagnostics for Fokker-Planck mass conservation analysis.
 
-    Computes boundary fluxes J = αm - D∇m at each domain boundary
+    Computes boundary fluxes J = αm - ∇(D m) at each domain boundary
     to verify mass conservation and identify sources of mass loss.
     """
 
@@ -173,7 +173,7 @@ class FluxDiagnostics:
     ) -> BoundaryFluxResult:
         """Compute boundary flux for current density field.
 
-        The flux J = αm - D∇m is computed at each boundary.
+        The flux J = αm - ∇(D m) is computed at each boundary (αm - D∇m for a scalar D).
         Positive flux means mass is leaving through that boundary.
 
         Args:
@@ -298,7 +298,7 @@ class FluxDiagnostics:
     ) -> BoundaryFluxResult:
         """Compute 1D boundary flux.
 
-        J = αm - D(∂m/∂x)
+        J = αm - ∂(D m)/∂x
 
         At left boundary (x=0): J_left, positive = rightward
         At right boundary (x=L): J_right, positive = rightward
@@ -309,21 +309,20 @@ class FluxDiagnostics:
         # Total mass, on the grid's own measure (#2145)
         total_mass = float(integrate_on_weights(m, self._axis_weights(0, m.shape[0])))
 
-        # Diffusion coefficient handling
-        D_left = D if np.isscalar(D) else D[0]
-        D_right = D if np.isscalar(D) else D[-1]
+        # The diffusive flux of a varying D is -∂(D m)/∂x, Ito's (#2841); a scalar D keeps -D ∂m/∂x
+        q, D_left, D_right = (m, D, D) if np.isscalar(D) else (np.asarray(D) * m, 1.0, 1.0)
 
         # Left boundary flux (positive = into domain from left = entering)
-        # J_left = α[0]*m[0] - D*∂m/∂x|_0
-        # Using one-sided difference: ∂m/∂x|_0 ≈ (m[1] - m[0]) / dx
-        dm_dx_left = (m[1] - m[0]) / dx
+        # J_left = α[0]*m[0] - ∂(D m)/∂x|_0
+        # Using one-sided difference: ∂q/∂x|_0 ≈ (q[1] - q[0]) / dx
+        dm_dx_left = (q[1] - q[0]) / dx
         advection_left = alpha[0] * m[0]
         diffusion_left = -D_left * dm_dx_left
         J_left = advection_left + diffusion_left
 
         # Right boundary flux (positive = leaving domain)
         # J_right = α[-1]*m[-1] - D*∂m/∂x|_L
-        dm_dx_right = (m[-1] - m[-2]) / dx
+        dm_dx_right = (q[-1] - q[-2]) / dx
         advection_right = alpha[-1] * m[-1]
         diffusion_right = -D_right * dm_dx_right
         J_right = advection_right + diffusion_right
@@ -359,7 +358,7 @@ class FluxDiagnostics:
     ) -> BoundaryFluxResult:
         """Compute 2D boundary flux.
 
-        J = α·m - D∇m
+        J = α·m - ∇(D m)
 
         Integrate flux along each boundary edge.
         """
@@ -381,15 +380,15 @@ class FluxDiagnostics:
             alpha_x = alpha[..., 0]
             alpha_y = alpha[..., 1]
 
-        # Diffusion coefficient
-        D_val = D if np.isscalar(D) else np.mean(D)
+        # The diffusive flux of a varying D is -∇(D m), Ito's (#2841), not D's mean times -∇m; a scalar keeps -D ∇m
+        q, D_val = (m, D) if np.isscalar(D) else (np.asarray(D) * m, 1.0)
 
         boundary_fluxes = {}
         total_advection = 0.0
         total_diffusion = 0.0
 
         # Left boundary (x=0): integrate over y, outward normal = (-1, 0)
-        dm_dx_left = (m[1, :] - m[0, :]) / dx
+        dm_dx_left = (q[1, :] - q[0, :]) / dx
         adv_left = -alpha_x[0, :] * m[0, :]  # -α_x because normal is -x
         diff_left = D_val * dm_dx_left  # D*∂m/∂x, outward is -x so sign flips
         J_left = float(integrate_on_weights(adv_left + diff_left, w_y))
@@ -398,7 +397,7 @@ class FluxDiagnostics:
         total_diffusion += float(integrate_on_weights(diff_left, w_y))
 
         # Right boundary (x=L): outward normal = (+1, 0)
-        dm_dx_right = (m[-1, :] - m[-2, :]) / dx
+        dm_dx_right = (q[-1, :] - q[-2, :]) / dx
         adv_right = alpha_x[-1, :] * m[-1, :]
         diff_right = -D_val * dm_dx_right
         J_right = float(integrate_on_weights(adv_right + diff_right, w_y))
@@ -407,7 +406,7 @@ class FluxDiagnostics:
         total_diffusion += float(integrate_on_weights(diff_right, w_y))
 
         # Bottom boundary (y=0): outward normal = (0, -1)
-        dm_dy_bottom = (m[:, 1] - m[:, 0]) / dy
+        dm_dy_bottom = (q[:, 1] - q[:, 0]) / dy
         adv_bottom = -alpha_y[:, 0] * m[:, 0]
         diff_bottom = D_val * dm_dy_bottom
         J_bottom = float(integrate_on_weights(adv_bottom + diff_bottom, w_x))
@@ -416,7 +415,7 @@ class FluxDiagnostics:
         total_diffusion += float(integrate_on_weights(diff_bottom, w_x))
 
         # Top boundary (y=L): outward normal = (0, +1)
-        dm_dy_top = (m[:, -1] - m[:, -2]) / dy
+        dm_dy_top = (q[:, -1] - q[:, -2]) / dy
         adv_top = alpha_y[:, -1] * m[:, -1]
         diff_top = -D_val * dm_dy_top
         J_top = float(integrate_on_weights(adv_top + diff_top, w_x))
@@ -446,7 +445,7 @@ class FluxDiagnostics:
     ) -> BoundaryFluxResult:
         """Compute nD boundary flux for dimension >= 3.
 
-        J = α·m - D∇m
+        J = α·m - ∇(D m)
 
         Integrates flux over each boundary face (2 faces per dimension).
         For each dimension d, computes flux at x_d = min and x_d = max faces.
@@ -463,8 +462,8 @@ class FluxDiagnostics:
             # Vector velocity field: shape (*grid_shape, dimension)
             alpha_components = [alpha[..., d] for d in range(self.dimension)]
 
-        # Diffusion coefficient
-        D_val = D if np.isscalar(D) else float(np.mean(D))
+        # The diffusive flux of a varying D is -∇(D m), Ito's (#2841), not D's mean times -∇m; a scalar keeps -D ∇m
+        q, D_val = (m, D) if np.isscalar(D) else (np.asarray(D) * m, 1.0)
 
         boundary_fluxes = {}
         total_advection = 0.0
@@ -494,7 +493,7 @@ class FluxDiagnostics:
 
             # Low boundary (x_d = min): outward normal = -e_d
             # J_lo = -α_d * m - D * (-∂m/∂x_d) = -α_d * m + D * ∂m/∂x_d
-            dm_lo = (m[tuple(lo_next_slice)] - m[tuple(lo_slice)]) / h_d
+            dm_lo = (q[tuple(lo_next_slice)] - q[tuple(lo_slice)]) / h_d
             m_lo = m[tuple(lo_slice)]
             alpha_lo = alpha_d[tuple(lo_slice)]
 
@@ -509,7 +508,7 @@ class FluxDiagnostics:
 
             # High boundary (x_d = max): outward normal = +e_d
             # J_hi = α_d * m - D * ∂m/∂x_d
-            dm_hi = (m[tuple(hi_slice)] - m[tuple(hi_prev_slice)]) / h_d
+            dm_hi = (q[tuple(hi_slice)] - q[tuple(hi_prev_slice)]) / h_d
             m_hi = m[tuple(hi_slice)]
             alpha_hi = alpha_d[tuple(hi_slice)]
 

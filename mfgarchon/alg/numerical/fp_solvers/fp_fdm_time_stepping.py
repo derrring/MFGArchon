@@ -12,7 +12,8 @@ Functions:
     solve_timestep_full_nd: Implicit timestep solver for scalar diffusion
 
 Mathematical Background:
-    FP Equation: dm/dt + div(alpha * m) = (sigma^2/2) * Laplacian(m)
+    FP Equation: dm/dt + div(alpha * m) = Laplacian(D * m), D = sigma^2/2 per point (Ito; d_i d_j(A_ij m) for a tensor,
+    #2841)
 
     The implicit scheme solves:
         (I/dt + A + D) m^{n+1} = m^n / dt
@@ -97,7 +98,7 @@ from .fp_fdm_alg_divergence_centered import (
 )
 from .fp_fdm_alg_divergence_upwind import add_interior_entries_divergence_upwind
 from .fp_fdm_bc import add_boundary_no_flux_entries_divergence_upwind
-from .fp_fdm_operators import is_boundary_point
+from .fp_fdm_operators import is_boundary_point, ito_diffusion
 
 logger = get_logger(__name__)
 
@@ -270,7 +271,7 @@ def _refuse_flux_off_the_implicit_step(boundary_conditions: Any, path: str) -> N
     if _declares_flux(boundary_conditions):
         raise NotImplementedError(
             f"FP-FDM's {path} builds no prescribed-flux source, so a FLUX face would be solved as a no-flux wall "
-            "(#2581). The implicit step (a U-derived or velocity drift with a scalar volatility) honours FLUX."
+            "(#2581). The implicit step (a U-derived or velocity drift with a scalar or field volatility) honours FLUX."
         )
 
 
@@ -592,7 +593,7 @@ def solve_timestep_explicit_with_drift(
     Solve one timestep using semi-implicit scheme with direct drift.
 
     Uses operator splitting (Lie splitting):
-    1. Implicit diffusion: (I - dt*σ²/2*Δ) m* = m^k
+    1. Implicit diffusion: (I - dt*Δ(D ·)) m* = m^k, D = σ²/2 per point (Itô, #2841)
     2. Explicit advection: m^{k+1} = m* - dt * div(α * m*)
 
     This is unconditionally stable for diffusion while allowing direct drift.
@@ -647,18 +648,14 @@ def solve_timestep_explicit_with_drift(
 
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
     if varying_sigma:
-        # Issue #1183: per-point variable-coefficient diffusion. Bake the field D(x)=sigma(x)^2/2
-        # into a conservative finite-volume Laplacian (face-averaged D_{i+1/2}, wᵀL=0 preserved --
-        # the weighted statement since #2145; 1ᵀL is the uniform-weight one and does not hold),
-        # so a non-uniform sigma is honored per point instead of collapsed to its mean.
+        # Per-point sigma (#1183), as Ito diffusion Delta(D m) (#2841): the unit mass-conservative Laplacian acting on
+        # D m, so w^T L = 0 (the weighted statement since #2145) carries over to any D. The face-averaged div(D grad m)
+        # this replaced conserved mass too, but is the FP of another SDE.
         d_field = diffusion_from_volatility(sigma_arr, kind="field")
-        L_matrix = LaplacianOperator(
-            spacings=list(spacing),
-            field_shape=shape,
-            bc=boundary_conditions,
-            mass_conservative=True,
-            coefficient_field=d_field,
+        unit = LaplacianOperator(
+            spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
         ).as_scipy_sparse()
+        L_matrix = ito_diffusion({"laplacian": unit}, {"laplacian": d_field})
         A_diffusion = sparse.eye(N_total) / dt - L_matrix
     else:
         # Scalar (or uniform-array) sigma: unit mass-conservative Laplacian scaled by the scalar D.
@@ -890,7 +887,7 @@ def solve_fp_nd_full_system(
 
     Mathematical Formulation
     ------------------------
-    FP Equation: dm/dt + div(m * v) = (sigma^2/2) * Laplacian(m)
+    FP Equation: dm/dt + div(m * v) = Laplacian(D m), D = sigma^2/2 per point; d_i d_j(A_ij m) for a tensor (Ito, #2841)
 
     Direct Discretization:
         (I/dt + A + D) m^{n+1} = m^n / dt
@@ -1323,7 +1320,8 @@ def solve_timestep_tensor_explicit(
     """
     Solve one timestep with tensor diffusion using explicit Forward Euler.
 
-    Implements: m^{k+1} = m^k + dt * (div(D * grad(m)) - div(alpha * m)), D = 1/2 Sigma Sigma^T
+    Implements: m^{k+1} = m^k + dt * (d_i d_j(D_ij m) - div(alpha * m)), D = 1/2 Sigma Sigma^T, which is
+    div(D grad m) for a constant D (Ito, #2841)
 
     Parameters
     ----------
@@ -1396,14 +1394,29 @@ def solve_timestep_tensor_explicit(
     else:
         raise TypeError(f"tensor_field must be np.ndarray or callable, got {type(tensor_field)}")
 
-    # Compute tensor diffusion term: div(D * grad(m)).
+    # Compute the tensor diffusion term d_i d_j(D_ij m), div(D grad m) for a constant D.
     # Sigma is the SDE volatility; the diffusion operator needs the PDE diffusion tensor
     # D = (1/2) Sigma Sigma^T (docs/user/CONVENTIONS.md § Volatility and diffusion; Issue #811). The raw
     # Sigma was applied as if it were D — e.g. isotropic Sigma = 0.3 I gave effective D = 0.3
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
     D_tensor = diffusion_from_volatility(Sigma, kind="tensor")
-    diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions, geometry=grid)
+    if D_tensor.ndim == 2:
+        # a constant A: d_i d_j(A_ij m) is div(A grad m), the kernel's own form
+        diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions, geometry=grid)
+    else:
+        # A per point, or read from a callable: Ito diffusion d_i d_j(A_ij m) (#2841), each component's unit operator
+        # (the kernel at the unit tensor e_i e_j^T + e_j e_i^T, both off-diagonal entries for i < j) acting on A_ij m
+        def unit_operator(i: int, j: int) -> Callable[[np.ndarray], np.ndarray]:
+            e = np.zeros((ndim, ndim))
+            e[i, j] = e[j, i] = 1.0
+            tensor = np.broadcast_to(e, (*shape, ndim, ndim))
+            return lambda u: apply_diffusion(u, tensor, list(spacing), bc=boundary_conditions, geometry=grid)
+
+        pairs = [(i, j) for i in range(ndim) for j in range(i, ndim)]
+        diffusion_term = ito_diffusion(
+            {pair: unit_operator(*pair) for pair in pairs}, {(i, j): D_tensor[..., i, j] for i, j in pairs}
+        )(M_current)
 
     # Compute advection term: div(alpha * m)
     # Use upwind scheme from fp_fdm_advection module
@@ -1537,6 +1550,14 @@ def solve_timestep_full_nd(
     # They get a constraint row instead of a stencil row: they are not unknowns.
     repeated_rows: list[int] = []
 
+    # A volatility that varies in space is Ito diffusion, Delta(D m) (#2841): the rows below are then assembled with
+    # D = 0, and the handlers assemble their own unit stencil a second time (sigma = 1, so D = 1/2, with no time
+    # derivative and no advection), which `ito_diffusion` scales by D column by column. A row scaled by its own D_i
+    # was D Delta m, which does not conserve mass. The scalar and uniform-array paths are left as they were.
+    varying_sigma = isinstance(volatility, np.ndarray) and float(np.ptp(volatility)) > 1e-12
+    unit_rows: tuple[list[int], list[int], list[float]] = ([], [], [])
+    zero_u = np.zeros_like(u_flat) if varying_sigma else u_flat
+
     # Build matrix by iterating over all grid points
     for flat_idx in range(N_total):
         # Convert flat index to multi-index (i, j, k, ...)
@@ -1556,8 +1577,9 @@ def solve_timestep_full_nd(
             continue
 
         # Extract local diffusion coefficient (scalar or from spatially varying array)
-        if isinstance(volatility, np.ndarray):
-            # For spatially varying diffusion, extract value at this grid point
+        if varying_sigma:
+            sigma_local = 0.0
+        elif isinstance(volatility, np.ndarray):
             sigma_local = float(volatility[multi_idx])
         else:
             sigma_local = volatility
@@ -1611,6 +1633,10 @@ def solve_timestep_full_nd(
                 grid,
                 interface_velocity=interface_velocity,
             )
+            if varying_sigma:
+                _BOUNDARY_HANDLERS[advection_scheme](
+                    *unit_rows, flat_idx, multi_idx, shape, ndim, np.inf, 1.0, 0.0, spacing, zero_u, grid
+                )
         else:
             # Interior point or periodic boundary
             _INTERIOR_HANDLERS[advection_scheme](
@@ -1630,9 +1656,29 @@ def solve_timestep_full_nd(
                 boundary_conditions,
                 interface_velocity=interface_velocity,
             )
+            if varying_sigma:
+                _INTERIOR_HANDLERS[advection_scheme](
+                    *unit_rows,
+                    flat_idx,
+                    multi_idx,
+                    shape,
+                    ndim,
+                    np.inf,
+                    1.0,
+                    0.0,
+                    spacing,
+                    zero_u,
+                    grid,
+                    boundary_conditions,
+                )
 
     # Assemble sparse matrix
     A_matrix = sparse.coo_matrix((data_values, (row_indices, col_indices)), shape=(N_total, N_total)).tocsr()
+    if varying_sigma:
+        # the unit rows hold -L/2 (D = 1/2, 1/dt = 0); Dirichlet and repeated-endpoint rows carry no diffusion
+        unit_laplacian = -2.0 * sparse.coo_matrix((unit_rows[2], (unit_rows[0], unit_rows[1])), shape=A_matrix.shape)
+        d_field = diffusion_from_volatility(np.asarray(volatility), kind="field")
+        A_matrix = (A_matrix - ito_diffusion({"laplacian": unit_laplacian.tocsr()}, {"laplacian": d_field})).tocsr()
 
     # Right-hand side
     b_rhs = m_flat / dt

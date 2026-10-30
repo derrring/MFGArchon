@@ -60,7 +60,8 @@ class FPFDMSolver(BaseFPSolver):
     """
     Finite Difference Method (FDM) solver for Fokker-Planck equations.
 
-    Supports general FP equation: dm/dt + div(v*m) = (sigma^2/2) * Laplacian(m)
+    Supports general FP equation: dm/dt + div(v*m) = Laplacian(D*m), D = sigma^2/2 per point (Ito; d_i d_j(A_ij m)
+    for a tensor, #2841)
 
     Advection Scheme Options:
 
@@ -619,15 +620,15 @@ class FPFDMSolver(BaseFPSolver):
         ``build_advection_matrix(U).T`` instead, which missed it by up to 245 there (#2594).
 
         Mathematical Formulation:
-            FP equation: dm/dt + ∇·(vm) = (σ²/2) Δm
+            FP equation: dm/dt + ∇·(vm) = Δ(D m), D = σ²/2 per point (Itô, #2841)
 
             Discretized with A_advection_T (the transposed HJB linearisation):
                 (I/dt + A_advection_T + D) m^{k+1} = m^k / dt
 
             where:
             - A_advection_T: the HJB's linearised operator, transposed
-            - D: Diffusion matrix (built internally; symmetric for a CONSTANT diffusion, and
-              self-adjoint in the control-volume inner product in general -- see the Note)
+            - D: Diffusion matrix (built internally; self-adjoint in the control-volume inner product for a
+              constant diffusion, and the adjoint of the HJB's row-scaled diffusion for a per-point one -- see the Note)
             - I: Identity matrix
 
         Args:
@@ -652,12 +653,14 @@ class FPFDMSolver(BaseFPSolver):
             >>> M_next = fp_solver.solve_fp_step_adjoint_mode(M_current, J.T, volatility=sigma, time=t)
 
         Note:
-            ~~The diffusion operator is symmetric (D = D^T)~~ **[CORRECTED 2026-08-28, #2145]**.
-            It is self-adjoint in the CONTROL-VOLUME inner product, `W D` symmetric with
-            `W = diag(w)`, which is the statement a non-uniform control volume admits: the wall
-            rows carry `2/h²` where their neighbours' columns carry `1/h²`, so plain `D = Dᵀ`
-            would require the equal-volume mesh this grid is not. Measured on the varying-sigma
-            path: `max|D - Dᵀ|` 0.0 before #2145, 197.02 after; `max|WD - (WD)ᵀ|` is 0.0.
+            The unit Laplacian `L` is self-adjoint in the CONTROL-VOLUME inner product, `W L` symmetric with
+            `W = diag(w)`, which is the statement a non-uniform control volume admits: the wall rows carry
+            `2/h²` where their neighbours' columns carry `1/h²`, so plain `L = Lᵀ` would require the
+            equal-volume mesh this grid is not (#2145). A constant diffusion is `D L`, self-adjoint the same way.
+            A per-point one is `L diag(D)` (Itô, #2841), which is not self-adjoint but is the `L²(w)`-adjoint
+            of the row-scaled `diag(D) L` an HJB's `D Δu` assembles: `W L diag(D) = (diag(D) L)ᵀ W`. Measured
+            with sigma = 0.3 + 0.2x under NO_FLUX: 1.2e-14 in 1-D (n 41) and 0.0 in 2-D (n 9), where
+            `max|W L diag(D) - (W L diag(D))ᵀ|` is 1.0e-01 and 1.2e-02.
 
             The advection half is therefore the HJB's transpose, while the diffusion half is
             adjoint-consistent in `L²(w)` rather than in the unweighted inner product. Independent
@@ -712,7 +715,7 @@ class FPFDMSolver(BaseFPSolver):
         # The system below is I/dt + A^T - D with right-hand side m/dt and no Dirichlet row: the Laplacian's
         # Dirichlet stencil puts g = 0 one cell outside the wall (first order) and drops any other g -- a
         # uniform 0.7 solved identically to 0 (#2531). Refused rather than solved as something else.
-        from .fp_fdm_operators import is_boundary_point
+        from .fp_fdm_operators import is_boundary_point, ito_diffusion
         from .fp_fdm_time_stepping import (
             _declares_dirichlet,
             _is_dirichlet_at_point,
@@ -736,13 +739,11 @@ class FPFDMSolver(BaseFPSolver):
 
         # Build the diffusion matrix.
         if varying_sigma:
-            # Issue #1183: per-point variable-coefficient diffusion -- bake the field
-            # D(x) = sigma(x)^2/2 into a conservative finite-volume Laplacian (face-averaged
-            # D_{i+1/2}, mass-conserving) rather than collapsing sigma to its mean.
+            # Per-point sigma (#1183), as Ito diffusion Delta(D m) (#2841): the unit Laplacian acting on D m, the same
+            # owner the time stepping reads, rather than the face-averaged div(D grad m).
             d_field = diffusion_from_volatility(sigma_arr, kind="field")
-            diffusion_matrix = LaplacianOperator(
-                spacings=spacing, field_shape=shape, bc=bc, mass_conservative=True, coefficient_field=d_field
-            ).as_scipy_sparse()
+            unit = LaplacianOperator(spacings=spacing, field_shape=shape, bc=bc).as_scipy_sparse()
+            diffusion_matrix = ito_diffusion({"laplacian": unit}, {"laplacian": d_field})
         else:
             # Scalar (or uniform-array) sigma: scalar D times the (existing) Laplacian.
             scalar_sigma = float(sigma_arr.reshape(-1)[0]) if sigma_arr.ndim > 0 else float(sigma_val)

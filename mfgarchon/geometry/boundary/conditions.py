@@ -2413,7 +2413,8 @@ def flux_bc(
     """
     Create prescribed-flux boundary conditions for a Fokker-Planck solver: ``J.n = value`` (#2581).
 
-    ``J = alpha*m - D*grad(m)`` is the total flux and ``n`` the outward normal, so ``value`` (q) is mass per unit
+    ``J_i = alpha_i*m - d_j(A_ij*m)`` (``alpha*m - D*grad(m)`` for a constant D, #2841) is the total flux and ``n`` the
+    outward normal, so ``value`` (q) is mass per unit
     time per unit boundary measure, **outward positive**: ``q > 0`` takes mass out, ``q < 0`` puts it in, and
     ``q = 0`` is ``no_flux_bc``. It is not ``neumann_bc``: where the drift crosses the wall, ``J.n = q`` is not
     ``-D*dm/dn = q``.

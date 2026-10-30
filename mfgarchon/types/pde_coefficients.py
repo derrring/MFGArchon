@@ -33,7 +33,7 @@ class DriftCallable(Protocol):
         dx_t = α(t, x_t, m_t) dt + σ dW_t
 
     Mathematical formulation:
-        - FP equation: ∂m/∂t + ∇·(α m) = ∇·(D ∇m)
+        - FP equation: ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)   (Itô, the adjoint of the HJB's D:∇∇u; #2841)
         - HJB equation: -∂u/∂t + H(∇u, α) - D:∇∇u = 0
 
     Args:
