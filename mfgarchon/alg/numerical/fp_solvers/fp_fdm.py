@@ -91,7 +91,7 @@ class FPFDMSolver(BaseFPSolver):
         - Supports periodic, Dirichlet, and no-flux boundary conditions
 
     Required Geometry Traits (Issue #596 Phase 2.2A):
-        - SupportsLaplacian: Provides Δm operator for diffusion term (σ²/2) Δm
+        - SupportsLaplacian: Provides the Δ operator for the diffusion term Δ(D m), D = σ²/2 per point (Itô, #2841)
 
     Compatible Geometries:
         - TensorProductGrid (structured grids)

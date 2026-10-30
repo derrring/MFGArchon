@@ -233,8 +233,9 @@ class TestMFGCallableCoefficients:
 
         # Liveness: the spatially varying array must reach the solve. Byte-identity above establishes
         # that a dropped array falls back to exactly M_none, so any real difference proves it was read.
-        # Measured max|M - M_none| = 4.393; threshold 0.5 leaves ~9x margin.
-        assert np.abs(M - M_none).max() > 0.5, "spatially varying volatility array was ignored"
+        # Measured max|M - M_none| = 0.1506 under the Ito diffusion (#2841); the 4.393 measured before was
+        # the row-scaled step's, whose mass gain inflated it. Threshold 0.01 leaves ~15x margin.
+        assert np.abs(M - M_none).max() > 0.01, "spatially varying volatility array was ignored"
 
 
 if __name__ == "__main__":

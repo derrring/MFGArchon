@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 
-def ito_diffusion(unit: Mapping[Any, Any], coefficients: Mapping[Any, np.ndarray]) -> Any:
+def ito_diffusion(unit: Mapping[Any, Any], coefficients: Mapping[Any, float | np.ndarray]) -> Any:
     """The Fokker-Planck diffusion of a spatially varying A, in Ito form: ``sum_ij d_i d_j (A_ij m)`` (#2841).
 
     The FP equation of ``dX = alpha dt + Sigma dW`` is ``d_t m + div(alpha m) = d_i d_j (A_ij m)`` with
@@ -58,12 +58,16 @@ def ito_diffusion(unit: Mapping[Any, Any], coefficients: Mapping[Any, np.ndarray
             f"ito_diffusion: unit keys {sorted(map(str, unit))} != coefficient keys {sorted(map(str, coefficients))}"
         )
     if all(sparse.issparse(op) for op in unit.values()):
-        return sum(op @ sparse.diags(np.asarray(coefficients[k], dtype=float).ravel()) for k, op in unit.items())
+        terms = [op @ sparse.diags(np.asarray(coefficients[k], dtype=float).ravel()) for k, op in unit.items()]
+        return sparse.csr_matrix(sum(terms[1:], terms[0]))
     if all(callable(op) for op in unit.values()):
         ops: dict[Any, Callable[[np.ndarray], np.ndarray]] = dict(unit)
 
         def apply(m: np.ndarray) -> np.ndarray:
-            return sum(ops[k](np.asarray(coefficients[k], dtype=float) * m) for k in ops)
+            total = np.zeros(np.shape(m))
+            for k, op in ops.items():
+                total = total + op(np.asarray(coefficients[k], dtype=float) * m)
+            return total
 
         return apply
     raise TypeError("ito_diffusion: the unit operators must all be sparse matrices or all be callables")

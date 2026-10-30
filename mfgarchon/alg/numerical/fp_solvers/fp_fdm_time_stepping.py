@@ -1400,7 +1400,7 @@ def solve_timestep_tensor_explicit(
     # Sigma was applied as if it were D — e.g. isotropic Sigma = 0.3 I gave effective D = 0.3
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
-    D_tensor = diffusion_from_volatility(Sigma, kind="tensor")
+    D_tensor = np.asarray(diffusion_from_volatility(Sigma, kind="tensor"))
     if D_tensor.ndim == 2:
         # a constant A: d_i d_j(A_ij m) is div(A grad m), the kernel's own form
         diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions, geometry=grid)
