@@ -292,10 +292,11 @@ def _refuse_cap_off_the_implicit_step(boundary_conditions: Any, path: str) -> No
 
 def _refuse_an_inadmissible_cap(boundary_conditions: Any) -> None:
     """Every ``flux_capacity`` the BC carries is one FP-FDM honours, or the BC is refused (#2581, PR 2a): a cap goes on
-    a DIRICHLET segment whose value is the number 0, and is a real c, finite and >= 0, and not a bool.
+    a DIRICHLET segment whose value is the number 0, and is a real c that a float holds, finite and >= 0, and not a bool.
 
-    The one owner of that check. The solver's constructor reads it, and so does the step, which can be handed a BC the
-    constructor never saw: one set on the solver after construction, or ``solve_fp_nd_full_system`` called directly.
+    The one owner of that check. Three sites read it: the solver's constructor; ``solve_fp_nd_full_system``, before it
+    writes level 0; and the step, ``solve_timestep_full_nd``. The last two can be handed a BC the constructor never
+    saw: one set on the solver after construction, or either called directly.
     """
     for segment in getattr(boundary_conditions, "segments", None) or ():
         c = segment.flux_capacity
@@ -318,12 +319,12 @@ def _refuse_an_inadmissible_cap(boundary_conditions: Any) -> None:
             admissible = (
                 not isinstance(c, bool) and isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0
             )
-        except OverflowError:  # an integer or a fraction past float's range is no finite cap
+        except OverflowError:  # an integer or a fraction past float's range is finite, but no float holds it
             admissible = False
         if not admissible:
             raise ValueError(
                 f"FP-FDM: segment {segment.name!r} has flux_capacity {c!r}; a cap is a finite mass per unit time per "
-                "unit boundary measure, >= 0, not a bool, and no cap is None (#2581)."
+                "unit boundary measure, >= 0, within float's range, not a bool, and no cap is None (#2581)."
             )
 
 

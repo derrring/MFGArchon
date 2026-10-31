@@ -29,10 +29,14 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None
     it (user ruling, 2026-10-31): paired with an HJB that reads u = g at the exit it is not an equilibrium, since as
     c -> 0 the FP side becomes a wall while the HJB side stays an exit (user ruling, 2026-10-10).
 
-    Read when the coupled solve runs, on each FP solver's own ``boundary_conditions``: FP-FDM, the one FP family that
-    honours a cap, keeps there the BC it imposes, a BC set after it was handed over included. A solver that keeps
-    none there honours no cap; every other FP family refuses one itself (#2575). Every coupled solver that holds an
-    FP solver calls this.
+    Read when the coupled solve runs, on the ``boundary_conditions`` of each FP solver the coupled solver was handed:
+    FP-FDM, the one FP family that honours a cap, keeps there the BC it imposes, a BC set after it was handed over
+    included, and every other FP family refuses a cap itself (#2575). Every coupled solver that holds an FP solver
+    calls this.
+
+    The limit: this reads the object handed over, not what it delegates to. A user's object that wraps a capped
+    FP-FDM and does not expose its ``boundary_conditions`` is not seen, and the cap is honoured inside the coupled
+    solve, as in a user's own loop around ``solve_fp_system`` (user ruling, 2026-11-01).
     """
     for fp_solver in fp_solvers:
         bc = getattr(fp_solver, "boundary_conditions", None)

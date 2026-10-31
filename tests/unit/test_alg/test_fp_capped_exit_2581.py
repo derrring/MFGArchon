@@ -402,6 +402,8 @@ REFUSALS = {
         r"Make every face that meets the capped",
     ),
     "a coupled solve": (lambda: _coupled(_bc(1, CAP)), NotImplementedError, r"standalone FP solve only"),
+    # c = 0 is a cap FP-FDM honours, the limit the 2026-10-10 ruling turns on, not an absent one (review 3 of #2849)
+    "a zero cap in a coupled solve": (lambda: _coupled(_bc(1, 0.0)), NotImplementedError, r"standalone FP solve only"),
     "a cap set after the coupled solver is built": (
         lambda: _coupled_set_after(),
         NotImplementedError,
@@ -484,7 +486,9 @@ COUPLED = {
 @pytest.mark.parametrize("route", sorted(COUPLED))
 def test_every_coupled_solver_refuses_a_capped_fp(route: str):
     """A capped exit is offered for a standalone FP solve only (user rulings 2026-10-10 and 2026-10-31): every coupled
-    solver that holds an FP solver refuses one whose BC carries a cap, by name, when it solves. Its remedy, the FP
-    solved alone, is the coupled REFUSALS row's."""
+    solver that holds an FP solver refuses one whose BC carries a cap, by name. Each row caps every FP solver before
+    the coupled solver is built, so the rows pin that each site refuses, not that it reads at solve: that is pinned for
+    the fixed point alone, by the REFUSALS row that caps after it is built. Its remedy, the FP solved alone, is the
+    coupled REFUSALS row's."""
     with pytest.raises(NotImplementedError, match=r"standalone FP solve only"):
         COUPLED[route]()
