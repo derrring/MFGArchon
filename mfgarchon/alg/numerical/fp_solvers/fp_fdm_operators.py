@@ -86,6 +86,11 @@ def shared_at_repeated_endpoints(values: np.ndarray, boundary_conditions: Any, s
 
     if boundary_conditions is None or not declares_periodic(boundary_conditions):
         return values
+    if np.shape(values)[: len(shape)] != tuple(shape):
+        raise ValueError(
+            f"a coefficient of shape {np.shape(values)} does not lead with the grid's shape {tuple(shape)}: a "
+            "per-point volatility for one step is spatial, its time axis already read"
+        )
     shared = np.array(values, dtype=float, copy=True)
     for idx in np.ndindex(*shape):
         if is_boundary_point(idx, shape, len(shape)):

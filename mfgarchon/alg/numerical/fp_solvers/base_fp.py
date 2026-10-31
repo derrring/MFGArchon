@@ -55,7 +55,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
     Diffusion Types (controlled by the volatility parameter; an array declares volatility_kind):
         - Constant isotropic: D = σ²/2 (scalar, same in all directions)
-        - Anisotropic: D = diag(σ₁², σ₂², ...) (different per direction)
+        - Anisotropic: D = diag(σ₁², σ₂², ...)/2 (different per direction)
         - Spatially varying: D(t,x) (depends on location)
         - State-dependent: D(t,x,m) (nonlinear, depends on density)
         - Zero: D = 0 (pure advection, requires WENO/SL)

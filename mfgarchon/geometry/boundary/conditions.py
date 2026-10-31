@@ -2417,7 +2417,7 @@ def flux_bc(
     outward normal, so ``value`` (q) is mass per unit
     time per unit boundary measure, **outward positive**: ``q > 0`` takes mass out, ``q < 0`` puts it in, and
     ``q = 0`` is ``no_flux_bc``. It is not ``neumann_bc``: ``J.n = q`` and ``-D*dm/dn = q`` differ by
-    ``(v.n - dD/dn)*m``, so they part wherever the drift crosses the wall or D varies across it.
+    ``(v.n - dD/dn)*m``, so they part wherever ``v.n != dD/dn``.
 
     Pass it to the FP solver as its own ``boundary_conditions``. It is FP-side only, so a problem or geometry
     carrying it is refused, since that BC is shared with the HJB (user ruling 2026-10-09, B-2). ``FPFDMSolver``

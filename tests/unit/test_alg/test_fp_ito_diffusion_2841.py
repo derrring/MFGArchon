@@ -214,11 +214,11 @@ def _one_solve(grid, path: str, m0: np.ndarray, nt: int, dt: float, bc, **volati
             steps.append(solver.solve_fp_step_adjoint_mode(steps[-1], sparse.csr_matrix((n, n)), **volatility))
         return np.asarray(steps)
     if path == "explicit_callable_drift":
-        return np.asarray(
-            solver.solve_fp_system(
-                m0, drift_field=lambda t, xx, mm: 0.2 * np.ones_like(mm), show_progress=False, **volatility
-            )
-        )
+
+        def drift(t, xx, mm):
+            return 0.2 * (np.ones_like(mm) if m0.ndim == 1 else np.ones((m0.ndim, *np.shape(mm))))
+
+        return np.asarray(solver.solve_fp_system(m0, drift_field=drift, show_progress=False, **volatility))
     u = np.broadcast_to(0.1 * np.cos(2 * np.pi * _nodes(grid)[0]), (nt + 1, *m0.shape)).copy()
     return np.asarray(solver.solve_fp_system(m0, potential_field=u, show_progress=False, **volatility))
 
@@ -230,6 +230,7 @@ def _one_solve(grid, path: str, m0: np.ndarray, nt: int, dt: float, bc, **volati
         ("implicit", 2, "no_flux"),
         ("explicit_callable_drift", 1, "no_flux"),
         ("adjoint_mode", 1, "no_flux"),
+        ("implicit", 1, "periodic"),
         ("explicit_callable_drift", 1, "periodic"),
         ("adjoint_mode", 1, "periodic"),
     ],
@@ -250,8 +251,8 @@ def test_a_nearly_uniform_field_is_the_scalar_step(path: str, dim: int, wall: st
 
 
 def test_a_dirichlet_wall_holds_its_value_under_a_field_volatility():
-    """The implicit step's Dirichlet rows are constraints, m = g, and carry no diffusion of their own (the owner drops
-    them from the unit stencil); under a field the wall still reads g at every step."""
+    """The implicit step's Dirichlet rows are constraints, m = g, and carry no diffusion of their own (its assembly
+    leaves them out of the unit stencil); under a field the wall still reads g at every step."""
     n, nt, dt, g = 21, 5, 0.05, 0.3
     grid = _grid(1, n)
     x = _nodes(grid)[0]
@@ -272,22 +273,103 @@ def test_a_dirichlet_wall_holds_its_value_under_a_field_volatility():
     assert np.allclose(np.asarray(m)[1:, 0], g, rtol=0, atol=1e-13), np.asarray(m)[1:, 0]
 
 
-@pytest.mark.parametrize("path", ["implicit", "explicit_callable_drift", "adjoint_mode", "tensor"])
-def test_a_periodic_grid_keeps_its_seam_and_its_mass_under_a_field(path: str):
-    """On an endpoint-inclusive periodic grid the last node is the first, so it has one coefficient: a sigma that
-    differs at its two copies (0.3 + 0.2x) is read at the first, and the step conserves mass and keeps the copies equal. The
-    tensor is a per-point anisotropic Sigma, 2-D."""
-    dim, n, nt, dt = (2, 9, 10, 0.002) if path == "tensor" else (1, 21, 10, 0.05)
+@pytest.mark.parametrize(
+    ("path", "dim"),
+    [
+        ("implicit", 1),
+        ("explicit_callable_drift", 1),
+        ("explicit_callable_drift", 2),
+        ("adjoint_mode", 1),
+        ("tensor", 2),
+    ],
+)
+def test_a_periodic_grid_reads_its_seam_at_the_first_copy(path: str, dim: int):
+    """On an endpoint-inclusive periodic grid the last node is the first, so it has one coefficient, every component of
+    A included. With a sigma that differs at its two copies (0.3 + 0.2x), and for the tensor an off-diagonal that does
+    too, each step equals bit for bit the step on sigma with its first copy written into the last, as the implicit
+    step's constraint rows read it (#1822); and it conserves mass and keeps the copies equal."""
+    n, nt, dt = (9, 10, 0.002) if path == "tensor" else ((9, 10, 0.05) if dim == 2 else (21, 10, 0.05))
     bc = periodic_bc(dimension=dim)
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=bc)
     x = _nodes(grid)
     m0 = 1 + 0.5 * np.cos(2 * np.pi * x[0]) + (0.3 * np.cos(2 * np.pi * x[1]) if dim == 2 else 0.0)
     sigma = 0.3 + 0.2 * x[0]
     if path == "tensor":
-        volatility = {"volatility": _tensor(sigma, 0.25 + 0.1 * x[1], 0.05), "volatility_kind": "tensor"}
-        m = _one_solve(grid, "implicit", m0, nt, dt, bc, **volatility)
+        volatility, kind = _tensor(sigma, 0.25 + 0.1 * x[1], 0.05 * (1 + x[0] + x[1])), "tensor"
     else:
-        m = _one_solve(grid, path, m0, nt, dt, bc, volatility=sigma, volatility_kind="field")
+        volatility, kind = sigma, "field"
+
+    def first_copy(a: np.ndarray) -> np.ndarray:
+        a = np.array(a, copy=True)
+        for axis in range(dim):
+            last, first = [slice(None)] * a.ndim, [slice(None)] * a.ndim
+            last[axis], first[axis] = -1, 0
+            a[tuple(last)] = a[tuple(first)]
+        return a
+
+    def run(v: np.ndarray) -> np.ndarray:
+        return _one_solve(
+            grid, "implicit" if path == "tensor" else path, m0, nt, dt, bc, volatility=v, volatility_kind=kind
+        )
+
+    m = run(volatility)
+    assert np.array_equal(m, run(first_copy(volatility)))
     mass = _mass(grid, m)
     assert np.max(np.abs(mass / mass[0] - 1)) < 1e-12, mass / mass[0] - 1
     assert np.max(np.abs(np.take(m[-1], -1, axis=0) - np.take(m[-1], 0, axis=0))) < 1e-12
+
+
+@pytest.mark.parametrize("off_diagonal", ["zero_on_a_line", "negative"])
+def test_the_tensor_step_is_the_ito_sum_component_by_component(off_diagonal: str):
+    """One tensor step with no drift is m0 + dt sum_{i<=j} U_ij(A_ij m0), U_ij the diffusion kernel at the unit tensor
+    of the component (e_i e_i^T, or e_i e_j^T + e_j e_i^T for i < j). An off-diagonal that is zero on a line, or
+    negative, is still a component of A and is summed."""
+    from mfgarchon.operators.differential.diffusion import apply_diffusion
+    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+    n, dt = 9, 0.002
+    grid = _grid(2, n)
+    x = _nodes(grid)
+    s_xy = 0.05 * (x[0] - 0.5) if off_diagonal == "zero_on_a_line" else np.full(x[0].shape, -0.05)
+    sigma = _tensor(0.3 + 0.2 * x[0], 0.25 + 0.1 * x[1], s_xy)
+    m0 = 1 + 0.5 * np.cos(np.pi * x[0]) + 0.3 * np.cos(np.pi * x[1])
+    m1 = FPFDMSolver(_problem(grid, 1, dt), boundary_conditions=no_flux_bc(dimension=2)).solve_fp_system(
+        m0, potential_field=np.zeros((2, n, n)), volatility=sigma, volatility_kind="tensor", show_progress=False
+    )[-1]
+    a = np.asarray(diffusion_from_volatility(sigma, kind="tensor"))
+    expected = np.zeros_like(m0)
+    for i, j in ((0, 0), (0, 1), (1, 1)):
+        e = np.zeros((2, 2))
+        e[i, j] = e[j, i] = 1.0
+        unit = np.broadcast_to(e, (n, n, 2, 2))
+        expected = expected + apply_diffusion(a[..., i, j] * m0, unit, [1.0 / (n - 1)] * 2, bc=no_flux_bc(dimension=2))
+    expected = m0 + dt * expected
+    assert np.max(np.abs(m1 - expected)) < 1e-13 * np.max(m0), np.max(np.abs(m1 - expected))
+
+
+def test_a_diagonal_per_point_tensor_is_refused_for_its_wall_not_for_an_off_diagonal():
+    """A partly no-flux BC is refused on the tensor step by its advection (a Dirichlet wall exchanges mass); a diagonal
+    per-point Sigma has no off-diagonal component, so that is the refusal, not the kernel's off-diagonal one."""
+    n = 9
+    grid = _grid(2, n)
+    x = _nodes(grid)
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(
+                name=f,
+                bc_type=BCType.DIRICHLET if f == "x_min" else BCType.NO_FLUX,
+                value=0.2 if f == "x_min" else 0.0,
+                boundary=f,
+            )
+            for f in ("x_min", "x_max", "y_min", "y_max")
+        ],
+    )
+    with pytest.raises(NotImplementedError, match="mass_conservative divergence supports only"):
+        FPFDMSolver(_problem(grid, 1, 0.002), boundary_conditions=bc).solve_fp_system(
+            np.ones((n, n)),
+            potential_field=np.zeros((2, n, n)),
+            volatility=_tensor(0.3 + 0.2 * x[0], 0.25 + 0.1 * x[1], 0.0),
+            volatility_kind="tensor",
+            show_progress=False,
+        )
