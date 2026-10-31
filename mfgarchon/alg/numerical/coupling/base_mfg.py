@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.alg.base_solver import BaseNumericalSolver
+from mfgarchon.geometry.boundary import BoundaryConditions
+
 # Issue #2207: the builders below COMPOSE the problem's source rather than receiving one,
 # so this module is the single consumer of the #1361 composition owner for every
 # BaseCouplingIterator subclass. Runtime, not TYPE_CHECKING -- it is called, not annotated.
@@ -33,17 +36,15 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, hjb_solvers: Any, w
     Read when the coupled solve runs, on every BC its solvers read. An FP solver's is its own ``boundary_conditions``:
     FP-FDM, the one FP family that honours a cap, keeps there the BC it imposes, a BC set after it was handed over
     included; every other FP family refuses a cap itself (#2575). An HJB solver's is its own BC or the problem's shared
-    one, from that solver's `get_boundary_conditions` (#2530). A solver that exposes neither reads no cap. Every coupled
-    solver that holds an FP solver calls this.
+    one, from its `get_boundary_conditions` (#2530). A stand-in that is no solver, or a BC that is no
+    ``BoundaryConditions``, carries no cap to read. Every coupled solver that holds an FP solver calls this.
     """
     read = [(fp_solver, getattr(fp_solver, "boundary_conditions", None)) for fp_solver in fp_solvers]
-    for hjb_solver in hjb_solvers:
-        lookup = getattr(hjb_solver, "get_boundary_conditions", None)
-        read.append((hjb_solver, lookup() if callable(lookup) else None))
+    read += [(hjb, hjb.get_boundary_conditions()) for hjb in hjb_solvers if isinstance(hjb, BaseNumericalSolver)]
     for solver, bc in read:
-        capped = sorted(
-            seg.name for seg in getattr(bc, "segments", None) or () if getattr(seg, "flux_capacity", None) is not None
-        )
+        if not isinstance(bc, BoundaryConditions):
+            continue
+        capped = sorted(seg.name for seg in bc.segments if seg.flux_capacity is not None)
         if capped:
             raise NotImplementedError(
                 f"{where}: {type(solver).__name__} reads boundary conditions that cap the exit(s) {capped} "
