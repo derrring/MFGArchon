@@ -573,10 +573,9 @@ class BCSegment:
 
     priority: int = 0
 
-    # Flux-limited absorption (for DIRICHLET exits)
-    # Units: mass/time for density methods, particles/time for Lagrangian methods
-    # None = unlimited (instant absorption)
-    # No FP solver honours a cap yet; every FP solver that takes a segment BC refuses one carrying it (#2575).
+    # Flux-limited absorption (for DIRICHLET exits): a capacity c per unit boundary measure, mass per unit time, the
+    # same unit for every family (#2581, ruling A-1); the exit is m >= 0, J.n <= c, m (c - J.n) = 0. None = no cap.
+    # FP-FDM honours it on a DIRICHLET(0) exit of its own BC (#2581); every other FP solver refuses it (#2575).
     flux_capacity: float | None = None
 
     @property

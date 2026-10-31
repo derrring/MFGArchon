@@ -24,6 +24,35 @@ else:
     pass
 
 
+def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None:
+    """A capped exit (``flux_capacity``, #2581) is offered for a standalone FP solve only, so a coupled solve refuses
+    it (user ruling, 2026-10-31): paired with an HJB that reads u = g at the exit it is not an equilibrium, since as
+    c -> 0 the FP side becomes a wall while the HJB side stays an exit (user ruling, 2026-10-10).
+
+    Read when the coupled solve runs, on the ``boundary_conditions`` of each FP solver the coupled solver was handed:
+    FP-FDM, the one FP family that honours a cap, keeps there the BC it imposes, a BC set after it was handed over
+    included, and every other FP family refuses a cap itself (#2575). Every coupled solver that holds an FP solver
+    calls this.
+
+    The limit: this reads the object handed over, not what it delegates to. A user's object that wraps a capped
+    FP-FDM and does not expose its ``boundary_conditions`` is not seen, and the cap is honoured inside the coupled
+    solve, as in a user's own loop around ``solve_fp_system`` (user ruling, 2026-11-01).
+    """
+    for fp_solver in fp_solvers:
+        bc = getattr(fp_solver, "boundary_conditions", None)
+        capped = sorted(
+            seg.name for seg in getattr(bc, "segments", None) or () if getattr(seg, "flux_capacity", None) is not None
+        )
+        if capped:
+            raise NotImplementedError(
+                f"{where}: {type(fp_solver).__name__}'s boundary conditions cap the exit(s) {capped} (flux_capacity). "
+                "A capped exit is offered for a standalone FP solve only: paired with an HJB that reads u = g at the "
+                "exit it is not an equilibrium, since as c -> 0 the FP side becomes a wall while the HJB side stays an "
+                "exit (user rulings of 2026-10-10 and 2026-10-31, #2581). Solve the FP alone, "
+                "fp_solver.solve_fp_system(M_initial, potential_field=U), or remove the cap for the coupled solve."
+            )
+
+
 def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
     """Fail loud if ``problem`` carries a dynamic BC provider this coupling loop cannot resolve.
 

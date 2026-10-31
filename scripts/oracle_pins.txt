@@ -7,7 +7,7 @@
 # requires every test pytest collects from that file to pass. A target of `-` declares a part nothing
 # pins yet: it counts in the denominator and keeps its label unmet. A label is met only when it has at
 # least one target, no `-` part, and every one of its targets passed. Kinds:
-#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 72 cells: for each family counted so far, each BC
+#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 74 cells: for each family counted so far, each BC
 #               it declares in `_SUPPORTED_BC_TYPES` x dimension 1 and 2, on its default configuration, and HJB-GFDM's
 #               cells for each distinct discrete equation it ships. (a) covers every shipped family (comment
 #               6395444642, user ruling 2026-10-25, confirming 6014400413); an off-default family -- HJB-SL, HJB-WENO,
@@ -16,7 +16,10 @@
 #               (#2584). The network solvers declare none either (`_SUPPORTED_BC_TYPES` is None); whether their
 #               node-level BCs form cells, a separate type system in 6014400413, is ruled when their batch comes. An FP
 #               family's DIRICHLET is two cells, an exit (the shared BC, m = 0) and a prescribed density (an explicit
-#               FP BC, m = g)
+#               FP BC, m = g). A ``flux_capacity`` an FP family honours on its exit adds a boundary equation, the
+#               complementarity m >= 0, J.n <= c, m (c - J.n) = 0, that no type's cell reaches, so it is two more cells,
+#               capped_exit x dimension, on the DIRICHLET exit/density split's precedent (#2581, the approver's ruling
+#               on PR 2a's plan, 2026-10-31)
 #   row         a (b) row of #2512 (comment 6054006841), labelled <grid|network>/<row>
 #   convention  a convention ruled 2026-10-08, labelled C1-C6 as #2429 numbers them
 #   pin         a pin a batch rests on that is not a cell itself
@@ -72,7 +75,7 @@ pin    hjb_fem/coverage       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.p
 pin    hjb_fem/whole_file     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py
 pin    hjb_fem/boundary_tags  tests/unit/test_alg/test_fem_boundary_tags_2540.py
 
-# FP-FDM: 12 cells. Dirichlet is two cells: as an exit (a shared Dirichlet, m = 0) and as a prescribed
+# FP-FDM: 14 cells. Dirichlet is two cells: as an exit (a shared Dirichlet, m = 0) and as a prescribed
 # density (an explicit FP BC, m = g). Each cell's oracle compares the returned density with an exact one and asserts
 # its wall nodes; `test_fp_fdm_bc_oracles_2512.py` records the rival each of its fixtures separates. The exit and
 # density oracles are drift-free; the no-flux and periodic ones take the drift through `potential_field`.
@@ -105,6 +108,10 @@ oracle fp_fdm/flux_1d                tests/unit/test_alg/test_fp_flux_bc_2581.py
 oracle fp_fdm/flux_1d                tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_1d]
 oracle fp_fdm/flux_2d                tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_2d]
 oracle fp_fdm/flux_2d                tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_2d]
+# The capped-exit cells (#2581, PR 2a): a manufactured solution on the saturated branch, J.n = c with m > 0 at the exit
+# and a drift into it, at first order, the record's rate c |exit| at every step, and the absorbing exit as the rival.
+oracle fp_fdm/capped_exit_1d         tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]
+oracle fp_fdm/capped_exit_2d         tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]
 
 # FP-FEM: 14 cells. Dirichlet is two cells, as for every FP family that declares it: the shared exit and the explicit
 # route's prescribed density (#2532), whose route is pinned below. The density cells' oracle is drift-free and exact to
