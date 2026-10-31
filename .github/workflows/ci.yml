@@ -6,15 +6,8 @@ name: CI/CD Pipeline
 #
 
 on:
-  # Lightweight checks on PRs
+  # Lightweight checks on every PR: no paths filter, so no PR goes without them (#1659)
   pull_request:
-    paths:
-      - 'mfgarchon/**/*.py'
-      - 'tests/**/*.py'
-      - 'pyproject.toml'
-      - '.github/workflows/ci.yml'
-      - '.pre-commit-config.yaml'
-      - 'scripts/update_ruff_version.py'   # decides which ruff this workflow installs
 
   # Full checks on main branch pushes
   push:
@@ -236,7 +229,9 @@ jobs:
         # Naming a path git no longer tracks makes pytest collect NOTHING and report
         # "no tests ran" -- which is how this was found, and it is invisible locally because
         # a stale __pycache__ leaves the directory present in a working tree.
-        pytest tests/unit/test_core -v \
+        # tests/unit/test_backends runs here since #1659; a test that needs torch skips on the
+        # test itself (importorskip), not by a workflow flag.
+        pytest tests/unit/test_core tests/unit/test_backends -v \
           -n auto \
           -m "not slow and not optional_torch and not benchmark and not experimental and not environment" \
           --junitxml=junit.xml -o junit_family=legacy --maxfail=10 \
