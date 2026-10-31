@@ -207,13 +207,14 @@ def test_the_numpy_backend_does_not_import_a_solver_it_never_uses(pkg):
     # comment conflated them. What actually holds, checked per workflow at the pytest invocation
     # and not at the pip line:
     #
-    #   nightly.yml          [numerical]+numba, `pytest tests/unit` ignoring only test_backends/
-    #                        and test_visualization/  -> collected, ASSERTS
+    #   nightly.yml          [numerical]+numba, `pytest tests/unit` ignoring only
+    #                        test_visualization/, which holds no tests  -> collected, ASSERTS
     #   discrimination.yml   [numerical]+numba, via scripts/test_discrimination.py -> ASSERTS
     #   deprecation-check.yml  installs both and never invokes pytest at all -> does not run this
     #   python-compat.yml    no extras -> collected, SKIPS
-    #   ci.yml               no extras; on pull_request it runs only tests/unit/test_core, so this
-    #                        file is NOT COLLECTED. It is collected on `release`, where it skips.
+    #   ci.yml               no extras; on pull_request it runs only tests/unit/test_core and
+    #                        tests/unit/test_backends, so this file is NOT COLLECTED. It is
+    #                        collected on `release`, where it skips.
     #
     # So the guard is live on exactly two runners. The torch guard above was vacuous on nightly for
     # a different reason -- torch is in `[nn]`/`[all]`, which nightly does not install.

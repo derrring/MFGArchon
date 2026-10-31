@@ -7,7 +7,7 @@
   float64-on-MPS.
 
   Neither was reached by any automatic tier: `pytestmark = pytest.mark.optional_torch`, and the
-  gate (`scripts/ci_markers.txt`) and `nightly.yml:135` both deselect that marker, so the family
+  gate (`scripts/ci_markers.txt`) and `nightly.yml`'s shard step both deselect that marker, so the family
   runs only on a release -- and the last release was 2026-07-04. Measured 2026-09-02: the family
   was `2 failed, 21 passed` and is now green. Whether the marker gets a tier is item 3 of #2210
   and stays open.

@@ -82,13 +82,11 @@ jobs:
         # removes that observable, so the install has to prove itself here instead.
         python -c "import cvxpy; print('cvxpy', cvxpy.__version__)"
 
-    # NOTE: --paths defaults to `tests`, which includes tests/unit/test_visualization.
-    # nightly.yml deliberately --ignores it (see its comment: it "runs in no AUTOMATIC
-    # workflow"), so this is the only automatic tier that collects it.
-    # tests/unit/test_backends runs in every tier since #1659. The marker set here is
-    # byte-identical to local_ci.sh, but if a test is red on a runner the baseline gate
+    # NOTE: --paths defaults to `tests`. tests/unit/test_visualization, which nightly.yml
+    # and python-compat.yml --ignore, tracks only __init__.py, so there is nothing in it to
+    # collect; tests/unit/test_backends runs in every tier since #1659. The marker set here
+    # is byte-identical to local_ci.sh, and if a test is red on a runner the baseline gate
     # aborts the whole job with a clear message rather than producing a wrong number.
-    # Exercise once via workflow_dispatch before trusting the schedule.
     - name: Sweep and compare against the baseline
       env:
         OMP_NUM_THREADS: 1

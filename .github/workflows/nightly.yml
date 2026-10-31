@@ -119,15 +119,12 @@ jobs:
         # the first ten. The old --maxfail=10 aborted at ~2.5% of the suite, so
         # every @slow test in the repo went unexecuted -- not merely a subset.
         #
-        # The --ignore line is a DELIBERATE DEFERRAL, not an oversight.
-        # tests/unit/test_visualization runs in no AUTOMATIC workflow -- not here, not
-        # in the PR smoke subset, not in python-compat.yml. It DOES run on the
-        # release-only `pytest tests/` in ci.yml's "Run all tests with coverage" step,
-        # which carries no --ignore; that is post-publication reporting, not a gate.
-        # The maintainer's call (2026-07-20) is that this area is not mature enough to
-        # gate on yet. Tracked in #1659, which moved tests/unit/test_backends into every
-        # tier. A platform-specific failure should be a skip marker ON THE TEST, where
-        # it is visible, rather than a workflow flag that removes tests from every tier.
+        # The --ignore line removes nothing: tests/unit/test_visualization tracks only
+        # __init__.py. It was a deliberate deferral (the maintainer's call, 2026-07-20,
+        # that the area was not mature enough to gate on), and it stays as #1659's
+        # record; #1659 moved tests/unit/test_backends into every tier. A platform-specific
+        # failure should be a skip marker ON THE TEST, where it is visible, rather than a
+        # workflow flag that removes tests from every tier.
         pytest ${{ matrix.shard.path }} -v \
           -n auto \
           --ignore=tests/unit/test_visualization/ \

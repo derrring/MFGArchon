@@ -107,7 +107,7 @@ import pytest
 #:   python -m venv /tmp/nojax
 #:   /tmp/nojax/bin/python -m pip install --upgrade pip
 #:   /tmp/nojax/bin/pip install -e ".[numerical]" --group dev numba
-#: The upgrade is not decoration -- it is `nightly.yml:75`, the line immediately above the install,
+#: The upgrade is not decoration -- it is `nightly.yml`'s `pip install --upgrade pip`, immediately above the install,
 #: and `--group` is newer than the pip a fresh venv ships. Measured here: a 3.12 venv brings pip
 #: 25.0.1, which answers `no such option: --group` (control: the same pip accepts `--dry-run`).
 #:

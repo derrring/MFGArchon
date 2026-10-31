@@ -532,11 +532,11 @@ but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
 | Tier | What | Where | Cost |
 |:-----|:-----|:------|:-----|
 | Gate (authoritative) | fail-fast ratchet, capability matrix, full suite (CI marker set, `-n auto`, no coverage) | **local**, `./scripts/local_ci.sh` | ~4 min |
-| PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_config`) | GitHub `ci.yml` | ~3 min |
+| PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_backends`) | GitHub `ci.yml` | ~3 min |
 | Backstop | full suite **incl. `@slow`**, excluding `@manual`; plus the capability matrix + its self-test | GitHub `nightly.yml`, 03:00 | `timeout-minutes: 300` |
 | Release | full suite incl. `@slow`, excluding `@manual`, with coverage | GitHub `ci.yml` on `release` | 35 min budget |
 
-**The consequence you must not forget:** a GitHub-green PR has NOT had its tests run. `./scripts/local_ci.sh` before every push is the gate; state its result in the PR. A regression outside `test_core`/`test_config` will otherwise reach `main` and only surface in nightly.
+**The consequence you must not forget:** a GitHub-green PR has NOT had its tests run. `./scripts/local_ci.sh` before every push is the gate; state its result in the PR. A regression outside `test_core`/`test_backends` will otherwise reach `main` and only surface in nightly.
 
 ---
 

@@ -72,8 +72,8 @@ jobs:
 
       - name: Fast test suite
         run: |
-          # Exclude the dir nightly.yml excludes (plotting, deferred under #1659) — otherwise every
-          # version fails identically on a non-version issue. tests/unit/test_backends runs here
+          # The test_visualization --ignore removes nothing: the directory tracks only __init__.py.
+          # It mirrors nightly.yml's and stays as #1659's record. tests/unit/test_backends runs here
           # since #1659; its torch tests skip on the test itself.
           pytest tests/unit -q -p no:cacheprovider \
             --ignore=tests/unit/test_visualization/ \
