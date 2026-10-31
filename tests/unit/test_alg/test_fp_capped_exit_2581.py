@@ -24,9 +24,20 @@ import numpy as np
 from scipy import sparse
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.coupling.block_iterators import BlockGaussSeidelIterator, BlockJacobiIterator
+from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
+from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
+from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid, no_flux_bc
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
@@ -326,3 +337,60 @@ def test_a_cap_is_refused_where_the_switch_does_not_hold(case: str):
         _solve(_bc(2, CAP), dim=2)
     if case == "a coupled solve":  # the remedy the refusal names: the FP solved alone
         _solve(_bc(1, CAP))
+
+
+def _coupled_pairs(k: int) -> tuple[list[MFGProblem], list[HJBFDMSolver], list[FPFDMSolver]]:
+    """k problems, each with an HJB solver and an FP solver whose own BC caps the exit at x_max."""
+    problems = [_problem(1, 11, 4, 0.1)[0] for _ in range(k)]
+    return (
+        problems,
+        [HJBFDMSolver(p) for p in problems],
+        [FPFDMSolver(p, boundary_conditions=_bc(1, CAP)) for p in problems],
+    )
+
+
+def _single(build):
+    problems, hjbs, fps = _coupled_pairs(1)
+    return build(problems[0], hjbs[0], fps[0])
+
+
+ONE_ITERATION = {"max_iterations": 1, "tolerance": 1e-12, "verbose": False}
+#: every coupled solver that holds an FP solver, besides problem.solve (a REFUSALS row): each solves once, capped
+COUPLED = {
+    "fixed point": lambda: _single(
+        lambda p, h, f: FixedPointIterator(p, hjb_solver=h, fp_solver=f).solve(**ONE_ITERATION)
+    ),
+    "block gauss-seidel": lambda: _single(
+        lambda p, h, f: BlockGaussSeidelIterator(p, hjb_solver=h, fp_solver=f).solve(**ONE_ITERATION)
+    ),
+    "block jacobi": lambda: _single(lambda p, h, f: BlockJacobiIterator(p, h, f).solve(**ONE_ITERATION)),
+    "fictitious play": lambda: _single(
+        lambda p, h, f: FictitiousPlayIterator(p, hjb_solver=h, fp_solver=f).solve(**ONE_ITERATION)
+    ),
+    "newton": lambda: _single(lambda p, h, f: NewtonMFGSolver(p, h, f).solve(**ONE_ITERATION)),
+    "mfg residual": lambda: _single(lambda p, h, f: MFGResidual(p, h, f).compute_fp_output(np.zeros((5, 11)))),
+    "multi-population": lambda: (
+        lambda ps, hs, fs: MultiPopulationIterator(
+            MultiPopulationProblem(populations=ps, population_names=["a", "b"]), hs, fs
+        ).solve(max_iterations=1, tolerance=1e-12)
+    )(*_coupled_pairs(2)),
+    "regime switching": lambda: (
+        lambda ps, hs, fs: RegimeSwitchingIterator(
+            ps, RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])), hs, fs, max_iterations=1
+        ).solve()
+    )(*_coupled_pairs(2)),
+    "graph": lambda: (
+        lambda ps, hs, fs: GraphMFGSolver(
+            ps, AdjacencyCoupling(np.ones((2, 2)) - np.eye(2), alpha=0.05, beta=0.02), hs, fs, max_iterations=1
+        ).solve()
+    )(*_coupled_pairs(2)),
+}
+
+
+@pytest.mark.parametrize("route", sorted(COUPLED))
+def test_every_coupled_solver_refuses_a_capped_fp(route: str):
+    """A capped exit is offered for a standalone FP solve only (user rulings 2026-10-10 and 2026-10-31): every coupled
+    solver that holds an FP solver refuses one whose BC carries a cap, by name, when it solves. Its remedy, the FP
+    solved alone, is the coupled REFUSALS row's."""
+    with pytest.raises(NotImplementedError, match=r"standalone FP solve only"):
+        COUPLED[route]()
