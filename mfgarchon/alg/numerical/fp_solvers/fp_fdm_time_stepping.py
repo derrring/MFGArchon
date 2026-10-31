@@ -315,7 +315,9 @@ def _refuse_an_inadmissible_cap(boundary_conditions: Any) -> None:
                 "not read as 0 here (#2581). Give the capped exit the value 0."
             )
         try:
-            admissible = not isinstance(c, bool) and isinstance(c, numbers.Real) and np.isfinite(float(c)) and c >= 0
+            admissible = (
+                not isinstance(c, bool) and isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0
+            )
         except OverflowError:  # an integer or a fraction past float's range is no finite cap
             admissible = False
         if not admissible:

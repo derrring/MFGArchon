@@ -37,7 +37,7 @@ from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopu
 from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
 from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
-from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_fp_nd_full_system
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_fp_nd_full_system, solve_timestep_full_nd
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -243,7 +243,7 @@ def test_a_capped_face_off_axis_0_lets_out_c_times_its_measure():
         bounds=[(0.0, 1.0), (0.0, 0.5)], Nx_points=[11, 9], boundary_conditions=no_flux_bc(dimension=2)
     )
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3)
-    conditions = Conditions(m_initial=lambda x: 4.0, u_terminal=lambda x: 0.0, T=0.3)
+    conditions = Conditions(m_initial=lambda x: 2.0, u_terminal=lambda x: 0.0, T=0.3)  # unit mass on the box
     problem = MFGProblem(model=model, domain=grid, conditions=conditions, Nt=6)
     walls = [BCSegment(name=f, bc_type=BCType.NO_FLUX, boundary=f) for f in ("x_min", "x_max", "y_min")]
     exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="y_max", flux_capacity=0.05)
@@ -310,6 +310,26 @@ def _faces(x_max: BCSegment | None = None, y_max: BCSegment | None = None, cappe
     return BoundaryConditions(dimension=2, segments=segments)
 
 
+def _step_only(bc: BoundaryConditions) -> None:
+    """``solve_timestep_full_nd`` called directly, below the solver and the full-system solve."""
+    problem, grid = _problem(1, 11, 4, 0.1)
+    x = np.asarray(grid.coordinates[0])
+    solve_timestep_full_nd(
+        M_current=np.ones(11),
+        U_current=-x,
+        problem=problem,
+        dt=0.025,
+        volatility=SIGMA,
+        coupling_coefficient=1.0,
+        spacing=(0.1,),
+        grid=grid,
+        ndim=1,
+        shape=(11,),
+        boundary_conditions=bc.bind_geometry(grid),
+        advection_scheme="divergence_upwind",
+    )
+
+
 def _no_step(bc: BoundaryConditions) -> None:
     """``solve_fp_nd_full_system`` handed one time level, which writes level 0 and takes no step."""
     problem, grid = _problem(1, 11, 4, 0.1)
@@ -366,6 +386,7 @@ REFUSALS = {
         r"Make every face that meets the capped x_max face a NO_FLUX wall",
     ),
     "a cap past float's range": (lambda: _solve(_bc(1, 10**400)), ValueError, r"finite mass"),
+    "a negative cap through the step directly": (lambda: _step_only(_bc(1, -1.0)), ValueError, r"finite mass"),
     "a negative cap on a run with no step": (lambda: _no_step(_bc(1, -1.0)), ValueError, r"finite mass"),
     "a FLUX face meeting the cap": (
         lambda: _solve(
