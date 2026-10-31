@@ -72,9 +72,9 @@ jobs:
 
       - name: Fast test suite
         run: |
-          # Exclude the same platform-specific dirs the main CI excludes (MPS/plotting failures on
-          # Linux runners) — otherwise every version fails identically on a non-version issue.
+          # The test_visualization --ignore removes nothing: the directory tracks only __init__.py.
+          # It mirrors nightly.yml's and stays as #1659's record. tests/unit/test_backends runs here
+          # since #1659; its torch tests skip on the test itself.
           pytest tests/unit -q -p no:cacheprovider \
-            --ignore=tests/unit/test_backends/ \
             --ignore=tests/unit/test_visualization/ \
             -m "not slow and not benchmark and not experimental and not optional_torch and not environment"

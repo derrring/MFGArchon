@@ -69,7 +69,8 @@ jobs:
     # without it. That twentieth is LIVE library, so the backstop tier could not read the library
     # end to end -- measured on b88b4781. Installing numba leaves the 19 frozen ones, which is a
     # state the deprecation-guide tests are entitled to skip on. torch stays out: it is a 2 GB
-    # wheel on a tier that already deselects `optional_torch` and ignores tests/unit/test_backends/.
+    # wheel on a tier that already deselects `optional_torch`, and tests/unit/test_backends/'s
+    # torch tests skip on importorskip.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -118,19 +119,14 @@ jobs:
         # the first ten. The old --maxfail=10 aborted at ~2.5% of the suite, so
         # every @slow test in the repo went unexecuted -- not merely a subset.
         #
-        # The two --ignore lines are a DELIBERATE DEFERRAL, not an oversight. Those
-        # directories run in no AUTOMATIC workflow -- not here, not in the PR smoke
-        # subset, not in python-compat.yml. They DO run on the release-only
-        # `pytest tests/` in ci.yml's "Run all tests with coverage" step, which carries no --ignore; that is
-        # post-publication reporting, not a gate. Locally they pass in 1.8 s
-        # (242 + 34 tests), so the exclusion is not about runtime; the maintainer's
-        # call (2026-07-20) is that these areas are not mature enough to gate on yet.
-        # Tracked in #1659. When enabled, a platform-specific failure should be a
-        # skip marker ON THE TEST, where it is visible, rather than a workflow flag
-        # that silently removes 276 tests from every tier.
+        # The --ignore line removes nothing: tests/unit/test_visualization tracks only
+        # __init__.py. It was a deliberate deferral (the maintainer's call, 2026-07-20,
+        # that the area was not mature enough to gate on), and it stays as #1659's
+        # record; #1659 moved tests/unit/test_backends into every tier. A platform-specific
+        # failure should be a skip marker ON THE TEST, where it is visible, rather than a
+        # workflow flag that removes tests from every tier.
         pytest ${{ matrix.shard.path }} -v \
           -n auto \
-          --ignore=tests/unit/test_backends/ \
           --ignore=tests/unit/test_visualization/ \
           -m "not optional_torch and not benchmark and not experimental and not environment and not manual" \
           --junitxml=junit.xml -o junit_family=legacy \
