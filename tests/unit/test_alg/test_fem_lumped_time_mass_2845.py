@@ -36,6 +36,11 @@ FACES = {
 }
 
 
+def _unit_level(mesh) -> float:
+    """The constant whose mass is 1 on the mesh's measure: Mesh1D's is (n + 1)/n for n cells, a 2-D or 3-D mesh's 1."""
+    return mesh.num_elements / (mesh.num_elements + 1) if isinstance(mesh, Mesh1D) else 1.0
+
+
 def _structured():
     return skfem.MeshTri.init_tensor(np.linspace(0.0, 1.0, 33), np.linspace(0.0, 1.0, 33))
 
@@ -64,7 +69,7 @@ def test_a_no_flux_pure_diffusion_spike_keeps_its_mass_to_round_off(build):
     problem = MFGProblem(
         model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.6),
         domain=mesh,
-        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=NT * DT),
+        conditions=Conditions(m_initial=lambda x, c=_unit_level(mesh): c, u_terminal=lambda x: 0.0, T=NT * DT),
         Nt=NT,
     )
     solver = FPFEMSolver(problem)
@@ -99,7 +104,7 @@ def _pair_problem(dim: int, lambda_: float) -> MFGProblem:
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=lambda_)), volatility=0.5
         ),
         domain=mesh,
-        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=5 * 0.01),
+        conditions=Conditions(m_initial=lambda x, c=_unit_level(mesh): c, u_terminal=lambda x: 0.0, T=5 * 0.01),
         Nt=5,
     )
 
