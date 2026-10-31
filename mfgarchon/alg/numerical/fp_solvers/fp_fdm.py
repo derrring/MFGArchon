@@ -23,6 +23,8 @@ from mfgarchon.utils.pde_coefficients import (
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
+    _refuse_a_cap_off_upwind,
+    _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
 )
 from .fp_fdm_time_stepping import (
@@ -120,6 +122,11 @@ class FPFDMSolver(BaseFPSolver):
     #: explicit one (#2512, row B3).
     honors_inhomogeneous_neumann: bool = False
 
+    #: Internal: the last ``solve_fp_system``'s outflow per DIRICHLET segment, by segment name, the mass that left
+    #: through it by each time level, from 0 at the first (#2581, PR 2a). Not a public record: how a solve reports its
+    #: boundary outflow is #2846's to decide. None before a solve.
+    _boundary_outflow: dict[str, np.ndarray] | None = None
+
     def __init__(
         self,
         problem: Any,
@@ -184,6 +191,7 @@ class FPFDMSolver(BaseFPSolver):
             )
 
         # The FP's own BC when it was handed one, else the problem's shared BC from its one owner (#2530, row B9).
+        self._own_bc = boundary_conditions is not None
         if boundary_conditions is not None:
             self.boundary_conditions = self._fp_own_bc(boundary_conditions)
         else:
@@ -212,6 +220,25 @@ class FPFDMSolver(BaseFPSolver):
         _refuse_partial_periodic(self.boundary_conditions, self.dimension, self.problem.geometry)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
+
+    def _validate_bc_support(self, bc: Any) -> None:
+        """The base checks, with a capacity-limited exit honoured on this solver's own BC (#2581, PR 2a).
+
+        A ``flux_capacity`` c is accepted on a DIRICHLET segment with value 0 of the BC handed to the constructor: an
+        exit on the FP's own BC, with c a finite mass per unit time per unit boundary measure, c >= 0. Which caps are
+        admissible is `_refuse_an_inadmissible_cap`'s, which the step reads too. Any other BC this is asked about --
+        the problem's shared one, read through ``get_boundary_conditions()`` -- keeps the base's refusal: there the
+        HJB reads the exit as u = g, which with a capped FP is not an equilibrium (user ruling 2026-10-10). A BC is this
+        solver's own when it is the one handed to the constructor, whatever object it is: the problem's shared BC object
+        handed over as ``boundary_conditions=`` is the user's choice of an own BC, and its cap is honoured as one.
+        """
+        capped = [seg for seg in getattr(bc, "segments", None) or () if seg.flux_capacity is not None]
+        if not capped or not (getattr(self, "_own_bc", False) and bc is getattr(self, "boundary_conditions", None)):
+            super()._validate_bc_support(bc)
+            return
+        super(BaseFPSolver, self)._validate_bc_support(bc)
+        _refuse_an_inadmissible_cap(bc)
+        _refuse_a_cap_off_upwind([seg.name for seg in capped], self.advection_scheme)
 
     def _log_cfl_diagnostic(self, volatility: float | np.ndarray | Callable | None = None) -> None:
         """Log CFL diagnostic for accuracy/convergence guidance (Issue #882, #1052).
@@ -527,6 +554,7 @@ class FPFDMSolver(BaseFPSolver):
                     advection_scheme=self.advection_scheme,
                     progress_callback=progress_callback,
                     source_term=source_term,
+                    outflow=self._fresh_outflow_record(),
                 )
             else:
                 raise TypeError(f"drift_field must be np.ndarray or Callable, got {type(drift_field)}")
@@ -577,6 +605,7 @@ class FPFDMSolver(BaseFPSolver):
                 progress_callback=progress_callback,
                 source_term=source_term,
                 velocity_field=_internal_velocity,
+                outflow=self._fresh_outflow_record(),
             )
 
         # Issue #641: Always route to unified nD solver (works for all dimensions)
@@ -593,7 +622,13 @@ class FPFDMSolver(BaseFPSolver):
             progress_callback=progress_callback,
             source_term=source_term,
             velocity_field=_internal_velocity,
+            outflow=self._fresh_outflow_record(),
         )
+
+    def _fresh_outflow_record(self) -> dict[str, np.ndarray]:
+        """A new ``_boundary_outflow`` for the solve about to run, filled by the implicit step (#2581, PR 2a)."""
+        self._boundary_outflow = {}
+        return self._boundary_outflow
 
     # =========================================================================
     # Strict Adjoint Mode (Issue #622)
@@ -719,10 +754,12 @@ class FPFDMSolver(BaseFPSolver):
         from .fp_fdm_time_stepping import (
             _declares_dirichlet,
             _is_dirichlet_at_point,
+            _refuse_cap_off_the_implicit_step,
             _refuse_flux_off_the_implicit_step,
         )
 
         _refuse_flux_off_the_implicit_step(bc, "solve_fp_step_adjoint_mode")
+        _refuse_cap_off_the_implicit_step(bc, "solve_fp_step_adjoint_mode")
 
         if _declares_dirichlet(bc) and any(
             is_boundary_point(idx, shape, len(shape)) and _is_dirichlet_at_point(bc, idx, shape, self.problem.geometry)

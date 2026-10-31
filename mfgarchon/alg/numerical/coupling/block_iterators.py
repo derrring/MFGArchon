@@ -48,6 +48,7 @@ from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    refuse_a_capped_exit_in_a_coupled_solve,
 )
 from .fixed_point_utils import (
     apply_damping,
@@ -676,6 +677,7 @@ class BlockIterator(BaseCouplingIterator):
         Returns:
             SolverResult with solution and convergence info
         """
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
         start_time = time.time()
 
         # Get problem dimensions

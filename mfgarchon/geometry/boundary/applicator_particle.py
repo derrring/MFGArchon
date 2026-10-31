@@ -359,8 +359,8 @@ class ParticleApplicator:
     @deprecated(
         since="v0.22.0",
         replacement="ParticleApplicator.apply, which is this method with no limits and returns its first three values; "
-        "a capacity-limited exit has no replacement (#2575).",
-        reason="no FP solver honours a capacity-limited exit: each refuses a segment carrying flux_capacity (#2575), "
+        "a capacity-limited exit has no particle replacement (#2575).",
+        reason="the particle FP solver refuses a capacity-limited exit (#2575), which FPFDMSolver alone honours (#2581), "
         "and the solver method that called this one had no caller and is deleted (#2550)",
     )
     def apply_with_flux_limits(
@@ -372,7 +372,8 @@ class ParticleApplicator:
     ) -> tuple[NDArray[np.floating], NDArray[np.bool_], NDArray[np.floating], dict[str, int]]:
         """
         Apply segment-aware BC with flux-limited absorption at absorbing exits. Deprecated (#2550): with no limits it is
-        `apply`, and a capacity-limited exit has no replacement, since no FP solver honours one (#2575).
+        `apply`, and a capacity-limited exit has no particle replacement: the particle FP solver refuses one (#2575), and
+        FPFDMSolver alone honours it (#2581).
 
         `apply`'s end-position rule, with one difference: a segment named in ``flux_limits`` absorbs, in particle
         order, only while its count this call is below its limit. Past it the particle is not absorbed and the faces it

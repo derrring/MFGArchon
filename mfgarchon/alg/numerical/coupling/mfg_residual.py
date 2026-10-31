@@ -32,6 +32,7 @@ from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
+    refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
     resolve_volatility_kwarg,
 )
@@ -295,6 +296,7 @@ class MFGResidual:
         Returns:
             M_new: Density field from FP solve
         """
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "MFGResidual.compute_fp_output")
         if self._fp_sig_params is None:
             return self.fp_solver.solve_fp_system(self.M_initial, U)
 

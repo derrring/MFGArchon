@@ -73,7 +73,7 @@ from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_e
 from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
-from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative
+from mfgarchon.utils.numerical.mass_fabrication_gate import MAX_CLIP_MASS_FABRICATION, refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     _DriftDispatcher,
@@ -228,7 +228,11 @@ def _declares_flux(boundary_conditions: Any) -> bool:
 
 
 def _flux_sources(
-    boundary_conditions: Any, grid: Any, shape: tuple[int, ...], spacing: tuple[float, ...], time: float | None
+    boundary_conditions: Any,
+    grid: Any,
+    shape: tuple[int, ...],
+    spacing: tuple[float, ...],
+    time: float | None,
 ) -> np.ndarray | None:
     """The right-hand side a prescribed flux puts on the implicit step, or None when no face is FLUX (#2581).
 
@@ -273,6 +277,166 @@ def _refuse_flux_off_the_implicit_step(boundary_conditions: Any, path: str) -> N
             f"FP-FDM's {path} builds no prescribed-flux source, so a FLUX face would be solved as a no-flux wall "
             "(#2581). The implicit step (a U-derived or velocity drift with a scalar or field volatility) honours FLUX."
         )
+
+
+def _refuse_cap_off_the_implicit_step(boundary_conditions: Any, path: str) -> None:
+    """A step that runs no capped-exit switch refuses a ``flux_capacity`` rather than solve the exit uncapped (#2581)."""
+    capped = [seg.name for seg in getattr(boundary_conditions, "segments", None) or () if seg.flux_capacity is not None]
+    if capped:
+        raise NotImplementedError(
+            f"FP-FDM's {path} runs no capped-exit switch, so segment(s) {capped} would be solved as uncapped exits "
+            "(#2581). The implicit step (a U-derived or velocity drift with a scalar or field volatility) honours "
+            "flux_capacity."
+        )
+
+
+def _refuse_an_inadmissible_cap(boundary_conditions: Any) -> None:
+    """Every ``flux_capacity`` the BC carries is one FP-FDM honours, or the BC is refused (#2581, PR 2a): a cap goes on
+    a DIRICHLET segment whose value is the number 0, and is a real c, finite and >= 0, and not a bool.
+
+    The one owner of that check. The solver's constructor reads it, and so does the step, which can be handed a BC the
+    constructor never saw: one set on the solver after construction, or ``solve_fp_nd_full_system`` called directly.
+    """
+    for segment in getattr(boundary_conditions, "segments", None) or ():
+        c = segment.flux_capacity
+        if c is None:
+            continue
+        if segment.bc_type != BCType.DIRICHLET:
+            raise NotImplementedError(
+                f"FP-FDM: segment {segment.name!r} is {segment.bc_type.value} and carries a flux_capacity, which caps "
+                "an exit: a DIRICHLET segment with value 0 on the FP's own BC (#2581)."
+            )
+        value = segment.value
+        if isinstance(value, bool) or not (isinstance(value, numbers.Real) and value == 0):
+            raise NotImplementedError(
+                f"FP-FDM: segment {segment.name!r} carries a flux_capacity on a DIRICHLET with value {value!r}. A capped "
+                "exit is a DIRICHLET whose value is the number 0: on the FP's own BC a DIRICHLET(g) with g != 0 is a "
+                "prescribed density m = g, not an exit, and has no outflow to cap, and a callable or array value is "
+                "not read as 0 here (#2581). Give the capped exit the value 0."
+            )
+        try:
+            admissible = (
+                not isinstance(c, bool) and isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0
+            )
+        except OverflowError:  # an integer or a fraction past float's range is no finite cap
+            admissible = False
+        if not admissible:
+            raise ValueError(
+                f"FP-FDM: segment {segment.name!r} has flux_capacity {c!r}; a cap is a finite mass per unit time per "
+                "unit boundary measure, >= 0, not a bool, and no cap is None (#2581)."
+            )
+
+
+def _capped_exit_nodes(
+    boundary_conditions: Any, dirichlet_nodes: list[int], shape: tuple[int, ...], grid: Any, spacing: tuple[float, ...]
+) -> dict[int, tuple[Any, float]]:
+    """The Dirichlet nodes whose governing segment carries a ``flux_capacity`` (#2581, PR 2a), each with that segment
+    and the half cell normal to its exit face, dx/2 along the face's axis.
+
+    A node's outflow over the step is read off the no-flux row's balance, which counts every wall face of the node
+    together; it is the exit face's alone only when each other wall face of the node is NO_FLUX. So every face that
+    meets a capped face must be governed by a NO_FLUX segment, or the BC is refused. That is read on the faces, not on
+    the nodes, so which segment governs a corner -- by priority or declaration order -- cannot decide between a refusal
+    and a solve (the approver's ruling on review 1). A corner that a NO_FLUX face governs is a wall node: the cap then
+    holds on the capped face less that corner's half cell, an O(h) difference.
+    """
+    _refuse_an_inadmissible_cap(boundary_conditions)
+    faces = [BoundaryFace(axis, side) for axis in range(len(shape)) for side in ("min", "max")]
+    governing = {face: boundary_conditions.segment_for_face(face, grid) for face in faces}
+    for face, segment in governing.items():
+        if segment.flux_capacity is None:
+            continue
+        for other in faces:
+            met = governing[other]
+            if other.axis != face.axis and met.bc_type != BCType.NO_FLUX:
+                raise NotImplementedError(
+                    f"FP-FDM: segment {segment.name!r} caps the {face.to_string()} face, which meets the "
+                    f"{other.to_string()} face, governed by {met.name!r} ({met.bc_type.value}). A node where the two "
+                    "meet counts the outflow of all its wall faces together, so the cap cannot be read on one face "
+                    f"(#2581). Make every face that meets the capped {face.to_string()} face a NO_FLUX wall."
+                )
+    capped: dict[int, tuple[Any, float]] = {}
+    for idx in dirichlet_nodes:
+        multi_idx = tuple(int(i) for i in grid.get_multi_index(idx))
+        segment = _segment_at_node(boundary_conditions, multi_idx, shape, grid)
+        if segment is None or segment.flux_capacity is None:
+            continue
+        exit_face = next(face for face in _faces_of_node(multi_idx, shape) if governing[face] is segment)
+        capped[idx] = (segment, spacing[exit_face.axis] / 2.0)
+    return capped
+
+
+def _refuse_a_cap_off_upwind(names: list[str], advection_scheme: str) -> None:
+    """A capped exit on any scheme but ``divergence_upwind`` is refused (#2581, PR 2a).
+
+    Per node and step the cap is a linear complementarity problem: m >= 0, outflow <= c |face| dt, and their product
+    zero. Upwind's matrix is an M-matrix, which makes its solution unique, so the switch's root is the one. On
+    ``divergence_centered`` a node can satisfy all three both capped and absorbing, and nothing the switch or its
+    check reads tells the wrong root from the right one.
+    """
+    if names and advection_scheme != "divergence_upwind":
+        raise NotImplementedError(
+            f"FP-FDM: segment(s) {sorted(set(names))} carry a flux_capacity, which advection_scheme={advection_scheme!r} does not "
+            "honour: off upwind the capped exit's complementarity can have two roots at a node, and the switch could "
+            "take the wrong one (#2581). Use advection_scheme='divergence_upwind'."
+        )
+
+
+def _with_capped_rows(
+    A: sparse.csr_matrix,
+    b: np.ndarray,
+    walls: sparse.csr_matrix,
+    balance: np.ndarray,
+    capped: list[int],
+    capped_exits: dict[int, tuple[Any, float]],
+) -> tuple[sparse.csr_matrix, np.ndarray]:
+    """The step with each capped node's Dirichlet row replaced by its FLUX(c) row: the no-flux row ``walls`` holds there,
+    and ``balance - c / (dx/2)`` on its right-hand side (#2581, PR 2a)."""
+    if not capped:
+        return A, b
+    take = np.zeros(A.shape[0])
+    take[capped] = 1.0
+    A_capped = (sparse.diags(1.0 - take) @ A + sparse.diags(take) @ walls).tocsr()
+    b_capped = b.copy()
+    for i in capped:
+        segment, half = capped_exits[i]
+        b_capped[i] = balance[i] - segment.flux_capacity / half
+    return A_capped, b_capped
+
+
+def _refuse_a_capped_node_negative(
+    m: np.ndarray,
+    capped: list[int],
+    capped_exits: dict[int, tuple[Any, float]],
+    weights: np.ndarray,
+    grid: Any,
+    time: float | None,
+) -> None:
+    """A capped node the step takes negative, past the gate's threshold, is refused, never clipped (#2581, PR 2a; the
+    no-clip ruling of #2485).
+
+    No upwind input should reach it: upwind's step matrix is an M-matrix, so each exit node's complementarity, m >= 0,
+    outflow <= c |face| dt and their product zero, is a linear complementarity problem with a unique solution, which
+    holds m >= 0 at a capped node, and the switch ends at it. The check stays because that is an argument about the
+    discrete system, not a pin; the fuzz on #2581 PR 2a found no capped node below zero.
+    """
+    negative = [i for i in capped if m[i] < 0.0]
+    if not negative:
+        return
+    positive = float(weights @ np.maximum(m, 0.0))
+    made = float(sum(weights[i] * -m[i] for i in negative))
+    share = made / positive if positive > 0 else float("inf")
+    if share <= MAX_CLIP_MASS_FABRICATION:
+        return
+    worst = min(negative, key=lambda i: m[i])
+    segment, _ = capped_exits[worst]
+    node = tuple(int(j) for j in grid.get_multi_index(worst))
+    raise ValueError(
+        f"FP-FDM: in the step to t={time}, the capped exit {segment.name!r} (flux_capacity {segment.flux_capacity}) "
+        f"holds node {node} at m = {m[worst]:.3e}; clipping its capped nodes would fabricate {share:.3e} of the mass, "
+        f"past the threshold {MAX_CLIP_MASS_FABRICATION:.0e}, so the step is refused (#2581). The switch caps a node "
+        "only where its absorbing outflow exceeds the cap, which is meant to keep it non-negative on upwind."
+    )
 
 
 def _faces_of_node(multi_idx: tuple[int, ...], shape: tuple[int, ...]) -> list[BoundaryFace]:
@@ -351,13 +515,15 @@ def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray
 
 
 def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, BoundaryFace, np.ndarray]]:
-    """The walls of a 1-D grid whose own BC is Dirichlet, as ``(index, face, wall node)``. Each wall by its own type:
-    a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535)."""
-    return [
-        (index, BoundaryFace(0, side), _node(grid, (index,)))
-        for index, side in ((0, "min"), (-1, "max"))
-        if boundary_conditions.segment_for_face(BoundaryFace(0, side), grid).bc_type == BCType.DIRICHLET
-    ]
+    """The walls of a 1-D grid whose own BC holds a Dirichlet value, as ``(index, face, wall node)``. Each wall by its
+    own type: a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535). A capped exit
+    holds no value: its node keeps its density, which queues at the cap (#2581, PR 2a)."""
+    walls = []
+    for index, side in ((0, "min"), (-1, "max")):
+        segment = boundary_conditions.segment_for_face(BoundaryFace(0, side), grid)
+        if segment.bc_type == BCType.DIRICHLET and segment.flux_capacity is None:
+            walls.append((index, BoundaryFace(0, side), _node(grid, (index,))))
+    return walls
 
 
 def _get_bc_type(boundary_conditions: Any) -> str | None:
@@ -821,9 +987,15 @@ def solve_fp_nd_full_system(
     # Issue #919: Direct velocity field input
     velocity_field: np.ndarray | None = None,
     volatility_kind: str | None = None,
+    outflow: dict[str, np.ndarray] | None = None,
 ) -> np.ndarray:
     """
     Solve multi-dimensional FP equation using full-dimensional sparse linear system.
+
+    ``outflow``, when given, is filled with each DIRICHLET segment's cumulative outflow: the mass that left through it
+    by each time level, from 0 at the first, negative where mass came in (#2581, PR 2a). The implicit step records it;
+    the explicit steps refuse those walls. Internal: its one reader is FPFDMSolver's private record; a public outflow
+    surface is #2846's.
 
     Evolves density forward in time from t=0 to t=T by directly assembling
     and solving the full multi-dimensional system at each timestep.
@@ -900,6 +1072,9 @@ def solve_fp_nd_full_system(
     - A: advection operator (full multi-D upwind discretization)
     - D: diffusion operator (full multi-D Laplacian)
     """
+    # Checked before level 0 is written: a run with one time level takes no step, and the 1-D level-0 exemption
+    # reads the cap (review 2 of #2849).
+    _refuse_an_inadmissible_cap(boundary_conditions)
     # Get problem dimensions
     ndim = problem.geometry.dimension
     shape = tuple(problem.geometry.get_grid_shape())
@@ -952,8 +1127,10 @@ def solve_fp_nd_full_system(
     _refuse_provider_wall_coefficients(boundary_conditions)
     if use_tensor_diffusion:
         _refuse_flux_off_the_implicit_step(boundary_conditions, "explicit tensor-diffusion step")
+        _refuse_cap_off_the_implicit_step(boundary_conditions, "explicit tensor-diffusion step")
     elif use_callable_drift:
         _refuse_flux_off_the_implicit_step(boundary_conditions, "explicit step for a callable drift")
+        _refuse_cap_off_the_implicit_step(boundary_conditions, "explicit step for a callable drift")
 
     # Issue #1632. Two hazards, and the first belongs to the WHOLE chain below, not to one arm.
     #
@@ -1089,6 +1266,7 @@ def solve_fp_nd_full_system(
     # Edge cases
     if Nt <= 1:
         return M_solution
+    steps_out: list[dict[str, float]] | None = [] if outflow is not None else None
 
     # Set default boundary conditions
     if boundary_conditions is None:
@@ -1138,6 +1316,7 @@ def solve_fp_nd_full_system(
     # Time evolution loop (forward in time)
     for k in timestep_range:
         M_current = M_solution[k]
+        step_out: dict[str, float] | None = {} if steps_out is not None else None
 
         # Evaluate source term at current timestep (implicit: evaluate at t_{k+1})
         if source_term is not None:
@@ -1242,9 +1421,12 @@ def solve_fp_nd_full_system(
                 source_term=source_values,
                 interface_velocity=vel_at_k,
                 time=(k + 1) * dt,
+                outflow=step_out,
             )
 
         M_solution[k + 1] = M_next
+        if steps_out is not None:
+            steps_out.append(step_out or {})
 
         # Issue #881: NaN/Inf detection after each timestep
         if not np.all(np.isfinite(M_next)):
@@ -1301,6 +1483,10 @@ def solve_fp_nd_full_system(
         if progress_callback is not None:
             progress_callback(1)
 
+    if outflow is not None and steps_out is not None:
+        names = sorted({name for step in steps_out for name in step})
+        for name in names:
+            outflow[name] = np.concatenate(([0.0], np.cumsum([step.get(name, 0.0) for step in steps_out])))
     return M_solution
 
 
@@ -1469,6 +1655,7 @@ def solve_timestep_full_nd(
     source_term: np.ndarray | None = None,
     interface_velocity: np.ndarray | None = None,
     time: float | None = None,
+    outflow: dict[str, float] | None = None,
 ) -> np.ndarray:
     """
     Solve one timestep of the full nD FP equation, for the level at ``time``: the time at which a Dirichlet value
@@ -1508,6 +1695,10 @@ def solve_timestep_full_nd(
           (conservative via telescoping, stable, O(dx)) [DEFAULT]
         Legacy alias: "flux"->"divergence_upwind". The gradient schemes and their aliases
         "centered" / "upwind" were removed in #2007 and raise.
+    outflow : dict[str, float] | None
+        When given, each DIRICHLET segment's name gains the mass that left through it over this step, negative where
+        mass came in: read off the no-flux row the capped exit uses, at every Dirichlet node (#2581, PR 2a). Internal,
+        as on `solve_fp_nd_full_system`.
 
     Returns
     -------
@@ -1564,6 +1755,45 @@ def solve_timestep_full_nd(
     unit_rows: tuple[list[int], list[int], list[float]] = ([], [], [])
     zero_u = np.zeros_like(u_flat) if varying_sigma else u_flat
 
+    def local_sigma(multi_idx: tuple[int, ...]) -> float:
+        if varying_sigma:
+            return 0.0
+        if isinstance(volatility, np.ndarray):
+            return float(volatility[multi_idx])
+        return volatility
+
+    def add_wall_rows(
+        rows: tuple[list, list, list], unit: tuple[list, list, list], flat_idx: int, multi_idx: tuple[int, ...]
+    ) -> None:
+        """The no-flux handler's row at a wall node, and its unit stencil when the volatility varies (#2841). The one
+        call the assembly below makes at a no-flux wall, and the capped exit's row (#2581, PR 2a)."""
+        _BOUNDARY_HANDLERS[advection_scheme](
+            *rows,
+            flat_idx,
+            multi_idx,
+            shape,
+            ndim,
+            dt,
+            local_sigma(multi_idx),
+            coupling_coefficient,
+            spacing,
+            u_flat,
+            grid,
+            interface_velocity=interface_velocity,
+        )
+        if varying_sigma:
+            _BOUNDARY_HANDLERS[advection_scheme](
+                *unit, flat_idx, multi_idx, shape, ndim, np.inf, 1.0, 0.0, spacing, zero_u, grid
+            )
+
+    def with_ito(matrix: sparse.csr_matrix, unit: tuple[list, list, list]) -> sparse.csr_matrix:
+        if not varying_sigma:
+            return matrix
+        # the unit rows hold -L/2 (D = 1/2, 1/dt = 0); Dirichlet and repeated-endpoint rows carry no diffusion
+        unit_laplacian = -2.0 * sparse.coo_matrix((unit[2], (unit[0], unit[1])), shape=matrix.shape)
+        d_field = diffusion_from_volatility(np.asarray(volatility), kind="field")
+        return (matrix - ito_diffusion({"laplacian": unit_laplacian.tocsr()}, {"laplacian": d_field})).tocsr()
+
     # Build matrix by iterating over all grid points
     for flat_idx in range(N_total):
         # Convert flat index to multi-index (i, j, k, ...)
@@ -1582,13 +1812,7 @@ def solve_timestep_full_nd(
             repeated_rows.append(flat_idx)
             continue
 
-        # Extract local diffusion coefficient (scalar or from spatially varying array)
-        if varying_sigma:
-            sigma_local = 0.0
-        elif isinstance(volatility, np.ndarray):
-            sigma_local = float(volatility[multi_idx])
-        else:
-            sigma_local = volatility
+        sigma_local = local_sigma(multi_idx)
 
         # Check if this is a boundary point
         is_boundary = is_boundary_point(multi_idx, shape, ndim)
@@ -1623,26 +1847,7 @@ def solve_timestep_full_nd(
         elif (is_no_flux or not is_uniform) and is_boundary and not wraps_everywhere:
             # No-flux or mixed BC at boundary: scheme-specific assembly
             _refuse_provider_wall_coefficients(boundary_conditions)
-            _BOUNDARY_HANDLERS[advection_scheme](
-                row_indices,
-                col_indices,
-                data_values,
-                flat_idx,
-                multi_idx,
-                shape,
-                ndim,
-                dt,
-                sigma_local,
-                coupling_coefficient,
-                spacing,
-                u_flat,
-                grid,
-                interface_velocity=interface_velocity,
-            )
-            if varying_sigma:
-                _BOUNDARY_HANDLERS[advection_scheme](
-                    *unit_rows, flat_idx, multi_idx, shape, ndim, np.inf, 1.0, 0.0, spacing, zero_u, grid
-                )
+            add_wall_rows((row_indices, col_indices, data_values), unit_rows, flat_idx, multi_idx)
         else:
             # Interior point or periodic boundary
             _INTERIOR_HANDLERS[advection_scheme](
@@ -1679,12 +1884,9 @@ def solve_timestep_full_nd(
                 )
 
     # Assemble sparse matrix
-    A_matrix = sparse.coo_matrix((data_values, (row_indices, col_indices)), shape=(N_total, N_total)).tocsr()
-    if varying_sigma:
-        # the unit rows hold -L/2 (D = 1/2, 1/dt = 0); Dirichlet and repeated-endpoint rows carry no diffusion
-        unit_laplacian = -2.0 * sparse.coo_matrix((unit_rows[2], (unit_rows[0], unit_rows[1])), shape=A_matrix.shape)
-        d_field = diffusion_from_volatility(np.asarray(volatility), kind="field")
-        A_matrix = (A_matrix - ito_diffusion({"laplacian": unit_laplacian.tocsr()}, {"laplacian": d_field})).tocsr()
+    A_matrix = with_ito(
+        sparse.coo_matrix((data_values, (row_indices, col_indices)), shape=(N_total, N_total)).tocsr(), unit_rows
+    )
 
     # Right-hand side
     b_rhs = m_flat / dt
@@ -1698,6 +1900,7 @@ def solve_timestep_full_nd(
     # put g + dt*S into the solve -- an absorbing exit held at dt*S, 0.025 for S = 1 at dt = 0.025 under
     # problem.solve (#2531). The rows themselves come from the per-point resolver above, so the values
     # must be written wherever it can answer Dirichlet; `_declares_dirichlet` is that test, cheap.
+    dirichlet_nodes: list[int] = []
     if _declares_dirichlet(boundary_conditions):
         for idx in range(N_total):
             multi_idx = np.unravel_index(idx, shape)
@@ -1708,15 +1911,13 @@ def solve_timestep_full_nd(
                     boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx), geometry=grid
                 )
                 b_rhs[idx] = bc_value / dt
+                dirichlet_nodes.append(idx)
 
     # The repeated-endpoint rows assembled above read `m[i] - m[mirror] = 0`. Zeroed last so a
     # source term cannot re-enter a row that carries a constraint rather than a balance.
     if repeated_rows:
         b_rhs = b_rhs.copy()
         b_rhs[repeated_rows] = 0.0
-
-    # Solve linear system
-    m_next_flat = sparse.linalg.spsolve(A_matrix, b_rhs)
 
     # A prescribed flux (#2581) enters by linearity, m = m0 + A^-1 b_q with m0 the step without it: one more solve on
     # the same matrix, none when every q is zero, so q = 0 is the no-flux step bit for bit. B-3's owner refuses the step
@@ -1727,8 +1928,52 @@ def solve_timestep_full_nd(
     # this rule is refused (a 1152-row scan, and review 4's pulse and ramp into a nearly empty domain, on #2840). Each
     # remedy below was run on refused rows before it was written (the approver's rulings on #2840).
     flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
-    if flux_sources is not None and np.any(flux_sources):
-        m_flux = sparse.linalg.spsolve(A_matrix, flux_sources)
+    has_flux = flux_sources is not None and bool(np.any(flux_sources))
+
+    # A capped exit (#2581, PR 2a): on its segment m >= 0, J.n <= c and m (c - J.n) = 0, as an active set within the
+    # step. Every exit node starts absorbing, its Dirichlet row. A node whose outflow over the step would exceed
+    # c |face| dt takes the FLUX(c) row instead -- the no-flux handler's row, with -c/(dx/2) on its right-hand side --
+    # and the step is solved again, until no absorbing node exceeds its cap. A node's outflow is read off that same
+    # no-flux row: with the Dirichlet row in its place, its balance is the mass the exit takes, so the cap, the switch
+    # and the outflow record all read the row the scheme already owns. The rows are built at the Dirichlet nodes alone.
+    capped_exits = _capped_exit_nodes(boundary_conditions, dirichlet_nodes, shape, grid, spacing)
+    _refuse_a_cap_off_upwind([segment.name for segment, _ in capped_exits.values()], advection_scheme)
+    A_step, b_step = A_matrix, b_rhs
+    walls = None
+    capped: list[int] = []
+    m_next_flat = m_flux = None
+    if dirichlet_nodes and (capped_exits or outflow is not None):
+        weights = np.asarray(grid.measure_weights(), dtype=float).ravel()
+        wall_rows: tuple[list, list, list] = ([], [], [])
+        wall_unit: tuple[list, list, list] = ([], [], [])
+        for idx in dirichlet_nodes:
+            add_wall_rows(wall_rows, wall_unit, idx, tuple(int(i) for i in grid.get_multi_index(idx)))
+        walls = with_ito(
+            sparse.coo_matrix((wall_rows[2], (wall_rows[0], wall_rows[1])), shape=A_matrix.shape).tocsr(), wall_unit
+        )
+        balance = m_flat / dt + (source_term if source_term is not None else 0.0)
+    # Each pass solves the step without the flux and, with a FLUX wall, the flux's part apart, as B-3's owner below reads
+    # them: one solve a pass, two with a FLUX wall, and the last pass's are the step's.
+    while capped_exits:
+        A_step, b_step = _with_capped_rows(A_matrix, b_rhs, walls, balance, capped, capped_exits)
+        m_next_flat = sparse.linalg.spsolve(A_step, b_step)
+        m_flux = sparse.linalg.spsolve(A_step, flux_sources) if has_flux else None
+        m_full = m_next_flat + m_flux if has_flux else m_next_flat
+        through = (balance - walls @ m_full) * weights  # mass per unit time through each Dirichlet node's walls
+        over = [
+            i
+            for i, (segment, half) in capped_exits.items()
+            if i not in capped and through[i] > segment.flux_capacity * weights[i] / half
+        ]
+        if not over:
+            break
+        capped.extend(over)
+
+    if m_next_flat is None:
+        m_next_flat = sparse.linalg.spsolve(A_step, b_step)
+    if has_flux:
+        if m_flux is None:
+            m_flux = sparse.linalg.spsolve(A_step, flux_sources)
         m_next_flat = refuse_what_a_flux_takes_negative(
             m_next_flat,
             m_flux,
@@ -1751,6 +1996,16 @@ def solve_timestep_full_nd(
                 "it does not. The state this step starts from holds what the flux did on the earlier steps."
             ),
         )
+
+    if walls is not None:
+        if capped:
+            _refuse_a_capped_node_negative(m_next_flat, capped, capped_exits, weights, grid, time)
+        if outflow is not None:
+            through = (balance - walls @ m_next_flat) * weights
+            for idx in dirichlet_nodes:
+                multi_idx = tuple(int(i) for i in grid.get_multi_index(idx))
+                name = _segment_at_node(boundary_conditions, multi_idx, shape, grid).name
+                outflow[name] = outflow.get(name, 0.0) + float(through[idx]) * dt
 
     # Reshape back to multi-dimensional array
     m_next = m_next_flat.reshape(shape)

@@ -29,6 +29,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     BaseCouplingIterator,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    refuse_a_capped_exit_in_a_coupled_solve,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
@@ -199,6 +200,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         GraphMFGResult
             Contains value functions, densities, convergence info for all nodes.
         """
+        refuse_a_capped_exit_in_a_coupled_solve(self._fp, "GraphMFGSolver.solve")
         N = self._N
 
         # Initialize: initial densities, then each node's terminal condition from its one owner at that density, the

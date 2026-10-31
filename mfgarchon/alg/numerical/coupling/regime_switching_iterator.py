@@ -35,6 +35,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
@@ -442,6 +443,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         RegimeSwitchingResult
             Contains value functions, densities, convergence info.
         """
+        refuse_a_capped_exit_in_a_coupled_solve(self._fp, "RegimeSwitchingIterator.solve")
         K = self._regime.n_regimes
         Q = self._regime.transition_matrix
         # Re-check HERE, not only in __init__: the transform reads Q and the FP solvers'
