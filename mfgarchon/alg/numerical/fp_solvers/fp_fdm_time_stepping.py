@@ -290,6 +290,37 @@ def _refuse_cap_off_the_implicit_step(boundary_conditions: Any, path: str) -> No
         )
 
 
+def _refuse_an_inadmissible_cap(boundary_conditions: Any) -> None:
+    """Every ``flux_capacity`` the BC carries is one FP-FDM honours, or the BC is refused (#2581, PR 2a): a cap goes on
+    a DIRICHLET segment whose value is the number 0, and is a real c, finite and >= 0, and not a bool.
+
+    The one owner of that check. The solver's constructor reads it, and so does the step, which can be handed a BC the
+    constructor never saw: one set on the solver after construction, or ``solve_fp_nd_full_system`` called directly.
+    """
+    for segment in getattr(boundary_conditions, "segments", None) or ():
+        c = segment.flux_capacity
+        if c is None:
+            continue
+        if segment.bc_type != BCType.DIRICHLET:
+            raise NotImplementedError(
+                f"FP-FDM: segment {segment.name!r} is {segment.bc_type.value} and carries a flux_capacity, which caps "
+                "an exit: a DIRICHLET segment with value 0 on the FP's own BC (#2581)."
+            )
+        value = segment.value
+        if isinstance(value, bool) or not (isinstance(value, numbers.Real) and value == 0):
+            raise NotImplementedError(
+                f"FP-FDM: segment {segment.name!r} carries a flux_capacity on a DIRICHLET with value {value!r}. A capped "
+                "exit is a DIRICHLET whose value is the number 0: on the FP's own BC a DIRICHLET(g) with g != 0 is a "
+                "prescribed density m = g, not an exit, and has no outflow to cap, and a callable or array value is "
+                "not read as 0 here (#2581). Give the capped exit the value 0."
+            )
+        if isinstance(c, bool) or not (isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0):
+            raise ValueError(
+                f"FP-FDM: segment {segment.name!r} has flux_capacity {c!r}; a cap is a finite mass per unit time per "
+                "unit boundary measure, >= 0, not a bool, and no cap is None (#2581)."
+            )
+
+
 def _capped_exit_nodes(
     boundary_conditions: Any, dirichlet_nodes: list[int], shape: tuple[int, ...], grid: Any, spacing: tuple[float, ...]
 ) -> dict[int, tuple[Any, float]]:
@@ -297,31 +328,35 @@ def _capped_exit_nodes(
     and the half cell normal to its exit face, dx/2 along the face's axis.
 
     A node's outflow over the step is read off the no-flux row's balance, which counts every wall face of the node
-    together; it is the exit face's alone only when each other wall face of the node is NO_FLUX. A capped node on two
-    exit faces, or on an exit face and a FLUX or other non-NO_FLUX face, is refused.
+    together; it is the exit face's alone only when each other wall face of the node is NO_FLUX. So every face that
+    meets a capped face must be governed by a NO_FLUX segment, or the BC is refused. That is read on the faces, not on
+    the nodes, so which segment governs a corner -- by priority or declaration order -- cannot decide between a refusal
+    and a solve (the approver's ruling on review 1). A corner that a NO_FLUX face governs is a wall node: the cap then
+    holds on the capped face less that corner's half cell, an O(h) difference.
     """
+    _refuse_an_inadmissible_cap(boundary_conditions)
+    faces = [BoundaryFace(axis, side) for axis in range(len(shape)) for side in ("min", "max")]
+    governing = {face: boundary_conditions.segment_for_face(face, grid) for face in faces}
+    for face, segment in governing.items():
+        if segment.flux_capacity is None:
+            continue
+        for other in faces:
+            met = governing[other]
+            if other.axis != face.axis and met.bc_type != BCType.NO_FLUX:
+                raise NotImplementedError(
+                    f"FP-FDM: segment {segment.name!r} caps the {face.to_string()} face, which meets the "
+                    f"{other.to_string()} face, governed by {met.name!r} ({met.bc_type.value}). A node where the two "
+                    "meet counts the outflow of all its wall faces together, so the cap cannot be read on one face "
+                    f"(#2581). Make every face that meets the capped {face.to_string()} face a NO_FLUX wall."
+                )
     capped: dict[int, tuple[Any, float]] = {}
     for idx in dirichlet_nodes:
         multi_idx = tuple(int(i) for i in grid.get_multi_index(idx))
         segment = _segment_at_node(boundary_conditions, multi_idx, shape, grid)
         if segment is None or segment.flux_capacity is None:
             continue
-        faces = [(face, boundary_conditions.segment_for_face(face, grid)) for face in _faces_of_node(multi_idx, shape)]
-        exits = [face for face, face_segment in faces if face_segment.bc_type == BCType.DIRICHLET]
-        others = [
-            f"{face.to_string()} ({face_segment.bc_type.value})"
-            for face, face_segment in faces
-            if face_segment.bc_type not in (BCType.DIRICHLET, BCType.NO_FLUX)
-        ]
-        if len(exits) != 1 or others:
-            met = [face.to_string() for face in exits[1:]] + others
-            raise NotImplementedError(
-                f"FP-FDM: node {multi_idx} is governed by segment {segment.name!r}, which carries a flux_capacity, and "
-                f"also lies on {', '.join(met)}. The node's outflow over a step counts all of its wall faces together, "
-                "so the cap cannot be read on one face (#2581). Make every other face that meets the capped exit at "
-                "this node a NO_FLUX wall."
-            )
-        capped[idx] = (segment, spacing[exits[0].axis] / 2.0)
+        exit_face = next(face for face in _faces_of_node(multi_idx, shape) if governing[face] is segment)
+        capped[idx] = (segment, spacing[exit_face.axis] / 2.0)
     return capped
 
 
@@ -1895,7 +1930,7 @@ def solve_timestep_full_nd(
     A_step, b_step = A_matrix, b_rhs
     walls = None
     capped: list[int] = []
-    m_full = None
+    m_next_flat = m_flux = None
     if dirichlet_nodes and (capped_exits or outflow is not None):
         weights = np.asarray(grid.measure_weights(), dtype=float).ravel()
         wall_rows: tuple[list, list, list] = ([], [], [])
@@ -1906,22 +1941,28 @@ def solve_timestep_full_nd(
             sparse.coo_matrix((wall_rows[2], (wall_rows[0], wall_rows[1])), shape=A_matrix.shape).tocsr(), wall_unit
         )
         balance = m_flat / dt + (source_term if source_term is not None else 0.0)
-        while True:
-            A_step, b_step = _with_capped_rows(A_matrix, b_rhs, walls, balance, capped, capped_exits)
-            m_full = sparse.linalg.spsolve(A_step, b_step + flux_sources if has_flux else b_step)
-            through = (balance - walls @ m_full) * weights  # mass per unit time through each Dirichlet node's walls
-            over = [
-                i
-                for i, (segment, half) in capped_exits.items()
-                if i not in capped and through[i] > segment.flux_capacity * weights[i] / half
-            ]
-            if not over:
-                break
-            capped.extend(over)
+    # Each pass solves the step without the flux and, with a FLUX wall, the flux's part apart, as B-3's owner below reads
+    # them: one solve a pass, two with a FLUX wall, and the last pass's are the step's.
+    while capped_exits:
+        A_step, b_step = _with_capped_rows(A_matrix, b_rhs, walls, balance, capped, capped_exits)
+        m_next_flat = sparse.linalg.spsolve(A_step, b_step)
+        m_flux = sparse.linalg.spsolve(A_step, flux_sources) if has_flux else None
+        m_full = m_next_flat + m_flux if has_flux else m_next_flat
+        through = (balance - walls @ m_full) * weights  # mass per unit time through each Dirichlet node's walls
+        over = [
+            i
+            for i, (segment, half) in capped_exits.items()
+            if i not in capped and through[i] > segment.flux_capacity * weights[i] / half
+        ]
+        if not over:
+            break
+        capped.extend(over)
 
-    m_next_flat = m_full if (m_full is not None and not has_flux) else sparse.linalg.spsolve(A_step, b_step)
+    if m_next_flat is None:
+        m_next_flat = sparse.linalg.spsolve(A_step, b_step)
     if has_flux:
-        m_flux = sparse.linalg.spsolve(A_step, flux_sources)
+        if m_flux is None:
+            m_flux = sparse.linalg.spsolve(A_step, flux_sources)
         m_next_flat = refuse_what_a_flux_takes_negative(
             m_next_flat,
             m_flux,

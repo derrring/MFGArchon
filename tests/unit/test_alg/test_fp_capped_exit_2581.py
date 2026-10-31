@@ -55,14 +55,29 @@ def _source(t: float, points: np.ndarray) -> np.ndarray:
     return np.exp(K * x) * (-g * np.cos(np.pi * x) - D * (K * f1 + f2))
 
 
-def _bc(dim: int, cap: float | None, x_max: BCType = BCType.DIRICHLET, y_max: BCType = BCType.NO_FLUX, value=0.0):
+def _bc(
+    dim: int,
+    cap: float | None,
+    x_max: BCType = BCType.DIRICHLET,
+    y_max: BCType = BCType.NO_FLUX,
+    value=0.0,
+    y_max_priority: int = 0,
+):
     faces = ["x_min", "x_max"] + (["y_min", "y_max"] if dim == 2 else [])
     segments = []
     for face in faces:
         if face == "x_max":
             segments.append(BCSegment(name="exit", bc_type=x_max, value=value, boundary=face, flux_capacity=cap))
         elif face == "y_max" and y_max == BCType.DIRICHLET:
-            segments.append(BCSegment(name="second_exit", bc_type=BCType.DIRICHLET, value=0.0, boundary=face))
+            segments.append(
+                BCSegment(
+                    name="second_exit",
+                    bc_type=BCType.DIRICHLET,
+                    value=0.0,
+                    boundary=face,
+                    priority=y_max_priority,
+                )
+            )
         else:
             segments.append(BCSegment(name=face, bc_type=BCType.NO_FLUX, boundary=face))
     return BoundaryConditions(dimension=dim, segments=segments)
@@ -145,9 +160,9 @@ def test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges():
 
 def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     """The trapezoid mass plus the record is the mass at level 0 plus what came in. In 1-D a capped exit beside a free
-    one, both in the record: a BC of DIRICHLET segments alone holds its walls at g(0) at level 0 (#2535), and the capped
-    wall keeps the caller's density there, which queues. In 2-D a capped exit beside a FLUX inflow, whose q gives what
-    came in."""
+    one, both in the record, under a field volatility, whose Itô diffusion the wall rows carry: a BC of DIRICHLET
+    segments alone holds its walls at g(0) at level 0 (#2535), and the capped wall keeps the caller's density there,
+    which queues. In 2-D a capped exit beside a FLUX inflow, whose q gives what came in."""
     problem, grid = _problem(1, 21, 20, 1.0)
     x = np.asarray(grid.coordinates[0])
     m0 = np.exp(-((x - 0.7) ** 2) / 0.05) + 0.5
@@ -160,7 +175,13 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     )
     solver = FPFDMSolver(problem, boundary_conditions=bc)
     m = np.asarray(
-        solver.solve_fp_system(m0, potential_field=np.broadcast_to(-x, (21, 21)).copy(), show_progress=False)
+        solver.solve_fp_system(
+            m0,
+            potential_field=np.broadcast_to(-x, (21, 21)).copy(),
+            volatility=0.2 + 0.6 * x,
+            volatility_kind="field",
+            show_progress=False,
+        )
     )
     weights = grid.measure_weights()
     assert m[0][0] == 0.0
@@ -216,6 +237,17 @@ def _solve(bc: BoundaryConditions, dim: int = 1, scheme: str = "divergence_upwin
         solver.solve_fp_system(np.ones_like(x), drift_field=drift, show_progress=False)
 
 
+def _solve_set_after(bc: BoundaryConditions) -> None:
+    """The solve with ``bc`` set on the solver after construction, which the constructor never checked."""
+    problem, grid = _problem(1, 11, 4, 0.1)
+    x = np.asarray(grid.coordinates[0])
+    solver = FPFDMSolver(problem, boundary_conditions=_bc(1, CAP))
+    solver.boundary_conditions = bc.bind_geometry(grid)
+    solver.solve_fp_system(
+        np.ones_like(x), potential_field=np.broadcast_to(-x, (5, *x.shape)).copy(), show_progress=False
+    )
+
+
 def _adjoint_step(bc: BoundaryConditions) -> None:
     problem, _ = _problem(1, 11, 4, 0.1)
     FPFDMSolver(problem, boundary_conditions=bc).solve_fp_step_adjoint_mode(np.ones(11), sparse.csr_matrix((11, 11)))
@@ -238,10 +270,17 @@ REFUSALS = {
         r"is no_flux and carries a flux_capacity",
     ),
     "a negative cap": (lambda: _solve(_bc(1, -1.0)), ValueError, r"a cap is a finite mass per unit time"),
+    "a bool cap": (lambda: _solve(_bc(1, False)), ValueError, r"not a bool"),
+    "a negative cap set after construction": (lambda: _solve_set_after(_bc(1, -1.0)), ValueError, r"finite mass"),
     "two exits at a corner": (
         lambda: _solve(_bc(2, CAP, y_max=BCType.DIRICHLET), dim=2),
         NotImplementedError,
-        r"Make every other face that meets the capped exit at this node a NO_FLUX wall",
+        r"Make every face that meets the capped x_max face a NO_FLUX wall",
+    ),
+    "a corner the other face governs": (
+        lambda: _solve(_bc(2, CAP, y_max=BCType.DIRICHLET, y_max_priority=1), dim=2),
+        NotImplementedError,
+        r"Make every face that meets the capped x_max face a NO_FLUX wall",
     ),
     "the explicit step": (
         lambda: _solve(_bc(1, CAP), drift=lambda t, x, m: np.ones_like(np.asarray(x)[..., 0])),

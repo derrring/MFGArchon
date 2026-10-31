@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numbers
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -25,6 +24,7 @@ from mfgarchon.utils.pde_coefficients import (
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
     _refuse_a_cap_off_upwind,
+    _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
 )
 from .fp_fdm_time_stepping import (
@@ -224,35 +224,18 @@ class FPFDMSolver(BaseFPSolver):
     def _validate_bc_support(self, bc: Any) -> None:
         """The base checks, with a capacity-limited exit honoured on this solver's own BC (#2581, PR 2a).
 
-        A ``flux_capacity`` c is accepted on a DIRICHLET segment with value 0 of a BC handed to the constructor: an
-        exit on the FP's own BC, with c a finite mass per unit time per unit boundary measure, c >= 0. On the problem's
-        shared BC the HJB reads that exit as u = g, which with a capped FP is not an equilibrium (user ruling
-        2026-10-10), so a cap there keeps the base's refusal. A cap on another segment type, on a DIRICHLET(g != 0),
-        which is a prescribed density, or on a scheme other than upwind is refused here.
+        A ``flux_capacity`` c is accepted on a DIRICHLET segment with value 0 of the BC handed to the constructor: an
+        exit on the FP's own BC, with c a finite mass per unit time per unit boundary measure, c >= 0. Which caps are
+        admissible is `_refuse_an_inadmissible_cap`'s, which the step reads too. Any other BC this is asked about --
+        the problem's shared one, read through ``get_boundary_conditions()`` -- keeps the base's refusal: there the
+        HJB reads the exit as u = g, which with a capped FP is not an equilibrium (user ruling 2026-10-10).
         """
         capped = [seg for seg in getattr(bc, "segments", None) or () if seg.flux_capacity is not None]
-        if not capped or not getattr(self, "_own_bc", False):
+        if not capped or not (getattr(self, "_own_bc", False) and bc is getattr(self, "boundary_conditions", None)):
             super()._validate_bc_support(bc)
             return
         super(BaseFPSolver, self)._validate_bc_support(bc)
-        for seg in capped:
-            if seg.bc_type != BCType.DIRICHLET:
-                raise NotImplementedError(
-                    f"FPFDMSolver: segment {seg.name!r} is {seg.bc_type.value} and carries a flux_capacity, which caps "
-                    "an exit: a DIRICHLET segment with value 0 on the FP's own BC (#2581)."
-                )
-            if not (isinstance(seg.value, numbers.Real) and seg.value == 0):
-                raise NotImplementedError(
-                    f"FPFDMSolver: segment {seg.name!r} carries a flux_capacity on a DIRICHLET with value {seg.value!r}. "
-                    "On the FP's own BC a DIRICHLET(g) with g != 0 is a prescribed density m = g, not an exit, and "
-                    "has no outflow to cap (#2581). Give the capped exit value 0."
-                )
-            c = seg.flux_capacity
-            if not (isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0):
-                raise ValueError(
-                    f"FPFDMSolver: segment {seg.name!r} has flux_capacity {c!r}; a cap is a finite mass per unit time "
-                    "per unit boundary measure, >= 0, and no cap is None (#2581)."
-                )
+        _refuse_an_inadmissible_cap(bc)
         _refuse_a_cap_off_upwind([seg.name for seg in capped], self.advection_scheme)
 
     def _log_cfl_diagnostic(self, volatility: float | np.ndarray | Callable | None = None) -> None:

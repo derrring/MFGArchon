@@ -101,6 +101,10 @@ def _fem_explicit(cap):
 
 ROUTES = {
     "fdm-shared": lambda cap: FPFDMSolver(_grid_problem(_exit(1, cap))),
+    # the shared BC read beside FP-FDM's own uncapped one: honouring a cap on its own BC does not lift the shared one's
+    "fdm-shared-read-beside-own": lambda cap: FPFDMSolver(
+        _grid_problem(_exit(1, cap)), boundary_conditions=_exit(1, None)
+    ).get_boundary_conditions(),
     "particle-shared": lambda cap: FPParticleSolver(_grid_problem(_exit(1, cap)), num_particles=200),
     "particle-explicit": lambda cap: FPParticleSolver(
         _grid_problem(_exit(1, None)), num_particles=200, boundary_conditions=_exit(1, cap)
@@ -128,12 +132,13 @@ def test_fp_fdm_honours_the_cap_on_its_own_bc():
     """The fixture as the capability's oracle: with a cap of 1e-6 the exit lets out at most cap * T = 5e-7 over the
     horizon (1-D, so the exit's measure is 1), and the mass the solve keeps plus the outflow it records is the mass it
     started with. Uncapped, this solve lets out 0.207328 through the same exit (measured at #2581 PR 2a's commit; the
-    module docstring's 0.081667 is another solve's, at 5e4b64e4)."""
+    module docstring's 0.081667 is another solve's, at 5e4b64e4). A cap of 0 is the limit the user's ruling of
+    2026-10-10 turns on, the exit become a wall: it lets out nothing, to round-off."""
     problem = _grid_problem(_exit(1, None))
     weights = problem.geometry.measure_weights()
     m0 = np.asarray(problem.m_initial, dtype=float)
     outflow = {}
-    for cap in (None, CAP):
+    for cap in (None, CAP, 0.0):
         solver = FPFDMSolver(problem, boundary_conditions=_exit(1, cap))
         m = np.asarray(solver.solve_fp_system(m0, show_progress=False))
         out = solver._boundary_outflow["exit"]
@@ -141,3 +146,4 @@ def test_fp_fdm_honours_the_cap_on_its_own_bc():
         outflow[cap] = out[-1]
     assert 0.0 < outflow[CAP] <= CAP * 0.5 * (1 + 1e-12)
     assert outflow[None] > 1e3 * outflow[CAP]
+    assert abs(outflow[0.0]) < 1e-12
