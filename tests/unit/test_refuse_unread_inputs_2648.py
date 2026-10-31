@@ -143,7 +143,9 @@ DATACLASSES = [
     (WassersteinSolverConfig, {}, "max_iterations", 7),
     (NetworkMFGComponents, {}, "node_potential_func", _f),
     (VariationalMFGComponents, {}, "terminal_cost_func", _f),
-    (GraphBCConfig, {}, "edge_bcs", []),
+    # node_bcs, not edge_bcs: an edge condition is refused (#2493), and the config keeps its conditions as a tuple,
+    # which `tuple()` hands back as the same object, so the round trip below still compares identity (#2292).
+    (GraphBCConfig, {}, "node_bcs", ()),
     (MultiPopulationProblem, {"populations": [object()]}, "population_names", ["only"]),
     (
         HybridMazeConfig,

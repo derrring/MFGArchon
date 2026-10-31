@@ -27,7 +27,7 @@ Part of: Unified Boundary Condition Architecture
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal
@@ -56,24 +56,51 @@ class GraphBCType(Enum):
     CUSTOM = "custom"  # User-defined function
 
 
-@dataclass
+#: Why an edge condition is refused: the one sentence `EdgeBC`, `GraphBCConfig` and `add_edge_bc` give.
+_EDGES_NOT_APPLIED = (
+    "an edge condition is not applied: no graph solver has an edge field it could act on, so it would be "
+    "dropped. It is refused until an edge operator is ruled (#2493). For a condition at a node, use NodeBC."
+)
+
+
+def _refuse_a_foreign_bc_type(kind: str, name: str, bc_type: object) -> None:
+    """A graph condition's type is a ``GraphBCType``. A continuum ``BCType`` shares two value strings with it,
+    "dirichlet" and "neumann", while being a different member, and any other type matches no branch of
+    ``GraphApplicator.apply``: either way the condition would be dropped without a word (#2292)."""
+    if isinstance(bc_type, GraphBCType):
+        return
+    from .types import BCType
+
+    hint = ""
+    if isinstance(bc_type, BCType):
+        hint = " That is the continuum alphabet, BCType"
+        hint += f"; the graph one is GraphBCType.{bc_type.name}." if bc_type.name in GraphBCType.__members__ else "."
+    raise TypeError(f"{kind} {name!r}: bc_type must be a GraphBCType, got {bc_type!r}.{hint} (#2292)")
+
+
+@dataclass(frozen=True)
 class NodeBC:
     """
     Boundary condition specification for a set of nodes.
 
+    Frozen: a condition is checked once, when it is built, so it cannot change after that (#2292).
+
     Attributes:
-        nodes: List of node indices or callable(num_nodes) -> indices
-        bc_type: Type of boundary condition
+        nodes: Node indices, kept as a tuple, or callable(num_nodes) -> indices
+        bc_type: Type of boundary condition, a ``GraphBCType``
         value: BC value (constant or callable(node, t) -> value)
         name: Optional name for this BC region (e.g., "exit", "source")
     """
 
-    nodes: list[int] | Callable[[int], list[int]]
+    nodes: tuple[int, ...] | Callable[[int], list[int]]
     bc_type: GraphBCType = GraphBCType.DIRICHLET
     value: float | Callable[[int, float], float] = 0.0
     name: str = "boundary"
 
     def __post_init__(self) -> None:
+        _refuse_a_foreign_bc_type("NodeBC", self.name, self.bc_type)
+        if not callable(self.nodes):
+            object.__setattr__(self, "nodes", tuple(self.nodes))
         # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
         # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
         # dropped without a word, so it is refused (#1948).
@@ -97,10 +124,12 @@ class NodeBC:
         return float(self.value)
 
 
-@dataclass
+@dataclass(frozen=True)
 class EdgeBC:
     """
     Boundary condition specification for edges (flow-based problems).
+
+    Refused when built: no graph solver applies an edge condition (#2493).
 
     Attributes:
         edges: List of (from_node, to_node) tuples or callable
@@ -114,25 +143,17 @@ class EdgeBC:
     value: float | Callable[[int, int, float], float] = 0.0
     name: str = "edge_boundary"
 
-    def get_edges(self, num_nodes: int) -> list[tuple[int, int]]:
-        """Get edge tuples, resolving callable if needed."""
-        if callable(self.edges):
-            return self.edges(num_nodes)
-        return list(self.edges)
-
-    def get_value(self, from_node: int, to_node: int, t: float) -> float:
-        """Get BC value for a specific edge at time t."""
-        if callable(self.value):
-            return self.value(from_node, to_node, t)
-        return float(self.value)
+    def __post_init__(self) -> None:
+        raise NotImplementedError(f"EdgeBC {self.name!r}: {_EDGES_NOT_APPLIED}")
 
 
-@dataclass
+@dataclass(frozen=True)
 class GraphBCConfig:
     """
     Configuration for graph boundary conditions.
 
-    Provides a declarative way to specify BCs for graph problems.
+    Provides a declarative way to specify BCs for graph problems. Frozen, with its conditions kept as tuples,
+    so a configuration checked once cannot change after it is handed over (#2292).
 
     Example:
         >>> config = GraphBCConfig(
@@ -144,9 +165,21 @@ class GraphBCConfig:
         >>> applicator = GraphApplicator.from_config(config, num_nodes=20)
     """
 
-    node_bcs: list[NodeBC] = field(default_factory=list)
-    edge_bcs: list[EdgeBC] = field(default_factory=list)
+    node_bcs: tuple[NodeBC, ...] = ()
+    edge_bcs: tuple[EdgeBC, ...] = ()
     default_bc_type: GraphBCType = NEVER_READ  # refused when passed; never read (#2648)
+
+    def __post_init__(self) -> None:
+        for i, bc in enumerate(self.node_bcs):
+            if not isinstance(bc, NodeBC):
+                raise TypeError(
+                    f"GraphBCConfig: node_bcs[{i}] is a {type(bc).__name__}, not a NodeBC. Every entry of node_bcs "
+                    "is a NodeBC (#2292)."
+                )
+        if self.edge_bcs:
+            raise NotImplementedError(f"GraphBCConfig: edge_bcs is not empty, and {_EDGES_NOT_APPLIED}")
+        object.__setattr__(self, "node_bcs", tuple(self.node_bcs))
+        object.__setattr__(self, "edge_bcs", tuple(self.edge_bcs))
 
 
 GraphBCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
@@ -223,13 +256,9 @@ class GraphApplicator(BaseGraphApplicator):
         """
         super().__init__(num_nodes)
 
-        # Node BC storage
+        # Node BC storage; a name may name several conditions, and a lookup by it refuses that (#2292)
         self._node_bcs: list[NodeBC] = []
-        self._node_bc_map: dict[str, NodeBC] = {}
-
-        # Edge BC storage
-        self._edge_bcs: list[EdgeBC] = []
-        self._edge_bc_map: dict[str, EdgeBC] = {}
+        self._node_bcs_by_name: dict[str, list[NodeBC]] = {}
 
         # Cache for resolved node indices
         self._resolved_boundary_nodes: set[int] | None = None
@@ -247,11 +276,13 @@ class GraphApplicator(BaseGraphApplicator):
         Returns:
             Configured GraphApplicator
         """
+        if not isinstance(config, GraphBCConfig):
+            raise TypeError(
+                f"GraphApplicator.from_config: config is a {type(config).__name__}, not a GraphBCConfig (#2292)."
+            )
         applicator = cls(num_nodes)
         for node_bc in config.node_bcs:
             applicator.add_node_bc(node_bc)
-        for edge_bc in config.edge_bcs:
-            applicator.add_edge_bc(edge_bc)
         return applicator
 
     @classmethod
@@ -282,7 +313,20 @@ class GraphApplicator(BaseGraphApplicator):
             >>> network = GridNetwork(10, 10)
             >>> applicator = GraphApplicator.from_network_geometry(network, boundary_type="leaf")
         """
-        num_nodes = geometry.num_nodes
+        read = {"leaf": set(), "degree": {"degree_threshold"}, "spatial": set(), "custom": {"boundary_nodes"}}
+        if boundary_type not in read:
+            raise ValueError(f"Unknown boundary_type: {boundary_type}")
+        unread = sorted(set(kwargs) - read[boundary_type] - {"boundary_value"})
+        if unread:
+            raise TypeError(
+                f"GraphApplicator.from_network_geometry: boundary_type={boundary_type!r} reads "
+                f"{sorted(read[boundary_type] | {'boundary_value'})}, and not {unread} (#2292)."
+            )
+        if boundary_type == "custom" and "boundary_nodes" not in kwargs:
+            raise TypeError(
+                "GraphApplicator.from_network_geometry: boundary_type='custom' needs boundary_nodes (#2292)."
+            )
+        num_nodes = _num_nodes(geometry)
 
         applicator = cls(num_nodes)
 
@@ -294,10 +338,8 @@ class GraphApplicator(BaseGraphApplicator):
             boundary_nodes = cls._detect_low_degree_nodes(geometry, threshold)
         elif boundary_type == "spatial":
             boundary_nodes = cls._detect_spatial_boundary_nodes(geometry)
-        elif boundary_type == "custom":
-            boundary_nodes = kwargs.get("boundary_nodes", [])
-        else:
-            raise ValueError(f"Unknown boundary_type: {boundary_type}")
+        else:  # "custom"
+            boundary_nodes = kwargs["boundary_nodes"]
 
         if boundary_nodes:
             applicator.set_dirichlet_nodes(boundary_nodes, value=kwargs.get("boundary_value", 0.0), name="boundary")
@@ -308,12 +350,10 @@ class GraphApplicator(BaseGraphApplicator):
     def _detect_leaf_nodes(geometry) -> list[int]:
         """Detect leaf nodes (degree 1) in the graph."""
         degrees = GraphApplicator._node_degrees(geometry)
-        if degrees is None:
-            return []
         return [int(i) for i in np.where(degrees == 1)[0]]
 
     @staticmethod
-    def _node_degrees(geometry) -> np.ndarray | None:
+    def _node_degrees(geometry) -> np.ndarray:
         """Combinatorial degree: how many neighbours each node has.
 
         `(adj != 0).sum(axis=1)`, not `adj.sum(axis=1)`. The latter is the weighted degree -- the
@@ -342,20 +382,23 @@ class GraphApplicator(BaseGraphApplicator):
         try:
             network_data = geometry.network_data
         except AttributeError:
-            return None
-        if network_data is None:
-            return None
-        adj = network_data.adjacency_matrix
+            network_data = None
+        adj = None if network_data is None else network_data.adjacency_matrix
         if adj is None:
-            return None
+            # A graph geometry without `network_data`, such as a maze, gives its own adjacency (#2292).
+            try:
+                adj = geometry.get_adjacency_matrix()
+            except AttributeError:
+                raise TypeError(
+                    f"{type(geometry).__name__} gives neither network_data.adjacency_matrix nor get_adjacency_matrix(), "
+                    "so no node degree can be read from it (#2292)."
+                ) from None
         return np.asarray((adj != 0).sum(axis=1)).flatten()
 
     @staticmethod
     def _detect_low_degree_nodes(geometry, threshold: int) -> list[int]:
         """Detect nodes with degree <= threshold."""
         degrees = GraphApplicator._node_degrees(geometry)
-        if degrees is None:
-            return []
         return [int(i) for i in np.where(degrees <= threshold)[0]]
 
     @staticmethod
@@ -496,17 +539,34 @@ class GraphApplicator(BaseGraphApplicator):
         return self.add_node_bc(bc)
 
     def add_node_bc(self, bc: NodeBC) -> GraphApplicator:
-        """Add a node BC specification."""
+        """Add a node BC specification. Its nodes are checked against this graph now (#2292)."""
+        if not isinstance(bc, NodeBC):
+            raise TypeError(f"GraphApplicator.add_node_bc: got a {type(bc).__name__}, not a NodeBC (#2292).")
+        self._resolve_nodes(bc)
         self._node_bcs.append(bc)
-        self._node_bc_map[bc.name] = bc
+        self._node_bcs_by_name.setdefault(bc.name, []).append(bc)
         self._invalidate_cache()
         return self
 
     def add_edge_bc(self, bc: EdgeBC) -> GraphApplicator:
-        """Add an edge BC specification."""
-        self._edge_bcs.append(bc)
-        self._edge_bc_map[bc.name] = bc
-        return self
+        """Refused: no graph solver applies an edge condition (#2493)."""
+        raise NotImplementedError(f"GraphApplicator.add_edge_bc: {_EDGES_NOT_APPLIED}")
+
+    def _checked_nodes(self, nodes, where: str) -> list[int]:
+        """``nodes`` as a list of node indices of this graph, or refused by name: an index outside
+        ``[0, num_nodes)`` would otherwise be skipped without a word (#2292)."""
+        indices = [int(n) for n in nodes]
+        outside = [n for n in indices if not 0 <= n < self.num_nodes]
+        if outside:
+            raise ValueError(
+                f"{where}: node(s) {outside} are not nodes of this graph, whose nodes are 0..{self.num_nodes - 1} "
+                "(#2292)."
+            )
+        return indices
+
+    def _resolve_nodes(self, bc: NodeBC) -> list[int]:
+        """The one reading of a condition's nodes, a callable resolved against this graph, each one checked."""
+        return self._checked_nodes(bc.get_nodes(self.num_nodes), f"NodeBC {bc.name!r}")
 
     def _invalidate_cache(self) -> None:
         """Invalidate cached resolved indices."""
@@ -560,12 +620,7 @@ class GraphApplicator(BaseGraphApplicator):
         is_2d = result.ndim == 2
 
         for bc in self._node_bcs:
-            nodes = bc.get_nodes(self.num_nodes)
-
-            for node in nodes:
-                if node < 0 or node >= self.num_nodes:
-                    continue
-
+            for node in self._resolve_nodes(bc):
                 if bc.bc_type == GraphBCType.DIRICHLET:
                     # Issue #1471: a Dirichlet value pin belongs to the VALUE field (HJB u), not the
                     # density field (FP m) — pinning m to a value-function value is wrong.
@@ -686,15 +741,18 @@ class GraphApplicator(BaseGraphApplicator):
             >>> u_bc = applicator.apply_direct(u, [0], lambda n, t: np.sin(t))
         """
         result = field.copy()
+        nodes = self._checked_nodes(boundary_nodes, "GraphApplicator.apply_direct")
+        if isinstance(values, (list, np.ndarray)) and len(values) != len(nodes):
+            raise ValueError(
+                f"GraphApplicator.apply_direct: {len(values)} value(s) for {len(nodes)} node(s). Give one value per "
+                "node, or one number or callable for all of them (#2292)."
+            )
 
-        for i, node in enumerate(boundary_nodes):
-            if node < 0 or node >= self.num_nodes:
-                continue
-
+        for i, node in enumerate(nodes):
             if callable(values):
                 value = values(node, t)
             elif isinstance(values, (list, np.ndarray)):
-                value = values[i] if i < len(values) else values[-1]
+                value = values[i]
             else:
                 value = float(values)
 
@@ -770,7 +828,7 @@ class GraphApplicator(BaseGraphApplicator):
             self._resolved_boundary_nodes = set()
             for bc in self._node_bcs:
                 if bc.bc_type in (GraphBCType.DIRICHLET, GraphBCType.ABSORBING):
-                    self._resolved_boundary_nodes.update(bc.get_nodes(self.num_nodes))
+                    self._resolved_boundary_nodes.update(self._resolve_nodes(bc))
 
         return list(self._resolved_boundary_nodes)
 
@@ -785,7 +843,7 @@ class GraphApplicator(BaseGraphApplicator):
             self._resolved_source_nodes = set()
             for bc in self._node_bcs:
                 if bc.bc_type == GraphBCType.SOURCE:
-                    self._resolved_source_nodes.update(bc.get_nodes(self.num_nodes))
+                    self._resolved_source_nodes.update(self._resolve_nodes(bc))
 
         return list(self._resolved_source_nodes)
 
@@ -800,16 +858,22 @@ class GraphApplicator(BaseGraphApplicator):
         return [i for i in range(self.num_nodes) if i not in boundary]
 
     def get_bc_by_name(self, name: str) -> NodeBC | None:
-        """Get node BC by name."""
-        return self._node_bc_map.get(name)
+        """Get node BC by name, or None if no condition has it. A name several conditions share is refused:
+        the ``set_*_nodes`` helpers each give one default name, so two calls of one helper share it (#2292)."""
+        named = self._node_bcs_by_name.get(name, [])
+        if len(named) > 1:
+            raise ValueError(
+                f"GraphApplicator.get_bc_by_name: {len(named)} conditions are named {name!r}, so the name picks none "
+                "of them. Give each its own name, e.g. set_dirichlet_nodes(..., name=...) (#2292)."
+            )
+        return named[0] if named else None
 
     def get_bc_value(self, name: str, node: int, t: float) -> float | None:
         """Get BC value for a specific node from named BC region."""
         bc = self.get_bc_by_name(name)
         if bc is None:
             return None
-        nodes = bc.get_nodes(self.num_nodes)
-        if node in nodes:
+        if node in self._resolve_nodes(bc):
             return bc.get_value(node, t)
         return None
 
@@ -817,7 +881,7 @@ class GraphApplicator(BaseGraphApplicator):
         """String representation."""
         bc_summary = []
         for bc in self._node_bcs:
-            nodes = bc.get_nodes(self.num_nodes)
+            nodes = self._resolve_nodes(bc)
             bc_summary.append(f"{bc.name}({bc.bc_type.value}): {len(nodes)} nodes")
 
         return f"GraphApplicator(num_nodes={self.num_nodes}, bcs=[{', '.join(bc_summary)}])"
@@ -826,6 +890,33 @@ class GraphApplicator(BaseGraphApplicator):
 # =============================================================================
 # Convenience Functions
 # =============================================================================
+
+
+def _num_nodes(geometry) -> int:
+    """A graph geometry's node count. Network geometries call it ``num_nodes``; every ``GraphGeometry``, a maze
+    among them, gives ``num_spatial_points`` (#2292)."""
+    # Issue #543: getattr() normalizes the attribute naming across geometries
+    for name in ("num_nodes", "n_nodes", "num_spatial_points"):
+        n = getattr(geometry, name, None)
+        if n is not None:
+            return int(n)
+    raise TypeError(
+        f"{type(geometry).__name__} gives no node count: none of num_nodes, n_nodes or num_spatial_points (#2292)."
+    )
+
+
+def accept_graph_boundary_conditions(boundary_conditions, where: str) -> GraphBCConfig | None:
+    """The node boundary conditions a graph geometry is handed: a ``GraphBCConfig``, or ``None`` for none.
+
+    Anything else, a continuum ``BoundaryConditions``, a list, or a bare ``NodeBC``, is refused here, by
+    name, rather than failing later where the problem is built (#2292).
+    """
+    if boundary_conditions is None or isinstance(boundary_conditions, GraphBCConfig):
+        return boundary_conditions
+    raise TypeError(
+        f"{where}: boundary_conditions is a {type(boundary_conditions).__name__}. A graph geometry takes a "
+        "GraphBCConfig, e.g. GraphBCConfig(node_bcs=[NodeBC(...)]), or None (#2292)."
+    )
 
 
 def create_graph_applicator(
@@ -897,16 +988,7 @@ def create_maze_applicator(
         >>> maze = MazeGeometry(width=10, height=10)
         >>> applicator = create_maze_applicator(maze, auto_detect_exits=True)
     """
-    # Get number of nodes from geometry
-    # Issue #543: Use getattr() to normalize attribute naming (num_nodes vs n_nodes)
-    num_nodes = getattr(maze_geometry, "num_nodes", None) or getattr(maze_geometry, "n_nodes", None)
-    if num_nodes is None:
-        raise ValueError(
-            "Cannot determine number of nodes from maze geometry. "
-            "Geometry must have 'num_nodes' or 'n_nodes' attribute."
-        )
-
-    applicator = GraphApplicator(num_nodes)
+    applicator = GraphApplicator(_num_nodes(maze_geometry))
 
     # Auto-detect exits if requested
     if auto_detect_exits and exit_nodes is None:

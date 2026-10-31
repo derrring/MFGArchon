@@ -1736,9 +1736,11 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         Parameters
         ----------
         boundary_conditions : GraphBCConfig or None
-            Declarative node boundary conditions, or ``None``.
+            Declarative node boundary conditions, or ``None``. Anything else is refused by name (#2292).
         """
-        self._node_bc = boundary_conditions
+        from mfgarchon.geometry.boundary.applicator_graph import accept_graph_boundary_conditions
+
+        self._node_bc = accept_graph_boundary_conditions(boundary_conditions, type(self).__name__)
 
     @property
     def dimension(self) -> int:
@@ -2193,8 +2195,12 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         return getattr(self, "_node_bc", None) is not None
 
     def set_boundary_conditions(self, boundary_conditions) -> None:
-        """Set/replace the node-BC config at runtime (Issue #1471)."""
-        self._node_bc = boundary_conditions
+        """Set/replace the node-BC config at runtime (Issue #1471): a ``GraphBCConfig`` or ``None`` (#2292)."""
+        from mfgarchon.geometry.boundary.applicator_graph import accept_graph_boundary_conditions
+
+        self._node_bc = accept_graph_boundary_conditions(
+            boundary_conditions, f"{type(self).__name__}.set_boundary_conditions"
+        )
 
     def get_collocation_points(self) -> NDArray:
         """

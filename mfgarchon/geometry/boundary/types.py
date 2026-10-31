@@ -594,6 +594,13 @@ class BCSegment:
 
     def __post_init__(self) -> None:
         """Validate BCSegment specification (Issue #596 Phase 2.5)."""
+        # A graph type shares "dirichlet" and "neumann" with BCType as value strings while being a different
+        # member, and no continuum reader has a reading of "absorbing", "source" or "custom" (#2292).
+        if not isinstance(self.bc_type, BCType):
+            raise TypeError(
+                f"BCSegment {self.name!r}: bc_type must be a BCType, got {self.bc_type!r}. A GraphBCType is a graph "
+                "node's condition, given through NodeBC on a graph geometry (#2292)."
+            )
         # Issue #612: Fix validation - boundary+region are complementary filters, not exclusive
         # Valid combinations:
         #   - boundary alone (entire boundary wall)

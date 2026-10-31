@@ -139,8 +139,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="bc_noflux_reads_as_clamp",
         path="mfgarchon/geometry/boundary/bc_utils.py",
-        old='    elif bc_type_lower in ("neumann", "no_flux", "robin"):\n        return "reflect"',
-        new='    elif bc_type_lower in ("neumann", "no_flux", "robin"):\n        return "clamp"  # MUTATED',
+        old='        "neumann": "reflect",  # mirror at the boundary\n        "no_flux": "reflect",\n        "robin": "reflect",',
+        new='        "neumann": "clamp",  # MUTATED\n        "no_flux": "clamp",\n        "robin": "clamp",',
         owner="no_flux/neumann/robin -> reflect (#1698)",
         verify="bc_type_to_geometric_operation('no_flux') == 'clamp'",
     ),

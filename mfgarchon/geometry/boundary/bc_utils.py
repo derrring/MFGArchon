@@ -12,6 +12,7 @@ All solvers should import from this module for consistent BC handling.
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any, NoReturn
 
 
@@ -52,6 +53,39 @@ def get_bc_type_string(boundary_conditions: Any) -> str | None:
     return bc_type.lower() if isinstance(bc_type, str) else bc_type
 
 
+#: Each BC type string the semi-Lagrangian fold has a reading for, and its geometric operation. Total: a string
+#: not here is refused by name rather than read as a stop at the wall, which it used to be (#2292).
+_GEOMETRIC_OPERATION = MappingProxyType(
+    {
+        "periodic": "periodic",  # wrap around the domain
+        "neumann": "reflect",  # mirror at the boundary
+        "no_flux": "reflect",
+        "robin": "reflect",
+        "reflecting": "reflect",  # the particle vocabulary's fold, which the fallback read as a stop
+        "dirichlet": "clamp",  # stay at the boundary
+        "absorbing": "clamp",  # the particle vocabulary's exit
+    }
+)
+
+#: BC types with no geometric operation, what each is, and why neither a fold nor a stop at the wall imposes it.
+_NO_GEOMETRIC_OPERATION = MappingProxyType(
+    {
+        "flux": (
+            "a prescribed mass flux J.n = q",
+            "it is a Fokker-Planck solver's own BC, read by FP-FDM's implicit step and by FP-FEM (#2581)",
+        ),
+        "extrapolation_linear": (
+            "a ghost-value extrapolation",
+            "it constrains the value's derivative at the wall (#2292)",
+        ),
+        "extrapolation_quadratic": (
+            "a ghost-value extrapolation",
+            "it constrains the value's derivative at the wall (#2292)",
+        ),
+    }
+)
+
+
 def bc_type_to_geometric_operation(bc_type: str | None) -> str:
     """
     Map BC type string to geometric operation for Semi-Lagrangian solvers.
@@ -64,8 +98,12 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
 
     Mapping:
         - 'periodic' → 'periodic' (wrap around domain)
-        - 'neumann', 'no_flux', 'robin' → 'reflect' (mirror at boundary)
+        - 'neumann', 'no_flux', 'robin', 'reflecting' → 'reflect' (mirror at boundary)
         - 'dirichlet', 'absorbing', None → 'clamp' (stay at boundary)
+
+    Raises:
+        NotImplementedError: for 'flux' and the extrapolations, which have no geometric operation.
+        ValueError: for any other string, which no BC type spells (#2292).
 
     Example:
         >>> bc_type_to_geometric_operation('no_flux')
@@ -77,21 +115,19 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
     """
     if bc_type is None:
         return "clamp"  # Default: absorbing
-
     bc_type_lower = bc_type.lower()
-
-    if bc_type_lower == "periodic":
-        return "periodic"
-    elif bc_type_lower in ("neumann", "no_flux", "robin"):
-        return "reflect"
-    elif bc_type_lower == "flux":
-        # A prescribed mass flux has no geometric reading: neither a fold nor a stop at the wall imposes J.n = q (#2581).
+    if bc_type_lower in _GEOMETRIC_OPERATION:
+        return _GEOMETRIC_OPERATION[bc_type_lower]
+    if bc_type_lower in _NO_GEOMETRIC_OPERATION:
+        what, why = _NO_GEOMETRIC_OPERATION[bc_type_lower]
         raise NotImplementedError(
-            "bc_type_to_geometric_operation: a FLUX boundary (a prescribed mass flux J.n = q) has no geometric "
-            "operation; it is a Fokker-Planck solver's own BC, read by FP-FDM's implicit step and by FP-FEM (#2581)."
+            f"bc_type_to_geometric_operation: the {bc_type_lower.upper()} boundary ({what}) has no geometric operation; "
+            f"{why}."
         )
-    else:  # dirichlet, absorbing, or unknown
-        return "clamp"
+    raise ValueError(
+        f"bc_type_to_geometric_operation: {bc_type!r} is no BC type this reads; it reads "
+        f"{sorted(_GEOMETRIC_OPERATION)} and None. A graph type ('source', 'custom') has no continuum reading (#2292)."
+    )
 
 
 def geometric_operations(boundary_conditions: Any) -> set[str]:

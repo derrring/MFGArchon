@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from mfgarchon.geometry.boundary import BCSegment
+from mfgarchon.geometry.boundary import BCSegment, BCType
 from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
 from mfgarchon.geometry.boundary.resolution import FPResolver, HJBResolver, MathBCType
 
@@ -37,7 +37,11 @@ _STATE = {"drift": 0.5, "diffusion": 0.1}
 
 
 def _segment(bc_type):
-    return BCSegment(name="s", bc_type=bc_type, value=0.0)
+    """A segment carrying ``bc_type``. ``BCSegment`` refuses a ``GraphBCType`` when it is built (#2292); a built
+    segment is mutable, though, so the type is set on one here, and the resolvers must still refuse it."""
+    segment = BCSegment(name="s", bc_type=BCType.NO_FLUX, value=0.0)
+    segment.bc_type = bc_type
+    return segment
 
 
 def test_the_state_is_sufficient_for_a_member_that_does_have_an_image():

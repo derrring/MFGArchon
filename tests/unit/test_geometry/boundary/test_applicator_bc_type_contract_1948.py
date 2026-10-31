@@ -580,3 +580,173 @@ def test_the_implicit_applicator_refuses_an_extrapolation_by_gate_and_by_branch(
         ImplicitApplicator(_sphere(), boundary_tolerance=1e-8).apply(_RADIAL.copy(), bc, _CLOUD, spacing=0.13)
     with pytest.raises(NotImplementedError, match="has no branch"):
         _DeclaresExtrapolation(_sphere(), boundary_tolerance=1e-8).apply(_RADIAL.copy(), bc, _CLOUD, spacing=0.13)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The acceptance gate (#2292, #2512 row N1). The table above measures `apply` on inputs a NodeBC already holds; this
+# one measures every place a graph BC input is ACCEPTED, against each class of input, so that an input is either
+# taken as declared or refused by name where it is handed over -- never stored and dropped later.
+# ---------------------------------------------------------------------------------------------------------------------
+
+
+def _maze(boundary_conditions=None):
+    """A 3 x 3 maze, a graph geometry with no `network_data`."""
+    from mfgarchon.geometry.graph.maze_generator import MazeGeometry
+
+    return MazeGeometry(3, 3, seed=0, boundary_conditions=boundary_conditions)
+
+
+def _gate_cases():
+    from mfgarchon.geometry.boundary.applicator_graph import (
+        EdgeBC,
+        GraphBCConfig,
+        create_graph_applicator,
+        create_maze_applicator,
+    )
+    from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
+
+    def applicator():
+        return GraphApplicator(num_nodes=5)
+
+    accepts, refuses = [], []
+    # the type a condition is built with
+    for t in GraphBCType:
+        accepts.append((f"NodeBC[{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t, value=_graph_value(t))))
+    for t in BCType:
+        refuses.append((f"NodeBC[BCType.{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t), TypeError, "GraphBCType"))
+        accepts.append((f"BCSegment[{t.name}]", lambda t=t: BCSegment(name="s", bc_type=t, value=0.0)))
+    for t in GraphBCType:
+        refuses.append(
+            (f"BCSegment[GraphBCType.{t.name}]", lambda t=t: BCSegment(name="s", bc_type=t), TypeError, "BCType")
+        )
+    refuses.append(("NodeBC[str]", lambda: NodeBC(nodes=[0], bc_type="dirichlet"), TypeError, "GraphBCType"))
+    # the nodes a condition names, through every route that takes them
+    for nodes in ([5], [-1], [7, 0]):
+        for route, call in [
+            ("add_node_bc", lambda n=nodes: applicator().add_node_bc(NodeBC(nodes=n))),
+            ("from_config", lambda n=nodes: GraphApplicator.from_config(GraphBCConfig(node_bcs=[NodeBC(nodes=n)]), 5)),
+            ("set_dirichlet_nodes", lambda n=nodes: applicator().set_dirichlet_nodes(n)),
+            ("set_absorbing_nodes", lambda n=nodes: applicator().set_absorbing_nodes(n)),
+            ("set_source_nodes", lambda n=nodes: applicator().set_source_nodes(n)),
+            ("set_custom_bc", lambda n=nodes: applicator().set_custom_bc(n, lambda f, node, t: 0.0)),
+            ("callable nodes", lambda n=nodes: applicator().add_node_bc(NodeBC(nodes=lambda num, n=n: n))),
+            ("apply_direct", lambda n=nodes: applicator().apply_direct(np.ones(5), n, 1.0)),
+            ("create_graph_applicator", lambda n=nodes: create_graph_applicator(5, boundary_nodes=n)),
+        ]:
+            refuses.append((f"{route}{nodes}", call, ValueError, "not nodes of this graph"))
+    accepts.append(("add_node_bc[0, 4]", lambda: applicator().add_node_bc(NodeBC(nodes=[0, 4]))))
+    # the object a graph geometry or a configuration is handed
+    for wrong in ([NodeBC(nodes=[0])], NodeBC(nodes=[0]), BoundaryConditions(dimension=1, segments=[]), "dirichlet"):
+        name = type(wrong).__name__
+        refuses.append((f"geometry[{name}]", lambda w=wrong: _maze(w), TypeError, "GraphBCConfig"))
+        refuses.append(
+            (
+                f"set_boundary_conditions[{name}]",
+                lambda w=wrong: _maze().set_boundary_conditions(w),
+                TypeError,
+                "GraphBCConfig",
+            )
+        )
+        refuses.append(
+            (f"from_config[{name}]", lambda w=wrong: GraphApplicator.from_config(w, 5), TypeError, "GraphBCConfig")
+        )
+    refuses.append(("GraphBCConfig[node_bcs entry]", lambda: GraphBCConfig(node_bcs=["x"]), TypeError, "not a NodeBC"))
+    refuses.append(("add_node_bc[str]", lambda: applicator().add_node_bc("x"), TypeError, "not a NodeBC"))
+    accepts.append(("geometry[GraphBCConfig]", lambda: _maze(GraphBCConfig(node_bcs=[NodeBC(nodes=[0])]))))
+    accepts.append(("geometry[None]", lambda: _maze().set_boundary_conditions(None)))
+    # edge conditions, until an edge operator is ruled (#2493)
+    refuses.append(("EdgeBC", lambda: EdgeBC(edges=[(0, 1)]), NotImplementedError, "#2493"))
+    refuses.append(
+        ("GraphBCConfig[edge_bcs]", lambda: GraphBCConfig(edge_bcs=[object()]), NotImplementedError, "#2493")
+    )
+    refuses.append(("add_edge_bc", lambda: applicator().add_edge_bc(None), NotImplementedError, "#2493"))
+    # a condition, once accepted, does not change
+    refuses.append(
+        (
+            "NodeBC mutated",
+            lambda: setattr(NodeBC(nodes=[0]), "value", 2.5),
+            AttributeError,
+            "cannot assign to field 'value'",
+        )
+    )
+    refuses.append(
+        (
+            "GraphBCConfig mutated",
+            lambda: setattr(GraphBCConfig(), "node_bcs", ()),
+            AttributeError,
+            "cannot assign to field 'node_bcs'",
+        )
+    )
+
+    # a lookup that cannot pick one condition, and an input the reader does not read
+    def two_named_alike():
+        a = applicator().set_dirichlet_nodes([0]).set_dirichlet_nodes([4])
+        return a.get_bc_by_name("dirichlet")
+
+    refuses.append(("get_bc_by_name[ambiguous]", two_named_alike, ValueError, "2 conditions are named"))
+    refuses.append(
+        (
+            "apply_direct[short values]",
+            lambda: applicator().apply_direct(np.ones(5), [0, 1], [9.0]),
+            ValueError,
+            "1 value",
+        )
+    )
+    refuses.append(
+        (
+            "from_network_geometry[typo]",
+            lambda: GraphApplicator.from_network_geometry(_maze(), boundary_values=7.0),
+            TypeError,
+            "boundary_values",
+        )
+    )
+    accepts.append(("create_maze_applicator", lambda: create_maze_applicator(_maze())))
+    # the continuum direction: every string a BCType spells is read or refused by name, and so is any other string
+    for t in BCType:
+        if t is BCType.FLUX or t.name.startswith("EXTRAPOLATION"):
+            refuses.append(
+                (
+                    f"geometric_operation[{t.value}]",
+                    lambda t=t: bc_type_to_geometric_operation(t.value),
+                    NotImplementedError,
+                    "no geometric operation",
+                )
+            )
+        else:
+            accepts.append((f"geometric_operation[{t.value}]", lambda t=t: bc_type_to_geometric_operation(t.value)))
+    for s in ("source", "custom", "nonsense"):
+        refuses.append(
+            (
+                f"geometric_operation[{s}]",
+                lambda s=s: bc_type_to_geometric_operation(s),
+                ValueError,
+                "is no BC type this reads",
+            )
+        )
+    return accepts, refuses
+
+
+_GATE_ACCEPTS, _GATE_REFUSES = _gate_cases()
+
+
+@pytest.mark.parametrize(("case", "call"), _GATE_ACCEPTS, ids=[c[0] for c in _GATE_ACCEPTS])
+def test_the_gate_takes_each_input_it_can_impose(case, call):
+    call()
+
+
+@pytest.mark.parametrize(("case", "call", "error", "match"), _GATE_REFUSES, ids=[c[0] for c in _GATE_REFUSES])
+def test_the_gate_refuses_each_input_it_cannot_impose_by_name(case, call, error, match):
+    with pytest.raises(error, match=match):
+        call()
+
+
+def test_the_maze_applicator_reads_the_mazes_own_exits():
+    """`create_maze_applicator` on the geometry its docstring names: it found no node count, and `_node_degrees`
+    read only `network_data`, so a maze's exits were never found (#2292). The exits are the leaves of the maze's
+    own adjacency, counted here without the applicator."""
+    from mfgarchon.geometry.boundary.applicator_graph import create_maze_applicator
+
+    maze = _maze()
+    leaves = sorted(int(i) for i in np.where((maze.get_adjacency_matrix() != 0).sum(axis=1) == 1)[0])
+    assert leaves, "the fixture maze has no dead end to test against"
+    assert sorted(create_maze_applicator(maze).get_bc_by_name("exit").get_nodes(maze.num_spatial_points)) == leaves
