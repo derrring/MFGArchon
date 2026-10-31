@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
+
 # Import shared iteration utilities (Issue #630, migrated #985)
 from mfgarchon.utils.iteration.schedules import (
     LEARNING_RATE_SCHEDULES,
@@ -232,6 +234,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         )
         return M_initial, self._reshape_to(U_terminal, shape)
 
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
     def solve(
         self,
         config: MFGSolverConfig | None = None,

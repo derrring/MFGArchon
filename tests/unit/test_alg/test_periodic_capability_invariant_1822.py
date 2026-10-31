@@ -35,6 +35,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -556,6 +557,14 @@ SURFACE_NOT_HONOURED = {
     # the raise it named is unreached rather than fixed. #2243's PR carries both measurements.
     #
     # ("FPSLJacobianSolver", "PERIODIC") is GONE (#1756): the class was retired, not repaired.
+    ("HJBGFDMSolver", "DIRICHLET"): (
+        # It passed by reading its walls from solves that had not converged. On this fixture its default Newton leaves
+        # 9 of 10 steps unconverged at Nx=21 at a budget of 30, 100 or 300 (worst residual 18 to 70) and 18 of 20 at
+        # Nx=41; and the same holds with a terminal that meets g at the walls, so not only #2610's jump. A step that does
+        # not converge now raises (#2644), so the row certifies once the step converges.
+        "#2610: its Newton does not converge on this fixture, so no converged solve certifies the wall (#2644)",
+        ConvergenceError,
+    ),
 }
 
 

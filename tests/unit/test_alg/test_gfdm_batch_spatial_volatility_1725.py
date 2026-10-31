@@ -386,7 +386,6 @@ def test_native_2d_grid_field_is_mapped_to_collocation_points():
             collocation_points=collocation,
             delta=1.5,
             monotonicity_scheme="none",
-            max_newton_iterations=0,
         )
 
     solver.solve_hjb_system(
@@ -413,7 +412,6 @@ def test_ambiguous_2d_field_requires_explicit_solve_override():
             collocation_points=collocation,
             delta=1.5,
             monotonicity_scheme="none",
-            max_newton_iterations=0,
         )
 
     solver.solve_hjb_system(
@@ -463,7 +461,6 @@ def test_problem_owned_implicit_field_stays_collocation_indexed():
     solver = _solver(
         problem,
         points,
-        max_newton_iterations=0,
         boundary_conditions=no_flux_bc(dimension=1),
     )
 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -129,6 +130,7 @@ class MultiPopulationIterator:
         """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
         return self.relaxation
 
+    @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers))
     def solve(
         self,
         max_iterations: int = 50,

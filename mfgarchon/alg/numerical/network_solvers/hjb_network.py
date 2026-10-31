@@ -28,7 +28,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -306,6 +306,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         problem: NetworkMFGProblem,
         max_policy_iterations: int = 50,
         policy_tolerance: float = 1e-6,
+        on_inner_failure: str = "raise",
         **kwargs: Any,
     ) -> None:
         """
@@ -315,6 +316,8 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             problem: Network MFG problem
             max_policy_iterations: Maximum policy iteration steps
             policy_tolerance: Policy convergence tolerance
+            on_inner_failure: What a time step whose policy iteration exhausts its budget does (#2644): "raise" (the
+                default) or "record".
             **kwargs: Additional arguments for base solver
         """
         super().__init__(problem, scheme="BDF", **kwargs)  # Scheme unused — policy iteration overrides solve
@@ -328,7 +331,10 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                 "hamiltonian_func."
             )
 
-        self.max_policy_iterations = max_policy_iterations
+        self.on_inner_failure = on_inner_failure
+        self.max_policy_iterations = checked_inner_budget(
+            max_policy_iterations, "max_policy_iterations", "NetworkPolicyIterationHJBSolver"
+        )
         self.policy_tolerance = policy_tolerance
         # Issue #1426 (S0-25): policy_tolerance is stored but never read — policy iteration
         # terminates on discrete policy stability (`_policies_equal`), not a value tolerance. Fail
@@ -379,18 +385,21 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
 
         # Backward time stepping with policy iteration
         # Nt steps from index (Nt-1) down to 0
+        self._begin_inner_solve_record()
         for n in range(Nt - 1, -1, -1):
             t = self.times[n]
             m_current = M_density[n, :]
 
-            U[n, :] = self._policy_iteration_step(U[n + 1, :], m_current, t, diffusion)
+            U[n, :] = self._policy_iteration_step(U[n + 1, :], m_current, t, diffusion, t_idx=n)
 
             # Apply boundary conditions
             U[n, :] = self.network_problem.apply_boundary_conditions(U[n, :], t)
 
         return U
 
-    def _policy_iteration_step(self, u_next: np.ndarray, m: np.ndarray, t: float, diffusion: float) -> np.ndarray:
+    def _policy_iteration_step(
+        self, u_next: np.ndarray, m: np.ndarray, t: float, diffusion: float, t_idx: int = -1
+    ) -> np.ndarray:
         """Single backward time step via Howard policy iteration (Issue #1474).
 
         The "policy" is the full transition-rate vector ``alpha*(u) = H.optimal_control`` (not a single
@@ -410,6 +419,18 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             u_current = u_new
             if self._policies_equal(old_rates, self.current_rates):
                 break
+        else:
+            # The rates did not settle within the budget, so the value is not the policy-iteration fixed point (#2644).
+            change = max(float(np.max(np.abs(old_rates[i] - self.current_rates[i]))) for i in range(self.num_nodes))
+            self._inner_solve_failed(
+                InnerSolveFailure(
+                    t_idx=t_idx,
+                    residual=change,
+                    tolerance=1e-10,  # `_policies_equal`'s atol
+                    steps=self.max_policy_iterations,
+                    reason="policy iteration budget exhausted (the largest change in a node's transition rates)",
+                )
+            )
         return u_current
 
     def _rates_at(self, u: np.ndarray, m: np.ndarray, t: float) -> dict[int, np.ndarray]:

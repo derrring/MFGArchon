@@ -1,0 +1,13 @@
+- **An inner nonlinear iteration that exhausts its budget no longer hands back its last iterate as the answer** (Issue #2644, #2673).
+  - **One owner:** `base_hjb.report_inner_solve_failure`. Every member hands its failure there:
+    - HJB-FDM's 1-D Newton, its nD Newton and value iteration;
+    - the weak-form Newton (HJB-FEM, meshless Galerkin);
+    - HJB-GFDM's Newton;
+    - Howard's policy iteration, standalone and inside HJB-GFDM;
+    - network policy iteration.
+  - **The policy:** by default the owner raises `ConvergenceError`. Under `on_inner_failure="record"` it keeps the iterate, records the step in `inner_solve_failures()`, and warns with a `RuntimeWarning`; before, HJB-GFDM and the weak-form Newton wrote a log line no warning filter or result could see, and Howard and network policy iteration said nothing.
+  - **Budgets:** a budget below 1 is refused.
+- **A coupled solve's HJB solvers record for its sweeps, and every coupler reads the record at its verdict** (#1878): the fixed point, both block iterators, fictitious play, multi-population, regime switching, the graph solver and Newton. Before, only the fixed point read it, so a `BlockIterator` over failed inner steps reported `converged=True`.
+- **One `ConvergenceError`.** `mfgarchon.utils.ConvergenceError` and `mfgarchon.alg.numerical.hjb_solvers.ConvergenceError` are one class, an `MFGSolverError` and a `RuntimeError`, constructed as `ConvergenceError(solver_type, iterations, residual, message="")`. The unused `types.solver_types.ConvergenceError` and `SolverError` are removed.
+- **`HJBFDMSolver(on_newton_failure=...)` is deprecated for `on_inner_failure`**, whose `"fallback"` is the old `"warn_and_fallback"`.
+  - HJB-FDM's nD Newton no longer catches a `ConvergenceError` raised inside it as a failure to fall back from.

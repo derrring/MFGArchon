@@ -855,8 +855,12 @@ def test_integrated_howard_dirichlet_value():
         dimension=1,
     )
     gfdm, pts, bdry = _make_howard_gfdm_with_bc(bc)
+    # Howard's policy does not settle at every step of this fixture, even at 500 iterations, which is its own issue
+    # after #2644; so it solves under "record", and the record says which steps (#2644).
+    gfdm.on_inner_failure = "record"
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2  # terminal != g_D at the boundary
     U = gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
+    assert all("Howard policy iteration budget exhausted" in f.reason for f in gfdm.inner_solve_failures())
     assert np.all(np.isfinite(U))
     assert np.allclose(U[0, bdry], g_D, atol=1e-6), (
         f"Dirichlet boundary not honored: U[0, boundary]={U[0, bdry]} != g_D={g_D} "

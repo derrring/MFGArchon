@@ -205,7 +205,7 @@ def test_the_fixed_point_map_returns_g_at_a_dirichlet_node(monkeypatch):
 
 
 def test_the_value_iteration_fallback_also_returns_g_at_a_dirichlet_node(monkeypatch):
-    """The map Newton falls back to under ``on_newton_failure="warn_and_fallback"`` is a second copy of
+    """The map Newton falls back to under ``on_inner_failure="fallback"`` is a second copy of
     the fixed-point map, and it carries the same wall rows."""
     from mfgarchon.utils.numerical import SolverInfo
     from mfgarchon.utils.numerical.nonlinear_solvers import FixedPointSolver
@@ -213,7 +213,7 @@ def test_the_value_iteration_fallback_also_returns_g_at_a_dirichlet_node(monkeyp
     outputs: list = []
     monkeypatch.setattr(FixedPointSolver, "solve", _apply_once(outputs))
     solver, X, Y = _solver(dirichlet_bc(dimension=2, value=0.4))
-    solver.on_newton_failure = "warn_and_fallback"
+    solver.on_inner_failure = "fallback"
     failed = SolverInfo(converged=False, iterations=1, residual=1.0, residual_history=[1.0])
     solver.nonlinear_solver.solve = lambda F, U0: (U0, failed)
     u_T = _terminal(X, Y)

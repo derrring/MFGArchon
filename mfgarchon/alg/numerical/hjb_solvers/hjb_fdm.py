@@ -28,6 +28,7 @@ from mfgarchon.operators.stencils.finite_difference import (
 )
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
 from mfgarchon.utils.pde_coefficients import (
@@ -61,27 +62,10 @@ _UNASSEMBLED_TENSOR_REFUSAL = (
 # Type alias for HJB advection schemes (gradient form only - HJB is not a conservation law)
 HJBAdvectionScheme = Literal["gradient_centered", "gradient_upwind"]
 
-# Type alias for Newton failure behavior (Issue #669)
+# Type alias for Newton failure behavior (Issue #669); `on_newton_failure` is the deprecated name of
+# `on_inner_failure`, and "warn_and_fallback" is its "fallback" (#2644)
 NewtonFailurePolicy = Literal["raise", "warn_and_fallback"]
-
-
-class ConvergenceError(RuntimeError):
-    """Raised when a nonlinear solver fails to converge.
-
-    Attributes:
-        solver_type: Type of solver that failed ('newton', 'fixed_point').
-        iterations: Number of iterations performed before failure.
-        residual: Final residual norm at failure.
-    """
-
-    def __init__(self, solver_type: str, iterations: int, residual: float, message: str = ""):
-        self.solver_type = solver_type
-        self.iterations = iterations
-        self.residual = residual
-        super().__init__(
-            message
-            or f"{solver_type} solver failed to converge after {iterations} iterations (residual: {residual:.2e})"
-        )
+_NEWTON_FAILURE_TO_INNER = {"raise": "raise", "warn_and_fallback": "fallback"}
 
 
 def is_diagonal_tensor(Sigma: NDArray, rtol: float = 1e-10) -> bool:
@@ -240,11 +224,18 @@ class HJBFDMSolver(BaseHJBSolver):
     # BoundaryCapable protocol (Issue #1456): FDM assembles Dirichlet / Neumann / no-flux / periodic
     # boundary rows; Robin / Reflecting / Extrapolation are not handled and fail loud.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
+    # The nD Newton can retry a step with value iteration, so it also takes "fallback" (#2644).
+    _inner_failure_policies = ("raise", "record", "fallback")
 
     @deprecated_parameter(
         param_name="damping_factor",
         since="v0.19.2",
         replacement="relaxation",
+    )
+    @deprecated_parameter(
+        param_name="on_newton_failure",
+        since="v0.22.0",
+        replacement="on_inner_failure",
     )
     def __init__(
         self,
@@ -256,7 +247,8 @@ class HJBFDMSolver(BaseHJBSolver):
         max_newton_iterations: int | None = None,
         newton_tolerance: float | None = None,
         constraint: ConstraintProtocol | None = None,
-        on_newton_failure: NewtonFailurePolicy = "raise",
+        on_inner_failure: str | None = None,
+        on_newton_failure: NewtonFailurePolicy | None = None,
         analytic_jacobian: bool | None = None,
         # Deprecated parameter (decorator handles warnings)
         damping_factor: float | None = None,
@@ -291,10 +283,12 @@ class HJBFDMSolver(BaseHJBSolver):
                 the constraint propagates backward through the sweep (Issue #2036). The terminal
                 condition is the caller's data and must already lie in K: one that does not is
                 refused, not projected.
-            on_newton_failure: Behavior when Newton solver fails (Issue #669).
-                Only meaningful when solver_type="newton" and dimension > 1.
+            on_inner_failure: What a time step whose nonlinear solve stops without a root does (#2644).
                 - 'raise': Raise ConvergenceError (default, fail-fast).
-                - 'warn_and_fallback': Emit warning and retry with Value Iteration.
+                - 'record': Keep the iterate, record the step in `inner_solve_failures()`, and warn. A coupled
+                  solve sets this for its sweeps and does not report convergence over a recorded step (#1878).
+                - 'fallback': nD Newton only: retry the step with value iteration, and record if that fails too.
+            on_newton_failure: Deprecated name of `on_inner_failure` (Issue #669); 'warn_and_fallback' is 'fallback'.
             analytic_jacobian: Which 1D Newton path the solve takes.
                 - None (default): the batch path on the NumPy backend, the per-point path
                   on any other.
@@ -363,7 +357,12 @@ class HJBFDMSolver(BaseHJBSolver):
         self.solver_type = solver_type
         self.relaxation = relaxation
         self.constraint = constraint  # Variational inequality constraint (Issue #591)
-        self.on_newton_failure: NewtonFailurePolicy = on_newton_failure  # Issue #669
+        # Issue #669, #2644: what an inner solve that stops without a root does; the old name maps onto the new.
+        if on_newton_failure is not None:
+            if on_inner_failure is not None:
+                raise TypeError("HJBFDMSolver: pass on_inner_failure, not on_newton_failure as well (#2644).")
+            on_inner_failure = _NEWTON_FAILURE_TO_INNER.get(on_newton_failure, on_newton_failure)
+        self.on_inner_failure = "raise" if on_inner_failure is None else on_inner_failure
 
         # Validate
         if self.max_newton_iterations < 1:
@@ -402,7 +401,6 @@ class HJBFDMSolver(BaseHJBSolver):
             _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem, self.dimension, self.numerical_hamiltonian)
 
         # The latest solve_hjb_system's non-converged time steps; None until one has run (#1878).
-        self._inner_solve_failures: list[InnerSolveFailure] | None = None
 
         # For nD, extract grid info and create nonlinear solver
         if self.dimension > 1:
@@ -500,13 +498,28 @@ class HJBFDMSolver(BaseHJBSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
-    def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
-        """The time steps of the latest ``solve_hjb_system`` whose nonlinear solve did not converge (#1878).
+    @property
+    def on_newton_failure(self) -> str:
+        """Deprecated name of ``on_inner_failure`` (Issue #669, #2644); 'warn_and_fallback' is its 'fallback'."""
+        import warnings
 
-        ``None`` before the first solve. Recorded on both paths: the 1-D Newton and the nD
-        centralized solver, including a value-iteration fallback that still did not converge.
-        """
-        return None if self._inner_solve_failures is None else tuple(self._inner_solve_failures)
+        warnings.warn(
+            "HJBFDMSolver.on_newton_failure is deprecated; read on_inner_failure (#2644).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return {"fallback": "warn_and_fallback"}.get(self.on_inner_failure, self.on_inner_failure)
+
+    @on_newton_failure.setter
+    def on_newton_failure(self, policy: str) -> None:
+        import warnings
+
+        warnings.warn(
+            "HJBFDMSolver.on_newton_failure is deprecated; set on_inner_failure (#2644).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.on_inner_failure = _NEWTON_FAILURE_TO_INNER.get(policy, policy)
 
     @retired_volatility_keywords
     def solve_hjb_system(
@@ -547,7 +560,7 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError("U_terminal is required")
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
-        self._inner_solve_failures = []
+        self._begin_inner_solve_record()
         # The accessor refuses a BC this solver cannot honour (#1699). Read it here, before any work;
         # the nD Newton handler also preserves this NotImplementedError rather than treating it as a
         # convergence failure (#2477).
@@ -637,6 +650,9 @@ class HJBFDMSolver(BaseHJBSolver):
                 source_term=source_term,
                 cross_density=cross_density,  # Issue #1071
                 failures=self._inner_solve_failures,
+                on_failure="record"
+                if self.on_inner_failure == "fallback"
+                else self.on_inner_failure,  # 1-D has no fallback
                 constraint=self.constraint,
             )
 
@@ -853,6 +869,10 @@ class HJBFDMSolver(BaseHJBSolver):
                 # Unsupported residual operations are a capability refusal, not a
                 # Newton convergence failure eligible for fallback (Issue #2477).
                 raise
+            except ConvergenceError:
+                # An inner solve that already went through the owner: its answer stands. A ConvergenceError is a
+                # RuntimeError, so the clause below would turn it into a fallback, or into a second error (#2644).
+                raise
             except (np.linalg.LinAlgError, ValueError, RuntimeError) as e:
                 newton_failed = True
                 newton_error = e
@@ -861,7 +881,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 info = SolverInfo(converged=False, iterations=0, residual=float("inf"), residual_history=[])
 
             if newton_failed:
-                if self.on_newton_failure == "warn_and_fallback":
+                if self.on_inner_failure == "fallback":
                     # Define fixed-point map G for fallback (same computation as FP path)
                     def G_fallback(U: NDArray) -> NDArray:
                         gradients = self._compute_gradients_nd(U, time=time)
@@ -885,42 +905,36 @@ class HJBFDMSolver(BaseHJBSolver):
                     warnings.warn(
                         f"Newton solver failed{error_detail}. "
                         f"Falling back to Value Iteration as explicitly requested "
-                        f"(on_newton_failure='warn_and_fallback').",
+                        f"(on_inner_failure='fallback').",
                         UserWarning,
                         stacklevel=2,
                     )
 
                     U_solution, info = fallback_solver.solve(G_fallback, U_guess)
                     used_fallback = True
-                else:  # "raise"
-                    if newton_error:
-                        raise ConvergenceError(
-                            "newton", info.iterations, info.residual, f"Newton solver failed: {newton_error}"
-                        ) from newton_error
-                    else:
-                        raise ConvergenceError("newton", info.iterations, info.residual)
+                elif newton_error is not None:
+                    # Newton raised, so there is no iterate to keep under "record": the solve is refused (#2644).
+                    raise ConvergenceError(
+                        "newton", info.iterations, info.residual, f"Newton solver failed: {newton_error}"
+                    ) from newton_error
 
-        # Warn if not converged (applies to both FP and post-fallback)
+        # A step that is not a root goes to the owner: Newton's own, value iteration's, or the fallback's (#2644).
         if not info.converged:
-            import warnings
-
-            warnings.warn(
-                f"{self.solver_type} did not converge (residual: {info.residual:.2e})",
-                UserWarning,
-                stacklevel=2,
-            )
-            if self._inner_solve_failures is not None:
-                self._inner_solve_failures.append(
-                    InnerSolveFailure(
-                        t_idx=t_idx,
-                        residual=float(info.residual),
-                        tolerance=float(self.newton_tolerance),
-                        steps=int(info.iterations),
-                        reason="value-iteration fallback after a failed Newton did not converge"
-                        if used_fallback
-                        else f"{self.solver_type} did not converge",
-                    )
+            if used_fallback:
+                reason = "value-iteration fallback after a failed Newton did not converge"
+            elif self.solver_type == "newton":
+                reason = "newton solver failed to converge"
+            else:
+                reason = f"{self.solver_type} did not converge"
+            self._inner_solve_failed(
+                InnerSolveFailure(
+                    t_idx=t_idx,
+                    residual=float(info.residual),
+                    tolerance=float(self.newton_tolerance),
+                    steps=int(info.iterations),
+                    reason=reason,
                 )
+            )
 
         # Apply variational inequality constraint via projection (Issue #591)
         if constraint is not None:

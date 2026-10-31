@@ -292,15 +292,10 @@ class NetworkSolveResult:
 # === Error Classes ===
 
 
-class SolverError(Exception):
-    """Base exception for solver errors."""
+# The convergence-failure class is `mfgarchon.utils.exceptions.ConvergenceError`, the one every solver raises (#2673).
 
 
-class ConvergenceError(SolverError):
-    """Raised when solver fails to converge."""
-
-
-class ConfigurationError(SolverError):
+class ConfigurationError(Exception):
     """Raised when solver configuration is invalid."""
 
 

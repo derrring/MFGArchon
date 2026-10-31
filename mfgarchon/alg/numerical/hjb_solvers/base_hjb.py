@@ -73,6 +73,61 @@ class InnerSolveFailure:
     reason: str
 
 
+#: What a solver does when an inner nonlinear solve stops without converging (#2644). "raise", the default, refuses
+#: the iterate. "record" keeps it, appends the failure to the solver's record for a reader, and warns; a coupled
+#: solve sets it on its HJB solvers for its sweeps and reads the record at its verdict (#1878). "fallback", which
+#: only HJB-FDM's nD Newton takes, first tries value iteration, and records if that fails too.
+INNER_FAILURE_POLICIES: tuple[str, ...] = ("raise", "record")
+
+
+def checked_inner_budget(budget: int, name: str, solver: str) -> int:
+    """An inner iteration's budget, refused below 1 (#2644): a budget of 0 takes no step, so it would hand the starting
+    value back as the step's answer, or fail every step by construction."""
+    if isinstance(budget, bool) or not isinstance(budget, (int, np.integer)) or budget < 1:
+        raise ValueError(f"{solver}: {name} is {budget!r}; an inner iteration needs a budget of at least 1 (#2644).")
+    return int(budget)
+
+
+def report_inner_solve_failure(
+    failure: InnerSolveFailure,
+    *,
+    policy: str,
+    record: list[InnerSolveFailure] | None,
+    solver: str,
+    steps_unit: str = "step(s)",
+) -> None:
+    """The one owner of an inner nonlinear solve that stopped without a root (#2644).
+
+    Every inner iteration that can exhaust its budget hands its failure here and says nothing itself, so the
+    caller gets one answer in one channel: a ``ConvergenceError`` under "raise", or a record and one
+    ``RuntimeWarning`` under "record". A ``logger.warning`` was the channel before, and no warning filter and no
+    result could see it.
+    """
+    from mfgarchon.utils.exceptions import ConvergenceError
+
+    message = (
+        f"{solver} did not converge at t_idx={failure.t_idx}: {failure.reason} after {failure.steps} {steps_unit}, "
+        f"residual {failure.residual:.3e} against a tolerance of {failure.tolerance:.3e}. The iterate for this time "
+        "step is not a root of the discrete HJB (#2644)."
+    )
+    if policy == "raise":
+        raise ConvergenceError(
+            solver,
+            failure.steps,
+            failure.residual,
+            message + " To keep the iterate, set on_inner_failure='record' and read inner_solve_failures().",
+        )
+    if policy not in ("record", "fallback"):
+        raise ValueError(f"{solver}: on_inner_failure is {policy!r}, not one of 'raise' or 'record' (#2644).")
+    if record is not None:
+        record.append(failure)
+    warnings.warn(
+        message + " A coupled solve reads inner_solve_failures() and does not report convergence over it (#1878).",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
 def _one_sided_differences_1d(
     U_array: np.ndarray,
     Dx: float,
@@ -268,15 +323,48 @@ class BaseHJBSolver(BaseNumericalSolver):
                 f"inside; refusing is a behaviour, an absent signature is not."
             )
 
+    #: The values ``on_inner_failure`` takes on this solver; HJB-FDM's nD Newton adds "fallback" (#2644).
+    _inner_failure_policies: tuple[str, ...] = INNER_FAILURE_POLICIES
+
+    @property
+    def on_inner_failure(self) -> str:
+        """What this solver does when an inner nonlinear solve stops without converging (#2644): "raise" (the
+        default) or "record", see ``INNER_FAILURE_POLICIES``. A coupled solve sets "record" for its sweeps."""
+        return getattr(self, "_on_inner_failure", "raise")
+
+    @on_inner_failure.setter
+    def on_inner_failure(self, policy: str) -> None:
+        if policy not in self._inner_failure_policies:
+            raise ValueError(
+                f"{type(self).__name__}: on_inner_failure is {policy!r}; it takes {list(self._inner_failure_policies)} "
+                "(#2644)."
+            )
+        self._on_inner_failure = policy
+
+    def _begin_inner_solve_record(self) -> None:
+        """Start the record of this solve's inner failures; a solver whose inner solve iterates calls it on entry."""
+        self._inner_solve_failures: list[InnerSolveFailure] | None = []
+
+    def _inner_solve_failed(self, failure: InnerSolveFailure) -> None:
+        """Hand an inner solve that stopped without a root to the owner, under this solver's policy (#2644)."""
+        report_inner_solve_failure(
+            failure,
+            policy=self.on_inner_failure,
+            record=getattr(self, "_inner_solve_failures", None),
+            solver=type(self).__name__,
+        )
+
     def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
         """The time steps of the latest ``solve_hjb_system`` whose nonlinear solve did not converge (#1878).
 
-        ``None`` (the default) means this solver does not track its inner solves, so a coupling loop
-        can certify nothing from it either way. An empty tuple means every step it solved converged. A
-        solver that iterates per time step overrides this, so that a coupled result built on steps that
-        are not roots of the discrete HJB is not reported as converged.
+        ``None`` means this solver does not track its inner solves, so a coupling loop can certify nothing
+        from it either way: a solver whose solve has no inner iteration never starts a record. An empty tuple
+        means every step it solved converged. A solver whose inner solve iterates starts the record on entry
+        (``_begin_inner_solve_record``), so that a coupled result built on steps that are not roots of the
+        discrete HJB is not reported as converged.
         """
-        return None
+        record = getattr(self, "_inner_solve_failures", None)
+        return None if record is None else tuple(record)
 
     def coupling_binding(self) -> CouplingBinding | None:
         """``Model.coupling_cost`` bound on this solver's own points and weights, or None (#1642 stage 1b-2).
@@ -1598,6 +1686,7 @@ def solve_hjb_timestep_newton(
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects this step if it does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
+    on_failure: str = "record",  # #2644: the owner's policy for a step that does not converge
 ) -> np.ndarray:
     """
     Solve HJB timestep using Newton's method.
@@ -1708,26 +1797,20 @@ def solve_hjb_timestep_newton(
     if not converged:
         # The step count is the steps the returned iterate actually took. This printed
         # `max_newton_iterations`, so a solve the guard stopped one step from its start read "after 30
-        # iterations" (#1878).
-        warnings.warn(
-            f"HJB inner Newton did not converge at t_idx={t_idx_n}: {stop_reason} after "
-            f"{steps} Newton steps, residual {final_residual_norm:.3e} against a "
-            f"tolerance of {newton_tolerance:.3e}. The value function returned for this timestep "
-            f"is not a root of the discrete HJB (Issue #1745); a coupling loop that reads "
-            f"`inner_solve_failures()` will not report the coupled result as converged (Issue #1878).",
-            RuntimeWarning,
-            stacklevel=2,
+        # iterations" (#1878). What follows is the owner's: raise, or record and warn (#2644).
+        report_inner_solve_failure(
+            InnerSolveFailure(
+                t_idx=int(t_idx_n) if t_idx_n is not None else -1,
+                residual=float(final_residual_norm),
+                tolerance=float(newton_tolerance),
+                steps=steps,
+                reason=stop_reason,
+            ),
+            policy=on_failure,
+            record=failures,
+            solver="HJB inner Newton",
+            steps_unit="Newton steps",
         )
-        if failures is not None:
-            failures.append(
-                InnerSolveFailure(
-                    t_idx=int(t_idx_n) if t_idx_n is not None else -1,
-                    residual=float(final_residual_norm),
-                    tolerance=float(newton_tolerance),
-                    steps=steps,
-                    reason=stop_reason,
-                )
-            )
 
     # Enforce BC on solution (Issue #542)
     # BC-aware Laplacian uses ghost cells for derivatives, but boundary values must be explicitly set
@@ -1864,6 +1947,7 @@ def solve_hjb_system_backward(
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
+    on_failure: str = "record",  # #2644: the owner's policy for a step that does not converge
     volatility_kind: str | None = None,  # #2378 part 2a: 'field' for an array; a tensor is refused in 1-D
     constraint: ConstraintProtocol | None = None,  # Issue #2036: projected onto after each step's Newton solve
 ) -> np.ndarray:
@@ -1990,6 +2074,7 @@ def solve_hjb_system_backward(
             source_term=source_at_n,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
             failures=failures,
+            on_failure=on_failure,
             numerical_hamiltonian=numerical_hamiltonian,
         )
         if constraint is not None:

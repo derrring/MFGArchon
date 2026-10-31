@@ -35,6 +35,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
+    verdict_reads_inner_failures,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import (
@@ -192,6 +193,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._N = N
         self._last_result: GraphMFGResult | None = None
 
+    @verdict_reads_inner_failures(lambda self: list(self._hjb))
     def solve(self) -> GraphMFGResult:
         """Run Picard iteration over N-node graph.
 

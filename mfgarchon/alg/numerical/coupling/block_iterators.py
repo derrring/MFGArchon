@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import scipy.sparse as sparse
 
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -656,6 +657,7 @@ class BlockIterator(BaseCouplingIterator):
 
         return U_new, M_new
 
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
     def solve(
         self,
         max_iterations: int = 100,

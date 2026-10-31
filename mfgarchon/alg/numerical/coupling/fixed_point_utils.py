@@ -7,8 +7,10 @@ These utilities are used by both legacy and config-aware fixed-point iterator im
 
 from __future__ import annotations
 
+import functools
 import inspect
-from typing import TYPE_CHECKING
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -19,6 +21,8 @@ from mfgarchon.utils.mfg_logging import get_logger
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.utils.solver_result import SolverResult
@@ -271,6 +275,67 @@ def read_inner_solve_failures(hjb_solver: object) -> object:
     """
     method = getattr(hjb_solver, "inner_solve_failures", None)
     return method() if callable(method) else None
+
+
+def read_inner_solve_failures_of(hjb_solvers: Iterable[object]) -> tuple | None:
+    """What a coupled solve's HJB solvers say about their latest solves, together (#2644): ``None`` when none of
+    them tracks its inner solves, else every recorded step of every one that does."""
+    records = [read_inner_solve_failures(solver) for solver in hjb_solvers]
+    tracked = [record for record in records if isinstance(record, tuple)]
+    return None if not tracked else tuple(failure for record in tracked for failure in record)
+
+
+@contextmanager
+def inner_failures_recorded(hjb_solvers: Iterable[object]) -> Iterator[None]:
+    """For a coupled solve: each HJB solver whose ``on_inner_failure`` is "raise" records instead, while it runs.
+
+    A sweep's inner failure is then the coupler's to read at its verdict (#1878), not an exception partway through
+    the solve; the policy is restored after (#2644). A duck-typed solver without the attribute is left alone.
+    """
+    switched = [solver for solver in hjb_solvers if getattr(solver, "on_inner_failure", None) == "raise"]
+    for solver in switched:
+        solver.on_inner_failure = "record"
+    try:
+        yield
+    finally:
+        for solver in switched:
+            solver.on_inner_failure = "raise"
+
+
+def verdict_reads_inner_failures(
+    hjb_solvers_of: Callable[[Any], list[object]],
+    *,
+    check: bool = True,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Decorate a coupled solver's ``solve`` so that its HJB solvers record inner failures while it runs, and a result
+    reported converged over a failed inner step of the last sweep is not (#1878, #2644).
+
+    The one place every coupler's verdict reads the record. ``FixedPointIterator`` read it alone before, so a
+    ``BlockIterator`` over the same failed steps reported ``converged=True``. Each solver's record is its latest solve,
+    which in a coupler is the last sweep's. Newton takes ``check=False``: its last HJB solve can be a Jacobian probe,
+    so it reads the record in its own verdict, where the latest solve is the accepted iterate's.
+    """
+
+    def decorate(solve: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(solve)
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            solvers = hjb_solvers_of(self)
+            with inner_failures_recorded(solvers):
+                result = solve(self, *args, **kwargs)
+            failures = read_inner_solve_failures_of(solvers) if check else None
+            if getattr(result, "converged", False) and failures:
+                metadata = getattr(result, "metadata", None)
+                previous = metadata.get("convergence_reason", "") if isinstance(metadata, dict) else ""
+                _, reason = refuse_convergence_over_failed_inner_solves(True, previous, failures)
+                result.converged = False
+                if isinstance(metadata, dict):
+                    metadata["convergence_reason"] = reason
+                    metadata["inner_hjb_failures"] = len(failures)
+            return result
+
+        return wrapper
+
+    return decorate
 
 
 def refuse_convergence_over_failed_inner_solves(

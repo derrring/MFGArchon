@@ -25,7 +25,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, base_hjb
+from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError, HJBFDMSolver, base_hjb
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import InnerSolveFailure
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid, no_flux_bc
@@ -141,7 +141,8 @@ def test_a_converged_result_satisfies_the_discrete_hjb_at_every_step():
 
 
 def test_the_nd_path_records_its_non_converged_steps_too():
-    """A 2-D value-iteration solve with a one-iteration budget records every time step; a converging one records none."""
+    """A 2-D value-iteration solve with a one-iteration budget records every time step under "record"; a converging one
+    records none. Under the default "raise" the starved solve is refused (#2644)."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[9, 7], boundary_conditions=no_flux_bc(dimension=2))
     hamiltonian = SeparableHamiltonian(
         # An aggregating coupling (a negative cost, #2375 ruling 3): this file's measurements were taken on it.
@@ -158,7 +159,12 @@ def test_the_nd_path_records_its_non_converged_steps_too():
             Nt=4,
         )
         recorded = {}
-        for label, options in (("starved", {"max_newton_iterations": 1, "newton_tolerance": 1e-300}), ("default", {})):
+        starved = {"max_newton_iterations": 1, "newton_tolerance": 1e-300}
+        with pytest.raises(ConvergenceError, match="did not converge at t_idx=3"):
+            HJBFDMSolver(problem, solver_type="fixed_point", **starved).solve_hjb_system(
+                np.ones((5, 9, 7)), np.zeros((9, 7)), np.zeros((5, 9, 7))
+            )
+        for label, options in (("starved", {**starved, "on_inner_failure": "record"}), ("default", {})):
             solver = HJBFDMSolver(problem, solver_type="fixed_point", **options)
             solver.solve_hjb_system(np.ones((5, 9, 7)), np.zeros((9, 7)), np.zeros((5, 9, 7)))
             recorded[label] = solver.inner_solve_failures()

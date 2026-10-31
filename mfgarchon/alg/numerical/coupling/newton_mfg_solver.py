@@ -40,7 +40,13 @@ from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
-from .fixed_point_utils import check_convergence_criteria, diverged_value_function
+from .fixed_point_utils import (
+    check_convergence_criteria,
+    diverged_value_function,
+    read_inner_solve_failures,
+    refuse_convergence_over_failed_inner_solves,
+    verdict_reads_inner_failures,
+)
 from .mfg_residual import MFGResidual
 
 if TYPE_CHECKING:
@@ -266,6 +272,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         return U, M, residuals, diverged_at
 
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], check=False)
     def solve(
         self,
         max_iterations: int = 30,
@@ -301,7 +308,15 @@ class NewtonMFGSolver(BaseCouplingIterator):
                     "dt-weighted space-time L2 change (#2565)."
                 )
             absolute_tolerance = self.newton_tolerance
-        verdict = self._outer_verdict(tolerance, absolute_tolerance)
+        outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
+
+        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
+            # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
+            # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
+            converged, reason = outer_verdict(U, M, F_HJB, F_FP)
+            return refuse_convergence_over_failed_inner_solves(
+                converged, reason, read_inner_solve_failures(self.mfg_residual.hjb_solver)
+            )
 
         # Initialize from warm start or cold start
         warm_start = self.get_warm_start_data()

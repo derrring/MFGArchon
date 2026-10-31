@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
@@ -257,6 +258,7 @@ class FixedPointIterator(BaseCouplingIterator):
             shape,
         )
 
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
     def solve(
         self,
         config: MFGSolverConfig | None = None,
