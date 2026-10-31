@@ -147,7 +147,7 @@ class MultiPopulationIterator:
             Contains U (list of value functions), M (list of densities),
             iterations, and convergence info.
         """
-        refuse_a_capped_exit_in_a_coupled_solve(self.fp_solvers, self.hjb_solvers, "MultiPopulationIterator.solve")
+        refuse_a_capped_exit_in_a_coupled_solve(self.fp_solvers, "MultiPopulationIterator.solve")
         K = self.multi_problem.K
         # The terminal coupling is single-population (#1642, the user's ruling 5): with more than one population this
         # loop couples them through the stacked densities it hands each HJB as its cross-density.

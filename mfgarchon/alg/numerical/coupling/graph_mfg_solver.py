@@ -200,7 +200,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         GraphMFGResult
             Contains value functions, densities, convergence info for all nodes.
         """
-        refuse_a_capped_exit_in_a_coupled_solve(self._fp, self._hjb, "GraphMFGSolver.solve")
+        refuse_a_capped_exit_in_a_coupled_solve(self._fp, "GraphMFGSolver.solve")
         N = self._N
 
         # Initialize: initial densities, then each node's terminal condition from its one owner at that density, the

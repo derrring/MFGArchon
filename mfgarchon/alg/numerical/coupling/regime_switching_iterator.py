@@ -443,7 +443,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         RegimeSwitchingResult
             Contains value functions, densities, convergence info.
         """
-        refuse_a_capped_exit_in_a_coupled_solve(self._fp, self._hjb, "RegimeSwitchingIterator.solve")
+        refuse_a_capped_exit_in_a_coupled_solve(self._fp, "RegimeSwitchingIterator.solve")
         K = self._regime.n_regimes
         Q = self._regime.transition_matrix
         # Re-check HERE, not only in __init__: the transform reads Q and the FP solvers'

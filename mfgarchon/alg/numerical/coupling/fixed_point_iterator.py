@@ -299,7 +299,7 @@ class FixedPointIterator(BaseCouplingIterator):
             ...     return True  # Continue
             >>> result = solver.solve(iteration_callback=monitor)
         """
-        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], [self.hjb_solver], "FixedPointIterator.solve")
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FixedPointIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
 
