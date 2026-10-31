@@ -568,9 +568,9 @@ def test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate(family: str):
     """Clause (2) at the solver level (reviews 2 and 3 of #2840). FP-FDM centered, branch (b): an outflow drains 32% of
     the positive mass, deepening nothing, and takes the step's own clip from s0 = 8.8e-9 past the gate; with q = 0 the
     step solves. FP-FEM P2, branch (a): an inflow deepens the Galerkin step's own negatives, s0 = 7.1e-10, by 3.9e-8 of
-    the mass. P2, which keeps the consistent mass: P1's time term is lumped since #2845, and on lumped 1-D P1 this
-    branch's rows sit in a dt band of relative width 2.4e-8 (an inflow at x_max; review 1 of #2848), too narrow for a
-    pin to stay inside across platforms, against 6e-5 for this P2 row."""
+    the mass. P2, which keeps the consistent mass: P1's time term is lumped since #2845, and on lumped 1-D P1 the one
+    row found for this branch (an inflow at x_max, n 22, sigma 0.14, v 6.2; review 1 of #2848) sits in a dt band of
+    relative width 2.4e-8, too narrow for a pin to stay inside across platforms, against 6e-5 for this P2 row."""
     if family == "fdm":
         n, dt = 14, 0.1
         grid = _grid(1, n)

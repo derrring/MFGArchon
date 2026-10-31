@@ -1,5 +1,6 @@
-"""P1 FEM lumps the mass in its time derivative (#2845), so FP-FEM's implicit pure-diffusion step is an M-matrix step
-wherever every off-diagonal of the stiffness is <= 0, and takes no density negative: the clip after it has nothing to add.
+"""P1 FEM lumps the mass in its time derivative (#2845), so FP-FEM's implicit pure-diffusion step with no-flux or
+Dirichlet walls is an M-matrix step wherever every off-diagonal of the stiffness is <= 0, and takes no density negative:
+the clip after it has nothing to add. A Robin wall's consistent boundary mass is outside that condition.
 
 The oracle is the scheme's own invariant: a no-flux, pure-diffusion solve conserves mass exactly, so `solve_fp_system`'s
 mass is pinned to round-off. With the consistent mass the step goes negative at this dt, and the clip injects 1.2e-2 to
@@ -111,12 +112,13 @@ def _pair_problem(dim: int, lambda_: float) -> MFGProblem:
 
 @pytest.mark.parametrize("dim", [1, 2, 3])
 def test_hjb_fem_and_fp_fem_step_on_one_time_mass(dim: int):
-    """The pair's time terms share one mass (#2845). With no drift and H zero at the iterate's gradient, both steps solve
-    (ML/dt + D K) x = (ML/dt) x_prev with a symmetric matrix, so <U^n, ML m^n> is the same at every n, to round-off.
-    Setting either solver's time mass back to M moves it by 3.9e-4 (1-D), 1.6e-3 (2-D) and 6.8e-3 (3-D), and a revert
-    of either half that keeps each step self-consistent reddens nothing else in the suite (review 1 of #2848). Three
-    arms: HJB-FEM's Picard step; its Newton step, H made negligible (4.7e-9 at the head); and FP-FEM's adjoint step,
-    with no advection, which must equal its forward step."""
+    """The pair's time terms share one mass (#2845). With no drift, and H read at U_coupling_prev = 0 where the quadratic
+    H is 0, both steps solve (ML/dt + D K) x = (ML/dt) x_prev with a symmetric matrix, so <U^n, ML m^n> is the same at
+    every n, to round-off. Setting either solver's time mass back to M moves it by 3.9e-4 (1-D), 1.6e-3 (2-D) and
+    6.7e-3 to 6.8e-3 (3-D). A revert of HJB-FEM's time mass, or of FP-FEM's adjoint step, that keeps each step
+    self-consistent reddened no other test at cf747a70, over the test files review 1 of #2848 listed as reaching FEM;
+    a revert of FP-FEM's forward step also reddens the mass pins above. Three arms: HJB-FEM's Picard step; its Newton step, H made negligible (4.3e-9 to
+    4.8e-9 at the head); and FP-FEM's adjoint step, with no advection, which must equal its forward step."""
     for arm, lambda_, tolerance in (("picard", 1.0, 1e-12), ("newton", 1e8, 1e-7)):
         problem = _pair_problem(dim, lambda_)
         fp, hjb = FPFEMSolver(problem), HJBFEMSolver(problem)
