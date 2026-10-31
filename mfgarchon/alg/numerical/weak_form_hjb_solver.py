@@ -7,7 +7,8 @@ a ``WeakFormDiscretization`` (stiffness ``K``, mass ``M``, gradient-projection
 Galerkin (point cloud + MLS). A concrete subclass supplies only the
 discretization and the boundary-condition strategy (the BC hooks).
 
-Time discretization: implicit Euler (backward). Two nonlinearity modes:
+Time discretization: implicit Euler (backward), its time derivative on the discretization's
+``time_mass``, as the FP solver's (#2845). Two nonlinearity modes:
 - Picard (default): ``H`` evaluated at the previous iterate's gradient.
 - Newton (``use_newton=True``): full/semismooth Newton per timestep with the
   Hamiltonian Jacobian ``H.dp()`` (Clarke element for nondifferentiable ``H``).
@@ -24,6 +25,7 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
@@ -82,6 +84,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
         self._dof_points.flags.writeable = False
         self._K = discretization.stiffness()
         self._M = discretization.mass()
+        # The time derivative's mass, lumped for P1 FEM (#2845); the source, H and the mass a solve measures keep M.
+        self._M_time = time_mass(discretization, self._M)
         self._R_grad = discretization.gradient_projection()
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._M_lumped_inv: NDArray | None = None
@@ -185,7 +189,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
     def _robin_operator_terms(self, D: float):
         """Optional Robin boundary operator augmentation ``alpha*u + beta*du/dn = g``.
 
-        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M/dt + D*K``
+        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M_t/dt + D*K`` (M_t the time mass, #2845)
         and each timestep RHS, or ``(None, None)`` for no Robin BC. Unlike ``_weak_bc_terms``
         (Nitsche, which SKIPS condensation), this term COEXISTS with Dirichlet condensation:
         the Robin dofs stay free (the operator term carries the BC) while any Dirichlet dofs
@@ -263,8 +267,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
     ) -> NDArray:
         """One HJB timestep via Newton iteration (supports semismooth H).
 
-        Residual: F(U) = (M/dt)(U - U_next) + D*K*U + M*H(grad U) - rhs_coupling.
-        Jacobian: J = M/dt + D*K + sum_d M @ diag(dH/dp_d) @ G_d.
+        Residual: F(U) = (M_t/dt)(U - U_next) + D*K*U + M*H(grad U) - rhs_coupling, with M_t the time mass
+        (``_M_time``: lumped for P1 FEM, #2845) and M the consistent mass.
+        Jacobian: J = M_t/dt + D*K + sum_d M @ diag(dH/dp_d) @ G_d.
         """
         self._build_gradient_operators()
 
@@ -278,7 +283,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         # Robin operator augmentation (Issue #1237): the boundary mass enters the Jacobian
         # (and the residual via A_robin @ U); the boundary load enters the residual as -rhs_robin.
         A_robin, rhs_robin = self._robin_operator_terms(D)
-        J_fixed = self._M / dt + D * self._K
+        J_fixed = self._M_time / dt + D * self._K
         if weak_bc:
             J_fixed = J_fixed + A_extra
         if A_robin is not None:
@@ -308,7 +313,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 dH_dp = dH_dp.reshape(-1, 1)
 
             residual = (
-                (self._M / dt) @ (U_current - U_next) + D * (self._K @ U_current) + self._M @ H_vals - rhs_coupling
+                (self._M_time / dt) @ (U_current - U_next) + D * (self._K @ U_current) + self._M @ H_vals - rhs_coupling
             )
             if weak_bc:
                 residual = residual + A_extra @ U_current
@@ -471,7 +476,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U = np.zeros((Nt + 1, N))
         U[Nt] = U_terminal
 
-        A_system = self._M / dt + D * self._K
+        A_system = self._M_time / dt + D * self._K
         # The Nitsche block is the same at every level; its data load is read at each level's time, below.
         A_extra, rhs_extra = self._weak_bc_terms(D, (Nt - 1) * dt)
         weak_bc = A_extra is not None
@@ -501,7 +506,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     tolerance=newton_tolerance,
                 )
             else:
-                rhs = (self._M / dt) @ U[n + 1]
+                rhs = (self._M_time / dt) @ U[n + 1]
                 if H_class is not None:
                     p_prev = self._nodal_gradient(U_coupling_prev[n])
                     H_values = np.asarray(
@@ -509,7 +514,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     ).ravel()
                     # MINUS. The canonical equation (the MFGProblem class docstring) is
                     # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives
-                    # (M/dt + D*K) U[n] = (M/dt) U[n+1] - M @ H: H moves to the RHS with a sign
+                    # (M_t/dt + D*K) U[n] = (M_t/dt) U[n+1] - M @ H: H moves to the RHS with a sign
                     # flip. This read `+=` from the file's FIRST version (d9f66701, #773) until
                     # #2023 -- and that version stated the correct algebra in a comment three lines
                     # above the code, `M/dt*u^n = M/dt*u^{n+1} - D*K*u^n - H_rhs`, then "rearranged"

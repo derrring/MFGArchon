@@ -114,6 +114,10 @@ class MeshlessGalerkinDiscretization:
         M = np.einsum("q,qi,qj->ij", self._w, self._phi, self._phi)
         return sparse.csr_matrix(M)
 
+    @property
+    def lumps_time_mass(self) -> bool:
+        return False
+
     def advection(self, velocity: NDArray) -> sparse.csr_matrix:
         # velocity at dofs (dim, n_dof) or (n_dof,); interpolate to quad points
         # via the MLS shape functions: alpha(xi_q) = sum_j phi_j(xi_q) v_j.

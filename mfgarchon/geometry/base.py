@@ -1045,8 +1045,8 @@ class UnstructuredMesh(Geometry):
     def get_mass_matrix(self):
         """Return assembled FEM mass matrix M.
 
-        M[i,j] = integral(phi_i * phi_j). Scipy CSR format.
-        Used for time stepping: (M/dt + D*K) u^{n+1} = M/dt * u^n.
+        M[i,j] = integral(phi_i * phi_j), the consistent P1 mass. Scipy CSR format.
+        The FEM solvers' P1 time term is its row-sum lumping, diag(M 1) (#2845), not M itself.
         """
         self._ensure_fem_operators()
         return self._fem_mass
