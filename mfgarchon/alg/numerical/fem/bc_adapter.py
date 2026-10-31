@@ -21,7 +21,7 @@ Mapping, per governing segment:
     BCType.NO_FLUX   → same as NEUMANN (zero normal derivative)
     BCType.ROBIN     → operator augmentation (NOT condensation): a D-scaled FacetBasis boundary
                        mass + load assembled by ``assemble_robin_terms`` and folded into the
-                       weak-form operator ``M/dt + D*K`` upstream (the solver's
+                       weak-form operator ``M_t/dt + D*K`` upstream, M_t the time mass (#2845) (the solver's
                        ``_robin_operator_terms`` hook). Robin dofs stay free, so the
                        condensation path here treats Robin as a no-op (Issue #1237).
     BCType.PERIODIC  → NotImplementedError (needs DOF pairing across boundaries — Issue #1237,
@@ -64,7 +64,7 @@ def apply_bc_to_fem_system(
     natural BC in the weak form: no action. An INHOMOGENEOUS Neumann still owes a boundary load on the HJB side;
     that is an operator augmentation like Robin, assembled by ``assemble_robin_terms`` and folded in upstream, not
     applied here (Issue #2294). For Robin: no action here — the Robin boundary mass + load are an operator
-    augmentation assembled by ``assemble_robin_terms`` and folded into ``M/dt + D*K`` upstream (Robin dofs stay free,
+    augmentation assembled by ``assemble_robin_terms`` and folded into ``M_t/dt + D*K`` upstream (Robin dofs stay free,
     so they are not condensed). A facet governed by Periodic raises ``NotImplementedError`` (Issue #1237, still
     deferred) — fail loud rather than silently degrade to Neumann.
 
@@ -376,7 +376,7 @@ def assemble_robin_terms(
     - ``rhs_robin`` :math:`= D\,(1/\beta)\int_{\partial\Omega} g\,\phi_i`          (boundary load)
 
     Both scale with ``D`` exactly like the stiffness ``K`` does, so the caller adds ``A_robin``
-    to ``M/dt + D*K`` and ``rhs_robin`` to each timestep RHS. The boundary mass is symmetric, so
+    to ``M_t/dt + D*K`` and ``rhs_robin`` to each timestep RHS. The boundary mass is symmetric, so
     the FP Robin term is the adjoint (identical) of the HJB one (Type-A duality preserved).
 
     Summed over the facets each ``BCType.ROBIN`` segment governs (`BoundaryConditions.segments_for_facets`), each

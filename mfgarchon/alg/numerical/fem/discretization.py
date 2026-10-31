@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .assembly import (
+    _import_skfem,
     assemble_advection,
     assemble_gradient_projection,
     assemble_mass,
@@ -79,6 +80,25 @@ class FEMDiscretization:
 
     def mass(self) -> sparse.csr_matrix:
         return assemble_mass(self._basis)
+
+    @property
+    def lumps_time_mass(self) -> bool:
+        """A P1 simplex element lumps the mass in the time derivative, ``diag(M 1)``; every other element keeps the
+        consistent mass (#2845).
+
+        The lumped implicit pure-diffusion step is an M-matrix step, so it takes no density negative, wherever every
+        off-diagonal of the stiffness is <= 0: on P1 in 1-D always; in 2-D when each interior edge's two opposite angles
+        sum to at most pi and each boundary edge's opposite angle is at most pi/2; in 3-D a Delaunay mesh does not give
+        it. That is with no-flux and Dirichlet walls. A Robin wall adds its boundary mass, consistent,
+        D (alpha/beta) int phi_i phi_j, whose off-diagonal on a 2-D boundary edge e is D (alpha/beta) |e| / 6; with
+        alpha/beta > 0 the step stays an M-matrix only where (alpha/beta) |e| <= 3 cot(theta_e), theta_e the angle
+        opposite e.
+        P2 keeps the consistent mass, as ruled (P1 only): its vertex functions integrate to about 0 on triangles
+        and below 0 on tetrahedra, so its row sums are no positive lumping there, though they are on a line. So do
+        the tensor-product elements, Q1 included.
+        """
+        skfem = _import_skfem()
+        return isinstance(self._basis.elem, (skfem.ElementLineP1, skfem.ElementTriP1, skfem.ElementTetP1))
 
     def advection(self, velocity: NDArray) -> sparse.csr_matrix:
         return assemble_advection(self._basis, velocity)
