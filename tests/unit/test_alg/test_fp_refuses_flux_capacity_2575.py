@@ -136,7 +136,7 @@ def test_fp_fdm_honours_the_cap_on_its_own_bc():
     for cap in (None, CAP):
         solver = FPFDMSolver(problem, boundary_conditions=_exit(1, cap))
         m = np.asarray(solver.solve_fp_system(m0, show_progress=False))
-        out = solver.boundary_outflow["exit"]
+        out = solver._boundary_outflow["exit"]
         assert np.max(np.abs(m @ weights + out - m[0] @ weights)) < 1e-12
         outflow[cap] = out[-1]
     assert 0.0 < outflow[CAP] <= CAP * 0.5 * (1 + 1e-12)

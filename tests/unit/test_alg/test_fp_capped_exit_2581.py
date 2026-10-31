@@ -3,7 +3,7 @@ within the step (user rulings 2026-10-09 and 2026-10-10; the approver's on the p
 
 Each exit node starts the step absorbing; a node whose outflow over the step would exceed c |face| dt takes the FLUX(c)
 row, the no-flux row with -c/(dx/2) on its right-hand side, and the step is solved again. A node's outflow is read off
-that no-flux row, which also gives the record ``FPFDMSolver.boundary_outflow``. It is offered for a standalone FP solve
+that no-flux row, which also gives the solver's internal record of the mass each Dirichlet segment let out. It is offered for a standalone FP solve
 only: paired with an HJB reading u = g at the exit it is not an equilibrium (user ruling 2026-10-10).
 
 The oracles, without symmetry that would let a rival branch agree:
@@ -89,7 +89,7 @@ def _saturated(dim: int, n: int, cap: float | None) -> tuple[float, np.ndarray]:
         source_term=_source,
         show_progress=False,
     )
-    rate = np.diff(solver.boundary_outflow["exit"]) / (T / nt)
+    rate = np.diff(solver._boundary_outflow["exit"]) / (T / nt)
     return float(np.abs(np.asarray(m)[-1] - _exact(T, x)).max()), rate
 
 
@@ -122,7 +122,7 @@ def _release(n: int) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     m = np.asarray(
         solver.solve_fp_system(m0, potential_field=np.broadcast_to(-x, (nt + 1, n)).copy(), show_progress=False)
     )
-    out = solver.boundary_outflow["exit"]
+    out = solver._boundary_outflow["exit"]
     capped = np.diff(out) / (t_end / nt) >= cap * (1 - 1e-12)
     first = int(np.argmax(capped))
     released = first + int(np.argmax(~capped[first:]))
@@ -144,10 +144,10 @@ def test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges():
 
 
 def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
-    """The trapezoid mass plus the record is the mass at level 0, beside each other wall the record covers. In 1-D a
-    capped exit beside a free one: a BC of DIRICHLET segments alone holds its walls at g(0) at level 0 (#2535), and the
-    capped wall keeps the caller's density there, which queues. In 2-D a capped exit beside a FLUX inflow, whose
-    segment's share is in the record too."""
+    """The trapezoid mass plus the record is the mass at level 0 plus what came in. In 1-D a capped exit beside a free
+    one, both in the record: a BC of DIRICHLET segments alone holds its walls at g(0) at level 0 (#2535), and the capped
+    wall keeps the caller's density there, which queues. In 2-D a capped exit beside a FLUX inflow, whose q gives what
+    came in."""
     problem, grid = _problem(1, 21, 20, 1.0)
     x = np.asarray(grid.coordinates[0])
     m0 = np.exp(-((x - 0.7) ** 2) / 0.05) + 0.5
@@ -165,7 +165,7 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     weights = grid.measure_weights()
     assert m[0][0] == 0.0
     assert m[0][-1] == m0[-1]
-    out = solver.boundary_outflow
+    out = solver._boundary_outflow
     assert np.max(np.abs(m @ weights + out["free"] + out["exit"] - m[0] @ weights)) < 1e-12
 
     problem, grid = _problem(2, 13, 10, 0.5)
@@ -185,11 +185,11 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
             np.ones_like(x), potential_field=np.broadcast_to(-x, (11, *x.shape)).copy(), show_progress=False
         )
     )
-    out = solver.boundary_outflow
-    assert np.allclose(np.diff(out["inflow"]), -0.2 * LY * 0.05, rtol=1e-12, atol=0.0)
+    # the FLUX face lets in 0.2 per unit length per unit time over its length LY, which the record does not hold
+    let_in = 0.2 * LY * 0.05 * np.arange(11)
     weights = grid.measure_weights()
     total = np.einsum("tij,ij->t", m, weights)
-    assert np.max(np.abs(total + out["inflow"] + out["exit"] - total[0])) < 1e-12
+    assert np.max(np.abs(total + solver._boundary_outflow["exit"] - let_in - total[0])) < 1e-12
 
 
 def test_an_infinite_cap_is_the_absorbing_exit_bit_for_bit():
@@ -199,7 +199,7 @@ def test_an_infinite_cap_is_the_absorbing_exit_bit_for_bit():
     for cap in (None, 1e300):
         solver = FPFDMSolver(problem, boundary_conditions=_bc(2, cap))
         m = solver.solve_fp_system(_exact(0.0, x), potential_field=np.broadcast_to(-ALPHA * x, (11, *x.shape)).copy())
-        runs.append((np.asarray(m), solver.boundary_outflow["exit"]))
+        runs.append((np.asarray(m), solver._boundary_outflow["exit"]))
     assert np.array_equal(runs[0][0], runs[1][0])
     assert np.array_equal(runs[0][1], runs[1][1])
 

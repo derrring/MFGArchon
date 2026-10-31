@@ -122,10 +122,10 @@ class FPFDMSolver(BaseFPSolver):
     #: explicit one (#2512, row B3).
     honors_inhomogeneous_neumann: bool = False
 
-    #: The last ``solve_fp_system``'s outflow per DIRICHLET and FLUX segment: by segment name, the mass that left through
-    #: it by each time level, from 0 at the first, negative where mass came in (#2581, PR 2a). With the trapezoid mass
-    #: M(t), M(t) + sum(outflow at t) = M(0) plus what a source added. None before a solve.
-    boundary_outflow: dict[str, np.ndarray] | None = None
+    #: Internal: the last ``solve_fp_system``'s outflow per DIRICHLET segment, by segment name, the mass that left
+    #: through it by each time level, from 0 at the first (#2581, PR 2a). Not a public record: how a solve reports its
+    #: boundary outflow is #2846's to decide. None before a solve.
+    _boundary_outflow: dict[str, np.ndarray] | None = None
 
     def __init__(
         self,
@@ -641,9 +641,9 @@ class FPFDMSolver(BaseFPSolver):
         )
 
     def _fresh_outflow_record(self) -> dict[str, np.ndarray]:
-        """A new ``boundary_outflow`` for the solve about to run, filled by the implicit step (#2581, PR 2a)."""
-        self.boundary_outflow = {}
-        return self.boundary_outflow
+        """A new ``_boundary_outflow`` for the solve about to run, filled by the implicit step (#2581, PR 2a)."""
+        self._boundary_outflow = {}
+        return self._boundary_outflow
 
     # =========================================================================
     # Strict Adjoint Mode (Issue #622)

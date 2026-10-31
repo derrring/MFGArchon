@@ -914,9 +914,9 @@ exit it is not an equilibrium, since as $c \to 0$ the FP side becomes a wall whi
 ruling 2026-10-10; a coupled MFG uses the finite-rate exit). FP-FDM honours it on a `DIRICHLET` exit with value 0 of
 its own `boundary_conditions`, on `divergence_upwind`, as an active set within each implicit step: every exit node
 starts absorbing; a node whose outflow over the step would exceed $c\,|\text{face}|\,\Delta t$ takes the `FLUX(c)` row,
-and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, so
-`FPFDMSolver.boundary_outflow` records, per `DIRICHLET` and `FLUX` segment, the mass that left by each time level, and
-the trapezoid mass plus that record is the initial mass plus what a source added. A cap on the shared BC, on another
+and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, the
+one the scheme already assembles at a no-flux wall, so the trapezoid mass plus what the exits let out is the initial
+mass plus what a source added. A cap on the shared BC, on another
 type, on a `DIRICHLET(g \ne 0)`, on `divergence_centered` (where the complementarity can have two roots at a node), at
 a node where the exit meets a face that is not `NO_FLUX`, or on any other solver is refused by name (#2581, #2575).
 

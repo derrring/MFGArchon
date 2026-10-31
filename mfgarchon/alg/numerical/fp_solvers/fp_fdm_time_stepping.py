@@ -233,7 +233,6 @@ def _flux_sources(
     shape: tuple[int, ...],
     spacing: tuple[float, ...],
     time: float | None,
-    by_segment: dict[str, float] | None = None,
 ) -> np.ndarray | None:
     """The right-hand side a prescribed flux puts on the implicit step, or None when no face is FLUX (#2581).
 
@@ -243,7 +242,6 @@ def _flux_sources(
     each FLUX face's q over that face's piece. Each face is read through the face owner, as the Dirichlet rows read
     it (#2512 row B1), and its q at the node and at ``time``, the level solved for, by the value owner a Dirichlet
     value goes through (row B2). A node a Dirichlet face takes keeps its identity row and gets nothing here.
-    ``by_segment``, when given, gains each FLUX segment's outflow rate, q over its faces' measure (#2581, PR 2a).
     """
     if not _declares_flux(boundary_conditions):
         return None
@@ -258,7 +256,6 @@ def _flux_sources(
     if not flux_faces:
         return None
     sources = np.zeros(int(np.prod(shape)))
-    weights = np.asarray(grid.measure_weights(), dtype=float).ravel() if by_segment is not None else None
     for face, segment in flux_faces:
         wall_index = 0 if face.side == "min" else shape[face.axis] - 1
         half_cell = spacing[face.axis] / 2.0
@@ -270,11 +267,6 @@ def _flux_sources(
             where = f"FP-FDM's FLUX face {face.to_string()} at node {tuple(int(i) for i in multi_idx)}"
             q = float(segment_value(segment, t=time, x=_node(grid, multi_idx), where=where, time_keyword="time"))
             sources[grid.get_index(multi_idx)] -= q / half_cell
-            if weights is not None:
-                # the node's piece of the face is its weight over the half cell normal to the face
-                by_segment[segment.name] = (
-                    by_segment.get(segment.name, 0.0) + q * weights[grid.get_index(multi_idx)] / half_cell
-                )
     return sources
 
 
@@ -379,10 +371,13 @@ def _refuse_a_capped_node_negative(
     grid: Any,
     time: float | None,
 ) -> None:
-    """A capped node the step takes negative, past the gate's threshold, is refused, never clipped (#2581, PR 2a).
+    """A capped node the step takes negative, past the gate's threshold, is refused, never clipped (#2581, PR 2a; the
+    no-clip ruling of #2485).
 
-    The switch caps a node only where its absorbing outflow exceeds c, so on upwind capping removes less than the
-    absorbing row, whose node is 0; that m_capped >= m_absorbing follows is the intended argument, not a proved one.
+    No upwind input should reach it: upwind's step matrix is an M-matrix, so each exit node's complementarity, m >= 0,
+    outflow <= c |face| dt and their product zero, is a linear complementarity problem with a unique solution, which
+    holds m >= 0 at a capped node, and the switch ends at it. The check stays because that is an argument about the
+    discrete system, not a pin; the fuzz on #2581 PR 2a found no capped node below zero.
     """
     negative = [i for i in capped if m[i] < 0.0]
     if not negative:
@@ -479,13 +474,15 @@ def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray
 
 
 def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, BoundaryFace, np.ndarray]]:
-    """The walls of a 1-D grid whose own BC is Dirichlet, as ``(index, face, wall node)``. Each wall by its own type:
-    a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535)."""
-    return [
-        (index, BoundaryFace(0, side), _node(grid, (index,)))
-        for index, side in ((0, "min"), (-1, "max"))
-        if boundary_conditions.segment_for_face(BoundaryFace(0, side), grid).bc_type == BCType.DIRICHLET
-    ]
+    """The walls of a 1-D grid whose own BC holds a Dirichlet value, as ``(index, face, wall node)``. Each wall by its
+    own type: a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535). A capped exit
+    holds no value: its node keeps its density, which queues at the cap (#2581, PR 2a)."""
+    walls = []
+    for index, side in ((0, "min"), (-1, "max")):
+        segment = boundary_conditions.segment_for_face(BoundaryFace(0, side), grid)
+        if segment.bc_type == BCType.DIRICHLET and segment.flux_capacity is None:
+            walls.append((index, BoundaryFace(0, side), _node(grid, (index,))))
+    return walls
 
 
 def _get_bc_type(boundary_conditions: Any) -> str | None:
@@ -954,9 +951,9 @@ def solve_fp_nd_full_system(
     """
     Solve multi-dimensional FP equation using full-dimensional sparse linear system.
 
-    ``outflow``, when given, is filled with each DIRICHLET and FLUX segment's cumulative outflow: the mass that left
-    through it by each time level, from 0 at the first, negative where mass came in (#2581, PR 2a). The implicit step
-    records it; the explicit steps refuse those walls.
+    ``outflow``, when given, is filled with each DIRICHLET segment's cumulative outflow: the mass that left through it
+    by each time level, from 0 at the first, negative where mass came in (#2581, PR 2a). The implicit step records it;
+    the explicit steps refuse those walls.
 
     Evolves density forward in time from t=0 to t=T by directly assembling
     and solving the full multi-dimensional system at each timestep.
@@ -1217,13 +1214,9 @@ def solve_fp_nd_full_system(
     # node; a BC with a non-Dirichlet segment keeps the caller's initial density there (#1258's pin). Every later
     # level is the implicit step's, whose rows hold g(t_{k+1}); the explicit steps refuse a Dirichlet wall. A
     # post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
-    # A capped exit is not held: its node keeps the caller's density, which queues at the cap (#2581, PR 2a).
     if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
         for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
-            if boundary_conditions.segment_for_face(face, grid).flux_capacity is None:
-                M_solution[0, index] = _get_bc_value(
-                    boundary_conditions, face, time=0.0, point=wall_node, geometry=grid
-                )
+            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node, geometry=grid)
 
     # Edge cases
     if Nt <= 1:
@@ -1658,8 +1651,8 @@ def solve_timestep_full_nd(
         Legacy alias: "flux"->"divergence_upwind". The gradient schemes and their aliases
         "centered" / "upwind" were removed in #2007 and raise.
     outflow : dict[str, float] | None
-        When given, each DIRICHLET and FLUX segment's name gains the mass that left through it over this step,
-        negative where mass came in (#2581, PR 2a).
+        When given, each DIRICHLET segment's name gains the mass that left through it over this step, negative where
+        mass came in: read off the no-flux row the capped exit uses, at every Dirichlet node (#2581, PR 2a).
 
     Returns
     -------
@@ -1888,8 +1881,7 @@ def solve_timestep_full_nd(
     # spsolve's round-off negatives are measured on the step that holds them, and no upwind inflow row measured under
     # this rule is refused (a 1152-row scan, and review 4's pulse and ramp into a nearly empty domain, on #2840). Each
     # remedy below was run on refused rows before it was written (the approver's rulings on #2840).
-    flux_rate: dict[str, float] | None = {} if outflow is not None else None
-    flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time, by_segment=flux_rate)
+    flux_sources = _flux_sources(boundary_conditions, grid, shape, spacing, time)
     has_flux = flux_sources is not None and bool(np.any(flux_sources))
 
     # A capped exit (#2581, PR 2a): on its segment m >= 0, J.n <= c and m (c - J.n) = 0, as an active set within the
@@ -1962,9 +1954,6 @@ def solve_timestep_full_nd(
                 multi_idx = tuple(int(i) for i in grid.get_multi_index(idx))
                 name = _segment_at_node(boundary_conditions, multi_idx, shape, grid).name
                 outflow[name] = outflow.get(name, 0.0) + float(through[idx]) * dt
-    if outflow is not None and flux_rate:
-        for name, rate in flux_rate.items():
-            outflow[name] = outflow.get(name, 0.0) + rate * dt
 
     # Reshape back to multi-dimensional array
     m_next = m_next_flat.reshape(shape)
