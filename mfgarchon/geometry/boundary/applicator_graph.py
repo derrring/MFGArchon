@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 # Import base class for inheritance
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
@@ -92,7 +92,7 @@ class NodeBC:
         name: Optional name for this BC region (e.g., "exit", "source")
     """
 
-    nodes: tuple[int, ...] | Callable[[int], list[int]]
+    nodes: Sequence[int] | Callable[[int], list[int]]
     bc_type: GraphBCType = GraphBCType.DIRICHLET
     value: float | Callable[[int, float], float] = 0.0
     name: str = "boundary"

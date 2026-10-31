@@ -1730,8 +1730,9 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
 
         Node-BC lives at this abstraction so NetworkGeometry (grid/random/scale-free) and
         MazeGeometry inherit it uniformly (graph is the highest abstraction over both). The carrier
-        is a ``GraphBCConfig`` (multi-region node/edge BC: DIRICHLET / ABSORBING / SOURCE / NEUMANN);
-        ``None`` means no explicit BC (the NEUMANN / zero-flux default), matching the prior behaviour.
+        is a ``GraphBCConfig`` (multi-region node BC: DIRICHLET / ABSORBING / SOURCE / NEUMANN /
+        CUSTOM; an edge BC is refused, #2493); ``None`` means no explicit BC (the NEUMANN / zero-flux
+        default), matching the prior behaviour.
 
         Parameters
         ----------
@@ -2182,7 +2183,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
     def get_boundary_conditions(self):
         """Node boundary conditions owned by the graph geometry (Issue #1471).
 
-        Returns a ``GraphBCConfig`` (node/edge BC over node sets) or ``None``. This is the graph
+        Returns a ``GraphBCConfig`` (node BC over node sets) or ``None``. This is the graph
         analogue of the continuum ``BoundaryConditions`` on ``TensorProductGrid`` — the boundary
         *locus* on a graph is a node set, not a wall segment, so the two BC representations are
         genuinely different types (the accessor is polymorphic by geometry, consumed through the

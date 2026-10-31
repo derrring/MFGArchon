@@ -122,9 +122,9 @@ def test_the_guard_actually_refuses(tmp_path):
 
         victim = worktree / "mfgarchon" / "geometry" / "boundary" / "bc_utils.py"
         original = victim.read_text()
-        m = re.search(r"( +return \"reflect\")", original)
+        m = re.search(r"( +\"no_flux\": \"reflect\",)", original)
         assert m, "the anchor moved; update this test rather than deleting it"
-        victim.write_text(original[: m.start()] + '        return "clamp"  # MUTATED' + original[m.end() :])
+        victim.write_text(original[: m.start()] + '        "no_flux": "clamp",  # MUTATED' + original[m.end() :])
         proc = subprocess.run(
             ["bash", str(worktree / "scripts" / "local_ci.sh"), "--fast"],
             cwd=worktree,
