@@ -988,7 +988,8 @@ def solve_fp_nd_full_system(
 
     ``outflow``, when given, is filled with each DIRICHLET segment's cumulative outflow: the mass that left through it
     by each time level, from 0 at the first, negative where mass came in (#2581, PR 2a). The implicit step records it;
-    the explicit steps refuse those walls.
+    the explicit steps refuse those walls. Internal: its one reader is FPFDMSolver's private record; a public outflow
+    surface is #2846's.
 
     Evolves density forward in time from t=0 to t=T by directly assembling
     and solving the full multi-dimensional system at each timestep.
@@ -1687,7 +1688,8 @@ def solve_timestep_full_nd(
         "centered" / "upwind" were removed in #2007 and raise.
     outflow : dict[str, float] | None
         When given, each DIRICHLET segment's name gains the mass that left through it over this step, negative where
-        mass came in: read off the no-flux row the capped exit uses, at every Dirichlet node (#2581, PR 2a).
+        mass came in: read off the no-flux row the capped exit uses, at every Dirichlet node (#2581, PR 2a). Internal,
+        as on `solve_fp_nd_full_system`.
 
     Returns
     -------

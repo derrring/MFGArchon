@@ -3040,8 +3040,9 @@ def mixed_bc_from_regions(
         if len(faces) > 1 and segment_template.flux_capacity is not None:
             raise ValueError(
                 f"Region {region_name!r} covers {len(faces)} faces and its segment carries a flux_capacity. "
-                "One segment per face would count that capacity once per face. Give each face its own "
-                "segment and capacity (Issue #2472)."
+                "A capacity is per unit boundary measure (#2581), so one per face would carry the same c, but "
+                "whether a capacity spanning several faces is one budget or one per face is not settled here. Give "
+                "each face its own segment and capacity (Issue #2472)."
             )
         for face in faces:
             name = segment_template.name if len(faces) == 1 else f"{segment_template.name}[{face.to_string()}]"

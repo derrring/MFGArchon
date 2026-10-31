@@ -186,8 +186,8 @@ class BaseFPSolver(BaseNumericalSolver):
         if capped:
             raise NotImplementedError(
                 f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, which this solver does not honour "
-                "on this BC: the solve would ignore the cap (#2575). FPFDMSolver honours it on a DIRICHLET(0) exit of "
-                "the FP's own BC, FPFDMSolver(problem, boundary_conditions=...), with advection_scheme="
+                "on this BC: the solve would ignore the cap (#2575). FPFDMSolver honours it on a tensor-product grid, "
+                "on a DIRICHLET(0) exit of the FP's own BC, FPFDMSolver(problem, boundary_conditions=...), with advection_scheme="
                 "'divergence_upwind' (#2581)."
             )
 

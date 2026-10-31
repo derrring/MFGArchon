@@ -11,8 +11,8 @@ The oracles, without symmetry that would let a rival branch agree:
   J.n = c and m > 0 at the exit and a nonzero drift into it, at the upwind step's first order; the record's rate is
   c |exit| at every step; the same solve with the exit absorbing misses by O(1);
 - the release: a queue that drains frees the exit, and the switch time converges under refinement;
-- the mass identity: the trapezoid mass plus the recorded outflow is the initial mass;
-- c = infinity is the absorbing exit, bit for bit.
+- the mass identity: the trapezoid mass plus the recorded outflow is the mass at level 0 plus what came in;
+- a cap past every outflow (1e300; an infinite one is refused) is the absorbing exit, bit for bit.
 """
 
 from __future__ import annotations
@@ -218,7 +218,7 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     assert np.max(np.diff(out)) <= 0.3 * LY * 0.2 * (1 + 1e-12)
 
 
-def test_an_infinite_cap_is_the_absorbing_exit_bit_for_bit():
+def test_a_cap_past_every_outflow_is_the_absorbing_exit_bit_for_bit():
     problem, grid = _problem(2, 21, 10, 0.2)
     x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
     runs = []

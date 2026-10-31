@@ -915,10 +915,14 @@ ruling 2026-10-10; a coupled MFG uses the finite-rate exit). FP-FDM honours it o
 its own `boundary_conditions`, on `divergence_upwind`, as an active set within each implicit step: every exit node
 starts absorbing; a node whose outflow over the step would exceed $c\,|\text{face}|\,\Delta t$ takes the `FLUX(c)` row,
 and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, the
-one the scheme already assembles at a no-flux wall, so the trapezoid mass plus what the exits let out is the initial
-mass plus what a source added. A cap on the shared BC, on another
-type, on a `DIRICHLET(g \ne 0)`, on `divergence_centered` (where the complementarity can have two roots at a node), at
-a node where the exit meets a face that is not `NO_FLUX`, or on any other solver is refused by name (#2581, #2575).
+one the scheme already assembles at a no-flux wall, so the trapezoid mass plus what the exits let out is the mass at
+the returned level 0 plus what a source added and a `FLUX` wall let in. (In 1-D a BC whose segments are all
+`DIRICHLET` holds its uncapped walls at $g(0)$ at level 0, #2535; a capped wall keeps the caller's density there.)
+A cap on the shared BC, on another type, on a `DIRICHLET(g \ne 0)`, on `divergence_centered` (where the
+complementarity can have two roots at a node), on a face that meets a face not governed by a `NO_FLUX` segment, or on
+any other solver is refused by name (#2581, #2575). That rule is read on the faces, so which segment governs a corner,
+by priority or declaration order, does not decide it. A corner of the capped face that a `NO_FLUX` face governs is a
+wall node: the cap then holds on the capped face less that corner's half cell, an $O(h)$ difference.
 
 ### What is not settled here
 
