@@ -129,8 +129,8 @@ class LaplacianOperator(LinearOperator):
                 2.00. The cost was never the price of conservation; it was the price of the
                 wrong measure.
 
-                The argument is kept because ``coefficient_field`` requires it and five
-                production sites pass it; removing it is a breaking API change, not a cleanup.
+                The argument is kept because ``coefficient_field`` requires it and production
+                sites pass it; removing it is a breaking API change, not a cleanup.
             coefficient_field: Optional per-point diffusion field ``D(x)`` (same shape as the
                 field) for a spatially-varying ``∇·(D∇·)`` (Issue #1183). Only honored by
                 ``as_scipy_sparse()`` with ``mass_conservative=True``: the stencil uses the

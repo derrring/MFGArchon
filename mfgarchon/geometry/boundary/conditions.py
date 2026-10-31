@@ -2381,10 +2381,10 @@ def no_flux_bc(dimension: int | None = None, domain_bounds: np.ndarray | None = 
 
     The condition differs by equation, and both are what "no flux" should mean on that side:
 
-    - **FP side**: zero total flux, ``J.n = 0`` with ``J = v*m - D*grad(m)``. This is the
-      mass-conserving wall, and it is what the divergence-form discretisation enforces. With
-      drift at the boundary it implies ``D dm/dn = (v.n) m``, so the normal derivative of the
-      density is generally **not** zero.
+    - **FP side**: zero total flux, ``J.n = 0`` with ``J = v*m - grad(D*m)`` (``v*m - D*grad(m)`` for a
+      constant D; CONVENTIONS § 5, #2841). This is the mass-conserving wall, and it is what the
+      divergence-form discretisation enforces. With drift at the boundary it implies
+      ``d(D m)/dn = (v.n) m``, so the normal derivative of the density is generally **not** zero.
     - **HJB side**: zero normal derivative, ``du/dn = 0`` -- the adjoint of a reflecting wall.
 
     Common for Fokker-Planck equations, where it is the correct choice for conserving mass.
@@ -2413,10 +2413,11 @@ def flux_bc(
     """
     Create prescribed-flux boundary conditions for a Fokker-Planck solver: ``J.n = value`` (#2581).
 
-    ``J = alpha*m - D*grad(m)`` is the total flux and ``n`` the outward normal, so ``value`` (q) is mass per unit
+    ``J_i = alpha_i*m - d_j(A_ij*m)`` (``alpha*m - D*grad(m)`` for a constant D, #2841) is the total flux and ``n`` the
+    outward normal, so ``value`` (q) is mass per unit
     time per unit boundary measure, **outward positive**: ``q > 0`` takes mass out, ``q < 0`` puts it in, and
-    ``q = 0`` is ``no_flux_bc``. It is not ``neumann_bc``: where the drift crosses the wall, ``J.n = q`` is not
-    ``-D*dm/dn = q``.
+    ``q = 0`` is ``no_flux_bc``. It is not ``neumann_bc``: ``J.n = q`` and ``-D*dm/dn = q`` differ by
+    ``(v.n - dD/dn)*m``, so they part wherever ``v.n != dD/dn``.
 
     Pass it to the FP solver as its own ``boundary_conditions``. It is FP-side only, so a problem or geometry
     carrying it is refused, since that BC is shared with the HJB (user ruling 2026-10-09, B-2). ``FPFDMSolver``
@@ -2488,7 +2489,8 @@ def robin_bc(
     **The trap.** The reflecting condition's own coefficients are
     ``(alpha, beta) = (D_pH(x, grad u).n, D)``, so ``alpha = -v_n``, NOT ``+v_n``, wherever the FP
     transport velocity is ``v = -D_pH``. That also follows from the library's own
-    ``J = v*m - D grad m`` without mentioning ``D_pH``, which is the sense-free route to it. Those are the
+    ``J = v*m - D grad m``, for a constant D, without mentioning ``D_pH``, which is the sense-free route to
+    it. Those are the
     coefficients of the reflecting wall read as a condition on ``m``. An FP solver reads a ROBIN as a
     condition on the flux, ``J.n = (D/beta)(alpha*m - g)`` (#2512, user ruling 2026-10-10), so there the
     reflecting wall is ``ROBIN(0, beta, 0)``, which is ``NO_FLUX``.

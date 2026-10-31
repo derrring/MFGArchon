@@ -6,7 +6,7 @@ compatible with FP solver APIs. These helpers make it explicit what type of
 drift is being used without requiring a full Strategy Pattern hierarchy.
 
 The Fokker-Planck equation is:
-    ∂m/∂t + ∇·(α m) = ∇·(D ∇m)
+    ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)   (Itô; Δ(D m) for a field, #2841)
 
 where α(t,x,m) is the drift field. This module helps construct α for various
 physical scenarios.
@@ -83,7 +83,7 @@ def zero_drift() -> Callable:
     the heat equation or pure diffusion without advection.
 
     Equation:
-        ∂m/∂t = ∇·(D ∇m)  (no advection term)
+        ∂m/∂t = ∂ᵢ∂ⱼ(Dᵢⱼ m)  (no advection term)
 
     Returns:
         Callable with signature α(t, x, m) -> 0

@@ -217,8 +217,11 @@ def test_fp_fdm_callable_drift_reads_a_tensor_override():
     Defect 1: a tensor-valued callable was ignored there, and the solve ran at the problem's 0.3.
     Defect 2: a constant (2, 2) tensor was read as a spatial field and refused for not matching the
     9 x 9 grid, while the potential route read the same array as a tensor. The oracle: a callable
-    returning a constant Sigma is that constant Sigma, so the two solves must agree exactly, and
-    both must differ from the problem's own volatility or the override was never read.
+    returning a constant Sigma is that constant Sigma, so the two solves must agree, and both must
+    differ from the problem's own volatility or the override was never read. They agree to round-off,
+    not bit for bit: the callable is read per point, so it takes the Ito owner, component by component,
+    and the constant the kernel's own call (#2841); 4.4e-16 apart on this row, where each defect is
+    past 1e-3.
     """
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 
@@ -235,7 +238,7 @@ def test_fp_fdm_callable_drift_reads_a_tensor_override():
     called = solve(volatility=lambda t, x, m: sigma, volatility_kind="tensor")
     own = solve()
 
-    np.testing.assert_array_equal(called, constant)
+    np.testing.assert_allclose(called, constant, rtol=0, atol=1e-13 * np.max(np.abs(constant)))
     assert np.max(np.abs(constant - own)) > 1e-3, "the tensor override did not reach the callable-drift solve"
 
 

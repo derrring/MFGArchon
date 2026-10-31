@@ -33,7 +33,7 @@ class DriftCallable(Protocol):
         dx_t = α(t, x_t, m_t) dt + σ dW_t
 
     Mathematical formulation:
-        - FP equation: ∂m/∂t + ∇·(α m) = ∇·(D ∇m)
+        - FP equation: ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)   (Itô, the adjoint of the HJB's D:∇∇u; #2841)
         - HJB equation: -∂u/∂t + H(∇u, α) - D:∇∇u = 0
 
     Args:
@@ -96,7 +96,8 @@ class DiffusionCallable(Protocol):
     Protocol for state-dependent diffusion coefficient D(t, x, m).
 
     Convention (Issue #811, physics/PDE standard):
-        PDE:  dm/dt + div(alpha m) = D Laplacian(m)    (D appears directly)
+        PDE:  dm/dt + div(alpha m) = d_i d_j(D_ij m)    (D appears directly; Ito, #2841)
+              Laplacian(D m) for an isotropic D
         SDE:  dX = alpha dt + sigma dW,  where sigma = sqrt(2D)
 
     The callable returns the PDE diffusion coefficient D = sigma^2/2,

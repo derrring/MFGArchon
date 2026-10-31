@@ -153,9 +153,10 @@ class BCType(Enum):
             An FP solver refuses a NEUMANN handed to it explicitly, which would mean dm/dn = g (#2512, row B3).
         ROBIN: Mixed condition (alpha*u + beta*du/dn = g)
         PERIODIC: Wrap-around boundaries (u(x_min) = u(x_max))
-        FLUX: A prescribed total flux, J.n = q with J = alpha*m - D*grad(m), for a Fokker-Planck solver's own BC
+        FLUX: A prescribed total flux, J.n = q with J_i = alpha_i*m - d_j(A_ij*m), for a Fokker-Planck solver's own BC
             (#2581). q is mass per unit time per unit boundary measure, outward positive, and q = 0 is NO_FLUX. It
-            is not NEUMANN: where the drift crosses the wall, J.n = q is not D*dm/dn = -q. FP-side only, so it is
+            is not NEUMANN: J.n = q and -D*dm/dn = q differ by (v.n - dD/dn)*m, so they part wherever
+            v.n != dD/dn. FP-side only, so it is
             refused on a BC the HJB and FP share, and a step is refused rather than clipped past the gate where the
             clip would fabricate mass the flux decides (B-3, `refuse_what_a_flux_takes_negative`; any other step
             whose own clip is past the gate is the scheme's, flux included) (#2581, user rulings 2026-10-09 and

@@ -17,7 +17,7 @@ Note:
     - fp_fdm_alg_divergence_centered.py: add_boundary_no_flux_entries_divergence_centered
 
 Mathematical Background:
-    No-flux BC for FP: J.n = 0 where J = v*m - D*grad(m)
+    No-flux BC for FP: J.n = 0 where J = v*m - grad(D*m) (v*m - D*grad(m) for a constant D, #2841)
     This ensures mass conservation at domain boundaries.
 """
 
@@ -50,7 +50,7 @@ def add_boundary_no_flux_entries(
     """
     Add matrix entries for boundary grid point with no-flux BC.
 
-    No-flux BC for Fokker-Planck: J.n = 0 where J = alpha*m - D*grad(m)
+    No-flux BC for Fokker-Planck: J.n = 0 where J = alpha*m - grad(D*m) (alpha*m - D*grad(m) for a constant D, #2841)
 
     Uses flux-form (finite volume) discretization at boundaries:
     - Boundary cells treated as half-cells (volume dx/2)
@@ -58,7 +58,7 @@ def add_boundary_no_flux_entries(
     - Interior face flux uses upwind for advection
 
     Mathematical formulation:
-    For FP equation: dm/dt = D*Laplacian(m) - div(alpha*m) where alpha = -lambda*grad(U)
+    For FP equation: dm/dt = Laplacian(D*m) - div(alpha*m) where alpha = -lambda*grad(U)
 
     At right boundary (half-cell):
         (dx/2)*dm/dt = J_interior - J_boundary = J_interior - 0
@@ -119,8 +119,8 @@ def add_boundary_no_flux_entries(
         elif at_left_boundary:
             # Left boundary: ghost point approach for no-flux BC
             #
-            # For no-flux: J.n = 0 where J = alpha*m - D*grad(m)
-            # This gives: dm/dn = (alpha.n)*m / D at boundary
+            # For no-flux: J.n = 0 where J = alpha*m - grad(D*m)
+            # This gives: d(D m)/dn = (alpha.n)*m at boundary
             #
             # Using ghost point: m_ghost = m_0 (reflection for pure diffusion)
             # But for advection-diffusion, we need to adjust.
@@ -236,7 +236,7 @@ def add_boundary_no_flux_entries_conservative(
     """
     Add matrix entries for boundary grid point with no-flux BC using CONSERVATIVE Flux FDM.
 
-    No-flux BC: Total flux J = alpha*m - D*grad(m) = 0 at boundary.
+    No-flux BC: Total flux J = alpha*m - grad(D*m) = 0 at boundary.
 
     For conservative scheme:
     - Boundary flux F_{boundary} = 0 (enforced exactly)

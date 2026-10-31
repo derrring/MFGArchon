@@ -39,7 +39,7 @@ is a Neumann condition for the value function.
 |------|-------------------|------------------|-------------|
 | `DIRICHLET` | `u = g` | shared BC: **`m = 0`** (absorbing); a BC passed to the FP solver itself: `m = g` | Exit with exit cost `g`; fixed value |
 | `NEUMANN` | `du/dn = g` | see note below | Prescribed boundary data |
-| `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - D*grad(m)` | Reflecting / insulating wall; the mass-conserving choice |
+| `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - grad(D*m)` (`v*m - D*grad(m)` for a constant D) | Reflecting / insulating wall; the mass-conserving choice |
 | `ROBIN` | `alpha*u + beta*du/dn = g` | shared BC: refused; a BC passed to the FP solver itself: **`J.n = (D/beta)(alpha*m - g)`** (FP-FEM only) | Mixed condition; a finite-rate exit |
 | `PERIODIC` | `u(x_min) = u(x_max)` | `m(x_min) = m(x_max)` | Wrap-around domain |
 | `FLUX` | none: refused on a shared BC | a BC passed to the FP solver itself: **`J.n = q`**, outward positive (FP-FDM's implicit step, FP-FEM) | A prescribed inflow or outflow |
@@ -56,7 +56,7 @@ where `DIRICHLET(g)` is a prescribed density `m = g`: `FPFDMSolver(boundary_cond
 **`FLUX` is the FP's alone** ([Issue #2581](https://github.com/derrring/MFGArchon/issues/2581)). `flux_bc(q)` prescribes the total flux through the wall, `J.n = q`, outward positive: `q > 0` takes mass out, `q < 0` puts it in, and `q = 0` is NO_FLUX. `q` is a constant or a callable `q(t, x)`, read at the level being solved, as a Dirichlet value is. It is not a Neumann condition: where the drift crosses the wall, `J.n = q` is not `-D dm/dn = q`. It has no HJB reading, so a FLUX on the problem or its geometry is refused; give it to the FP solver, `FPFDMSolver(problem, boundary_conditions=flux_bc(...))` (its implicit step) or `FPFEMSolver(...)`, and keep the HJB's condition on the geometry. A step is refused by name rather than clipped past the gate where the clip would fabricate mass the flux decides (`refuse_what_a_flux_takes_negative`); any other step whose own clip is past the gate is the scheme's, the flux included: FP-FDM's guard refuses it where clipping would fabricate more than the gate allows, and FP-FEM, whose Galerkin advection is not monotone, clips it, warning above 1e-6 of the mass. Every other solver refuses FLUX.
 
 **`NO_FLUX` on the FP side is zero *total* flux, not zero gradient.** With drift at the wall the
-two differ: `J.n = 0` gives `D dm/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM
+two differ: `J.n = 0` gives `d(D m)/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM
 divergence-form discretisation enforces the boundary flux as exactly zero
 (`fp_fdm_alg_divergence_centered.py:273`), which is what conserves mass. Choosing `du/dn = 0` on
 the density instead would leak mass wherever the drift is non-zero at the boundary.

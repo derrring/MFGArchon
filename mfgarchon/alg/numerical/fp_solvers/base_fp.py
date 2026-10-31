@@ -39,7 +39,8 @@ class BaseFPSolver(BaseNumericalSolver):
     Abstract Base Class for Fokker-Planck (FP) equation solvers.
 
     The FP equation describes density evolution:
-        ∂m/∂t + ∇·(α m) = ∇·(D ∇m)
+        ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)
+    in Itô form, Δ(D m) for a field and D Δm only for a constant D (CONVENTIONS § 5, #2841).
 
     where:
         m(t,x): probability density
@@ -54,7 +55,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
     Diffusion Types (controlled by the volatility parameter; an array declares volatility_kind):
         - Constant isotropic: D = σ²/2 (scalar, same in all directions)
-        - Anisotropic: D = diag(σ₁², σ₂², ...) (different per direction)
+        - Anisotropic: D = diag(σ₁², σ₂², ...)/2 (different per direction)
         - Spatially varying: D(t,x) (depends on location)
         - State-dependent: D(t,x,m) (nonlinear, depends on density)
         - Zero: D = 0 (pure advection, requires WENO/SL)
@@ -310,7 +311,7 @@ class BaseFPSolver(BaseNumericalSolver):
         the specified drift and diffusion.
 
         General FP Equation:
-            ∂m/∂t + ∇·(α m) = ∇·(D ∇m)
+            ∂m/∂t + ∇·(α m) = ∂ᵢ∂ⱼ(Dᵢⱼ m)   (Itô; Δ(D m) for a field, #2841)
 
             where:
             - α(t,x,m): drift field (controlled by drift_field)
