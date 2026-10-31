@@ -228,7 +228,9 @@ class FPFDMSolver(BaseFPSolver):
         exit on the FP's own BC, with c a finite mass per unit time per unit boundary measure, c >= 0. Which caps are
         admissible is `_refuse_an_inadmissible_cap`'s, which the step reads too. Any other BC this is asked about --
         the problem's shared one, read through ``get_boundary_conditions()`` -- keeps the base's refusal: there the
-        HJB reads the exit as u = g, which with a capped FP is not an equilibrium (user ruling 2026-10-10).
+        HJB reads the exit as u = g, which with a capped FP is not an equilibrium (user ruling 2026-10-10). A BC is this
+        solver's own when it is the one handed to the constructor, whatever object it is: the problem's shared BC object
+        handed over as ``boundary_conditions=`` is the user's choice of an own BC, and its cap is honoured as one.
         """
         capped = [seg for seg in getattr(bc, "segments", None) or () if seg.flux_capacity is not None]
         if not capped or not (getattr(self, "_own_bc", False) and bc is getattr(self, "boundary_conditions", None)):

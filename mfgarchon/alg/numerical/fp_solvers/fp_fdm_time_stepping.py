@@ -314,7 +314,11 @@ def _refuse_an_inadmissible_cap(boundary_conditions: Any) -> None:
                 "prescribed density m = g, not an exit, and has no outflow to cap, and a callable or array value is "
                 "not read as 0 here (#2581). Give the capped exit the value 0."
             )
-        if isinstance(c, bool) or not (isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0):
+        try:
+            admissible = not isinstance(c, bool) and isinstance(c, numbers.Real) and np.isfinite(float(c)) and c >= 0
+        except OverflowError:  # an integer or a fraction past float's range is no finite cap
+            admissible = False
+        if not admissible:
             raise ValueError(
                 f"FP-FDM: segment {segment.name!r} has flux_capacity {c!r}; a cap is a finite mass per unit time per "
                 "unit boundary measure, >= 0, not a bool, and no cap is None (#2581)."
@@ -1066,6 +1070,9 @@ def solve_fp_nd_full_system(
     - A: advection operator (full multi-D upwind discretization)
     - D: diffusion operator (full multi-D Laplacian)
     """
+    # Checked before level 0 is written: a run with one time level takes no step, and the 1-D level-0 exemption
+    # reads the cap (review 2 of #2849).
+    _refuse_an_inadmissible_cap(boundary_conditions)
     # Get problem dimensions
     ndim = problem.geometry.dimension
     shape = tuple(problem.geometry.get_grid_shape())

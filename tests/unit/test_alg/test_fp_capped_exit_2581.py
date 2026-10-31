@@ -13,7 +13,10 @@ The oracles, without symmetry that would let a rival branch agree:
   c |exit| at every step; the same solve with the exit absorbing misses by O(1);
 - the release: a queue that drains frees the exit, and the switch time converges under refinement;
 - the mass identity: the trapezoid mass plus the recorded outflow is the mass at level 0 plus what came in;
-- a cap past every outflow (1e300; an infinite one is refused) is the absorbing exit, bit for bit.
+- a cap past every outflow (1e300; an infinite one is refused) is the absorbing exit, bit for bit, except in a 1-D BC
+  whose segments are all DIRICHLET: there the capped wall keeps the caller's density at level 0, and the cumulative
+  record is offset at every level >= 1 by that node's level-0 mass, m0 dx/2 (the approver's ruling, RULE 3, amended);
+- the cap's measure is the half cell normal to the exit face, on whichever axis that face lies.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopu
 from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
 from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_fp_nd_full_system
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -231,6 +235,24 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     assert np.max(np.diff(out)) <= 0.3 * LY * 0.2 * (1 + 1e-12)
 
 
+def test_a_capped_face_off_axis_0_lets_out_c_times_its_measure():
+    """A capped y_max under unequal spacing (dx 0.1, dy 0.0625), saturated at every step: each step lets out c |y_max| dt.
+    The half cell is read on the exit face's own axis: read on axis 0, or off a corner node's first face, the step lets
+    out 0.625 or 0.9625 of it (review 2 of #2849)."""
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 0.5)], Nx_points=[11, 9], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3)
+    conditions = Conditions(m_initial=lambda x: 4.0, u_terminal=lambda x: 0.0, T=0.3)
+    problem = MFGProblem(model=model, domain=grid, conditions=conditions, Nt=6)
+    walls = [BCSegment(name=f, bc_type=BCType.NO_FLUX, boundary=f) for f in ("x_min", "x_max", "y_min")]
+    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="y_max", flux_capacity=0.05)
+    solver = FPFDMSolver(problem, boundary_conditions=BoundaryConditions(dimension=2, segments=[*walls, exit_]))
+    y = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[1]
+    solver.solve_fp_system(4.0 * np.ones_like(y), potential_field=np.broadcast_to(-2.0 * y, (7, *y.shape)).copy())
+    assert np.allclose(np.diff(solver._boundary_outflow["exit"]), 0.05 * 1.0 * 0.05, rtol=1e-12, atol=0)
+
+
 def test_a_cap_past_every_outflow_is_the_absorbing_exit_bit_for_bit():
     problem, grid = _problem(2, 21, 10, 0.2)
     x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
@@ -273,6 +295,37 @@ def _coupled(bc: BoundaryConditions) -> None:
     problem.solve(hjb_solver=HJBFDMSolver(problem), fp_solver=fp, max_iterations=1, verbose=False)
 
 
+def _capped() -> BCSegment:
+    return BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=CAP)
+
+
+def _faces(x_max: BCSegment | None = None, y_max: BCSegment | None = None, capped_everywhere_else: bool = False):
+    """A 2-D BC: NO_FLUX x_min and y_min; ``x_max`` and ``y_max`` as given, or one capped segment with no placement
+    governing both."""
+    segments = [BCSegment(name=f, bc_type=BCType.NO_FLUX, boundary=f) for f in ("x_min", "y_min")]
+    if capped_everywhere_else:
+        segments.append(BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, flux_capacity=CAP))
+    else:
+        segments += [x_max, y_max]
+    return BoundaryConditions(dimension=2, segments=segments)
+
+
+def _no_step(bc: BoundaryConditions) -> None:
+    """``solve_fp_nd_full_system`` handed one time level, which writes level 0 and takes no step."""
+    problem, grid = _problem(1, 11, 4, 0.1)
+    x = np.asarray(grid.coordinates[0])
+    solve_fp_nd_full_system(np.ones(11), -x[None, :].copy(), problem, boundary_conditions=bc.bind_geometry(grid))
+
+
+def _coupled_set_after() -> None:
+    """The cap set on the FP solver after the coupled solver holding it was built: the refusal reads it when it solves."""
+    problem, grid = _problem(1, 11, 4, 0.1)
+    fp = FPFDMSolver(problem, boundary_conditions=_bc(1, None))
+    iterator = FixedPointIterator(problem, hjb_solver=HJBFDMSolver(problem), fp_solver=fp)
+    fp.boundary_conditions = _bc(1, CAP).bind_geometry(grid)
+    iterator.solve(**ONE_ITERATION)
+
+
 def _adjoint_step(bc: BoundaryConditions) -> None:
     problem, _ = _problem(1, 11, 4, 0.1)
     FPFDMSolver(problem, boundary_conditions=bc).solve_fp_step_adjoint_mode(np.ones(11), sparse.csr_matrix((11, 11)))
@@ -312,7 +365,27 @@ REFUSALS = {
         NotImplementedError,
         r"Make every face that meets the capped x_max face a NO_FLUX wall",
     ),
+    "a cap past float's range": (lambda: _solve(_bc(1, 10**400)), ValueError, r"finite mass"),
+    "a negative cap on a run with no step": (lambda: _no_step(_bc(1, -1.0)), ValueError, r"finite mass"),
+    "a FLUX face meeting the cap": (
+        lambda: _solve(
+            _faces(x_max=_capped(), y_max=BCSegment(name="in", bc_type=BCType.FLUX, value=-0.1, boundary="y_max")),
+            dim=2,
+        ),
+        NotImplementedError,
+        r"Make every face that meets the capped x_max face a NO_FLUX wall",
+    ),
+    "a capped segment on two meeting faces": (
+        lambda: _solve(_faces(capped_everywhere_else=True), dim=2),
+        NotImplementedError,
+        r"Make every face that meets the capped",
+    ),
     "a coupled solve": (lambda: _coupled(_bc(1, CAP)), NotImplementedError, r"standalone FP solve only"),
+    "a cap set after the coupled solver is built": (
+        lambda: _coupled_set_after(),
+        NotImplementedError,
+        r"standalone FP solve only",
+    ),
     "the explicit step": (
         lambda: _solve(_bc(1, CAP), drift=lambda t, x, m: np.ones_like(np.asarray(x)[..., 0])),
         NotImplementedError,
