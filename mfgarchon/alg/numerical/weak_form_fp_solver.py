@@ -9,8 +9,10 @@ built from the drift (the one piece that is genuinely backend-specific: FEM uses
 the exact quadrature-point gradient of ``U``; meshless uses the protocol's
 ``advection`` with a recovered nodal gradient).
 
-Time discretization: implicit Euler (forward). Mass conservation follows from the
-Galerkin weak form (the test space contains constants).
+Time discretization: implicit Euler (forward), its time derivative on the discretization's
+``time_mass``: row-sum lumped for P1 FEM, the consistent ``M`` otherwise (#2845). Mass
+conservation follows from the Galerkin weak form (the test space contains constants); the
+lumped mass keeps ``M``'s row sums, so it holds either way.
 
 Issue #1131 Phase 2.
 """
@@ -23,6 +25,7 @@ import numpy as np
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -72,6 +75,8 @@ class WeakFormFPSolver(BaseFPSolver):
         self._dof_points.flags.writeable = False
         self._K = discretization.stiffness()
         self._M = discretization.mass()
+        # The time derivative's mass, lumped for P1 FEM (#2845); the source, H and the mass a solve measures keep M.
+        self._M_time = time_mass(discretization, self._M)
         # Single source of truth for BCs (matches WeakFormHJBSolver); plain
         # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
@@ -241,7 +246,7 @@ class WeakFormFPSolver(BaseFPSolver):
             )
         M[0] = M_initial
 
-        A_base = self._M / dt + D * self._K
+        A_base = self._M_time / dt + D * self._K
         A_extra, rhs_extra = self._weak_bc_terms(D)
         weak_bc = A_extra is not None
         if weak_bc:
@@ -260,7 +265,7 @@ class WeakFormFPSolver(BaseFPSolver):
         m0_mass = float((self._M @ M[0]).sum())
         clip_weights = np.asarray(self._M.sum(axis=1)).ravel()  # what the clip below measures mass with
         for n in range(Nt):
-            rhs = (self._M / dt) @ M[n]
+            rhs = (self._M_time / dt) @ M[n]
             if source_term is not None:
                 # S of `d_t m + div(alpha m) - D Lap(m) = S`, evaluated implicitly at t_{n+1} to
                 # match FPFDMSolver, on the solver's own (N, d) dof coordinates (#2020).
@@ -412,8 +417,8 @@ class WeakFormFPSolver(BaseFPSolver):
                 "adjoint_mode='off' solves the FP side through solve_fp_system, which does."
             )
 
-        A_system = self._M / dt + A_advection_T + D * self._K
-        rhs = (self._M / dt) @ M_current.ravel()
+        A_system = self._M_time / dt + A_advection_T + D * self._K
+        rhs = (self._M_time / dt) @ M_current.ravel()
         # Robin operator augmentation (Issue #1237): same symmetric boundary mass + load as the
         # forward FP path, so the adjoint timestep carries the Robin BC consistently. No-op otherwise.
         A_robin, rhs_robin = self._robin_operator_terms(D)

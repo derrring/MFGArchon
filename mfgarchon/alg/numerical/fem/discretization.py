@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .assembly import (
+    _import_skfem,
     assemble_advection,
     assemble_gradient_projection,
     assemble_mass,
@@ -79,6 +80,20 @@ class FEMDiscretization:
 
     def mass(self) -> sparse.csr_matrix:
         return assemble_mass(self._basis)
+
+    @property
+    def lumps_time_mass(self) -> bool:
+        """A P1 simplex element lumps the mass in the time derivative, ``diag(M 1)``; every other element keeps the
+        consistent mass (#2845).
+
+        The lumped implicit pure-diffusion step is an M-matrix step, so it takes no density negative, wherever every
+        off-diagonal of the stiffness is <= 0: on P1 in 1-D always; in 2-D when each interior edge's two opposite angles
+        sum to at most pi and each boundary edge's opposite angle is at most pi/2; in 3-D a Delaunay mesh does not give
+        it. P2 keeps the consistent mass, since its vertex functions integrate to about zero or below (the row sums
+        ``LumpedMassPointMeasure`` reads are positive only for P1); so do the tensor-product elements, Q1 included.
+        """
+        skfem = _import_skfem()
+        return isinstance(self._basis.elem, (skfem.ElementLineP1, skfem.ElementTriP1, skfem.ElementTetP1))
 
     def advection(self, velocity: NDArray) -> sparse.csr_matrix:
         return assemble_advection(self._basis, velocity)

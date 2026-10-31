@@ -134,6 +134,10 @@ class MeshlessSCNIDiscretization:
     def mass(self) -> sparse.csr_matrix:
         return sparse.diags(self._V).tocsr()  # lumped nodal volumes
 
+    @property
+    def lumps_time_mass(self) -> bool:
+        return False
+
     def gradient_projection(self) -> list[sparse.csr_matrix]:
         # R_d = diag(V) B~_d, so the solver's G_d = diag(1/M_lumped) R_d = B~_d.
         Vdiag = sparse.diags(self._V)

@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+import numpy as np
+from scipy import sparse
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-    from scipy import sparse
 
 
 @runtime_checkable
@@ -65,6 +67,11 @@ class WeakFormDiscretization(Protocol):
         r"""Mass matrix $M_{ij} = \int_\Omega \phi_i \phi_j \, dx$. Symmetric PD."""
         ...
 
+    @property
+    def lumps_time_mass(self) -> bool:
+        """Does the time derivative use the row-sum lumped mass, ``diag(M 1)``, in place of ``mass()`` (#2845)?"""
+        ...
+
     def advection(self, velocity: NDArray) -> sparse.csr_matrix:
         r"""Advection matrix $C_{ij} = \int_\Omega (v \cdot \nabla\phi_j) \phi_i \, dx$.
 
@@ -80,3 +87,11 @@ class WeakFormDiscretization(Protocol):
         used to build the Hamiltonian Jacobian in Newton iteration.
         """
         ...
+
+
+def time_mass(discretization: WeakFormDiscretization, mass: sparse.csr_matrix) -> sparse.csr_matrix:
+    """The mass matrix a weak-form solver's time derivative uses: ``mass``, or its row-sum lumped diagonal where the
+    discretization lumps it (#2845). The row sums are kept, so the mass a solve measures, ``1^T M m``, is unchanged."""
+    if not discretization.lumps_time_mass:
+        return mass
+    return sparse.diags(np.asarray(mass.sum(axis=1)).ravel(), format="csr")

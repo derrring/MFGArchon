@@ -567,8 +567,9 @@ def test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve(level: float):
 def test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate(family: str):
     """Clause (2) at the solver level (reviews 2 and 3 of #2840). FP-FDM centered, branch (b): an outflow drains 32% of
     the positive mass, deepening nothing, and takes the step's own clip from s0 = 8.8e-9 past the gate; with q = 0 the
-    step solves. FP-FEM P1, branch (a): an inflow deepens the Galerkin step's own negatives, s0 = 7.3e-10, by 4.2e-6 of
-    the mass."""
+    step solves. FP-FEM P2, branch (a): an inflow deepens the Galerkin step's own negatives, s0 = 7.1e-10, by 3.9e-8 of
+    the mass. P2, because P1's time term is lumped since #2845 and its step left this branch no row: a search by dt
+    bisection found none in 300 random 1-D P1 rows, and 3 in 87 on P2, which keeps the consistent mass."""
     if family == "fdm":
         n, dt = 14, 0.1
         grid = _grid(1, n)
@@ -589,17 +590,17 @@ def test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate(family: str):
             else:
                 solver.solve_fp_system(m_init, potential_field=u, show_progress=False)
     else:
-        n, dt, q = 24, 0.01, -0.0012558296355453854
+        n, dt, q = 8, 0.00032432, -0.0026
         solver = FPFEMSolver(
-            _problem(_mesh(1, n), nt=1, t_end=dt, sigma=0.1), boundary_conditions=_segments(1, {"x_min": q})
+            _problem(_mesh(1, n), nt=1, t_end=dt, sigma=0.05), order=2, boundary_conditions=_segments(1, {"x_min": q})
         )
         x = solver._disc.dof_coordinates[:, 0]
-        m_init = np.exp(-((x - 0.605) ** 2) / 0.0078) + 2.1057829607576184e-12
+        m_init = np.exp(-((x - 0.77) ** 2) / 0.018) + 2.4e-5
         with pytest.raises(
             ValueError,
-            match=r"would fabricate 7\.27\de-10 of the mass, within the threshold.*deepens its negatives by 4\.20\de-06 more",
+            match=r"would fabricate 7\.10\de-10 of the mass, within the threshold.*deepens its negatives by 3\.89\de-08 more",
         ):
-            solver.solve_fp_system(M_initial=m_init, potential_field=np.broadcast_to(-x, (2, x.size)).copy())
+            solver.solve_fp_system(M_initial=m_init, potential_field=np.broadcast_to(-10.0 * x, (2, x.size)).copy())
 
 
 def test_an_outflow_that_drains_the_wall_is_refused_on_upwind():
@@ -647,23 +648,27 @@ def test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face()
 
 
 def test_fem_is_refused_where_the_first_negative_is_off_the_flux_face():
-    """P1, 8 cells, v 2, sigma 0.3, dt 0.1: the first DOF to go negative as q grows is x_min's, at q* = 0.2677, and the
-    FLUX DOF's is 0.3039 (`p_b3_rows.py`); at q = 0.285 the step is refused at x_min's DOF alone."""
-    mesh = _mesh(1, 8)
-    solver = FPFEMSolver(_problem(mesh, nt=2, t_end=0.2, sigma=0.3), boundary_conditions=_segments(1, {"x_max": 0.285}))
+    """P1, 10 cells, v 2, sigma 0.12, dt 0.1: the first DOF to go negative as q grows is x_min's, at q* = 1.0991, and the
+    FLUX DOF's is 1.2098 (`p_b3_pick_rows.py`, re-found on the lumped P1 step of #2845); at q = 1.15 the step is refused
+    at x_min's DOF alone."""
+    mesh = _mesh(1, 10)
+    solver = FPFEMSolver(_problem(mesh, nt=2, t_end=0.2, sigma=0.12), boundary_conditions=_segments(1, {"x_max": 1.15}))
     x = solver._disc.dof_coordinates[:, 0]
     first = int(np.argmin(x))
     u = np.broadcast_to(-2.0 * x, (3, x.size)).copy()
+    m_init = np.exp(-((x - 0.66) ** 2) / 0.08) + 1.5e-3
     with pytest.raises(ValueError, match=rf"at 1 DOF\(s\) in the step to t=0\.1, the most at DOF {first} ") as caught:
-        solver.solve_fp_system(M_initial=_bump(x), potential_field=u)
-    # the step without the flux is past the gate (s0 = 0.10): lowering q below q* hands the step to FP-FEM's clip, as the
+        solver.solve_fp_system(M_initial=m_init, potential_field=u)
+    # the step without the flux is past the gate (s0 = 0.45): lowering q below q* hands the step to FP-FEM's clip, as the
     # message says, and the solve runs (review 3 of #2840)
     assert (
         "A q on this step with which the flux takes no DOF negative past the threshold hands the step to FP-FEM's"
         in str(caught.value)
     )
-    lowered = FPFEMSolver(_problem(mesh, nt=2, t_end=0.2, sigma=0.3), boundary_conditions=_segments(1, {"x_max": 0.2}))
-    assert float(np.min(lowered.solve_fp_system(M_initial=_bump(x), potential_field=u))) >= 0.0
+    lowered = FPFEMSolver(
+        _problem(mesh, nt=2, t_end=0.2, sigma=0.12), boundary_conditions=_segments(1, {"x_max": 0.85})
+    )
+    assert float(np.min(lowered.solve_fp_system(M_initial=m_init, potential_field=u))) >= 0.0
 
 
 def test_fp_fdm_names_the_inflow_remedy_on_centered_and_it_clears_the_row():
