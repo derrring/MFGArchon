@@ -905,6 +905,21 @@ past the gate is the scheme's, the flux's share included, and its clip decides i
 guard refuses it where clipping would fabricate more than the gate allows, and FP-FEM, whose Galerkin advection is not
 monotone, clips it, warning above $10^{-6}$ of the mass. Every other solver refuses FLUX by name (#2581).
 
+### A capacity-limited exit at the FP
+
+A `flux_capacity` $c$ on an exit caps its outflow per unit boundary measure: on the exit, $m \ge 0$,
+$J \cdot n \le c$ and $m\,(c - J \cdot n) = 0$, a local complementarity, so the excess queues inside the domain (user
+ruling 2026-10-09, A-1 and A-3). It is offered for a standalone FP solve: paired with an HJB that reads $u = g$ at the
+exit it is not an equilibrium, since as $c \to 0$ the FP side becomes a wall while the HJB side stays an exit (user
+ruling 2026-10-10; a coupled MFG uses the finite-rate exit). FP-FDM honours it on a `DIRICHLET` exit with value 0 of
+its own `boundary_conditions`, on `divergence_upwind`, as an active set within each implicit step: every exit node
+starts absorbing; a node whose outflow over the step would exceed $c\,|\text{face}|\,\Delta t$ takes the `FLUX(c)` row,
+and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, so
+`FPFDMSolver.boundary_outflow` records, per `DIRICHLET` and `FLUX` segment, the mass that left by each time level, and
+the trapezoid mass plus that record is the initial mass plus what a source added. A cap on the shared BC, on another
+type, on a `DIRICHLET(g \ne 0)`, on `divergence_centered` (where the complementarity can have two roots at a node), at
+a node where the exit meets a face that is not `NO_FLUX`, or on any other solver is refused by name (#2581, #2575).
+
 ### What is not settled here
 
 The remaining boundary-condition convention — ghost-cell placement on vertex- versus cell-centred grids —

@@ -171,12 +171,13 @@ class BaseFPSolver(BaseNumericalSolver):
         self._validate_problem_compatibility()
 
     def _validate_bc_support(self, bc: Any) -> None:
-        """The base support check, and any segment carrying a ``flux_capacity`` refused: no FP solver honours one (#2575).
+        """The base support check, and any segment carrying a ``flux_capacity`` refused (#2575).
 
         Every FP solver that takes a segment BC reaches this on the BC it will solve with, through its own call
         or through ``get_boundary_conditions()``; a network problem carries no segment BC. A capped Dirichlet
         exit was accepted and the cap ignored by FDM, particle, FEM and meshless, so it solved as uncapped; SL,
         GFDM and FVM refuse the exit itself. The HJB side is not refused: on a shared exit it reads u = g.
+        FP-FDM honours a cap on its own BC's exit and calls this only for the cases it still refuses (#2581, PR 2a).
         """
         super()._validate_bc_support(bc)
         capped = [
@@ -184,9 +185,10 @@ class BaseFPSolver(BaseNumericalSolver):
         ]
         if capped:
             raise NotImplementedError(
-                f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, which no FP solver honours "
-                "yet: the solve would ignore the cap (#2575). Remove flux_capacity until the capacity-limited "
-                "exit lands."
+                f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, which this solver does not honour "
+                "on this BC: the solve would ignore the cap (#2575). FPFDMSolver honours it on a DIRICHLET(0) exit of "
+                "the FP's own BC, FPFDMSolver(problem, boundary_conditions=...), with advection_scheme="
+                "'divergence_upwind' (#2581)."
             )
 
     def _fp_view_of_shared(self, bc: _BC) -> _BC:

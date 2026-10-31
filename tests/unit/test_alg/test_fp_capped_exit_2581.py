@@ -1,0 +1,266 @@
+"""A capacity-limited exit on FP-FDM (#2581, PR 2a): on the exit, m >= 0, J.n <= c and m (c - J.n) = 0, as an active set
+within the step (user rulings 2026-10-09 and 2026-10-10; the approver's on the plan, 2026-10-31).
+
+Each exit node starts the step absorbing; a node whose outflow over the step would exceed c |face| dt takes the FLUX(c)
+row, the no-flux row with -c/(dx/2) on its right-hand side, and the step is solved again. A node's outflow is read off
+that no-flux row, which also gives the record ``FPFDMSolver.boundary_outflow``. It is offered for a standalone FP solve
+only: paired with an HJB reading u = g at the exit it is not an equilibrium (user ruling 2026-10-10).
+
+The oracles, without symmetry that would let a rival branch agree:
+- the saturated branch, 1-D and 2-D (the manifest's cells ``fp_fdm/capped_exit_{1,2}d``): a manufactured solution with
+  J.n = c and m > 0 at the exit and a nonzero drift into it, at the upwind step's first order; the record's rate is
+  c |exit| at every step; the same solve with the exit absorbing misses by O(1);
+- the release: a queue that drains frees the exit, and the switch time converges under refinement;
+- the mass identity: the trapezoid mass plus the recorded outflow is the initial mass;
+- c = infinity is the absorbing exit, bit for bit.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import numpy as np
+from scipy import sparse
+
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.geometry import TensorProductGrid, no_flux_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+ALPHA, SIGMA, CAP, GAMMA, T, LY = 0.5, 0.8, 0.5, 0.3, 0.5, 0.5
+D = SIGMA**2 / 2
+K = ALPHA / D
+BETA = -CAP * np.exp(-K) / (2 * D)
+LEVEL_FACTOR = 1.25
+#: (levels, errors at T recorded at this file's first commit, ratio band): the upwind step's first order
+CELLS = {
+    1: ((21, 41, 81), (4.1591e-02, 2.0145e-02, 9.9017e-03), (1.6, 2.4)),
+    2: ((21, 41, 81), (4.1591e-02, 2.0145e-02, 9.9017e-03), (1.6, 2.4)),
+}
+
+
+def _exact(t: float, x: np.ndarray) -> np.ndarray:
+    """``m = e^{kx} (1 + beta x^2 + gamma e^{-t} cos(pi x))``, k = alpha/D: J = alpha m - D m_x = -D e^{kx} f', zero at
+    x = 0 and c at x = 1 by beta's choice, with m > 0 there."""
+    return np.exp(K * x) * (1 + BETA * x**2 + GAMMA * np.exp(-t) * np.cos(np.pi * x))
+
+
+def _source(t: float, points: np.ndarray) -> np.ndarray:
+    """``S = m_t + J_x``, with J = -D e^{kx} f'."""
+    x = np.asarray(points)[:, 0]
+    g = GAMMA * np.exp(-t)
+    f1 = 2 * BETA * x - g * np.pi * np.sin(np.pi * x)
+    f2 = 2 * BETA - g * np.pi**2 * np.cos(np.pi * x)
+    return np.exp(K * x) * (-g * np.cos(np.pi * x) - D * (K * f1 + f2))
+
+
+def _bc(dim: int, cap: float | None, x_max: BCType = BCType.DIRICHLET, y_max: BCType = BCType.NO_FLUX, value=0.0):
+    faces = ["x_min", "x_max"] + (["y_min", "y_max"] if dim == 2 else [])
+    segments = []
+    for face in faces:
+        if face == "x_max":
+            segments.append(BCSegment(name="exit", bc_type=x_max, value=value, boundary=face, flux_capacity=cap))
+        elif face == "y_max" and y_max == BCType.DIRICHLET:
+            segments.append(BCSegment(name="second_exit", bc_type=BCType.DIRICHLET, value=0.0, boundary=face))
+        else:
+            segments.append(BCSegment(name=face, bc_type=BCType.NO_FLUX, boundary=face))
+    return BoundaryConditions(dimension=dim, segments=segments)
+
+
+def _problem(dim: int, n: int, nt: int, t_end: float, sigma: float = SIGMA) -> tuple[MFGProblem, TensorProductGrid]:
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, LY)][:dim], Nx_points=[n] * dim, boundary_conditions=no_flux_bc(dimension=dim)
+    )
+    model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=sigma)
+    # the problem's own density is a constant of unit mass on the grid's measure; each solve is handed its own
+    conditions = Conditions(m_initial=lambda x, c=1.0 / (LY if dim == 2 else 1.0): c, u_terminal=lambda x: 0.0, T=t_end)
+    return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=nt), grid
+
+
+def _saturated(dim: int, n: int, cap: float | None) -> tuple[float, np.ndarray]:
+    nt = 2 * (n - 1)
+    problem, grid = _problem(dim, n, nt, T)
+    x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
+    solver = FPFDMSolver(problem, boundary_conditions=_bc(dim, cap))
+    m = solver.solve_fp_system(
+        _exact(0.0, x),
+        potential_field=np.broadcast_to(-ALPHA * x, (nt + 1, *x.shape)).copy(),
+        source_term=_source,
+        show_progress=False,
+    )
+    rate = np.diff(solver.boundary_outflow["exit"]) / (T / nt)
+    return float(np.abs(np.asarray(m)[-1] - _exact(T, x)).max()), rate
+
+
+@pytest.mark.parametrize("dim", [1, 2])
+def test_the_saturated_branch_converges_at_the_steps_order(dim: int):
+    """J.n = c with m > 0 at the exit, so every exit node is capped at every step: the record's rate is c |exit| there
+    (the exit's measure is LY in 2-D), and the absorbing rival misses by 3.1."""
+    levels, recorded, (low, high) = CELLS[dim]
+    errors = []
+    for n in levels:
+        error, rate = _saturated(dim, n, CAP)
+        errors.append(error)
+        assert np.allclose(rate, CAP * (LY if dim == 2 else 1.0), rtol=1e-12, atol=0.0), rate
+    ratios = [errors[i] / errors[i + 1] for i in range(len(errors) - 1)]
+    assert all(low < r < high for r in ratios), (errors, ratios)
+    for got, want in zip(errors, recorded, strict=True):
+        assert want / LEVEL_FACTOR < got < want * LEVEL_FACTOR, errors
+    absorbing, _ = _saturated(dim, levels[1], None)
+    assert absorbing > 100 * errors[1], absorbing
+
+
+def _release(n: int) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    nt, t_end, cap = 4 * (n - 1), 4.0, 0.3
+    problem, grid = _problem(1, n, nt, t_end, sigma=0.4)
+    x = np.asarray(grid.coordinates[0])
+    weights = grid.measure_weights()
+    m0 = np.exp(-((x - 0.5) ** 2) / 0.02)
+    m0 = m0 / (m0 @ weights)
+    solver = FPFDMSolver(problem, boundary_conditions=_bc(1, cap))
+    m = np.asarray(
+        solver.solve_fp_system(m0, potential_field=np.broadcast_to(-x, (nt + 1, n)).copy(), show_progress=False)
+    )
+    out = solver.boundary_outflow["exit"]
+    capped = np.diff(out) / (t_end / nt) >= cap * (1 - 1e-12)
+    first = int(np.argmax(capped))
+    released = first + int(np.argmax(~capped[first:]))
+    assert capped[first], capped
+    assert not capped[released:].any(), capped
+    return (released + 1) * t_end / nt, m, out, weights
+
+
+def test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges():
+    """A drift of 1 carries a bump into an exit capped at 0.3: the outflow sits at the cap while the queue lasts, then the
+    exit frees for good. Measured: the release at t* = 3.275, 3.3, 3.3125 for n = 41, 81, 161 (and 3.3156 at 321)."""
+    times = []
+    for n in (41, 81, 161):
+        t_star, m, out, weights = _release(n)
+        times.append(t_star)
+        assert np.max(np.abs(m @ weights + out - 1.0)) < 1e-12
+        assert m.min() >= 0.0
+    assert abs(times[2] - times[1]) < 0.75 * abs(times[1] - times[0]), times
+
+
+def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
+    """The trapezoid mass plus the record is the mass at level 0, beside each other wall the record covers. In 1-D a
+    capped exit beside a free one: a BC of DIRICHLET segments alone holds its walls at g(0) at level 0 (#2535), and the
+    capped wall keeps the caller's density there, which queues. In 2-D a capped exit beside a FLUX inflow, whose
+    segment's share is in the record too."""
+    problem, grid = _problem(1, 21, 20, 1.0)
+    x = np.asarray(grid.coordinates[0])
+    m0 = np.exp(-((x - 0.7) ** 2) / 0.05) + 0.5
+    bc = BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="free", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.3),
+        ],
+    )
+    solver = FPFDMSolver(problem, boundary_conditions=bc)
+    m = np.asarray(
+        solver.solve_fp_system(m0, potential_field=np.broadcast_to(-x, (21, 21)).copy(), show_progress=False)
+    )
+    weights = grid.measure_weights()
+    assert m[0][0] == 0.0
+    assert m[0][-1] == m0[-1]
+    out = solver.boundary_outflow
+    assert np.max(np.abs(m @ weights + out["free"] + out["exit"] - m[0] @ weights)) < 1e-12
+
+    problem, grid = _problem(2, 13, 10, 0.5)
+    x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="inflow", bc_type=BCType.FLUX, value=-0.2, boundary="x_min"),
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.3),
+            BCSegment(name="y_min", bc_type=BCType.NO_FLUX, boundary="y_min"),
+            BCSegment(name="y_max", bc_type=BCType.NO_FLUX, boundary="y_max"),
+        ],
+    )
+    solver = FPFDMSolver(problem, boundary_conditions=bc)
+    m = np.asarray(
+        solver.solve_fp_system(
+            np.ones_like(x), potential_field=np.broadcast_to(-x, (11, *x.shape)).copy(), show_progress=False
+        )
+    )
+    out = solver.boundary_outflow
+    assert np.allclose(np.diff(out["inflow"]), -0.2 * LY * 0.05, rtol=1e-12, atol=0.0)
+    weights = grid.measure_weights()
+    total = np.einsum("tij,ij->t", m, weights)
+    assert np.max(np.abs(total + out["inflow"] + out["exit"] - total[0])) < 1e-12
+
+
+def test_an_infinite_cap_is_the_absorbing_exit_bit_for_bit():
+    problem, grid = _problem(2, 21, 10, 0.2)
+    x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
+    runs = []
+    for cap in (None, 1e300):
+        solver = FPFDMSolver(problem, boundary_conditions=_bc(2, cap))
+        m = solver.solve_fp_system(_exact(0.0, x), potential_field=np.broadcast_to(-ALPHA * x, (11, *x.shape)).copy())
+        runs.append((np.asarray(m), solver.boundary_outflow["exit"]))
+    assert np.array_equal(runs[0][0], runs[1][0])
+    assert np.array_equal(runs[0][1], runs[1][1])
+
+
+def _solve(bc: BoundaryConditions, dim: int = 1, scheme: str = "divergence_upwind", drift=None) -> None:
+    problem, grid = _problem(dim, 11, 4, 0.1)
+    x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
+    solver = FPFDMSolver(problem, boundary_conditions=bc, advection_scheme=scheme)
+    if drift is None:
+        solver.solve_fp_system(
+            np.ones_like(x), potential_field=np.broadcast_to(-x, (5, *x.shape)).copy(), show_progress=False
+        )
+    else:
+        solver.solve_fp_system(np.ones_like(x), drift_field=drift, show_progress=False)
+
+
+def _adjoint_step(bc: BoundaryConditions) -> None:
+    problem, _ = _problem(1, 11, 4, 0.1)
+    FPFDMSolver(problem, boundary_conditions=bc).solve_fp_step_adjoint_mode(np.ones(11), sparse.csr_matrix((11, 11)))
+
+
+REFUSALS = {
+    "centered": (
+        lambda: _solve(_bc(1, CAP), scheme="divergence_centered"),
+        NotImplementedError,
+        r"switch could take the wrong one",
+    ),
+    "a prescribed density": (
+        lambda: _solve(_bc(1, CAP, value=0.5)),
+        NotImplementedError,
+        r"prescribed density m = g, not an exit",
+    ),
+    "a wall": (
+        lambda: _solve(_bc(1, CAP, x_max=BCType.NO_FLUX)),
+        NotImplementedError,
+        r"is no_flux and carries a flux_capacity",
+    ),
+    "a negative cap": (lambda: _solve(_bc(1, -1.0)), ValueError, r"a cap is a finite mass per unit time"),
+    "two exits at a corner": (
+        lambda: _solve(_bc(2, CAP, y_max=BCType.DIRICHLET), dim=2),
+        NotImplementedError,
+        r"Make every other face that meets the capped exit at this node a NO_FLUX wall",
+    ),
+    "the explicit step": (
+        lambda: _solve(_bc(1, CAP), drift=lambda t, x, m: np.ones_like(np.asarray(x)[..., 0])),
+        NotImplementedError,
+        r"runs no capped-exit switch",
+    ),
+    "the adjoint step": (
+        lambda: _adjoint_step(_bc(1, CAP)),
+        NotImplementedError,
+        r"solve_fp_step_adjoint_mode runs no capped-exit switch",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFUSALS))
+def test_a_cap_is_refused_where_the_switch_does_not_hold(case: str):
+    """Each refusal names what it refuses; the corner's remedy, making the other face a wall, is run and solves."""
+    run, error, message = REFUSALS[case]
+    with pytest.raises(error, match=message):
+        run()
+    if case == "two exits at a corner":
+        _solve(_bc(2, CAP), dim=2)

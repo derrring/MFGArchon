@@ -1,4 +1,5 @@
-"""No FP solver honours a capacity-limited exit, so a segment carrying `flux_capacity` is refused (#2575).
+"""A segment carrying `flux_capacity` is refused wherever the cap is not honoured (#2575); FP-FDM honours it on its own
+BC's exit since #2581's PR 2a, and that route is the capability's oracle here.
 
 A capped Dirichlet exit was accepted, and the cap ignored, by FDM, particle, FEM and meshless; SL, GFDM and
 FVM refuse the exit itself. On #2531's fixture at `5e4b64e4`, FP-FDM's outflow over the horizon was 0.081667
@@ -8,9 +9,11 @@ method it called is deprecated (#2550). The refusal sits in
 `BaseFPSolver._validate_bc_support`, which every FP solver that takes a segment BC reaches on the BC it
 solves with.
 
-Retirement: the capacity-limited exit is scheduled in this phase (user ruling, 2026-10-09). When it lands,
-these refusals fail with "DID NOT RAISE"; delete this file then, and let this fixture become the
-capability's oracle: outflow over the horizon at most cap * T = 5e-7.
+Retirement: the capacity-limited exit lands per family (user ruling, 2026-10-09; #2581's staging). FP-FDM's own BC
+landed in PR 2a: its route left the refusals and its fixture is the oracle below, outflow over the horizon at most
+cap * T = 5e-7. FP-FDM on the shared BC stays refused (the HJB reads u = g there, no equilibrium with a cap, user ruling
+2026-10-10), and the problem's default solve with it. FEM retires its routes in #2581's PR 2b and the particle solver in
+PR 4: each fails here with "DID NOT RAISE" then, and moves out of ``ROUTES``.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
-REFUSAL = r"carry a flux_capacity, which no FP solver honours yet"
+REFUSAL = r"carry a flux_capacity, which this solver does not honour on this BC"
 CAP = 1e-6
 
 
@@ -98,7 +101,6 @@ def _fem_explicit(cap):
 
 ROUTES = {
     "fdm-shared": lambda cap: FPFDMSolver(_grid_problem(_exit(1, cap))),
-    "fdm-explicit": lambda cap: FPFDMSolver(_grid_problem(_exit(1, None)), boundary_conditions=_exit(1, cap)),
     "particle-shared": lambda cap: FPParticleSolver(_grid_problem(_exit(1, cap)), num_particles=200),
     "particle-explicit": lambda cap: FPParticleSolver(
         _grid_problem(_exit(1, None)), num_particles=200, boundary_conditions=_exit(1, cap)
@@ -120,3 +122,22 @@ def test_the_default_solve_refuses_a_capped_exit():
     """`problem.solve()` with the default scheme builds FP-FDM, so the silent answer was on the default path."""
     with pytest.raises(NotImplementedError, match=REFUSAL):
         _grid_problem(_exit(1, CAP)).solve(max_iterations=1)
+
+
+def test_fp_fdm_honours_the_cap_on_its_own_bc():
+    """The fixture as the capability's oracle: with a cap of 1e-6 the exit lets out at most cap * T = 5e-7 over the
+    horizon (1-D, so the exit's measure is 1), and the mass the solve keeps plus the outflow it records is the mass it
+    started with. Uncapped, this solve lets out 0.207328 through the same exit (measured at #2581 PR 2a's commit; the
+    module docstring's 0.081667 is another solve's, at 5e4b64e4)."""
+    problem = _grid_problem(_exit(1, None))
+    weights = problem.geometry.measure_weights()
+    m0 = np.asarray(problem.m_initial, dtype=float)
+    outflow = {}
+    for cap in (None, CAP):
+        solver = FPFDMSolver(problem, boundary_conditions=_exit(1, cap))
+        m = np.asarray(solver.solve_fp_system(m0, show_progress=False))
+        out = solver.boundary_outflow["exit"]
+        assert np.max(np.abs(m @ weights + out - m[0] @ weights)) < 1e-12
+        outflow[cap] = out[-1]
+    assert 0.0 < outflow[CAP] <= CAP * 0.5 * (1 + 1e-12)
+    assert outflow[None] > 1e3 * outflow[CAP]
