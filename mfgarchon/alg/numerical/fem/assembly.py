@@ -122,7 +122,7 @@ def assemble_mass(basis: skfem.Basis) -> sparse.csr_matrix:
     Assemble the mass matrix M where M[i,j] = integral(phi_i * phi_j).
 
     Used for:
-    - Time discretization: (M/dt + K) u^{n+1} = M/dt * u^n
+    - Time discretization: (M/dt + K) u^{n+1} = M/dt * u^n, where a P1 solver lumps M (``time_mass``, #2845)
     - L2 projection
     - Mass conservation verification
 

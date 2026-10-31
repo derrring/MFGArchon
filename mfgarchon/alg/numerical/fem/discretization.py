@@ -89,8 +89,9 @@ class FEMDiscretization:
         The lumped implicit pure-diffusion step is an M-matrix step, so it takes no density negative, wherever every
         off-diagonal of the stiffness is <= 0: on P1 in 1-D always; in 2-D when each interior edge's two opposite angles
         sum to at most pi and each boundary edge's opposite angle is at most pi/2; in 3-D a Delaunay mesh does not give
-        it. P2 keeps the consistent mass, since its vertex functions integrate to about zero or below (the row sums
-        ``LumpedMassPointMeasure`` reads are positive only for P1); so do the tensor-product elements, Q1 included.
+        it. P2 keeps the consistent mass, as ruled (P1 only): its vertex functions integrate to about 0 on triangles
+        and below 0 on tetrahedra, so its row sums are no positive lumping there, though they are on a line. So do
+        the tensor-product elements, Q1 included.
         """
         skfem = _import_skfem()
         return isinstance(self._basis.elem, (skfem.ElementLineP1, skfem.ElementTriP1, skfem.ElementTetP1))

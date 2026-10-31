@@ -139,7 +139,7 @@ class WeakFormFPSolver(BaseFPSolver):
     def _robin_operator_terms(self, D: float):
         """Optional Robin boundary operator augmentation, the FP's total-flux Robin ``J.n = (D/beta)(alpha*m - g)``.
 
-        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M/dt + D*K`` and each
+        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M_t/dt + D*K`` (M_t the time mass, #2845) and each
         timestep RHS, or ``(None, None)`` for no Robin BC. The term is the boundary mass
         ``D*(alpha/beta)*int_dOmega phi_i phi_j`` and the load ``D*(g/beta)*int_dOmega phi_i``. The
         weak form integrates the whole flux by parts and leaves ``J.n`` on the boundary, so this

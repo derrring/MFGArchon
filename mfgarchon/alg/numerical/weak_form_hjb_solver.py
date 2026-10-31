@@ -189,7 +189,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
     def _robin_operator_terms(self, D: float):
         """Optional Robin boundary operator augmentation ``alpha*u + beta*du/dn = g``.
 
-        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M/dt + D*K``
+        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M_t/dt + D*K`` (M_t the time mass, #2845)
         and each timestep RHS, or ``(None, None)`` for no Robin BC. Unlike ``_weak_bc_terms``
         (Nitsche, which SKIPS condensation), this term COEXISTS with Dirichlet condensation:
         the Robin dofs stay free (the operator term carries the BC) while any Dirichlet dofs
@@ -267,8 +267,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
     ) -> NDArray:
         """One HJB timestep via Newton iteration (supports semismooth H).
 
-        Residual: F(U) = (M/dt)(U - U_next) + D*K*U + M*H(grad U) - rhs_coupling.
-        Jacobian: J = M/dt + D*K + sum_d M @ diag(dH/dp_d) @ G_d.
+        Residual: F(U) = (M_t/dt)(U - U_next) + D*K*U + M*H(grad U) - rhs_coupling, with M_t the time mass
+        (``_M_time``: lumped for P1 FEM, #2845) and M the consistent mass.
+        Jacobian: J = M_t/dt + D*K + sum_d M @ diag(dH/dp_d) @ G_d.
         """
         self._build_gradient_operators()
 
@@ -513,7 +514,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     ).ravel()
                     # MINUS. The canonical equation (the MFGProblem class docstring) is
                     # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives
-                    # (M/dt + D*K) U[n] = (M/dt) U[n+1] - M @ H: H moves to the RHS with a sign
+                    # (M_t/dt + D*K) U[n] = (M_t/dt) U[n+1] - M @ H: H moves to the RHS with a sign
                     # flip. This read `+=` from the file's FIRST version (d9f66701, #773) until
                     # #2023 -- and that version stated the correct algebra in a comment three lines
                     # above the code, `M/dt*u^n = M/dt*u^{n+1} - D*K*u^n - H_rhs`, then "rearranged"
