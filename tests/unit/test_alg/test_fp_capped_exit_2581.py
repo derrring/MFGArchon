@@ -162,7 +162,9 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     """The trapezoid mass plus the record is the mass at level 0 plus what came in. In 1-D a capped exit beside a free
     one, both in the record, under a field volatility, whose Itô diffusion the wall rows carry: a BC of DIRICHLET
     segments alone holds its walls at g(0) at level 0 (#2535), and the capped wall keeps the caller's density there,
-    which queues. In 2-D a capped exit beside a FLUX inflow, whose q gives what came in."""
+    which queues. In 2-D a capped exit across from a FLUX inflow into a nearly empty domain, whose q gives what came in:
+    the inflow alone takes the exit to its cap, so the switch must read the flux's part of the step, and the exit never
+    lets out more than c |exit| dt in a step."""
     problem, grid = _problem(1, 21, 20, 1.0)
     x = np.asarray(grid.coordinates[0])
     m0 = np.exp(-((x - 0.7) ** 2) / 0.05) + 0.5
@@ -189,12 +191,12 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     out = solver._boundary_outflow
     assert np.max(np.abs(m @ weights + out["free"] + out["exit"] - m[0] @ weights)) < 1e-12
 
-    problem, grid = _problem(2, 13, 10, 0.5)
+    problem, grid = _problem(2, 13, 5, 1.0)
     x = np.meshgrid(*[np.asarray(a) for a in grid.coordinates], indexing="ij")[0]
     bc = BoundaryConditions(
         dimension=2,
         segments=[
-            BCSegment(name="inflow", bc_type=BCType.FLUX, value=-0.2, boundary="x_min"),
+            BCSegment(name="inflow", bc_type=BCType.FLUX, value=-1.0, boundary="x_min"),
             BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.3),
             BCSegment(name="y_min", bc_type=BCType.NO_FLUX, boundary="y_min"),
             BCSegment(name="y_max", bc_type=BCType.NO_FLUX, boundary="y_max"),
@@ -203,14 +205,17 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     solver = FPFDMSolver(problem, boundary_conditions=bc)
     m = np.asarray(
         solver.solve_fp_system(
-            np.ones_like(x), potential_field=np.broadcast_to(-x, (11, *x.shape)).copy(), show_progress=False
+            0.01 * np.ones_like(x), potential_field=np.broadcast_to(-2.0 * x, (6, *x.shape)).copy(), show_progress=False
         )
     )
-    # the FLUX face lets in 0.2 per unit length per unit time over its length LY, which the record does not hold
-    let_in = 0.2 * LY * 0.05 * np.arange(11)
+    # the FLUX face lets in 1.0 per unit length per unit time over its length LY, which the record does not hold
+    let_in = 1.0 * LY * 0.2 * np.arange(6)
     weights = grid.measure_weights()
     total = np.einsum("tij,ij->t", m, weights)
-    assert np.max(np.abs(total + solver._boundary_outflow["exit"] - let_in - total[0])) < 1e-12
+    out = solver._boundary_outflow["exit"]
+    assert np.max(np.abs(total + out - let_in - total[0])) < 1e-12
+    assert np.max(np.diff(out)) > 0.5 * 0.3 * LY * 0.2  # the inflow reaches the exit
+    assert np.max(np.diff(out)) <= 0.3 * LY * 0.2 * (1 + 1e-12)
 
 
 def test_an_infinite_cap_is_the_absorbing_exit_bit_for_bit():
@@ -270,7 +275,12 @@ REFUSALS = {
         r"is no_flux and carries a flux_capacity",
     ),
     "a negative cap": (lambda: _solve(_bc(1, -1.0)), ValueError, r"a cap is a finite mass per unit time"),
-    "a bool cap": (lambda: _solve(_bc(1, False)), ValueError, r"not a bool"),
+    # refused at construction, before any step: the constructor reads the owner as well as the step
+    "a bool cap": (
+        lambda: FPFDMSolver(_problem(1, 11, 4, 0.1)[0], boundary_conditions=_bc(1, False)),
+        ValueError,
+        r"not a bool",
+    ),
     "a negative cap set after construction": (lambda: _solve_set_after(_bc(1, -1.0)), ValueError, r"finite mass"),
     "two exits at a corner": (
         lambda: _solve(_bc(2, CAP, y_max=BCType.DIRICHLET), dim=2),
