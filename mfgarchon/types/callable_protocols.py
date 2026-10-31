@@ -376,9 +376,9 @@ class DiffusionFieldCallable(Protocol):
 
     Returns:
         - Scalar: an isotropic volatility σ (the diffusion is σ²/2)
-        - Array (N,): a spatially varying isotropic volatility σ(x)
-        - Array (N, d): Diagonal tensor diffusion [σ_x², σ_y², ...]
-        - Array (N, d, d): Full tensor diffusion Σ(x)
+        - Array of the density's shape: a spatially varying isotropic volatility σ(x); any other shape is refused
+        - With volatility_kind="tensor", the callable is read per point and returns the (d, d) volatility matrix
+          Σ(t, x, m), whose diffusion is ΣΣᵀ/2
 
     Examples:
         >>> # Spatially varying diffusion
