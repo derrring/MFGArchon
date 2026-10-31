@@ -35,6 +35,8 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    fp_boundary_conditions,
+    refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
@@ -69,32 +71,6 @@ _REGIME_SOURCE_ORIGIN = (
     "RegimeSwitchingIterator hands every regime's solve a source: its {term}, plus any source the regime's "
     "problem declares"
 )
-
-
-def _fp_boundary_conditions(fp_solver: Any) -> Any:
-    """The BC object the FP solve will actually impose.
-
-    NOT ``problem.geometry.boundary_conditions``. A BC handed to the FP solver
-    (``boundary_conditions=``) outranks the problem's shared one
-    (`MFGProblem.get_boundary_conditions`, #2530), and the FP translates either. The
-    solvers are constructor arguments here, so that resolution has already run by the time
-    this iterator is built, and the solver's own attribute is the single authoritative
-    answer.
-
-    #1802's first version of the guard read geometry instead, and the routes that outranked
-    geometry then walked past it: the predicate flagged the object the solver used and
-    returned clean for the object the guard looked at.
-
-    A solver that exposes no ``boundary_conditions`` attribute -- the weak-form family keeps its BC in
-    ``_bc``, set from ``get_boundary_conditions()`` -- is asked through that method, which ends in the
-    FP's reading of the shared BC (``BaseFPSolver._fp_view_of_shared``, #2512 row B3). The geometry's
-    BC read raw is not what such a solver imposes: a shared Dirichlet exit is absorbing at the FP, its
-    value dropped, so a guard reading the raw value refused a homogeneous FP exit (#2529).
-    """
-    resolved = getattr(fp_solver, "boundary_conditions", None)
-    if resolved is not None:
-        return resolved
-    return fp_solver.get_boundary_conditions()
 
 
 @dataclass
@@ -262,7 +238,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
         - it read ``problem.geometry.boundary_conditions`` while the solve uses what the FP
           solver resolved, which a BC handed to the solver outranks. See
-          ``_fp_boundary_conditions``.
+          ``fp_boundary_conditions``.
         - it iterated ``segments`` and never read ``default_bc``/``default_value``. A
           fall-through wall carries data too; #1686 had already closed that exact hole in
           ``base_solver.py`` 300 lines away, which is why the predicate is now shared
@@ -273,7 +249,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         for k in range(K):
             if self._outflow_rate(k, K, Q) == 0.0:
                 continue  # no factor is applied to this regime, so nothing is rescaled
-            bc = _fp_boundary_conditions(self._fp[k])
+            bc = fp_boundary_conditions(self._fp[k])
             offences = describe_inhomogeneous_bc_data(bc, bc_types=None)
             if offences:
                 msg = (
@@ -442,6 +418,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         RegimeSwitchingResult
             Contains value functions, densities, convergence info.
         """
+        refuse_a_capped_exit_in_a_coupled_solve(self._fp, "RegimeSwitchingIterator.solve")
         K = self._regime.n_regimes
         Q = self._regime.transition_matrix
         # Re-check HERE, not only in __init__: the transform reads Q and the FP solvers'

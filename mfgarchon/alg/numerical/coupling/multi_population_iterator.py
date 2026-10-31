@@ -28,6 +28,7 @@ from .base_mfg import (
     hjb_coupling_binding,
     hjb_solve_kwargs,
     hjb_terminal_binding,
+    refuse_a_capped_exit_in_a_coupled_solve,
 )
 from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
 
@@ -146,6 +147,7 @@ class MultiPopulationIterator:
             Contains U (list of value functions), M (list of densities),
             iterations, and convergence info.
         """
+        refuse_a_capped_exit_in_a_coupled_solve(self.fp_solvers, "MultiPopulationIterator.solve")
         K = self.multi_problem.K
         # The terminal coupling is single-population (#1642, the user's ruling 5): with more than one population this
         # loop couples them through the stacked densities it hands each HJB as its cross-density.

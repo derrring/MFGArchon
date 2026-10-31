@@ -4,7 +4,8 @@ within the step (user rulings 2026-10-09 and 2026-10-10; the approver's on the p
 Each exit node starts the step absorbing; a node whose outflow over the step would exceed c |face| dt takes the FLUX(c)
 row, the no-flux row with -c/(dx/2) on its right-hand side, and the step is solved again. A node's outflow is read off
 that no-flux row, which also gives the solver's internal record of the mass each Dirichlet segment let out. It is offered for a standalone FP solve
-only: paired with an HJB reading u = g at the exit it is not an equilibrium (user ruling 2026-10-10).
+only, and a coupled solve refuses it: paired with an HJB reading u = g at the exit it is not an equilibrium (user
+rulings 2026-10-10 and 2026-10-31).
 
 The oracles, without symmetry that would let a rival branch agree:
 - the saturated branch, 1-D and 2-D (the manifest's cells ``fp_fdm/capped_exit_{1,2}d``): a manufactured solution with
@@ -24,6 +25,7 @@ from scipy import sparse
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid, no_flux_bc
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
@@ -253,6 +255,13 @@ def _solve_set_after(bc: BoundaryConditions) -> None:
     )
 
 
+def _coupled(bc: BoundaryConditions) -> None:
+    """A coupled solve, ``problem.solve``, whose FP solver carries ``bc`` as its own."""
+    problem, _ = _problem(1, 11, 4, 0.1)
+    fp = FPFDMSolver(problem, boundary_conditions=bc)
+    problem.solve(hjb_solver=HJBFDMSolver(problem), fp_solver=fp, max_iterations=1, verbose=False)
+
+
 def _adjoint_step(bc: BoundaryConditions) -> None:
     problem, _ = _problem(1, 11, 4, 0.1)
     FPFDMSolver(problem, boundary_conditions=bc).solve_fp_step_adjoint_mode(np.ones(11), sparse.csr_matrix((11, 11)))
@@ -292,6 +301,7 @@ REFUSALS = {
         NotImplementedError,
         r"Make every face that meets the capped x_max face a NO_FLUX wall",
     ),
+    "a coupled solve": (lambda: _coupled(_bc(1, CAP)), NotImplementedError, r"standalone FP solve only"),
     "the explicit step": (
         lambda: _solve(_bc(1, CAP), drift=lambda t, x, m: np.ones_like(np.asarray(x)[..., 0])),
         NotImplementedError,
@@ -307,9 +317,12 @@ REFUSALS = {
 
 @pytest.mark.parametrize("case", sorted(REFUSALS))
 def test_a_cap_is_refused_where_the_switch_does_not_hold(case: str):
-    """Each refusal names what it refuses; the corner's remedy, making the other face a wall, is run and solves."""
+    """Each refusal names what it refuses; the corner's remedy, making the other face a wall, and the coupled solve's,
+    the FP solved alone, are run and solve."""
     run, error, message = REFUSALS[case]
     with pytest.raises(error, match=message):
         run()
     if case == "two exits at a corner":
         _solve(_bc(2, CAP), dim=2)
+    if case == "a coupled solve":  # the remedy the refusal names: the FP solved alone
+        _solve(_bc(1, CAP))

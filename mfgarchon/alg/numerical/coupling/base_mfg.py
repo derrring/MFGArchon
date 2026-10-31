@@ -24,6 +24,55 @@ else:
     pass
 
 
+def fp_boundary_conditions(fp_solver: Any) -> Any:
+    """The BC object the FP solve will actually impose.
+
+    NOT ``problem.geometry.boundary_conditions``. A BC handed to the FP solver
+    (``boundary_conditions=``) outranks the problem's shared one
+    (`MFGProblem.get_boundary_conditions`, #2530), and the FP translates either. A coupled
+    solver is handed its FP solvers built, so that resolution has already run, and the solver's
+    own attribute is the single authoritative answer. The one owner of that read: the regime
+    iterator's guard and `refuse_a_capped_exit_in_a_coupled_solve` both read it.
+
+    #1802's first version of the guard read geometry instead, and the routes that outranked
+    geometry then walked past it: the predicate flagged the object the solver used and
+    returned clean for the object the guard looked at.
+
+    A solver that exposes no ``boundary_conditions`` attribute -- the weak-form family keeps its BC in
+    ``_bc``, set from ``get_boundary_conditions()`` -- is asked through that method, which ends in the
+    FP's reading of the shared BC (``BaseFPSolver._fp_view_of_shared``, #2512 row B3). The geometry's
+    BC read raw is not what such a solver imposes: a shared Dirichlet exit is absorbing at the FP, its
+    value dropped, so a guard reading the raw value refused a homogeneous FP exit (#2529).
+    """
+    resolved = getattr(fp_solver, "boundary_conditions", None)
+    if resolved is not None:
+        return resolved
+    return fp_solver.get_boundary_conditions()
+
+
+def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None:
+    """A capped exit (``flux_capacity``, #2581) is offered for a standalone FP solve only, so a coupled solve refuses
+    it (user ruling, 2026-10-31): paired with an HJB that reads u = g at the exit it is not an equilibrium, since as
+    c -> 0 the FP side becomes a wall while the HJB side stays an exit (user ruling, 2026-10-10).
+
+    Read when the coupled solve runs, on the BC each FP solve imposes (`fp_boundary_conditions`), so a BC set on a
+    solver after it was handed over is read too. Every coupled solver that holds an FP solver calls this.
+    """
+    for fp_solver in fp_solvers:
+        bc = fp_boundary_conditions(fp_solver)
+        capped = sorted(
+            seg.name for seg in getattr(bc, "segments", None) or () if getattr(seg, "flux_capacity", None) is not None
+        )
+        if capped:
+            raise NotImplementedError(
+                f"{where}: {type(fp_solver).__name__}'s boundary conditions cap the exit(s) {capped} (flux_capacity). "
+                "A capped exit is offered for a standalone FP solve only: paired with an HJB that reads u = g at the "
+                "exit it is not an equilibrium, since as c -> 0 the FP side becomes a wall while the HJB side stays an "
+                "exit (user rulings of 2026-10-10 and 2026-10-31, #2581). Solve the FP alone, "
+                "fp_solver.solve_fp_system(M_initial, potential_field=U), or remove the cap for the coupled solve."
+            )
+
+
 def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
     """Fail loud if ``problem`` carries a dynamic BC provider this coupling loop cannot resolve.
 

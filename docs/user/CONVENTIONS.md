@@ -909,9 +909,10 @@ monotone, clips it, warning above $10^{-6}$ of the mass. Every other solver refu
 
 A `flux_capacity` $c$ on an exit caps its outflow per unit boundary measure: on the exit, $m \ge 0$,
 $J \cdot n \le c$ and $m\,(c - J \cdot n) = 0$, a local complementarity, so the excess queues inside the domain (user
-ruling 2026-10-09, A-1 and A-3). It is offered for a standalone FP solve: paired with an HJB that reads $u = g$ at the
-exit it is not an equilibrium, since as $c \to 0$ the FP side becomes a wall while the HJB side stays an exit (user
-ruling 2026-10-10; a coupled MFG uses the finite-rate exit). FP-FDM honours it on a `DIRICHLET` exit with value 0 of
+ruling 2026-10-09, A-1 and A-3). It is offered for a standalone FP solve only, and every coupled solver refuses an FP
+solver whose BC carries one: paired with an HJB that reads $u = g$ at the exit it is not an equilibrium, since as
+$c \to 0$ the FP side becomes a wall while the HJB side stays an exit (user rulings 2026-10-10 and 2026-10-31). The
+exit a coupled MFG is to use is the finite-rate one, #2581's PR 3, not yet implemented. FP-FDM honours it on a `DIRICHLET` exit with value 0 of
 its own `boundary_conditions`, on `divergence_upwind`, as an active set within each implicit step: every exit node
 starts absorbing; a node whose outflow over the step would exceed $c\,|\text{face}|\,\Delta t$ takes the `FLUX(c)` row,
 and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, the

@@ -59,7 +59,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - **`adapt_hamiltonian()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
 - **`apply_boundary_conditions_gpu()`** — use `mfgarchon.utils.particle_utils.apply_boundary_conditions_gpu` instead (remove by v0.25.0)
 - **`apply_boundary_conditions_numpy()`** — use `mfgarchon.utils.particle_utils.apply_boundary_conditions_numpy` instead (remove by v0.25.0)
-- **`apply_with_flux_limits()`** — use `ParticleApplicator.apply, which is this method with no limits and returns its first three values; a capacity-limited exit has no replacement (#2575).` instead (remove by v0.25.0)
+- **`apply_with_flux_limits()`** — use `ParticleApplicator.apply, which is this method with no limits and returns its first three values; a capacity-limited exit has no particle replacement (#2575).` instead (remove by v0.25.0)
 - **`calculate_l2_convergence_metrics()`** — use `sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt) from mfgarchon.utils.convergence, which measures the change in the problem's own measure rather than with one scalar spacing (#2555).` instead (remove by v0.25.0)
 - **`create_hamiltonian_adapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
 - **`get_boundary_target_values()`** — use `mfgarchon.geometry.boundary.types.segment_value` instead (remove by v0.25.0)

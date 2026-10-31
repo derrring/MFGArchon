@@ -26,6 +26,7 @@ from .base_mfg import (
     allocate_state_arrays,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    refuse_a_capped_exit_in_a_coupled_solve,
     resolve_backend,
 )
 from .fixed_point_utils import (
@@ -298,6 +299,7 @@ class FixedPointIterator(BaseCouplingIterator):
             ...     return True  # Continue
             >>> result = solver.solve(iteration_callback=monitor)
         """
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FixedPointIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
 
