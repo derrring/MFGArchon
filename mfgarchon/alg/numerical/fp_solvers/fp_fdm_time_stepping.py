@@ -1723,7 +1723,9 @@ def solve_timestep_full_nd(
             return float(volatility[multi_idx])
         return volatility
 
-    def add_wall_rows(rows: tuple[list, list, list], unit: tuple[list, list, list], flat_idx: int, multi_idx) -> None:
+    def add_wall_rows(
+        rows: tuple[list, list, list], unit: tuple[list, list, list], flat_idx: int, multi_idx: tuple[int, ...]
+    ) -> None:
         """The no-flux handler's row at a wall node, and its unit stencil when the volatility varies (#2841). The one
         call the assembly below makes at a no-flux wall, and the capped exit's row (#2581, PR 2a)."""
         _BOUNDARY_HANDLERS[advection_scheme](

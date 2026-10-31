@@ -248,7 +248,7 @@ class FPFDMSolver(BaseFPSolver):
                     "has no outflow to cap (#2581). Give the capped exit value 0."
                 )
             c = seg.flux_capacity
-            if not (isinstance(c, numbers.Real) and np.isfinite(c) and c >= 0):
+            if not (isinstance(c, numbers.Real) and np.isfinite(float(c)) and float(c) >= 0):
                 raise ValueError(
                     f"FPFDMSolver: segment {seg.name!r} has flux_capacity {c!r}; a cap is a finite mass per unit time "
                     "per unit boundary measure, >= 0, and no cap is None (#2581)."
