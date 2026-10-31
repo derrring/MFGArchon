@@ -96,9 +96,13 @@ def _bc(
     return BoundaryConditions(dimension=dim, segments=segments)
 
 
-def _problem(dim: int, n: int, nt: int, t_end: float, sigma: float = SIGMA) -> tuple[MFGProblem, TensorProductGrid]:
+def _problem(
+    dim: int, n: int, nt: int, t_end: float, sigma: float = SIGMA, shared: BoundaryConditions | None = None
+) -> tuple[MFGProblem, TensorProductGrid]:
     grid = TensorProductGrid(
-        bounds=[(0.0, 1.0), (0.0, LY)][:dim], Nx_points=[n] * dim, boundary_conditions=no_flux_bc(dimension=dim)
+        bounds=[(0.0, 1.0), (0.0, LY)][:dim],
+        Nx_points=[n] * dim,
+        boundary_conditions=no_flux_bc(dimension=dim) if shared is None else shared,
     )
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=sigma)
     # the problem's own density is a constant of unit mass on the grid's measure; each solve is handed its own
@@ -379,6 +383,15 @@ COUPLED = {
             ps, RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])), hs, fs, max_iterations=1
         ).solve()
     )(*_coupled_pairs(2)),
+    # the problem's shared BC capped, which the HJB reads, beside FP-FDM's own uncapped BC
+    "a capped shared BC": lambda: (
+        lambda p: p.solve(
+            hjb_solver=HJBFDMSolver(p),
+            fp_solver=FPFDMSolver(p, boundary_conditions=_bc(1, None)),
+            max_iterations=1,
+            verbose=False,
+        )
+    )(_problem(1, 11, 4, 0.1, shared=_bc(1, CAP))[0]),
     "graph": lambda: (
         lambda ps, hs, fs: GraphMFGSolver(
             ps, AdjacencyCoupling(np.ones((2, 2)) - np.eye(2), alpha=0.05, beta=0.02), hs, fs, max_iterations=1
@@ -390,7 +403,15 @@ COUPLED = {
 @pytest.mark.parametrize("route", sorted(COUPLED))
 def test_every_coupled_solver_refuses_a_capped_fp(route: str):
     """A capped exit is offered for a standalone FP solve only (user rulings 2026-10-10 and 2026-10-31): every coupled
-    solver that holds an FP solver refuses one whose BC carries a cap, by name, when it solves. Its remedy, the FP
-    solved alone, is the coupled REFUSALS row's."""
+    solver that holds an FP solver refuses a cap on a BC its solvers read, by name, when it solves -- the FP's own BC,
+    or the problem's shared one, which the HJB reads. Its remedy, the FP solved alone, is the coupled REFUSALS row's;
+    beside a capped shared BC, the FP solved alone on its own BC reads no shared BC and solves."""
     with pytest.raises(NotImplementedError, match=r"standalone FP solve only"):
         COUPLED[route]()
+    if route == "a capped shared BC":
+        problem, grid = _problem(1, 11, 4, 0.1, shared=_bc(1, CAP))
+        x = np.asarray(grid.coordinates[0])
+        solver = FPFDMSolver(problem, boundary_conditions=_bc(1, CAP))
+        solver.solve_fp_system(
+            np.ones_like(x), potential_field=np.broadcast_to(-x, (5, 11)).copy(), show_progress=False
+        )

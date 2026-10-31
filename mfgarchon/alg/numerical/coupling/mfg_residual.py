@@ -296,7 +296,7 @@ class MFGResidual:
         Returns:
             M_new: Density field from FP solve
         """
-        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "MFGResidual.compute_fp_output")
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], [self.hjb_solver], "MFGResidual.compute_fp_output")
         if self._fp_sig_params is None:
             return self.fp_solver.solve_fp_system(self.M_initial, U)
 

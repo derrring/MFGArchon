@@ -259,7 +259,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         Returns:
             SolverResult object (or tuple if return_tuple=True)
         """
-        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FictitiousPlayIterator.solve")
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], [self.hjb_solver], "FictitiousPlayIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
 

@@ -677,7 +677,7 @@ class BlockIterator(BaseCouplingIterator):
         Returns:
             SolverResult with solution and convergence info
         """
-        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
+        refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], [self.hjb_solver], "BlockIterator.solve")
         start_time = time.time()
 
         # Get problem dimensions
