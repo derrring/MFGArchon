@@ -16,12 +16,24 @@ See docs/development/BACKEND_SWITCHING_DESIGN.md for comprehensive design.
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 if TYPE_CHECKING:
     from mfgarchon.backends.base_backend import BaseBackend
+
+
+def _is_torch_tensor(x: Any) -> bool:
+    """Whether ``x`` is a ``torch.Tensor``, subclasses included, without importing torch.
+
+    Not ``hasattr(x, "device")``: a NumPy >= 2 ndarray has ``.device`` too (#2825). Not the
+    module name either: a subclass defined outside torch (torchvision's tensors) keeps its own.
+    A tensor exists only once torch is imported, so an unloaded torch means ``x`` is not one.
+    """
+    torch = sys.modules.get("torch")
+    return torch is not None and isinstance(x, torch.Tensor)
 
 
 def backend_aware_copy(array, backend: BaseBackend | None = None):
@@ -78,7 +90,7 @@ def backend_aware_assign(target, indices, value, backend: BaseBackend | None = N
     # PyTorch MPS tensors need special handling
     if hasattr(target, "device") and str(target.device).startswith("mps"):
         # Convert value to same backend if needed
-        if not hasattr(value, "device"):
+        if not _is_torch_tensor(value):
             import torch
 
             value = torch.tensor(value, device=target.device, dtype=target.dtype)
@@ -179,7 +191,7 @@ def backend_aware_zeros_like(array, backend: BaseBackend | None = None):
         return backend.zeros_like(array)
 
     # Fallback
-    if type(array).__module__.split(".", maxsplit=1)[0] == "torch":
+    if _is_torch_tensor(array):
         import torch
 
         return torch.zeros_like(array)
@@ -205,7 +217,7 @@ def backend_aware_ones_like(array, backend: BaseBackend | None = None):
         return backend.ones_like(array)
 
     # Fallback
-    if type(array).__module__.split(".", maxsplit=1)[0] == "torch":
+    if _is_torch_tensor(array):
         import torch
 
         return torch.ones_like(array)
