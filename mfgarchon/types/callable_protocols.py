@@ -206,9 +206,14 @@ def bind_user_callable(
     )
 
 
-def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str) -> BoundCallable:
+def bind_by_name(
+    fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str, wrap: str, wrap_unnamed: str
+) -> BoundCallable:
     """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
-    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal.
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal, and ``wrap``
+    and ``wrap_unnamed`` are the wraps advised for another callable and for one that cannot be called by name. The
+    caller writes them, since a wrap is right only for the callables its role meets: one built from the slots alone,
+    ``lambda t, node: f(t, node)``, reads a callable written ``(node, t)`` swapped.
 
     Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
     place: such a callable is called by name only, so one with a parameter named otherwise and no default is refused,
@@ -223,7 +228,6 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
     """
     name = getattr(fn, "__qualname__", fn)
     names = ", ".join(slots.order)
-    wrap = f"`lambda {slots.order[0]}: f({slots.order[0]})` or `lambda {names}: f({names})`"
     target = fn
     while isinstance(target, functools.partial):
         target = target.func
@@ -231,8 +235,8 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
         raise TypeError(
             f"{role} {name!r} is of type {type(fn).__name__}, not a plain def or lambda: a {role} is a function whose "
             "parameter names declare what it reads, and a def that a decorator turned into another object "
-            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it in a function that names "
-            f"what it reads, such as {wrap} ({ruling})."
+            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it, such as {wrap} "
+            f"({ruling})."
         )
     try:
         declared = list(inspect.signature(fn).parameters.values())
@@ -247,7 +251,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
         )
         raise TypeError(
             f"{role} {name!r} {what}, so it cannot be called by name: wrap it in a function that names what it reads, "
-            f"such as {wrap} ({ruling})."
+            f"such as {wrap_unnamed} ({ruling})."
         )
     bound = bind_user_callable(fn, slots, role=role)
     if bound.binding != "keyword":

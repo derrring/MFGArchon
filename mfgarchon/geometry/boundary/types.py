@@ -881,7 +881,14 @@ def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
 def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
     """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise: the strict rule of
     `callable_protocols.bind_by_name`, the one owner of it, which a graph node's value reads too (#2512 row B2)."""
-    return bind_by_name(fn, BOUNDARY_VALUE_SLOTS, role="boundary value", ruling="#2512 row B2")
+    return bind_by_name(
+        fn,
+        BOUNDARY_VALUE_SLOTS,
+        role="boundary value",
+        ruling="#2512 row B2",
+        wrap="`lambda t: f(t)`, `lambda t: s(t)` for an interpolant over time, or `lambda t: np.sin(t)`",
+        wrap_unnamed="`lambda t: f(t)` or `lambda x: f(x[0])`",
+    )
 
 
 def _with_default(fn: Callable[..., Any], *names: str) -> str:
