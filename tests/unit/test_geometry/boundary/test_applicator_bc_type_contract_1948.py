@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import enum
 import typing
+from decimal import Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -668,15 +669,15 @@ def _gate_cases():
     for nodes in (3, 0):
         for route, call in routes.items():
             refuses.append(
-                (f"{route}[{nodes}]", lambda c=call, n=nodes: c(n), TypeError, "a collection of node indices")
+                (f"{route}[{nodes}]", lambda c=call, n=nodes: c(n), TypeError, "a list, tuple or range of nodes")
             )
-    refuses.append(("NodeBC[nodes=5]", lambda: NodeBC(nodes=5), TypeError, "a collection of node indices"))
-    refuses.append(("NodeBC[nodes='12']", lambda: NodeBC(nodes="12"), TypeError, "a collection of node indices"))
+    refuses.append(("NodeBC[nodes=5]", lambda: NodeBC(nodes=5), TypeError, "a list, tuple or range of nodes"))
+    refuses.append(("NodeBC[nodes='12']", lambda: NodeBC(nodes="12"), TypeError, "a list, tuple or range of nodes"))
     for factory, call in {
         "create_maze_applicator[exit_nodes=0]": lambda: create_maze_applicator(_maze(), exit_nodes=0),
         "create_maze_applicator[entry_nodes=0]": lambda: create_maze_applicator(_maze(), entry_nodes=0),
     }.items():
-        refuses.append((factory, call, TypeError, "a collection of node indices"))
+        refuses.append((factory, call, TypeError, "a list, tuple or range of nodes"))
     for threshold in ("1", True, float("nan"), float("inf")):
         refuses.append(
             (
@@ -691,7 +692,24 @@ def _gate_cases():
             "from_network_geometry[custom, None]",
             lambda: GraphApplicator.from_network_geometry(_maze(), "custom", boundary_nodes=None),
             TypeError,
-            "needs boundary_nodes",
+            "boundary_nodes is None",
+        )
+    )
+    # a factory's value is read whether or not there are nodes to impose it on
+    refuses.append(
+        (
+            "create_graph_applicator[source_value=a str, no source nodes]",
+            lambda: create_graph_applicator(5, boundary_nodes=[1], source_value="2.5"),
+            TypeError,
+            "source_value is a str",
+        )
+    )
+    refuses.append(
+        (
+            "from_network_geometry[boundary_value=a str]",
+            lambda: GraphApplicator.from_network_geometry(_maze(), "leaf", boundary_value="2.5"),
+            TypeError,
+            "boundary_value is a str",
         )
     )
     # node 0 as a one-element array, which a truth test dropped, and an entry generator read once
@@ -715,13 +733,12 @@ def _gate_cases():
             ),
         )
     )
-    accepts.append(
+    refuses.append(
         (
             "create_maze_applicator[entry generator]",
-            lambda: np.array_equal(
-                create_maze_applicator(_maze(), entry_nodes=(n for n in [4])).apply(np.zeros(9), field_type="density"),
-                [0, 0, 0, 0, 1.0, 0, 0, 0, 0],
-            ),
+            lambda: create_maze_applicator(_maze(), entry_nodes=(n for n in [4])),
+            TypeError,
+            "a list, tuple or range of nodes",
         )
     )
     accepts.append(
@@ -819,16 +836,67 @@ def _gate_cases():
             lambda: np.array_equal(applicator().apply_direct(np.zeros(5), [0, 0], 2.5), [2.5, 0, 0, 0, 0]),
         )
     )
-    accepts.append(
+    refuses.append(
         (
             "apply_direct[a 0-d array value]",
-            lambda: np.array_equal(applicator().apply_direct(np.zeros(5), [1], np.array(2.5)), [0, 2.5, 0, 0, 0]),
+            lambda: applicator().apply_direct(np.zeros(5), [1], np.array(2.5)),
+            TypeError,
+            "values is a 0-D",
         )
     )
     for route, call in routes.items():
         refuses.append(
-            (f"{route}[np.array(0)]", lambda c=call: c(np.array(0)), TypeError, "a collection of node indices")
+            (f"{route}[np.array(0)]", lambda c=call: c(np.array(0)), TypeError, "a list, tuple or range of nodes")
         )
+    # found by review 3: a value list with entries of different shapes, nodes in an order nobody declared, and a
+    # finite threshold beyond float range
+    refuses.append(
+        (
+            "apply_direct[a value list of a number and a column]",
+            lambda: applicator().apply_direct(np.zeros((2, 5)), [1, 3], [7.0, np.array([8.0, 9.0])]),
+            TypeError,
+            "values is a list",
+        )
+    )
+    for label, nodes in (("a generator", lambda: (n for n in [3, 1])), ("a dict's keys", lambda: {3: 0, 1: 0}.keys())):
+        refuses.append(
+            (
+                f"apply_direct[{label} with a value list]",
+                lambda nodes=nodes: applicator().apply_direct(np.zeros(5), nodes(), [10.0, 20.0]),
+                TypeError,
+                "a list, tuple or range of nodes",
+            )
+        )
+    refuses.append(
+        (
+            "apply_direct[a set with one value]",
+            lambda: applicator().apply_direct(np.zeros(5), {3, 1}, 2.5),
+            TypeError,
+            "a list, tuple or range of nodes",
+        )
+    )
+    for threshold, expected in ((10**400, list(range(9))), (-(10**400), []), (Fraction(10**400, 3), list(range(9)))):
+        accepts.append(
+            (
+                f"from_network_geometry[degree_threshold={'-' if threshold < 0 else ''}10**400-sized]",
+                lambda th=threshold, e=expected: (
+                    sorted(
+                        GraphApplicator.from_network_geometry(
+                            _maze(), "degree", degree_threshold=th
+                        ).get_boundary_nodes()
+                    )
+                    == e
+                ),
+            )
+        )
+    refuses.append(
+        (
+            "from_network_geometry[degree_threshold=Decimal]",
+            lambda: GraphApplicator.from_network_geometry(_maze(), "degree", degree_threshold=Decimal("2.5")),
+            TypeError,
+            "degree_threshold",
+        )
+    )
 
     def lookup(node):
         return applicator().set_dirichlet_nodes([1, 2], value=7.0, name="d").get_bc_value("d", node, 0.0)
@@ -884,7 +952,7 @@ def _gate_cases():
             "GraphBCConfig[a bare NodeBC]",
             lambda: GraphBCConfig(node_bcs=NodeBC(nodes=[0])),
             TypeError,
-            "a collection of NodeBC",
+            "a list or tuple of NodeBC",
         )
     )
     refuses.append(("add_node_bc[str]", lambda: applicator().add_node_bc("x"), TypeError, "not a NodeBC"))
@@ -892,10 +960,12 @@ def _gate_cases():
     accepts.append(("geometry[GraphBCConfig]", lambda: _maze(config).get_boundary_conditions() is config))
     accepts.append(("geometry[None]", lambda: _maze().get_boundary_conditions() is None))
     # an iterator is kept, not consumed by the check and stored empty; and a config keeps tuples
-    accepts.append(
+    refuses.append(
         (
             "GraphBCConfig[generator]",
-            lambda: len(GraphBCConfig(node_bcs=(b for b in [NodeBC(nodes=[0])])).node_bcs) == 1,
+            lambda: GraphBCConfig(node_bcs=(b for b in [NodeBC(nodes=[0])])),
+            TypeError,
+            "a list or tuple of NodeBC",
         )
     )
     accepts.append(
@@ -921,15 +991,76 @@ def _gate_cases():
             "#2493",
         )
     )
-    # a condition, once accepted, does not change: not its fields, not an array value's contents
-
-    def mutate_array_value():
-        NodeBC(nodes=[0], value=np.array(2.5)).value[...] = 9.0
-
+    # a condition, once accepted, does not change
     refuses.append(
         ("NodeBC mutated", lambda: setattr(NodeBC(nodes=[0]), "value", 2.5), AttributeError, "cannot assign")
     )
-    refuses.append(("NodeBC array value mutated", mutate_array_value, ValueError, "read-only"))
+    # a value is one form on every route that takes one, a factory's boundary_value among them; float() would read a
+    # string, a bool or a Decimal, and overflows on a number too large for the field
+    for label, value in (
+        ("a str", "2.5"),
+        ("a bool", True),
+        ("a Decimal", Decimal("2.5")),
+        ("None", None),
+        ("a 0-d array", np.array(2.5)),
+        ("a list", [2.5]),
+        ("10**400", 10**400),
+    ):
+        refuses.append((f"NodeBC[value={label}]", lambda v=value: NodeBC(nodes=[0], value=v), TypeError, "value is"))
+    refuses.append(
+        (
+            "create_graph_applicator[boundary_value=a str]",
+            lambda: create_graph_applicator(5, boundary_nodes=[1], boundary_value="2.5"),
+            TypeError,
+            "value is a str",
+        )
+    )
+    for label, values in (("10**400", 10**400), ("a list holding 10**400", [10**400, 1.0])):
+        refuses.append(
+            (
+                f"apply_direct[values={label}]",
+                lambda v=values: applicator().apply_direct(np.zeros(5), [1, 3], v),
+                TypeError,
+                "too large for a float",
+            )
+        )
+    # an array of nodes is an integer array; a values array is 1-D and real; a factory takes a callable for its nodes
+    for label, nodes in (("a float array", np.array([1.0, 3.0])), ("a bool array", np.array([False, True]))):
+        refuses.append(
+            (
+                f"apply_direct[nodes as {label}]",
+                lambda v=nodes: applicator().apply_direct(np.zeros(5), v, 2.5),
+                TypeError,
+                "a list, tuple or range of nodes",
+            )
+        )
+    for label, values in (("a 2-D array", np.array([[7.0, 8.0]])), ("a bool array", np.array([True, False]))):
+        refuses.append(
+            (
+                f"apply_direct[values as {label}]",
+                lambda v=values: applicator().apply_direct(np.zeros((2, 5)), [1, 3], v),
+                TypeError,
+                "values is a",
+            )
+        )
+    accepts.append(
+        (
+            "create_graph_applicator[boundary_nodes=a callable]",
+            lambda: np.array_equal(
+                create_graph_applicator(5, boundary_nodes=lambda n: [n - 1], boundary_value=2.5).apply(np.zeros(5)),
+                [0, 0, 0, 0, 2.5],
+            ),
+        )
+    )
+    accepts.append(
+        (
+            "NodeBC[value=Fraction(5, 2)]",
+            lambda: np.array_equal(
+                GraphApplicator(5).add_node_bc(NodeBC(nodes=[1], value=Fraction(5, 2))).apply(np.zeros(5)),
+                [0, 2.5, 0, 0, 0],
+            ),
+        )
+    )
     refuses.append(
         ("GraphBCConfig mutated", lambda: setattr(GraphBCConfig(), "node_bcs", ()), AttributeError, "cannot assign")
     )
@@ -1041,6 +1172,84 @@ def test_the_gate_takes_each_input_it_can_impose(case, call):
 def test_the_gate_refuses_each_input_it_cannot_impose_by_name(case, call, error, match):
     with pytest.raises(error, match=match):
         call()
+
+
+def _one_refusal_per_acceptor():
+    """Each route that takes a graph BC input, one input outside its form, and the ACCEPTED_FORMS entry it reads."""
+    from mfgarchon.geometry.boundary.applicator_graph import (
+        GraphBCConfig,
+        create_graph_applicator,
+        create_maze_applicator,
+    )
+
+    def lookup(node):
+        return GraphApplicator(5).set_dirichlet_nodes([1], value=7.0, name="d").get_bc_value("d", node, 0.0)
+
+    rows = {
+        "NodeBC.nodes": (lambda: NodeBC(nodes={1}), "condition_nodes"),
+        "NodeBC.nodes, a callable's return": (
+            lambda: GraphApplicator(5).add_node_bc(NodeBC(nodes=lambda n: {1})),
+            "nodes",
+        ),
+        "set_dirichlet_nodes.nodes": (lambda: GraphApplicator(5).set_dirichlet_nodes(iter([1])), "condition_nodes"),
+        "set_source_nodes.nodes": (lambda: GraphApplicator(5).set_source_nodes(frozenset({1})), "condition_nodes"),
+        "set_absorbing_nodes.nodes": (lambda: GraphApplicator(5).set_absorbing_nodes(None), "condition_nodes"),
+        "set_custom_bc.nodes": (lambda: GraphApplicator(5).set_custom_bc({1}, lambda f, n, t: 0.0), "condition_nodes"),
+        "apply_direct.boundary_nodes": (lambda: GraphApplicator(5).apply_direct(np.zeros(5), {1}, 1.0), "nodes"),
+        "create_graph_applicator.absorbing_nodes": (
+            lambda: create_graph_applicator(5, absorbing_nodes=(n for n in [1])),
+            "factory_nodes",
+        ),
+        "create_maze_applicator.entry_nodes": (
+            lambda: create_maze_applicator(_maze(), entry_nodes={0}),
+            "factory_nodes",
+        ),
+        "from_network_geometry.boundary_nodes": (
+            lambda: GraphApplicator.from_network_geometry(_maze(), "custom", boundary_nodes={0}),
+            "condition_nodes",
+        ),
+        "a node's entry": (lambda: GraphApplicator(5).set_dirichlet_nodes([1.0]), "node"),
+        "a node outside the graph": (lambda: GraphApplicator(5).apply_direct(np.zeros(5), [7], 1.0), "node"),
+        "get_bc_value.node": (lambda: lookup(2.0), "node"),
+        "NodeBC.value": (lambda: NodeBC(nodes=[0], value="2.5"), "value"),
+        "set_dirichlet_nodes.value": (lambda: GraphApplicator(5).set_dirichlet_nodes([0], value=True), "value"),
+        "set_custom_bc.bc_func": (lambda: GraphApplicator(5).set_custom_bc([0], "x"), "value"),
+        "create_graph_applicator.boundary_value": (
+            lambda: create_graph_applicator(5, boundary_value=Decimal(1)),
+            "value",
+        ),
+        "from_network_geometry.boundary_value": (
+            lambda: GraphApplicator.from_network_geometry(_maze(), "leaf", boundary_value=None),
+            "value",
+        ),
+        "apply_direct.values, a count": (lambda: GraphApplicator(5).apply_direct(np.zeros(5), [1, 2], [1.0]), "values"),
+        "apply_direct.values, a column": (
+            lambda: GraphApplicator(5).apply_direct(np.zeros((2, 5)), [1], [np.array([1.0, 2.0])]),
+            "values",
+        ),
+        "GraphBCConfig.node_bcs": (lambda: GraphBCConfig(node_bcs=iter([])), "conditions"),
+        "GraphBCConfig.node_bcs, an entry": (lambda: GraphBCConfig(node_bcs=["x"]), "conditions"),
+        "GraphBCConfig.edge_bcs": (lambda: GraphBCConfig(edge_bcs={1}), "conditions"),
+        "from_network_geometry.degree_threshold": (
+            lambda: GraphApplicator.from_network_geometry(_maze(), "degree", degree_threshold=float("inf")),
+            "threshold",
+        ),
+    }
+    return [pytest.param(call, key, id=route) for route, (call, key) in rows.items()]
+
+
+@pytest.mark.parametrize(("call", "key"), _one_refusal_per_acceptor())
+def test_each_route_refuses_in_the_words_of_the_form_it_reads(call, key):
+    """Every acceptor reads its input through one table, `ACCEPTED_FORMS`, and refuses in that entry's words: a
+    refusal written beside the table would let the forms a route takes drift from the ones it names (#2292)."""
+    from mfgarchon.geometry.boundary.applicator_graph import ACCEPTED_FORMS
+
+    with pytest.raises((TypeError, ValueError)) as refused:
+        call()
+    assert ACCEPTED_FORMS[key] in str(refused.value)
+    # the nodes entry is quoted inside the two that also take a callable or None: a route quotes its own, not a wider one
+    wider = [words for other, words in ACCEPTED_FORMS.items() if other != key and ACCEPTED_FORMS[key] in words]
+    assert not any(words in str(refused.value) for words in wider)
 
 
 def test_the_maze_applicator_reads_the_mazes_own_exits():

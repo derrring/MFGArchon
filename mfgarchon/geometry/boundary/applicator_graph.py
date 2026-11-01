@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 import numbers
-from collections.abc import Iterable
+from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -81,24 +81,119 @@ def _refuse_a_foreign_bc_type(kind: str, name: str, bc_type: object) -> None:
     raise TypeError(f"{kind} {name!r}: bc_type must be a GraphBCType, got {bc_type!r}.{hint} (#2292)")
 
 
-def _given_nodes(nodes: object, where: str) -> tuple[int, ...] | Callable[[int], list[int]] | None:
-    """A factory's node argument (#2292): None for no nodes, a callable as given, or a tuple read once by `_as_tuple`,
-    so a bare node, 0 among them, is refused by name. An empty collection is no nodes, as it was."""
-    if nodes is None or callable(nodes):
+# =============================================================================
+# The forms a graph boundary-condition input is taken in (#2292): one table, read by every acceptor
+# =============================================================================
+
+_NODES = "a list, tuple or range of nodes, or a 1-D integer array"
+_RULE = "a callable that takes the graph's node count and returns such nodes"
+#: Each class of graph BC input and the forms it is taken in. Every acceptor reads its input through the reader of its
+#: class below and coerces nothing on its own; any other form is refused by name, in these words. A per-node value of
+#: any other form is A2's to decide (#2296).
+ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
+    {
+        "node": "an int (a numbers.Integral that is not a bool) from 0 to the graph's last node",
+        "nodes": _NODES,
+        "condition_nodes": f"nodes ({_NODES}), or {_RULE}",
+        "factory_nodes": f"None, nodes ({_NODES}), or {_RULE}; None or no nodes is no condition",
+        "value": (
+            "a real number a float holds (a numbers.Real that is not a bool, and not too large for a float), or a "
+            "callable, taken as at main: a callable's forms are A2's (#2296)"
+        ),
+        "values": "a value, or a list, tuple or 1-D real array of real numbers a float holds, one per node",
+        "conditions": "a list or tuple",
+        "threshold": "a finite real number (a numbers.Real that is not a bool), compared as given",
+    }
+)
+
+
+def _shown(item: object) -> str:
+    """How a refusal names what it was given."""
+    if item is None:
+        return "None"
+    if isinstance(item, np.ndarray):
+        return f"a {item.ndim}-D {item.dtype} array"
+    name = type(item).__name__
+    return f"{'an' if name[0] in 'aeiou' else 'a'} {name}"
+
+
+def _is_real(item: object) -> bool:
+    return isinstance(item, numbers.Real) and not isinstance(item, (bool, np.bool_))
+
+
+def _is_value(item: object) -> bool:
+    """A real number a float holds: a value is written into a float field, and float() of a larger one overflows."""
+    if not _is_real(item):
+        return False
+    try:
+        float(cast("float", item))
+    except OverflowError:
+        return False
+    return True
+
+
+def _nodes(items: object, where: str, form: str = "nodes") -> tuple:
+    """``items`` in a form ``ACCEPTED_FORMS["nodes"]`` names, as a tuple of its entries, or refused by name in the words
+    of ``ACCEPTED_FORMS[form]``, the acceptor's own entry. The entries are checked against a graph where an applicator
+    takes them (`GraphApplicator._checked_nodes`)."""
+    if isinstance(items, (list, tuple, range)):
+        return tuple(items)
+    if isinstance(items, np.ndarray) and items.ndim == 1 and items.dtype.kind in "iu":
+        return tuple(items.tolist())
+    raise TypeError(f"{where} is {_shown(items)}; it takes {ACCEPTED_FORMS[form]} (#2292).")
+
+
+def _conditions(items: object, where: str, of: str) -> tuple:
+    """``items`` in a form ``ACCEPTED_FORMS["conditions"]`` names, as a tuple, or refused by name."""
+    if isinstance(items, (list, tuple)):
+        return tuple(items)
+    raise TypeError(f"{where} is {_shown(items)}; it takes {ACCEPTED_FORMS['conditions']} of {of} (#2292).")
+
+
+def _value(value: object, where: str) -> None:
+    """Refuse by name a ``value`` outside the form ``ACCEPTED_FORMS["value"]`` names."""
+    if not (callable(value) or _is_value(value)):
+        shown = "a real number too large for a float" if _is_real(value) else _shown(value)
+        raise TypeError(f"{where} is {shown}; it takes {ACCEPTED_FORMS['value']} (#2292).")
+
+
+def _node_values(values: object, count: int, where: str) -> tuple | None:
+    """``values`` in a form ``ACCEPTED_FORMS["values"]`` names: None for a value, which every node takes, else one
+    value per node, or refused by name."""
+    if callable(values) or _is_value(values):
+        return None
+    if isinstance(values, (list, tuple)) and all(_is_value(v) for v in values):
+        per_node = tuple(values)
+    elif isinstance(values, np.ndarray) and values.ndim == 1 and values.dtype.kind in "iuf":
+        per_node = tuple(values.tolist())
+    else:
+        shown = "a real number too large for a float" if _is_real(values) else _shown(values)
+        raise TypeError(
+            f"{where}: values is {shown}; it takes {ACCEPTED_FORMS['values']}, a value being "
+            f"{ACCEPTED_FORMS['value']} (#2292)."
+        )
+    if len(per_node) != count:
+        raise ValueError(
+            f"{where}: values holds {len(per_node)} value(s) for {count} node(s); it takes {ACCEPTED_FORMS['values']} "
+            "(#2292)."
+        )
+    return per_node
+
+
+def _threshold(threshold: object, where: str) -> float:
+    """``threshold`` in the form ``ACCEPTED_FORMS["threshold"]`` names, unconverted, or refused by name. Finite by
+    comparison: float() would round a Fraction, and math.isfinite overflows on a large int (#2292)."""
+    if not _is_real(threshold) or not -math.inf < cast("float", threshold) < math.inf:
+        raise TypeError(f"{where} is {threshold!r}; it takes {ACCEPTED_FORMS['threshold']} (#2292).")
+    return cast("float", threshold)  # the cast is for mypy: the value is returned as given
+
+
+def _given_nodes(nodes: object, where: str, form: str = "factory_nodes") -> tuple | Callable[[int], list[int]] | None:
+    """A node argument in the form ``ACCEPTED_FORMS[form]`` names: a callable as given, None for none where the form
+    takes it, or nodes read by `_nodes`. An empty collection is no condition (#2292)."""
+    if callable(nodes) or (nodes is None and form == "factory_nodes"):
         return cast("Callable[[int], list[int]] | None", nodes)
-    return _as_tuple(nodes, where, "node indices")
-
-
-def _as_tuple(items: object, where: str, of: str) -> tuple:
-    """``items`` as a tuple, or refused by name: a bare entry, such as one NodeBC or an int, is not a collection of
-    them (#2292)."""
-    if (
-        isinstance(items, (str, bytes))
-        or (isinstance(items, np.ndarray) and items.ndim == 0)
-        or not isinstance(items, Iterable)
-    ):
-        raise TypeError(f"{where} is a {type(items).__name__}; it takes a collection of {of}, e.g. a list (#2292).")
-    return tuple(items)
+    return _nodes(nodes, where, form)
 
 
 @dataclass(frozen=True)
@@ -106,8 +201,8 @@ class NodeBC:
     """
     Boundary condition specification for a set of nodes.
 
-    Frozen, with its nodes kept as a tuple and an array value as a read-only copy, so a condition cannot change after
-    it is built; its nodes are checked against a graph when an applicator takes it (#2292).
+    Frozen, with its nodes kept as a tuple, so a condition cannot change after it is built; its nodes are checked
+    against a graph when an applicator takes it (#2292).
 
     Attributes:
         nodes: Node indices, kept as a tuple, or callable(num_nodes) -> indices
@@ -124,16 +219,12 @@ class NodeBC:
     def __post_init__(self) -> None:
         _refuse_a_foreign_bc_type("NodeBC", self.name, self.bc_type)
         if not callable(self.nodes):
-            object.__setattr__(self, "nodes", _as_tuple(self.nodes, f"NodeBC {self.name!r}: nodes", "node indices"))
-        if isinstance(self.value, np.ndarray):
-            # Frozen holds the field, not an array's contents: a read-only copy keeps the value checked here (#2292).
-            value = np.array(self.value)
-            value.flags.writeable = False
-            object.__setattr__(self, "value", value)
+            object.__setattr__(self, "nodes", _nodes(self.nodes, f"NodeBC {self.name!r}: nodes", "condition_nodes"))
+        _value(self.value, f"NodeBC {self.name!r}: value")
         # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
         # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
         # dropped without a word, so it is refused (#1948).
-        if self.bc_type == GraphBCType.NEUMANN and (callable(self.value) or np.any(np.asarray(self.value) != 0)):
+        if self.bc_type == GraphBCType.NEUMANN and (callable(self.value) or self.value != 0):
             raise NotImplementedError(
                 f"NodeBC {self.name!r}: GraphBCType.NEUMANN is zero flux, and a non-zero flux "
                 f"(value={self.value!r}) is not implemented on graphs. It would be dropped rather than "
@@ -143,7 +234,7 @@ class NodeBC:
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
         if callable(self.nodes):
-            return list(_as_tuple(self.nodes(num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})", "node indices"))
+            return list(_nodes(self.nodes(num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})"))
         return list(self.nodes)
 
     def get_value(self, node: int, t: float) -> float:
@@ -200,13 +291,13 @@ class GraphBCConfig:
 
     def __post_init__(self) -> None:
         # The tuple first: an iterator is consumed by the check below, and would be stored empty (#2292).
-        object.__setattr__(self, "node_bcs", _as_tuple(self.node_bcs, "GraphBCConfig: node_bcs", "NodeBC"))
-        object.__setattr__(self, "edge_bcs", _as_tuple(self.edge_bcs, "GraphBCConfig: edge_bcs", "EdgeBC"))
+        object.__setattr__(self, "node_bcs", _conditions(self.node_bcs, "GraphBCConfig: node_bcs", "NodeBC"))
+        object.__setattr__(self, "edge_bcs", _conditions(self.edge_bcs, "GraphBCConfig: edge_bcs", "EdgeBC"))
         for i, bc in enumerate(self.node_bcs):
             if not isinstance(bc, NodeBC):
                 raise TypeError(
-                    f"GraphBCConfig: node_bcs[{i}] is a {type(bc).__name__}, not a NodeBC. Every entry of node_bcs "
-                    "is a NodeBC (#2292)."
+                    f"GraphBCConfig: node_bcs[{i}] is {_shown(bc)}, not a NodeBC; node_bcs takes "
+                    f"{ACCEPTED_FORMS['conditions']} of NodeBC (#2292)."
                 )
         if self.edge_bcs:
             raise NotImplementedError(f"GraphBCConfig: edge_bcs is not empty, and {_EDGES_NOT_APPLIED}")
@@ -357,11 +448,7 @@ class GraphApplicator(BaseGraphApplicator):
                 f"GraphApplicator.from_network_geometry: boundary_type={boundary_type!r} reads "
                 f"{sorted(read[boundary_type] | {'boundary_value'})}, and not {unread} (#2292)."
             )
-        if boundary_type == "custom" and kwargs.get("boundary_nodes") is None:
-            raise TypeError(
-                "GraphApplicator.from_network_geometry: boundary_type='custom' needs boundary_nodes, a collection of "
-                "node indices (#2292)."
-            )
+        _value(kwargs.get("boundary_value", 0.0), "GraphApplicator.from_network_geometry: boundary_value")
         num_nodes = _num_nodes(geometry)
 
         applicator = cls(num_nodes)
@@ -371,23 +458,15 @@ class GraphApplicator(BaseGraphApplicator):
         if boundary_type == "leaf":
             boundary_nodes = cls._detect_leaf_nodes(geometry)
         elif boundary_type == "degree":
-            threshold = kwargs.get("degree_threshold", 1)
-            if (
-                isinstance(threshold, (bool, np.bool_))
-                or not isinstance(threshold, numbers.Real)
-                or not math.isfinite(threshold)
-            ):
-                raise TypeError(
-                    f"GraphApplicator.from_network_geometry: degree_threshold is {threshold!r}; it takes a finite "
-                    "number, the largest degree a boundary node has (#2292)."
-                )
-            # Compared as given: float() would round a Fraction, or a large int, across a degree (#2292).
-            boundary_nodes = cls._detect_low_degree_nodes(geometry, cast("float", threshold))
+            threshold = _threshold(
+                kwargs.get("degree_threshold", 1), "GraphApplicator.from_network_geometry: degree_threshold"
+            )
+            boundary_nodes = cls._detect_low_degree_nodes(geometry, threshold)
         elif boundary_type == "spatial":
             boundary_nodes = cls._detect_spatial_boundary_nodes(geometry)
         else:  # "custom"
             boundary_nodes = _given_nodes(
-                kwargs["boundary_nodes"], "GraphApplicator.from_network_geometry: boundary_nodes"
+                kwargs.get("boundary_nodes"), "GraphApplicator.from_network_geometry: boundary_nodes", "condition_nodes"
             )
 
         # A detector's list, or the given nodes read once into a tuple: empty is no condition. A truth test on the
@@ -619,19 +698,18 @@ class GraphApplicator(BaseGraphApplicator):
     def _checked_nodes(self, nodes, where: str, param: str = "nodes") -> list[int]:
         """``nodes`` as a list of node indices of this graph, or refused by name: an index outside
         ``[0, num_nodes)`` would otherwise be skipped without a word (#2292)."""
-        indices = list(_as_tuple(nodes, f"{where}: {param}", "node indices"))
+        indices = list(_nodes(nodes, f"{where}: {param}"))
         foreign = [n for n in indices if isinstance(n, (bool, np.bool_)) or not isinstance(n, numbers.Integral)]
         if foreign:
             raise TypeError(
-                f"{where}: node(s) {foreign!r} are not node indices. A node is an int; a bool, a float or a string is "
-                "refused rather than read as one (#2292)."
+                f"{where}: node(s) {foreign!r} are not node indices; a node is {ACCEPTED_FORMS['node']} (#2292)."
             )
         indices = [int(n) for n in indices]
         outside = [n for n in indices if not 0 <= n < self.num_nodes]
         if outside:
             raise ValueError(
-                f"{where}: node(s) {outside} are not nodes of this graph, whose nodes are 0..{self.num_nodes - 1} "
-                "(#2292)."
+                f"{where}: node(s) {outside} are not nodes of this graph; a node is {ACCEPTED_FORMS['node']}, here "
+                f"0..{self.num_nodes - 1} (#2292)."
             )
         return indices
 
@@ -812,21 +890,10 @@ class GraphApplicator(BaseGraphApplicator):
             >>> u_bc = applicator.apply_direct(u, [0], lambda n, t: np.sin(t))
         """
         result = field.copy()
-        unordered = isinstance(boundary_nodes, (set, frozenset))
         nodes = self._checked_nodes(boundary_nodes, "GraphApplicator.apply_direct", "boundary_nodes")
-        per_node = values if isinstance(values, (list, tuple, np.ndarray)) and np.ndim(values) > 0 else None
+        per_node = _node_values(values, len(nodes), "GraphApplicator.apply_direct")
         if per_node is not None:
-            if unordered:
-                raise TypeError(
-                    "GraphApplicator.apply_direct: boundary_nodes is a set, which has no order to pair with a value "
-                    "list. Give the nodes as a list (#2292)."
-                )
-            if len(per_node) != len(nodes):
-                raise ValueError(
-                    f"GraphApplicator.apply_direct: {len(per_node)} value(s) for {len(nodes)} node(s). Give one value "
-                    "per node, or one number or callable for all of them (#2292)."
-                )
-            repeated = sorted({n for n in nodes if nodes.count(n) > 1})
+            repeated = sorted(n for n, count in Counter(nodes).items() if count > 1)
             if repeated:
                 raise ValueError(
                     f"GraphApplicator.apply_direct: node(s) {repeated} are given more than once, each with a value of "
@@ -1016,6 +1083,8 @@ def create_graph_applicator(
 
     # Each read once into a tuple, or refused by name: a truth test on the given object dropped a bare 0 and a
     # one-element array of node 0, and raised on a longer array. None or empty is no condition (#2292).
+    _value(boundary_value, "create_graph_applicator: boundary_value")
+    _value(source_value, "create_graph_applicator: source_value")
     boundary = _given_nodes(boundary_nodes, "create_graph_applicator: boundary_nodes")
     source = _given_nodes(source_nodes, "create_graph_applicator: source_nodes")
     absorbing = _given_nodes(absorbing_nodes, "create_graph_applicator: absorbing_nodes")

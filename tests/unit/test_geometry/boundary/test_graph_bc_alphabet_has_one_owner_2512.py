@@ -59,8 +59,9 @@ def _members(node: ast.AST, enum: str) -> list[str]:
 
 
 def _has_string(node: ast.AST) -> bool:
-    items = node.elts if isinstance(node, (ast.Tuple, ast.List, ast.Set)) else [node]
-    return any(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in items)
+    """A string constant anywhere in the operand ``node``: itself, a display's element, or inside a call such as
+    ``frozenset({...})`` or ``str(...)``, which a display-only reading missed (#2292 review 3, S-c)."""
+    return any(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in ast.walk(node))
 
 
 def _loads_bc_type(node: ast.AST) -> bool:
@@ -156,6 +157,14 @@ PLANTED = {
     "a graph member inside a call operand": (
         "mfgarchon/alg/numerical/network_solvers/fp_network.py",
         "def _rival(node_bc):\n    return node_bc.bc_type in frozenset({GraphBCType.SOURCE})\n",
+    ),
+    "a string inside a call operand": (
+        "mfgarchon/alg/numerical/network_solvers/fp_network.py",
+        "def _rival(node_bc):\n    return node_bc.bc_type.value in frozenset({'source'})\n",
+    ),
+    "a string built by a call": (
+        "mfgarchon/alg/numerical/network_solvers/hjb_network.py",
+        "def _rival(node_bc):\n    return node_bc.bc_type.value == str('absorbing')\n",
     ),
     "a graph member as a match case in a continuum reader": (
         "mfgarchon/geometry/boundary/bc_utils.py",

@@ -1,18 +1,44 @@
 - **A graph boundary condition is taken as declared or refused by name where it is handed over** (Issue #2292, #2512 row N1). Before, several inputs were accepted and then dropped or misread without a word.
+  - One table, `applicator_graph.ACCEPTED_FORMS`, names the forms each kind of input is taken in: a node; nodes, as `apply_direct` takes them; a condition's nodes, which may also be a callable; a factory's nodes, which may also be `None`; a value; values; a config's conditions; a threshold. Every route that takes one reads it through that table, and refuses any other form by name, in the table's words. The forms main took that are now refused are listed below, each with what main did.
   - `NodeBC` takes a `GraphBCType`. A continuum `BCType` shares two value strings with it while being a different member, and was silently skipped; it is refused now.
   - `BCSegment` takes a `BCType` and refuses a `GraphBCType`. So does `BoundaryConditions` for its `default_bc`, through the same check, which also refuses a string `default_bc`.
-  - A node that is not an index of the graph is refused by name on every route that names nodes, `get_bc_value` among them. Before, a node outside the graph was skipped. A float or a string raised numpy's `IndexError` or a `TypeError` that named nothing. A bool was read as a boolean mask, so `[True]` wrote every node.
-  - Every route that takes nodes, and `GraphBCConfig.node_bcs`, takes a collection and refuses a bare entry by name, a 0-d array among them.
-  - `create_graph_applicator` and `create_maze_applicator` read `None` or an empty collection as no nodes, and check anything else. `from_network_geometry(boundary_type="custom")` refuses `boundary_nodes=None` by name. In `create_graph_applicator` and the custom route, a truth test dropped node 0 given as `0` or `np.array([0])`, and raised numpy's "truth value is ambiguous" on a longer array.
-  - Two conditions that write the same field at a shared node are refused when the second is added; before, `apply` kept whichever it read last. `create_maze_applicator` leaves a dead end named as an entry out of the exits it detects. `apply_direct` refuses a node given twice with a value each, which kept the last, and a set paired with a value list, which paired them in hash order.
+  - A node that is not an index of the graph is refused by name on every route that names nodes, `get_bc_value` among them.
+    - Before, on the routes that take a collection, a node outside the graph was skipped. A float or a string raised numpy's `IndexError` or a `TypeError` that named nothing. A bool was read as a boolean mask, so `[True]` wrote every node.
+    - `get_bc_value` read a float or a bool by equality, so `2.0` read node 2 and `True` node 1. It returned `None` for a node outside the graph or a string.
+  - `create_graph_applicator` and `create_maze_applicator` read `None` or an empty collection as no nodes, and check anything else. `from_network_geometry(boundary_type="custom")` refuses `boundary_nodes=None` by name, which main took as no nodes.
+    - Before, in both factories and the custom route, a truth test dropped node 0 given as `0` or `np.array([0])`. It raised numpy's "truth value is ambiguous" on a longer array, which is now taken, and on an empty one, which is now no nodes.
+  - Two conditions that write the same field at a shared node are refused when the second is added; before, `apply` kept whichever it read last. `create_maze_applicator` leaves a dead end named as an entry out of the exits it detects. `apply_direct` refuses a node given twice with a value each, which kept the last.
   - A graph geometry takes a `GraphBCConfig` or `None` as `boundary_conditions=`, and refuses anything else when it is built. The conditions inside the config are checked against the graph where they reach an applicator, which is when the problem is built.
-  - `GraphApplicator.from_network_geometry` refuses a keyword it does not read.
-    - Its `degree_threshold` is a finite number, compared as given. A string, which raised numpy's `UFuncTypeError`, is refused by name. So are a bool, which was read as 0 or 1; a NaN, which found no node; and an array.
-    - Its spatial boundary works on a maze, from the maze's own node positions, where it raised an `AttributeError`. A geometry that gives no positions is refused by name.
-  - `apply_direct` refuses a value list whose length is not the number of nodes given, and reads a 0-d array value as a number.
+  - `GraphApplicator.from_network_geometry` refuses a keyword it does not read. Its `degree_threshold` is compared as given, a large int or `Fraction` among them; a string raised numpy's `UFuncTypeError` and is refused by name. Its spatial boundary works on a maze, from the maze's own node positions, where it raised an `AttributeError`. A geometry that gives no positions is refused by name.
+  - `apply_direct` takes a tuple of values, one per node, as it takes a list; a tuple raised `float()`'s `TypeError` before.
+  - A value too large for a float, `10**400` among them, is refused by name on every route that takes a value, where `float()` raised an `OverflowError` that named nothing.
   - A name several conditions share is refused at lookup.
+- **Forms main took that are now refused**, measured at main (ee0879d0). Each is refused by name.
+  - Nodes, on every route that takes them: `NodeBC.nodes` and what a callable there returns, `set_dirichlet_nodes`, `set_source_nodes`, `set_absorbing_nodes`, `set_custom_bc`, `apply_direct`, `create_graph_applicator`, `from_network_geometry(boundary_type="custom")` and `create_maze_applicator`.
+    - A set or a frozenset. Main took it, and `apply_direct` paired a value list with it in the set's iteration order, not the order written: `{3, 1}` with `[10.0, 20.0]` gave node 1 the 10.
+    - A generator, an iterator or a dict's keys. Main took it. A `NodeBC` holding an iterator imposed it on the first `apply` and nothing on the next, and `get_boundary_nodes` then returned no node.
+    - A 1-D bool array. Main indexed the field with each entry, so `np.array([False, True])` wrote every node.
+    - A string, on `create_maze_applicator`'s `exit_nodes`. Main took its characters as nodes: `"13"` made `"1"` and `"3"` exits. On the other routes a string raised a `TypeError` that named nothing.
+  - A value: `NodeBC.value`, so every `value=`, `boundary_value=` and `source_value=` and `set_custom_bc`'s `bc_func`, and each of `apply_direct`'s values. A callable value is unchanged on every one of them, taken as at main: its forms are A2's (#2296).
+    - A string, a `Decimal`, or a 0-d array. Main read each through `float()`, so `"2.5"` imposed 2.5. A 0-d array alone in `apply_direct` raised `len() of unsized object`, and is still refused.
+    - A bool or an `np.bool_`. Main read it as 1.0 or 0.0.
+    - `None` in a value list. Main wrote NaN.
+    - A value given to a factory with no nodes to impose it on: `create_graph_applicator`'s `boundary_value` or `source_value`, or `from_network_geometry`'s `boundary_value`. Main took it unread. A factory now reads its values whether or not it has nodes.
+    - A value of any of these forms on a `GraphBCType.CUSTOM` condition, which reads only a callable. Main took it and imposed nothing. CUSTOM's callable is unchanged, and so is CUSTOM given a real number, which still imposes nothing until #2512 row N2 is ruled.
+  - `apply_direct`'s values, beyond a single value:
+    - A list whose length is not the number of nodes. Main repeated its last value over the remaining nodes and dropped any extra; an empty one raised an `IndexError`.
+    - A list holding an array, such as `[7.0, np.array([8.0, 9.0])]` on a two-row field. Main wrote the array down the rows at that node. A per-node value other than a number is A2's to decide (#2296).
+    - A 2-D array. Main broadcast it over the field: `[[7.0, 8.0]]` for two nodes of a two-row field wrote 7 on the first row and 8 on the second.
+    - A bool, object or complex array. Main took it; a complex one lost its imaginary part with numpy's `ComplexWarning`.
+  - `from_network_geometry`'s `degree_threshold`:
+    - A `Decimal`, which is not a `numbers.Real`. Main compared it.
+    - An array, 0-d or 1-D. Main compared each node's degree with it, so `np.array([2])` found what `2` finds.
+    - A bool. Main read it as 0 or 1.
+    - A NaN. Main found no node.
+    - An infinity. Main found every node, or none for minus infinity.
+  - `GraphBCConfig.node_bcs` given a generator or an iterator. Main took it; the first applicator built from the config imposed its conditions and every later one found none.
 - **`EdgeBC`, a non-empty `GraphBCConfig.edge_bcs`, `GraphApplicator.add_edge_bc` and `GraphApplicator.apply_edge_direct` are refused** (Issue #2493). No graph solver applied an edge condition, so each was stored and dropped. The refusal stays until an edge operator is ruled.
-- **`NodeBC`, `EdgeBC` and `GraphBCConfig` are frozen.** A config keeps its conditions as a tuple, a condition its nodes as a tuple and an array value as a read-only copy, so a condition cannot change after it is built.
+- **`NodeBC`, `EdgeBC` and `GraphBCConfig` are frozen.** A config keeps its conditions as a tuple and a condition its nodes as a tuple, so a condition cannot change after it is built.
 - **`create_maze_applicator` works on a `MazeGeometry`.** It reads the maze's node count and its own adjacency, where before it raised "Cannot determine number of nodes".
 - **`bc_type_to_geometric_operation` takes a BC type string, a `BCType` member or `None`, and refuses anything else by name, a `GraphBCType` member and any other enum among them.**
   - A `BCType` member is read by its value; before, it raised an `AttributeError`.
