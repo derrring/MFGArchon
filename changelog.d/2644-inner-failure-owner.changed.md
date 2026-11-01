@@ -9,3 +9,4 @@
   - HJB-GFDM stored any value, `20.0`, `2.5`, `0` and `True` among them.
   - HJB-FDM read `True` as a budget of 1, and a float raised `range()`'s `TypeError` when it solved, which named nothing.
 - **`GraphMFGResult`, `RegimeSwitchingResult` and `MultiPopulationResult` carry `metadata`**, which a refused verdict fills as it does every coupler's (#2644).
+- **`base_hjb.solve_hjb_timestep_newton` and `solve_hjb_system_backward` raise `ConvergenceError` by default** (#2644). Their `on_failure` defaulted to `"record"`, so at their defaults a step that did not converge warned and handed back its iterate. To keep that, pass `on_failure="record"` with a `failures` list to record into. Their `max_newton_iterations` is an integer, refused by name otherwise, where a float raised `range()`'s `TypeError`; a budget of 0 still measures and reports the starting iterate (#1878).

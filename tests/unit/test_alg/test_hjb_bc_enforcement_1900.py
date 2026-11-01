@@ -104,6 +104,8 @@ def _solve_and_measure(bc, nx: int = 21, tol: float = 1e-9):
             bc=bc,
             domain_bounds=BOUNDS,
             current_time=0.5,
+            failures=[],
+            on_failure="record",  # the entry raises by default; this measures the iterate it returns either way
         )
     warned = any("inner Newton did not converge" in str(w.message) for w in caught)
     residual = base_hjb.compute_hjb_residual(

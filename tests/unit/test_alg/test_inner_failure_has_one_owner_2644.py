@@ -294,6 +294,12 @@ def _violations(found: dict[tuple[str, str], dict]) -> list[str]:
     for key, site in sorted(found.items()):
         if key in MEMBERS and len(site["lines"]) != MEMBERS[key]:
             out.append(f"{key}: {len(site['lines'])} loops, the member has {MEMBERS[key]}: {site['lines']}")
+        if site["owner"] and key not in MEMBERS:
+            # Every owner-caller is a member, so its loop count is pinned: a second loop beside a reporting one would
+            # otherwise pass silently (#2644 review 2, F8).
+            out.append(
+                f"{key} routes through the owner but is not a member, so its loops are not counted: {site['lines']}"
+            )
         if site["owner"]:
             continue
         if key not in ALLOWED:
@@ -361,6 +367,14 @@ PLANTED = {
         "mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
         None,
         "\n\ntry:\n    import _no_such_backend\nexcept ImportError:" + _NEWTON.replace("\n", "\n    "),
+    ),
+    "a new owner-caller with a second, silent loop": (
+        "mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
+        None,
+        "\n\ndef _rival_reporting(u, f, max_iterations, tolerance, report_inner_solve_failure):\n"
+        "    for _ in range(max_iterations):\n        step = f(u)\n        if abs(step) < tolerance:\n            break\n"
+        "    else:\n        report_inner_solve_failure(u)\n    for _ in range(max_iterations):\n        step = f(u)\n"
+        "        if abs(step) < tolerance:\n            break\n    return u\n",
     ),
     "a second, silent loop inside a member": (
         "mfgarchon/alg/numerical/hjb_solvers/hjb_howard.py",

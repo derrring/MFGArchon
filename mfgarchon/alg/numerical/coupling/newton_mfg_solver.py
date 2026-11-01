@@ -61,6 +61,10 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+#: The verdict's read of the inner HJB record, before any verdict has run.
+_NOT_READ = object()
+
+
 class NewtonMFGSolver(BaseCouplingIterator):
     """
     Newton's method solver for coupled MFG systems.
@@ -311,13 +315,15 @@ class NewtonMFGSolver(BaseCouplingIterator):
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
         last_reason = [""]
+        self._verdict_inner_failures: object = _NOT_READ
 
         def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
             # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
             # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
             converged, reason = outer_verdict(U, M, F_HJB, F_FP)
+            self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
             converged, last_reason[0] = refuse_convergence_over_failed_inner_solves(
-                converged, reason, read_inner_solve_failures(self.mfg_residual.hjb_solver)
+                converged, reason, self._verdict_inner_failures
             )
             return converged, last_reason[0]
 
@@ -420,10 +426,11 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         return self._create_result(
             converged=newton_info.converged,
-            # A last verdict refused over failed inner steps says so, not only that the budget ran out (#2644).
+            # A last verdict refused over failed inner steps says so, not only that the budget ran out. That verdict
+            # read the iterate before the one returned: Newton evaluates F at its last iterate without one (#2644).
             reason="Newton converged"
             if newton_info.converged
-            else last_reason[0]
+            else f"Newton max iterations; its last verdict, on the iterate before the one returned: {last_reason[0]}"
             if last_reason[0].startswith("inner_hjb_not_converged")
             else "Newton max iterations",
             elapsed=elapsed,
@@ -479,6 +486,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
         if newton_info is not None:
             info["final_residual"] = newton_info.residual
             info["jacobian_evaluations"] = newton_info.extra.get("jacobian_evals", 0)
+
+        # As on every coupler's result: the inner HJB steps the last verdict read, or the latest solve's where no
+        # verdict ran; None when the solver does not track them (#2644 review 2, F4).
+        failures = getattr(self, "_verdict_inner_failures", _NOT_READ)
+        if failures is _NOT_READ:
+            failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
+        info["inner_hjb_failures"] = list(failures) if isinstance(failures, tuple) else None
 
         return self.U, self.M, info
 

@@ -22,6 +22,7 @@ from mfgarchon.alg.numerical.coupling.block_iterators import BlockIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError, HJBFDMSolver, HJBGFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import InnerSolveFailure
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
@@ -63,10 +64,44 @@ def test_a_coupled_solve_is_not_converged_over_a_failed_inner_step(coupler, budg
     failed = hjb.inner_solve_failures()
     assert result.converged == (not failed), (result.converged, len(failed))
     assert bool(failed) == (budget == 1), len(failed)
+    assert result.metadata["inner_hjb_failures"] == list(failed)  # on every result, converged or not (#2644)
     assert hjb.on_inner_failure == "raise"
 
 
-@pytest.mark.parametrize("coupler", ["graph", "regime switching"])
+def test_newtons_result_lists_its_inner_failures_as_every_coupler_does():
+    """Newton returns ``(U, M, info)``, and ``info`` carries ``inner_hjb_failures`` in the shape every coupler's
+    metadata does, whatever the verdict: here a one-step budget, whose failed steps it lists (#2644 review 2, F4)."""
+    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+
+    p = _problem(n=9, nt=4)
+    hjb = HJBFDMSolver(p, max_newton_iterations=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _, _, info = NewtonMFGSolver(p, hjb, FPFDMSolver(p), picard_warmup=1).solve(
+            max_iterations=2, tolerance=1e-4, verbose=False
+        )
+    assert isinstance(info["inner_hjb_failures"], list), info
+    assert info["inner_hjb_failures"], info["convergence_reason"]
+
+
+def _terminal_problem(terminal):
+    """The 1-D problem of `_problem` with the given terminal: steep (30(x-0.7)^2) fails 2 steps at a 3-step budget."""
+    model = Model(
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
+        volatility=0.4,
+    )
+    cond = Conditions(
+        m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2),
+        u_terminal=lambda x: terminal(np.asarray(x, dtype=float)[..., 0]),
+        T=0.5,
+    )
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return MFGProblem(model=model, domain=grid, conditions=cond, Nt=40)
+
+
+@pytest.mark.parametrize("coupler", ["graph", "regime switching", "multi-population"])
 def test_a_solver_shared_by_two_nodes_is_read_for_each_of_its_solves(coupler):
     """The repo builds `GraphMFGSolver([p, p], ..., [h, h], ...)`: one HJB solver object for two nodes. Its latest record
     is the second node's, so with a steep terminal at node 0 (2 failed steps at a 3-step budget) and a flat one at node
@@ -74,25 +109,12 @@ def test_a_solver_shared_by_two_nodes_is_read_for_each_of_its_solves(coupler):
     M1). The sweep's record is each solve's, so the two failed steps of node 0 are read and the result is refused."""
     from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
     from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+    from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
     from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+    from mfgarchon.core.multi_population import MultiPopulationProblem
     from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 
-    def problem(terminal):
-        model = Model(
-            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
-            volatility=0.4,
-        )
-        cond = Conditions(
-            m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2),
-            u_terminal=lambda x: terminal(np.asarray(x, dtype=float)[..., 0]),
-            T=0.5,
-        )
-        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return MFGProblem(model=model, domain=grid, conditions=cond, Nt=40)
-
-    steep, flat = problem(lambda x: 30.0 * (x - 0.7) ** 2), problem(lambda x: 0.0 * x)
+    steep, flat = _terminal_problem(lambda x: 30.0 * (x - 0.7) ** 2), _terminal_problem(lambda x: 0.0 * x)
     hjb = HJBFDMSolver(steep, max_newton_iterations=3)
     fps = [FPFDMSolver(steep), FPFDMSolver(flat)]
     build = {
@@ -105,12 +127,78 @@ def test_a_solver_shared_by_two_nodes_is_read_for_each_of_its_solves(coupler):
             [hjb, hjb],
             fps,
         ),
+        "multi-population": lambda: MultiPopulationIterator(
+            MultiPopulationProblem(populations=[steep, flat], population_names=["steep", "flat"]), [hjb, hjb], fps
+        ),
     }[coupler]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = build().solve()
     assert not result.converged
     assert len(result.metadata["inner_hjb_failures"]) == 2, result.metadata.get("convergence_reason")
+
+
+class _ForwardingWrapper:
+    """A supported duck-typed HJB solver that forwards its report to the solver it wraps, so it logs no solve itself."""
+
+    def __init__(self, inner):
+        self.inner, self.problem = inner, inner.problem
+
+    def solve_hjb_system(self, *args, **kwargs):
+        return self.inner.solve_hjb_system(*args, **kwargs)
+
+    def inner_solve_failures(self):
+        return self.inner.inner_solve_failures()
+
+    @property
+    def on_inner_failure(self):
+        return self.inner.on_inner_failure
+
+    @on_inner_failure.setter
+    def on_inner_failure(self, policy):
+        self.inner.on_inner_failure = policy
+
+
+class _ReportsAFailureItsLogDoesNotHold(HJBFDMSolver):
+    """Solves and logs for real, and reports a failure no solve recorded."""
+
+    def inner_solve_failures(self):
+        return (InnerSolveFailure(t_idx=0, residual=1.0, tolerance=1e-6, steps=1, reason="fabricated", measure="m"),)
+
+
+@pytest.mark.parametrize("case", ["one slot, read by its report", "a shared wrapper", "a shared report not its log"])
+def test_a_solvers_report_decides_and_a_shared_solver_is_read_only_through_it(case):
+    """`inner_solve_failures()` is the report (#2644 review 2, F2 and F3). An object in one slot is read by it: at
+    fc43d3d4 a BlockIterator read the private record instead, and certified over the failure the repo's own double
+    reports. An object in several slots is read from the log only where the log is that report's history; a forwarding
+    wrapper that logs nothing, shared, certified at 658d143f and fc43d3d4, and a report the log does not hold would
+    have been read past. Both are refused by name instead."""
+    from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+    from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+    from tests.unit.test_alg.test_picard_reports_failed_inner_solves_1878 import _ReportsOnSomeSolves, _smoke_problem
+
+    if case == "one slot, read by its report":
+        problem = _smoke_problem()
+        hjb = _ReportsOnSomeSolves(problem, lambda call: True)
+        solver = BlockIterator(problem, hjb, FPFDMSolver(problem), method="gauss_seidel", relaxation=0.5)
+        expected = "inner_hjb_not_converged"
+        kwargs = {"max_iterations": 150, "tolerance": 1e-3, "verbose": False}
+    else:
+        steep, flat = _terminal_problem(lambda x: 30.0 * (x - 0.7) ** 2), _terminal_problem(lambda x: 0.0 * x)
+        if case == "a shared wrapper":
+            hjb = _ForwardingWrapper(HJBFDMSolver(steep, max_newton_iterations=3))
+        else:
+            steep = _terminal_problem(lambda x: 0.0 * x)
+            hjb = _ReportsAFailureItsLogDoesNotHold(steep)
+        coupling = AdjacencyCoupling(0.05 * (np.ones((2, 2)) - np.eye(2)))
+        solver = GraphMFGSolver([steep, flat], coupling, [hjb, hjb], [FPFDMSolver(steep), FPFDMSolver(flat)])
+        expected = "cannot be read one by one"
+        kwargs = {}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = solver.solve(**kwargs)
+    assert not result.converged
+    assert expected in result.metadata["convergence_reason"], result.metadata["convergence_reason"]
 
 
 def test_a_failure_with_no_record_begun_is_refused_under_record():
@@ -131,6 +219,18 @@ def test_the_1d_newton_refuses_an_exhausted_budget_by_default():
     with pytest.raises(ConvergenceError, match="did not converge at t_idx=39"):
         HJBFDMSolver(_problem(), max_newton_iterations=1).solve_hjb_system(
             np.ones((41, 41)), 2.0 * (x - 0.7) ** 2, np.zeros((41, 41))
+        )
+    # The module-level entry raises at its own defaults too, where it raised a RuntimeError at fc43d3d4 (#2644 review
+    # 2, F1); and it reads its budget through the one check.
+    from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+
+    with pytest.raises(ConvergenceError, match="did not converge at t_idx=39"):
+        base_hjb.solve_hjb_system_backward(
+            np.ones((41, 41)), 2.0 * (x - 0.7) ** 2, np.zeros((41, 41)), _problem(), max_newton_iterations=1
+        )
+    with pytest.raises(TypeError, match="an integer is required"):
+        base_hjb.solve_hjb_system_backward(
+            np.ones((41, 41)), 2.0 * (x - 0.7) ** 2, np.zeros((41, 41)), _problem(), max_newton_iterations=20.0
         )
 
 

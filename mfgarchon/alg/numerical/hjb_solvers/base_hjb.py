@@ -84,7 +84,7 @@ class InnerSolveFailure:
 INNER_FAILURE_POLICIES: tuple[str, ...] = ("raise", "record")
 
 
-def checked_inner_budget(budget: object, name: str, solver: str) -> int:
+def checked_inner_budget(budget: object, name: str, solver: str, minimum: int = 1) -> int:
     """An inner iteration's budget, a number of steps: an integer (a ``numbers.Integral`` that is not a bool) of at
     least 1, or refused by name (#2644). A float was truncated or failed later without naming itself, and a budget of 0
     takes no step, so it would hand the starting value back as the step's answer, or fail every step by construction.
@@ -94,8 +94,10 @@ def checked_inner_budget(budget: object, name: str, solver: str) -> int:
             f"{solver}: {name} is {budget!r}; an inner iteration's budget is a number of steps, and an integer is "
             "required (#2644)."
         )
-    if budget < 1:
-        raise ValueError(f"{solver}: {name} is {budget!r}; an inner iteration needs a budget of at least 1 (#2644).")
+    if budget < minimum:
+        raise ValueError(
+            f"{solver}: {name} is {budget!r}; an inner iteration needs a budget of at least {minimum} (#2644)."
+        )
     return int(budget)
 
 
@@ -1722,7 +1724,7 @@ def solve_hjb_timestep_newton(
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects this step if it does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
-    on_failure: str = "record",  # #2644: the owner's policy for a step that does not converge
+    on_failure: str = "raise",  # #2644: the owner's policy for a step that does not converge; "record" needs failures
 ) -> np.ndarray:
     """
     Solve HJB timestep using Newton's method.
@@ -1740,6 +1742,11 @@ def solve_hjb_timestep_newton(
     # Set defaults if still None
     if max_newton_iterations is None:
         max_newton_iterations = DEFAULT_NEWTON_MAX_ITERATIONS
+    # The module-level step keeps a budget of 0, which measures and reports its starting iterate (#1878); a solver's
+    # budget is at least 1.
+    max_newton_iterations = checked_inner_budget(
+        max_newton_iterations, "max_newton_iterations", "solve_hjb_timestep_newton", minimum=0
+    )
     if newton_tolerance is None:
         newton_tolerance = DEFAULT_NEWTON_TOLERANCE
 
@@ -1984,7 +1991,7 @@ def solve_hjb_system_backward(
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
-    on_failure: str = "record",  # #2644: the owner's policy for a step that does not converge
+    on_failure: str = "raise",  # #2644: the owner's policy for a step that does not converge; "record" needs failures
     volatility_kind: str | None = None,  # #2378 part 2a: 'field' for an array; a tensor is refused in 1-D
     constraint: ConstraintProtocol | None = None,  # Issue #2036: projected onto after each step's Newton solve
 ) -> np.ndarray:
