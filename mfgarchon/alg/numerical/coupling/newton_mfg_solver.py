@@ -424,15 +424,24 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         self._solution_computed = True
 
+        # A last verdict refused over failed inner steps says so, not only how Newton stopped. A named stop
+        # (line_search_failed, diverged) returns the iterate that verdict judged; when the budget runs out, Newton
+        # evaluates F at its last iterate without a verdict, so the verdict read the iterate before it (#2644).
+        refused = last_reason[0] if last_reason[0].startswith("inner_hjb_not_converged") else ""
+        stop = newton_info.extra.get("reason")
+        if newton_info.converged:
+            reason = "Newton converged"
+        elif stop:
+            reason = f"Newton stopped: {stop}" + (
+                f"; its last verdict, on the iterate returned: {refused}" if refused else ""
+            )
+        else:
+            reason = "Newton max iterations" + (
+                f"; its last verdict, on the iterate before the one returned: {refused}" if refused else ""
+            )
         return self._create_result(
             converged=newton_info.converged,
-            # A last verdict refused over failed inner steps says so, not only that the budget ran out. That verdict
-            # read the iterate before the one returned: Newton evaluates F at its last iterate without one (#2644).
-            reason="Newton converged"
-            if newton_info.converged
-            else f"Newton max iterations; its last verdict, on the iterate before the one returned: {last_reason[0]}"
-            if last_reason[0].startswith("inner_hjb_not_converged")
-            else "Newton max iterations",
+            reason=reason,
             elapsed=elapsed,
             newton_info=newton_info,
         )

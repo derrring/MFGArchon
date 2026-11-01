@@ -11,7 +11,7 @@ import functools
 import inspect
 from collections import Counter
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Concatenate, NamedTuple, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
@@ -282,77 +282,52 @@ def read_inner_solve_failures(hjb_solver: object) -> object:
     return method() if callable(method) else None
 
 
-class UnreadableSolves(NamedTuple):
-    """A solver object that fills several slots of a coupled solve, whose solves cannot be read one by one (#2644)."""
+def refuse_a_shared_hjb_solver(hjb_solvers: Iterable[object], coupler: str) -> None:
+    """A coupled solve takes one HJB solver object per slot, and refuses one object in several slots by name (#2644).
 
-    solver: str
-    slots: int
-    logged: int
-
-
-def read_inner_solve_failures_of(
-    hjb_solvers: Iterable[object], log: list | None = None
-) -> tuple | UnreadableSolves | None:
-    """What a coupled solve's HJB solvers say about their last sweep, together (#2644): ``None`` when none of them
-    tracks its inner solves, else every recorded step of every one that does.
-
-    A solver's public ``inner_solve_failures()`` is the report, and an object that fills one slot is read by it. An
-    object that fills ``m`` slots solved ``m`` times in the sweep, and its report is only the last: a coupler sharing one
-    solver between two nodes certified over the first node's failed steps (#2644 review 1, M1). So it is read from
-    ``log`` (`inner_failures_recorded`), its last ``m`` records, but only where the log is that report's history: at
-    least ``m`` records, the last of them equal to the report. Otherwise its solves cannot be read one by one, and that
-    is returned instead of a reading (#2644 review 2, F2 and F3). A solver whose report is None says nothing.
+    A solver's record is its latest solve, so an object filling two nodes or regimes reports only its last slot's, and
+    a coupler reading it certified over the first slot's failed steps (#2644 review 1, M1). Nothing in the library
+    shares a solver, so sharing is refused rather than read solve by solve. The check is by identity, of the objects the
+    coupler is handed: wrappers that hide one solver behind distinct objects are not seen.
     """
     slots = list(hjb_solvers)
     filled = Counter(id(solver) for solver in slots)
-    failures: list = []
-    tracked = False
-    for solver in {id(solver): solver for solver in slots}.values():
-        report = read_inner_solve_failures(solver)
-        if not isinstance(report, tuple):
-            continue
-        tracked = True
-        if filled[id(solver)] == 1:
-            failures.extend(report)
-            continue
-        logged = [record for owner, record in (log or ()) if owner is solver]
-        if len(logged) < filled[id(solver)] or tuple(logged[-1]) != report:
-            return UnreadableSolves(type(solver).__name__, filled[id(solver)], len(logged))
-        for record in logged[-filled[id(solver)] :]:
-            failures.extend(record)
-    return tuple(failures) if tracked else None
+    for solver in slots:
+        if filled[id(solver)] > 1:
+            raise ValueError(
+                f"{coupler}: one HJB solver object, a {type(solver).__name__}, fills {filled[id(solver)]} of its slots. "
+                "Pass one HJB solver per slot (#2644): a solver's record is its latest solve, so the earlier slots of a "
+                "shared one could not be read."
+            )
+
+
+def read_inner_solve_failures_of(hjb_solvers: Iterable[object]) -> tuple | None:
+    """What a coupled solve's HJB solvers say about their latest solves, together (#2644): ``None`` when none of them
+    tracks its inner solves, else every recorded step of every one that does. Each slot holds its own solver
+    (`refuse_a_shared_hjb_solver`), so each one's latest solve is its slot's in the last sweep."""
+    records = [read_inner_solve_failures(solver) for solver in hjb_solvers]
+    tracked = [record for record in records if isinstance(record, tuple)]
+    return None if not tracked else tuple(failure for record in tracked for failure in record)
 
 
 @contextmanager
-def inner_failures_recorded(hjb_solvers: Iterable[Any]) -> Iterator[list]:
-    """For a coupled solve: each HJB solver whose ``on_inner_failure`` is "raise" records instead, while it runs, and
-    each record a solver begins is logged in solve order on the list this yields (`begin_inner_solve_record`).
+def inner_failures_recorded(hjb_solvers: Iterable[Any]) -> Iterator[None]:
+    """For a coupled solve: each HJB solver whose ``on_inner_failure`` is "raise" records instead, while it runs.
 
     A sweep's inner failure is then the coupler's to read at its verdict (#1878), not an exception partway through
     the solve; the policy is restored after (#2644). A duck-typed solver without the attribute is left alone.
     """
-    solvers = list({id(solver): solver for solver in hjb_solvers}.values())
-    switched = [solver for solver in solvers if getattr(solver, "on_inner_failure", None) == "raise"]
-    logged_solvers = [solver for solver in solvers if callable(getattr(solver, "inner_solve_failures", None))]
-    log: list = []
-    # Every write is inside the try, and only what was written is restored: a solver that refuses an attribute leaves
-    # the others as they were (#2644 review 2, F7).
-    recorded: list = []
-    logged: list = []
+    switched: list = []
+    # Every write is inside the try, and only what was written is restored (#2644 review 2, F7).
     try:
-        for solver in switched:
-            solver.on_inner_failure = "record"
-            recorded.append(solver)
-        for solver in logged_solvers:
-            before = getattr(solver, "_inner_solve_log", None)
-            solver._inner_solve_log = log
-            logged.append((solver, before))
-        yield log
+        for solver in hjb_solvers:
+            if getattr(solver, "on_inner_failure", None) == "raise":
+                solver.on_inner_failure = "record"
+                switched.append(solver)
+        yield
     finally:
-        for solver in recorded:
+        for solver in switched:
             solver.on_inner_failure = "raise"
-        for solver, before in logged:
-            solver._inner_solve_log = before
 
 
 #: The ``stacklevel`` of a warning a decorated ``solve`` raises for its caller: `verdict_reads_inner_failures`' wrapper
@@ -372,10 +347,10 @@ def verdict_reads_inner_failures(
     reported converged over a failed inner step of the last sweep is not (#1878, #2644).
 
     The one place every coupler's verdict reads the record. ``FixedPointIterator`` read it alone before, so a
-    ``BlockIterator`` over the same failed steps reported ``converged=True``. The record read is the last sweep's,
-    every solve of it, also where one solver object fills several slots (`read_inner_solve_failures_of`). Newton takes
-    ``check=False``: its last HJB solve can be a Jacobian probe, so it reads the record in its own verdict, where the
-    latest solve is the accepted iterate's.
+    ``BlockIterator`` over the same failed steps reported ``converged=True``. One HJB solver object in several slots is
+    refused before the solve (`refuse_a_shared_hjb_solver`), so each solver's latest record is its slot's in the last
+    sweep. Newton takes ``check=False``: its last HJB solve can be a Jacobian probe, so it reads the record in its own
+    verdict, where the latest solve is the accepted iterate's.
     """
 
     def decorate(
@@ -384,14 +359,12 @@ def verdict_reads_inner_failures(
         @functools.wraps(solve)
         def wrapper(self: _Solver, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Result:
             solvers = hjb_solvers_of(self)
-            with inner_failures_recorded(solvers) as log:
+            refuse_a_shared_hjb_solver(solvers, type(self).__name__)
+            with inner_failures_recorded(solvers):
                 result = solve(self, *args, **kwargs)
             if not check:
                 return result
-            failures = read_inner_solve_failures_of(solvers, log)
-            if isinstance(failures, UnreadableSolves):
-                _refuse_an_unreadable_result(result, failures)
-                return result
+            failures = read_inner_solve_failures_of(solvers)
             metadata = getattr(result, "metadata", None)
             if isinstance(metadata, dict):
                 # Every coupler's result says what its last sweep's inner solves were, converged or not (#2644).
@@ -403,21 +376,6 @@ def verdict_reads_inner_failures(
         return wrapper
 
     return decorate
-
-
-def _refuse_an_unreadable_result(result: Any, unreadable: UnreadableSolves) -> None:
-    """A result whose last sweep's inner solves cannot be read is not reported converged, and says why, whatever its
-    Picard criteria said: its ``inner_hjb_failures`` cannot be filled either (#2644 review 2, F2 and F3)."""
-    metadata = getattr(result, "metadata", None)
-    previous = metadata.get("convergence_reason", "") if isinstance(metadata, dict) else ""
-    result.converged = False
-    if isinstance(metadata, dict):
-        metadata["convergence_reason"] = (
-            f"inner_hjb_unreadable: a solver object, {unreadable.solver}, fills {unreadable.slots} slots and its solves "
-            f"cannot be read one by one: it logged {unreadable.logged} solve(s), or its inner_solve_failures() is not "
-            f"the last one logged. So the last sweep's inner HJB steps cannot be read ({previous}) (#2644)."
-        )
-        metadata["inner_hjb_failures"] = None
 
 
 def _refuse_a_converged_result(result: Any, failures: tuple) -> None:

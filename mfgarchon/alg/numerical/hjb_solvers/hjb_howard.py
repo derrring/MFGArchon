@@ -61,7 +61,6 @@ from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import cone_policy
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     INNER_FAILURE_POLICIES,
     InnerSolveFailure,
-    begin_inner_solve_record,
     checked_inner_budget,
     report_inner_solve_failure,
 )
@@ -908,7 +907,7 @@ class HJBHowardSolver:
         U[Nt] = U_terminal.copy()
 
         alpha_carry: np.ndarray | None = None
-        begin_inner_solve_record(self)
+        self._inner_solve_failures = []
         for nt in range(Nt - 1, -1, -1):
             m_n = np.asarray(M_density[nt]) if M_density is not None else np.zeros(n)
             U[nt], alpha_carry = self._howard_step(U[nt + 1], m_n, nt, sigma, dt, static, alpha_carry)

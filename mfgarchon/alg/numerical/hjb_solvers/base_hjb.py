@@ -86,8 +86,10 @@ INNER_FAILURE_POLICIES: tuple[str, ...] = ("raise", "record")
 
 def checked_inner_budget(budget: object, name: str, solver: str, minimum: int = 1) -> int:
     """An inner iteration's budget, a number of steps: an integer (a ``numbers.Integral`` that is not a bool) of at
-    least 1, or refused by name (#2644). A float was truncated or failed later without naming itself, and a budget of 0
-    takes no step, so it would hand the starting value back as the step's answer, or fail every step by construction.
+    least ``minimum``, or refused by name (#2644). A float was truncated or failed later without naming itself. A
+    solver's minimum is 1: a budget of 0 takes no step, so it would hand the starting value back as the step's answer,
+    or fail every step by construction. The module-level Newton step's is 0, where a budget of 0 measures and reports
+    its starting iterate (#1878).
     """
     if isinstance(budget, (bool, np.bool_)) or not isinstance(budget, numbers.Integral):
         raise TypeError(
@@ -99,22 +101,6 @@ def checked_inner_budget(budget: object, name: str, solver: str, minimum: int = 
             f"{solver}: {name} is {budget!r}; an inner iteration needs a budget of at least {minimum} (#2644)."
         )
     return int(budget)
-
-
-def begin_inner_solve_record(solver: Any) -> list[InnerSolveFailure]:
-    """Start ``solver``'s record of one solve's inner failures, the one place a record begins (#2644).
-
-    While a coupled solve reads its solvers (`inner_failures_recorded`), each record begun is also logged, in solve
-    order, on the log it hands the solver as ``_inner_solve_log``. A coupler can give one solver object several nodes
-    or regimes, and that object's latest record is then only its last slot's, so the coupler reads the last sweep
-    from the log (#2644 review 1, M1).
-    """
-    record: list[InnerSolveFailure] = []
-    solver._inner_solve_failures = record
-    log = getattr(solver, "_inner_solve_log", None)
-    if log is not None:
-        log.append((solver, record))
-    return record
 
 
 def report_inner_solve_failure(
@@ -156,7 +142,7 @@ def report_inner_solve_failure(
         # (#2644 review 1, S9).
         raise RuntimeError(
             f"{solver}: an inner failure under on_inner_failure={policy!r} has no record to go to, because this solve "
-            "began none (begin_inner_solve_record). A solver whose inner solve iterates begins one on entry (#2644)."
+            "began none. A solver whose inner solve iterates begins one on entry (#2644)."
         )
     record.append(failure)
     warnings.warn(
@@ -164,6 +150,17 @@ def report_inner_solve_failure(
         RuntimeWarning,
         stacklevel=3,
     )
+
+
+def _checked_step_policy(on_failure: str, failures: list[InnerSolveFailure] | None, where: str) -> None:
+    """A module-level Newton entry's policy, refused at entry by name rather than when a step first fails: "raise", or
+    "record" with a failures list to record into (#2644 review 3, M-5)."""
+    if on_failure not in ("raise", "record"):
+        raise ValueError(f"{where}: on_failure is {on_failure!r}; it takes 'raise' or 'record' (#2644).")
+    if on_failure == "record" and failures is None:
+        raise ValueError(
+            f"{where}: on_failure='record' needs a failures list to record into; pass failures=[] (#2644)."
+        )
 
 
 def _one_sided_differences_1d(
@@ -381,7 +378,7 @@ class BaseHJBSolver(BaseNumericalSolver):
 
     def _begin_inner_solve_record(self) -> None:
         """Start the record of this solve's inner failures; a solver whose inner solve iterates calls it on entry."""
-        self._inner_solve_failures: list[InnerSolveFailure] | None = begin_inner_solve_record(self)
+        self._inner_solve_failures: list[InnerSolveFailure] | None = []
 
     def _inner_solve_failed(self, failure: InnerSolveFailure) -> None:
         """Hand an inner solve that stopped without a root to the owner, under this solver's policy (#2644)."""
@@ -1739,6 +1736,7 @@ def solve_hjb_timestep_newton(
         t_idx_n: Time index for current solution
         bc_values: Per-boundary BC values (Issue #574)
     """
+    _checked_step_policy(on_failure, failures, "solve_hjb_timestep_newton")
     # Set defaults if still None
     if max_newton_iterations is None:
         max_newton_iterations = DEFAULT_NEWTON_MAX_ITERATIONS
@@ -2022,6 +2020,7 @@ def solve_hjb_system_backward(
             "The 1-D HJB-FDM solve reads a scalar or per-point field volatility, and this one is a "
             "tensor (volatility_kind='tensor'); a 1-D volatility is a scalar or a field (#2378)."
         )
+    _checked_step_policy(on_failure, failures, "solve_hjb_system_backward")
 
     # Set defaults if still None
     if max_newton_iterations is None:

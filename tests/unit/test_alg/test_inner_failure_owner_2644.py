@@ -102,11 +102,11 @@ def _terminal_problem(terminal):
 
 
 @pytest.mark.parametrize("coupler", ["graph", "regime switching", "multi-population"])
-def test_a_solver_shared_by_two_nodes_is_read_for_each_of_its_solves(coupler):
-    """The repo builds `GraphMFGSolver([p, p], ..., [h, h], ...)`: one HJB solver object for two nodes. Its latest record
-    is the second node's, so with a steep terminal at node 0 (2 failed steps at a 3-step budget) and a flat one at node
-    1 (none), reading each solver's latest record certified the result, converged=True at 658d143f (#2644 review 1,
-    M1). The sweep's record is each solve's, so the two failed steps of node 0 are read and the result is refused."""
+def test_one_hjb_solver_in_two_slots_is_refused(coupler):
+    """The repo built `GraphMFGSolver([p, p], ..., [h, h], ...)`: one HJB solver object for two nodes. A solver's record
+    is its latest solve, so with a steep terminal at node 0 (2 failed steps at a 3-step budget) and a flat one at node
+    1, reading the solver's record certified the result, converged=True at 658d143f (#2644 review 1, M1). One object in
+    several slots is refused by name before the solve, on every coupler, and its policy is left as it was (#2644)."""
     from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
     from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
     from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
@@ -131,80 +131,32 @@ def test_a_solver_shared_by_two_nodes_is_read_for_each_of_its_solves(coupler):
             MultiPopulationProblem(populations=[steep, flat], population_names=["steep", "flat"]), [hjb, hjb], fps
         ),
     }[coupler]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        result = build().solve()
-    assert not result.converged
-    assert len(result.metadata["inner_hjb_failures"]) == 2, result.metadata.get("convergence_reason")
+    with pytest.raises(ValueError, match="Pass one HJB solver per slot"):
+        build().solve()
+    assert hjb.on_inner_failure == "raise"
 
 
-class _ForwardingWrapper:
-    """A supported duck-typed HJB solver that forwards its report to the solver it wraps, so it logs no solve itself."""
-
-    def __init__(self, inner):
-        self.inner, self.problem = inner, inner.problem
-
-    def solve_hjb_system(self, *args, **kwargs):
-        return self.inner.solve_hjb_system(*args, **kwargs)
-
-    def inner_solve_failures(self):
-        return self.inner.inner_solve_failures()
-
-    @property
-    def on_inner_failure(self):
-        return self.inner.on_inner_failure
-
-    @on_inner_failure.setter
-    def on_inner_failure(self, policy):
-        self.inner.on_inner_failure = policy
-
-
-class _ReportsAFailureItsLogDoesNotHold(HJBFDMSolver):
-    """Solves and logs for real, and reports a failure no solve recorded."""
-
-    def inner_solve_failures(self):
-        return (InnerSolveFailure(t_idx=0, residual=1.0, tolerance=1e-6, steps=1, reason="fabricated", measure="m"),)
-
-
-@pytest.mark.parametrize("case", ["one slot, read by its report", "a shared wrapper", "a shared report not its log"])
-def test_a_solvers_report_decides_and_a_shared_solver_is_read_only_through_it(case):
-    """`inner_solve_failures()` is the report (#2644 review 2, F2 and F3). An object in one slot is read by it: at
-    fc43d3d4 a BlockIterator read the private record instead, and certified over the failure the repo's own double
-    reports. An object in several slots is read from the log only where the log is that report's history; a forwarding
-    wrapper that logs nothing, shared, certified at 658d143f and fc43d3d4, and a report the log does not hold would
-    have been read past. Both are refused by name instead."""
-    from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
-    from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+def test_a_solver_in_one_slot_is_read_by_its_report():
+    """A solver's ``inner_solve_failures()`` is its report, and the coupler reads it, as at 658d143f: the repo's own
+    double reports a failure on every solve, and a BlockIterator over it is not reported converged (#2644 review 2,
+    F2)."""
     from tests.unit.test_alg.test_picard_reports_failed_inner_solves_1878 import _ReportsOnSomeSolves, _smoke_problem
 
-    if case == "one slot, read by its report":
-        problem = _smoke_problem()
-        hjb = _ReportsOnSomeSolves(problem, lambda call: True)
-        solver = BlockIterator(problem, hjb, FPFDMSolver(problem), method="gauss_seidel", relaxation=0.5)
-        expected = "inner_hjb_not_converged"
-        kwargs = {"max_iterations": 150, "tolerance": 1e-3, "verbose": False}
-    else:
-        steep, flat = _terminal_problem(lambda x: 30.0 * (x - 0.7) ** 2), _terminal_problem(lambda x: 0.0 * x)
-        if case == "a shared wrapper":
-            hjb = _ForwardingWrapper(HJBFDMSolver(steep, max_newton_iterations=3))
-        else:
-            steep = _terminal_problem(lambda x: 0.0 * x)
-            hjb = _ReportsAFailureItsLogDoesNotHold(steep)
-        coupling = AdjacencyCoupling(0.05 * (np.ones((2, 2)) - np.eye(2)))
-        solver = GraphMFGSolver([steep, flat], coupling, [hjb, hjb], [FPFDMSolver(steep), FPFDMSolver(flat)])
-        expected = "cannot be read one by one"
-        kwargs = {}
+    problem = _smoke_problem()
+    hjb = _ReportsOnSomeSolves(problem, lambda call: True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        result = solver.solve(**kwargs)
+        result = BlockIterator(problem, hjb, FPFDMSolver(problem), method="gauss_seidel", relaxation=0.5).solve(
+            max_iterations=150, tolerance=1e-3, verbose=False
+        )
     assert not result.converged
-    assert expected in result.metadata["convergence_reason"], result.metadata["convergence_reason"]
+    assert "inner_hjb_not_converged" in result.metadata["convergence_reason"], result.metadata["convergence_reason"]
 
 
 def test_a_failure_with_no_record_begun_is_refused_under_record():
     """A member that forgot to begin its record raised standalone, but inside a coupler it warned and dropped the
     failure, so the coupler read an empty record and certified (#2644 review 1, S9)."""
-    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import InnerSolveFailure, report_inner_solve_failure
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import report_inner_solve_failure
 
     failure = InnerSolveFailure(t_idx=0, residual=1.0, tolerance=1e-6, steps=1, reason="budget exhausted", measure="m")
     for policy in ("record", "fallback"):
@@ -232,6 +184,16 @@ def test_the_1d_newton_refuses_an_exhausted_budget_by_default():
         base_hjb.solve_hjb_system_backward(
             np.ones((41, 41)), 2.0 * (x - 0.7) ** 2, np.zeros((41, 41)), _problem(), max_newton_iterations=20.0
         )
+    # The step entry raises at its defaults too (#2644 review 3, B-2), and both entries refuse at entry, by name, a
+    # policy they cannot follow: "record" with no list to record into, or an unknown one (M-5).
+    u = 2.0 * (x - 0.7) ** 2
+    with pytest.raises(ConvergenceError, match="did not converge at t_idx=39"):
+        base_hjb.solve_hjb_timestep_newton(u, u, np.ones(41), _problem(), t_idx_n=39, max_newton_iterations=1)
+    for kwargs, match in (({"on_failure": "record"}, "needs a failures list"), ({"on_failure": "warn"}, "it takes")):
+        with pytest.raises(ValueError, match=match):
+            base_hjb.solve_hjb_timestep_newton(u, u, np.ones(41), _problem(), t_idx_n=39, **kwargs)
+        with pytest.raises(ValueError, match=match):
+            base_hjb.solve_hjb_system_backward(np.ones((41, 41)), u, np.zeros((41, 41)), _problem(), **kwargs)
 
 
 def test_an_owner_raise_inside_the_nd_newton_reaches_the_caller_as_itself(monkeypatch):
