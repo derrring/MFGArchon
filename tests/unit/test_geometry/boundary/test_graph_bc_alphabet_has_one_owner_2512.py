@@ -19,8 +19,9 @@ segments `BCSegment` admits only with a `BCType` (#2292), so its string reads on
 
 **Known blind spots**:
 - a decode that is not a comparison: a mapping keyed by a member or by a value string, as the owner's `_WRITES` is;
-- a type held under another name (``kind = bc.bc_type``, ``default_bc.value``), or a member reached through an alias
-  or by value (``GraphBCType("source")``);
+- a type held under another name (``kind = bc.bc_type``, ``default_bc.value``), or a member reached through an alias,
+  by value (``GraphBCType("source")``), by name (``GraphBCType["SOURCE"]``, ``getattr(GraphBCType, "SOURCE")``) or
+  through its module (``applicator_graph.GraphBCType.SOURCE``): a member is read only as ``GraphBCType.<NAME>``;
 - ``isinstance``, a refusal's test rather than a decode, is not read.
 """
 
