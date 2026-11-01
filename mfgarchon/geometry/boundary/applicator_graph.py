@@ -40,7 +40,7 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-from mfgarchon.types.callable_protocols import NODE_RULE_SLOTS, NODE_VALUE_SLOTS, BoundCallable, bind_user_callable
+from mfgarchon.types.callable_protocols import NODE_RULE_SLOTS, NODE_VALUE_SLOTS, BoundCallable, bind_by_name
 
 # Import base class for inheritance
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
@@ -105,11 +105,12 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
         ),
         "value": (
             "a real number a float holds (a numbers.Real that is not a bool, which float() converts, to a finite float "
-            "if it is finite), or a callable of (t, node), time first, bound once by its parameter names and called "
-            "by keyword; one that reads t is read only where a time is given, and not into a 2-D (Nt, N) field"
+            "if it is finite), or a function of (t, node), time first, whose parameters are named after them: bound once "
+            "and called by name, and refused otherwise; one that reads t is read only where a time is given, and not "
+            "into a 2-D (Nt, N) field"
         ),
         "rule": (
-            "a callable of (t, node, field), time first, bound as a value is; field is the node values the CUSTOM "
+            "a function of (t, node, field), time first, bound as a value is; field is the node values the CUSTOM "
             "condition is applied to"
         ),
         "values": (
@@ -197,13 +198,14 @@ class _Constant:
 
 def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
     """``value`` in the form ``ACCEPTED_FORMS["value"]`` names, as the one object every reader calls, or refused by
-    name. A callable is bound here, once, to ``(t, node)`` by its parameter names (#2296): one written in the order
-    before #2378 phase 5, ``(node, t)``, was called node-first and is refused, not swapped."""
+    name. A callable is bound here, once, to ``(t, node)`` by its parameter names, by the rule a grid boundary value is
+    bound by (`bind_by_name`, #2296): one written in the order before #2378 phase 5, ``(node, t)``, is refused rather
+    than swapped, and so is one whose parameters cannot be read, which position alone would have swapped."""
     if callable(value):
         try:
-            return bind_user_callable(value, NODE_VALUE_SLOTS, role="graph node value")
+            return bind_by_name(value, NODE_VALUE_SLOTS, role="graph node value", ruling="#2296")
         except TypeError as refused:
-            raise TypeError(f"{where}: {refused} (#2296)") from refused
+            raise TypeError(f"{where}: {refused}") from refused
     if not _is_value(value):
         shown = f"{_shown(value)}, a real number no float holds" if _is_real(value) else _shown(value)
         raise TypeError(f"{where} is {shown}; it takes {ACCEPTED_FORMS['value']} (#2292).")
@@ -216,9 +218,9 @@ def _rule_reader(rule: object, where: str) -> BoundCallable:
     if not callable(rule):
         raise TypeError(f"{where} is {_shown(rule)}; it takes {ACCEPTED_FORMS['rule']} (#2296).")
     try:
-        return bind_user_callable(rule, NODE_RULE_SLOTS, role="graph CUSTOM rule")
+        return bind_by_name(rule, NODE_RULE_SLOTS, role="graph CUSTOM rule", ruling="#2296")
     except TypeError as refused:
-        raise TypeError(f"{where}: {refused} (#2296)") from refused
+        raise TypeError(f"{where}: {refused}") from refused
 
 
 def _graph_value_at(
@@ -229,7 +231,13 @@ def _graph_value_at(
     if t is None and "t" in read.passes:
         raise TypeError(f"{where}: it reads t, and no time was given. Pass t where the condition is applied (#2296).")
     slots: dict[str, object] = {"t": t, "node": node} if field is None else {"t": t, "node": node, "field": field}
-    return float(read(**slots))
+    value = read(**slots)
+    try:
+        return float(value)
+    except (TypeError, ValueError) as refused:
+        raise TypeError(
+            f"{where}: it returned {_shown(value)}, not one real number; a node's value is one (#2296)."
+        ) from refused
 
 
 def _refuse_a_time_read_into_rows(read: BoundCallable | _Constant, where: str) -> None:

@@ -10,7 +10,6 @@ These types are used by the BoundaryConditions class in conditions.py.
 
 from __future__ import annotations
 
-import functools
 import inspect
 import numbers
 from dataclasses import dataclass
@@ -21,7 +20,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
-from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_by_name
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -880,56 +879,9 @@ def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
 
 
 def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
-    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise.
-
-    Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
-    place: a boundary value is called by name only (user ruling, #2512 row B2), so one with a parameter named
-    otherwise and no default is refused, and so is one that cannot be called by name -- a positional-only
-    parameter, or a signature that cannot be read. A parameter named otherwise with a default keeps its default.
-
-    It is a function the user writes, a ``def`` or a ``lambda``, or a ``functools.partial`` of one (user ruling,
-    2026-10-11): another callable's parameter names were not written against the slots. A SciPy interpolant takes
-    ``(x, ...)`` and would read time data at the position; a class instance, a bound method, a builtin, a ufunc, a
-    vectorized or jax-wrapped function are refused the same way, with the wrap that makes each one a function.
-    """
-    name = getattr(fn, "__qualname__", fn)
-    target = fn
-    while isinstance(target, functools.partial):
-        target = target.func
-    if not inspect.isfunction(target):
-        raise TypeError(
-            f"boundary value {name!r} is of type {type(fn).__name__}, not a plain def or lambda: a boundary value is a "
-            "function whose parameter names declare what it reads, and a def that a decorator turned into another "
-            "object (functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it, such as "
-            "`lambda t: f(t)`, `lambda t: s(t)` for an interpolant over time, or `lambda t: np.sin(t)` (#2512 row B2)."
-        )
-    try:
-        declared = list(inspect.signature(fn).parameters.values())
-    except (TypeError, ValueError):
-        declared = None
-    if declared is None or any(p.kind is inspect.Parameter.POSITIONAL_ONLY for p in declared):
-        # `def f(t, /)`: renaming cannot help, wrapping does.
-        what = (
-            "has no signature Python can read"
-            if declared is None
-            else f"takes {inspect.signature(fn)}, with positional-only parameters"
-        )
-        raise TypeError(
-            f"boundary value {name!r} {what}, so it cannot be called by name: wrap it in a function that names what "
-            "it reads, such as `lambda t: f(t)` or `lambda x: f(x[0])` (#2512 row B2)."
-        )
-    bound = bind_user_callable(fn, BOUNDARY_VALUE_SLOTS, role="boundary value")
-    if bound.binding != "keyword":
-        try:
-            params = ", ".join(inspect.signature(fn).parameters)
-        except (TypeError, ValueError):
-            params = "an unreadable signature"
-        raise TypeError(
-            f"boundary value {name!r} takes ({params}), whose parameters are not all "
-            "named after the slots: a boundary value names them t, x, time first (#2378 phase 5, #2375 ruling 8), "
-            "and is called by name."
-        )
-    return bound
+    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise: the strict rule of
+    `callable_protocols.bind_by_name`, the one owner of it, which a graph node's value reads too (#2512 row B2)."""
+    return bind_by_name(fn, BOUNDARY_VALUE_SLOTS, role="boundary value", ruling="#2512 row B2")
 
 
 def _with_default(fn: Callable[..., Any], *names: str) -> str:

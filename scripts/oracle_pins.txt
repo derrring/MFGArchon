@@ -313,7 +313,8 @@ row grid/B8_no_image_raises         -
 #   refusing a swap loudly.
 row grid/B9_bc_read_at_solve_time   -
 # Two items were attached to rows N1 and N2 by the audit session's ruling of 2026-10-12, before A1, A2 and A3 existed.
-#   A1 reassigned them (audit session ruling, 2026-11-01): the readers' time default to N2, which A2 met (below), and
+#   A1 reassigned them (audit session ruling, 2026-11-01):
+# - to N2, the graph readers' time default, which A2 met (below);
 # - to A3, beside N2, under the user's ruling of 2026-11-01 that the network HJB pin is imposed inside the operator
 #   (#1544, #2617): the policy-iteration path (`NetworkPolicyIterationHJBSolver.solve_hjb_system`, `hjb_network.py:395`
 #   at 1a036677) imposes the node BCs by overwriting U[n] after each time step's policy iteration, so the interior rows
@@ -328,8 +329,8 @@ row network/N1_graph_bc_alphabet    tests/unit/test_geometry/boundary/test_graph
 #   through `bind_user_callable`, the value to (t, node) and the rule, a field of its own, to (t, node, field), time
 #   first, and read through `applicator_graph._graph_value_at`; the order before #2378 phase 5, (node, t), is refused.
 #   B2's guard holds it: `applicator_graph.py` is in its population and `_graph_value_at` among its owners. Its readers
-#   `GraphApplicator.apply`, `apply_hjb`, `apply_fp` and `apply_direct`, which read a callable node value at t = 0 when
-#   given no t, take None for no time, so the time-default scan finds any that goes back to a number.
+#   `GraphApplicator.apply`, `apply_hjb`, `apply_fp` and `apply_direct`, which before A2 read a callable node value at
+#   t = 0 when given no t, take None for no time, so the time-default scan finds any that goes back to a number.
 #   `apply_edge_direct` is refused since #2292's acceptance gate (#2493).
 row network/N2_node_bc_arity        tests/unit/test_geometry/boundary/test_value_has_one_owner_2512.py
 row network/N2_node_bc_arity        tests/unit/test_geometry/boundary/test_graph_value_binding_2296.py

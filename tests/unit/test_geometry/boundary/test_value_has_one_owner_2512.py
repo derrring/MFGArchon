@@ -358,8 +358,8 @@ def test_a_planted_callable_decode_is_found(package_copy, planted):
 # `get_bc_value_at_boundary` with ``time=`` one. Blind spots: a literal passed positionally, through a name, or
 # through a helper that forwards its own parameter (FP-FDM's level-0 write passes ``time=0.0`` to `_get_bc_value`,
 # which is t_0, not a default); a negative literal, ``t=-0.0``, which is a unary minus, not a constant; a call
-# outside a function or lambda body, as in the other checks here; `BCSegment.get_value`'s ``t=``, which is not
-# checked, since `NodeBC.get_value` shares its name; and a signature default forwarded to the owner,
+# outside a function or lambda body, as in the other checks here; a ``t=`` literal given to `BCSegment.get_value` or
+# `NodeBC.get_value`, which reach an owner only through a name; and a signature default forwarded to the owner,
 # ``def f(..., time=0.0)`` passing ``t=time``, which reads t = 0 for every caller that omits it: the next check's.
 # A graph node's value and rule are read at their time by `_graph_value_at`, the graph's owner of that read (#2296).
 _TIME_KEYWORDS = {

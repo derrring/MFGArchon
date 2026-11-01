@@ -206,6 +206,62 @@ def bind_user_callable(
     )
 
 
+def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str) -> BoundCallable:
+    """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal.
+
+    Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
+    place: such a callable is called by name only, so one with a parameter named otherwise and no default is refused,
+    and so is one that cannot be called by name -- a positional-only parameter, or a signature that cannot be read. A
+    parameter named otherwise with a default keeps its default.
+
+    It is a function the user writes, a ``def`` or a ``lambda``, or a ``functools.partial`` of one (user ruling,
+    2026-10-11): another callable's parameter names were not written against the slots. A SciPy interpolant takes
+    ``(x, ...)`` and would read time data at the position; a class instance, a bound method, a builtin, a ufunc, a
+    vectorized or jax-wrapped function are refused the same way, with the wrap that makes each one a function. Bound by
+    position instead, a callable with no readable signature written in another order would be read swapped (#2296).
+    """
+    name = getattr(fn, "__qualname__", fn)
+    names = ", ".join(slots.order)
+    wrap = f"`lambda {slots.order[0]}: f({slots.order[0]})` or `lambda {names}: f({names})`"
+    target = fn
+    while isinstance(target, functools.partial):
+        target = target.func
+    if not inspect.isfunction(target):
+        raise TypeError(
+            f"{role} {name!r} is of type {type(fn).__name__}, not a plain def or lambda: a {role} is a function whose "
+            "parameter names declare what it reads, and a def that a decorator turned into another object "
+            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it in a function that names "
+            f"what it reads, such as {wrap} ({ruling})."
+        )
+    try:
+        declared = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        declared = None
+    if declared is None or any(p.kind is inspect.Parameter.POSITIONAL_ONLY for p in declared):
+        # `def f(t, /)`: renaming cannot help, wrapping does.
+        what = (
+            "has no signature Python can read"
+            if declared is None
+            else f"takes {inspect.signature(fn)}, with positional-only parameters"
+        )
+        raise TypeError(
+            f"{role} {name!r} {what}, so it cannot be called by name: wrap it in a function that names what it reads, "
+            f"such as {wrap} ({ruling})."
+        )
+    bound = bind_user_callable(fn, slots, role=role)
+    if bound.binding != "keyword":
+        try:
+            params = ", ".join(inspect.signature(fn).parameters)
+        except (TypeError, ValueError):
+            params = "an unreadable signature"
+        raise TypeError(
+            f"{role} {name!r} takes ({params}), whose parameters are not all named after the slots: a {role} names "
+            f"them {names}, time first (#2378 phase 5, #2375 ruling 8), and is called by name."
+        )
+    return bound
+
+
 def out_of_order(names: Sequence[str], slots: Slots) -> bool:
     """Whether positional parameter ``names`` break ``slots``' order: a time parameter anywhere but
     at the ``t`` slot's position, or slot-named parameters out of slot order. The one statement of

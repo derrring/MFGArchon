@@ -357,7 +357,7 @@ def _graph_condition(bc_type: GraphBCType) -> dict[str, float | Callable[..., fl
 
     Measured 2026-09-10, one field carried both contracts: the CUSTOM cell read SILENT for a scalar, REFUSED for a
     `(node, t)` callable and applied for `(field, node, t)`, from an applicator that never changed. A CUSTOM condition
-    now takes its rule as `rule=` and refuses a value (#2296).
+    now takes its rule as `rule=` and refuses a non-zero value (#2296).
     """
     if bc_type is GraphBCType.CUSTOM:
         return {"rule": _custom_node_bc}
@@ -1041,7 +1041,7 @@ def _gate_cases():
             )
         )
     # review 4: a masked array, whose masked entries read as None and were written as NaN; a finite real number whose
-    # float() saturates to inf rather than raising; set_custom_bc's value is its bc_func
+    # float() saturates to inf rather than raising; set_custom_bc's rule is its bc_func
     refuses.append(
         (
             "apply_direct[values as a masked array]",
