@@ -370,7 +370,7 @@ class GraphApplicator(BaseGraphApplicator):
                     f"GraphApplicator.from_network_geometry: degree_threshold is {threshold!r}; it takes a number, the "
                     "largest degree a boundary node has (#2292)."
                 )
-            boundary_nodes = cls._detect_low_degree_nodes(geometry, threshold)
+            boundary_nodes = cls._detect_low_degree_nodes(geometry, float(threshold))
         elif boundary_type == "spatial":
             boundary_nodes = cls._detect_spatial_boundary_nodes(geometry)
         else:  # "custom"
@@ -433,7 +433,7 @@ class GraphApplicator(BaseGraphApplicator):
         return np.asarray((adj != 0).sum(axis=1)).flatten()
 
     @staticmethod
-    def _detect_low_degree_nodes(geometry, threshold: int) -> list[int]:
+    def _detect_low_degree_nodes(geometry, threshold: float) -> list[int]:
         """Detect nodes with degree <= threshold."""
         degrees = GraphApplicator._node_degrees(geometry)
         return [int(i) for i in np.where(degrees <= threshold)[0]]
