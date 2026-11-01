@@ -22,7 +22,7 @@ from mfgarchon.alg.optimization.optimal_transport.wasserstein_solver import Wass
 from mfgarchon.alg.optimization.variational_problem import VariationalMFGComponents
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.extensions.topology import NetworkMFGComponents
-from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig
+from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, NodeBC
 from mfgarchon.geometry.graph.maze_hybrid import AlgorithmSpec, HybridMazeConfig, HybridStrategy
 from mfgarchon.hooks.debug import PerformanceHook
 from mfgarchon.utils.deprecation import NEVER_READ
@@ -137,13 +137,19 @@ def test_a_reason_names_no_path_the_code_does_not_take(target, kwargs, false):
     assert not [phrase for phrase in false if phrase in str(refused.value)], str(refused.value)
 
 
+#: One graph condition, built once, so a round trip through `GraphBCConfig` can be compared by identity (#2292).
+_GRAPH_NODE_BCS = (NodeBC(nodes=[0], name="row"),)
+
 DATACLASSES = [
     (MCMCConfig, {}, "num_samples", 7),
     (MCConfig, {}, "num_samples", 7),
     (WassersteinSolverConfig, {}, "max_iterations", 7),
     (NetworkMFGComponents, {}, "node_potential_func", _f),
     (VariationalMFGComponents, {}, "terminal_cost_func", _f),
-    (GraphBCConfig, {}, "edge_bcs", []),
+    # node_bcs, not edge_bcs: an edge condition is refused (#2493). The config keeps its conditions as a tuple, which
+    # `tuple()` hands back as the same object, so the round trip below compares identity; and not the empty default,
+    # which a config dropping the field would hand back too (#2292).
+    (GraphBCConfig, {}, "node_bcs", _GRAPH_NODE_BCS),
     (MultiPopulationProblem, {"populations": [object()]}, "population_names", ["only"]),
     (
         HybridMazeConfig,

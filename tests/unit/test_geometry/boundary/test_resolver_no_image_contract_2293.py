@@ -21,14 +21,13 @@ from __future__ import annotations
 
 import pytest
 
-from mfgarchon.geometry.boundary import BCSegment
+from mfgarchon.geometry.boundary import BCSegment, BCType
 from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
 from mfgarchon.geometry.boundary.resolution import FPResolver, HJBResolver, MathBCType
 
-#: A real member of a real alphabet in this package with no `BCType` counterpart, so it is the shape
-#: a caller actually reaches this path with rather than a synthetic sentinel. `GraphBCType.SOURCE`
-#: and `.CUSTOM` would do as well; `ABSORBING` is used because #2292 records it as the member that
-#: reaches `NodeBC` today.
+#: A real member of a real alphabet in this package with no `BCType` counterpart, rather than a synthetic sentinel.
+#: `BCSegment` refuses it when built (#2292), so `_segment` sets it on a built segment, the one way left to reach a
+#: resolver with it; `GraphBCType.SOURCE` and `.CUSTOM` would do as well.
 _NO_IMAGE = GraphBCType.ABSORBING
 
 #: `FPResolver` needs these to resolve a real member at all, so passing them proves the refusal
@@ -37,7 +36,11 @@ _STATE = {"drift": 0.5, "diffusion": 0.1}
 
 
 def _segment(bc_type):
-    return BCSegment(name="s", bc_type=bc_type, value=0.0)
+    """A segment carrying ``bc_type``. ``BCSegment`` refuses a ``GraphBCType`` when it is built (#2292); a built
+    segment is mutable, though, so the type is set on one here, and the resolvers must still refuse it."""
+    segment = BCSegment(name="s", bc_type=BCType.NO_FLUX, value=0.0)
+    segment.bc_type = bc_type
+    return segment
 
 
 def test_the_state_is_sufficient_for_a_member_that_does_have_an_image():

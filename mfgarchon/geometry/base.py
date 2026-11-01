@@ -1730,15 +1730,18 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
 
         Node-BC lives at this abstraction so NetworkGeometry (grid/random/scale-free) and
         MazeGeometry inherit it uniformly (graph is the highest abstraction over both). The carrier
-        is a ``GraphBCConfig`` (multi-region node/edge BC: DIRICHLET / ABSORBING / SOURCE / NEUMANN);
-        ``None`` means no explicit BC (the NEUMANN / zero-flux default), matching the prior behaviour.
+        is a ``GraphBCConfig`` (multi-region node BC: DIRICHLET / ABSORBING / SOURCE / NEUMANN /
+        CUSTOM; an edge BC is refused, #2493); ``None`` means no explicit BC (the NEUMANN / zero-flux
+        default), matching the prior behaviour.
 
         Parameters
         ----------
         boundary_conditions : GraphBCConfig or None
-            Declarative node boundary conditions, or ``None``.
+            Declarative node boundary conditions, or ``None``. Anything else is refused by name (#2292).
         """
-        self._node_bc = boundary_conditions
+        from mfgarchon.geometry.boundary.applicator_graph import accept_graph_boundary_conditions
+
+        self._node_bc = accept_graph_boundary_conditions(boundary_conditions, type(self).__name__)
 
     @property
     def dimension(self) -> int:
@@ -2180,7 +2183,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
     def get_boundary_conditions(self):
         """Node boundary conditions owned by the graph geometry (Issue #1471).
 
-        Returns a ``GraphBCConfig`` (node/edge BC over node sets) or ``None``. This is the graph
+        Returns a ``GraphBCConfig`` (node BC over node sets) or ``None``. This is the graph
         analogue of the continuum ``BoundaryConditions`` on ``TensorProductGrid`` — the boundary
         *locus* on a graph is a node set, not a wall segment, so the two BC representations are
         genuinely different types (the accessor is polymorphic by geometry, consumed through the
@@ -2193,8 +2196,12 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         return getattr(self, "_node_bc", None) is not None
 
     def set_boundary_conditions(self, boundary_conditions) -> None:
-        """Set/replace the node-BC config at runtime (Issue #1471)."""
-        self._node_bc = boundary_conditions
+        """Set/replace the node-BC config at runtime (Issue #1471): a ``GraphBCConfig`` or ``None`` (#2292)."""
+        from mfgarchon.geometry.boundary.applicator_graph import accept_graph_boundary_conditions
+
+        self._node_bc = accept_graph_boundary_conditions(
+            boundary_conditions, f"{type(self).__name__}.set_boundary_conditions"
+        )
 
     def get_collocation_points(self) -> NDArray:
         """

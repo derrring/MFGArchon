@@ -42,6 +42,7 @@ class TestGeometricOperationMapping:
             ("neumann", "reflect"),
             ("robin", "reflect"),
             ("periodic", "periodic"),
+            ("reflecting", "reflect"),
             ("dirichlet", "clamp"),
             ("absorbing", "clamp"),
         ],
@@ -58,9 +59,17 @@ class TestGeometricOperationMapping:
         """
         assert bc_type_to_geometric_operation(None) == "clamp"
 
-    def test_an_unrecognised_type_also_clamps(self):
-        """Same conservative fallback, reached by a different route."""
-        assert bc_type_to_geometric_operation("something_nobody_declared") == "clamp"
+    @pytest.mark.parametrize("bc_type", ["something_nobody_declared", "source", "custom"])
+    def test_an_unrecognised_type_is_refused_by_name(self, bc_type):
+        """A string no BC type spells is refused, not read as a stop at the wall. It used to clamp, and so did the
+        graph-only "source" and "custom", and REFLECTING through the same fallback (#2292)."""
+        with pytest.raises(ValueError, match=rf"{bc_type!r} is no BC type this reads"):
+            bc_type_to_geometric_operation(bc_type)
+
+    @pytest.mark.parametrize("bc_type", ["flux", "extrapolation_linear", "extrapolation_quadratic"])
+    def test_a_type_with_no_geometric_operation_is_refused_by_name(self, bc_type):
+        with pytest.raises(NotImplementedError, match="has no geometric operation"):
+            bc_type_to_geometric_operation(bc_type)
 
     def test_the_mapping_is_case_insensitive(self):
         assert bc_type_to_geometric_operation("NO_FLUX") == "reflect"
@@ -77,7 +86,7 @@ class TestGeometricOperationMapping:
         """
         produced = {
             bc_type_to_geometric_operation(t)
-            for t in ("no_flux", "neumann", "robin", "periodic", "dirichlet", "absorbing", None, "junk")
+            for t in ("no_flux", "neumann", "robin", "periodic", "dirichlet", "absorbing", None)
         }
         assert produced == {"reflect", "periodic", "clamp"}
 
