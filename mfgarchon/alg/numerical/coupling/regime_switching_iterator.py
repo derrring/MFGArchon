@@ -121,6 +121,10 @@ class RegimeSwitchingResult:
     regime_config: RegimeSwitchingConfig | None = None
     """The regime switching configuration used."""
 
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """A refused verdict's ``convergence_reason`` and ``inner_hjb_failures``, the last sweep's failed inner HJB steps,
+    which ``verdict_reads_inner_failures`` writes for every coupler (#2644)."""
+
 
 class RegimeSwitchingIterator(BaseCouplingIterator):
     """Picard iteration for Markov-switching MFG systems.

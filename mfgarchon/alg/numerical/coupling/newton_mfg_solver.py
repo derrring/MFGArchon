@@ -310,13 +310,16 @@ class NewtonMFGSolver(BaseCouplingIterator):
             absolute_tolerance = self.newton_tolerance
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
+        last_reason = [""]
+
         def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
             # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
             # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
             converged, reason = outer_verdict(U, M, F_HJB, F_FP)
-            return refuse_convergence_over_failed_inner_solves(
+            converged, last_reason[0] = refuse_convergence_over_failed_inner_solves(
                 converged, reason, read_inner_solve_failures(self.mfg_residual.hjb_solver)
             )
+            return converged, last_reason[0]
 
         # Initialize from warm start or cold start
         warm_start = self.get_warm_start_data()
@@ -417,7 +420,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         return self._create_result(
             converged=newton_info.converged,
-            reason="Newton converged" if newton_info.converged else "Newton max iterations",
+            # A last verdict refused over failed inner steps says so, not only that the budget ran out (#2644).
+            reason="Newton converged"
+            if newton_info.converged
+            else last_reason[0]
+            if last_reason[0].startswith("inner_hjb_not_converged")
+            else "Newton max iterations",
             elapsed=elapsed,
             newton_info=newton_info,
         )

@@ -66,6 +66,74 @@ def test_a_coupled_solve_is_not_converged_over_a_failed_inner_step(coupler, budg
     assert hjb.on_inner_failure == "raise"
 
 
+@pytest.mark.parametrize("coupler", ["graph", "regime switching"])
+def test_a_solver_shared_by_two_nodes_is_read_for_each_of_its_solves(coupler):
+    """The repo builds `GraphMFGSolver([p, p], ..., [h, h], ...)`: one HJB solver object for two nodes. Its latest record
+    is the second node's, so with a steep terminal at node 0 (2 failed steps at a 3-step budget) and a flat one at node
+    1 (none), reading each solver's latest record certified the result, converged=True at 658d143f (#2644 review 1,
+    M1). The sweep's record is each solve's, so the two failed steps of node 0 are read and the result is refused."""
+    from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+    from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+    from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+    from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+    def problem(terminal):
+        model = Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
+            volatility=0.4,
+        )
+        cond = Conditions(
+            m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2),
+            u_terminal=lambda x: terminal(np.asarray(x, dtype=float)[..., 0]),
+            T=0.5,
+        )
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return MFGProblem(model=model, domain=grid, conditions=cond, Nt=40)
+
+    steep, flat = problem(lambda x: 30.0 * (x - 0.7) ** 2), problem(lambda x: 0.0 * x)
+    hjb = HJBFDMSolver(steep, max_newton_iterations=3)
+    fps = [FPFDMSolver(steep), FPFDMSolver(flat)]
+    build = {
+        "graph": lambda: GraphMFGSolver(
+            [steep, flat], AdjacencyCoupling(0.05 * (np.ones((2, 2)) - np.eye(2))), [hjb, hjb], fps
+        ),
+        "regime switching": lambda: RegimeSwitchingIterator(
+            [steep, flat],
+            RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
+            [hjb, hjb],
+            fps,
+        ),
+    }[coupler]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = build().solve()
+    assert not result.converged
+    assert len(result.metadata["inner_hjb_failures"]) == 2, result.metadata.get("convergence_reason")
+
+
+def test_a_failure_with_no_record_begun_is_refused_under_record():
+    """A member that forgot to begin its record raised standalone, but inside a coupler it warned and dropped the
+    failure, so the coupler read an empty record and certified (#2644 review 1, S9)."""
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import InnerSolveFailure, report_inner_solve_failure
+
+    failure = InnerSolveFailure(t_idx=0, residual=1.0, tolerance=1e-6, steps=1, reason="budget exhausted", measure="m")
+    for policy in ("record", "fallback"):
+        with pytest.raises(RuntimeError, match="began none"):
+            report_inner_solve_failure(failure, policy=policy, record=None, solver="AMember")
+
+
+def test_the_1d_newton_refuses_an_exhausted_budget_by_default():
+    """At a one-step budget HJB-FDM's 1-D Newton exhausts its first step, t_idx 39. By default that is a
+    ConvergenceError, not a returned iterate; no test held the 1-D raise before (#2644 review 1, M2)."""
+    x = np.linspace(0.0, 1.0, 41)
+    with pytest.raises(ConvergenceError, match="did not converge at t_idx=39"):
+        HJBFDMSolver(_problem(), max_newton_iterations=1).solve_hjb_system(
+            np.ones((41, 41)), 2.0 * (x - 0.7) ** 2, np.zeros((41, 41))
+        )
+
+
 def test_an_owner_raise_inside_the_nd_newton_reaches_the_caller_as_itself(monkeypatch):
     """HJB-FDM's nD Newton catches RuntimeError around the generic solver to fall back or re-raise, and a
     ConvergenceError is a RuntimeError: an owner's raise from inside it was caught and replaced (#2644)."""
@@ -137,6 +205,9 @@ def test_the_weak_form_newton_refuses_an_exhausted_budget_and_records_it_when_as
     with pytest.warns(RuntimeWarning, match="Newton iteration budget exhausted"):
         fem.solve_hjb_system(**args)
     assert fem.inner_solve_failures(), "a one-iteration budget recorded no step"
+    # a budget below 1 took no step and handed back the terminal value as every step's answer (#2644 review 1, S1)
+    with pytest.raises(ValueError, match="budget of at least 1"):
+        fem.solve_hjb_system(**{**args, "max_newton_iterations": 0})
 
 
 def test_hjb_gfdm_records_the_residual_of_the_step_it_returns():

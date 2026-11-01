@@ -14,10 +14,15 @@ here.
 loop count. A count pin means a new loop inside an allowed function still fails. An allowance that covers no site
 fails, so a function that moves cannot leave its name behind.
 
+It enumerates every function, as the census does: a def nested in a method, under an ``if`` or under a ``try`` is one
+of them, a nested function's loops are its own, and a name defined twice in a module is one site whose loops add up.
+Each member's loop count is pinned, so a second loop inside a member fails even though the member calls the owner.
+
 **Known blind spots**, as plan_B's census states them: tolerances under other names; fixed-count iterations with no
 test; recursion; iterations inside third-party code and callables passed in; anything outside `mfgarchon/alg/` (the
 geometry projections and `core/` minimisers are #2644's B2 rows); and a member that calls the owner on one path and
-returns its iterate in silence on another.
+returns its iterate in silence on another. Also: a function built at run time (``exec``, ``types.FunctionType``), and
+an iteration written as a comprehension, which has no early exit to read.
 """
 
 from __future__ import annotations
@@ -228,43 +233,67 @@ def scan(root: Path) -> dict[tuple[str, str], dict]:
         )
         if rel is None:
             continue
-        for cls_or_mod in [tree, *[c for c in ast.walk(tree) if isinstance(c, ast.ClassDef)]]:
-            owner_name = "" if cls_or_mod is tree else f"{cls_or_mod.name}."
-            for func in cls_or_mod.body:
-                if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for func, name in _functions(tree):
+            derived = _derived(func)
+
+            def convergence(test, derived=derived):
+                return (
+                    _tol_compare(test)
+                    or _converg(test)
+                    or bool(set(_idents(test)) & derived)
+                    or bool(set(_called(test)) & helpers)
+                )
+
+            lines = []
+            for loop in _own(func.body):
+                if not isinstance(loop, LOOPS):
                     continue
-                derived = _derived(func)
-
-                def convergence(test, derived=derived):
-                    return (
-                        _tol_compare(test)
-                        or _converg(test)
-                        or bool(set(_idents(test)) & derived)
-                        or bool(set(_called(test)) & helpers)
-                    )
-
-                lines = []
-                for loop in _own(func.body):
-                    if not isinstance(loop, LOOPS):
-                        continue
-                    bound = loop.test if isinstance(loop, ast.While) else loop.iter
-                    p1 = (isinstance(loop, ast.While) and convergence(loop.test)) or _early_exits(loop, convergence)
-                    p2 = any(BUDGET.search(i) for i in _idents(bound)) and (
-                        isinstance(loop, ast.While) or _early_exits(loop, lambda _t: True)
-                    )
-                    if p1 or p2:
-                        lines.append(loop.lineno)
-                if lines:
-                    found[(rel, owner_name + func.name)] = {
-                        "lines": sorted(lines),
-                        "owner": bool(set(_called(func)) & OWNER),
-                    }
+                bound = loop.test if isinstance(loop, ast.While) else loop.iter
+                p1 = (isinstance(loop, ast.While) and convergence(loop.test)) or _early_exits(loop, convergence)
+                p2 = any(BUDGET.search(i) for i in _idents(bound)) and (
+                    isinstance(loop, ast.While) or _early_exits(loop, lambda _t: True)
+                )
+                if p1 or p2:
+                    lines.append(loop.lineno)
+            if lines:
+                # A name defined twice in a module is one site: its loops add up, and it routes through the owner
+                # only if every definition does, so a later definition cannot hide an earlier one or be hidden.
+                site = found.setdefault((rel, name), {"lines": [], "owner": True})
+                site["lines"] = sorted(site["lines"] + lines)
+                site["owner"] = site["owner"] and bool(set(_own_calls(func)) & OWNER)
     return found
+
+
+def _functions(tree: ast.AST):
+    """Every function in ``tree``, nested ones included, as the census enumerates them, with its qualified name: the
+    enclosing classes and functions, then its own. A def under an ``if`` or a ``try`` is one of them."""
+    stack = [(tree, "")]
+    while stack:
+        node, prefix = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield child, prefix + child.name
+                stack.append((child, f"{prefix}{child.name}."))
+            elif isinstance(child, ast.ClassDef):
+                stack.append((child, f"{prefix}{child.name}."))
+            else:
+                stack.append((child, prefix))
+
+
+def _own_calls(func: ast.AST) -> list[str]:
+    """The calls ``func`` makes itself: a nested function's owner call covers the nested function's own loops."""
+    return [
+        n.func.attr if isinstance(n.func, ast.Attribute) else n.func.id
+        for n in _own(func.body)
+        if isinstance(n, ast.Call) and isinstance(n.func, (ast.Attribute, ast.Name))
+    ]
 
 
 def _violations(found: dict[tuple[str, str], dict]) -> list[str]:
     out = []
     for key, site in sorted(found.items()):
+        if key in MEMBERS and len(site["lines"]) != MEMBERS[key]:
+            out.append(f"{key}: {len(site['lines'])} loops, the member has {MEMBERS[key]}: {site['lines']}")
         if site["owner"]:
             continue
         if key not in ALLOWED:
@@ -274,12 +303,14 @@ def _violations(found: dict[tuple[str, str], dict]) -> list[str]:
     return out
 
 
+#: The members, each with its loop count: a second loop inside a member that already calls the owner fails the count,
+#: whether or not it reports (#2644 review 1, M3).
 MEMBERS = {
-    ("numerical/hjb_solvers/base_hjb.py", "solve_hjb_timestep_newton"),
-    ("numerical/hjb_solvers/hjb_gfdm.py", "HJBGFDMSolver._solve_timestep"),
-    ("numerical/hjb_solvers/hjb_howard.py", "HJBHowardSolver._howard_step"),
-    ("numerical/network_solvers/hjb_network.py", "NetworkPolicyIterationHJBSolver._policy_iteration_step"),
-    ("numerical/weak_form_hjb_solver.py", "WeakFormHJBSolver._solve_timestep_newton"),
+    ("numerical/hjb_solvers/base_hjb.py", "solve_hjb_timestep_newton"): 1,
+    ("numerical/hjb_solvers/hjb_gfdm.py", "HJBGFDMSolver._solve_timestep"): 1,
+    ("numerical/hjb_solvers/hjb_howard.py", "HJBHowardSolver._howard_step"): 1,
+    ("numerical/network_solvers/hjb_network.py", "NetworkPolicyIterationHJBSolver._policy_iteration_step"): 1,
+    ("numerical/weak_form_hjb_solver.py", "WeakFormHJBSolver._solve_timestep_newton"): 1,
 }
 
 
@@ -296,7 +327,7 @@ def test_every_inner_iteration_under_alg_reports_to_the_owner(found):
 def test_the_census_finds_the_members_and_each_routes_through_the_owner(found):
     """The control: plan_B's census found these at ee0879d0. Were the predicate to stop seeing one, the rule above
     could not fire for it."""
-    assert {key for key in MEMBERS if key in found and found[key]["owner"]} == MEMBERS
+    assert {key for key in MEMBERS if key in found and found[key]["owner"]} == set(MEMBERS)
 
 
 def test_every_allowance_still_covers_a_site(found):
@@ -317,6 +348,25 @@ PLANTED = {
         "mfgarchon/alg/numerical/hjb_solvers/hjb_howard.py",
         "report_inner_solve_failure(",
         "print(",
+    ),
+    "a closure under an if in a method": (
+        "mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
+        None,
+        "\n\nclass _Rival:\n    def solve(self, u, f, max_iterations, tolerance, nested):\n        if nested:\n\n"
+        "            def newton(u):\n                for _ in range(max_iterations):\n                    step = f(u)\n"
+        "                    u = u - step\n                    if abs(step) < tolerance:\n                        break\n"
+        "                return u\n\n            return newton(u)\n        return u\n",
+    ),
+    "a def under try/except ImportError": (
+        "mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
+        None,
+        "\n\ntry:\n    import _no_such_backend\nexcept ImportError:" + _NEWTON.replace("\n", "\n    "),
+    ),
+    "a second, silent loop inside a member": (
+        "mfgarchon/alg/numerical/hjb_solvers/hjb_howard.py",
+        "        for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below\n",
+        "        for _ in range(self.max_iter):\n            if alpha is None:\n                break\n"
+        "        for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below\n",
     ),
     "a second loop in an allowed function": (
         "mfgarchon/alg/numerical/gfdm_components/positive_qp_fan.py",

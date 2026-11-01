@@ -83,11 +83,16 @@ class TestHJBFDMSolverInitialization:
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        with pytest.raises(ValueError, match="max_newton_iterations must be >= 1"):
+        with pytest.raises(ValueError, match=r"max_newton_iterations is .*budget of at least 1"):
             HJBFDMSolver(problem, max_newton_iterations=0)
 
-        with pytest.raises(ValueError, match="max_newton_iterations must be >= 1"):
+        with pytest.raises(ValueError, match=r"max_newton_iterations is .*budget of at least 1"):
             HJBFDMSolver(problem, max_newton_iterations=-5)
+
+        # a budget is a number of steps: a float or a bool is refused by name, not truncated or read as 1 (#2644)
+        for budget in (20.0, True):
+            with pytest.raises(TypeError, match="an integer is required"):
+                HJBFDMSolver(problem, max_newton_iterations=budget)
 
     def test_invalid_tolerance(self):
         """Test that invalid newton_tolerance raises error."""
@@ -919,7 +924,8 @@ class TestHJBFDMSolverNewtonFallback:
         assert call_kwargs["max_iterations"] == solver.max_newton_iterations * 10
 
     def test_on_inner_failure_ignored_for_fixed_point(self):
-        """Test that on_inner_failure's fallback is irrelevant when solver_type='fixed_point'."""
+        """solver_type='fixed_point' takes on_inner_failure='fallback'. The fixed point has no fallback, so it records
+        as 'record' does rather than raising (#2644)."""
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )

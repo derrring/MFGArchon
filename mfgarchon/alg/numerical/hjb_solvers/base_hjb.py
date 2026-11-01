@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numbers
 import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -60,10 +61,11 @@ DEFAULT_NEWTON_TOLERANCE: float = 1e-6
 class InnerSolveFailure:
     """A backward time step whose nonlinear solve returned something that is not a root (#1878).
 
-    ``residual`` is the member's own measure of the iterate it returned, compared with ``tolerance``, and ``measure``
-    names it: the members measure different quantities (a residual norm, a step norm, a policy change), so a reader
-    compares ``residual`` with its own ``tolerance`` and never with another member's (#2644). ``steps`` is how many
-    solver steps that iterate is from the start, and ``reason`` says why the solve stopped.
+    ``residual`` is the member's own measure of where its solve stopped, compared with ``tolerance``, and ``measure``
+    names it: the members measure different quantities (a residual norm of the iterate returned, the size of the last
+    step, a policy change, a fixed-point step's residual at the iterate it started from), so a reader compares
+    ``residual`` with its own ``tolerance`` and never with another member's (#2644). ``steps`` is how many solver steps
+    the returned iterate is from the start, and ``reason`` says why the solve stopped.
     """
 
     t_idx: int
@@ -76,17 +78,41 @@ class InnerSolveFailure:
 
 #: What a solver does when an inner nonlinear solve stops without converging (#2644). "raise", the default, refuses
 #: the iterate. "record" keeps it, appends the failure to the solver's record for a reader, and warns; a coupled
-#: solve sets it on its HJB solvers for its sweeps and reads the record at its verdict (#1878). "fallback", which
-#: only HJB-FDM's nD Newton takes, first tries value iteration, and records if that fails too.
+#: solve sets it on its HJB solvers for its sweeps and reads the record at its verdict (#1878). "fallback", which only
+#: HJB-FDM takes, retries a failed nD Newton step with value iteration and records if that fails too; on HJB-FDM's other
+#: inner solves, 1-D Newton and the nD fixed point, it records as "record" does.
 INNER_FAILURE_POLICIES: tuple[str, ...] = ("raise", "record")
 
 
-def checked_inner_budget(budget: int, name: str, solver: str) -> int:
-    """An inner iteration's budget, refused below 1 (#2644): a budget of 0 takes no step, so it would hand the starting
-    value back as the step's answer, or fail every step by construction."""
-    if isinstance(budget, bool) or not isinstance(budget, (int, np.integer)) or budget < 1:
+def checked_inner_budget(budget: object, name: str, solver: str) -> int:
+    """An inner iteration's budget, a number of steps: an integer (a ``numbers.Integral`` that is not a bool) of at
+    least 1, or refused by name (#2644). A float was truncated or failed later without naming itself, and a budget of 0
+    takes no step, so it would hand the starting value back as the step's answer, or fail every step by construction.
+    """
+    if isinstance(budget, (bool, np.bool_)) or not isinstance(budget, numbers.Integral):
+        raise TypeError(
+            f"{solver}: {name} is {budget!r}; an inner iteration's budget is a number of steps, and an integer is "
+            "required (#2644)."
+        )
+    if budget < 1:
         raise ValueError(f"{solver}: {name} is {budget!r}; an inner iteration needs a budget of at least 1 (#2644).")
     return int(budget)
+
+
+def begin_inner_solve_record(solver: Any) -> list[InnerSolveFailure]:
+    """Start ``solver``'s record of one solve's inner failures, the one place a record begins (#2644).
+
+    While a coupled solve reads its solvers (`inner_failures_recorded`), each record begun is also logged, in solve
+    order, on the log it hands the solver as ``_inner_solve_log``. A coupler can give one solver object several nodes
+    or regimes, and that object's latest record is then only its last slot's, so the coupler reads the last sweep
+    from the log (#2644 review 1, M1).
+    """
+    record: list[InnerSolveFailure] = []
+    solver._inner_solve_failures = record
+    log = getattr(solver, "_inner_solve_log", None)
+    if log is not None:
+        log.append((solver, record))
+    return record
 
 
 def report_inner_solve_failure(
@@ -120,9 +146,17 @@ def report_inner_solve_failure(
             message + " To keep the iterate, set on_inner_failure='record' and read inner_solve_failures().",
         )
     if policy not in ("record", "fallback"):
-        raise ValueError(f"{solver}: on_inner_failure is {policy!r}, not one of 'raise' or 'record' (#2644).")
-    if record is not None:
-        record.append(failure)
+        raise ValueError(
+            f"{solver}: on_inner_failure is {policy!r}, not one of 'raise', 'record' or 'fallback' (#2644)."
+        )
+    if record is None:
+        # Dropping it would leave the solve's record empty, so a coupler reading it would certify over this step
+        # (#2644 review 1, S9).
+        raise RuntimeError(
+            f"{solver}: an inner failure under on_inner_failure={policy!r} has no record to go to, because this solve "
+            "began none (begin_inner_solve_record). A solver whose inner solve iterates begins one on entry (#2644)."
+        )
+    record.append(failure)
     warnings.warn(
         message + " A coupled solve reads inner_solve_failures() and does not report convergence over it (#1878).",
         RuntimeWarning,
@@ -345,7 +379,7 @@ class BaseHJBSolver(BaseNumericalSolver):
 
     def _begin_inner_solve_record(self) -> None:
         """Start the record of this solve's inner failures; a solver whose inner solve iterates calls it on entry."""
-        self._inner_solve_failures: list[InnerSolveFailure] | None = []
+        self._inner_solve_failures: list[InnerSolveFailure] | None = begin_inner_solve_record(self)
 
     def _inner_solve_failed(self, failure: InnerSolveFailure) -> None:
         """Hand an inner solve that stopped without a root to the owner, under this solver's policy (#2644)."""

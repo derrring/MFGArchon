@@ -559,9 +559,10 @@ SURFACE_NOT_HONOURED = {
     # ("FPSLJacobianSolver", "PERIODIC") is GONE (#1756): the class was retired, not repaired.
     ("HJBGFDMSolver", "DIRICHLET"): (
         # It passed by reading its walls from solves that had not converged. On this fixture its default Newton leaves
-        # 9 of 10 steps unconverged at Nx=21 at a budget of 30, 100 or 300 (worst residual 18 to 70) and 18 of 20 at
-        # Nx=41; and the same holds with a terminal that meets g at the walls, so not only #2610's jump. A step that does
-        # not converge now raises (#2644), so the row certifies once the step converges.
+        # 9 of 10 steps unconverged at Nx=21 at a budget of 30, 100 or 300 (worst residual 16.7 to 18.1) and 18 of 20 at
+        # Nx=41 (32.7 to 34.0). With its terminal multiplied by 4x(1 - x), which meets g = 0 at both walls, 8 of 10 and
+        # 17 of 20 are, so it is not only #2610's jump. A step that does not converge now raises (#2644), so the row
+        # certifies once the step converges.
         "#2610: its Newton does not converge on this fixture, so no converged solve certifies the wall (#2644)",
         ConvergenceError,
     ),

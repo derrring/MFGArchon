@@ -60,6 +60,12 @@ def _network_diffusion(
     return float(diffusion_from_volatility(float(volatility)))
 
 
+#: `_policies_equal`'s bound on a transition rate's change between policy iterations, `np.allclose`'s
+#: atol + rtol * |rate|; a policy that has not settled is recorded against the same bound (#2644).
+_RATES_ATOL = 1e-10
+_RATES_RTOL = 1e-5
+
+
 class NetworkHJBSolver(BaseHJBSolver):
     """
     HJB solver for Mean Field Games on networks.
@@ -421,15 +427,28 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                 break
         else:
             # The rates did not settle within the budget, so the value is not the policy-iteration fixed point (#2644).
-            change = max(float(np.max(np.abs(old_rates[i] - self.current_rates[i]))) for i in range(self.num_nodes))
+            # The residual is the stopping test's own quantity, so it is compared with 1: `np.allclose` bounds a change
+            # by atol + rtol * |rate|, not by atol alone (#2644 review 1, S4).
+            change = max(
+                float(
+                    np.max(
+                        np.abs(old_rates[i] - self.current_rates[i])
+                        / (_RATES_ATOL + _RATES_RTOL * np.abs(self.current_rates[i]))
+                    )
+                )
+                for i in range(self.num_nodes)
+            )
             self._inner_solve_failed(
                 InnerSolveFailure(
                     t_idx=t_idx,
                     residual=change,
-                    tolerance=1e-10,  # `_policies_equal`'s atol
+                    tolerance=1.0,
                     steps=self.max_policy_iterations,
                     reason="policy iteration budget exhausted",
-                    measure="the largest change in a node's transition rates at the last iteration",
+                    measure=(
+                        "the largest ratio of a transition rate's change at the last iteration to the bound the "
+                        f"stopping test allows it, {_RATES_ATOL:g} + {_RATES_RTOL:g} * |rate|"
+                    ),
                 )
             )
         return u_current
@@ -486,7 +505,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
 
     def _policies_equal(self, rates1: dict[int, np.ndarray], rates2: dict[int, np.ndarray]) -> bool:
         """Two rate policies are equal when every node's rate vector matches."""
-        return all(np.allclose(rates1[i], rates2[i], atol=1e-10) for i in range(self.num_nodes))
+        return all(np.allclose(rates1[i], rates2[i], rtol=_RATES_RTOL, atol=_RATES_ATOL) for i in range(self.num_nodes))
 
 
 # Factory function for network HJB solvers

@@ -30,6 +30,7 @@ import numpy as np
 
 pytest.importorskip("cvxpy")
 
+from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.core.hamiltonian import (
@@ -845,7 +846,12 @@ def test_integrated_howard_dirichlet_value():
     """Issue #1118 PR2a: inner_solver='howard' now honors the prescribed Dirichlet VALUE via
     the shared value-form BC rows, not the old hardcoded b=0. Uses a NONZERO g_D and a uniform
     Dirichlet BC (the previously-silently-misclassified case): the backward steps must pin the
-    boundary to g_D, not 0 and not the terminal value."""
+    boundary to g_D, not 0 and not the terminal value.
+
+    The Dirichlet value is imposed on its rows whatever the policy iteration does: measured at #2644's head,
+    |U - g_D| on the boundary is 0.0 at every step below Nt, the two whose policy did not settle (t_idx 1 and 0)
+    among them. So this row reads the walls under "record", and asserts that count (#2644 review 1, S8); by default
+    the same solve is refused (M2)."""
     g_D = 2.0
     bc = BoundaryConditions(
         segments=[
@@ -857,10 +863,15 @@ def test_integrated_howard_dirichlet_value():
     gfdm, pts, bdry = _make_howard_gfdm_with_bc(bc)
     # Howard's policy does not settle at every step of this fixture, even at 500 iterations, which is its own issue
     # after #2644; so it solves under "record", and the record says which steps (#2644).
-    gfdm.on_inner_failure = "record"
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2  # terminal != g_D at the boundary
-    U = gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
-    assert all("Howard policy iteration budget exhausted" in f.reason for f in gfdm.inner_solve_failures())
+    M = np.ones((gfdm.problem.Nt + 1, *U_T.shape))
+    with pytest.raises(ConvergenceError, match="Howard policy iteration budget exhausted"):
+        gfdm.solve_hjb_system(M_density=M, U_terminal=U_T)
+    gfdm.on_inner_failure = "record"
+    U = gfdm.solve_hjb_system(M_density=M, U_terminal=U_T)
+    failures = gfdm.inner_solve_failures()
+    assert [f.t_idx for f in failures] == [1, 0], failures
+    assert all("Howard policy iteration budget exhausted" in f.reason for f in failures)
     assert np.all(np.isfinite(U))
     assert np.allclose(U[0, bdry], g_D, atol=1e-6), (
         f"Dirichlet boundary not honored: U[0, boundary]={U[0, bdry]} != g_D={g_D} "

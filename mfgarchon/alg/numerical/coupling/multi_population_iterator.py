@@ -426,6 +426,9 @@ class MultiPopulationResult:
         sweep's values.
     population_names : list[str]
         Names of populations.
+    metadata : dict
+        A refused verdict's ``convergence_reason`` and ``inner_hjb_failures``, the last sweep's failed inner HJB steps,
+        which ``verdict_reads_inner_failures`` writes for every coupler (#2644).
     """
 
     def __init__(self, U, M, iterations, converged, errors, population_names, errors_M=None, errors_U=None):
@@ -437,6 +440,7 @@ class MultiPopulationResult:
         self.errors_M = errors_M
         self.errors_U = errors_U
         self.population_names = population_names
+        self.metadata: dict = {}
 
     def __repr__(self):
         status = "converged" if self.converged else "not converged"

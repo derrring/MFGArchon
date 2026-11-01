@@ -86,12 +86,14 @@ def _solve_1d(terminal, **solver_kwargs):
 
 @pytest.mark.parametrize("terminal", sorted(TERMINALS))
 def test_newton_imposes_the_dirichlet_value_whatever_the_terminal(terminal):
-    """The zero terminal does not converge (above), so every case solves under "record" and reads its record: empty for
-    the constant and linear terminals, the zero one's unconverged steps for it (#2644)."""
+    """The zero terminal does not converge (above), so every case solves under "record" and reads its record. What this
+    asserts is imposed on the Dirichlet rows whatever the iteration does: measured at #2644's head, |U - g| on the walls
+    is 0.0 at every step below NT for all three terminals, the zero one's 8 unconverged steps (t_idx 7 to 0) among them.
+    So the row reads the walls from a recorded solve, and asserts the record's count (#2644 review 1, S8)."""
     solver, _, U = _solve_1d(terminal, on_inner_failure="record")
     np.testing.assert_allclose(U[:NT, 0], 0.7, rtol=0, atol=1e-12)
     np.testing.assert_allclose(U[:NT, -1], 0.4, rtol=0, atol=1e-12)
-    assert (solver.inner_solve_failures() != ()) == (terminal == "zero"), solver.inner_solve_failures()
+    assert len(solver.inner_solve_failures()) == (8 if terminal == "zero" else 0), solver.inner_solve_failures()
 
 
 @pytest.mark.parametrize("terminal", ["constant", "linear"])
@@ -136,7 +138,10 @@ def test_both_inner_solvers_impose_it_in_2d(inner, terminal):
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=dirichlet_bc(dimension=2, value=0.0)
     )
     kwargs = HOWARD if inner == "howard" else {"monotonicity_scheme": "none"}
-    # 2-D Newton does not converge here (above), so both solve under "record" and read the record (#2644).
+    # 2-D Newton does not converge here (above), so both solve under "record" and read the record. The walls asserted
+    # below are imposed on the Dirichlet rows whatever the iteration does: measured at #2644's head, |U - g| there is 0.0
+    # at every step below NT, Newton's 10 unconverged ones among them; so the row asserts the record's count (#2644
+    # review 1, S8).
     solver = HJBGFDMSolver(
         _problem(grid),
         collocation_points=pts,
@@ -154,4 +159,4 @@ def test_both_inner_solvers_impose_it_in_2d(inner, terminal):
     walls = solver.boundary_indices
     g = pts[walls, 0] + 2 * pts[walls, 1]
     assert np.abs(U[:NT][:, walls] - g).max() < 1e-12
-    assert (solver.inner_solve_failures() != ()) == (inner == "newton"), solver.inner_solve_failures()
+    assert len(solver.inner_solve_failures()) == (NT if inner == "newton" else 0), solver.inner_solve_failures()

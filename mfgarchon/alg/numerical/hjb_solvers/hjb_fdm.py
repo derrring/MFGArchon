@@ -287,7 +287,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 - 'raise': Raise ConvergenceError (default, fail-fast).
                 - 'record': Keep the iterate, record the step in `inner_solve_failures()`, and warn. A coupled
                   solve sets this for its sweeps and does not report convergence over a recorded step (#1878).
-                - 'fallback': nD Newton only: retry the step with value iteration, and record if that fails too.
+                - 'fallback': retry a failed nD Newton step with value iteration, and record if that fails too. On
+                  the 1-D Newton and the nD fixed point, which have no fallback, it records as 'record' does.
             on_newton_failure: Deprecated name of `on_inner_failure` (Issue #669); 'warn_and_fallback' is 'fallback'.
             analytic_jacobian: Which 1D Newton path the solve takes.
                 - None (default): the batch path on the NumPy backend, the per-point path
@@ -350,8 +351,10 @@ class HJBFDMSolver(BaseHJBSolver):
             relaxation = damping_factor
 
         # Set defaults (use None check to avoid treating 0 as falsy)
-        self.max_newton_iterations = (
-            max_newton_iterations if max_newton_iterations is not None else base_hjb.DEFAULT_NEWTON_MAX_ITERATIONS
+        self.max_newton_iterations = base_hjb.checked_inner_budget(
+            max_newton_iterations if max_newton_iterations is not None else base_hjb.DEFAULT_NEWTON_MAX_ITERATIONS,
+            "max_newton_iterations",
+            "HJBFDMSolver",
         )
         self.newton_tolerance = newton_tolerance if newton_tolerance is not None else base_hjb.DEFAULT_NEWTON_TOLERANCE
         self.solver_type = solver_type
@@ -365,8 +368,6 @@ class HJBFDMSolver(BaseHJBSolver):
         self.on_inner_failure = "raise" if on_inner_failure is None else on_inner_failure
 
         # Validate
-        if self.max_newton_iterations < 1:
-            raise ValueError(f"max_newton_iterations must be >= 1, got {self.max_newton_iterations}")
         if self.newton_tolerance <= 0:
             raise ValueError(f"newton_tolerance must be > 0, got {self.newton_tolerance}")
         if not 0 < relaxation <= 1.0:
@@ -399,8 +400,6 @@ class HJBFDMSolver(BaseHJBSolver):
 
         if self.use_upwind:
             _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem, self.dimension, self.numerical_hamiltonian)
-
-        # The latest solve_hjb_system's non-converged time steps; None until one has run (#1878).
 
         # For nD, extract grid info and create nonlinear solver
         if self.dimension > 1:
@@ -920,7 +919,9 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # A step that is not a root goes to the owner: Newton's own, value iteration's, or the fallback's (#2644).
         if not info.converged:
-            relative_change = "the relative change of the fixed-point iterate, ||x_new - x|| / ||x||"
+            # The fixed point measures the step before it moves: ||G(x) - x|| / ||x|| at the iterate the last step
+            # started from, not at the one returned (#2644 review 1, S3).
+            relative_change = "||G(x) - x|| / ||x|| at the iterate the last fixed-point step started from"
             if used_fallback:
                 reason, measure = "value-iteration fallback after a failed Newton did not converge", relative_change
             elif self.solver_type == "newton":

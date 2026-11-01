@@ -24,7 +24,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
@@ -431,6 +431,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
             use_newton = self._use_newton_default
         # Only the Newton branch iterates within a step, so only it keeps a record of inner failures (#2644).
         if use_newton:
+            max_newton_iterations = checked_inner_budget(
+                max_newton_iterations, "max_newton_iterations", type(self).__name__
+            )
             self._begin_inner_solve_record()
         else:
             self._inner_solve_failures = None
