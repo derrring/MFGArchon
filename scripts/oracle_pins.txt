@@ -314,7 +314,7 @@ row grid/B8_no_image_raises         -
 row grid/B9_bc_read_at_solve_time   -
 # Rows N1 and N2 inherit an item from B2b-2b-iv (audit session ruling, 2026-10-12): `GraphApplicator.apply`,
 #   `apply_fp` and `apply_hjb` take `t=0`, so given no t they read a callable node value at t = 0, in silence. They read
-#   no edge value: `_edge_bcs` is stored and never read. `apply_direct` and `apply_edge_direct` take `t=0.0` and call a
+#   no edge value: an edge condition is refused since #2292's acceptance gate (#2493). `apply_direct` and `apply_edge_direct` take `t=0.0` and call a
 #   callable value at it the same way. None of them reaches the owner (`NodeBC.get_value` calls the value directly),
 #   and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
 # They also inherit an item from #1544 (#2617; audit session ruling, 2026-10-12): the policy-iteration path
@@ -322,7 +322,9 @@ row grid/B9_bc_read_at_solve_time   -
 #   overwriting U[n] after each time step's policy iteration, so the interior rows of its solves used unpinned neighbour
 #   values. The coupling ran through L^pi at D = 0 already, and the viscous term D L adds a second one. #2617's
 #   review 1 reported it as a pre-existing first-order lag.
-row network/N1_graph_bc_alphabet    -
+# Row N1 (#2292; audit session ruling, 2026-11-01): the guard holds each BC alphabet to its own readers, with its
+#   planted rivals in the same file. #1948's acceptance gate table refuses the crossing where a condition is handed over.
+row network/N1_graph_bc_alphabet    tests/unit/test_geometry/boundary/test_graph_bc_alphabet_has_one_owner_2512.py
 row network/N2_node_bc_arity        -
 
 # Conventions

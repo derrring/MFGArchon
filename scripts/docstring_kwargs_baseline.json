@@ -1,10 +1,8 @@
 {
   "_comment": "Every keyword argument in a docstring example must be a real parameter of the callee it names.",
   "checked": 971,
-  "blocks": 592,
+  "blocks": 591,
   "findings": [
-    "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(height=...)",
-    "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(width=...)",
     "mfgarchon.geometry.protocol.detect_geometry_type: NetworkGeometry(n_nodes=...)",
     "mfgarchon.geometry.protocol.detect_geometry_type: NetworkGeometry(topology=...)",
     "mfgarchon.geometry.protocols.graph.SupportsGraphLaplacian: NetworkGeometry(adjacency_matrix=...)",

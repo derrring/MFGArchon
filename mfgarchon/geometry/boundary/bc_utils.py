@@ -12,6 +12,7 @@ All solvers should import from this module for consistent BC handling.
 
 from __future__ import annotations
 
+from enum import Enum
 from types import MappingProxyType
 from typing import Any, NoReturn
 
@@ -86,12 +87,12 @@ _NO_GEOMETRIC_OPERATION = MappingProxyType(
 )
 
 
-def bc_type_to_geometric_operation(bc_type: str | None) -> str:
+def bc_type_to_geometric_operation(bc_type: str | Enum | None) -> str:
     """
     Map BC type string to geometric operation for Semi-Lagrangian solvers.
 
     Args:
-        bc_type: BC type string from get_bc_type_string()
+        bc_type: BC type string from get_bc_type_string(), or a BC type member, which is read by its value
 
     Returns:
         Geometric operation: 'reflect', 'clamp', or 'periodic'
@@ -103,7 +104,8 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
 
     Raises:
         NotImplementedError: for 'flux' and the extrapolations, which have no geometric operation.
-        ValueError: for any other string, which no BC type spells (#2292).
+        ValueError: for any other string, a graph type's "source" or "custom" among them (#2292).
+        TypeError: for anything that is neither a string, a BC type member nor None.
 
     Example:
         >>> bc_type_to_geometric_operation('no_flux')
@@ -115,6 +117,11 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
     """
     if bc_type is None:
         return "clamp"  # Default: absorbing
+    bc_type = getattr(bc_type, "value", bc_type) if isinstance(bc_type, Enum) else bc_type
+    if not isinstance(bc_type, str):
+        raise TypeError(
+            f"bc_type_to_geometric_operation: {bc_type!r} is not a BC type string, a BC type or None (#2292)."
+        )
     bc_type_lower = bc_type.lower()
     if bc_type_lower in _GEOMETRIC_OPERATION:
         return _GEOMETRIC_OPERATION[bc_type_lower]

@@ -315,8 +315,9 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
 #:
 #: The cross-alphabet question is real and is not this table's: `BCType` and `GraphBCType` share the
 #: `.value` strings {"dirichlet", "neumann"} while being different members, so a `BCType` handed to
-#: `NodeBC` matches no branch and returns the field untouched. That belongs with the alphabet work
-#: at #2292, not here.
+#: `NodeBC` matched no branch and returned the field untouched. #2292 refuses it where it is handed
+#: over (the acceptance gate below), and row N1's guard, `test_graph_bc_alphabet_has_one_owner_2512.py`,
+#: holds each reader to one alphabet.
 def _graph_field_types() -> tuple[str, ...]:
     """The second axis, read from `apply`'s own `Literal` rather than listed here.
 
@@ -584,8 +585,9 @@ def test_the_implicit_applicator_refuses_an_extrapolation_by_gate_and_by_branch(
 
 # ---------------------------------------------------------------------------------------------------------------------
 # The acceptance gate (#2292, #2512 row N1). The table above measures `apply` on inputs a NodeBC already holds; this
-# one measures every place a graph BC input is ACCEPTED, against each class of input, so that an input is either
-# taken as declared or refused by name where it is handed over -- never stored and dropped later.
+# one measures the places a graph BC input is accepted (the population of #2292's class line, each acceptor by input
+# class), so that an input is either taken as declared or refused by name where it is handed over -- never stored and
+# dropped later. A hand-listed table: an acceptor added later is not in it until a row is.
 # ---------------------------------------------------------------------------------------------------------------------
 
 
@@ -597,6 +599,7 @@ def _maze(boundary_conditions=None):
 
 
 def _gate_cases():
+    """Each accept case returns True when the input was taken as declared; each refuse case names its error."""
     from mfgarchon.geometry.boundary.applicator_graph import (
         EdgeBC,
         GraphBCConfig,
@@ -611,30 +614,53 @@ def _gate_cases():
     accepts, refuses = [], []
     # the type a condition is built with
     for t in GraphBCType:
-        accepts.append((f"NodeBC[{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t, value=_graph_value(t))))
+        accepts.append(
+            (f"NodeBC[{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t, value=_graph_value(t)).bc_type is t)
+        )
     for t in BCType:
         refuses.append((f"NodeBC[BCType.{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t), TypeError, "GraphBCType"))
-        accepts.append((f"BCSegment[{t.name}]", lambda t=t: BCSegment(name="s", bc_type=t, value=0.0)))
+        accepts.append((f"BCSegment[{t.name}]", lambda t=t: BCSegment(name="s", bc_type=t, value=0.0).bc_type is t))
     for t in GraphBCType:
         refuses.append(
             (f"BCSegment[GraphBCType.{t.name}]", lambda t=t: BCSegment(name="s", bc_type=t), TypeError, "BCType")
         )
     refuses.append(("NodeBC[str]", lambda: NodeBC(nodes=[0], bc_type="dirichlet"), TypeError, "GraphBCType"))
-    # the nodes a condition names, through every route that takes them
+    # the nodes a condition names, through every route that takes them: outside the graph, then not node indices
+    routes = {
+        "add_node_bc": lambda n: applicator().add_node_bc(NodeBC(nodes=n)),
+        "from_config": lambda n: GraphApplicator.from_config(GraphBCConfig(node_bcs=[NodeBC(nodes=n)]), 5),
+        "set_dirichlet_nodes": lambda n: applicator().set_dirichlet_nodes(n),
+        "set_absorbing_nodes": lambda n: applicator().set_absorbing_nodes(n),
+        "set_source_nodes": lambda n: applicator().set_source_nodes(n),
+        "set_custom_bc": lambda n: applicator().set_custom_bc(n, lambda f, node, t: 0.0),
+        "callable nodes": lambda n: applicator().add_node_bc(NodeBC(nodes=lambda num, n=n: n)),
+        "apply_direct": lambda n: applicator().apply_direct(np.ones(5), n, 1.0),
+        "create_graph_applicator": lambda n: create_graph_applicator(5, boundary_nodes=n),
+    }
     for nodes in ([5], [-1], [7, 0]):
-        for route, call in [
-            ("add_node_bc", lambda n=nodes: applicator().add_node_bc(NodeBC(nodes=n))),
-            ("from_config", lambda n=nodes: GraphApplicator.from_config(GraphBCConfig(node_bcs=[NodeBC(nodes=n)]), 5)),
-            ("set_dirichlet_nodes", lambda n=nodes: applicator().set_dirichlet_nodes(n)),
-            ("set_absorbing_nodes", lambda n=nodes: applicator().set_absorbing_nodes(n)),
-            ("set_source_nodes", lambda n=nodes: applicator().set_source_nodes(n)),
-            ("set_custom_bc", lambda n=nodes: applicator().set_custom_bc(n, lambda f, node, t: 0.0)),
-            ("callable nodes", lambda n=nodes: applicator().add_node_bc(NodeBC(nodes=lambda num, n=n: n))),
-            ("apply_direct", lambda n=nodes: applicator().apply_direct(np.ones(5), n, 1.0)),
-            ("create_graph_applicator", lambda n=nodes: create_graph_applicator(5, boundary_nodes=n)),
-        ]:
-            refuses.append((f"{route}{nodes}", call, ValueError, "not nodes of this graph"))
-    accepts.append(("add_node_bc[0, 4]", lambda: applicator().add_node_bc(NodeBC(nodes=[0, 4]))))
+        for route, call in routes.items():
+            refuses.append((f"{route}{nodes}", lambda c=call, n=nodes: c(n), ValueError, "not nodes of this graph"))
+    for nodes in ([2.7], [2.0], ["3"], [True], [np.True_]):
+        for route, call in routes.items():
+            refuses.append((f"{route}{nodes!r}", lambda c=call, n=nodes: c(n), TypeError, "not node indices"))
+    refuses.append(("NodeBC[nodes=5]", lambda: NodeBC(nodes=5), TypeError, "a collection of node indices"))
+    refuses.append(("NodeBC[nodes='12']", lambda: NodeBC(nodes="12"), TypeError, "a collection of node indices"))
+    accepts.append(
+        (
+            "add_node_bc[0, 4]",
+            lambda: np.array_equal(
+                applicator().add_node_bc(NodeBC(nodes=[0, 4], value=2.5)).apply(np.zeros(5)), [2.5, 0, 0, 0, 2.5]
+            ),
+        )
+    )
+    accepts.append(
+        (
+            "add_node_bc[np.int64 nodes]",
+            lambda: np.array_equal(
+                applicator().add_node_bc(NodeBC(nodes=np.array([1]), value=2.5)).apply(np.zeros(5)), [0, 2.5, 0, 0, 0]
+            ),
+        )
+    )
     # the object a graph geometry or a configuration is handed
     for wrong in ([NodeBC(nodes=[0])], NodeBC(nodes=[0]), BoundaryConditions(dimension=1, segments=[]), "dirichlet"):
         name = type(wrong).__name__
@@ -651,37 +677,64 @@ def _gate_cases():
             (f"from_config[{name}]", lambda w=wrong: GraphApplicator.from_config(w, 5), TypeError, "GraphBCConfig")
         )
     refuses.append(("GraphBCConfig[node_bcs entry]", lambda: GraphBCConfig(node_bcs=["x"]), TypeError, "not a NodeBC"))
+    refuses.append(
+        (
+            "GraphBCConfig[a bare NodeBC]",
+            lambda: GraphBCConfig(node_bcs=NodeBC(nodes=[0])),
+            TypeError,
+            "a collection of NodeBC",
+        )
+    )
     refuses.append(("add_node_bc[str]", lambda: applicator().add_node_bc("x"), TypeError, "not a NodeBC"))
-    accepts.append(("geometry[GraphBCConfig]", lambda: _maze(GraphBCConfig(node_bcs=[NodeBC(nodes=[0])]))))
-    accepts.append(("geometry[None]", lambda: _maze().set_boundary_conditions(None)))
+    config = GraphBCConfig(node_bcs=[NodeBC(nodes=[0])])
+    accepts.append(("geometry[GraphBCConfig]", lambda: _maze(config).get_boundary_conditions() is config))
+    accepts.append(("geometry[None]", lambda: _maze().get_boundary_conditions() is None))
+    # an iterator is kept, not consumed by the check and stored empty; and a config keeps tuples
+    accepts.append(
+        (
+            "GraphBCConfig[generator]",
+            lambda: len(GraphBCConfig(node_bcs=(b for b in [NodeBC(nodes=[0])])).node_bcs) == 1,
+        )
+    )
+    accepts.append(
+        (
+            "stored as tuples",
+            lambda: (
+                isinstance(GraphBCConfig(node_bcs=[NodeBC(nodes=[0, 1])]).node_bcs, tuple)
+                and NodeBC(nodes=[0, 1]).nodes == (0, 1)
+            ),
+        )
+    )
     # edge conditions, until an edge operator is ruled (#2493)
     refuses.append(("EdgeBC", lambda: EdgeBC(edges=[(0, 1)]), NotImplementedError, "#2493"))
     refuses.append(
         ("GraphBCConfig[edge_bcs]", lambda: GraphBCConfig(edge_bcs=[object()]), NotImplementedError, "#2493")
     )
     refuses.append(("add_edge_bc", lambda: applicator().add_edge_bc(None), NotImplementedError, "#2493"))
-    # a condition, once accepted, does not change
     refuses.append(
         (
-            "NodeBC mutated",
-            lambda: setattr(NodeBC(nodes=[0]), "value", 2.5),
-            AttributeError,
-            "cannot assign to field 'value'",
+            "apply_edge_direct",
+            lambda: applicator().apply_edge_direct(np.zeros(3), [(0, 1)], 1.0),
+            NotImplementedError,
+            "#2493",
         )
     )
+    # a condition, once accepted, does not change: not its fields, not an array value's contents
+
+    def mutate_array_value():
+        NodeBC(nodes=[0], value=np.array(2.5)).value[...] = 9.0
+
     refuses.append(
-        (
-            "GraphBCConfig mutated",
-            lambda: setattr(GraphBCConfig(), "node_bcs", ()),
-            AttributeError,
-            "cannot assign to field 'node_bcs'",
-        )
+        ("NodeBC mutated", lambda: setattr(NodeBC(nodes=[0]), "value", 2.5), AttributeError, "cannot assign")
+    )
+    refuses.append(("NodeBC array value mutated", mutate_array_value, ValueError, "read-only"))
+    refuses.append(
+        ("GraphBCConfig mutated", lambda: setattr(GraphBCConfig(), "node_bcs", ()), AttributeError, "cannot assign")
     )
 
     # a lookup that cannot pick one condition, and an input the reader does not read
     def two_named_alike():
-        a = applicator().set_dirichlet_nodes([0]).set_dirichlet_nodes([4])
-        return a.get_bc_by_name("dirichlet")
+        return applicator().set_dirichlet_nodes([0]).set_dirichlet_nodes([4]).get_bc_by_name("dirichlet")
 
     refuses.append(("get_bc_by_name[ambiguous]", two_named_alike, ValueError, "2 conditions are named"))
     refuses.append(
@@ -700,8 +753,19 @@ def _gate_cases():
             "boundary_values",
         )
     )
-    accepts.append(("create_maze_applicator", lambda: create_maze_applicator(_maze())))
+    accepts.append(
+        (
+            "from_network_geometry[maze, spatial]",
+            lambda: (
+                len(GraphApplicator.from_network_geometry(_maze(), "spatial", boundary_value=3.0).get_boundary_nodes())
+                > 0
+            ),
+        )
+    )
+    accepts.append(("create_maze_applicator", lambda: len(create_maze_applicator(_maze()).get_boundary_nodes()) > 0))
     # the continuum direction: every string a BCType spells is read or refused by name, and so is any other string
+    expected = {"neumann": "reflect", "no_flux": "reflect", "robin": "reflect", "reflecting": "reflect"}
+    expected |= {"periodic": "periodic", "dirichlet": "clamp"}
     for t in BCType:
         if t is BCType.FLUX or t.name.startswith("EXTRAPOLATION"):
             refuses.append(
@@ -713,7 +777,18 @@ def _gate_cases():
                 )
             )
         else:
-            accepts.append((f"geometric_operation[{t.value}]", lambda t=t: bc_type_to_geometric_operation(t.value)))
+            accepts.append(
+                (
+                    f"geometric_operation[{t.value}]",
+                    lambda t=t: bc_type_to_geometric_operation(t.value) == expected[t.value],
+                )
+            )
+            accepts.append(
+                (
+                    f"geometric_operation[BCType.{t.name}]",
+                    lambda t=t: bc_type_to_geometric_operation(t) == expected[t.value],
+                )
+            )
     for s in ("source", "custom", "nonsense"):
         refuses.append(
             (
@@ -723,6 +798,9 @@ def _gate_cases():
                 "is no BC type this reads",
             )
         )
+    refuses.append(
+        ("geometric_operation[object]", lambda: bc_type_to_geometric_operation(object()), TypeError, "not a BC type")
+    )
     return accepts, refuses
 
 
@@ -731,7 +809,7 @@ _GATE_ACCEPTS, _GATE_REFUSES = _gate_cases()
 
 @pytest.mark.parametrize(("case", "call"), _GATE_ACCEPTS, ids=[c[0] for c in _GATE_ACCEPTS])
 def test_the_gate_takes_each_input_it_can_impose(case, call):
-    call()
+    assert call() is True, f"{case}: accepted, but not as declared"
 
 
 @pytest.mark.parametrize(("case", "call", "error", "match"), _GATE_REFUSES, ids=[c[0] for c in _GATE_REFUSES])

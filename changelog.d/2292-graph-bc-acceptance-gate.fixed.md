@@ -1,15 +1,18 @@
 - **A graph boundary condition is taken as declared or refused by name where it is handed over** (Issue #2292, #2512 row N1). Before, several inputs were accepted and then dropped without a word.
   - `NodeBC` takes a `GraphBCType`. A continuum `BCType` shares two value strings with it while being a different member, and was silently skipped; it is refused now.
-  - `BCSegment` takes a `BCType` and refuses a `GraphBCType`.
-  - A node outside the graph is refused, on every route that names nodes. Before, it was skipped.
+  - `BCSegment` takes a `BCType` and refuses a `GraphBCType`, and so does `BoundaryConditions` for its `default_bc`, through the same check.
+  - A node that is not an index of the graph is refused on every route that names nodes: one outside the graph, which was skipped, and a bool, a float or a string, which was read as an int.
+  - `NodeBC.nodes` and `GraphBCConfig.node_bcs` take a collection, and refuse a bare entry by name. A config given its conditions as an iterator kept none of them; it keeps them now.
+  - Two conditions that write the same field at a shared node are refused when the second is added; before, `apply` kept whichever it read last. `create_maze_applicator` leaves a dead end named as an entry out of the exits it detects.
   - A graph geometry takes a `GraphBCConfig` or `None` as `boundary_conditions=`, and refuses anything else when it is built.
-  - `GraphApplicator.from_network_geometry` refuses a keyword it does not read.
-  - `apply_direct` refuses a value list whose length is not the node count.
+  - `GraphApplicator.from_network_geometry` refuses a keyword it does not read. Its spatial boundary reads a geometry's own node positions, as a maze gives them; before, such a geometry got no boundary nodes, and one with no positions at all is refused.
+  - `apply_direct` refuses a value list whose length is not the number of nodes given.
   - A name several conditions share is refused at lookup.
-- **`EdgeBC`, a non-empty `GraphBCConfig.edge_bcs` and `GraphApplicator.add_edge_bc` are refused** (Issue #2493). No graph solver applied an edge condition, so each was stored and dropped. The refusal stays until an edge operator is ruled.
-- **`NodeBC`, `EdgeBC` and `GraphBCConfig` are frozen.** A config keeps its conditions as tuples, so a condition checked once cannot change after that.
+- **`EdgeBC`, a non-empty `GraphBCConfig.edge_bcs`, `GraphApplicator.add_edge_bc` and `GraphApplicator.apply_edge_direct` are refused** (Issue #2493). No graph solver applied an edge condition, so each was stored and dropped. The refusal stays until an edge operator is ruled.
+- **`NodeBC`, `EdgeBC` and `GraphBCConfig` are frozen.** A config keeps its conditions as a tuple, a condition its nodes as a tuple and an array value as a read-only copy, so a condition cannot change after it is built.
 - **`create_maze_applicator` works on a `MazeGeometry`.** It reads the maze's node count and its own adjacency, where before it raised "Cannot determine number of nodes".
-- **`bc_type_to_geometric_operation` is total.**
+- **`bc_type_to_geometric_operation` takes a BC type string, a BC type member or `None`, and refuses anything else by name.**
+  - A member is read by its value; before, it raised an `AttributeError`.
   - `"reflecting"` maps to `"reflect"`; before, it fell through to `"clamp"`.
   - The extrapolation types are refused, as `"flux"` already was.
   - Any other string, the graph-only `"source"` and `"custom"` among them, is refused instead of read as `"clamp"`.

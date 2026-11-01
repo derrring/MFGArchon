@@ -27,6 +27,8 @@ Part of: Unified Boundary Condition Architecture
 
 from __future__ import annotations
 
+import numbers
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -78,12 +80,21 @@ def _refuse_a_foreign_bc_type(kind: str, name: str, bc_type: object) -> None:
     raise TypeError(f"{kind} {name!r}: bc_type must be a GraphBCType, got {bc_type!r}.{hint} (#2292)")
 
 
+def _as_tuple(items: object, where: str, of: str) -> tuple:
+    """``items`` as a tuple, or refused by name: a bare entry, such as one NodeBC or an int, is not a collection of
+    them (#2292)."""
+    if isinstance(items, (str, bytes)) or not isinstance(items, Iterable):
+        raise TypeError(f"{where} is a {type(items).__name__}; it takes a collection of {of}, e.g. a list (#2292).")
+    return tuple(items)
+
+
 @dataclass(frozen=True)
 class NodeBC:
     """
     Boundary condition specification for a set of nodes.
 
-    Frozen: a condition is checked once, when it is built, so it cannot change after that (#2292).
+    Frozen, with its nodes kept as a tuple and an array value as a read-only copy, so a condition cannot change after
+    it is built; its nodes are checked against a graph when an applicator takes it (#2292).
 
     Attributes:
         nodes: Node indices, kept as a tuple, or callable(num_nodes) -> indices
@@ -100,7 +111,12 @@ class NodeBC:
     def __post_init__(self) -> None:
         _refuse_a_foreign_bc_type("NodeBC", self.name, self.bc_type)
         if not callable(self.nodes):
-            object.__setattr__(self, "nodes", tuple(self.nodes))
+            object.__setattr__(self, "nodes", _as_tuple(self.nodes, f"NodeBC {self.name!r}: nodes", "node indices"))
+        if isinstance(self.value, np.ndarray):
+            # Frozen holds the field, not an array's contents: a read-only copy keeps the value checked here (#2292).
+            value = np.array(self.value)
+            value.flags.writeable = False
+            object.__setattr__(self, "value", value)
         # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
         # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
         # dropped without a word, so it is refused (#1948).
@@ -170,6 +186,9 @@ class GraphBCConfig:
     default_bc_type: GraphBCType = NEVER_READ  # refused when passed; never read (#2648)
 
     def __post_init__(self) -> None:
+        # The tuple first: an iterator is consumed by the check below, and would be stored empty (#2292).
+        object.__setattr__(self, "node_bcs", _as_tuple(self.node_bcs, "GraphBCConfig: node_bcs", "NodeBC"))
+        object.__setattr__(self, "edge_bcs", _as_tuple(self.edge_bcs, "GraphBCConfig: edge_bcs", "EdgeBC"))
         for i, bc in enumerate(self.node_bcs):
             if not isinstance(bc, NodeBC):
                 raise TypeError(
@@ -178,8 +197,6 @@ class GraphBCConfig:
                 )
         if self.edge_bcs:
             raise NotImplementedError(f"GraphBCConfig: edge_bcs is not empty, and {_EDGES_NOT_APPLIED}")
-        object.__setattr__(self, "node_bcs", tuple(self.node_bcs))
-        object.__setattr__(self, "edge_bcs", tuple(self.edge_bcs))
 
 
 GraphBCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
@@ -229,8 +246,6 @@ class GraphApplicator(BaseGraphApplicator):
         >>> applicator = GraphApplicator(num_nodes=100)
         >>> u_bc = applicator.apply_direct(u, boundary_nodes=[0, 99], values=[0.0, 0.0])
 
-        >>> # Direct edge flow specification
-        >>> flow_bc = applicator.apply_edge_direct(flow, edges=[(0,1), (2,3)], values=[0.0, 0.0])
     """
 
     #: (type, field) cells `apply` leaves unchanged on purpose, each with its reason. Declared rather than
@@ -244,6 +259,18 @@ class GraphApplicator(BaseGraphApplicator):
             (GraphBCType.SOURCE, "value"): "a source injects density; u has no source term at the node",
             (GraphBCType.NEUMANN, "value"): "zero flux is the graph Laplacian's own condition at a node",
             (GraphBCType.NEUMANN, "density"): "zero flux is the graph Laplacian's own condition at a node",
+        }
+    )
+
+    #: The fields each condition writes at its nodes in `apply` (#2292): two conditions that write one field at one
+    #: node would leave it to whichever `apply` reads last, so `add_node_bc` refuses the second.
+    _WRITES: ClassVar[MappingProxyType[GraphBCType, tuple[str, ...]]] = MappingProxyType(
+        {
+            GraphBCType.DIRICHLET: ("value",),
+            GraphBCType.ABSORBING: ("value", "density"),
+            GraphBCType.SOURCE: ("density",),
+            GraphBCType.NEUMANN: (),
+            GraphBCType.CUSTOM: ("value", "density"),
         }
     )
 
@@ -304,7 +331,9 @@ class GraphApplicator(BaseGraphApplicator):
                 - "custom": Use provided node list
             **kwargs: Additional arguments
                 - degree_threshold: For "degree" type (default: 1)
-                - boundary_nodes: For "custom" type
+                - boundary_nodes: For "custom" type, which needs it
+                - boundary_value: The boundary nodes' Dirichlet value, for every type (default: 0.0)
+                Any other keyword is refused (#2292).
 
         Returns:
             Configured GraphApplicator
@@ -407,24 +436,28 @@ class GraphApplicator(BaseGraphApplicator):
         # Issue #543: Use try/except instead of hasattr() for optional attribute
         try:
             network_data = geometry.network_data
-            if network_data is not None:
-                positions = network_data.node_positions
-                if positions is not None:
-                    min_coords = np.min(positions, axis=0)
-                    max_coords = np.max(positions, axis=0)
-
-                    boundary_nodes = []
-                    for i, pos in enumerate(positions):
-                        # Check if on any boundary face
-                        on_boundary = np.any(np.abs(pos - min_coords) < tolerance) or np.any(
-                            np.abs(pos - max_coords) < tolerance
-                        )
-                        if on_boundary:
-                            boundary_nodes.append(i)
-                    return boundary_nodes
         except AttributeError:
-            pass
-        return []
+            network_data = None
+        positions = None if network_data is None else network_data.node_positions
+        if positions is None:
+            # A graph geometry without `network_data`, such as a maze, gives its own positions (#2292).
+            try:
+                positions = geometry.get_node_positions()
+            except AttributeError:
+                positions = None
+        if positions is None:
+            raise TypeError(
+                f"{type(geometry).__name__} gives no node positions, so no node lies on its bounding box; "
+                "use boundary_type='leaf', 'degree' or 'custom' (#2292)."
+            )
+        positions = np.asarray(positions)
+        min_coords = np.min(positions, axis=0)
+        max_coords = np.max(positions, axis=0)
+        return [
+            i
+            for i, pos in enumerate(positions)
+            if np.any(np.abs(pos - min_coords) < tolerance) or np.any(np.abs(pos - max_coords) < tolerance)
+        ]
 
     # =========================================================================
     # High-Level API: Named Region Specification
@@ -542,7 +575,16 @@ class GraphApplicator(BaseGraphApplicator):
         """Add a node BC specification. Its nodes are checked against this graph now (#2292)."""
         if not isinstance(bc, NodeBC):
             raise TypeError(f"GraphApplicator.add_node_bc: got a {type(bc).__name__}, not a NodeBC (#2292).")
-        self._resolve_nodes(bc)
+        nodes = set(self._resolve_nodes(bc))
+        for other in self._node_bcs:
+            shared = sorted(nodes & set(self._resolve_nodes(other)))
+            fields = sorted(set(self._WRITES[bc.bc_type]) & set(self._WRITES[other.bc_type]))
+            if shared and fields:
+                raise ValueError(
+                    f"GraphApplicator.add_node_bc: NodeBC {bc.name!r} ({bc.bc_type.name}) and {other.name!r} "
+                    f"({other.bc_type.name}) both write the {' and '.join(fields)} field at node(s) {shared}, so `apply` "
+                    "would keep whichever it reads last, silently. Give each node one condition per field (#2292)."
+                )
         self._node_bcs.append(bc)
         self._node_bcs_by_name.setdefault(bc.name, []).append(bc)
         self._invalidate_cache()
@@ -555,7 +597,14 @@ class GraphApplicator(BaseGraphApplicator):
     def _checked_nodes(self, nodes, where: str) -> list[int]:
         """``nodes`` as a list of node indices of this graph, or refused by name: an index outside
         ``[0, num_nodes)`` would otherwise be skipped without a word (#2292)."""
-        indices = [int(n) for n in nodes]
+        indices = list(nodes)
+        foreign = [n for n in indices if isinstance(n, (bool, np.bool_)) or not isinstance(n, numbers.Integral)]
+        if foreign:
+            raise TypeError(
+                f"{where}: node(s) {foreign!r} are not node indices. A node is an int; a bool, a float or a string is "
+                "refused rather than read as one (#2292)."
+            )
+        indices = [int(n) for n in indices]
         outside = [n for n in indices if not 0 <= n < self.num_nodes]
         if outside:
             raise ValueError(
@@ -771,47 +820,12 @@ class GraphApplicator(BaseGraphApplicator):
         t: float = 0.0,
         edge_index_map: dict[tuple[int, int], int] | None = None,
     ) -> NDArray[np.floating]:
+        """Refused: no graph solver has an edge field, so an edge value written here reaches no solve (#2493).
+
+        It used to write ``values`` into ``edge_flow``, mapping an edge with no ``edge_index_map`` entry to its position
+        in ``edges`` and repeating the last of a short value list (#2292).
         """
-        Apply BC directly to edge flows.
-
-        Low-level API for flow-based problems.
-
-        Args:
-            edge_flow: Edge flow values (shape: (num_edges,))
-            edges: List of (from_node, to_node) tuples
-            values: BC values for edges
-            t: Current time
-            edge_index_map: Mapping from (from, to) to edge index
-
-        Returns:
-            Edge flow with BCs applied
-
-        Example:
-            >>> flow_bc = applicator.apply_edge_direct(
-            ...     flow, edges=[(0,1), (99,98)], values=0.0
-            ... )
-        """
-        result = edge_flow.copy()
-
-        if edge_index_map is None:
-            # Assume edges are indexed in order
-            edge_index_map = {edge: i for i, edge in enumerate(edges)}
-
-        for i, edge in enumerate(edges):
-            edge_idx = edge_index_map.get(edge)
-            if edge_idx is None:
-                continue
-
-            if callable(values):
-                value = values(edge[0], edge[1], t)
-            elif isinstance(values, (list, np.ndarray)):
-                value = values[i] if i < len(values) else values[-1]
-            else:
-                value = float(values)
-
-            result[edge_idx] = value
-
-        return result
+        raise NotImplementedError(f"GraphApplicator.apply_edge_direct: {_EDGES_NOT_APPLIED}")
 
     # =========================================================================
     # Query Methods
@@ -985,14 +999,16 @@ def create_maze_applicator(
         Configured GraphApplicator for maze
 
     Example:
-        >>> maze = MazeGeometry(width=10, height=10)
+        >>> maze = MazeGeometry(rows=10, cols=10)
         >>> applicator = create_maze_applicator(maze, auto_detect_exits=True)
     """
     applicator = GraphApplicator(_num_nodes(maze_geometry))
 
-    # Auto-detect exits if requested
+    # Auto-detect exits if requested. A dead end named as an entry is the entry's: the explicit name overrides the
+    # heuristic, where both would have written the density at that node (#2292).
     if auto_detect_exits and exit_nodes is None:
-        exit_nodes = GraphApplicator._detect_leaf_nodes(maze_geometry)
+        entries = set(entry_nodes or ())
+        exit_nodes = [n for n in GraphApplicator._detect_leaf_nodes(maze_geometry) if n not in entries]
 
     if exit_nodes:
         applicator.set_absorbing_nodes(exit_nodes, name="exit")

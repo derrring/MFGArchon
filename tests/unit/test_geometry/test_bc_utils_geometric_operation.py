@@ -86,7 +86,7 @@ class TestGeometricOperationMapping:
         """
         produced = {
             bc_type_to_geometric_operation(t)
-            for t in ("no_flux", "neumann", "robin", "reflecting", "periodic", "dirichlet", "absorbing", None)
+            for t in ("no_flux", "neumann", "robin", "periodic", "dirichlet", "absorbing", None)
         }
         assert produced == {"reflect", "periodic", "clamp"}
 
