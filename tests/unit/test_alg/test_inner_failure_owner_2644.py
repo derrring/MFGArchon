@@ -84,6 +84,37 @@ def test_newtons_result_lists_its_inner_failures_as_every_coupler_does():
     assert info["inner_hjb_failures"], info["convergence_reason"]
 
 
+@pytest.mark.parametrize(("stop", "max_iterations"), [("a named stop", 20), ("an exhausted budget", 6)])
+def test_newtons_reason_says_how_it_stopped(stop, max_iterations):
+    """Newton's reason follows its stop (#2644 review 3, M-2). On a named stop, here line_search_failed, NewtonSolver
+    returns the iterate its last verdict judged; when its budget runs out, it evaluates F at its last iterate without a
+    verdict, so that verdict read the iterate before. The stop is read from NewtonSolver's own warning."""
+    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+
+    p = _problem(n=5, nt=3)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _, _, info = NewtonMFGSolver(
+            p, HJBFDMSolver(p, max_newton_iterations=1), FPFDMSolver(p), picard_warmup=3
+        ).solve(max_iterations=max_iterations, tolerance=1e-3, verbose=False)
+    stops = {
+        str(w.message).split(".")[0].removeprefix("Newton stopped: ")
+        for w in caught
+        if str(w.message).startswith("Newton stopped")
+    }
+    reason = info["convergence_reason"]
+    if stop == "a named stop":
+        assert stops == {"line_search_failed"}, stops
+        assert reason.startswith(
+            "Newton stopped: line_search_failed; its last verdict, on the iterate returned: inner_hjb_not_converged"
+        ), reason
+    else:
+        assert not stops, stops
+        assert reason.startswith(
+            "Newton max iterations; its last verdict, on the iterate before the one returned: inner_hjb_not_converged"
+        ), reason
+
+
 def _terminal_problem(terminal):
     """The 1-D problem of `_problem` with the given terminal: steep (30(x-0.7)^2) fails 2 steps at a 3-step budget."""
     model = Model(
@@ -106,7 +137,8 @@ def test_one_hjb_solver_in_two_slots_is_refused(coupler):
     """The repo built `GraphMFGSolver([p, p], ..., [h, h], ...)`: one HJB solver object for two nodes. A solver's record
     is its latest solve, so with a steep terminal at node 0 (2 failed steps at a 3-step budget) and a flat one at node
     1, reading the solver's record certified the result, converged=True at 658d143f (#2644 review 1, M1). One object in
-    several slots is refused by name before the solve, on every coupler, and its policy is left as it was (#2644)."""
+    several slots is refused by name before the solve, on every coupler, and its policy is left as it was (#2644).
+    With one solver per slot the same solve is taken, and its result lists what each slot's solver reports."""
     from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
     from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
     from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
@@ -115,24 +147,35 @@ def test_one_hjb_solver_in_two_slots_is_refused(coupler):
     from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 
     steep, flat = _terminal_problem(lambda x: 30.0 * (x - 0.7) ** 2), _terminal_problem(lambda x: 0.0 * x)
+
+    def build(hjbs):
+        fps = [FPFDMSolver(steep), FPFDMSolver(flat)]
+        return {
+            "graph": lambda: GraphMFGSolver(
+                [steep, flat], AdjacencyCoupling(0.05 * (np.ones((2, 2)) - np.eye(2))), hjbs, fps
+            ),
+            "regime switching": lambda: RegimeSwitchingIterator(
+                [steep, flat],
+                RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
+                hjbs,
+                fps,
+            ),
+            "multi-population": lambda: MultiPopulationIterator(
+                MultiPopulationProblem(populations=[steep, flat], population_names=["steep", "flat"]), hjbs, fps
+            ),
+        }[coupler]()
+
+    own = [HJBFDMSolver(steep, max_newton_iterations=3), HJBFDMSolver(flat, max_newton_iterations=3)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = build(own).solve()
+    reported = [failure for hjb in own for failure in hjb.inner_solve_failures()]
+    assert not result.converged
+    assert result.metadata["inner_hjb_failures"] == reported
+    assert len(reported) == 2, len(reported)
     hjb = HJBFDMSolver(steep, max_newton_iterations=3)
-    fps = [FPFDMSolver(steep), FPFDMSolver(flat)]
-    build = {
-        "graph": lambda: GraphMFGSolver(
-            [steep, flat], AdjacencyCoupling(0.05 * (np.ones((2, 2)) - np.eye(2))), [hjb, hjb], fps
-        ),
-        "regime switching": lambda: RegimeSwitchingIterator(
-            [steep, flat],
-            RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
-            [hjb, hjb],
-            fps,
-        ),
-        "multi-population": lambda: MultiPopulationIterator(
-            MultiPopulationProblem(populations=[steep, flat], population_names=["steep", "flat"]), [hjb, hjb], fps
-        ),
-    }[coupler]
     with pytest.raises(ValueError, match="Pass one HJB solver per slot"):
-        build().solve()
+        build([hjb, hjb]).solve()
     assert hjb.on_inner_failure == "raise"
 
 
