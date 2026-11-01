@@ -2465,7 +2465,8 @@ def robin_bc(
 
     - ``FPFEMSolver`` (from its own ``boundary_conditions`` only) / ``HJBFEMSolver`` -- weak form,
       coefficients read:
-      ``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, load ``D*(1/beta)*int_dOmega g phi_i``.
+      ``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, its row-sum lumped diagonal on P1 (#2845), load
+      ``D*(1/beta)*int_dOmega g phi_i``.
       Constant ``g`` only; ``beta == 0`` fails loud; a provider-valued ``alpha`` raises a bare
       ``TypeError`` from ``float()``.
     - ``HJBGFDMSolver`` -- the ``Robin(0, 1)`` case only, i.e. ``n . grad u = g``.

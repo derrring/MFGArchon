@@ -115,7 +115,7 @@ class MeshlessGalerkinDiscretization:
         return sparse.csr_matrix(M)
 
     @property
-    def lumps_time_mass(self) -> bool:
+    def lumps_mass(self) -> bool:
         return False
 
     def advection(self, velocity: NDArray) -> sparse.csr_matrix:

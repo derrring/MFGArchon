@@ -282,17 +282,17 @@ def test_the_natural_bc_parameter_gates_the_neumann_arm():
     solver = HJBFEMSolver(_problem(_segments("neumann", _G)), order=1)
     basis, bc = solver._basis, solver._bc
 
-    _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+    _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
     assert rhs is not None, "the gradient-natural weak form must assemble the load"
     assert rhs.sum() == pytest.approx(0.125 * _G * _BOUNDARY_MEASURE, rel=1e-12)
 
     with pytest.raises(NotImplementedError, match="TOTAL FLUX"):
-        assemble_robin_terms(basis, bc, 0.125, natural_bc="flux")
+        assemble_robin_terms(basis, bc, 0.125, natural_bc="flux", lump=False)
 
     # The default is the RESTRICTIVE one on purpose: a caller who forgets gets the refusal, not
     # silently wrong physics. Flipping it to "gradient" is a one-word change with no other symptom.
     with pytest.raises(NotImplementedError, match="TOTAL FLUX"):
-        assemble_robin_terms(basis, bc, 0.125)
+        assemble_robin_terms(basis, bc, 0.125, lump=False)
 
     # FPFEMSolver's OWN call site, reached by a route production does not take -- and deliberately.
     # `_validate_bc_support` refuses an inhomogeneous Neumann at construction, so the backstop below
@@ -323,7 +323,7 @@ def test_the_public_factory_path_assembles():
 
     basis = HJBFEMSolver(_problem(_segments("neumann", 0.0)), order=1)._basis
 
-    _, rhs = assemble_robin_terms(basis, neumann_bc(_G, dimension=2), 0.125, natural_bc="gradient")
+    _, rhs = assemble_robin_terms(basis, neumann_bc(_G, dimension=2), 0.125, natural_bc="gradient", lump=False)
     assert rhs is not None, "neumann_bc(g) is the library's public way to ask for this condition and it must assemble."
     assert rhs.sum() == pytest.approx(0.125 * _G * 4.0, rel=1e-12), (
         "the factory's segment carries no `boundary`, so it spans the whole boundary -- perimeter 4, "
@@ -396,13 +396,13 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
     )
 
     if accepted:
-        _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+        _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
         assert rhs is not None, f"{value!r} is a real number and must assemble a load"
         assert np.isfinite(rhs).all(), f"{value!r} assembled a non-finite load: {rhs.sum()}"
     else:
         # The value is read by the one owner (#2512 row B2), which names what it cannot read.
         with pytest.raises(NotImplementedError, match=r"has a (value of type|non-finite)"):
-            assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+            assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
 
 
 @pytest.mark.parametrize(

@@ -422,9 +422,13 @@ def test_a_node_only_natural_segments_share_needs_no_choice_under_a_blending_str
     basis = _square_basis()
     averaged = BoundaryConditions(dimension=2, segments=[load], default_bc=BCType.NO_FLUX, corner_strategy="average")
     refuse_what_fem_cannot_impose(basis, averaged, "test")
-    _, r_avg = assemble_robin_terms(basis, averaged, 0.1, natural_bc="gradient")
+    _, r_avg = assemble_robin_terms(basis, averaged, 0.1, natural_bc="gradient", lump=False)
     _, r_pri = assemble_robin_terms(
-        basis, BoundaryConditions(dimension=2, segments=[load], default_bc=BCType.NO_FLUX), 0.1, natural_bc="gradient"
+        basis,
+        BoundaryConditions(dimension=2, segments=[load], default_bc=BCType.NO_FLUX),
+        0.1,
+        natural_bc="gradient",
+        lump=False,
     )
     np.testing.assert_array_equal(r_avg, r_pri)
 
@@ -450,7 +454,7 @@ def test_2305_a_neumann_load_on_the_default_channel_or_an_alias_is_assembled_whe
     basis = _square_basis()
     _, by_default = assemble_robin_terms(
         basis, BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NEUMANN, default_value=5.0), 0.125,
-        natural_bc="gradient",
+        natural_bc="gradient", lump=False,
     )  # fmt: skip
     assert by_default.sum() == pytest.approx(0.125 * 5.0 * 4.0, rel=1e-12)
     named = BoundaryConditions(
@@ -458,7 +462,7 @@ def test_2305_a_neumann_load_on_the_default_channel_or_an_alias_is_assembled_whe
         segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=5.0, boundary=name)],
         default_bc=BCType.NO_FLUX,
     )
-    _, on_the_wall = assemble_robin_terms(basis, named, 0.125, natural_bc="gradient")
+    _, on_the_wall = assemble_robin_terms(basis, named, 0.125, natural_bc="gradient", lump=False)
     assert on_the_wall.sum() == pytest.approx(0.125 * 5.0 * 1.0, rel=1e-12)
     assert np.allclose(basis.doflocs[0, np.flatnonzero(on_the_wall)], 0.0)
 

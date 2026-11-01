@@ -1,6 +1,7 @@
 """P1 FEM lumps the mass in its time derivative (#2845), so FP-FEM's implicit pure-diffusion step with no-flux or
 Dirichlet walls is an M-matrix step wherever every off-diagonal of the stiffness is <= 0, and takes no density negative:
-the clip after it has nothing to add. A Robin wall's consistent boundary mass is outside that condition.
+the clip after it has nothing to add. A Robin wall's boundary mass is lumped too, so with alpha/beta >= 0 it only adds to
+the diagonal and the condition holds with it.
 
 The oracle is the scheme's own invariant: a no-flux, pure-diffusion solve conserves mass exactly, so `solve_fp_system`'s
 mass is pinned to round-off. With the consistent mass the step goes negative at this dt, and the clip injects 1.2e-2 to
@@ -12,6 +13,8 @@ passes; its seed is fixed. The 1-D mesh is here because the pairing below cannot
 once: on a uniform line P1's M = ML - (h^2/6) K, and <U, ML m> is then conserved under either mass.
 """
 
+import logging
+
 import pytest
 import skfem
 
@@ -20,6 +23,7 @@ from scipy import sparse
 from scipy.spatial import Delaunay
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.fem.discretization import FEMDiscretization
 from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
@@ -86,7 +90,53 @@ def test_a_no_flux_pure_diffusion_spike_keeps_its_mass_to_round_off(build):
     assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, mass
 
 
-def _pair_problem(dim: int, lambda_: float) -> MFGProblem:
+def test_a_spike_at_a_robin_wall_is_not_clipped(mfg_caplog, monkeypatch):
+    """FP-FEM from a one-node spike on y_min, Robin alpha/beta = 200 on every face, D = 0.18, dt = 1e-4, init_tensor
+    33 x 33 (K has no positive off-diagonal). With the consistent boundary mass the step took the density to -1.33e-2
+    and the positivity clip injected mass, logging "FP positivity clip injected" (measured at d254acb1). The lumped
+    boundary mass keeps the step an M-matrix step, so the clip has nothing to do (#2845). The row fails on the clip's
+    own messages only, and first shows that this fixture logs them, unlumped: the clip is seen only through them, so an
+    absence alone would also pass with both reworded, renamed or moved to another level."""
+    mesh = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
+    mesh.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_tensor(np.linspace(0, 1, 33), np.linspace(0, 1, 33)))
+    mesh.boundary_conditions = _walls(2, "no_flux")
+    problem = MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.6),
+        domain=mesh,
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=2 * DT),
+        Nt=2,
+    )
+    robin = BoundaryConditions(
+        dimension=2,
+        segments=[BCSegment(name=f, bc_type=BCType.ROBIN, alpha=200.0, beta=1.0, boundary=f) for f in FACES[2]],
+    )
+
+    def clipped(solver) -> list[str]:
+        mfg_caplog.clear()
+        x = solver._disc.dof_coordinates
+        m0 = np.zeros(len(x))
+        m0[np.argmin(np.hypot(x[:, 0] - 0.5, x[:, 1]))] = 1.0
+        # The clip logs from the weak-form FP base, once per step and once for the solve (AGENTS.md: mfg_caplog, and
+        # an absence paired with a presence on the same logger name).
+        with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.weak_form_fp_solver"):
+            solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((3, len(x))))
+        return [m for m in mfg_caplog.messages if "FP positivity clip injected" in m]
+
+    with monkeypatch.context() as unlumped:
+        unlumped.setattr(FEMDiscretization, "lumps_mass", property(lambda self: False))
+        assert clipped(FPFEMSolver(problem, boundary_conditions=robin)), (
+            "the control: unlumped, this fixture is clipped"
+        )
+    assert not clipped(FPFEMSolver(problem, boundary_conditions=robin))
+
+
+def _walls(dim: int, wall: str) -> BoundaryConditions:
+    """No flux on every face, or a homogeneous Robin, alpha/beta = 2 and g = 0, which keeps <U, ML m> constant."""
+    kind = {"no_flux": {"bc_type": BCType.NO_FLUX}, "robin": {"bc_type": BCType.ROBIN, "alpha": 2.0, "beta": 1.0}}[wall]
+    return BoundaryConditions(dimension=dim, segments=[BCSegment(name=f, boundary=f, **kind) for f in FACES[dim]])
+
+
+def _pair_problem(dim: int, lambda_: float, wall: str = "no_flux") -> MFGProblem:
     if dim == 1:
         mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=16)
         mesh.generate_mesh()
@@ -97,9 +147,7 @@ def _pair_problem(dim: int, lambda_: float) -> MFGProblem:
         axis = np.linspace(0, 1, 5)
         mesh = Mesh3D(domain_type="box", bounds=(0.0, 1.0, 0.0, 1.0, 0.0, 1.0))
         mesh.mesh_data = skfem_to_meshdata(skfem.MeshTet.init_tensor(axis, axis, axis))
-    mesh.boundary_conditions = BoundaryConditions(
-        dimension=dim, segments=[BCSegment(name=f, bc_type=BCType.NO_FLUX, boundary=f) for f in FACES[dim]]
-    )
+    mesh.boundary_conditions = _walls(dim, wall)
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=lambda_)), volatility=0.5
@@ -110,8 +158,10 @@ def _pair_problem(dim: int, lambda_: float) -> MFGProblem:
     )
 
 
-@pytest.mark.parametrize("dim", [1, 2, 3])
-def test_hjb_fem_and_fp_fem_step_on_one_time_mass(dim: int):
+@pytest.mark.parametrize(
+    ("dim", "wall"), [(1, "no_flux"), (2, "no_flux"), (3, "no_flux"), (2, "robin")], ids=["1", "2", "3", "2-robin"]
+)
+def test_hjb_fem_and_fp_fem_step_on_one_time_mass(dim: int, wall: str):
     """The pair's time terms share one mass (#2845). With no drift, and H read at U_coupling_prev = 0 where the
     quadratic H is 0, both steps solve (ML/dt + D K) x = (ML/dt) x_prev with a symmetric matrix, so <U^n, ML m^n> is
     the same at every n, to round-off. Setting either solver's time mass back to M moves it by 3.9e-4 (1-D), 1.6e-3
@@ -119,10 +169,15 @@ def test_hjb_fem_and_fp_fem_step_on_one_time_mass(dim: int):
     step self-consistent reddened no other test at cf747a70, over the test files review 1 of #2848 listed as reaching
     FEM; a revert of FP-FEM's forward step also reddens the mass pins above. Three arms: HJB-FEM's Picard step; its
     Newton step, H made negligible (4.3e-9 to 4.8e-9 at the head); and FP-FEM's adjoint step, with no advection,
-    which must equal its forward step."""
+    which must equal its forward step.
+
+    The 2-D Robin wall adds one boundary mass to both steps, lumped as their time mass is, so the matrix stays symmetric
+    and the pairing constant (#2845). Lumping it on one side only moves the pairing; nothing else at d254acb1's test
+    files saw that revert. A shared ROBIN is the HJB's, so the FP is handed the same one as its own."""
     for arm, lambda_, tolerance in (("picard", 1.0, 1e-12), ("newton", 1e8, 1e-7)):
-        problem = _pair_problem(dim, lambda_)
-        fp, hjb = FPFEMSolver(problem), HJBFEMSolver(problem)
+        problem = _pair_problem(dim, lambda_, wall)
+        fp = FPFEMSolver(problem, boundary_conditions=_walls(dim, wall)) if wall == "robin" else FPFEMSolver(problem)
+        hjb = HJBFEMSolver(problem)
         x = fp._disc.dof_coordinates
         n_dof = len(x)
         m0 = 1.0 + 0.5 * np.cos(np.pi * x[:, 0])
