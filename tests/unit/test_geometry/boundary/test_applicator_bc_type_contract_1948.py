@@ -300,7 +300,7 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
 #: inside themselves -- DIRICHLET pins only the value field (#1471), ABSORBING does opposite things
 #: to the two halves (#1478), SOURCE injects only into the density -- so the dispatch surface is the
 #: product and a single-`field_type` table sees one column of it. NEUMANN (a bare `pass`) and CUSTOM
-#: (which branches on `callable(bc.value)`) do NOT read `field_type`, so their four cells are two
+#: (which applies its rule to either field) do NOT read `field_type`, so their four cells are two
 #: labels over one code path each. Ten cells cover seven distinct paths, and saying so here is
 #: cheaper than letting the count read as coverage it does not have.
 #:
@@ -312,7 +312,7 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
 #:   DIRICHLET  recorded applying  INCOMPLETE: the verdict was true, the density      -- the axis
 #:                                 half was silent, unmarked and out of view
 #:   CUSTOM     recorded silent    WRONG about the member: it applies given the       -- the fixture
-#:                                 callable its API documents (see `_graph_value`)
+#:                                 callable its API documents (see `_graph_condition`)
 #:
 #: The axis alone leaves six cells silent, not four; CUSTOM's arm never reads `field_type`, so only
 #: the per-member fixture moves it. No reader of the old table could have told, in any of the three
@@ -342,37 +342,29 @@ def _graph_field_types() -> tuple[str, ...]:
 _GRAPH_FIELD_TYPES = _graph_field_types()
 
 
-def _custom_node_bc(field: npt.NDArray[np.floating], node: int, t: float) -> float:
-    """The callable `set_custom_bc` documents and constructs: `(field, node, t) -> float`."""
-    del t
+def _custom_node_bc(node: int, field: npt.NDArray[np.floating]) -> float:
+    """A CUSTOM rule, a callable of `(t, node, field)` that declares no time, so the cells apply it with none (#2296)."""
     return 0.5 * float(field[node])
 
 
-def _graph_value(bc_type: GraphBCType) -> float | Callable[..., float]:
-    """The `value` each member's dispatch arm can actually use: a callable for CUSTOM, a scalar else.
+def _graph_condition(bc_type: GraphBCType) -> dict[str, float | Callable[..., float]]:
+    """What each member's dispatch arm reads: CUSTOM a rule, of its own field, and the others a scalar value.
 
     "Its own API" would be too strong for one member: `set_absorbing_nodes` takes no `value` at all
     and hard-codes `0.0`, so the 2.5 below is not what an ABSORBING region is built with. Both
     verdicts are unchanged by it (the arm writes `value` on "value" and `0.0` on "density", and 2.5
     and 0.0 both differ from every node in `_NODES`), so this is stated rather than fixed.
 
-    Not a convenience. `NodeBC.value` is annotated `float | Callable[[int, float], float]` and
-    `NodeBC.get_value` calls it that way, while the CUSTOM branch of `apply` calls it as
-    `(field, node, t)` -- the signature `set_custom_bc` documents and then constructs a `NodeBC`
-    with. One field carries two incompatible callable contracts, selected by `bc_type`, which is
-    #1948's "no shared contract" one level below the applicators.
-
-    So the CUSTOM cell reports whichever of three outcomes the fixture chooses, from an applicator
-    that never changes. Measured 2026-09-10: a scalar falls through the branch's `callable(bc.value)`
-    guard and reads SILENT, the two-argument `(node, t)` form raises `TypeError` and reads REFUSED,
-    and the documented three-argument form applies. Only the third is a fact about the class.
+    Measured 2026-09-10, one field carried both contracts: the CUSTOM cell read SILENT for a scalar, REFUSED for a
+    `(node, t)` callable and applied for `(field, node, t)`, from an applicator that never changed. A CUSTOM condition
+    now takes its rule as `rule=` and refuses a value (#2296).
     """
     if bc_type is GraphBCType.CUSTOM:
-        return _custom_node_bc
+        return {"rule": _custom_node_bc}
     # NEUMANN is zero flux on a graph, and a non-zero value is refused when the `NodeBC` is built
     # (`test_a_non_zero_graph_neumann_flux_is_refused`), so its cells are measured at the one value
     # the type admits.
-    return 0.0 if bc_type is GraphBCType.NEUMANN else 2.5
+    return {"value": 0.0 if bc_type is GraphBCType.NEUMANN else 2.5}
 
 
 _GRAPH_CELLS = [(t, ft) for t in GraphBCType for ft in _GRAPH_FIELD_TYPES]
@@ -428,8 +420,8 @@ def test_no_graph_cell_refuses_by_accident():
     """A refusal must be deliberate. `_apply_and_classify` reports `ValueError` and `TypeError` as
     "refused" too, so without this a cell that starts raising for a BUG reason scores as compliant.
 
-    Not hypothetical: `_graph_value` records the two-argument callable raising `TypeError` from
-    inside the CUSTOM arm, which reads exactly like a branch that had been fixed to refuse.
+    Not hypothetical: `_graph_condition` records a two-argument callable raising `TypeError` from
+    inside the CUSTOM arm, which read exactly like a branch that had been fixed to refuse.
 
     This is a sweep and not a line inside the parametrised cell above, and the difference is
     load-bearing. Until #1948 step 2, four of the ten cells carried `xfail(strict=True)`, which absorbs a
@@ -446,7 +438,7 @@ def test_no_graph_cell_refuses_by_accident():
     accidental = []
     for bc_type, field_type in _GRAPH_CELLS:
         applicator = GraphApplicator(num_nodes=_NODES.size).add_node_bc(
-            NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, value=_graph_value(bc_type), name="s")
+            NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, name="s", **_graph_condition(bc_type))
         )
         outcome, result = _apply_and_classify(
             lambda _t, _a=applicator, _f=field_type: _a.apply(_NODES.copy(), field_type=_f),
@@ -475,7 +467,7 @@ def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
     """
     field = _NODES.copy()
     applicator = GraphApplicator(num_nodes=_NODES.size).add_node_bc(
-        NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, value=_graph_value(bc_type), name="s")
+        NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, name="s", **_graph_condition(bc_type))
     )
     outcome, result = _apply_and_classify(
         lambda _t: applicator.apply(field.copy(), field_type=field_type),
@@ -504,7 +496,7 @@ def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
     )
 
 
-@pytest.mark.parametrize("value", [2.5, lambda node, t: 0.0], ids=["non_zero", "callable"])
+@pytest.mark.parametrize("value", [2.5, lambda t, node: 0.0], ids=["non_zero", "callable"])
 def test_a_non_zero_graph_neumann_flux_is_refused(value):
     """Graph NEUMANN is zero flux; `apply` leaves both fields unchanged for it. A flux it would drop is
     refused when the `NodeBC` is built (maintainer ruling 2026-10-04). A callable cannot be checked for
@@ -639,7 +631,7 @@ def _gate_cases():
     # the type a condition is built with
     for t in GraphBCType:
         accepts.append(
-            (f"NodeBC[{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t, value=_graph_value(t)).bc_type is t)
+            (f"NodeBC[{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t, **_graph_condition(t)).bc_type is t)
         )
     for t in BCType:
         refuses.append((f"NodeBC[BCType.{t.name}]", lambda t=t: NodeBC(nodes=[0], bc_type=t), TypeError, "GraphBCType"))
@@ -656,7 +648,7 @@ def _gate_cases():
         "set_dirichlet_nodes": lambda n: applicator().set_dirichlet_nodes(n),
         "set_absorbing_nodes": lambda n: applicator().set_absorbing_nodes(n),
         "set_source_nodes": lambda n: applicator().set_source_nodes(n),
-        "set_custom_bc": lambda n: applicator().set_custom_bc(n, lambda f, node, t: 0.0),
+        "set_custom_bc": lambda n: applicator().set_custom_bc(n, lambda t, node, field: 0.0),
         "callable nodes": lambda n: applicator().add_node_bc(NodeBC(nodes=lambda num, n=n: n)),
         "apply_direct": lambda n: applicator().apply_direct(np.ones(5), n, 1.0),
         "create_graph_applicator": lambda n: create_graph_applicator(5, boundary_nodes=n),
@@ -1306,7 +1298,10 @@ def _one_refusal_per_acceptor():
         "set_dirichlet_nodes.nodes": (lambda: GraphApplicator(5).set_dirichlet_nodes(iter([1])), "condition_nodes"),
         "set_source_nodes.nodes": (lambda: GraphApplicator(5).set_source_nodes(frozenset({1})), "condition_nodes"),
         "set_absorbing_nodes.nodes": (lambda: GraphApplicator(5).set_absorbing_nodes(None), "condition_nodes"),
-        "set_custom_bc.nodes": (lambda: GraphApplicator(5).set_custom_bc({1}, lambda f, n, t: 0.0), "condition_nodes"),
+        "set_custom_bc.nodes": (
+            lambda: GraphApplicator(5).set_custom_bc({1}, lambda t, node, field: 0.0),
+            "condition_nodes",
+        ),
         "apply_direct.boundary_nodes": (lambda: GraphApplicator(5).apply_direct(np.zeros(5), {1}, 1.0), "nodes"),
         "create_graph_applicator.absorbing_nodes": (
             lambda: create_graph_applicator(5, absorbing_nodes=(n for n in [1])),
@@ -1325,7 +1320,7 @@ def _one_refusal_per_acceptor():
         "get_bc_value.node": (lambda: lookup(2.0), "node"),
         "NodeBC.value": (lambda: NodeBC(nodes=[0], value="2.5"), "value"),
         "set_dirichlet_nodes.value": (lambda: GraphApplicator(5).set_dirichlet_nodes([0], value=True), "value"),
-        "set_custom_bc.bc_func": (lambda: GraphApplicator(5).set_custom_bc([0], "x"), "value"),
+        "set_custom_bc.bc_func": (lambda: GraphApplicator(5).set_custom_bc([0], "x"), "rule"),
         "create_graph_applicator.boundary_value": (
             lambda: create_graph_applicator(5, boundary_value=Decimal(1)),
             "value",

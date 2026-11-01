@@ -82,6 +82,9 @@ NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"), unmoved=
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
 NODE_INTERACTION_SLOTS = Slots(("t", "node", "m"))
 NODE_LAGRANGIAN_SLOTS = Slots(("t", "node", "velocity", "m"))
+# A graph node's boundary value, and a CUSTOM node's rule, which also reads the field it is applied to (#2296).
+NODE_VALUE_SLOTS = Slots(("t", "node"))
+NODE_RULE_SLOTS = Slots(("t", "node", "field"))
 # Callables ruling 8 did not reorder: always time-first, bound so a space-first one is refused.
 SOLVER_SOURCE_SLOTS = Slots(("t", "x"), reordered=False)
 VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)

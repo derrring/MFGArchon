@@ -3,8 +3,9 @@
 The owner is `types.boundary_value`, reached through `types.segment_value` for a segment. This guard fails if a
 module decodes a value itself (audit session ruling, 2026-10-09, #2512 comment 6073690080).
 
-**Population.** Every module under `mfgarchon/`, except `applicator_graph.py`, whose node values, and whose t = 0
-read of a callable graph value, are rows N1/N2.
+**Population.** Every module under `mfgarchon/`. `applicator_graph.py` joined it with row N2 (#2296): a graph node's
+value and a CUSTOM node's rule are bound once and read through `applicator_graph._graph_value_at`, which the time scans
+below count as an owner.
 
 **A value read** is ``<x>.value`` or ``<x>.default_value``, or ``getattr(<x>, "value"[, default])``, as D17-D19
 read it; ``<x>.bc_type.value`` and the like are enum reads, not values. A name assigned in the same function from a
@@ -51,10 +52,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 PACKAGE = Path("mfgarchon")
-# Rows N1/N2: node values, and `GraphApplicator.apply`/`apply_fp`/`apply_hjb` reading a callable node value at t = 0
-# when given no t, as `apply_direct`/`apply_edge_direct` do at their default, which the manifest's N1/N2 comment
-# carries.
-EXCLUDED = {"mfgarchon/geometry/boundary/applicator_graph.py"}
 VALUE_ATTRS = frozenset({"value", "default_value"})
 ENUM_HOLDERS = frozenset({"bc_type", "default_bc", "type", "kind", "math_type"})
 CONVERT = frozenset({"float", "int", "complex", "asarray", "array"})
@@ -124,8 +121,6 @@ def scan(root: Path, allowed: Mapping[tuple[str, str], str] = ALLOWED) -> tuple[
     population, sites = [], []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if rel in EXCLUDED:
-            continue
         population.append(rel)
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, FUNCTIONS):
@@ -229,8 +224,6 @@ def coefficient_scan(root: Path, allowed: Mapping[tuple[str, str], str] = COEFFI
     population, sites = [], []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if rel in EXCLUDED:
-            continue
         population.append(rel)
         tree = ast.parse(path.read_text())
         scopes = [(tree, "<module>")] + [
@@ -280,6 +273,8 @@ CALLABLE_CALLS_ALLOWED = {
     ("mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py", "_boundary_conditions_from_dict"): (
         "wraps for the owner: #2597's dict translator"
     ),
+    # Not a value: a graph condition's node rule, which returns its nodes (#2292 reads them).
+    ("mfgarchon/geometry/boundary/applicator_graph.py", "get_nodes"): "non-boundary: a node rule",
     # Not a boundary value: a callable probe of an accessor, a getter or an operator.
     ("mfgarchon/alg/numerical/adjoint/verification.py", "verify_duality"): "non-boundary: L_hjb, L_fp_adjoint",
     ("mfgarchon/alg/numerical/coupling/fixed_point_utils.py", "read_inner_solve_failures"): "non-boundary: a method",
@@ -323,8 +318,6 @@ def callable_scan(root: Path, allowed: Mapping[tuple[str, str], str] = CALLABLE_
     population, sites = [], []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if rel in EXCLUDED:
-            continue
         population.append(rel)
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, FUNCTIONS):
@@ -368,7 +361,13 @@ def test_a_planted_callable_decode_is_found(package_copy, planted):
 # outside a function or lambda body, as in the other checks here; `BCSegment.get_value`'s ``t=``, which is not
 # checked, since `NodeBC.get_value` shares its name; and a signature default forwarded to the owner,
 # ``def f(..., time=0.0)`` passing ``t=time``, which reads t = 0 for every caller that omits it: the next check's.
-_TIME_KEYWORDS = {"segment_value": "t", "boundary_value": "t", "get_bc_value_at_boundary": "time"}
+# A graph node's value and rule are read at their time by `_graph_value_at`, the graph's owner of that read (#2296).
+_TIME_KEYWORDS = {
+    "segment_value": "t",
+    "boundary_value": "t",
+    "get_bc_value_at_boundary": "time",
+    "_graph_value_at": "t",
+}
 
 
 def time_literals(scope: ast.AST) -> list[int]:
@@ -393,8 +392,6 @@ def time_literal_scan(root: Path) -> tuple[list[str], list[str]]:
     population, sites = [], []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if rel in EXCLUDED:
-            continue
         population.append(rel)
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, FUNCTIONS):
@@ -444,7 +441,9 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 # **Count, by this predicate.** At 375122e5 it found 43 members and 7 storers.
 # - Of the 43, 31 reach the owner through functions and 12 through a class's constructor, two of them as ``cls(...)``
 #   (`DiffusionOperator.from_volatility`, `NormalDerivOperator.from_axis`).
-# - `applicator_graph.py` is outside the population (row N2), so its three are not among them.
+# - `applicator_graph.py` was outside the population then. It joined with row N2 (#2296), and its four readers,
+#   `GraphApplicator.apply`, `apply_hjb`, `apply_fp` and `apply_direct`, which defaulted their time to 0, default it to
+#   ``None`` since, as the 26 below do.
 # - At this head it finds only the five in `TIME_DEFAULTS_ALLOWED`.
 # - The 12 private members left the population by losing the default: their time is keyword-only and required, and
 #   every production caller passes it.
@@ -453,7 +452,7 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 #
 # **Blind spots:**
 # - Callees are matched by bare name. A chain can pass through a same-named function that does not reach the owner;
-#   that is a false positive, and the reason `applicator_graph.py`'s `NodeBC.get_value` is outside the population.
+#   that is a false positive. `NodeBC.get_value` and the segment's `get_value` share the name and both reach an owner.
 #   A same-named function that does reach the owner, called on an object that does not, is the same false positive.
 # - A parameter renamed or aliased before the call (``tt = time``), passed inside a container or ``**kwargs``, or
 #   through dynamic dispatch (``getattr``, a callback).
@@ -555,8 +554,6 @@ def time_default_scan(
     population, timed, storing_classes, initializers = [], [], set(), []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if rel in EXCLUDED:
-            continue
         population.append(rel)
         tree = ast.parse(path.read_text())
         owner = {
