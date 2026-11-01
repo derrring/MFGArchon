@@ -1,5 +1,5 @@
 - **A graph node's value takes `(t, node)`, time first, and a CUSTOM node takes a rule of `(t, node, field)` as `rule=`** (#2296, #2512 row N2). **This breaks a callable written in the old order.**
-  - **How the library calls them.** `NodeBC`, `set_dirichlet_nodes`, `set_source_nodes`, `apply_direct` and the factories bind a callable value once, through `bind_user_callable`, to `(t, node)`; `set_custom_bc` and `NodeBC(rule=)` bind a rule to `(t, node, field)`. Parameters named after the slots are passed by name, so a value that reads no time, `lambda node: …`, is accepted.
+  - **How the library calls them.** `NodeBC`, `set_dirichlet_nodes`, `set_source_nodes`, `apply_direct` and the factories bind a callable value once, through `bind_user_callable`, to `(t, node)`; `set_custom_bc` and `NodeBC(rule=)` bind a rule to `(t, node, field)`. Parameters named after the slots are passed by name, so a value that reads no time, `lambda node: …`, is accepted and read with no time; at main it was called `(node, t)` and raised `TypeError: … takes 1 positional argument but 2 were given`.
   - **Refused by name where it is built:**
     - a value written `(node, t)`, the order `NodeBC.get_value` called it in. The refusal names `(t, node)`;
     - a callable whose parameters cannot be matched to the slots, such as `lambda a, b: …`;
