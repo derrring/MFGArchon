@@ -189,11 +189,14 @@ def bind_user_callable(
         return BoundCallable(fn, "spatial", ("x",))
     # Named after the slots in the order they are written, a callable keeps that order, and one written time last
     # would read its arguments in the wrong slots: the advice is to reorder, by what each parameter reads.
-    time_last = ", ".join([*(slot for slot in order_ if slot != "t"), "time"])
+    if "t" in order_:
+        time_last = ", ".join([*(slot for slot in order_ if slot != "t"), "time"])
+        target, swapped_ = f"({', '.join(order_)}), time first", f"one written ({time_last})"
+    else:
+        target, swapped_ = f"({', '.join(order_)})", "one written in another order"
     reorder = (
-        f"Name each parameter after what it reads and put them in the order ({', '.join(order_)}), time first: named "
-        f"{', '.join(order_)} in the order it is written, one written ({time_last}) would read its arguments in the "
-        "wrong slots."
+        f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order_)} in the "
+        f"order it is written, {swapped_} would read its arguments in the wrong slots."
     )
     if misplaced:
         why = f": {', '.join(misplaced)} would receive another slot's value. {reorder}"
