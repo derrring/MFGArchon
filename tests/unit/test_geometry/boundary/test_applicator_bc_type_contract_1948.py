@@ -643,8 +643,57 @@ def _gate_cases():
     for nodes in ([2.7], [2.0], ["3"], [True], [np.True_]):
         for route, call in routes.items():
             refuses.append((f"{route}{nodes!r}", lambda c=call, n=nodes: c(n), TypeError, "not node indices"))
+    # a bare node, 0 among them, which a truth test took as no nodes (found by A1's fuzz)
+    for nodes in (3, 0):
+        for route, call in routes.items():
+            refuses.append(
+                (f"{route}[{nodes}]", lambda c=call, n=nodes: c(n), TypeError, "a collection of node indices")
+            )
     refuses.append(("NodeBC[nodes=5]", lambda: NodeBC(nodes=5), TypeError, "a collection of node indices"))
     refuses.append(("NodeBC[nodes='12']", lambda: NodeBC(nodes="12"), TypeError, "a collection of node indices"))
+    for factory, call in {
+        "create_maze_applicator[exit_nodes=0]": lambda: create_maze_applicator(_maze(), exit_nodes=0),
+        "create_maze_applicator[entry_nodes=0]": lambda: create_maze_applicator(_maze(), entry_nodes=0),
+    }.items():
+        refuses.append((factory, call, TypeError, "a collection of node indices"))
+    refuses.append(
+        (
+            "from_network_geometry[custom, None]",
+            lambda: GraphApplicator.from_network_geometry(_maze(), "custom", boundary_nodes=None),
+            TypeError,
+            "needs boundary_nodes",
+        )
+    )
+    # node 0 as a one-element array, which a truth test dropped, and an entry generator read once
+    accepts.append(
+        (
+            "create_graph_applicator[np.array([0])]",
+            lambda: np.array_equal(
+                create_graph_applicator(5, boundary_nodes=np.array([0]), boundary_value=2.5).apply(np.zeros(5)),
+                [2.5, 0, 0, 0, 0],
+            ),
+        )
+    )
+    accepts.append(
+        (
+            "from_network_geometry[custom, np.array([0])]",
+            lambda: np.array_equal(
+                GraphApplicator.from_network_geometry(
+                    _maze(), "custom", boundary_nodes=np.array([0]), boundary_value=2.5
+                ).apply(np.zeros(9)),
+                [2.5, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+        )
+    )
+    accepts.append(
+        (
+            "create_maze_applicator[entry generator]",
+            lambda: np.array_equal(
+                create_maze_applicator(_maze(), entry_nodes=(n for n in [4])).apply(np.zeros(9), field_type="density"),
+                [0, 0, 0, 0, 1.0, 0, 0, 0, 0],
+            ),
+        )
+    )
     accepts.append(
         (
             "add_node_bc[0, 4]",

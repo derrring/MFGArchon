@@ -130,7 +130,7 @@ class NodeBC:
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
         if callable(self.nodes):
-            return self.nodes(num_nodes)
+            return list(_as_tuple(self.nodes(num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})", "node indices"))
         return list(self.nodes)
 
     def get_value(self, node: int, t: float) -> float:
@@ -351,9 +351,10 @@ class GraphApplicator(BaseGraphApplicator):
                 f"GraphApplicator.from_network_geometry: boundary_type={boundary_type!r} reads "
                 f"{sorted(read[boundary_type] | {'boundary_value'})}, and not {unread} (#2292)."
             )
-        if boundary_type == "custom" and "boundary_nodes" not in kwargs:
+        if boundary_type == "custom" and kwargs.get("boundary_nodes") is None:
             raise TypeError(
-                "GraphApplicator.from_network_geometry: boundary_type='custom' needs boundary_nodes (#2292)."
+                "GraphApplicator.from_network_geometry: boundary_type='custom' needs boundary_nodes, a collection of "
+                "node indices (#2292)."
             )
         num_nodes = _num_nodes(geometry)
 
@@ -370,7 +371,9 @@ class GraphApplicator(BaseGraphApplicator):
         else:  # "custom"
             boundary_nodes = kwargs["boundary_nodes"]
 
-        if boundary_nodes:
+        # A detector gives a list, empty when it finds no node. Given nodes go to NodeBC as they are, to be checked
+        # there: a truth test dropped a bare 0 and a one-element array of node 0 (#2292).
+        if boundary_type == "custom" or boundary_nodes:
             applicator.set_dirichlet_nodes(boundary_nodes, value=kwargs.get("boundary_value", 0.0), name="boundary")
 
         return applicator
@@ -594,10 +597,10 @@ class GraphApplicator(BaseGraphApplicator):
         """Refused: no graph solver applies an edge condition (#2493)."""
         raise NotImplementedError(f"GraphApplicator.add_edge_bc: {_EDGES_NOT_APPLIED}")
 
-    def _checked_nodes(self, nodes, where: str) -> list[int]:
+    def _checked_nodes(self, nodes, where: str, param: str = "nodes") -> list[int]:
         """``nodes`` as a list of node indices of this graph, or refused by name: an index outside
         ``[0, num_nodes)`` would otherwise be skipped without a word (#2292)."""
-        indices = list(nodes)
+        indices = list(_as_tuple(nodes, f"{where}: {param}", "node indices"))
         foreign = [n for n in indices if isinstance(n, (bool, np.bool_)) or not isinstance(n, numbers.Integral)]
         if foreign:
             raise TypeError(
@@ -790,7 +793,7 @@ class GraphApplicator(BaseGraphApplicator):
             >>> u_bc = applicator.apply_direct(u, [0], lambda n, t: np.sin(t))
         """
         result = field.copy()
-        nodes = self._checked_nodes(boundary_nodes, "GraphApplicator.apply_direct")
+        nodes = self._checked_nodes(boundary_nodes, "GraphApplicator.apply_direct", "boundary_nodes")
         if isinstance(values, (list, np.ndarray)) and len(values) != len(nodes):
             raise ValueError(
                 f"GraphApplicator.apply_direct: {len(values)} value(s) for {len(nodes)} node(s). Give one value per "
@@ -968,13 +971,15 @@ def create_graph_applicator(
     """
     applicator = GraphApplicator(num_nodes)
 
-    if boundary_nodes:
+    # None is "no such nodes"; anything else goes to NodeBC to be checked, where a truth test dropped a bare 0 and
+    # a one-element array of node 0, and raised on a longer array (#2292).
+    if boundary_nodes is not None:
         applicator.set_dirichlet_nodes(boundary_nodes, value=boundary_value, name="boundary")
 
-    if source_nodes:
+    if source_nodes is not None:
         applicator.set_source_nodes(source_nodes, value=source_value, name="source")
 
-    if absorbing_nodes:
+    if absorbing_nodes is not None:
         applicator.set_absorbing_nodes(absorbing_nodes, name="absorbing")
 
     return applicator
@@ -1003,18 +1008,23 @@ def create_maze_applicator(
         >>> applicator = create_maze_applicator(maze, auto_detect_exits=True)
     """
     applicator = GraphApplicator(_num_nodes(maze_geometry))
+    # Built first, so the entries are read once, as given: a generator read here and again below came back empty
+    # (#2292). None is "no such nodes", and is the only input taken as that.
+    entry = (
+        None if entry_nodes is None else NodeBC(nodes=entry_nodes, bc_type=GraphBCType.SOURCE, value=1.0, name="entry")
+    )
 
     # Auto-detect exits if requested. A dead end named as an entry is the entry's: the explicit name overrides the
     # heuristic, where both would have written the density at that node (#2292).
     if auto_detect_exits and exit_nodes is None:
-        entries = set(entry_nodes or ())
-        exit_nodes = [n for n in GraphApplicator._detect_leaf_nodes(maze_geometry) if n not in entries]
+        entries = set() if entry is None else set(applicator._resolve_nodes(entry))
+        exit_nodes = [n for n in GraphApplicator._detect_leaf_nodes(maze_geometry) if n not in entries] or None
 
-    if exit_nodes:
+    if exit_nodes is not None:
         applicator.set_absorbing_nodes(exit_nodes, name="exit")
 
-    if entry_nodes:
-        applicator.set_source_nodes(entry_nodes, value=1.0, name="entry")
+    if entry is not None:
+        applicator.add_node_bc(entry)
 
     return applicator
 
