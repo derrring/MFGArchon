@@ -365,6 +365,11 @@ class GraphApplicator(BaseGraphApplicator):
             boundary_nodes = cls._detect_leaf_nodes(geometry)
         elif boundary_type == "degree":
             threshold = kwargs.get("degree_threshold", 1)
+            if isinstance(threshold, (bool, np.bool_)) or not isinstance(threshold, numbers.Real):
+                raise TypeError(
+                    f"GraphApplicator.from_network_geometry: degree_threshold is {threshold!r}; it takes a number, the "
+                    "largest degree a boundary node has (#2292)."
+                )
             boundary_nodes = cls._detect_low_degree_nodes(geometry, threshold)
         elif boundary_type == "spatial":
             boundary_nodes = cls._detect_spatial_boundary_nodes(geometry)

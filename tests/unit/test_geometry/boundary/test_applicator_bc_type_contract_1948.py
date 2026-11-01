@@ -656,6 +656,15 @@ def _gate_cases():
         "create_maze_applicator[entry_nodes=0]": lambda: create_maze_applicator(_maze(), entry_nodes=0),
     }.items():
         refuses.append((factory, call, TypeError, "a collection of node indices"))
+    for threshold in ("1", True):
+        refuses.append(
+            (
+                f"from_network_geometry[degree_threshold={threshold!r}]",
+                lambda th=threshold: GraphApplicator.from_network_geometry(_maze(), "degree", degree_threshold=th),
+                TypeError,
+                "degree_threshold",
+            )
+        )
     refuses.append(
         (
             "from_network_geometry[custom, None]",

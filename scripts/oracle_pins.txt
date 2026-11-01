@@ -312,18 +312,22 @@ row grid/B8_no_image_raises         -
 #   when the BC object's identity changes; the alternative is freeze-and-refuse, capturing at construction and
 #   refusing a swap loudly.
 row grid/B9_bc_read_at_solve_time   -
-# Rows N1 and N2 inherit an item from B2b-2b-iv (audit session ruling, 2026-10-12): `GraphApplicator.apply`,
-#   `apply_fp` and `apply_hjb` take `t=0`, so given no t they read a callable node value at t = 0, in silence. They read
-#   no edge value: an edge condition is refused since #2292's acceptance gate (#2493). `apply_direct` and `apply_edge_direct` take `t=0.0` and call a
-#   callable value at it the same way. None of them reaches the owner (`NodeBC.get_value` calls the value directly),
-#   and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
-# They also inherit an item from #1544 (#2617; audit session ruling, 2026-10-12): the policy-iteration path
-#   (`NetworkPolicyIterationHJBSolver.solve_hjb_system`, `hjb_network.py:395` at 1a036677) imposes the node BCs by
-#   overwriting U[n] after each time step's policy iteration, so the interior rows of its solves used unpinned neighbour
-#   values. The coupling ran through L^pi at D = 0 already, and the viscous term D L adds a second one. #2617's
-#   review 1 reported it as a pre-existing first-order lag.
-# Row N1 (#2292; audit session ruling, 2026-11-01): the guard holds each BC alphabet to its own readers, with its
-#   planted rivals in the same file. #1948's acceptance gate table refuses the crossing where a condition is handed over.
+# Two items were attached to rows N1 and N2 by the audit session's ruling of 2026-10-12, before A1, A2 and A3 existed.
+#   A1 reassigns them (audit session ruling, 2026-11-01):
+# - To N2, which A2's value binding owns, so N2 is not met until it is fixed: `GraphApplicator.apply`, `apply_fp` and
+#   `apply_hjb` take `t=0`, so given no t they read a callable node value at t = 0, in silence, and `apply_direct` takes
+#   `t=0.0` and calls a callable value at it the same way. None of them reaches the owner (`NodeBC.get_value` calls the
+#   value directly), and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
+#   `apply_edge_direct`, which did the same, is refused since #2292's acceptance gate (#2493).
+# - To A3, beside N2, under the user's ruling of 2026-11-01 that the network HJB pin is imposed inside the operator
+#   (#1544, #2617): the policy-iteration path (`NetworkPolicyIterationHJBSolver.solve_hjb_system`, `hjb_network.py:395`
+#   at 1a036677) imposes the node BCs by overwriting U[n] after each time step's policy iteration, so the interior rows
+#   of its solves used unpinned neighbour values. The coupling ran through L^pi at D = 0 already, and the viscous term
+#   D L adds a second one. #2617's review 1 reported it as a pre-existing first-order lag.
+# Row N1 (#2292; audit session ruling, 2026-11-01) is the alphabet itself. The guard holds each BC alphabet to its own
+#   readers, with its planted rivals in the same file and one named allowance, `_declares_dirichlet`: a continuum string
+#   dispatch on a BCType, a candidate for #2573's continuum owner rather than an endorsed form. #1948's acceptance gate
+#   table refuses the crossing where a condition is handed over.
 row network/N1_graph_bc_alphabet    tests/unit/test_geometry/boundary/test_graph_bc_alphabet_has_one_owner_2512.py
 row network/N2_node_bc_arity        -
 
