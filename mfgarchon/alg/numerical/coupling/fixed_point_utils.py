@@ -304,7 +304,9 @@ def refuse_a_shared_hjb_solver(hjb_solvers: Iterable[object], coupler: str) -> N
 def read_inner_solve_failures_of(hjb_solvers: Iterable[object]) -> tuple | None:
     """What a coupled solve's HJB solvers say about their latest solves, together (#2644): ``None`` when none of them
     tracks its inner solves, else every recorded step of every one that does. Each slot holds its own solver
-    (`refuse_a_shared_hjb_solver`), so each one's latest solve is its slot's in the last sweep."""
+    (`refuse_a_shared_hjb_solver`), so each one's latest solve is its slot's in the last sweep, where the sweep reached
+    it. A sweep that a diverged HJB ends early (#1718) leaves the later slots unsolved, and their solvers report their
+    previous solve, which can predate this coupled solve; that result is not converged."""
     records = [read_inner_solve_failures(solver) for solver in hjb_solvers]
     tracked = [record for record in records if isinstance(record, tuple)]
     return None if not tracked else tuple(failure for record in tracked for failure in record)
@@ -367,7 +369,7 @@ def verdict_reads_inner_failures(
             failures = read_inner_solve_failures_of(solvers)
             metadata = getattr(result, "metadata", None)
             if isinstance(metadata, dict):
-                # Every coupler's result says what its last sweep's inner solves were, converged or not (#2644).
+                # Every coupler's result says what its solvers' latest solves recorded, converged or not (#2644).
                 metadata["inner_hjb_failures"] = None if failures is None else list(failures)
             if failures:
                 _refuse_a_converged_result(result, failures)

@@ -176,6 +176,7 @@ def test_one_hjb_solver_in_two_slots_is_refused(coupler):
     hjb = HJBFDMSolver(steep, max_newton_iterations=3)
     with pytest.raises(ValueError, match="Pass one HJB solver per slot"):
         build([hjb, hjb]).solve()
+    assert hjb.inner_solve_failures() is None  # refused before the solve, so it never solved
     assert hjb.on_inner_failure == "raise"
 
 

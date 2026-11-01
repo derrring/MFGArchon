@@ -427,8 +427,9 @@ class MultiPopulationResult:
     population_names : list[str]
         Names of populations.
     metadata : dict
-        A refused verdict's ``convergence_reason`` and ``inner_hjb_failures``, the last sweep's failed inner HJB steps,
-        which ``verdict_reads_inner_failures`` writes for every coupler (#2644).
+        A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the
+        solvers' latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
+        ``verdict_reads_inner_failures`` writes both for every coupler (#2644).
     """
 
     def __init__(self, U, M, iterations, converged, errors, population_names, errors_M=None, errors_U=None):
