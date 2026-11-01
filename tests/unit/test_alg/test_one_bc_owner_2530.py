@@ -16,8 +16,6 @@ Rulings of the audit session (2026-10-13), plan at #2530 comment 6133804095:
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 import numpy as np
@@ -26,7 +24,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError, HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -348,26 +346,21 @@ def test_on_the_legacy_route_each_solver_solves_the_bc_the_owner_returns(name):
         run(_on_grid(no_flux_bc(dimension=1), bc))
 
 
-def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges(mfg_caplog):
+def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges():
     """HJB-GFDM's default Newton does not converge against a wall datum that jumps from U_T (#2610), and a wall read
     from an unconverged solve says nothing about which BC was resolved. So the datum is U_T = 0.7 + x(1 - x), which
-    equals the exit's 0.7 at both walls, and the solver's own verdict -- no "did not converge" record -- is asserted
-    before the walls are read. Its logger does not propagate, so the records are counted on it, and the absence is
-    paired with a presence on the same logger: #2610's jumping datum, U_T = 0 against the exit, which does not
-    converge."""
+    equals the exit's 0.7 at both walls, and the solver's own verdict is read before the walls are: a step that does not
+    converge now raises (#2644), so the three solves completing is that verdict. The absence is paired with a presence
+    on the same instrument: #2610's jumping datum, U_T = 0 against the exit, which does not converge, and raises."""
     x = np.linspace(0.0, 1.0, N)
     U_T = 0.7 + x * (1.0 - x)
 
     def run(problem):
         return _hjb(lambda p: HJBGFDMSolver(p, collocation_points=p.geometry.get_spatial_grid()), problem, U_T)
 
-    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
-        legacy, exit_grid, no_flux = run(_legacy(_EXIT)), run(_on_grid(_EXIT)), run(_on_grid(no_flux_bc(dimension=1)))
-    unconverged = [r for r in mfg_caplog.records if "did not converge" in r.getMessage()]
-    assert unconverged == [], f"{len(unconverged)} unconverged steps: the walls below would mean nothing"
-    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
+    legacy, exit_grid, no_flux = run(_legacy(_EXIT)), run(_on_grid(_EXIT)), run(_on_grid(no_flux_bc(dimension=1)))
+    with pytest.raises(ConvergenceError, match="did not converge"):
         _hjb(lambda p: HJBGFDMSolver(p, collocation_points=p.geometry.get_spatial_grid()), _on_grid(_EXIT), np.zeros(N))
-    assert any("did not converge" in r.getMessage() for r in mfg_caplog.records), "the instrument saw no record"
     np.testing.assert_allclose(legacy[0, [0, -1]], [0.7, 0.7], atol=1e-10)
     np.testing.assert_allclose(legacy, exit_grid)
     assert abs(no_flux[0, 0] - 0.7) > 0.05

@@ -58,6 +58,12 @@ from scipy.spatial import cKDTree
 
 import mfgarchon.utils.deprecation as _deprecation
 from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import cone_policy
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
+    INNER_FAILURE_POLICIES,
+    InnerSolveFailure,
+    checked_inner_budget,
+    report_inner_solve_failure,
+)
 from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
@@ -318,6 +324,8 @@ class HJBHowardSolver:
         Maximum Howard inner iterations per backward time step.
     tol : float
         Relative `∞`-norm tolerance on policy change `(α^{k+1} − α^k)/α^k`.
+    on_inner_failure : str
+        "raise" (default) or "record": what a time step whose policy iteration exhausts `max_iter` does (#2644).
     volatility : float | np.ndarray | None
         Override $\\sigma$ (constant scalar or a collocation-space array of
         shape `(n,)` declared ``volatility_kind="field"``). A field row-scales the Laplacian by
@@ -373,7 +381,16 @@ class HJBHowardSolver:
         use_provider_bc_rows: bool = False,
         volatility_kind: str | None = None,
         control_cost: QuadraticControlCost | None = None,
+        on_inner_failure: str = "raise",
     ):
+        if on_inner_failure not in INNER_FAILURE_POLICIES:
+            raise ValueError(
+                f"HJBHowardSolver: on_inner_failure is {on_inner_failure!r}; it takes {list(INNER_FAILURE_POLICIES)} "
+                "(#2644)."
+            )
+        #: What a time step whose policy iteration exhausts ``max_iter`` does (#2644); see ``BaseHJBSolver``.
+        self.on_inner_failure = on_inner_failure
+        self._inner_solve_failures: list[InnerSolveFailure] | None = None
         if discretisation not in ("upwind_projection", "upwind_per_axis", "central", "guarded_fan"):
             raise ValueError(
                 "discretisation must be one of {upwind_projection, upwind_per_axis, central, guarded_fan}, got "
@@ -473,7 +490,7 @@ class HJBHowardSolver:
         self.control_lagrangian = control_cost.lagrangian if control_cost is not None else control_lagrangian
         self.control_cost = control_cost
         self.discretisation = discretisation
-        self.max_iter = int(max_iter)
+        self.max_iter = checked_inner_budget(max_iter, "max_iter", "HJBHowardSolver")
         self.tol = float(tol)
         # The override, read by the one rule every solver uses (#2378). None stays None: the
         # problem's volatility is read later, as the stencil provider normalises it.
@@ -773,8 +790,27 @@ class HJBHowardSolver:
             alpha = alpha_new
             if rel < self.tol:
                 break
+        else:
+            # The policy did not settle within the budget, so the value is not the policy-iteration fixed point (#2644).
+            report_inner_solve_failure(
+                InnerSolveFailure(
+                    t_idx=int(t_idx),
+                    residual=rel,
+                    tolerance=self.tol,
+                    steps=self.max_iter,
+                    reason="Howard policy iteration budget exhausted",
+                    measure="the relative change of the last policy update, in the max norm",
+                ),
+                policy=self.on_inner_failure,
+                record=self._inner_solve_failures,
+                solver="HJBHowardSolver",
+            )
 
         return u_new, alpha
+
+    def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
+        """The time steps of the latest ``solve_hjb_system`` whose policy iteration exhausted ``max_iter`` (#2644)."""
+        return None if self._inner_solve_failures is None else tuple(self._inner_solve_failures)
 
     # ---- Public solve --------------------------------------------------
 
@@ -871,6 +907,7 @@ class HJBHowardSolver:
         U[Nt] = U_terminal.copy()
 
         alpha_carry: np.ndarray | None = None
+        self._inner_solve_failures = []
         for nt in range(Nt - 1, -1, -1):
             m_n = np.asarray(M_density[nt]) if M_density is not None else np.zeros(n)
             U[nt], alpha_carry = self._howard_step(U[nt + 1], m_n, nt, sigma, dt, static, alpha_carry)

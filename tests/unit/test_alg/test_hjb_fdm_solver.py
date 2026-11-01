@@ -83,11 +83,16 @@ class TestHJBFDMSolverInitialization:
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        with pytest.raises(ValueError, match="max_newton_iterations must be >= 1"):
+        with pytest.raises(ValueError, match=r"max_newton_iterations is .*budget of at least 1"):
             HJBFDMSolver(problem, max_newton_iterations=0)
 
-        with pytest.raises(ValueError, match="max_newton_iterations must be >= 1"):
+        with pytest.raises(ValueError, match=r"max_newton_iterations is .*budget of at least 1"):
             HJBFDMSolver(problem, max_newton_iterations=-5)
+
+        # a budget is a number of steps: a float or a bool is refused by name, not truncated or read as 1 (#2644)
+        for budget in (20.0, True):
+            with pytest.raises(TypeError, match="an integer is required"):
+                HJBFDMSolver(problem, max_newton_iterations=budget)
 
     def test_invalid_tolerance(self):
         """Test that invalid newton_tolerance raises error."""
@@ -780,16 +785,16 @@ class TestHJBFDMSolverGhostValueBC:
 class TestHJBFDMSolverNewtonFallback:
     """Test Newton-to-Value-Iteration adaptive fallback (Issue #669)."""
 
-    def test_on_newton_failure_default_is_raise(self):
-        """Test that default on_newton_failure is 'raise'."""
+    def test_on_inner_failure_default_is_raise(self):
+        """Test that default on_inner_failure is 'raise'."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, components=_default_components())
         solver = HJBFDMSolver(problem)
 
-        assert solver.on_newton_failure == "raise"
+        assert solver.on_inner_failure == "raise"
 
-    def test_on_newton_failure_raise_on_divergence(self):
-        """Test that ConvergenceError is raised when Newton diverges with on_newton_failure='raise'."""
+    def test_on_inner_failure_raise_on_divergence(self):
+        """Test that ConvergenceError is raised when Newton diverges with on_inner_failure='raise'."""
         from unittest.mock import patch
 
         from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError
@@ -799,7 +804,7 @@ class TestHJBFDMSolverNewtonFallback:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
-        solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure="raise")
+        solver = HJBFDMSolver(problem, solver_type="newton", on_inner_failure="raise")
 
         Nx, Ny = 8, 8
         Nt_points = problem.Nt_points
@@ -815,8 +820,8 @@ class TestHJBFDMSolverNewtonFallback:
         ):
             solver.solve_hjb_system(M_density, U_final, U_prev)
 
-    def test_on_newton_failure_raise_on_exception(self):
-        """Test that ConvergenceError wraps LinAlgError when on_newton_failure='raise'."""
+    def test_on_inner_failure_raise_on_exception(self):
+        """Test that ConvergenceError wraps LinAlgError when on_inner_failure='raise'."""
         from unittest.mock import patch
 
         from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError
@@ -825,7 +830,7 @@ class TestHJBFDMSolverNewtonFallback:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
-        solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure="raise")
+        solver = HJBFDMSolver(problem, solver_type="newton", on_inner_failure="raise")
 
         Nx, Ny = 8, 8
         Nt_points = problem.Nt_points
@@ -840,8 +845,8 @@ class TestHJBFDMSolverNewtonFallback:
         ):
             solver.solve_hjb_system(M_density, U_final, U_prev)
 
-    @pytest.mark.parametrize("policy", ["raise", "warn_and_fallback"])
-    def test_on_newton_failure_reraises_not_implemented(self, policy):
+    @pytest.mark.parametrize("policy", ["raise", "fallback"])
+    def test_on_inner_failure_reraises_not_implemented(self, policy):
         """Unsupported residual operations must not be treated as Newton failures."""
         import warnings
         from unittest.mock import patch
@@ -850,7 +855,7 @@ class TestHJBFDMSolverNewtonFallback:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
-        solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure=policy)
+        solver = HJBFDMSolver(problem, solver_type="newton", on_inner_failure=policy)
         Nx, Ny = 8, 8
         Nt_points = problem.Nt_points
         M_density = np.ones((Nt_points, Nx, Ny)) * 0.5
@@ -872,8 +877,8 @@ class TestHJBFDMSolverNewtonFallback:
         fallback_warnings = [str(w.message) for w in caught if "Falling back" in str(w.message)]
         assert not fallback_warnings, fallback_warnings
 
-    def test_on_newton_failure_fallback_on_divergence(self):
-        """Test fallback to Value Iteration when Newton diverges with warn_and_fallback."""
+    def test_on_inner_failure_fallback_on_divergence(self):
+        """Test fallback to Value Iteration when Newton diverges with on_inner_failure='fallback'."""
         import warnings
         from unittest.mock import patch
 
@@ -883,7 +888,7 @@ class TestHJBFDMSolverNewtonFallback:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
-        solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure="warn_and_fallback")
+        solver = HJBFDMSolver(problem, solver_type="newton", on_inner_failure="fallback")
 
         # Mock Newton solver to return non-converged result
         failed_info = SolverInfo(converged=False, iterations=30, residual=1.5, residual_history=[])
@@ -918,16 +923,17 @@ class TestHJBFDMSolverNewtonFallback:
         call_kwargs = MockFPSolver.call_args[1]
         assert call_kwargs["max_iterations"] == solver.max_newton_iterations * 10
 
-    def test_on_newton_failure_ignored_for_fixed_point(self):
-        """Test that on_newton_failure is irrelevant when solver_type='fixed_point'."""
+    def test_on_inner_failure_ignored_for_fixed_point(self):
+        """solver_type='fixed_point' takes on_inner_failure='fallback'. The fixed point has no fallback, so it records
+        as 'record' does rather than raising (#2644)."""
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
 
         # Should accept the parameter without error even for fixed_point
-        solver = HJBFDMSolver(problem, solver_type="fixed_point", on_newton_failure="warn_and_fallback")
-        assert solver.on_newton_failure == "warn_and_fallback"
+        solver = HJBFDMSolver(problem, solver_type="fixed_point", on_inner_failure="fallback")
+        assert solver.on_inner_failure == "fallback"
 
         # Solving should work normally (no fallback logic triggered)
         Nx, Ny = 8, 8
@@ -939,6 +945,20 @@ class TestHJBFDMSolverNewtonFallback:
         U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
         assert U_solution.shape == (Nt_points, Nx, Ny)
         assert np.all(np.isfinite(U_solution))
+
+    def test_on_newton_failure_is_the_deprecated_name_of_on_inner_failure(self):
+        """`on_newton_failure` (#669) is the old name of `on_inner_failure` (#2644): passing, reading and setting it warn,
+        and "warn_and_fallback" is "fallback"."""
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, components=_default_components())
+        with pytest.deprecated_call():
+            solver = HJBFDMSolver(problem, on_newton_failure="warn_and_fallback")
+        assert solver.on_inner_failure == "fallback"
+        with pytest.deprecated_call():
+            assert solver.on_newton_failure == "warn_and_fallback"
+        with pytest.deprecated_call():
+            solver.on_newton_failure = "raise"
+        assert solver.on_inner_failure == "raise"
 
     def test_convergence_error_attributes(self):
         """Test ConvergenceError exception has correct attributes."""

@@ -7,8 +7,11 @@ These utilities are used by both legacy and config-aware fixed-point iterator im
 
 from __future__ import annotations
 
+import functools
 import inspect
-from typing import TYPE_CHECKING
+from collections import Counter
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
@@ -19,9 +22,15 @@ from mfgarchon.utils.mfg_logging import get_logger
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.utils.solver_result import SolverResult
+
+_Solver = TypeVar("_Solver")
+_Params = ParamSpec("_Params")
+_Result = TypeVar("_Result")
 
 
 def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
@@ -273,6 +282,117 @@ def read_inner_solve_failures(hjb_solver: object) -> object:
     return method() if callable(method) else None
 
 
+def refuse_a_shared_hjb_solver(hjb_solvers: Iterable[object], coupler: str) -> None:
+    """A coupled solve takes one HJB solver object per slot, and refuses one object in several slots by name (#2644).
+
+    A solver's record is its latest solve, so an object filling two nodes or regimes reports only its last slot's, and
+    a coupler reading it certified over the first slot's failed steps (#2644 review 1, M1). Nothing in the library
+    shares a solver, so sharing is refused rather than read solve by solve. The check is by identity, of the objects the
+    coupler is handed: wrappers that hide one solver behind distinct objects are not seen.
+    """
+    slots = list(hjb_solvers)
+    filled = Counter(id(solver) for solver in slots)
+    for solver in slots:
+        if filled[id(solver)] > 1:
+            raise ValueError(
+                f"{coupler}: one HJB solver object, a {type(solver).__name__}, fills {filled[id(solver)]} of its slots. "
+                "Pass one HJB solver per slot (#2644): a solver's record is its latest solve, so the earlier slots of a "
+                "shared one could not be read."
+            )
+
+
+def read_inner_solve_failures_of(hjb_solvers: Iterable[object]) -> tuple | None:
+    """What a coupled solve's HJB solvers say about their latest solves, together (#2644): ``None`` when none of them
+    tracks its inner solves, else every recorded step of every one that does. Each slot holds its own solver
+    (`refuse_a_shared_hjb_solver`), so each one's latest solve is its slot's in the last sweep, where the sweep reached
+    it. A sweep that a diverged HJB ends early (#1718) leaves the later slots unsolved, and their solvers report their
+    previous solve, which can predate this coupled solve; that result is not converged."""
+    records = [read_inner_solve_failures(solver) for solver in hjb_solvers]
+    tracked = [record for record in records if isinstance(record, tuple)]
+    return None if not tracked else tuple(failure for record in tracked for failure in record)
+
+
+@contextmanager
+def inner_failures_recorded(hjb_solvers: Iterable[Any]) -> Iterator[None]:
+    """For a coupled solve: each HJB solver whose ``on_inner_failure`` is "raise" records instead, while it runs.
+
+    A sweep's inner failure is then the coupler's to read at its verdict (#1878), not an exception partway through
+    the solve; the policy is restored after (#2644). A duck-typed solver without the attribute is left alone.
+    """
+    switched: list = []
+    # Every write is inside the try, and only what was written is restored (#2644 review 2, F7).
+    try:
+        for solver in hjb_solvers:
+            if getattr(solver, "on_inner_failure", None) == "raise":
+                solver.on_inner_failure = "record"
+                switched.append(solver)
+        yield
+    finally:
+        for solver in switched:
+            solver.on_inner_failure = "raise"
+
+
+#: The ``stacklevel`` of a warning a decorated ``solve`` raises for its caller: `verdict_reads_inner_failures`' wrapper
+#: is one frame between the two (#2644).
+SOLVE_CALLER_STACKLEVEL = 3
+
+
+def verdict_reads_inner_failures(
+    hjb_solvers_of: Callable[[Any], list[object]],
+    *,
+    check: bool = True,
+) -> Callable[
+    [Callable[Concatenate[_Solver, _Params], _Result]],
+    Callable[Concatenate[_Solver, _Params], _Result],
+]:
+    """Decorate a coupled solver's ``solve`` so that its HJB solvers record inner failures while it runs, and a result
+    reported converged over a failed inner step of the last sweep is not (#1878, #2644).
+
+    The one place every coupler's verdict reads the record. ``FixedPointIterator`` read it alone before, so a
+    ``BlockIterator`` over the same failed steps reported ``converged=True``. One HJB solver object in several slots is
+    refused before the solve (`refuse_a_shared_hjb_solver`), so each solver's latest record is its slot's in the last
+    sweep. Newton takes ``check=False``: its last HJB solve can be a Jacobian probe, so it reads the record in its own
+    verdict, where the latest solve is the accepted iterate's.
+    """
+
+    def decorate(
+        solve: Callable[Concatenate[_Solver, _Params], _Result],
+    ) -> Callable[Concatenate[_Solver, _Params], _Result]:
+        @functools.wraps(solve)
+        def wrapper(self: _Solver, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Result:
+            solvers = hjb_solvers_of(self)
+            refuse_a_shared_hjb_solver(solvers, type(self).__name__)
+            with inner_failures_recorded(solvers):
+                result = solve(self, *args, **kwargs)
+            if not check:
+                return result
+            failures = read_inner_solve_failures_of(solvers)
+            metadata = getattr(result, "metadata", None)
+            if isinstance(metadata, dict):
+                # Every coupler's result says what its solvers' latest solves recorded, converged or not (#2644).
+                metadata["inner_hjb_failures"] = None if failures is None else list(failures)
+            if failures:
+                _refuse_a_converged_result(result, failures)
+            return result
+
+        return wrapper
+
+    return decorate
+
+
+def _refuse_a_converged_result(result: Any, failures: tuple) -> None:
+    """A result reported converged over ``failures``, failed inner steps of its last sweep, is not (#1878)."""
+    if not getattr(result, "converged", False):
+        return
+    metadata = getattr(result, "metadata", None)
+    previous = metadata.get("convergence_reason", "") if isinstance(metadata, dict) else ""
+    _, reason = refuse_convergence_over_failed_inner_solves(True, previous, failures)
+    result.converged = False
+    if isinstance(metadata, dict):
+        metadata["convergence_reason"] = reason
+        metadata["inner_hjb_failures"] = list(failures)
+
+
 def refuse_convergence_over_failed_inner_solves(
     converged: bool,
     reason: str,
@@ -292,12 +412,16 @@ def refuse_convergence_over_failed_inner_solves(
     """
     if not converged or not isinstance(inner_failures, tuple) or not inner_failures:
         return converged, reason
-    worst = max(inner_failures, key=lambda failure: failure.residual)
+    # Members measure different quantities (InnerSolveFailure.measure), so the worst step is the one furthest past its
+    # own tolerance, not the largest number (#2644).
+    worst = max(
+        inner_failures, key=lambda failure: failure.residual / failure.tolerance if failure.tolerance > 0 else np.inf
+    )
     steps = ", ".join(str(failure.t_idx) for failure in inner_failures)
     return False, (
         f"inner_hjb_not_converged: the Picard criteria were met ({reason}), but {len(inner_failures)} "
         f"HJB time step(s) of that sweep did not converge (t_idx {steps}; worst residual {worst.residual:.3e} "
-        f"against {worst.tolerance:.3e}: {worst.reason}). The fixed point is not a solution of the "
+        f"against {worst.tolerance:.3e}, {worst.measure}: {worst.reason}). The fixed point is not a solution of the "
         f"discrete MFG system (#1878)."
     )
 

@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 128
+**Total deprecated items**: 129
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11
 
 ---
@@ -43,11 +43,12 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*89 items*
+*90 items*
 
 ### Parameters
 
 - **`m_initial`** in `FPFEMSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
+- **`on_newton_failure`** in `HJBFDMSolver.__init__()` — use `on_inner_failure` instead (remove by v0.25.0)
 - **`m_initial`** in `MeshlessGalerkinFPSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
 - **`newton_tolerance`** in `NewtonMFGSolver.__init__()` — use `absolute_tolerance= on solve(), an extra bound beside tolerance= on the larger of U's and M's dt-weighted space-time L2 change, not an unscaled 2-norm, so it can no longer loosen the stop` instead (remove by v0.25.0)
 - **`m_initial`** in `WeakFormFPSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)

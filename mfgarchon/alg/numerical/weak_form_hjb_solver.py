@@ -24,7 +24,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
@@ -264,8 +264,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
         rhs_coupling: NDArray,
         max_iterations: int = 30,
         tolerance: float = 1e-6,
+        t_idx: int = -1,
     ) -> NDArray:
-        """One HJB timestep via Newton iteration (supports semismooth H).
+        """One HJB timestep via Newton iteration (supports semismooth H). A step that exhausts ``max_iterations``
+        goes to the owner of inner failures (#2644).
 
         Residual: F(U) = (M_t/dt)(U - U_next) + D*K*U + M*H(grad U) - rhs_coupling, with M_t the time mass
         (``_M_time``: lumped for P1 FEM, #2845) and M the consistent mass.
@@ -356,7 +358,16 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 logger.debug(f"Newton converged in {k + 1} iterations (norm={delta_norm:.2e})")
                 break
         else:
-            logger.warning(f"Newton did not converge in {max_iterations} iterations (norm={delta_norm:.2e})")
+            self._inner_solve_failed(
+                InnerSolveFailure(
+                    t_idx=t_idx,
+                    residual=float(delta_norm),
+                    tolerance=float(tolerance),
+                    steps=max_iterations,
+                    reason="Newton iteration budget exhausted",
+                    measure="the M-norm of the last Newton correction, sqrt(delta^T M delta)",
+                )
+            )
 
         return U_current
 
@@ -418,6 +429,14 @@ class WeakFormHJBSolver(BaseHJBSolver):
         """
         if use_newton is None:
             use_newton = self._use_newton_default
+        # Only the Newton branch iterates within a step, so only it keeps a record of inner failures (#2644).
+        if use_newton:
+            max_newton_iterations = checked_inner_budget(
+                max_newton_iterations, "max_newton_iterations", type(self).__name__
+            )
+            self._begin_inner_solve_record()
+        else:
+            self._inner_solve_failures = None
         # Issue #1071: named explicitly (not swallowed by **kwargs) so a multi-population
         # cross-density trajectory fails loud rather than silently decoupling.
         if cross_density is not None:
@@ -502,6 +521,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     # The residual SUBTRACTS rhs_coupling, and the contract subtracts S, so this is
                     # the source slot -- no change needed inside _solve_timestep_newton.
                     rhs_coupling=_source_at(n * dt),
+                    t_idx=n,
                     max_iterations=max_newton_iterations,
                     tolerance=newton_tolerance,
                 )

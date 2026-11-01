@@ -44,6 +44,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     fp_solver_sig_params,
     hjb_solver_sig_params,
     resolve_fp_drift_kwargs,
+    verdict_reads_inner_failures,
 )
 from mfgarchon.alg.numerical.coupling.source_composition import compose_fp_source, compose_hjb_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
@@ -119,6 +120,11 @@ class RegimeSwitchingResult:
 
     regime_config: RegimeSwitchingConfig | None = None
     """The regime switching configuration used."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the solvers'
+    latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
+    ``verdict_reads_inner_failures`` writes both for every coupler (#2644)."""
 
 
 class RegimeSwitchingIterator(BaseCouplingIterator):
@@ -435,6 +441,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         factor = np.exp(-q_k * t_grid)
         return N_k * factor.reshape((-1,) + (1,) * (N_k.ndim - 1))
 
+    @verdict_reads_inner_failures(lambda self: list(self._hjb))
     def solve(self) -> RegimeSwitchingResult:
         """Run Picard iteration over K coupled regime systems.
 

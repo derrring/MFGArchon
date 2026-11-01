@@ -50,6 +50,8 @@ from .base_hjb import (
     DEFAULT_NEWTON_MAX_ITERATIONS,
     DEFAULT_NEWTON_TOLERANCE,
     BaseHJBSolver,
+    InnerSolveFailure,
+    checked_inner_budget,
 )
 
 logger = get_logger(__name__)
@@ -318,6 +320,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         weight_scale: float = 1.0,
         max_newton_iterations: int | None = None,
         newton_tolerance: float | None = None,
+        on_inner_failure: str = "raise",
         # Inner HJB solver selector (Issue #1118). 'newton' (default): the existing
         # per-timestep Newton + Armijo line search. 'howard': delegate the backward
         # sweep to HJBHowardSolver (policy iteration; no line search, so it avoids the
@@ -402,6 +405,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             weight_scale: Scale parameter for weight function
             max_newton_iterations: Maximum Newton iterations (new parameter name)
             newton_tolerance: Newton convergence tolerance.
+            on_inner_failure: What a time step whose Newton, or Howard, exhausts its budget does (#2644): "raise" (the
+                default) refuses it; "record" keeps the iterate, records the step in ``inner_solve_failures()`` and warns.
             inner_solver: The solver of each time level's equation (#1118). ``"newton"``, the default, is Newton with an
                 Armijo line search on the collocation operator. ``"howard"`` delegates the backward sweep to
                 `HJBHowardSolver`'s policy iteration, which needs a quadratic control cost.
@@ -672,7 +677,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         self.weight_scale = weight_scale
 
         # Newton parameters (canonical names; v0.25.0 removed NiterNewton/l2errBoundNewton)
-        self.max_newton_iterations = max_newton_iterations
+        self.max_newton_iterations = checked_inner_budget(
+            max_newton_iterations, "max_newton_iterations", "HJBGFDMSolver"
+        )
+        self.on_inner_failure = on_inner_failure
         self.newton_tolerance = newton_tolerance
 
         # Issue #1118: inner-solver selector (Newton default; Howard policy iteration opt-in)
@@ -3233,6 +3241,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 U_terminal.flatten()
             )
 
+        self._begin_inner_solve_record()
         if self.inner_solver == "howard":
             # Issue #1118: delegate the backward sweep to Howard's policy iteration (no
             # Armijo line search -> no MIN_ALPHA stall). Howard owns the full Nt loop and
@@ -3784,8 +3793,12 @@ class HJBGFDMSolver(BaseHJBSolver):
             # _sigma_for_assembly yields a scalar or a collocation-space (N,) field, never a tensor.
             volatility_kind="field" if isinstance(assembly_sigma, np.ndarray) else None,
             use_provider_bc_rows=True,  # Issue #1118 PR2a: shared value-form BC rows
+            on_inner_failure=self.on_inner_failure,  # this solver's policy, for Howard's own inner loop (#2644)
         )
-        return howard.solve_hjb_system(M_collocation, U_terminal_colloc)
+        U = howard.solve_hjb_system(M_collocation, U_terminal_colloc)
+        # Howard owns the backward sweep here, so a step it recorded is a step of this solve (#2644).
+        self._inner_solve_failures.extend(howard.inner_solve_failures() or ())
+        return U
 
     def _solve_timestep(
         self,
@@ -3933,15 +3946,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Newton makes some progress even when sufficient-decrease fails.
             u_current = u_trial
         else:
-            # Ran out of iterations: the iterate is returned, but it is not a root, and that is said (#2599). HJB-FEM's
-            # Newton reports the same; this one returned its last iterate in silence, which hid #2599.
+            # Ran out of iterations: the iterate is not a root (#2599), and the owner decides what that means (#2644).
             r0_norm = _residual(u_current)[2]
             if not r0_norm < self.newton_tolerance:
-                logger.warning(
-                    f"HJB-GFDM Newton did not converge in {self.max_newton_iterations} "
-                    f"iteration{'' if self.max_newton_iterations == 1 else 's'} at time index "
-                    f"{time_idx}: residual {r0_norm:.2e} (boundary rows included) against tolerance "
-                    f"{self.newton_tolerance:.1e}."
+                self._inner_solve_failed(
+                    InnerSolveFailure(
+                        t_idx=int(time_idx),
+                        residual=float(r0_norm),
+                        tolerance=float(self.newton_tolerance),
+                        steps=self.max_newton_iterations,
+                        reason="HJB-GFDM Newton iteration budget exhausted",
+                        measure="the residual 2-norm of the returned step, its boundary rows included",
+                    )
                 )
 
         return u_current

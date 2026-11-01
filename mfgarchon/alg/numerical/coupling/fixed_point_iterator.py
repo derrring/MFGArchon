@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
 from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
@@ -257,6 +258,7 @@ class FixedPointIterator(BaseCouplingIterator):
             shape,
         )
 
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
     def solve(
         self,
         config: MFGSolverConfig | None = None,
@@ -351,7 +353,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 f"below the inner Newton floor and may report 'max iterations reached' "
                 f"without converging. Set newton_tolerance <= picard tolerance.",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=SOLVE_CALLER_STACKLEVEL,
             )
 
         # Get problem dimensions - handle both old 1D and new nD interfaces
@@ -934,7 +936,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 "Use SolverResult object instead (the default). "
                 "Will be removed in v1.0.0.",
                 DeprecationWarning,
-                stacklevel=2,
+                stacklevel=SOLVE_CALLER_STACKLEVEL,
             )
             return (
                 self.U,

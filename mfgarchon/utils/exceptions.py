@@ -53,42 +53,41 @@ class MFGSolverError(Exception):
         super().__init__(full_message)
 
 
-class ConvergenceError(MFGSolverError):
-    """Exception raised when solver fails to converge."""
+class ConvergenceError(MFGSolverError, RuntimeError):
+    """An iterative solve stopped without converging, so the iterate it reached is not the answer (#2644).
+
+    The one convergence-failure class (#2673): ``mfgarchon.utils.ConvergenceError`` and
+    ``mfgarchon.alg.numerical.hjb_solvers.ConvergenceError`` are this class. It is a ``RuntimeError`` too, so an
+    ``except RuntimeError`` written before the two were merged still catches it.
+
+    Attributes:
+        solver_type: The solve that stopped ("newton", "fixed_point", "howard", ...).
+        iterations: Steps the returned iterate took.
+        residual: That iterate's residual, in the solve's own measure.
+    """
 
     def __init__(
         self,
-        iterations_used: int,
-        max_iterations: int,
-        final_error: float,
-        tolerance: float,
+        solver_type: str,
+        iterations: int,
+        residual: float,
+        message: str = "",
+        *,
         solver_name: str | None = None,
-        convergence_history: list[float] | None = None,
     ):
-        diagnostic_data = {
-            "iterations_used": iterations_used,
-            "max_iterations": max_iterations,
-            "final_error": f"{final_error:.2e}",
-            "required_tolerance": f"{tolerance:.2e}",
-            "error_ratio": f"{final_error / tolerance:.1f}x too large",
-        }
-
-        if convergence_history:
-            diagnostic_data["convergence_trend"] = _analyze_convergence_trend(convergence_history)
-
-        # Generate helpful suggestions based on the convergence pattern
-        suggested_action = _generate_convergence_suggestions(
-            final_error, tolerance, iterations_used, max_iterations, convergence_history
-        )
-
-        message = f"Failed to converge after {iterations_used} iterations"
-
-        super().__init__(
-            message=message,
-            solver_name=solver_name,
-            suggested_action=suggested_action,
-            error_code="CONVERGENCE_FAILURE",
-            diagnostic_data=diagnostic_data,
+        self.solver_type = solver_type
+        self.iterations = iterations
+        self.residual = residual
+        # MFGSolverError's fields, set here rather than through its __init__: that one decorates the message with
+        # a solver prefix and an error-code line, and this class's message is what callers match and show.
+        self.solver_name = solver_name or "Unknown Solver"
+        self.suggested_action = None
+        self.error_code = "CONVERGENCE_FAILURE"
+        self.diagnostic_data = {}
+        Exception.__init__(
+            self,
+            message
+            or f"{solver_type} solver failed to converge after {iterations} iterations (residual: {residual:.2e})",
         )
 
 
@@ -224,54 +223,6 @@ class NumericalInstabilityError(MFGSolverError):
 
 
 # Helper functions for generating specific suggestions
-
-
-def _analyze_convergence_trend(history: list[float]) -> str:
-    """Analyze convergence history to determine trend."""
-    if len(history) < 3:
-        return "insufficient_data"
-
-    recent = history[-3:]
-
-    # Check if converging
-    if recent[-1] < recent[-2] < recent[-3]:
-        return "converging_slowly"
-    elif recent[-1] > recent[-2] * 1.1:
-        return "diverging"
-    elif max(recent) / min(recent) < 1.1:
-        return "stagnating"
-    else:
-        return "oscillating"
-
-
-def _generate_convergence_suggestions(
-    final_error: float,
-    tolerance: float,
-    iterations_used: int,
-    max_iterations: int,
-    history: list[float] | None = None,
-) -> str:
-    """Generate specific suggestions for convergence issues."""
-
-    error_ratio = final_error / tolerance
-
-    if error_ratio < 2:
-        return "Increase max_iterations slightly - very close to convergence"
-    elif error_ratio < 10:
-        return "Try: 1) Increase max_iterations, 2) Relax tolerance slightly, or 3) Improve initial guess"
-    else:
-        base_suggestion = (
-            "Large error suggests: 1) Check problem parameters, 2) Reduce time step size, 3) Use better initialization"
-        )
-
-        if history and len(history) > 3:
-            trend = _analyze_convergence_trend(history)
-            if trend == "diverging":
-                return base_suggestion + ", 4) Reduce damping parameter"
-            elif trend == "oscillating":
-                return base_suggestion + ", 4) Increase damping parameter"
-
-        return base_suggestion
 
 
 def _generate_configuration_suggestions(

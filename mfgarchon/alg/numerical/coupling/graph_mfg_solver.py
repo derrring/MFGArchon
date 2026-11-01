@@ -35,6 +35,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
+    verdict_reads_inner_failures,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import (
@@ -81,6 +82,11 @@ class GraphMFGResult:
 
     n_nodes: int = 0
     """Number of nodes in the graph."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the solvers'
+    latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
+    ``verdict_reads_inner_failures`` writes both for every coupler (#2644)."""
 
 
 class GraphMFGSolver(BaseCouplingIterator):
@@ -192,6 +198,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._N = N
         self._last_result: GraphMFGResult | None = None
 
+    @verdict_reads_inner_failures(lambda self: list(self._hjb))
     def solve(self) -> GraphMFGResult:
         """Run Picard iteration over N-node graph.
 

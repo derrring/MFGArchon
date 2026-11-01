@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -129,6 +130,7 @@ class MultiPopulationIterator:
         """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
         return self.relaxation
 
+    @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers))
     def solve(
         self,
         max_iterations: int = 50,
@@ -424,6 +426,10 @@ class MultiPopulationResult:
         sweep's values.
     population_names : list[str]
         Names of populations.
+    metadata : dict
+        A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the
+        solvers' latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
+        ``verdict_reads_inner_failures`` writes both for every coupler (#2644).
     """
 
     def __init__(self, U, M, iterations, converged, errors, population_names, errors_M=None, errors_U=None):
@@ -435,6 +441,7 @@ class MultiPopulationResult:
         self.errors_M = errors_M
         self.errors_U = errors_U
         self.population_names = population_names
+        self.metadata: dict = {}
 
     def __repr__(self):
         status = "converged" if self.converged else "not converged"

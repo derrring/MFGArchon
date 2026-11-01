@@ -35,7 +35,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError, HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -86,9 +86,14 @@ def _solve_1d(terminal, **solver_kwargs):
 
 @pytest.mark.parametrize("terminal", sorted(TERMINALS))
 def test_newton_imposes_the_dirichlet_value_whatever_the_terminal(terminal):
-    _, _, U = _solve_1d(terminal)
+    """The zero terminal does not converge (above), so every case solves under "record" and reads its record. What this
+    asserts is imposed on the Dirichlet rows whatever the iteration does: measured at #2644's head, |U - g| on the walls
+    is 0.0 at every step below NT for all three terminals, the zero one's 8 unconverged steps (t_idx 7 to 0) among them.
+    So the row reads the walls from a recorded solve, and asserts the record's count (#2644 review 1, S8)."""
+    solver, _, U = _solve_1d(terminal, on_inner_failure="record")
     np.testing.assert_allclose(U[:NT, 0], 0.7, rtol=0, atol=1e-12)
     np.testing.assert_allclose(U[:NT, -1], 0.4, rtol=0, atol=1e-12)
+    assert len(solver.inner_solve_failures()) == (8 if terminal == "zero" else 0), solver.inner_solve_failures()
 
 
 @pytest.mark.parametrize("terminal", ["constant", "linear"])
@@ -105,14 +110,21 @@ def test_each_level_is_a_root_of_the_system_its_step_solves(terminal):
 
 
 @pytest.mark.parametrize("iterations", [1, None], ids=["one iteration", "the default"])
-def test_newton_says_when_it_runs_out_of_iterations(iterations, caplog):
-    """It returned its last iterate in silence, which hid #2599. The constant case needs 2 to 4 iterations a step: given
-    one, every step warns; given the default, none does."""
+def test_newton_says_when_it_runs_out_of_iterations(iterations):
+    """It returned its last iterate in silence, which hid #2599, then said so in a log line no caller could see. The
+    constant case needs 2 to 4 iterations a step: given one, the solve is refused by default, and under "record" every
+    step warns and is recorded; given the default, none is (#2644)."""
     kwargs = {} if iterations is None else {"max_newton_iterations": iterations}
-    with caplog.at_level("WARNING", logger="mfgarchon"):
-        _solve_1d("constant", **kwargs)
-    warned = [r for r in caplog.records if "HJB-GFDM Newton did not converge" in r.getMessage()]
-    assert len(warned) == (NT if iterations == 1 else 0), [r.getMessage() for r in warned][:2]
+    if iterations == 1:
+        with pytest.raises(ConvergenceError, match="HJB-GFDM Newton iteration budget exhausted"):
+            _solve_1d("constant", **kwargs)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        solver, _, _ = _solve_1d("constant", on_inner_failure="record", **kwargs)
+    warned = [w for w in caught if "HJB-GFDM Newton iteration budget exhausted" in str(w.message)]
+    expected = NT if iterations == 1 else 0
+    assert len(warned) == expected, [str(w.message) for w in warned][:2]
+    assert len(solver.inner_solve_failures()) == expected, solver.inner_solve_failures()
 
 
 @pytest.mark.parametrize("inner", ["newton", "howard"])
@@ -126,11 +138,16 @@ def test_both_inner_solvers_impose_it_in_2d(inner, terminal):
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=dirichlet_bc(dimension=2, value=0.0)
     )
     kwargs = HOWARD if inner == "howard" else {"monotonicity_scheme": "none"}
+    # 2-D Newton does not converge here (above), so both solve under "record" and read the record. The walls asserted
+    # below are imposed on the Dirichlet rows whatever the iteration does: measured at #2644's head, |U - g| there is 0.0
+    # at every step below NT, Newton's 10 unconverged ones among them; so the row asserts the record's count (#2644
+    # review 1, S8).
     solver = HJBGFDMSolver(
         _problem(grid),
         collocation_points=pts,
         delta=0.5,
         boundary_conditions=dirichlet_bc(dimension=2, value=lambda x: x[0] + 2 * x[1]),
+        on_inner_failure="record",
         **kwargs,
     )
     U_T = np.full(n * n, 0.1) if terminal == "constant" else 0.1 + 0.05 * pts[:, 0]
@@ -142,3 +159,4 @@ def test_both_inner_solvers_impose_it_in_2d(inner, terminal):
     walls = solver.boundary_indices
     g = pts[walls, 0] + 2 * pts[walls, 1]
     assert np.abs(U[:NT][:, walls] - g).max() < 1e-12
+    assert len(solver.inner_solve_failures()) == (NT if inner == "newton" else 0), solver.inner_solve_failures()

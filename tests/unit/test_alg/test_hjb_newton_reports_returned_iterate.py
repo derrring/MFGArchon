@@ -152,6 +152,7 @@ def _drive(steps_and_residuals, budget):
                 max_newton_iterations=budget,
                 newton_tolerance=1e-12,
                 failures=failures,
+                on_failure="record",
             )
     finally:
         bh.newton_hjb_step = original
@@ -249,6 +250,7 @@ def test_a_step_whose_norm_overflows_is_not_computed(monkeypatch):
             max_newton_iterations=30,
             newton_tolerance=1e-12,
             failures=failures,
+            on_failure="record",
         )
     assert [(f.steps, f.reason) for f in failures] == [(0, "the Newton step could not be computed")], failures
     np.testing.assert_array_equal(returned, np.zeros(21))

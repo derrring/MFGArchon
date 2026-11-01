@@ -40,7 +40,13 @@ from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
-from .fixed_point_utils import check_convergence_criteria, diverged_value_function
+from .fixed_point_utils import (
+    check_convergence_criteria,
+    diverged_value_function,
+    read_inner_solve_failures,
+    refuse_convergence_over_failed_inner_solves,
+    verdict_reads_inner_failures,
+)
 from .mfg_residual import MFGResidual
 
 if TYPE_CHECKING:
@@ -53,6 +59,10 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 logger = get_logger(__name__)
+
+
+#: The verdict's read of the inner HJB record, before any verdict has run.
+_NOT_READ = object()
 
 
 class NewtonMFGSolver(BaseCouplingIterator):
@@ -266,6 +276,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         return U, M, residuals, diverged_at
 
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], check=False)
     def solve(
         self,
         max_iterations: int = 30,
@@ -301,7 +312,20 @@ class NewtonMFGSolver(BaseCouplingIterator):
                     "dt-weighted space-time L2 change (#2565)."
                 )
             absolute_tolerance = self.newton_tolerance
-        verdict = self._outer_verdict(tolerance, absolute_tolerance)
+        outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
+
+        last_reason = [""]
+        self._verdict_inner_failures: object = _NOT_READ
+
+        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
+            # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
+            # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
+            converged, reason = outer_verdict(U, M, F_HJB, F_FP)
+            self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
+            converged, last_reason[0] = refuse_convergence_over_failed_inner_solves(
+                converged, reason, self._verdict_inner_failures
+            )
+            return converged, last_reason[0]
 
         # Initialize from warm start or cold start
         warm_start = self.get_warm_start_data()
@@ -400,9 +424,24 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         self._solution_computed = True
 
+        # A last verdict refused over failed inner steps says so, not only how Newton stopped. A named stop
+        # (line_search_failed, diverged) returns the iterate that verdict judged; when the budget runs out, Newton
+        # evaluates F at its last iterate without a verdict, so the verdict read the iterate before it (#2644).
+        refused = last_reason[0] if last_reason[0].startswith("inner_hjb_not_converged") else ""
+        stop = newton_info.extra.get("reason")
+        if newton_info.converged:
+            reason = "Newton converged"
+        elif stop:
+            reason = f"Newton stopped: {stop}" + (
+                f"; its last verdict, on the iterate returned: {refused}" if refused else ""
+            )
+        else:
+            reason = "Newton max iterations" + (
+                f"; its last verdict, on the iterate before the one returned: {refused}" if refused else ""
+            )
         return self._create_result(
             converged=newton_info.converged,
-            reason="Newton converged" if newton_info.converged else "Newton max iterations",
+            reason=reason,
             elapsed=elapsed,
             newton_info=newton_info,
         )
@@ -456,6 +495,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
         if newton_info is not None:
             info["final_residual"] = newton_info.residual
             info["jacobian_evaluations"] = newton_info.extra.get("jacobian_evals", 0)
+
+        # As on every coupler's result: the inner HJB steps the last verdict read, or the latest solve's where no
+        # verdict ran; None when the solver does not track them (#2644 review 2, F4).
+        failures = getattr(self, "_verdict_inner_failures", _NOT_READ)
+        if failures is _NOT_READ:
+            failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
+        info["inner_hjb_failures"] = list(failures) if isinstance(failures, tuple) else None
 
         return self.U, self.M, info
 
