@@ -326,8 +326,9 @@ row grid/B9_bc_read_at_solve_time   -
 #   table refuses the crossing where a condition is handed over.
 row network/N1_graph_bc_alphabet    tests/unit/test_geometry/boundary/test_graph_bc_alphabet_has_one_owner_2512.py
 # Row N2 (#2296; audit session rulings, 2026-11-01) is a graph node's value and a CUSTOM node's rule. Each is bound once
-#   through `bind_user_callable`, the value to (t, node) and the rule, a field of its own, to (t, node, field), time
-#   first, and read through `applicator_graph._graph_value_at`; the order before #2378 phase 5, (node, t), is refused.
+#   through `callable_protocols.bind_by_name`, the strict by-name rule a grid boundary value is bound by too, the value
+#   to (t, node) and the rule, a field of its own, to (t, node, field), time first, and read through
+#   `applicator_graph._graph_value_at`; the order before #2378 phase 5, (node, t), is refused.
 #   B2's guard holds it: `applicator_graph.py` is in its population and `_graph_value_at` among its owners. Its readers
 #   `GraphApplicator.apply`, `apply_hjb`, `apply_fp` and `apply_direct`, which before A2 read a callable node value at
 #   t = 0 when given no t, take None for no time, so the time-default scan finds any that goes back to a number.

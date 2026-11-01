@@ -185,16 +185,14 @@ def _conditions(items: object, where: str, of: str) -> tuple:
 
 
 class _Constant:
-    """A constant node value, read as a bound callable is, so every reader makes one call (#2296)."""
+    """A constant node value, read where it is built (#2292). It reads no slot, so a reader's time checks pass it, and
+    `_graph_value_at` returns it as built (#2296)."""
 
     __slots__ = ("constant",)
     passes: tuple[str, ...] = ()
 
     def __init__(self, constant: float):
         self.constant = constant
-
-    def __call__(self, **_slots: object) -> float:
-        return self.constant
 
 
 # The wraps a refusal advises, for each order a callable may be written in: one written in the order before #2378

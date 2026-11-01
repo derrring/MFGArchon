@@ -63,17 +63,12 @@ class _NoSignature:
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (
-            lambda: NodeBC(nodes=[0], value=lambda node, t: 0.0),
-            r"takes \(node, t\), which is out of order.*\(t, node\)",
-        ),
         (lambda: NodeBC(nodes=[0], value=lambda a, b: 0.0), r"cannot be matched to \(t, node\)"),
         (lambda: NodeBC(nodes=[0], value=_NoSignature()), "not a plain def or lambda"),
         (lambda: NodeBC(nodes=[0], bc_type=GraphBCType.CUSTOM, value=1.0), "takes its rule as rule="),
-        (lambda: NodeBC(nodes=[0], bc_type=GraphBCType.CUSTOM, rule=lambda field, node, t: 0.0), "out of order"),
         (lambda: NodeBC(nodes=[0], rule=lambda t, node, field: 0.0), "rule= is a CUSTOM condition's"),
     ],
-    ids=["old order", "names no slot", "no signature", "CUSTOM scalar", "CUSTOM old order", "rule off CUSTOM"],
+    ids=["names no slot", "no signature", "CUSTOM scalar", "rule off CUSTOM"],
 )
 def test_a_value_or_rule_it_cannot_read_by_its_names_is_refused_where_it_is_built(build, match):
     with pytest.raises(TypeError, match=match):

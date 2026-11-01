@@ -187,12 +187,20 @@ def bind_user_callable(
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
+    # Named after the slots in the order they are written, a callable keeps that order, and one written time last
+    # would read its arguments in the wrong slots: the advice is to reorder, by what each parameter reads.
+    time_last = ", ".join([*(slot for slot in order_ if slot != "t"), "time"])
+    reorder = (
+        f"Name each parameter after what it reads and put them in the order ({', '.join(order_)}), time first: named "
+        f"{', '.join(order_)} in the order it is written, one written ({time_last}) would read its arguments in the "
+        "wrong slots."
+    )
     if misplaced:
-        why = f": {', '.join(misplaced)} would receive another slot's value. Name its parameters {', '.join(order_)}."
+        why = f": {', '.join(misplaced)} would receive another slot's value. {reorder}"
     elif passes is not None and not var_positional:
         why = (
             f": none of its parameters is named after a slot whose position #2375 ruling 8 changed, so they "
-            f"read the same in the old order and the new. Name them {', '.join(order_)}."
+            f"read the same in the old order and the new. {reorder}"
         )
     elif slots.reordered:
         # A reordered role binds a positional callable only if a parameter name says which order it is in, so
@@ -215,6 +223,11 @@ def bind_by_name(
     caller writes them, since a wrap is right only for the callables its role meets: one built from the slots alone,
     ``lambda t, node: f(t, node)``, reads a callable written ``(node, t)`` swapped.
 
+    Called by name, a callable is passed only the slots it names, and every one of them: so a ``functools.partial``
+    that freezes a slot by keyword is refused, since the slot passed by name would override it, and so is a ``*args``
+    or ``**kwargs`` parameter, which nothing reaches (#2296 review 2). A partial that freezes a slot by position, or
+    a keyword that names no slot, is a function of the slots it leaves.
+
     Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
     place: such a callable is called by name only, so one with a parameter named otherwise and no default is refused,
     and so is one that cannot be called by name -- a positional-only parameter, or a signature that cannot be read. A
@@ -229,7 +242,9 @@ def bind_by_name(
     name = getattr(fn, "__qualname__", fn)
     names = ", ".join(slots.order)
     target = fn
+    frozen: list[str] = []
     while isinstance(target, functools.partial):
+        frozen += [keyword for keyword in target.keywords if keyword in slots.slot_of()]
         target = target.func
     if not inspect.isfunction(target):
         raise TypeError(
@@ -252,6 +267,19 @@ def bind_by_name(
         raise TypeError(
             f"{role} {name!r} {what}, so it cannot be called by name: wrap it in a function that names what it reads, "
             f"such as {wrap_unnamed} ({ruling})."
+        )
+    if frozen:
+        raise TypeError(
+            f"{role} {name!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: called by name, a "
+            f"{role} is passed every slot it names, so the frozen value would be overridden. Freeze it by position, or "
+            f"write a function of the slots it reads ({ruling})."
+        )
+    variadic = [p for p in declared if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
+    if variadic:
+        stars = ", ".join(f"{'*' if p.kind is inspect.Parameter.VAR_POSITIONAL else '**'}{p.name}" for p in variadic)
+        raise TypeError(
+            f"{role} {name!r} takes {inspect.signature(fn)}: called by name, it is passed only the slots it names, so "
+            f"nothing reaches {stars}. Name each slot it reads as a parameter, such as `lambda {names}: ...` ({ruling})."
         )
     bound = bind_user_callable(fn, slots, role=role)
     if bound.binding != "keyword":
