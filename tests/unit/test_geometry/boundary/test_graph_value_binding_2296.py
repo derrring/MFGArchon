@@ -98,7 +98,9 @@ def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
         (lambda: applicator.apply(np.zeros((3, 4)), t=0.5), "2-D"),
         (lambda: applicator.apply_direct(np.zeros((3, 4)), [2], _g, t=0.5), "2-D"),
         (lambda: GraphApplicator(4).set_custom_bc([2], lambda t, node, field: t).apply(np.zeros((3, 4)), t=0.5), "2-D"),
-        (lambda: column.apply(np.zeros((3, 4))), "not one real number"),  # main wrote it down the node's column
+        # A value that reads no t is the one callable left to reach a 2-D field. Main called this one with two arguments
+        # and raised; one written `lambda node, t:` it wrote down the node's column, which the order refusal closes now.
+        (lambda: column.apply(np.zeros((3, 4))), "not one real number"),
     ):
         with pytest.raises(TypeError, match=match):
             read()
