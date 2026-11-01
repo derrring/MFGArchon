@@ -40,6 +40,7 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+from mfgarchon.geometry.boundary.types import _read_constant
 from mfgarchon.types.callable_protocols import NODE_RULE_SLOTS, NODE_VALUE_SLOTS, BoundCallable, bind_by_name
 
 # Import base class for inheritance
@@ -245,17 +246,21 @@ def _graph_value_at(
     read: BoundCallable | _Constant, where: str, *, t: float | None, node: int, field: NDArray | None = None
 ) -> float:
     """The one place a graph node's value or CUSTOM rule is read (#2296). One that reads ``t`` is refused by name when
-    no time is given: a default of 0 read it at t = 0 in silence."""
+    no time is given: a default of 0 read it at t = 0 in silence. What a callable returns is read as a grid boundary
+    value's return is, by `types._read_constant`, the one reader of both (#2512 row B2); a constant was read when it
+    was built (#2292)."""
+    if isinstance(read, _Constant):
+        return read.constant
     if t is None and "t" in read.passes:
         raise TypeError(f"{where}: it reads t, and no time was given. Pass t where the condition is applied (#2296).")
     slots: dict[str, object] = {"t": t, "node": node} if field is None else {"t": t, "node": node, "field": field}
-    value = read(**slots)
-    try:
-        return float(value)
-    except (TypeError, ValueError, OverflowError) as refused:
-        raise TypeError(
-            f"{where}: it returned {_shown(value)}, not one real number a float holds; a node's value is one (#2296)."
-        ) from refused
+    return _read_constant(
+        read(**slots),
+        kind=f"{where} (what its callable returned)",
+        where="the graph applicator",
+        returned=True,
+        advice="return one real number",
+    )
 
 
 def _refuse_a_time_read_into_rows(read: BoundCallable | _Constant, where: str) -> None:

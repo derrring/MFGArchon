@@ -82,8 +82,9 @@ def test_a_value_or_rule_it_cannot_read_by_its_names_is_refused_where_it_is_buil
 
 def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
     """Given no time, the readers read a callable at t = 0 in silence; on a 2-D (Nt, N) field, at the one t given, into
-    every row, and so did a CUSTOM rule. Each is refused by name. A constant reads as before; a value that reads no t,
-    which main called with two arguments, is read with none, into every row."""
+    every row, and so did a CUSTOM rule; and a callable's return of None was written as NaN. Each is refused by name. A
+    constant reads as before; a value that reads no t, which main called with two arguments, is read with none, into
+    every row."""
     applicator = GraphApplicator(4).set_dirichlet_nodes([2], value=_g)
     for read in (
         lambda: applicator.apply(np.zeros(4)),
@@ -92,17 +93,22 @@ def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
     ):
         with pytest.raises(TypeError, match="no time was given"):
             read()
-    for read, match in (
-        (lambda: applicator.apply(np.zeros((3, 4)), t=0.5), "2-D"),
-        (lambda: applicator.apply_direct(np.zeros((3, 4)), [2], _g, t=0.5), "2-D"),
-        (lambda: GraphApplicator(4).set_custom_bc([2], lambda t, node, field: t).apply(np.zeros((3, 4)), t=0.5), "2-D"),
-        # main wrote None as NaN
+    for read, error, match in (
+        (lambda: applicator.apply(np.zeros((3, 4)), t=0.5), TypeError, "2-D"),
+        (lambda: applicator.apply_direct(np.zeros((3, 4)), [2], _g, t=0.5), TypeError, "2-D"),
+        (
+            lambda: GraphApplicator(4).set_custom_bc([2], lambda t, node, field: t).apply(np.zeros((3, 4)), t=0.5),
+            TypeError,
+            "2-D",
+        ),
+        # main wrote None as NaN; a return is read by the grid's one reader, `types._read_constant`
         (
             lambda: GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: None).apply(np.zeros(4), t=0.5),
-            "not one real number",
+            NotImplementedError,
+            "does the function lack a `return`",
         ),
     ):
-        with pytest.raises(TypeError, match=match):
+        with pytest.raises(error, match=match):
             read()
     timeless = GraphApplicator(4).set_dirichlet_nodes([2], value=lambda node: 10.0 * node)
     np.testing.assert_array_equal(timeless.apply(np.zeros((3, 4)))[:, 2], [20.0, 20.0, 20.0])
