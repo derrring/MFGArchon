@@ -89,9 +89,10 @@ class FEMDiscretization:
         The lumped implicit pure-diffusion step is an M-matrix step, so it takes no density negative, wherever every
         off-diagonal of the stiffness is <= 0: on P1 in 1-D always; in 2-D when each interior edge's two opposite angles
         sum to at most pi and each boundary edge's opposite angle is at most pi/2; in 3-D a Delaunay mesh does not give
-        it. That holds with no-flux, Dirichlet and Robin walls with alpha/beta >= 0: the lumped Robin boundary mass,
-        D (alpha/beta) diag(int phi_i), is diagonal and only adds to the diagonal. A Robin wall with alpha/beta < 0
-        lowers the diagonal and is outside this claim.
+        it. That is with no-flux and Dirichlet walls. A Robin wall with alpha/beta >= 0 keeps it an M-matrix step: the
+        lumped Robin boundary mass, D (alpha/beta) diag(int phi_i), is diagonal and only adds to the diagonal. The
+        density then stays non-negative where the Robin load does too, g/beta >= 0; a negative load can take it below
+        0. A Robin wall with alpha/beta < 0 lowers the diagonal and is outside this claim.
         P2 keeps the consistent mass, as ruled (P1 only): its vertex functions integrate to about 0 on triangles
         and below 0 on tetrahedra, so its row sums are no positive lumping there, though they are on a line. So do
         the tensor-product elements, Q1 included.

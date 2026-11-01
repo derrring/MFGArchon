@@ -4,7 +4,7 @@ Robin ``alpha*u + beta*du/dn = g`` is implemented as an OPERATOR AUGMENTATION at
 weak-form level: integrating the diffusion operator ``-D*Delta u`` by parts and substituting
 ``du/dn = (g - alpha*u)/beta`` adds
 
-    A_robin   = D*(alpha/beta) * int_dOmega phi_i phi_j   (boundary mass -> operator)
+    A_robin   = D*(alpha/beta) * int_dOmega phi_i phi_j   (boundary mass -> operator; lumped on P1, #2845)
     rhs_robin = D*(1/beta)     * int_dOmega g phi_i        (boundary load -> RHS)
 
 to ``M/dt + D*K``. Both scale with ``D`` exactly like the stiffness, and the boundary mass is
