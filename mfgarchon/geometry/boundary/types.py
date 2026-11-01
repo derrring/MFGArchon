@@ -466,6 +466,18 @@ def sdf_region_holds(segment: BCSegment, points: np.ndarray, tolerance: float) -
     return np.array([segment.sdf_region(point) <= tolerance for point in points], dtype=bool)
 
 
+def refuse_a_non_continuum_bc_type(bc_type: object, where: str, field_name: str) -> None:
+    """A continuum condition's type is a ``BCType``, or it is refused by name (#2292): the one check a segment's
+    ``bc_type`` and a ``BoundaryConditions``' ``default_bc`` both go through. A ``GraphBCType`` shares "dirichlet" and
+    "neumann" with ``BCType`` as value strings while being a different member, and no continuum reader has a reading of
+    "source" or "custom"; "absorbing" it would read as an exit."""
+    if not isinstance(bc_type, BCType):
+        raise TypeError(
+            f"{where}: {field_name} must be a BCType, got {bc_type!r}. A GraphBCType is a graph node's condition, given "
+            "through NodeBC on a graph geometry (#2292)."
+        )
+
+
 @dataclass
 class BCSegment:
     """
@@ -594,6 +606,7 @@ class BCSegment:
 
     def __post_init__(self) -> None:
         """Validate BCSegment specification (Issue #596 Phase 2.5)."""
+        refuse_a_non_continuum_bc_type(self.bc_type, f"BCSegment {self.name!r}", "bc_type")
         # Issue #612: Fix validation - boundary+region are complementary filters, not exclusive
         # Valid combinations:
         #   - boundary alone (entire boundary wall)

@@ -48,6 +48,7 @@ from .types import (
     _normal_selects_face,
     normal_holds,
     parse_boundary_face,
+    refuse_a_non_continuum_bc_type,
     region_axis,
     region_holds,
     repeated_endpoint_count,
@@ -169,6 +170,8 @@ class BoundaryConditions:
 
     def __post_init__(self):
         """Sort segments by priority (highest first), and refuse a face of an axis the domain lacks."""
+        if self.default_bc is not None:
+            refuse_a_non_continuum_bc_type(self.default_bc, "BoundaryConditions", "default_bc")
         self.segments.sort(key=lambda seg: seg.priority, reverse=True)
         if self.dimension is not None:
             self._refuse_missing_axes(self.dimension)
