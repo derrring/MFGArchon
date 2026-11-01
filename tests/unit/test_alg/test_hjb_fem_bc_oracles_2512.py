@@ -397,7 +397,8 @@ def _quiet(caplog):
 
 
 # ---------------------------------------------------------------------------------------------- the record
-# The max error over every node and time level, per level, measured at e8905019 (picard, newton).
+# The max error over every node and time level, per level, measured at e8905019 (picard, newton), except robin_2d:
+# re-measured with #2845's lumped Robin boundary mass, on parent d254acb1.
 MEASURED = {
     "dirichlet_1d": ((6.0141e-02, 1.5629e-02, 3.9632e-03), (3.9455e-02, 9.8267e-03, 2.4625e-03)),
     "neumann_1d": ((9.6124e-02, 2.6721e-02, 7.0035e-03), (7.6583e-02, 2.0180e-02, 5.2771e-03)),
@@ -408,7 +409,7 @@ MEASURED = {
     "neumann_2d": ((3.5555e-02, 1.0471e-02, 2.9211e-03), (4.0363e-02, 1.1029e-02, 3.0541e-03)),
     "no_flux_2d": ((3.5750e-02, 9.7860e-03, 2.6039e-03), (4.0372e-02, 1.1100e-02, 2.9513e-03)),
     "reflecting_2d": ((3.5750e-02, 9.7860e-03, 2.6039e-03), (4.0372e-02, 1.1100e-02, 2.9513e-03)),
-    "robin_2d": ((2.5128e-03, 6.8695e-04, 1.8448e-04), (2.7862e-03, 7.6634e-04, 2.0586e-04)),
+    "robin_2d": ((2.9203e-03, 8.2329e-04, 2.2711e-04), (3.3403e-03, 9.4267e-04, 2.5889e-04)),
 }
 LEVEL_BAND = 1.25
 RATIO_BAND = (3.0, 5.0)

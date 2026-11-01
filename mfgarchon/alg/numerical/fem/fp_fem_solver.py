@@ -141,8 +141,8 @@ class FPFEMSolver(WeakFormFPSolver):
     def _robin_operator_terms(self, D: float):
         """Robin boundary operator augmentation: the FP's total-flux Robin ``J.n = (D/beta)(alpha*m - g)`` (Issue #1237).
 
-        The term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j`` plus the boundary
-        load ``D*(1/beta)*int_dOmega g phi_i``. This weak form integrates the whole flux ``J = v m - D grad m``
+        The term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j``, lumped on P1 as the time
+        mass is (#2845), plus the boundary load ``D*(1/beta)*int_dOmega g phi_i``. This weak form integrates the whole flux ``J = v m - D grad m``
         by parts and leaves ``J.n`` on the boundary, so the term imposes ``alpha*m - (beta/D)*J.n = g``, not
         ``alpha*m + beta*dm/dn = g`` (#2512, user ruling 2026-10-10). The boundary mass is the HJB Robin
         term's, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
@@ -159,7 +159,7 @@ class FPFEMSolver(WeakFormFPSolver):
         Only an explicit ROBIN reaches this: a shared one is the HJB's, refused at the FP."""
         from .bc_adapter import assemble_robin_terms
 
-        return assemble_robin_terms(self._basis, self._bc, D, natural_bc="flux")
+        return assemble_robin_terms(self._basis, self._bc, D, natural_bc="flux", lump=self._disc.lumps_mass)
 
     # --- advection from drift via exact quadrature-point gradient of U --------
     def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:

@@ -68,8 +68,9 @@ class WeakFormDiscretization(Protocol):
         ...
 
     @property
-    def lumps_time_mass(self) -> bool:
-        """Does the time derivative use the row-sum lumped mass, ``diag(M 1)``, in place of ``mass()`` (#2845)?"""
+    def lumps_mass(self) -> bool:
+        """Do the time derivative and a Robin wall's boundary mass use the row-sum lumped mass, ``diag(M 1)``, in place
+        of the consistent one (#2845)?"""
         ...
 
     def advection(self, velocity: NDArray) -> sparse.csr_matrix:
@@ -89,9 +90,12 @@ class WeakFormDiscretization(Protocol):
         ...
 
 
+def lumped(mass: sparse.spmatrix) -> sparse.csr_matrix:
+    """``mass``'s row-sum lumped diagonal, ``diag(M 1)``: its row sums are kept, so ``1^T M m`` is unchanged (#2845)."""
+    return sparse.diags(np.asarray(mass.sum(axis=1)).ravel(), format="csr")
+
+
 def time_mass(discretization: WeakFormDiscretization, mass: sparse.csr_matrix) -> sparse.csr_matrix:
     """The mass matrix a weak-form solver's time derivative uses: ``mass``, or its row-sum lumped diagonal where the
     discretization lumps it (#2845). The row sums are kept, so the mass a solve measures, ``1^T M m``, is unchanged."""
-    if not discretization.lumps_time_mass:
-        return mass
-    return sparse.diags(np.asarray(mass.sum(axis=1)).ravel(), format="csr")
+    return lumped(mass) if discretization.lumps_mass else mass

@@ -663,7 +663,7 @@ def test_the_fem_robin_load_refuses_a_callable_naming_1237():
         default_bc=BCType.NO_FLUX,
     )
     with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Robin load .*\(#1237\).* a constant"):
-        assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+        assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
 
 
 @pytest.mark.parametrize(

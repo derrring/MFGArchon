@@ -135,7 +135,7 @@ class MeshlessSCNIDiscretization:
         return sparse.diags(self._V).tocsr()  # lumped nodal volumes
 
     @property
-    def lumps_time_mass(self) -> bool:
+    def lumps_mass(self) -> bool:
         return False
 
     def gradient_projection(self) -> list[sparse.csr_matrix]:
