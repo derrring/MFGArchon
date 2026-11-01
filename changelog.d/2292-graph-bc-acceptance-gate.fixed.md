@@ -4,39 +4,42 @@
   - `BCSegment` takes a `BCType` and refuses a `GraphBCType`. So does `BoundaryConditions` for its `default_bc`, through the same check, which also refuses a string `default_bc`.
   - A node that is not an index of the graph is refused by name on every route that names nodes, `get_bc_value` among them.
     - Before, on the routes that take a collection, a node outside the graph was skipped. A float or a string raised numpy's `IndexError` or a `TypeError` that named nothing. A bool was read as a boolean mask, so `[True]` wrote every node.
-    - `get_bc_value` read a float or a bool by equality, so `2.0` read node 2 and `True` node 1. It returned `None` for a node outside the graph or a string.
-  - `create_graph_applicator` and `create_maze_applicator` read `None` or an empty collection as no nodes, and check anything else. `from_network_geometry(boundary_type="custom")` refuses `boundary_nodes=None` by name, which main took as no nodes.
-    - Before, in both factories and the custom route, a truth test dropped node 0 given as `0` or `np.array([0])`. It raised numpy's "truth value is ambiguous" on a longer array, which is now taken, and on an empty one, which is now no nodes.
+    - `get_bc_value` read any node by equality, so `2.0`, `np.float64(2.0)`, `Fraction(2)` and a 0-d or one-element array read node 2, and `True` node 1. It returned `None` for a node outside the graph or a string.
+  - `create_graph_applicator` and `create_maze_applicator` read `None` or an empty collection as no nodes, and check anything else. `from_network_geometry(boundary_type="custom")` refuses `boundary_nodes` given as `None` or left out, by name; main took either as no nodes.
+    - Before, in both factories and the custom route, a truth test dropped node 0 given as `0` or `np.array([0])`. It raised numpy's "truth value is ambiguous" on a longer integer array, which is now taken. An empty integer array is now no nodes; `np.array([])` is a float array, refused as every float array is.
   - Two conditions that write the same field at a shared node are refused when the second is added; before, `apply` kept whichever it read last. `create_maze_applicator` leaves a dead end named as an entry out of the exits it detects. `apply_direct` refuses a node given twice with a value each, which kept the last.
   - A graph geometry takes a `GraphBCConfig` or `None` as `boundary_conditions=`, and refuses anything else when it is built. The conditions inside the config are checked against the graph where they reach an applicator, which is when the problem is built.
   - `GraphApplicator.from_network_geometry` refuses a keyword it does not read. Its `degree_threshold` is compared as given, a large int or `Fraction` among them; a string raised numpy's `UFuncTypeError` and is refused by name. Its spatial boundary works on a maze, from the maze's own node positions, where it raised an `AttributeError`. A geometry that gives no positions is refused by name.
   - `apply_direct` takes a tuple of values, one per node, as it takes a list; a tuple raised `float()`'s `TypeError` before.
-  - A value too large for a float, `10**400` among them, is refused by name on every route that takes a value, where `float()` raised an `OverflowError` that named nothing.
+  - A finite value too large for a float is refused by name on every route that takes a value. Main raised `float()`'s `OverflowError`, which named nothing, for an `int` such as `10**400`, and imposed `inf` for a real number whose `float()` saturates, such as sympy's or gmpy2's. A real number that `float()` cannot convert is refused the same way. An infinity is still taken.
   - A name several conditions share is refused at lookup.
-- **Forms main took that are now refused**, measured at main (ee0879d0). Each is refused by name.
-  - Nodes, on every route that takes them: `NodeBC.nodes` and what a callable there returns, `set_dirichlet_nodes`, `set_source_nodes`, `set_absorbing_nodes`, `set_custom_bc`, `apply_direct`, `create_graph_applicator`, `from_network_geometry(boundary_type="custom")` and `create_maze_applicator`.
+- **Forms main took that are now refused**, measured at main (ee0879d0). Main read each kind of input through whatever coercion it met, so the forms outside the table that it took are open-ended. Each class below says what main accepted; the examples are measured. Each is now refused by name, in its table entry's words.
+  - **Nodes**, on every route that takes them: `NodeBC.nodes` and what a callable there returns, `set_dirichlet_nodes`, `set_source_nodes`, `set_absorbing_nodes`, `set_custom_bc`, `apply_direct`, `create_graph_applicator`, `from_network_geometry(boundary_type="custom")` and `create_maze_applicator`. Main took any iterable of entries, and any array numpy indexes with.
     - A set or a frozenset. Main took it, and `apply_direct` paired a value list with it in the set's iteration order, not the order written: `{3, 1}` with `[10.0, 20.0]` gave node 1 the 10.
-    - A generator, an iterator or a dict's keys. Main took it. A `NodeBC` holding an iterator imposed it on the first `apply` and nothing on the next, and `get_boundary_nodes` then returned no node.
-    - A 1-D bool array. Main indexed the field with each entry, so `np.array([False, True])` wrote every node.
-    - A string, on `create_maze_applicator`'s `exit_nodes`. Main took its characters as nodes: `"13"` made `"1"` and `"3"` exits. On the other routes a string raised a `TypeError` that named nothing.
-  - A value: `NodeBC.value`, so every `value=`, `boundary_value=` and `source_value=` and `set_custom_bc`'s `bc_func`, and each of `apply_direct`'s values. A callable value is unchanged on every one of them, taken as at main: its forms are A2's (#2296).
-    - A string, a `Decimal`, or a 0-d array. Main read each through `float()`, so `"2.5"` imposed 2.5. A 0-d array alone in `apply_direct` raised `len() of unsized object`, and is still refused.
+    - A generator, an iterator, a `map`, or a dict's keys or values. Main took it. A `NodeBC` holding an iterator imposed it on the first `apply` and nothing on the next, and `get_boundary_nodes` then returned no node.
+    - Any other iterable: a `dict`, a `deque`, an `array.array`, `bytes` (`b'\x01\x03'` gave nodes 1 and 3), a pandas `Series` or `Index`, a list of 0-d arrays.
+    - An array that is not a plain 1-D integer numpy array, a subclass of `ndarray` among them: an integer array of two or more dimensions, `np.argwhere`'s column `[[1], [3]]` among them; an object-dtype array; a masked array; a 1-D bool array, which main used as indices, so `np.array([False, True])` wrote every node; and a float array, `np.array([])` among them, which main took as no nodes.
+    - A string, on `create_maze_applicator`'s `exit_nodes`. Main stored its characters as exits, `"13"` as `"1"` and `"3"`, and `apply` then raised a `TypeError` that named nothing. On the other routes a string raised such a `TypeError` at once.
+  - **A value**: `NodeBC.value`, so every `value=`, `boundary_value=` and `source_value=` and `set_custom_bc`'s `bc_func`, and each of `apply_direct`'s values. Main read anything `float()` reads. A callable value is unchanged on every one of these routes, taken as at main: its forms are A2's (#2296).
+    - A string, an `np.str_` or `bytes`, a `Decimal`, or a 0-d array. Main read each through `float()`, so `"2.5"` imposed 2.5. A 0-d array alone in `apply_direct` raised `len() of unsized object`, and is still refused.
     - A bool or an `np.bool_`. Main read it as 1.0 or 0.0.
+    - A complex number. Main imposed its real part, so `np.complex128(2.5 + 1j)` imposed 2.5.
     - `None` in a value list. Main wrote NaN.
     - A value given to a factory with no nodes to impose it on: `create_graph_applicator`'s `boundary_value` or `source_value`, or `from_network_geometry`'s `boundary_value`. Main took it unread. A factory now reads its values whether or not it has nodes.
-    - A value of any of these forms on a `GraphBCType.CUSTOM` condition, which reads only a callable. Main took it and imposed nothing. CUSTOM's callable is unchanged, and so is CUSTOM given a real number, which still imposes nothing until #2512 row N2 is ruled.
-  - `apply_direct`'s values, beyond a single value:
-    - A list whose length is not the number of nodes. Main repeated its last value over the remaining nodes and dropped any extra; an empty one raised an `IndexError`.
-    - A list holding an array, such as `[7.0, np.array([8.0, 9.0])]` on a two-row field. Main wrote the array down the rows at that node. A per-node value other than a number is A2's to decide (#2296).
-    - A 2-D array. Main broadcast it over the field: `[[7.0, 8.0]]` for two nodes of a two-row field wrote 7 on the first row and 8 on the second.
+    - On a `GraphBCType.CUSTOM` condition, which reads only a callable, any non-callable outside the table: a list, an array, `None`, a complex number, `10**400`. Main took it and imposed nothing. CUSTOM's callable is unchanged, and so is CUSTOM given a real number, which still imposes nothing until #2512 row N2 is ruled.
+  - **`apply_direct`'s values**, beyond a single value. Main read any sequence numpy could write at a node.
+    - A list or an array whose length is not the number of nodes. Main repeated its last value over the remaining nodes and dropped any extra; an empty one raised an `IndexError`.
+    - A list holding an array or a list, such as `[7.0, np.array([8.0, 9.0])]` or `[7.0, [8.0, 9.0]]` on a two-row field. Main wrote the inner sequence down the rows at that node. A per-node value other than a number is A2's to decide (#2296).
+    - An array of two or more dimensions. Main broadcast it over the field: `[[7.0, 8.0]]` for two nodes of a two-row field wrote 7 on the first row and 8 on the second.
     - A bool, object or complex array. Main took it; a complex one lost its imaginary part with numpy's `ComplexWarning`.
-  - `from_network_geometry`'s `degree_threshold`:
-    - A `Decimal`, which is not a `numbers.Real`. Main compared it.
-    - An array, 0-d or 1-D. Main compared each node's degree with it, so `np.array([2])` found what `2` finds.
+    - A subclass of `ndarray`, a masked array among them. Main wrote a masked entry as 0 on a two-row field and as NaN on a one-row field.
+  - **`from_network_geometry`'s `degree_threshold`.** Main compared anything numpy compares with the degrees.
+    - A `Decimal` or a complex number, neither a `numbers.Real`. Main compared it: `2+0j` found what `2` finds.
+    - An array, a list or a tuple, such as `np.array([2])`, `[2]` or `(2,)`. Main found what `2` finds.
     - A bool. Main read it as 0 or 1.
     - A NaN. Main found no node.
     - An infinity. Main found every node, or none for minus infinity.
-  - `GraphBCConfig.node_bcs` given a generator or an iterator. Main took it; the first applicator built from the config imposed its conditions and every later one found none.
+  - **`GraphBCConfig.node_bcs`**, given any iterable other than a list or tuple: a generator, an iterator, a `map`, a `deque`, a dict's values or an object array. Main took it; an iterator's conditions reached only the first applicator built from the config, and the rest found none.
 - **`EdgeBC`, a non-empty `GraphBCConfig.edge_bcs`, `GraphApplicator.add_edge_bc` and `GraphApplicator.apply_edge_direct` are refused** (Issue #2493). No graph solver applied an edge condition, so each was stored and dropped. The refusal stays until an edge operator is ruled.
 - **`NodeBC`, `EdgeBC` and `GraphBCConfig` are frozen.** A config keeps its conditions as a tuple and a condition its nodes as a tuple, so a condition cannot change after it is built.
 - **`create_maze_applicator` works on a `MazeGeometry`.** It reads the maze's node count and its own adjacency, where before it raised "Cannot determine number of nodes".

@@ -27,6 +27,8 @@ file measures while writing unset memory on the uniform path.
 from __future__ import annotations
 
 import enum
+import math
+import numbers
 import typing
 from decimal import Decimal
 from fractions import Fraction
@@ -1015,13 +1017,16 @@ def _gate_cases():
             "value is a str",
         )
     )
-    for label, values in (("10**400", 10**400), ("a list holding 10**400", [10**400, 1.0])):
+    for label, values, match in (
+        ("10**400", 10**400, "values is an int, a real number no float holds"),
+        ("a list holding 10**400", [10**400, 1.0], "values is a list"),
+    ):
         refuses.append(
             (
                 f"apply_direct[values={label}]",
                 lambda v=values: applicator().apply_direct(np.zeros(5), [1, 3], v),
                 TypeError,
-                "too large for a float",
+                match,
             )
         )
     # an array of nodes is an integer array; a values array is 1-D and real; a factory takes a callable for its nodes
@@ -1043,6 +1048,82 @@ def _gate_cases():
                 "values is a",
             )
         )
+    # review 4: a masked array, whose masked entries read as None and were written as NaN; a finite real number whose
+    # float() saturates to inf rather than raising; set_custom_bc's value is its bc_func
+    refuses.append(
+        (
+            "apply_direct[values as a masked array]",
+            lambda: applicator().apply_direct(np.ones((2, 5)), [1, 3], np.ma.array([7.0, 8.0], mask=[False, True])),
+            TypeError,
+            "values is a 1-D float64 masked array",
+        )
+    )
+    refuses.append(
+        (
+            "apply_direct[nodes as a masked array]",
+            lambda: applicator().apply_direct(np.ones(5), np.ma.array([1, 3], mask=[False, True]), 2.5),
+            TypeError,
+            "boundary_nodes is a 1-D int64 masked array",
+        )
+    )
+
+    class Saturating:
+        """A real number beyond float range whose float() is inf, as sympy's and gmpy2's are."""
+
+        def __float__(self):
+            return math.inf
+
+    numbers.Real.register(Saturating)
+
+    class NoFloat:
+        """A real number that defines no conversion to a float."""
+
+    numbers.Real.register(NoFloat)
+    refuses.append(
+        (
+            "NodeBC[value=a real number float() cannot convert]",
+            lambda: NodeBC(nodes=[0], value=NoFloat()),
+            TypeError,
+            "a real number no float holds",
+        )
+    )
+
+    class Sub(np.ndarray):
+        """A numpy array subclass, whose tolist() the readers cannot rely on."""
+
+    refuses.append(
+        (
+            "apply_direct[nodes as an ndarray subclass]",
+            lambda: applicator().apply_direct(np.ones(5), np.array([1, 3]).view(Sub), 2.5),
+            TypeError,
+            "boundary_nodes is a 1-D int64 array",
+        )
+    )
+    refuses.append(
+        (
+            "NodeBC[value=a real number whose float() saturates]",
+            lambda: NodeBC(nodes=[0], value=Saturating()),
+            TypeError,
+            "a real number no float holds",
+        )
+    )
+    accepts.append(
+        (
+            "NodeBC[value=inf]",
+            lambda: np.array_equal(
+                GraphApplicator(5).add_node_bc(NodeBC(nodes=[1], value=math.inf)).apply(np.zeros(5)),
+                [0, math.inf, 0, 0, 0],
+            ),
+        )
+    )
+    refuses.append(
+        (
+            "set_custom_bc[bc_func=a str]",
+            lambda: applicator().set_custom_bc([0], "x"),
+            TypeError,
+            "set_custom_bc: bc_func is a str",
+        )
+    )
     accepts.append(
         (
             "create_graph_applicator[boundary_nodes=a callable]",

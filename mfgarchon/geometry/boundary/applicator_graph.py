@@ -33,7 +33,7 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, TypeGuard, cast
 
 import numpy as np
 
@@ -85,7 +85,7 @@ def _refuse_a_foreign_bc_type(kind: str, name: str, bc_type: object) -> None:
 # The forms a graph boundary-condition input is taken in (#2292): one table, read by every acceptor
 # =============================================================================
 
-_NODES = "a list, tuple or range of nodes, or a 1-D integer array"
+_NODES = "a list, tuple or range of nodes, or a 1-D integer numpy array (an ndarray, not a subclass)"
 _RULE = "a callable that takes the graph's node count and returns such nodes"
 #: Each class of graph BC input and the forms it is taken in. Every acceptor reads its input through the reader of its
 #: class below and coerces nothing on its own; any other form is refused by name, in these words. A per-node value of
@@ -95,12 +95,16 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
         "node": "an int (a numbers.Integral that is not a bool) from 0 to the graph's last node",
         "nodes": _NODES,
         "condition_nodes": f"nodes ({_NODES}), or {_RULE}",
-        "factory_nodes": f"None, nodes ({_NODES}), or {_RULE}; None or no nodes is no condition",
+        "factory_nodes": f"None, nodes ({_NODES}), or {_RULE}; None or an empty collection is no condition",
         "value": (
-            "a real number a float holds (a numbers.Real that is not a bool, and not too large for a float), or a "
+            "a real number a float holds (a numbers.Real that is not a bool, which float() converts, to a finite float "
+            "if it is finite), or a "
             "callable, taken as at main: a callable's forms are A2's (#2296)"
         ),
-        "values": "a value, or a list, tuple or 1-D real array of real numbers a float holds, one per node",
+        "values": (
+            "a value, or a list, tuple or 1-D real numpy array (an ndarray, not a subclass) of real numbers a float "
+            "holds, one per node"
+        ),
         "conditions": "a list or tuple",
         "threshold": "a finite real number (a numbers.Real that is not a bool), compared as given",
     }
@@ -112,24 +116,32 @@ def _shown(item: object) -> str:
     if item is None:
         return "None"
     if isinstance(item, np.ndarray):
-        return f"a {item.ndim}-D {item.dtype} array"
+        return f"a {item.ndim}-D {item.dtype} {'masked array' if isinstance(item, np.ma.MaskedArray) else 'array'}"
     name = type(item).__name__
-    return f"{'an' if name[0] in 'aeiou' else 'a'} {name}"
+    return f"{'an' if name[0].lower() in 'aeiou' else 'a'} {name}"
 
 
 def _is_real(item: object) -> bool:
     return isinstance(item, numbers.Real) and not isinstance(item, (bool, np.bool_))
 
 
+def _plain_array(item: object) -> TypeGuard[np.ndarray]:
+    """A numpy array of the base class, the one whose ``tolist()`` the readers' meaning rests on. A subclass can
+    redefine it: a masked array's masked entries read as None, which numpy wrote as NaN (#2292 review 4, F1)."""
+    return type(item) is np.ndarray
+
+
 def _is_value(item: object) -> bool:
-    """A real number a float holds: a value is written into a float field, and float() of a larger one overflows."""
+    """A real number a float holds: a value is written into a float field, so ``float()`` must succeed and keep it. It
+    raises for an int beyond float range or a Real that defines no conversion, and saturates to inf for other Reals
+    beyond it, so a finite number that becomes inf is refused too (#2292 review 4, F2)."""
     if not _is_real(item):
         return False
     try:
-        float(cast("float", item))
-    except OverflowError:
+        as_float = float(cast("float", item))
+    except (ArithmeticError, TypeError, ValueError):
         return False
-    return True
+    return not math.isinf(as_float) or item == as_float
 
 
 def _nodes(items: object, where: str, form: str = "nodes") -> tuple:
@@ -138,7 +150,8 @@ def _nodes(items: object, where: str, form: str = "nodes") -> tuple:
     takes them (`GraphApplicator._checked_nodes`)."""
     if isinstance(items, (list, tuple, range)):
         return tuple(items)
-    if isinstance(items, np.ndarray) and items.ndim == 1 and items.dtype.kind in "iu":
+    # A masked array is not one: its masked entries read as None, so the nodes it declares are not its entries.
+    if _plain_array(items) and items.ndim == 1 and items.dtype.kind in "iu":
         return tuple(items.tolist())
     raise TypeError(f"{where} is {_shown(items)}; it takes {ACCEPTED_FORMS[form]} (#2292).")
 
@@ -153,7 +166,7 @@ def _conditions(items: object, where: str, of: str) -> tuple:
 def _value(value: object, where: str) -> None:
     """Refuse by name a ``value`` outside the form ``ACCEPTED_FORMS["value"]`` names."""
     if not (callable(value) or _is_value(value)):
-        shown = "a real number too large for a float" if _is_real(value) else _shown(value)
+        shown = f"{_shown(value)}, a real number no float holds" if _is_real(value) else _shown(value)
         raise TypeError(f"{where} is {shown}; it takes {ACCEPTED_FORMS['value']} (#2292).")
 
 
@@ -164,10 +177,10 @@ def _node_values(values: object, count: int, where: str) -> tuple | None:
         return None
     if isinstance(values, (list, tuple)) and all(_is_value(v) for v in values):
         per_node = tuple(values)
-    elif isinstance(values, np.ndarray) and values.ndim == 1 and values.dtype.kind in "iuf":
+    elif _plain_array(values) and values.ndim == 1 and values.dtype.kind in "iuf":
         per_node = tuple(values.tolist())
     else:
-        shown = "a real number too large for a float" if _is_real(values) else _shown(values)
+        shown = f"{_shown(values)}, a real number no float holds" if _is_real(values) else _shown(values)
         raise TypeError(
             f"{where}: values is {shown}; it takes {ACCEPTED_FORMS['values']}, a value being "
             f"{ACCEPTED_FORMS['value']} (#2292)."
@@ -669,6 +682,7 @@ class GraphApplicator(BaseGraphApplicator):
             # Note: This requires field to be passed separately in apply()
             return 0.0  # Placeholder - actual value set during apply
 
+        _value(bc_func, "GraphApplicator.set_custom_bc: bc_func")  # named as the caller gave it (#2292 review 4, S1)
         bc = NodeBC(nodes=nodes, bc_type=GraphBCType.CUSTOM, value=bc_func, name=name)
         return self.add_node_bc(bc)
 
