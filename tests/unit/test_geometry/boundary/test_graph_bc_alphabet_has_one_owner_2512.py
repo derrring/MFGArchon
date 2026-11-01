@@ -49,11 +49,11 @@ ALLOWED = {
 
 
 def _members(node: ast.AST, enum: str) -> list[str]:
-    """The ``<enum>.<member>`` operands of ``node``, itself or the elements of a tuple, list or set display."""
-    items = node.elts if isinstance(node, (ast.Tuple, ast.List, ast.Set)) else [node]
+    """Every ``<enum>.<member>`` anywhere in the operand ``node``: itself, a display's element, or deeper, inside a
+    call such as ``frozenset({...})``, which a display-only reading missed (#2292 review 2, S7)."""
     return [
         f"{enum}.{item.attr}"
-        for item in items
+        for item in ast.walk(node)
         if isinstance(item, ast.Attribute) and isinstance(item.value, ast.Name) and item.value.id == enum
     ]
 
@@ -152,6 +152,10 @@ PLANTED = {
     "graph members compared in a network solver": (
         "mfgarchon/alg/numerical/network_solvers/hjb_network.py",
         "def _rival(node_bc):\n    return node_bc.bc_type in (GraphBCType.SOURCE, GraphBCType.ABSORBING)\n",
+    ),
+    "a graph member inside a call operand": (
+        "mfgarchon/alg/numerical/network_solvers/fp_network.py",
+        "def _rival(node_bc):\n    return node_bc.bc_type in frozenset({GraphBCType.SOURCE})\n",
     ),
     "a graph member as a match case in a continuum reader": (
         "mfgarchon/geometry/boundary/bc_utils.py",

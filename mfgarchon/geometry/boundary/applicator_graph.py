@@ -27,12 +27,13 @@ Part of: Unified Boundary Condition Architecture
 
 from __future__ import annotations
 
+import math
 import numbers
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 import numpy as np
 
@@ -80,10 +81,22 @@ def _refuse_a_foreign_bc_type(kind: str, name: str, bc_type: object) -> None:
     raise TypeError(f"{kind} {name!r}: bc_type must be a GraphBCType, got {bc_type!r}.{hint} (#2292)")
 
 
+def _given_nodes(nodes: object, where: str) -> tuple[int, ...] | Callable[[int], list[int]] | None:
+    """A factory's node argument (#2292): None for no nodes, a callable as given, or a tuple read once by `_as_tuple`,
+    so a bare node, 0 among them, is refused by name. An empty collection is no nodes, as it was."""
+    if nodes is None or callable(nodes):
+        return cast("Callable[[int], list[int]] | None", nodes)
+    return _as_tuple(nodes, where, "node indices")
+
+
 def _as_tuple(items: object, where: str, of: str) -> tuple:
     """``items`` as a tuple, or refused by name: a bare entry, such as one NodeBC or an int, is not a collection of
     them (#2292)."""
-    if isinstance(items, (str, bytes)) or not isinstance(items, Iterable):
+    if (
+        isinstance(items, (str, bytes))
+        or (isinstance(items, np.ndarray) and items.ndim == 0)
+        or not isinstance(items, Iterable)
+    ):
         raise TypeError(f"{where} is a {type(items).__name__}; it takes a collection of {of}, e.g. a list (#2292).")
     return tuple(items)
 
@@ -262,17 +275,10 @@ class GraphApplicator(BaseGraphApplicator):
         }
     )
 
-    #: The fields each condition writes at its nodes in `apply` (#2292): two conditions that write one field at one
-    #: node would leave it to whichever `apply` reads last, so `add_node_bc` refuses the second.
-    _WRITES: ClassVar[MappingProxyType[GraphBCType, tuple[str, ...]]] = MappingProxyType(
-        {
-            GraphBCType.DIRICHLET: ("value",),
-            GraphBCType.ABSORBING: ("value", "density"),
-            GraphBCType.SOURCE: ("density",),
-            GraphBCType.NEUMANN: (),
-            GraphBCType.CUSTOM: ("value", "density"),
-        }
-    )
+    #: The fields each condition writes at its nodes in `apply` (#2292): every field `_DECLARED_IDENTITY` does not
+    #: declare it leaves unchanged, derived below the class. Two conditions that write one field at one node would leave
+    #: it to whichever `apply` reads last, so `add_node_bc` refuses the second.
+    _WRITES: ClassVar[MappingProxyType[GraphBCType, tuple[str, ...]]]
 
     def __init__(self, num_nodes: int):
         """
@@ -359,26 +365,34 @@ class GraphApplicator(BaseGraphApplicator):
         num_nodes = _num_nodes(geometry)
 
         applicator = cls(num_nodes)
+        boundary_nodes: Sequence[int] | Callable[[int], list[int]] | None
 
         # Detect boundary nodes based on type
         if boundary_type == "leaf":
             boundary_nodes = cls._detect_leaf_nodes(geometry)
         elif boundary_type == "degree":
             threshold = kwargs.get("degree_threshold", 1)
-            if isinstance(threshold, (bool, np.bool_)) or not isinstance(threshold, numbers.Real):
+            if (
+                isinstance(threshold, (bool, np.bool_))
+                or not isinstance(threshold, numbers.Real)
+                or not math.isfinite(threshold)
+            ):
                 raise TypeError(
-                    f"GraphApplicator.from_network_geometry: degree_threshold is {threshold!r}; it takes a number, the "
-                    "largest degree a boundary node has (#2292)."
+                    f"GraphApplicator.from_network_geometry: degree_threshold is {threshold!r}; it takes a finite "
+                    "number, the largest degree a boundary node has (#2292)."
                 )
-            boundary_nodes = cls._detect_low_degree_nodes(geometry, float(threshold))
+            # Compared as given: float() would round a Fraction, or a large int, across a degree (#2292).
+            boundary_nodes = cls._detect_low_degree_nodes(geometry, cast("float", threshold))
         elif boundary_type == "spatial":
             boundary_nodes = cls._detect_spatial_boundary_nodes(geometry)
         else:  # "custom"
-            boundary_nodes = kwargs["boundary_nodes"]
+            boundary_nodes = _given_nodes(
+                kwargs["boundary_nodes"], "GraphApplicator.from_network_geometry: boundary_nodes"
+            )
 
-        # A detector gives a list, empty when it finds no node. Given nodes go to NodeBC as they are, to be checked
-        # there: a truth test dropped a bare 0 and a one-element array of node 0 (#2292).
-        if boundary_type == "custom" or boundary_nodes:
+        # A detector's list, or the given nodes read once into a tuple: empty is no condition. A truth test on the
+        # given object dropped a bare 0 and a one-element array of node 0 (#2292).
+        if boundary_nodes:
             applicator.set_dirichlet_nodes(boundary_nodes, value=kwargs.get("boundary_value", 0.0), name="boundary")
 
         return applicator
@@ -473,7 +487,7 @@ class GraphApplicator(BaseGraphApplicator):
 
     def set_dirichlet_nodes(
         self,
-        nodes: list[int] | Callable[[int], list[int]],
+        nodes: Sequence[int] | Callable[[int], list[int]],
         value: float | Callable[[int, float], float] = 0.0,
         name: str = "dirichlet",
     ) -> GraphApplicator:
@@ -501,7 +515,7 @@ class GraphApplicator(BaseGraphApplicator):
 
     def set_absorbing_nodes(
         self,
-        nodes: list[int] | Callable[[int], list[int]],
+        nodes: Sequence[int] | Callable[[int], list[int]],
         name: str = "absorbing",
     ) -> GraphApplicator:
         """
@@ -525,7 +539,7 @@ class GraphApplicator(BaseGraphApplicator):
 
     def set_source_nodes(
         self,
-        nodes: list[int] | Callable[[int], list[int]],
+        nodes: Sequence[int] | Callable[[int], list[int]],
         value: float | Callable[[int, float], float] = 1.0,
         name: str = "source",
     ) -> GraphApplicator:
@@ -549,7 +563,7 @@ class GraphApplicator(BaseGraphApplicator):
 
     def set_custom_bc(
         self,
-        nodes: list[int] | Callable[[int], list[int]],
+        nodes: Sequence[int] | Callable[[int], list[int]],
         bc_func: Callable[[NDArray, int, float], float],
         name: str = "custom",
     ) -> GraphApplicator:
@@ -798,20 +812,34 @@ class GraphApplicator(BaseGraphApplicator):
             >>> u_bc = applicator.apply_direct(u, [0], lambda n, t: np.sin(t))
         """
         result = field.copy()
+        unordered = isinstance(boundary_nodes, (set, frozenset))
         nodes = self._checked_nodes(boundary_nodes, "GraphApplicator.apply_direct", "boundary_nodes")
-        if isinstance(values, (list, np.ndarray)) and len(values) != len(nodes):
-            raise ValueError(
-                f"GraphApplicator.apply_direct: {len(values)} value(s) for {len(nodes)} node(s). Give one value per "
-                "node, or one number or callable for all of them (#2292)."
-            )
+        per_node = values if isinstance(values, (list, tuple, np.ndarray)) and np.ndim(values) > 0 else None
+        if per_node is not None:
+            if unordered:
+                raise TypeError(
+                    "GraphApplicator.apply_direct: boundary_nodes is a set, which has no order to pair with a value "
+                    "list. Give the nodes as a list (#2292)."
+                )
+            if len(per_node) != len(nodes):
+                raise ValueError(
+                    f"GraphApplicator.apply_direct: {len(per_node)} value(s) for {len(nodes)} node(s). Give one value "
+                    "per node, or one number or callable for all of them (#2292)."
+                )
+            repeated = sorted({n for n in nodes if nodes.count(n) > 1})
+            if repeated:
+                raise ValueError(
+                    f"GraphApplicator.apply_direct: node(s) {repeated} are given more than once, each with a value of "
+                    "its own, so only the last would be kept. Give each node once (#2292)."
+                )
 
         for i, node in enumerate(nodes):
             if callable(values):
                 value = values(node, t)
-            elif isinstance(values, (list, np.ndarray)):
-                value = values[i]
+            elif per_node is not None:
+                value = per_node[i]
             else:
-                value = float(values)
+                value = float(cast("float", values))
 
             if result.ndim == 2:
                 result[:, node] = value
@@ -830,8 +858,8 @@ class GraphApplicator(BaseGraphApplicator):
     ) -> NDArray[np.floating]:
         """Refused: no graph solver has an edge field, so an edge value written here reaches no solve (#2493).
 
-        It used to write ``values`` into ``edge_flow``, mapping an edge with no ``edge_index_map`` entry to its position
-        in ``edges`` and repeating the last of a short value list (#2292).
+        It used to write ``values`` into ``edge_flow``: with no ``edge_index_map``, each edge at its position in ``edges``;
+        with one, skipping an edge the map does not list; and repeating the last of a short value list (#2292).
         """
         raise NotImplementedError(f"GraphApplicator.apply_edge_direct: {_EDGES_NOT_APPLIED}")
 
@@ -892,6 +920,7 @@ class GraphApplicator(BaseGraphApplicator):
 
     def get_bc_value(self, name: str, node: int, t: float) -> float | None:
         """Get BC value for a specific node from named BC region."""
+        node = self._checked_nodes([node], "GraphApplicator.get_bc_value", "node")[0]
         bc = self.get_bc_by_name(name)
         if bc is None:
             return None
@@ -908,6 +937,15 @@ class GraphApplicator(BaseGraphApplicator):
 
         return f"GraphApplicator(num_nodes={self.num_nodes}, bcs=[{', '.join(bc_summary)}])"
 
+
+GraphApplicator._WRITES = MappingProxyType(
+    {
+        bc_type: tuple(
+            field for field in ("value", "density") if (bc_type, field) not in GraphApplicator._DECLARED_IDENTITY
+        )
+        for bc_type in GraphBCType
+    }
+)
 
 # =============================================================================
 # Convenience Functions
@@ -976,16 +1014,17 @@ def create_graph_applicator(
     """
     applicator = GraphApplicator(num_nodes)
 
-    # None is "no such nodes"; anything else goes to NodeBC to be checked, where a truth test dropped a bare 0 and
-    # a one-element array of node 0, and raised on a longer array (#2292).
-    if boundary_nodes is not None:
-        applicator.set_dirichlet_nodes(boundary_nodes, value=boundary_value, name="boundary")
-
-    if source_nodes is not None:
-        applicator.set_source_nodes(source_nodes, value=source_value, name="source")
-
-    if absorbing_nodes is not None:
-        applicator.set_absorbing_nodes(absorbing_nodes, name="absorbing")
+    # Each read once into a tuple, or refused by name: a truth test on the given object dropped a bare 0 and a
+    # one-element array of node 0, and raised on a longer array. None or empty is no condition (#2292).
+    boundary = _given_nodes(boundary_nodes, "create_graph_applicator: boundary_nodes")
+    source = _given_nodes(source_nodes, "create_graph_applicator: source_nodes")
+    absorbing = _given_nodes(absorbing_nodes, "create_graph_applicator: absorbing_nodes")
+    if boundary:
+        applicator.set_dirichlet_nodes(boundary, value=boundary_value, name="boundary")
+    if source:
+        applicator.set_source_nodes(source, value=source_value, name="source")
+    if absorbing:
+        applicator.set_absorbing_nodes(absorbing, name="absorbing")
 
     return applicator
 
@@ -1013,20 +1052,22 @@ def create_maze_applicator(
         >>> applicator = create_maze_applicator(maze, auto_detect_exits=True)
     """
     applicator = GraphApplicator(_num_nodes(maze_geometry))
-    # Built first, so the entries are read once, as given: a generator read here and again below came back empty
-    # (#2292). None is "no such nodes", and is the only input taken as that.
-    entry = (
-        None if entry_nodes is None else NodeBC(nodes=entry_nodes, bc_type=GraphBCType.SOURCE, value=1.0, name="entry")
+    # Each read once into a tuple, or refused by name: a generator read twice came back empty, and a truth test
+    # dropped a bare 0. None or empty is no condition (#2292).
+    given_entries = _given_nodes(entry_nodes, "create_maze_applicator: entry_nodes")
+    entry = NodeBC(nodes=given_entries, bc_type=GraphBCType.SOURCE, value=1.0, name="entry") if given_entries else None
+    exits: Sequence[int] | Callable[[int], list[int]] | None = _given_nodes(
+        exit_nodes, "create_maze_applicator: exit_nodes"
     )
 
-    # Auto-detect exits if requested. A dead end named as an entry is the entry's: the explicit name overrides the
-    # heuristic, where both would have written the density at that node (#2292).
+    # Auto-detect exits if none were given. A dead end named as an entry is the entry's: the explicit name overrides
+    # the heuristic, where both would have written the density at that node (#2292).
     if auto_detect_exits and exit_nodes is None:
         entries = set() if entry is None else set(applicator._resolve_nodes(entry))
-        exit_nodes = [n for n in GraphApplicator._detect_leaf_nodes(maze_geometry) if n not in entries] or None
+        exits = [n for n in GraphApplicator._detect_leaf_nodes(maze_geometry) if n not in entries]
 
-    if exit_nodes is not None:
-        applicator.set_absorbing_nodes(exit_nodes, name="exit")
+    if exits:
+        applicator.set_absorbing_nodes(exits, name="exit")
 
     if entry is not None:
         applicator.add_node_bc(entry)

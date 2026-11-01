@@ -1,19 +1,21 @@
-- **A graph boundary condition is taken as declared or refused by name where it is handed over** (Issue #2292, #2512 row N1). Before, several inputs were accepted and then dropped without a word.
+- **A graph boundary condition is taken as declared or refused by name where it is handed over** (Issue #2292, #2512 row N1). Before, several inputs were accepted and then dropped or misread without a word.
   - `NodeBC` takes a `GraphBCType`. A continuum `BCType` shares two value strings with it while being a different member, and was silently skipped; it is refused now.
-  - `BCSegment` takes a `BCType` and refuses a `GraphBCType`, and so does `BoundaryConditions` for its `default_bc`, through the same check.
-  - A node that is not an index of the graph is refused on every route that names nodes: one outside the graph, which was skipped, and a bool, a float or a string, which was read as an int.
-  - Every route that takes nodes, and `GraphBCConfig.node_bcs`, takes a collection and refuses a bare entry by name. A config given its conditions as an iterator kept none of them; it keeps them now.
-  - `create_graph_applicator`, `create_maze_applicator` and `from_network_geometry(boundary_type="custom")` read `None` as no nodes and check anything else. A truth test dropped node 0 given as `0` or `np.array([0])`, and raised numpy's "truth value is ambiguous" on a longer array.
-  - Two conditions that write the same field at a shared node are refused when the second is added; before, `apply` kept whichever it read last. `create_maze_applicator` leaves a dead end named as an entry out of the exits it detects.
-  - A graph geometry takes a `GraphBCConfig` or `None` as `boundary_conditions=`, and refuses anything else when it is built.
-  - `GraphApplicator.from_network_geometry` refuses a keyword it does not read. Its `degree_threshold` is a number: a string, which raised numpy's UFuncTypeError, and a bool, which was read as 0 or 1, are refused by name. Its spatial boundary reads a geometry's own node positions, as a maze gives them; before, such a geometry got no boundary nodes, and one with no positions at all is refused.
-  - `apply_direct` refuses a value list whose length is not the number of nodes given.
+  - `BCSegment` takes a `BCType` and refuses a `GraphBCType`. So does `BoundaryConditions` for its `default_bc`, through the same check, which also refuses a string `default_bc`.
+  - A node that is not an index of the graph is refused by name on every route that names nodes, `get_bc_value` among them. Before, a node outside the graph was skipped. A float or a string raised numpy's `IndexError` or a `TypeError` that named nothing. A bool was read as a boolean mask, so `[True]` wrote every node.
+  - Every route that takes nodes, and `GraphBCConfig.node_bcs`, takes a collection and refuses a bare entry by name, a 0-d array among them.
+  - `create_graph_applicator` and `create_maze_applicator` read `None` or an empty collection as no nodes, and check anything else. `from_network_geometry(boundary_type="custom")` refuses `boundary_nodes=None` by name. In `create_graph_applicator` and the custom route, a truth test dropped node 0 given as `0` or `np.array([0])`, and raised numpy's "truth value is ambiguous" on a longer array.
+  - Two conditions that write the same field at a shared node are refused when the second is added; before, `apply` kept whichever it read last. `create_maze_applicator` leaves a dead end named as an entry out of the exits it detects. `apply_direct` refuses a node given twice with a value each, which kept the last, and a set paired with a value list, which paired them in hash order.
+  - A graph geometry takes a `GraphBCConfig` or `None` as `boundary_conditions=`, and refuses anything else when it is built. The conditions inside the config are checked against the graph where they reach an applicator, which is when the problem is built.
+  - `GraphApplicator.from_network_geometry` refuses a keyword it does not read.
+    - Its `degree_threshold` is a finite number, compared as given. A string, which raised numpy's `UFuncTypeError`, is refused by name. So are a bool, which was read as 0 or 1; a NaN, which found no node; and an array.
+    - Its spatial boundary works on a maze, from the maze's own node positions, where it raised an `AttributeError`. A geometry that gives no positions is refused by name.
+  - `apply_direct` refuses a value list whose length is not the number of nodes given, and reads a 0-d array value as a number.
   - A name several conditions share is refused at lookup.
 - **`EdgeBC`, a non-empty `GraphBCConfig.edge_bcs`, `GraphApplicator.add_edge_bc` and `GraphApplicator.apply_edge_direct` are refused** (Issue #2493). No graph solver applied an edge condition, so each was stored and dropped. The refusal stays until an edge operator is ruled.
 - **`NodeBC`, `EdgeBC` and `GraphBCConfig` are frozen.** A config keeps its conditions as a tuple, a condition its nodes as a tuple and an array value as a read-only copy, so a condition cannot change after it is built.
 - **`create_maze_applicator` works on a `MazeGeometry`.** It reads the maze's node count and its own adjacency, where before it raised "Cannot determine number of nodes".
-- **`bc_type_to_geometric_operation` takes a BC type string, a BC type member or `None`, and refuses anything else by name.**
-  - A member is read by its value; before, it raised an `AttributeError`.
+- **`bc_type_to_geometric_operation` takes a BC type string, a `BCType` member or `None`, and refuses anything else by name, a `GraphBCType` member and any other enum among them.**
+  - A `BCType` member is read by its value; before, it raised an `AttributeError`.
   - `"reflecting"` maps to `"reflect"`; before, it fell through to `"clamp"`.
   - The extrapolation types are refused, as `"flux"` already was.
   - Any other string, the graph-only `"source"` and `"custom"` among them, is refused instead of read as `"clamp"`.

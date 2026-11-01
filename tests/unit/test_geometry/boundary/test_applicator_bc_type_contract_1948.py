@@ -26,7 +26,9 @@ file measures while writing unset memory on the uniform path.
 
 from __future__ import annotations
 
+import enum
 import typing
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
@@ -591,6 +593,25 @@ def test_the_implicit_applicator_refuses_an_extrapolation_by_gate_and_by_branch(
 # ---------------------------------------------------------------------------------------------------------------------
 
 
+class _ForeignEnum(enum.Enum):
+    """An enum that is no BC type, whose value a BC type also spells."""
+
+    PERIODIC = "periodic"
+
+
+def _maze_leaves() -> list[int]:
+    """The 3 x 3 maze's dead ends, from its own adjacency, without the applicator."""
+    return sorted(int(i) for i in np.where((_maze().get_adjacency_matrix() != 0).sum(axis=1) == 1)[0])
+
+
+def _maze_box_field(value: float) -> np.ndarray:
+    """The 3 x 3 maze's value field with ``value`` on every node its own positions put on the bounding box."""
+    positions = np.asarray(_maze().get_node_positions(), dtype=float)
+    lo, hi = positions.min(axis=0), positions.max(axis=0)
+    on_box = np.any(np.isclose(positions, lo) | np.isclose(positions, hi), axis=1)
+    return np.where(on_box, value, 0.0)
+
+
 def _maze(boundary_conditions=None):
     """A 3 x 3 maze, a graph geometry with no `network_data`."""
     from mfgarchon.geometry.graph.maze_generator import MazeGeometry
@@ -656,7 +677,7 @@ def _gate_cases():
         "create_maze_applicator[entry_nodes=0]": lambda: create_maze_applicator(_maze(), entry_nodes=0),
     }.items():
         refuses.append((factory, call, TypeError, "a collection of node indices"))
-    for threshold in ("1", True):
+    for threshold in ("1", True, float("nan"), float("inf")):
         refuses.append(
             (
                 f"from_network_geometry[degree_threshold={threshold!r}]",
@@ -774,6 +795,74 @@ def _gate_cases():
             ),
         )
     )
+    # found by review 2: a node twice with a value each, a set paired with a value list, a 0-d array, a node a lookup
+    # reads, and a threshold rounded on its way in
+    refuses.append(
+        (
+            "apply_direct[a node twice, a value each]",
+            lambda: applicator().apply_direct(np.zeros(5), [0, 0], [1.0, 2.0]),
+            ValueError,
+            "more than once",
+        )
+    )
+    refuses.append(
+        (
+            "apply_direct[a set with a value list]",
+            lambda: applicator().apply_direct(np.zeros(5), {3, 1}, [10.0, 20.0]),
+            TypeError,
+            "is a set",
+        )
+    )
+    accepts.append(
+        (
+            "apply_direct[a node twice, one value]",
+            lambda: np.array_equal(applicator().apply_direct(np.zeros(5), [0, 0], 2.5), [2.5, 0, 0, 0, 0]),
+        )
+    )
+    accepts.append(
+        (
+            "apply_direct[a 0-d array value]",
+            lambda: np.array_equal(applicator().apply_direct(np.zeros(5), [1], np.array(2.5)), [0, 2.5, 0, 0, 0]),
+        )
+    )
+    for route, call in routes.items():
+        refuses.append(
+            (f"{route}[np.array(0)]", lambda c=call: c(np.array(0)), TypeError, "a collection of node indices")
+        )
+
+    def lookup(node):
+        return applicator().set_dirichlet_nodes([1, 2], value=7.0, name="d").get_bc_value("d", node, 0.0)
+
+    for node, error, match in ((True, TypeError, "not node indices"), (2.0, TypeError, "not node indices")):
+        refuses.append((f"get_bc_value[{node!r}]", lambda n=node: lookup(n), error, match))
+    refuses.append(("get_bc_value[99]", lambda: lookup(99), ValueError, "not nodes of this graph"))
+    accepts.append(("get_bc_value[1]", lambda: lookup(1) == 7.0))
+    accepts.append(
+        (
+            "from_network_geometry[degree_threshold just below 2]",
+            lambda: (
+                sorted(
+                    GraphApplicator.from_network_geometry(
+                        _maze(), "degree", degree_threshold=Fraction(2**60 - 1, 2**59)
+                    ).get_boundary_nodes()
+                )
+                == _maze_leaves()
+            ),
+        )
+    )
+    # an empty collection is no condition, as it was
+    accepts.append(
+        (
+            "create_graph_applicator[[]]",
+            lambda: create_graph_applicator(5, boundary_nodes=[]).get_bc_by_name("boundary") is None,
+        )
+    )
+    accepts.append(
+        (
+            "create_maze_applicator[exit_nodes=[]]",
+            lambda: create_maze_applicator(_maze(), exit_nodes=[]).get_bc_by_name("exit") is None,
+        )
+    )
     # the object a graph geometry or a configuration is handed
     for wrong in ([NodeBC(nodes=[0])], NodeBC(nodes=[0]), BoundaryConditions(dimension=1, segments=[]), "dirichlet"):
         name = type(wrong).__name__
@@ -869,13 +958,18 @@ def _gate_cases():
     accepts.append(
         (
             "from_network_geometry[maze, spatial]",
-            lambda: (
-                len(GraphApplicator.from_network_geometry(_maze(), "spatial", boundary_value=3.0).get_boundary_nodes())
-                > 0
+            lambda: np.array_equal(
+                GraphApplicator.from_network_geometry(_maze(), "spatial", boundary_value=3.0).apply(np.zeros(9)),
+                _maze_box_field(3.0),
             ),
         )
     )
-    accepts.append(("create_maze_applicator", lambda: len(create_maze_applicator(_maze()).get_boundary_nodes()) > 0))
+    accepts.append(
+        (
+            "create_maze_applicator",
+            lambda: sorted(create_maze_applicator(_maze()).get_boundary_nodes()) == _maze_leaves(),
+        )
+    )
     # the continuum direction: every string a BCType spells is read or refused by name, and so is any other string
     expected = {"neumann": "reflect", "no_flux": "reflect", "robin": "reflect", "reflecting": "reflect"}
     expected |= {"periodic": "periodic", "dirichlet": "clamp"}
@@ -913,6 +1007,24 @@ def _gate_cases():
         )
     refuses.append(
         ("geometric_operation[object]", lambda: bc_type_to_geometric_operation(object()), TypeError, "not a BC type")
+    )
+    # a member is read by its value only as a BCType: the graph alphabet and a foreign enum are refused (review 2, M1)
+    for t in GraphBCType:
+        refuses.append(
+            (
+                f"geometric_operation[GraphBCType.{t.name}]",
+                lambda t=t: bc_type_to_geometric_operation(t),
+                TypeError,
+                "must be a BCType",
+            )
+        )
+    refuses.append(
+        (
+            "geometric_operation[a foreign enum]",
+            lambda: bc_type_to_geometric_operation(_ForeignEnum.PERIODIC),
+            TypeError,
+            "must be a BCType",
+        )
     )
     return accepts, refuses
 
