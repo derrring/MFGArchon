@@ -10,7 +10,7 @@ from __future__ import annotations
 import functools
 import inspect
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.utils.solver_result import SolverResult
+
+_Solver = TypeVar("_Solver")
+_Params = ParamSpec("_Params")
+_Result = TypeVar("_Result")
 
 
 def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
@@ -286,7 +290,7 @@ def read_inner_solve_failures_of(hjb_solvers: Iterable[object]) -> tuple | None:
 
 
 @contextmanager
-def inner_failures_recorded(hjb_solvers: Iterable[object]) -> Iterator[None]:
+def inner_failures_recorded(hjb_solvers: Iterable[Any]) -> Iterator[None]:
     """For a coupled solve: each HJB solver whose ``on_inner_failure`` is "raise" records instead, while it runs.
 
     A sweep's inner failure is then the coupler's to read at its verdict (#1878), not an exception partway through
@@ -302,11 +306,19 @@ def inner_failures_recorded(hjb_solvers: Iterable[object]) -> Iterator[None]:
             solver.on_inner_failure = "raise"
 
 
+#: The ``stacklevel`` of a warning a decorated ``solve`` raises for its caller: `verdict_reads_inner_failures`' wrapper
+#: is one frame between the two (#2644).
+SOLVE_CALLER_STACKLEVEL = 3
+
+
 def verdict_reads_inner_failures(
     hjb_solvers_of: Callable[[Any], list[object]],
     *,
     check: bool = True,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+) -> Callable[
+    [Callable[Concatenate[_Solver, _Params], _Result]],
+    Callable[Concatenate[_Solver, _Params], _Result],
+]:
     """Decorate a coupled solver's ``solve`` so that its HJB solvers record inner failures while it runs, and a result
     reported converged over a failed inner step of the last sweep is not (#1878, #2644).
 
@@ -316,26 +328,35 @@ def verdict_reads_inner_failures(
     so it reads the record in its own verdict, where the latest solve is the accepted iterate's.
     """
 
-    def decorate(solve: Callable[..., Any]) -> Callable[..., Any]:
+    def decorate(
+        solve: Callable[Concatenate[_Solver, _Params], _Result],
+    ) -> Callable[Concatenate[_Solver, _Params], _Result]:
         @functools.wraps(solve)
-        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        def wrapper(self: _Solver, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Result:
             solvers = hjb_solvers_of(self)
             with inner_failures_recorded(solvers):
                 result = solve(self, *args, **kwargs)
             failures = read_inner_solve_failures_of(solvers) if check else None
-            if getattr(result, "converged", False) and failures:
-                metadata = getattr(result, "metadata", None)
-                previous = metadata.get("convergence_reason", "") if isinstance(metadata, dict) else ""
-                _, reason = refuse_convergence_over_failed_inner_solves(True, previous, failures)
-                result.converged = False
-                if isinstance(metadata, dict):
-                    metadata["convergence_reason"] = reason
-                    metadata["inner_hjb_failures"] = len(failures)
+            if failures:
+                _refuse_a_converged_result(result, failures)
             return result
 
         return wrapper
 
     return decorate
+
+
+def _refuse_a_converged_result(result: Any, failures: tuple) -> None:
+    """A result reported converged over ``failures``, failed inner steps of its last sweep, is not (#1878)."""
+    if not getattr(result, "converged", False):
+        return
+    metadata = getattr(result, "metadata", None)
+    previous = metadata.get("convergence_reason", "") if isinstance(metadata, dict) else ""
+    _, reason = refuse_convergence_over_failed_inner_solves(True, previous, failures)
+    result.converged = False
+    if isinstance(metadata, dict):
+        metadata["convergence_reason"] = reason
+        metadata["inner_hjb_failures"] = len(failures)
 
 
 def refuse_convergence_over_failed_inner_solves(

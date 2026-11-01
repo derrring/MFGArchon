@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
 
 # Import shared iteration utilities (Issue #630, migrated #985)
 from mfgarchon.utils.iteration.schedules import (
@@ -505,7 +505,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 "Use SolverResult object instead (the default). "
                 "Will be removed in v1.0.0.",
                 DeprecationWarning,
-                stacklevel=2,
+                stacklevel=SOLVE_CALLER_STACKLEVEL,
             )
             return (
                 self.U,
