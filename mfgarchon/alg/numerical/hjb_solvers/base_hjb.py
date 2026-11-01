@@ -60,10 +60,10 @@ DEFAULT_NEWTON_TOLERANCE: float = 1e-6
 class InnerSolveFailure:
     """A backward time step whose nonlinear solve returned something that is not a root (#1878).
 
-    ``residual`` is the solver's own measure for the iterate actually returned: the grid-scaled residual
-    norm on the 1-D Newton path, and what the nD nonlinear solver reports otherwise (for value iteration,
-    its relative change). ``steps`` is how many solver steps that iterate is from the start on the 1-D path
-    and the nD solver's iteration count otherwise; ``reason`` says why the solve stopped.
+    ``residual`` is the member's own measure of the iterate it returned, compared with ``tolerance``, and ``measure``
+    names it: the members measure different quantities (a residual norm, a step norm, a policy change), so a reader
+    compares ``residual`` with its own ``tolerance`` and never with another member's (#2644). ``steps`` is how many
+    solver steps that iterate is from the start, and ``reason`` says why the solve stopped.
     """
 
     t_idx: int
@@ -71,6 +71,7 @@ class InnerSolveFailure:
     tolerance: float
     steps: int
     reason: str
+    measure: str
 
 
 #: What a solver does when an inner nonlinear solve stops without converging (#2644). "raise", the default, refuses
@@ -107,7 +108,8 @@ def report_inner_solve_failure(
 
     message = (
         f"{solver} did not converge at t_idx={failure.t_idx}: {failure.reason} after {failure.steps} {steps_unit}, "
-        f"residual {failure.residual:.3e} against a tolerance of {failure.tolerance:.3e}. The iterate for this time "
+        f"residual {failure.residual:.3e} against a tolerance of {failure.tolerance:.3e} ({failure.measure}). The "
+        "iterate for this time "
         "step is not a root of the discrete HJB (#2644)."
     )
     if policy == "raise":
@@ -1805,6 +1807,7 @@ def solve_hjb_timestep_newton(
                 tolerance=float(newton_tolerance),
                 steps=steps,
                 reason=stop_reason,
+                measure="the grid-scaled residual norm of the returned iterate",
             ),
             policy=on_failure,
             record=failures,

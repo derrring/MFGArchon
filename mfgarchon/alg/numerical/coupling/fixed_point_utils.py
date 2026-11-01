@@ -378,12 +378,16 @@ def refuse_convergence_over_failed_inner_solves(
     """
     if not converged or not isinstance(inner_failures, tuple) or not inner_failures:
         return converged, reason
-    worst = max(inner_failures, key=lambda failure: failure.residual)
+    # Members measure different quantities (InnerSolveFailure.measure), so the worst step is the one furthest past its
+    # own tolerance, not the largest number (#2644).
+    worst = max(
+        inner_failures, key=lambda failure: failure.residual / failure.tolerance if failure.tolerance > 0 else np.inf
+    )
     steps = ", ".join(str(failure.t_idx) for failure in inner_failures)
     return False, (
         f"inner_hjb_not_converged: the Picard criteria were met ({reason}), but {len(inner_failures)} "
         f"HJB time step(s) of that sweep did not converge (t_idx {steps}; worst residual {worst.residual:.3e} "
-        f"against {worst.tolerance:.3e}: {worst.reason}). The fixed point is not a solution of the "
+        f"against {worst.tolerance:.3e}, {worst.measure}: {worst.reason}). The fixed point is not a solution of the "
         f"discrete MFG system (#1878)."
     )
 

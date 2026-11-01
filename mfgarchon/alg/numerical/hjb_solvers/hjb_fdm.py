@@ -920,12 +920,13 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # A step that is not a root goes to the owner: Newton's own, value iteration's, or the fallback's (#2644).
         if not info.converged:
+            relative_change = "the relative change of the fixed-point iterate, ||x_new - x|| / ||x||"
             if used_fallback:
-                reason = "value-iteration fallback after a failed Newton did not converge"
+                reason, measure = "value-iteration fallback after a failed Newton did not converge", relative_change
             elif self.solver_type == "newton":
-                reason = "newton solver failed to converge"
+                reason, measure = "newton solver failed to converge", "the residual 2-norm of the Newton system"
             else:
-                reason = f"{self.solver_type} did not converge"
+                reason, measure = f"{self.solver_type} did not converge", relative_change
             self._inner_solve_failed(
                 InnerSolveFailure(
                     t_idx=t_idx,
@@ -933,6 +934,7 @@ class HJBFDMSolver(BaseHJBSolver):
                     tolerance=float(self.newton_tolerance),
                     steps=int(info.iterations),
                     reason=reason,
+                    measure=measure,
                 )
             )
 

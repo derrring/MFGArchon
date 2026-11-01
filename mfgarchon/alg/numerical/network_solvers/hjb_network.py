@@ -428,7 +428,8 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                     residual=change,
                     tolerance=1e-10,  # `_policies_equal`'s atol
                     steps=self.max_policy_iterations,
-                    reason="policy iteration budget exhausted (the largest change in a node's transition rates)",
+                    reason="policy iteration budget exhausted",
+                    measure="the largest change in a node's transition rates at the last iteration",
                 )
             )
         return u_current

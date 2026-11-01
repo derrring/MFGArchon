@@ -364,7 +364,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     residual=float(delta_norm),
                     tolerance=float(tolerance),
                     steps=max_iterations,
-                    reason="Newton iteration budget exhausted (the M-norm of the last correction)",
+                    reason="Newton iteration budget exhausted",
+                    measure="the M-norm of the last Newton correction, sqrt(delta^T M delta)",
                 )
             )
 

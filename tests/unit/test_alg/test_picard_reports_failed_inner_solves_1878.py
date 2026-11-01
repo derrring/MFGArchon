@@ -190,7 +190,11 @@ class _ReportsOnSomeSolves(HJBFDMSolver):
     def inner_solve_failures(self):
         if not self.flags or not self.flags[-1]:
             return ()
-        return (InnerSolveFailure(t_idx=0, residual=1.0, tolerance=1e-6, steps=1, reason="fabricated"),)
+        return (
+            InnerSolveFailure(
+                t_idx=0, residual=1.0, tolerance=1e-6, steps=1, reason="fabricated", measure="fabricated"
+            ),
+        )
 
 
 @pytest.mark.parametrize(

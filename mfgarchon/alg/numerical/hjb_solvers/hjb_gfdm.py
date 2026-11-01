@@ -3955,7 +3955,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                         residual=float(r0_norm),
                         tolerance=float(self.newton_tolerance),
                         steps=self.max_newton_iterations,
-                        reason="HJB-GFDM Newton iteration budget exhausted (residual with the boundary rows)",
+                        reason="HJB-GFDM Newton iteration budget exhausted",
+                        measure="the residual 2-norm of the returned step, its boundary rows included",
                     )
                 )
 
