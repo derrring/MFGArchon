@@ -82,9 +82,8 @@ def test_a_value_or_rule_it_cannot_read_by_its_names_is_refused_where_it_is_buil
 
 def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
     """Given no time, the readers read a callable at t = 0 in silence; on a 2-D (Nt, N) field, at the one t given, into
-    every row, and so did a CUSTOM rule; a value returning an array was written down its node's column. Each is refused
-    by name. A constant reads as before; a value that reads no t, which main called with two arguments, is read with
-    none, into every row."""
+    every row, and so did a CUSTOM rule. Each is refused by name. A constant reads as before; a value that reads no t,
+    which main called with two arguments, is read with none, into every row."""
     applicator = GraphApplicator(4).set_dirichlet_nodes([2], value=_g)
     for read in (
         lambda: applicator.apply(np.zeros(4)),
@@ -93,14 +92,15 @@ def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
     ):
         with pytest.raises(TypeError, match="no time was given"):
             read()
-    column = GraphApplicator(4).set_dirichlet_nodes([2], value=lambda node: np.array([1.0, 2.0, 3.0]))
     for read, match in (
         (lambda: applicator.apply(np.zeros((3, 4)), t=0.5), "2-D"),
         (lambda: applicator.apply_direct(np.zeros((3, 4)), [2], _g, t=0.5), "2-D"),
         (lambda: GraphApplicator(4).set_custom_bc([2], lambda t, node, field: t).apply(np.zeros((3, 4)), t=0.5), "2-D"),
-        # A value that reads no t is the one callable left to reach a 2-D field. Main called this one with two arguments
-        # and raised; one written `lambda node, t:` it wrote down the node's column, which the order refusal closes now.
-        (lambda: column.apply(np.zeros((3, 4))), "not one real number"),
+        # main wrote None as NaN
+        (
+            lambda: GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: None).apply(np.zeros(4), t=0.5),
+            "not one real number",
+        ),
     ):
         with pytest.raises(TypeError, match=match):
             read()

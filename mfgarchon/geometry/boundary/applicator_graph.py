@@ -252,9 +252,9 @@ def _graph_value_at(
     value = read(**slots)
     try:
         return float(value)
-    except (TypeError, ValueError) as refused:
+    except (TypeError, ValueError, OverflowError) as refused:
         raise TypeError(
-            f"{where}: it returned {_shown(value)}, not one real number; a node's value is one (#2296)."
+            f"{where}: it returned {_shown(value)}, not one real number a float holds; a node's value is one (#2296)."
         ) from refused
 
 

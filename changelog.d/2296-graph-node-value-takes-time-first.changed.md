@@ -8,7 +8,7 @@
     - `rule=` on any other type.
   - **Refused by name where it is read:**
     - `get_value` and `get_bc_value` on a CUSTOM condition, which has a rule and no value. At main they raised `TypeError: … missing 1 required positional argument: 't'`, naming nothing;
-    - a value or rule that returns anything but one real number. At main, on a 2-D field, a value returning an array wrote it down the node's column.
+    - a value or rule whose return `float()` cannot read: `None`, an array, a list, a string, an int too large for a float. At main a value returning `None` was written as NaN, in silence, and on a 2-D field an array or a list was written into the node's column, the case the order and 2-D refusals close now; otherwise NumPy or Python raised, naming nothing. A NaN or an infinite return is written, as at main.
   - `set_custom_bc`'s `bc_func` is the rule. At main it was documented and called as `(field, node, t)`; that order is refused now.
 - **`GraphApplicator.apply`, `apply_hjb`, `apply_fp` and `apply_direct` take `t=None` for no time, not 0.0** (#2296, #2512 row N2), as the grid readers do since #2512 row B2. A constant reads as before; a value that reads no time, which main called `(node, t)`, is read with none, and into every row of a 2-D field. A value or rule that reads `t` is refused by name:
   - when no time is given. At main it was read at t = 0;
