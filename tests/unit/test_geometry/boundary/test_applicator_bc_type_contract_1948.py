@@ -1124,17 +1124,16 @@ def _gate_cases():
             "a real number no float holds",
         )
     )
-    if np.finfo(np.longdouble).max > np.finfo(np.float64).max:  # a long double wider than a float (x86-64)
-        refuses.append(
-            (
-                "apply_direct[values as a long double array a float does not hold]",
-                lambda: applicator().apply_direct(
-                    np.zeros(5), [1, 3], np.array([np.longdouble("1e400"), 1], dtype=np.longdouble)
-                ),
-                TypeError,
-                "values is a 1-D float128 array",
-            )
+    # a long double array, refused on every host: where it is wider than a float (x86-64) an entry beyond float range
+    # was written as inf (review 5, M1)
+    refuses.append(
+        (
+            "apply_direct[values as a long double array]",
+            lambda: applicator().apply_direct(np.zeros(5), [1, 3], np.array([1.0, 2.0], dtype=np.longdouble)),
+            TypeError,
+            "values is a 1-D longdouble array",
         )
+    )
 
     class Sub(np.ndarray):
         """A numpy array subclass, whose tolist() the readers cannot rely on."""

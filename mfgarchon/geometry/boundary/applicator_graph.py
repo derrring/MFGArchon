@@ -86,6 +86,9 @@ def _refuse_a_foreign_bc_type(kind: str, name: str, bc_type: object) -> None:
 # =============================================================================
 
 _NODES = "a list, tuple or range of nodes, or a 1-D integer numpy array (an ndarray, not a subclass)"
+#: The float dtypes a values array is taken in: each holds only numbers a float holds, so none saturates under the cast
+#: to the float field. A long double is not among them, whatever its width on the host (#2292 review 5, M1).
+_FLOATS = (np.float16, np.float32, np.float64)
 _RULE = "a callable that takes the graph's node count and returns such nodes"
 #: Each class of graph BC input and the forms it is taken in. Every acceptor reads its input through the reader of its
 #: class below and coerces nothing on its own; any other form is refused by name, in these words. A per-node value of
@@ -105,8 +108,8 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
             "callable, taken as at main: a callable's forms are A2's (#2296)"
         ),
         "values": (
-            "a value, or a list, tuple or 1-D real numpy array (an ndarray, not a subclass) of real numbers a float "
-            "holds, one per node"
+            "a value, or a list, tuple or 1-D real numpy array (an ndarray, not a subclass, of an integer dtype or of "
+            "float16, float32 or float64) of real numbers a float holds, one per node"
         ),
         "conditions": "a list or tuple",
         "threshold": "a finite real number (a numbers.Real that is not a bool), compared as given",
@@ -119,8 +122,10 @@ def _shown(item: object) -> str:
     if item is None:
         return "None"
     if isinstance(item, np.ndarray):
-        # A subclass is named as itself, so a refused memmap or masked array is not described as the array taken.
-        return f"a {item.ndim}-D {item.dtype} {'array' if type(item) is np.ndarray else type(item).__name__}"
+        # A subclass is named as itself, so a refused memmap or masked array is not described as the array taken; so
+        # is a long double, which prints as float64 where it is one.
+        dtype = "longdouble" if item.dtype.type is np.longdouble else item.dtype
+        return f"a {item.ndim}-D {dtype} {'array' if type(item) is np.ndarray else type(item).__name__}"
     name = type(item).__name__
     return f"{'an' if name[0].lower() in 'aeiou' else 'a'} {name}"
 
@@ -149,13 +154,6 @@ def _is_value(item: object) -> bool:
     if math.isnan(as_float):
         return item != item  # only a NaN is a NaN
     return not math.isinf(as_float) or item == as_float
-
-
-def _a_float_holds_each(values: np.ndarray) -> bool:
-    """Each entry of a real array is kept by the float field it is written into: a dtype wider than float64 (a long
-    double on x86-64) holds finite numbers a float does not, which the cast writes as inf (#2292 review 5, M1)."""
-    with np.errstate(over="ignore"):
-        return bool(np.array_equal(np.isfinite(values), np.isfinite(values.astype(np.float64))))
 
 
 def _nodes(items: object, where: str, form: str = "nodes") -> tuple:
@@ -191,7 +189,7 @@ def _node_values(values: object, count: int, where: str) -> tuple | None:
         return None
     if isinstance(values, (list, tuple)) and all(_is_value(v) for v in values):
         per_node = tuple(values)
-    elif _plain_array(values) and values.ndim == 1 and values.dtype.kind in "iuf" and _a_float_holds_each(values):
+    elif _plain_array(values) and values.ndim == 1 and (values.dtype.kind in "iu" or values.dtype.type in _FLOATS):
         per_node = tuple(values.tolist())
     else:
         shown = f"{_shown(values)}, a real number no float holds" if _is_real(values) else _shown(values)
