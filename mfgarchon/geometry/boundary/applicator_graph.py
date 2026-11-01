@@ -95,7 +95,10 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
         "node": "an int (a numbers.Integral that is not a bool) from 0 to the graph's last node",
         "nodes": _NODES,
         "condition_nodes": f"nodes ({_NODES}), or {_RULE}",
-        "factory_nodes": f"None, nodes ({_NODES}), or {_RULE}; None or an empty collection is no condition",
+        "factory_nodes": (
+            f"None, nodes ({_NODES}), or {_RULE}; None or an empty collection is no condition, except that "
+            "create_maze_applicator detects its exits for exit_nodes=None while auto_detect_exits is True"
+        ),
         "value": (
             "a real number a float holds (a numbers.Real that is not a bool, which float() converts, to a finite float "
             "if it is finite), or a "
@@ -116,7 +119,8 @@ def _shown(item: object) -> str:
     if item is None:
         return "None"
     if isinstance(item, np.ndarray):
-        return f"a {item.ndim}-D {item.dtype} {'masked array' if isinstance(item, np.ma.MaskedArray) else 'array'}"
+        # A subclass is named as itself, so a refused memmap or masked array is not described as the array taken.
+        return f"a {item.ndim}-D {item.dtype} {'array' if type(item) is np.ndarray else type(item).__name__}"
     name = type(item).__name__
     return f"{'an' if name[0].lower() in 'aeiou' else 'a'} {name}"
 
@@ -133,15 +137,25 @@ def _plain_array(item: object) -> TypeGuard[np.ndarray]:
 
 def _is_value(item: object) -> bool:
     """A real number a float holds: a value is written into a float field, so ``float()`` must succeed and keep it. It
-    raises for an int beyond float range or a Real that defines no conversion, and saturates to inf for other Reals
-    beyond it, so a finite number that becomes inf is refused too (#2292 review 4, F2)."""
+    raises for an int beyond float range or a Real that defines no conversion, and saturates to inf for some Reals
+    beyond it (sympy's, mpmath's, gmpy2's mpfr), so a finite number that becomes inf, or a number that becomes NaN, is
+    refused too (#2292 reviews 4 and 5)."""
     if not _is_real(item):
         return False
     try:
         as_float = float(cast("float", item))
-    except (ArithmeticError, TypeError, ValueError):
+    except Exception:  # a Real's own __float__ may raise anything, and any failure means no float holds it
         return False
+    if math.isnan(as_float):
+        return item != item  # only a NaN is a NaN
     return not math.isinf(as_float) or item == as_float
+
+
+def _a_float_holds_each(values: np.ndarray) -> bool:
+    """Each entry of a real array is kept by the float field it is written into: a dtype wider than float64 (a long
+    double on x86-64) holds finite numbers a float does not, which the cast writes as inf (#2292 review 5, M1)."""
+    with np.errstate(over="ignore"):
+        return bool(np.array_equal(np.isfinite(values), np.isfinite(values.astype(np.float64))))
 
 
 def _nodes(items: object, where: str, form: str = "nodes") -> tuple:
@@ -177,7 +191,7 @@ def _node_values(values: object, count: int, where: str) -> tuple | None:
         return None
     if isinstance(values, (list, tuple)) and all(_is_value(v) for v in values):
         per_node = tuple(values)
-    elif _plain_array(values) and values.ndim == 1 and values.dtype.kind in "iuf":
+    elif _plain_array(values) and values.ndim == 1 and values.dtype.kind in "iuf" and _a_float_holds_each(values):
         per_node = tuple(values.tolist())
     else:
         shown = f"{_shown(values)}, a real number no float holds" if _is_real(values) else _shown(values)

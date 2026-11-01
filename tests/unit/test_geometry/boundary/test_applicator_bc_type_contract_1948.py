@@ -1055,7 +1055,7 @@ def _gate_cases():
             "apply_direct[values as a masked array]",
             lambda: applicator().apply_direct(np.ones((2, 5)), [1, 3], np.ma.array([7.0, 8.0], mask=[False, True])),
             TypeError,
-            "values is a 1-D float64 masked array",
+            "values is a 1-D float64 MaskedArray",
         )
     )
     refuses.append(
@@ -1063,7 +1063,7 @@ def _gate_cases():
             "apply_direct[nodes as a masked array]",
             lambda: applicator().apply_direct(np.ones(5), np.ma.array([1, 3], mask=[False, True]), 2.5),
             TypeError,
-            "boundary_nodes is a 1-D int64 masked array",
+            "boundary_nodes is a 1-D int64 MaskedArray",
         )
     )
 
@@ -1088,6 +1088,54 @@ def _gate_cases():
         )
     )
 
+    class RaisesOnFloat:
+        """A real number whose float() raises something other than an arithmetic, type or value error."""
+
+        def __float__(self):
+            raise RuntimeError("no float")
+
+    numbers.Real.register(RaisesOnFloat)
+    refuses.append(
+        (
+            "NodeBC[value=a real number whose float() raises]",
+            lambda: NodeBC(nodes=[0], value=RaisesOnFloat()),
+            TypeError,
+            "a real number no float holds",
+        )
+    )
+
+    class NaNFloat:
+        """A real number whose float() is NaN, which it is not."""
+
+        def __float__(self):
+            return math.nan
+
+        def __eq__(self, other):
+            return other is self
+
+        __hash__ = object.__hash__
+
+    numbers.Real.register(NaNFloat)
+    refuses.append(
+        (
+            "NodeBC[value=a real number whose float() is NaN]",
+            lambda: NodeBC(nodes=[0], value=NaNFloat()),
+            TypeError,
+            "a real number no float holds",
+        )
+    )
+    if np.finfo(np.longdouble).max > np.finfo(np.float64).max:  # a long double wider than a float (x86-64)
+        refuses.append(
+            (
+                "apply_direct[values as a long double array a float does not hold]",
+                lambda: applicator().apply_direct(
+                    np.zeros(5), [1, 3], np.array([np.longdouble("1e400"), 1], dtype=np.longdouble)
+                ),
+                TypeError,
+                "values is a 1-D float128 array",
+            )
+        )
+
     class Sub(np.ndarray):
         """A numpy array subclass, whose tolist() the readers cannot rely on."""
 
@@ -1096,7 +1144,7 @@ def _gate_cases():
             "apply_direct[nodes as an ndarray subclass]",
             lambda: applicator().apply_direct(np.ones(5), np.array([1, 3]).view(Sub), 2.5),
             TypeError,
-            "boundary_nodes is a 1-D int64 array",
+            "boundary_nodes is a 1-D int64 Sub",
         )
     )
     refuses.append(
