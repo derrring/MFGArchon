@@ -4,7 +4,7 @@ Robin ``alpha*u + beta*du/dn = g`` is implemented as an OPERATOR AUGMENTATION at
 weak-form level: integrating the diffusion operator ``-D*Delta u`` by parts and substituting
 ``du/dn = (g - alpha*u)/beta`` adds
 
-    A_robin   = D*(alpha/beta) * int_dOmega phi_i phi_j   (boundary mass -> operator)
+    A_robin   = D*(alpha/beta) * int_dOmega phi_i phi_j   (boundary mass -> operator; lumped on P1, #2845)
     rhs_robin = D*(1/beta)     * int_dOmega g phi_i        (boundary load -> RHS)
 
 to ``M/dt + D*K``. Both scale with ``D`` exactly like the stiffness, and the boundary mass is
@@ -333,7 +333,7 @@ class TestRobinFailLoud:
             default_bc=BCType.NO_FLUX,
         )
         with pytest.raises(NotImplementedError, match="beta=0"):
-            assemble_robin_terms(basis, bc, D=0.5)
+            assemble_robin_terms(basis, bc, D=0.5, lump=False)
 
     def test_robin_callable_value_fails_loud(self):
         from mfgarchon.alg.numerical.fem.assembly import create_basis
@@ -351,7 +351,7 @@ class TestRobinFailLoud:
         # The FEM Robin load is one constant g per segment (#1237): the owner refuses a g that declares x there
         # (#2512 row B2).
         with pytest.raises(NotImplementedError, match="declares x, but the FEM Robin load"):
-            assemble_robin_terms(basis, bc, D=0.5)
+            assemble_robin_terms(basis, bc, D=0.5, lump=False)
 
     def test_periodic_still_fails_loud(self):
         """Periodic FEM BC remains deferred (Issue #1237): the condensation adapter must still

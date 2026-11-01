@@ -222,7 +222,8 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
     def _robin_operator_terms(self, D: float):
         """Robin boundary operator augmentation (Issue #1237): the D-scaled boundary mass
-        ``D*(alpha/beta)*int_dOmega phi_i phi_j`` (folded into ``M_t/dt + D*K``, M_t the time mass, #2845) and load
+        ``D*(alpha/beta)*int_dOmega phi_i phi_j``, lumped on P1 as the time mass is (folded into ``M_t/dt + D*K``, M_t
+        the time mass, #2845), and load
         ``D*(1/beta)*int_dOmega g phi_i`` (added to each RHS), assembled over the Robin facets
         via ``skfem.FacetBasis``. ``(None, None)`` when no Robin segment is present.
 
@@ -233,7 +234,7 @@ class HJBFEMSolver(WeakFormHJBSolver):
         (Issue #2294)."""
         from .bc_adapter import assemble_robin_terms
 
-        return assemble_robin_terms(self._basis, self._bc, D, natural_bc="gradient")
+        return assemble_robin_terms(self._basis, self._bc, D, natural_bc="gradient", lump=self._disc.lumps_mass)
 
 
 if __name__ == "__main__":

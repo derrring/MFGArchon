@@ -363,6 +363,7 @@ def assemble_robin_terms(
     D: float,
     *,
     natural_bc: str = "flux",
+    lump: bool,
 ) -> tuple[sparse.csr_matrix, NDArray] | tuple[None, None]:
     r"""Assemble the Robin operator augmentation for the weak-form diffusion operator.
 
@@ -372,12 +373,16 @@ def assemble_robin_terms(
     :math:`\partial u/\partial n = (g - \alpha u)/\beta` moves a boundary MASS to the operator
     and a boundary LOAD to the RHS:
 
-    - ``A_robin``   :math:`= D\,(\alpha/\beta)\int_{\partial\Omega}\phi_i\phi_j`  (boundary mass)
+    - ``A_robin``   :math:`= D\,(\alpha/\beta)\int_{\partial\Omega}\phi_i\phi_j`  (boundary mass), its row-sum
+      lumped diagonal :math:`D\,(\alpha/\beta)\,\mathrm{diag}(\int_{\partial\Omega}\phi_i)` with ``lump`` (#2845)
     - ``rhs_robin`` :math:`= D\,(1/\beta)\int_{\partial\Omega} g\,\phi_i`          (boundary load)
 
     Both scale with ``D`` exactly like the stiffness ``K`` does, so the caller adds ``A_robin``
-    to ``M_t/dt + D*K`` and ``rhs_robin`` to each timestep RHS. The boundary mass is symmetric, so
-    the FP Robin term is the adjoint (identical) of the HJB one (Type-A duality preserved).
+    to ``M_t/dt + D*K`` and ``rhs_robin`` to each timestep RHS. The boundary mass is symmetric, lumped or not, so
+    the FP Robin term is the adjoint (identical) of the HJB one (Type-A duality preserved), provided both sides pass
+    the same ``lump``: each caller passes its discretization's ``lumps_mass``, the predicate its time mass reads. The
+    load needs no lumping: on a Lagrange element the basis functions sum to 1 on a facet, so with a constant ``g`` it is
+    already ``g`` times the lumped mass's diagonal.
 
     Summed over the facets each ``BCType.ROBIN`` segment governs (`BoundaryConditions.segments_for_facets`), each
     segment carrying its own ``alpha``, ``beta`` and constant ``value`` (``g``), **and over those of every
@@ -408,6 +413,7 @@ def assemble_robin_terms(
     import skfem
     from skfem import BilinearForm, FacetBasis, LinearForm
 
+    from mfgarchon.alg.numerical.weak_form_discretization import lumped
     from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
     from mfgarchon.geometry.boundary.types import BCType, segment_robin_coefficients, segment_value
 
@@ -501,6 +507,8 @@ def assemble_robin_terms(
         fb = FacetBasis(mesh, elem, facets=facets)
 
         M_bnd = skfem.asm(boundary_mass, fb)
+        if lump:
+            M_bnd = lumped(M_bnd)
         load_bnd = skfem.asm(boundary_load, fb)
 
         A_robin = A_robin + D * (alpha / beta) * M_bnd
