@@ -149,7 +149,9 @@ def _is_value(item: object) -> bool:
         return False
     try:
         as_float = float(cast("float", item))
-    except Exception:  # a Real's own __float__ may raise anything, and any failure means no float holds it
+    except (ArithmeticError, TypeError, ValueError):
+        # The conversion's own failures. A Real whose __float__ raises anything else propagates that error as itself:
+        # the fail-fast ratchet admits no broad handler (#2292 review 5, SF3).
         return False
     if math.isnan(as_float):
         return item != item  # only a NaN is a NaN

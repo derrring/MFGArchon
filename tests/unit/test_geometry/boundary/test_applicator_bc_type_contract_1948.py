@@ -1088,22 +1088,6 @@ def _gate_cases():
         )
     )
 
-    class RaisesOnFloat:
-        """A real number whose float() raises something other than an arithmetic, type or value error."""
-
-        def __float__(self):
-            raise RuntimeError("no float")
-
-    numbers.Real.register(RaisesOnFloat)
-    refuses.append(
-        (
-            "NodeBC[value=a real number whose float() raises]",
-            lambda: NodeBC(nodes=[0], value=RaisesOnFloat()),
-            TypeError,
-            "a real number no float holds",
-        )
-    )
-
     class NaNFloat:
         """A real number whose float() is NaN, which it is not."""
 
