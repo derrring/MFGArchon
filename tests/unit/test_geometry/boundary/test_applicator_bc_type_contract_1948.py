@@ -719,6 +719,61 @@ def _gate_cases():
             ),
         )
     )
+    # two conditions at one node: refused when both write one field, taken when their fields differ
+    refuses.append(
+        (
+            "add_node_bc[DIRICHLET, then ABSORBING at node 0]",
+            lambda: (
+                applicator()
+                .add_node_bc(NodeBC(nodes=[0], name="a"))
+                .add_node_bc(NodeBC(nodes=[0], bc_type=GraphBCType.ABSORBING, name="b"))
+            ),
+            ValueError,
+            "both write the value field",
+        )
+    )
+    refuses.append(
+        (
+            "create_maze_applicator[an exit named as an entry]",
+            lambda: create_maze_applicator(_maze(), exit_nodes=[4], entry_nodes=[4]),
+            ValueError,
+            "both write the density field",
+        )
+    )
+
+    def dirichlet_and_source_at_node_0():
+        both = applicator().add_node_bc(NodeBC(nodes=[0], value=2.5, name="d"))
+        both.add_node_bc(NodeBC(nodes=[0], bc_type=GraphBCType.SOURCE, value=0.5, name="s"))
+        return np.array_equal(both.apply(np.zeros(5)), [2.5, 0, 0, 0, 0]) and np.array_equal(
+            both.apply(np.zeros(5), field_type="density"), [0.5, 0, 0, 0, 0]
+        )
+
+    def a_dead_end_named_as_an_entry():
+        maze = _maze()
+        leaf = int(np.where((maze.get_adjacency_matrix() != 0).sum(axis=1) == 1)[0][0])
+        density = create_maze_applicator(maze, entry_nodes=[leaf]).apply(np.zeros(9), field_type="density")
+        return bool(density[leaf] == 1.0)
+
+    accepts.append(("add_node_bc[DIRICHLET and SOURCE at node 0]", dirichlet_and_source_at_node_0))
+    accepts.append(("create_maze_applicator[a dead end named as an entry]", a_dead_end_named_as_an_entry))
+    # a continuum default the same check as a segment's type reads (#2292's continuum direction)
+    for t in GraphBCType:
+        refuses.append(
+            (
+                f"BoundaryConditions[default_bc=GraphBCType.{t.name}]",
+                lambda t=t: BoundaryConditions(dimension=1, segments=[], default_bc=t),
+                TypeError,
+                "default_bc must be a BCType",
+            )
+        )
+    accepts.append(
+        (
+            "BoundaryConditions[default_bc=BCType.NO_FLUX]",
+            lambda: (
+                BoundaryConditions(dimension=1, segments=[], default_bc=BCType.NO_FLUX).default_bc is BCType.NO_FLUX
+            ),
+        )
+    )
     # the object a graph geometry or a configuration is handed
     for wrong in ([NodeBC(nodes=[0])], NodeBC(nodes=[0]), BoundaryConditions(dimension=1, segments=[]), "dirichlet"):
         name = type(wrong).__name__
