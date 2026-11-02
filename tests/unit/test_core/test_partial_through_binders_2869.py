@@ -27,7 +27,7 @@ from mfgarchon.operators.interaction import PotentialCost
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.callable_adapter import adapt_ic_callable
 from mfgarchon.utils.pde_coefficients import CoefficientField
-from mfgarchon.utils.validation.functions import _call_h
+from mfgarchon.utils.validation.functions import _call_h, validate_hamiltonian, validate_hamiltonian_derivative
 
 _TABLES = {name: slots for name, slots in vars(cp).items() if isinstance(slots, cp.Slots)}
 _NAMES = sorted({slot for slots in _TABLES.values() for slot in slots.order})
@@ -44,6 +44,16 @@ def _written(params, reads):
 
 def _meant(order, frozen):
     return sum(_COEF[slot] * frozen.get(slot, _AT[slot]) for slot in order)
+
+
+def _timed(function):
+    """A decorator as a user writes one: ``inspect.signature`` reads through it to what it wraps."""
+
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        return function(*args, **kwargs)
+
+    return wrapper
 
 
 def _bind(slots):
@@ -74,10 +84,10 @@ def test_a_slot_frozen_by_keyword_is_refused_on_every_binding_path(name):
     marked = functools.partial(_written(order, order), **{order[0]: _FROZEN})
     marked.note = "an attribute keeps it a level of its own"
     partials.append(functools.partial(marked))
+    partials.append(_timed(functools.partial(_written(order, order), **{order[0]: _FROZEN})))
     for partial in partials:
-        # Refused, or, for a level Python's signature sees through to the function it wraps, loud at the first read. A raw
-        # Hamiltonian's `required` may refuse it first.
-        with pytest.raises(TypeError, match=r"by keyword: called by name|multiple values|cannot be matched"):
+        # Refused, or, for a level Python's signature sees through to the function it wraps, loud at the first read.
+        with pytest.raises(TypeError, match=r"by keyword: called by name|multiple values"):
             _call(cp.bind_user_callable(partial, slots, role="r"), order)
 
 
@@ -173,6 +183,8 @@ _ONE_ARG_SURFACES = {
         (_ONE_ARG_SURFACES["PotentialCost"], functools.partial(lambda q, a, b: q + a + b, _FROZEN)),
         (bind_boundary_value, _two_levels(lambda a, b: a + b, _FROZEN)),
         (_bind(cp.POTENTIAL_SLOTS), _two_levels(lambda q, a, b: q + a + b, _FROZEN)),
+        (bind_boundary_value, _timed(functools.partial(lambda a, b: a + b, _FROZEN))),
+        (_bind(cp.POTENTIAL_SLOTS), _timed(functools.partial(lambda q, a, b: q + a + b, _FROZEN))),
     ],
     ids=[
         "never reordered, a misplaced name",
@@ -186,6 +198,8 @@ _ONE_ARG_SURFACES = {
         "PotentialCost",
         "by name, two levels",
         "binder, two levels",
+        "by name, a wrapper",
+        "binder, a wrapper",
     ],
 )
 def test_every_refusal_a_positional_partial_reaches_advises_keeping_what_it_froze(read, partial):
@@ -310,8 +324,18 @@ _POTENTIAL = functools.partial(lambda t, x: 8.0 * t * (np.asarray(x, dtype=float
         {"hamiltonian": {"potential": _POTENTIAL}},
         {"problem": {"source_term_hjb": functools.partial(lambda t, x, v, m: t * _in_space(x, v), t=0.45)}},
         {"problem": {"source_term_fp": functools.partial(lambda t, x, m: t * _in_space(x, m), t=0.45)}},
+        {"hamiltonian": {"potential": _timed(_POTENTIAL)}},
+        {"problem": {"source_term_hjb": _timed(functools.partial(lambda t, x, v, m: t * _in_space(x, v), t=0.45))}},
+        {"model": {"volatility": _timed(functools.partial(lambda t, x, m: 0.2 + t, t=0.45))}},
     ],
-    ids=["potential", "source_term_hjb", "source_term_fp"],
+    ids=[
+        "potential",
+        "source_term_hjb",
+        "source_term_fp",
+        "potential, a wrapper",
+        "source_term_hjb, a wrapper",
+        "volatility, a wrapper",
+    ],
 )
 def test_a_solve_refuses_a_keyword_frozen_slot_rather_than_solve_the_unfrozen_function(arguments):
     """Each returned converged at 2ace3724, equal to the unfrozen function, with no error."""
@@ -356,7 +380,7 @@ def test_what_a_raw_hamiltonian_is_told_about_a_frozen_measure_is_accepted_and_r
 
 
 def test_a_frozen_slot_with_no_readable_signature_is_refused_where_it_would_be_passed_by_name():
-    """``dict`` has no signature Python can read, so nothing says the frozen name is not a parameter."""
+    """A door passes every slot whatever a signature says, so ``dict``, with none Python can read, is refused the same."""
     with pytest.raises(TypeError, match="freezes t by keyword: called by name"):
         CoefficientField(functools.partial(dict, t=0.45), 0.1, "volatility")
 
@@ -383,3 +407,103 @@ def test_the_doors_off_the_default_path_read_the_same_check(read):
 
 def _family_member():
     return SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m)
+
+
+class _FamilyWithStars(SeparableHamiltonian):
+    def custom(self, t, x, p, **kw):
+        return kw["m"]
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        lambda: CoefficientField(functools.partial(lambda x, m, **kw: 0.2 + kw["t"], t=0.45), 0.1, "volatility"),
+        lambda: CoefficientField(functools.partial(lambda **kw: 0.2 + kw["t"], t=0.45), 0.1, "volatility"),
+        lambda: CoefficientField(
+            functools.update_wrapper(functools.partial(lambda **kw: 0.2 + kw["t"], t=0.45), lambda x, m: 0.0),
+            0.1,
+            "volatility",
+        ),
+        lambda: _problem(model={"volatility": functools.partial(lambda x, m, **kw: 0.2 + kw["t"], t=0.45)}),
+        lambda: DualHamiltonian(functools.partial(lambda x, alpha, t, **kw: kw["m"], m=0.5)),
+        lambda: DualLagrangian(functools.partial(lambda t, x, p, **kw: kw["m"], m=0.5)),
+        lambda: _call_h(
+            functools.partial(
+                _FamilyWithStars(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m).custom, m=0.5
+            ),
+            0.0,
+            7.0,
+            1.0,
+        ),
+    ],
+    ids=[
+        "CoefficientField, **kw beside names",
+        "CoefficientField, **kw alone",
+        "CoefficientField, a signature that hides it",
+        "MFGProblem",
+        "DualHamiltonian",
+        "DualLagrangian",
+        "a validator, a family's method",
+    ],
+)
+def test_a_door_that_passes_every_slot_overrides_what_is_frozen_into_kw(read):
+    """A binding passes the names it read, so a slot frozen into ``**kw`` stands there. These pass every slot, so it did not:
+    through ``problem.solve()``, 6.78e-2 from the frozen function in ``U`` on a 21-node fixture, converged, at 2ace3724."""
+    with pytest.raises(TypeError, match=r"freezes [tm] by keyword: called by name"):
+        read()
+
+
+@pytest.mark.parametrize("partial", [lambda x, m, time=0.0: 0.2 + time, lambda time, x, m: 0.2 + time], ids=["last", "first"])
+def test_an_alias_a_door_never_passes_stands(partial):
+    field = CoefficientField(functools.partial(partial, time=0.45), 0.1, "volatility")
+    assert field.evaluate_at(2, np.linspace(0.0, 1.0, 3), np.ones(3), 0.25) == pytest.approx(0.65)
+
+
+@pytest.mark.parametrize(
+    ("read", "partial"),
+    [
+        (
+            lambda f: cp.bind_user_callable(f, cp.POTENTIAL_SLOTS, role="r"),
+            lambda: _timed(functools.partial(lambda t, x: 100.0 * t + x, t=0.25)),
+        ),
+        (bind_boundary_value, lambda: _timed(functools.partial(lambda t, x: 100.0 * t + x, t=0.25))),
+        (
+            lambda f: adapt_ic_callable(f, 1, 3.0, role="m_initial"),
+            lambda: _timed(functools.partial(lambda t, x: 100.0 * t + x, t=0.25)),
+        ),
+        (
+            lambda f: CoefficientField(f, 0.1, "volatility"),
+            lambda: _timed(functools.partial(lambda t, x, m: 0.2 + t, t=0.25)),
+        ),
+        (
+            lambda f: cp.bind_user_callable(f, cp.POTENTIAL_SLOTS, role="r"),
+            lambda: functools.lru_cache(maxsize=None)(functools.partial(lambda t, x: 100.0 * t + x, t=0.25)),
+        ),
+        (
+            lambda f: cp.bind_user_callable(f, cp.POTENTIAL_SLOTS, role="r"),
+            lambda: functools.partial(_timed(functools.partial(lambda t, x: 100.0 * t + x, t=0.25))),
+        ),
+    ],
+    ids=["binder", "by name", "condition", "CoefficientField", "binder, lru_cache", "binder, a partial of a wrapper"],
+)
+def test_a_wrapper_does_not_hide_a_partial_from_the_check(read, partial):
+    """``inspect.signature`` reads through ``__wrapped__``, so the wrapper was called with the partial's names, and read 53.0
+    for 28.0 at 2ace3724 with no error."""
+    with pytest.raises(TypeError, match=r"freezes t by keyword: called by name|that fixes t=0\.25"):
+        read(partial())
+
+
+@pytest.mark.parametrize(
+    "validate",
+    [
+        lambda f, grid: validate_hamiltonian(f, grid),
+        lambda f, grid: validate_hamiltonian_derivative(f, grid, "dH_dm"),
+    ],
+    ids=["validate_hamiltonian", "validate_hamiltonian_derivative"],
+)
+def test_what_the_validators_tell_a_positional_partial_keeps_what_it_froze(validate):
+    """They said to name a raw callable's parameters t, x, p, m. Followed, with the partial kept, it validates and reads t = 9."""
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    result = validate(functools.partial(lambda a, b, c, d: a + b + c + d, 9.0), grid)
+    assert not result.is_valid
+    assert any("passing the frozen value by keyword" in (issue.suggestion or "") for issue in result.issues), result.issues

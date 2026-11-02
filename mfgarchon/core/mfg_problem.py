@@ -634,9 +634,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # spatial dependence, users with Stratonovich-derived drift must apply
         # the correction `alpha_Ito = alpha_Strat - (1/2) sigma * d_x sigma`
         # before passing the drift. mfgarchon does NOT add this correction.
-        from mfgarchon.utils.pde_coefficients import COEFFICIENT_CALL_SLOTS
+        from mfgarchon.utils.pde_coefficients import COEFFICIENT_CALL_NAMES
 
-        refuse_overridden(vola_value, COEFFICIENT_CALL_SLOTS, role="volatility")
+        refuse_overridden(vola_value, COEFFICIENT_CALL_NAMES, role="volatility")
         self._volatility = vola_value
         self._volatility_kind = volatility_kind
         self.drift_field = drift

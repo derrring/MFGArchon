@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import Slots, refuse_overridden
+from mfgarchon.types.callable_protocols import refuse_overridden
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -640,7 +640,7 @@ class CoefficientMode(Enum):
 
 # What `CoefficientField` passes a callable by name. It reads the partial it would override with the binders' check; it
 # does not yet bind through them (#2864).
-COEFFICIENT_CALL_SLOTS = Slots(("t", "x", "m"))
+COEFFICIENT_CALL_NAMES = ("t", "x", "m")
 
 
 class CoefficientField:
@@ -705,7 +705,7 @@ class CoefficientField:
         dimension: int = 1,
         mode: CoefficientMode | str | None = None,
     ):
-        refuse_overridden(field, COEFFICIENT_CALL_SLOTS, role=field_name)
+        refuse_overridden(field, COEFFICIENT_CALL_NAMES, role=field_name)
         self.field = field
         self.default = default_value
         self.name = field_name

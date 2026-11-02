@@ -27,7 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -100,34 +100,25 @@ _WRITE_A_FUNCTION = "a function named for the slots it reads that passes each ar
 
 def _partial_levels(fn: Any) -> Iterator[functools.partial]:
     """Each ``functools.partial`` in ``fn``, outermost first. Python flattens a partial of a partial only when the inner one
-    has no ``__dict__``, so one given an attribute, or wrapped by ``functools.update_wrapper``, stays a level of its own."""
-    while isinstance(fn, functools.partial):
+    has no ``__dict__``, so one given an attribute, or wrapped by ``functools.update_wrapper``, stays a level of its own. A
+    ``functools.wraps`` wrapper over a partial is walked through too: ``inspect.signature`` reads through ``__wrapped__``, so
+    the wrapper is called with the partial's names and hands them on."""
+    while True:
+        fn = inspect.unwrap(fn, stop=lambda f: isinstance(f, functools.partial))
+        if not isinstance(fn, functools.partial):
+            return
         yield fn
         fn = fn.func
 
 
-def frozen_by_keyword(fn: Any, slots: Slots) -> dict[str, Any]:
-    """The names identifying a slot that a ``functools.partial`` froze by keyword, with the value each call would see."""
-    slot_of = slots.slot_of()
+def frozen_by_keyword(fn: Any, names: Collection[str]) -> dict[str, Any]:
+    """Those of ``names`` that a ``functools.partial`` in ``fn`` froze by keyword, with the value each call would see."""
     frozen: dict[str, Any] = {}
     for level in _partial_levels(fn):
         for keyword, value in level.keywords.items():
-            if keyword in slot_of:
+            if keyword in names:
                 frozen.setdefault(keyword, value)
     return frozen
-
-
-def overridden_by_name(fn: Any, slots: Slots) -> list[str]:
-    """What `frozen_by_keyword` finds that is still a named parameter of the partial. Called by name, the slot passed
-    overrides the frozen value (#2869). One frozen into ``**kw`` is not named, so it is not passed, and it stands."""
-    frozen = frozen_by_keyword(fn, slots)
-    if not frozen:
-        return []
-    try:
-        named = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return list(frozen)
-    return [keyword for keyword in frozen if keyword in named]
 
 
 class FrozenSlotError(TypeError):
@@ -138,15 +129,18 @@ class FrozenSlotError(TypeError):
         self.frozen = frozen
 
 
-def refuse_overridden(fn: Any, slots: Slots, *, role: str) -> None:
-    """Refuse ``fn``, about to be called with ``slots`` by name, if that would override what a partial froze (#2869).
+def refuse_overridden(fn: Any, passes: Collection[str], *, role: str) -> None:
+    """Refuse ``fn``, about to be called by name with ``passes``, if that would override what a partial froze (#2869).
 
-    Where it is not called by name, as a positional binding is not, the frozen value stands, and this does not apply.
+    A binding passes the names it read, so a slot frozen into ``**kw`` stands. A door with no binding passes every name it
+    has, whatever the signature says, so a slot frozen into ``**kw`` is overridden there too, and an alias it never passes
+    stands. Where ``fn`` is not called by name, as a positional binding is not, the frozen value stands, and this does not
+    apply.
     """
-    frozen = overridden_by_name(fn, slots)
+    frozen = list(frozen_by_keyword(fn, passes))
     if frozen:
         raise FrozenSlotError(
-            f"{role} {getattr(fn, '__qualname__', fn)!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: "
+            f"{role} {getattr(fn, '__qualname__', fn)!r} is or wraps a functools.partial that freezes {', '.join(frozen)} by keyword: "
             f"called by name, it is passed that slot, so the frozen value would be overridden. Write "
             f"{_WRITE_A_FUNCTION}, passing the frozen value by keyword (#2869).",
             frozen,
@@ -261,7 +255,7 @@ def bind_user_callable(
             )
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
-        refuse_overridden(fn, slots, role=role)
+        refuse_overridden(fn, named, role=role)
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
     # Positionally it receives every slot, or every slot but the optional ones.
     shortened = tuple(slot for slot in order_ if slot not in slots.optional)

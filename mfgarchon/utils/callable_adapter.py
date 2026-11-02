@@ -136,7 +136,7 @@ def adapt_ic_callable(
             raise
         name = time_frozen[0]
         raise TypeError(
-            f"{role} is a functools.partial that fixes {name}={frozen_by_keyword(func, CONDITION_SLOTS)[name]!r}, but the "
+            f"{role} is a functools.partial that fixes {name}={frozen_by_keyword(func, (name,))[name]!r}, but the "
             f"library reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
             f"argument to the parameter that reads it, such as `lambda x: f(x=x, {name}=T)` for an f that takes "
             f"just x and {name}, with T the time you want."

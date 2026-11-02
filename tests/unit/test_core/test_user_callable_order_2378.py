@@ -274,7 +274,7 @@ def test_alpha_star_takes_time_first_with_t_idx_for_t():
             bind_user_callable(old_order, ALPHA_STAR_SLOTS, role="alpha_star")
 
 
-def test_a_raw_hamiltonian_must_declare_p_and_name_one_that_moved():
+def test_a_raw_hamiltonian_by_name_must_declare_p_and_one_by_position_must_name_one_that_moved():
     """A Hamiltonian need read no more than p, so a raw callable must declare only that; bound positionally it must name a slot
     ruling 8 moved, t, x or m, since p is at index 2 in both orders."""
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
