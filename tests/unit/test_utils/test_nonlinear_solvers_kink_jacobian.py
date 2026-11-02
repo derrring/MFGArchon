@@ -135,3 +135,16 @@ def test_the_step_size_used_is_the_one_it_was_given():
             f"eps={eps:g}: J[3,3] = {J[3, 3]!r}, expected {expected!r} -- "
             "the solver is not using the epsilon it was handed"
         )
+
+
+def test_a_step_no_halving_accepts_stops_the_solve_by_name():
+    """The line search's failure value is 0.0, and NewtonSolver stops on it by name, on the iterate it was handed
+    (#2858). A Jacobian of the wrong sign points uphill: on F(x) = x every trial x + a*d is (1 + a) x, and the smallest,
+    at a = 2^-19, still has an Armijo ratio of 1 + 1.9e-6, far from round-off. Returning the last halving instead takes
+    steps of 2^-20 and runs out the budget; stopping on the stepped iterate returns 2 x0."""
+    x0 = np.array([1.0, -2.0, 0.5])
+    with pytest.warns(RuntimeWarning, match="Newton stopped: line_search_failed"):
+        x, info = NewtonSolver(max_iterations=10, tolerance=1e-12).solve(lambda x: x, x0, jacobian=lambda x: -np.eye(3))
+    assert info.extra["reason"] == "line_search_failed", info.extra
+    assert info.iterations == 1, info.iterations
+    assert np.array_equal(x, x0), x

@@ -122,7 +122,8 @@ def test_newtons_reason_says_how_it_stopped(stop, max_iterations, monkeypatch):
     reason = info["convergence_reason"]
     if stop == "a named stop":
         assert stops == {"line_search_failed"}, stops
-        assert len(searched) == 3 and searched[2] > 1e-10, searched  # it stopped at that call, far above round-off
+        assert len(searched) == 3, searched  # it stopped at the call that failed
+        assert searched[2] > 1e-10, searched  # far above round-off
         assert reason.startswith(
             "Newton stopped: line_search_failed; its last verdict, on the iterate returned: inner_hjb_not_converged"
         ), reason
