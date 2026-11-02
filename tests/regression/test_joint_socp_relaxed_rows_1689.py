@@ -67,6 +67,7 @@ def _solver(ref, *, allow_relaxed: bool) -> HJBGFDMSolver:
 
 
 def test_opted_in_relaxed_rows_are_mains(mfg_caplog):
+    pytest.importorskip("cvxpy", reason="joint_socp requires cvxpy (the `numerical` extra)")
     ref = np.load(_FIXTURE)
     rows = [int(r) for r in ref["relaxed_rows"]]
     with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
@@ -86,6 +87,7 @@ def test_opted_in_relaxed_rows_are_mains(mfg_caplog):
 
 
 def test_without_the_opt_in_the_rows_are_refused_by_name():
+    pytest.importorskip("cvxpy", reason="joint_socp requires cvxpy (the `numerical` extra)")
     ref = np.load(_FIXTURE)
     with pytest.raises(ValueError, match=r"have no joint-SOCP stencil") as refusal:
         _solver(ref, allow_relaxed=False)
@@ -105,6 +107,7 @@ def test_a_row_its_neighbourhood_does_not_contain_is_refused(allow_relaxed):
     to 0.03, seed 0, delta 0.3) with a disc of radius 0.03 centred 0.05 to the right of the interior node nearest
     (0.5, 0.5), and ``visibility_margin=0.03``. The refusal names that node with its reason, and the opt-in, which
     accepts relaxed rows only, does not lift it."""
+    pytest.importorskip("cvxpy", reason="joint_socp requires cvxpy (the `numerical` extra)")
     grid = np.linspace(0.0, 1.0, 11)
     xs, ys = np.meshgrid(grid, grid, indexing="ij")
     points = np.column_stack([xs.ravel(), ys.ravel()])
