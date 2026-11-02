@@ -274,7 +274,7 @@ def test_a_slot_other_than_time_frozen_on_a_condition_keeps_its_refusal():
         adapt_ic_callable(functools.partial(lambda t, x: 100.0 * t + x, t=0.7), 1, 3.0, role="m_initial")
 
 
-def _solve(*, hamiltonian=None, model=None, problem=None):
+def _problem(*, hamiltonian=None, model=None, problem=None):
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(
@@ -290,7 +290,11 @@ def _solve(*, hamiltonian=None, model=None, problem=None):
         ),
         Nt=4,
         **(problem or {}),
-    ).solve()
+    )
+
+
+def _solve(**arguments):
+    return _problem(**arguments).solve()
 
 
 def _in_space(x, like):
@@ -327,6 +331,12 @@ def test_a_frozen_volatility_is_refused_before_the_solve_starts():
     with pytest.raises(TypeError, match=r"^volatility .* freezes t by keyword: called by name"):
         _solve(model={"volatility": functools.partial(sigma, t=0.45)})
     assert not calls
+
+
+def test_a_frozen_volatility_is_refused_when_the_problem_is_built():
+    """`MFGProblem` reads the check, so no ``solve()`` is needed to see it. `Model` holds what it is given."""
+    with pytest.raises(TypeError, match=r"^volatility .* freezes t by keyword: called by name"):
+        _problem(model={"volatility": functools.partial(lambda t, x, m: 0.2 + t, t=0.45)})
 
 
 def test_a_solvers_own_volatility_argument_is_refused_too():
