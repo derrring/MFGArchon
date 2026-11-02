@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,7 +17,13 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import applicator_graph as graph
 from mfgarchon.geometry.boundary.types import bind_boundary_value
-from mfgarchon.types.callable_protocols import CONDITION_SLOTS, SOLVER_SOURCE_SLOTS, bind_user_callable
+from mfgarchon.operators.interaction import PotentialCost
+from mfgarchon.types.callable_protocols import (
+    CONDITION_SLOTS,
+    POTENTIAL_SLOTS,
+    SOLVER_SOURCE_SLOTS,
+    bind_user_callable,
+)
 from mfgarchon.utils.callable_adapter import adapt_ic_callable
 
 _COEF = {"t": 100.0, "x": 1.0, "node": 1.0, "field": 10000.0, "extra": 0.0}
@@ -89,6 +96,20 @@ def test_every_arm_of_a_binders_advice_reads_right(read, names, reads, star):
     for arm in arms:
         slots = [slot for slot in reads if slot != "extra"]
         assert read(arm)(**{slot: _AT[slot] for slot in slots}) == sum(_COEF[slot] * _AT[slot] for slot in slots)
+
+
+def test_a_potential_sent_to_the_hamiltonian_is_told_what_each_parameter_reads():
+    """``SeparableHamiltonian(potential=lambda t, x: ...)``, a rename in place, read ``lambda a, b: 100*b + a`` swapped."""
+    measure = SimpleNamespace(points=np.array([[0.5]]), weights=np.array([1.0]))
+    with pytest.raises(TypeError) as refused:
+        PotentialCost(_written(["a", "b"], ["x", "t"])).bind_on(measure)
+    message = str(refused.value)
+    assert "lambda" not in message, message
+    assert "would read its arguments in the wrong slots" in message, message
+    arms = _arms(message, ["a", "b"], ["x", "t"])
+    assert arms, message
+    for arm in arms:
+        assert bind_user_callable(arm, POTENTIAL_SLOTS, role="potential")(t=0.25, x=3.0) == 28.0
 
 
 def _positional_only(t, x, /):
