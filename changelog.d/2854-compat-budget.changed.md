@@ -1,0 +1,1 @@
+- **`python-compat`'s time limit is 45 minutes, up from 30** (Issue #2854, user ruling, 2026-11-03). A job is meant to stay under 22.5 minutes, half of it; the slowest of the 18 jobs measured took 1,229 s against that 1,350 s. `ci.yml`'s limits are unchanged.
