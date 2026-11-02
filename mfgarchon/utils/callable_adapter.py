@@ -43,7 +43,12 @@ from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
     BoundCallable,
     bind_user_callable,
+    freezes_by_position,
+    frozen_by_keyword,
+    frozen_refusal,
     out_of_order,
+    overridden_by_name,
+    rewrite_advice,
 )
 
 if TYPE_CHECKING:
@@ -115,14 +120,17 @@ def adapt_ic_callable(
         return TypeError(_format_signature_error(func, dimension, attempts))
 
     time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
-    frozen = sorted(set(getattr(func, "keywords", None) or {}) & set(time_names))
-    if isinstance(func, functools.partial) and frozen:
+    frozen = sorted(set(frozen_by_keyword(func, CONDITION_SLOTS)) & set(time_names))
+    if frozen:
         raise TypeError(
             f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
             f"reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
             f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that takes "
             f"just x and {frozen[0]}, with T the time you want."
         )
+    overridden = overridden_by_name(func, CONDITION_SLOTS)
+    if overridden:
+        raise TypeError(frozen_refusal(func, overridden, CONDITION_SLOTS, role))
 
     names = _positional_names(func)
     if names is None:
@@ -151,7 +159,7 @@ def adapt_ic_callable(
         if "x" not in bound.passes:
             raise TypeError(
                 f"{role} {getattr(func, '__qualname__', func)!r} takes time and no space. It is a function of "
-                f"space. Name its space parameter x."
+                f"space. {rewrite_advice(func, CONDITION_SLOTS) if freezes_by_position(func) else 'Name its space parameter x.'}"
             )
         result, err = _try_call(functools.partial(bound, t=time_value), x=sample)
         if err is None and _is_valid_output(result):
@@ -180,7 +188,8 @@ def adapt_ic_callable(
             (
                 "f(*args, **kwargs)",
                 f"names none of its parameters, so which argument is time cannot be read. If {role} wraps "
-                f"another function, decorate the wrapper with functools.wraps; otherwise name its parameters after what they read",
+                f"another function, decorate the wrapper with functools.wraps; "
+                f"{rewrite_advice(func, CONDITION_SLOTS) if freezes_by_position(func) else 'otherwise name its parameters after what they read'}",
             )
         )
         raise refuse()
