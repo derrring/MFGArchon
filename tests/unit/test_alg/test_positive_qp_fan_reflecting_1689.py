@@ -248,8 +248,9 @@ def _frame_problem(bc, nt=4):
     )
 
 
-#: The rows refused only after the positive fan's QP has built an operator, which takes cvxpy. The others are refused first.
-_REFUSED_AFTER_THE_FAN_IS_BUILT = {
+#: The rows that reach `PositiveQPFan`, whose constructor refuses without cvxpy before anything else. The others are
+#: refused first.
+_REACHES_THE_POSITIVE_FAN = {
     "an obstacle in a domain with a reflecting face",
     "a layer node no mirror row places",
     "a layer node failing only the obliqueness certificate",
@@ -291,7 +292,7 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
     either direction. A no-flux datum is read as a Neumann one is, since HJB-GFDM writes them as one row (review 1 of
     #2783, B1), and zero is what the library's one owner of that question calls zero, so a complex datum is refused
     (review 2, N1)."""
-    if row in _REFUSED_AFTER_THE_FAN_IS_BUILT:
+    if row in _REACHES_THE_POSITIVE_FAN:
         pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     from mfgarchon.geometry.boundary import neumann_bc, periodic_bc, robin_bc
 
