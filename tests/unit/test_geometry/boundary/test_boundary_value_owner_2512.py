@@ -8,6 +8,8 @@ with no point refuses a callable that declares ``x``, at first use, naming itsel
 
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 import numpy as np
@@ -24,7 +26,14 @@ _REFUSED = {
     "(x, t)": (lambda x, t: t, _OUT_OF_ORDER),
     "(point, time)": (lambda point, time: time, _OUT_OF_ORDER),
     "(p, t)": (lambda p, t: t, _OUT_OF_ORDER),
-    "varargs": (lambda *args, **kw: 0.0, r"cannot be matched to \(t, x\)"),
+    "varargs": (lambda *args, **kw: 0.0, r"nothing reaches \*args, \*\*kw"),
+    # Called by name, these read in silence at main: what a partial froze is overridden by the slot passed by name,
+    # and nothing reaches *a or **kw, so the time read is 0 (#2296 review 2).
+    "partial freezing t by keyword": (
+        functools.partial(lambda t, x: t + x[0], t=0.25),
+        r"freezes t by keyword: called by name",
+    ),
+    "(x, *a, **kw)": (lambda x, *a, **kw: x[0] + kw.get("t", 0.0), r"\(x, \*a, \*\*kw\).*nothing reaches \*a, \*\*kw"),
     # Time first but a parameter named otherwise: the shared binder would bind these positionally, which the
     # ruling for boundary values does not allow.
     "(t, pos)": (lambda t, pos: t, _NOT_ALL_NAMED),

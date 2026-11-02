@@ -313,13 +313,9 @@ row grid/B8_no_image_raises         -
 #   refusing a swap loudly.
 row grid/B9_bc_read_at_solve_time   -
 # Two items were attached to rows N1 and N2 by the audit session's ruling of 2026-10-12, before A1, A2 and A3 existed.
-#   A1 reassigns them (audit session ruling, 2026-11-01):
-# - To N2, which A2's value binding owns, so N2 is not met until it is fixed: `GraphApplicator.apply`, `apply_fp` and
-#   `apply_hjb` take `t=0`, so given no t they read a callable node value at t = 0, in silence, and `apply_direct` takes
-#   `t=0.0` and calls a callable value at it the same way. None of them reaches the owner (`NodeBC.get_value` calls the
-#   value directly), and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
-#   `apply_edge_direct`, which did the same, is refused since #2292's acceptance gate (#2493).
-# - To A3, beside N2, under the user's ruling of 2026-11-01 that the network HJB pin is imposed inside the operator
+#   A1 reassigned them (audit session ruling, 2026-11-01):
+# - to N2, the graph readers' time default, which A2 met (below);
+# - to A3, beside N2, under the user's ruling of 2026-11-01 that the network HJB pin is imposed inside the operator
 #   (#1544, #2617): the policy-iteration path (`NetworkPolicyIterationHJBSolver.solve_hjb_system`, `hjb_network.py:395`
 #   at 1a036677) imposes the node BCs by overwriting U[n] after each time step's policy iteration, so the interior rows
 #   of its solves used unpinned neighbour values. The coupling ran through L^pi at D = 0 already, and the viscous term
@@ -329,7 +325,16 @@ row grid/B9_bc_read_at_solve_time   -
 #   dispatch on a BCType, a candidate for #2573's continuum owner rather than an endorsed form. #1948's acceptance gate
 #   table refuses the crossing where a condition is handed over.
 row network/N1_graph_bc_alphabet    tests/unit/test_geometry/boundary/test_graph_bc_alphabet_has_one_owner_2512.py
-row network/N2_node_bc_arity        -
+# Row N2 (#2296; audit session rulings, 2026-11-01) is a graph node's value and a CUSTOM node's rule. Each is bound once
+#   through `callable_protocols.bind_by_name`, the strict by-name rule a grid boundary value is bound by too, the value
+#   to (t, node) and the rule, a field of its own, to (t, node, field), time first, and read through
+#   `applicator_graph._graph_value_at`; the order before #2378 phase 5, (node, t), is refused.
+#   B2's guard holds it: `applicator_graph.py` is in its population and `_graph_value_at` among its owners. Its readers
+#   `GraphApplicator.apply`, `apply_hjb`, `apply_fp` and `apply_direct`, which before A2 read a callable node value at
+#   t = 0 when given no t, take None for no time, so the time-default scan finds any that goes back to a number.
+#   `apply_edge_direct` is refused since #2292's acceptance gate (#2493).
+row network/N2_node_bc_arity        tests/unit/test_geometry/boundary/test_value_has_one_owner_2512.py
+row network/N2_node_bc_arity        tests/unit/test_geometry/boundary/test_graph_value_binding_2296.py
 
 # Conventions
 convention C1                 tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py

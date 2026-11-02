@@ -82,6 +82,9 @@ NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"), unmoved=
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
 NODE_INTERACTION_SLOTS = Slots(("t", "node", "m"))
 NODE_LAGRANGIAN_SLOTS = Slots(("t", "node", "velocity", "m"))
+# A graph node's boundary value, and a CUSTOM node's rule, which also reads the field it is applied to (#2296).
+NODE_VALUE_SLOTS = Slots(("t", "node"))
+NODE_RULE_SLOTS = Slots(("t", "node", "field"))
 # Callables ruling 8 did not reorder: always time-first, bound so a space-first one is refused.
 SOLVER_SOURCE_SLOTS = Slots(("t", "x"), reordered=False)
 VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)
@@ -184,12 +187,23 @@ def bind_user_callable(
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
+    # Named after the slots in the order they are written, a callable keeps that order, and one written time last
+    # would read its arguments in the wrong slots: the advice is to reorder, by what each parameter reads.
+    if "t" in order_:
+        time_last = ", ".join([*(slot for slot in order_ if slot != "t"), "time"])
+        target, swapped_ = f"({', '.join(order_)}), time first", f"one written ({time_last})"
+    else:
+        target, swapped_ = f"({', '.join(order_)})", "one written in another order"
+    reorder = (
+        f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order_)} in the "
+        f"order it is written, {swapped_} would read its arguments in the wrong slots."
+    )
     if misplaced:
-        why = f": {', '.join(misplaced)} would receive another slot's value. Name its parameters {', '.join(order_)}."
+        why = f": {', '.join(misplaced)} would receive another slot's value. {reorder}"
     elif passes is not None and not var_positional:
         why = (
             f": none of its parameters is named after a slot whose position #2375 ruling 8 changed, so they "
-            f"read the same in the old order and the new. Name them {', '.join(order_)}."
+            f"read the same in the old order and the new. {reorder}"
         )
     elif slots.reordered:
         # A reordered role binds a positional callable only if a parameter name says which order it is in, so
@@ -201,6 +215,86 @@ def bind_user_callable(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
         f"matched to ({', '.join(order_)}){why}"
     )
+
+
+def bind_by_name(
+    fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str, wrap: str, wrap_unnamed: str
+) -> BoundCallable:
+    """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal, and ``wrap``
+    and ``wrap_unnamed`` are the wraps advised for another callable and for one that cannot be called by name. The
+    caller writes them, since a wrap is right only for the callables its role meets: one built from the slots alone,
+    ``lambda t, node: f(t, node)``, reads a callable written ``(node, t)`` swapped.
+
+    Called by name, a callable is passed only the slots it names, and every one of them: so a ``*args`` or ``**kwargs``
+    parameter is refused, since nothing reaches it, and then a ``functools.partial`` that freezes a parameter named
+    after a slot by keyword, since the slot passed by name would override it (#2296 reviews 2 and 3). A partial that
+    freezes a slot by position, or a keyword that names no slot, is a function of the slots it leaves.
+
+    Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
+    place: such a callable is called by name only, so one with a parameter named otherwise and no default is refused,
+    and so is one that cannot be called by name -- a positional-only parameter, or a signature that cannot be read. A
+    parameter named otherwise with a default keeps its default.
+
+    It is a function the user writes, a ``def`` or a ``lambda``, or a ``functools.partial`` of one (user ruling,
+    2026-10-11): another callable's parameter names were not written against the slots. A SciPy interpolant takes
+    ``(x, ...)`` and would read time data at the position; a class instance, a bound method, a builtin, a ufunc, a
+    vectorized or jax-wrapped function are refused the same way, with the wrap that makes each one a function. Bound by
+    position instead, a callable with no readable signature written in another order would be read swapped (#2296).
+    """
+    name = getattr(fn, "__qualname__", fn)
+    names = ", ".join(slots.order)
+    target = fn
+    frozen: list[str] = []
+    while isinstance(target, functools.partial):
+        frozen += [keyword for keyword in target.keywords if keyword in slots.slot_of()]
+        target = target.func
+    if not inspect.isfunction(target):
+        raise TypeError(
+            f"{role} {name!r} is of type {type(fn).__name__}, not a plain def or lambda: a {role} is a function whose "
+            "parameter names declare what it reads, and a def that a decorator turned into another object "
+            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it, such as {wrap} "
+            f"({ruling})."
+        )
+    try:
+        declared = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        declared = None
+    if declared is None or any(p.kind is inspect.Parameter.POSITIONAL_ONLY for p in declared):
+        # `def f(t, /)`: renaming cannot help, wrapping does.
+        what = (
+            "has no signature Python can read"
+            if declared is None
+            else f"takes {inspect.signature(fn)}, with positional-only parameters"
+        )
+        raise TypeError(
+            f"{role} {name!r} {what}, so it cannot be called by name: wrap it in a function that names what it reads, "
+            f"such as {wrap_unnamed} ({ruling})."
+        )
+    variadic = [p for p in declared if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
+    if variadic:
+        stars = ", ".join(f"{'*' if p.kind is inspect.Parameter.VAR_POSITIONAL else '**'}{p.name}" for p in variadic)
+        raise TypeError(
+            f"{role} {name!r} takes {inspect.signature(fn)}: called by name, it is passed only the slots it names, so "
+            f"nothing reaches {stars}. Name each slot it reads as a parameter, such as `lambda {names}: ...` ({ruling})."
+        )
+    if frozen:
+        raise TypeError(
+            f"{role} {name!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: called by name, a "
+            f"{role} is passed every slot it names, so the frozen value would be overridden. Freeze it by position, or "
+            f"write a function of the slots it reads ({ruling})."
+        )
+    bound = bind_user_callable(fn, slots, role=role)
+    if bound.binding != "keyword":
+        try:
+            params = ", ".join(inspect.signature(fn).parameters)
+        except (TypeError, ValueError):
+            params = "an unreadable signature"
+        raise TypeError(
+            f"{role} {name!r} takes ({params}), whose parameters are not all named after the slots: a {role} names "
+            f"them {names}, time first (#2378 phase 5, #2375 ruling 8), and is called by name."
+        )
+    return bound
 
 
 def out_of_order(names: Sequence[str], slots: Slots) -> bool:

@@ -312,7 +312,8 @@ The default averaging strategy is recommended for most MFG applications.
 A callable value is `g(t, x)`, time first, like every callable the library accepts (see
 `docs/user/CONVENTIONS.md`, § *Callable signatures*). It names what it reads, `(t, x)`, `(x)`, or `(t)` (or
 `time`), and the library calls it by name; any other parameter needs a default, and keeps it. One that puts `x`
-before `t`, or has a parameter without a default named otherwise, is refused when the segment is built (#2512).
+before `t`, has a parameter without a default named otherwise, or takes `*args` or `**kwargs`, which a call by name
+never reaches, is refused when the segment is built (#2512, #2296).
 
 BCs can vary with time:
 
@@ -352,7 +353,8 @@ not have:
 - HJB-GFDM (through `BCSegment.get_value`) passes both, so it reads `inlet_profile(t, x)` above.
 
 A boundary value is a function you write, a `def` or a `lambda` (or a `functools.partial` of one), since its
-parameter names are what tell the library what it reads. Any other callable is refused when the segment is built:
+parameter names are what tell the library what it reads. A partial freezes a slot by position, `partial(g, 0.25)`
+for `g(t, x)`: one that freezes it by keyword is refused, since the slot passed by name would override it. Any other callable is refused when the segment is built:
 a SciPy interpolant, a class instance, a bound method, a builtin or NumPy ufunc, a vectorized or jax-wrapped
 function. Wrap it in a function that names what it reads. An interpolant over time data takes `(x, ...)` and would
 read the time data at the position, so for `s = CubicSpline(times, values)` or `s = interp1d(times, values)` pass

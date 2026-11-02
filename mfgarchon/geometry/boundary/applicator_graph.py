@@ -40,6 +40,9 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+from mfgarchon.geometry.boundary.types import _read_constant
+from mfgarchon.types.callable_protocols import NODE_RULE_SLOTS, NODE_VALUE_SLOTS, BoundCallable, bind_by_name
+
 # Import base class for inheritance
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 
@@ -91,8 +94,7 @@ _NODES = "a list, tuple or range of nodes, or a 1-D integer numpy array (an ndar
 _FLOATS = (np.float16, np.float32, np.float64)
 _RULE = "a callable that takes the graph's node count and returns such nodes"
 #: Each class of graph BC input and the forms it is taken in. Every acceptor reads its input through the reader of its
-#: class below and coerces nothing on its own; any other form is refused by name, in these words. A per-node value of
-#: any other form is A2's to decide (#2296).
+#: class below and coerces nothing on its own; any other form is refused by name, in these words.
 ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
     {
         "node": "an int (a numbers.Integral that is not a bool) from 0 to the graph's last node",
@@ -104,8 +106,13 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
         ),
         "value": (
             "a real number a float holds (a numbers.Real that is not a bool, which float() converts, to a finite float "
-            "if it is finite), or a "
-            "callable, taken as at main: a callable's forms are A2's (#2296)"
+            "if it is finite), or a function of (t, node), time first, whose parameters are named after them: bound once "
+            "and called by name, and refused otherwise; one that reads t is read only where a time is given, and not "
+            "into a 2-D (Nt, N) field"
+        ),
+        "rule": (
+            "a function of (t, node, field), time first, bound as a value is; field is the node values the CUSTOM "
+            "condition is applied to"
         ),
         "values": (
             "a value, or a list, tuple or 1-D real numpy array (an ndarray, not a subclass, of an integer dtype or of "
@@ -177,11 +184,93 @@ def _conditions(items: object, where: str, of: str) -> tuple:
     raise TypeError(f"{where} is {_shown(items)}; it takes {ACCEPTED_FORMS['conditions']} of {of} (#2292).")
 
 
-def _value(value: object, where: str) -> None:
-    """Refuse by name a ``value`` outside the form ``ACCEPTED_FORMS["value"]`` names."""
-    if not (callable(value) or _is_value(value)):
+class _Constant:
+    """A constant node value, read where it is built (#2292). It reads no slot, so a reader's time checks pass it, and
+    `_graph_value_at` returns it as built (#2296)."""
+
+    __slots__ = ("constant",)
+    passes: tuple[str, ...] = ()
+
+    def __init__(self, constant: float):
+        self.constant = constant
+
+
+# The wraps a refusal advises, for each order a callable may be written in: one written in the order before #2378
+# phase 5 and wrapped time first would be read swapped.
+_VALUE_WRAP = "`lambda t, node: f(t, node)`, or `lambda t, node: f(node, t)` for one that takes the node first"
+# A rule has six orders, so each wrap names the one it is for, and any other is wrapped by what each parameter reads.
+_RULE_WRAP = (
+    "`lambda t, node, field: f(t, node, field)` for one written (t, node, field), "
+    "`lambda t, node, field: f(field, node, t)` for one written in `set_custom_bc`'s old order, (field, node, t), and "
+    "for one written in any other order a wrap that passes each argument to the parameter that reads it"
+)
+
+
+def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
+    """``value`` in the form ``ACCEPTED_FORMS["value"]`` names, as the one object every reader calls, or refused by
+    name. A callable is bound here, once, to ``(t, node)`` by its parameter names, by the rule a grid boundary value is
+    bound by (`bind_by_name`, #2296): one written in the order before #2378 phase 5, ``(node, t)``, is refused rather
+    than swapped, and so is one whose parameters cannot be read, which position alone would have swapped."""
+    if callable(value):
+        try:
+            return bind_by_name(
+                value,
+                NODE_VALUE_SLOTS,
+                role="graph node value",
+                ruling="#2296",
+                wrap=_VALUE_WRAP,
+                wrap_unnamed=_VALUE_WRAP,
+            )
+        except TypeError as refused:
+            raise TypeError(f"{where}: {refused}") from refused
+    if not _is_value(value):
         shown = f"{_shown(value)}, a real number no float holds" if _is_real(value) else _shown(value)
         raise TypeError(f"{where} is {shown}; it takes {ACCEPTED_FORMS['value']} (#2292).")
+    return _Constant(float(cast("float", value)))
+
+
+def _rule_reader(rule: object, where: str) -> BoundCallable:
+    """A CUSTOM condition's ``rule`` in the form ``ACCEPTED_FORMS["rule"]`` names, bound to ``(t, node, field)``, or
+    refused by name (#2296)."""
+    if not callable(rule):
+        raise TypeError(f"{where} is {_shown(rule)}; it takes {ACCEPTED_FORMS['rule']} (#2296).")
+    try:
+        return bind_by_name(
+            rule, NODE_RULE_SLOTS, role="graph CUSTOM rule", ruling="#2296", wrap=_RULE_WRAP, wrap_unnamed=_RULE_WRAP
+        )
+    except TypeError as refused:
+        raise TypeError(f"{where}: {refused}") from refused
+
+
+def _graph_value_at(
+    read: BoundCallable | _Constant, where: str, *, t: float | None, node: int, field: NDArray | None = None
+) -> float:
+    """The one place a graph node's value or CUSTOM rule is read (#2296). One that reads ``t`` is refused by name when
+    no time is given: a default of 0 read it at t = 0 in silence. What a callable returns is read as a grid boundary
+    value's return is, by `types._read_constant`, the one reader of both (#2512 row B2); a constant was read when it
+    was built (#2292)."""
+    if isinstance(read, _Constant):
+        return read.constant
+    if t is None and "t" in read.passes:
+        raise TypeError(f"{where}: it reads t, and no time was given. Pass t where the condition is applied (#2296).")
+    slots: dict[str, object] = {"t": t, "node": node} if field is None else {"t": t, "node": node, "field": field}
+    return _read_constant(
+        read(**slots),
+        kind=f"{where} (what its callable returned)",
+        where="the graph applicator",
+        returned=True,
+        advice="return one real number",
+    )
+
+
+def _refuse_a_time_read_into_rows(read: BoundCallable | _Constant, where: str) -> None:
+    """A 2-D ``(Nt, N)`` field takes one value per node for every row, at the one time it is applied at, so a value or
+    rule that reads ``t`` is refused there by name rather than written at that time into every row (#2296)."""
+    if "t" in read.passes:
+        raise TypeError(
+            f"{where}: it reads t, and a 2-D (Nt, N) field would take its value at one time in every row. Apply the "
+            "condition row by row, each at its own time (#2296)."
+        )
 
 
 def _node_values(values: object, count: int, where: str) -> tuple | None:
@@ -234,20 +323,37 @@ class NodeBC:
     Attributes:
         nodes: Node indices, kept as a tuple, or callable(num_nodes) -> indices
         bc_type: Type of boundary condition, a ``GraphBCType``
-        value: BC value (constant or callable(node, t) -> value)
+        value: BC value, a constant or a callable of (t, node), time first (#2296)
         name: Optional name for this BC region (e.g., "exit", "source")
+        rule: A CUSTOM condition's rule, a callable of (t, node, field) -> the node's new value, and only CUSTOM's
     """
 
     nodes: Sequence[int] | Callable[[int], list[int]]
     bc_type: GraphBCType = GraphBCType.DIRICHLET
-    value: float | Callable[[int, float], float] = 0.0
+    value: float | Callable[..., float] = 0.0
     name: str = "boundary"
+    rule: Callable[..., float] | None = None
 
     def __post_init__(self) -> None:
         _refuse_a_foreign_bc_type("NodeBC", self.name, self.bc_type)
         if not callable(self.nodes):
             object.__setattr__(self, "nodes", _nodes(self.nodes, f"NodeBC {self.name!r}: nodes", "condition_nodes"))
-        _value(self.value, f"NodeBC {self.name!r}: value")
+        # A CUSTOM condition's rule reads the field as well, so it has a field of its own, and `value` is not read for
+        # it: one field carrying both contracts applied, raised or did nothing by the caller's signature (#2296).
+        if self.bc_type is GraphBCType.CUSTOM:
+            if self.rule is None or not (_is_value(self.value) and self.value == 0):
+                raise TypeError(
+                    f"NodeBC {self.name!r}: a CUSTOM condition takes its rule as rule=, {ACCEPTED_FORMS['rule']}, and "
+                    "no value; a value is not read for it (#2296)."
+                )
+            object.__setattr__(self, "_read", _rule_reader(self.rule, f"NodeBC {self.name!r}: rule"))
+        else:
+            if self.rule is not None:
+                raise TypeError(
+                    f"NodeBC {self.name!r}: rule= is a CUSTOM condition's; a {self.bc_type.name} condition takes value "
+                    "(#2296)."
+                )
+            object.__setattr__(self, "_read", _value_reader(self.value, f"NodeBC {self.name!r}: value"))
         # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
         # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
         # dropped without a word, so it is refused (#1948).
@@ -264,11 +370,16 @@ class NodeBC:
             return list(_nodes(self.nodes(num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})"))
         return list(self.nodes)
 
-    def get_value(self, node: int, t: float) -> float:
-        """Get BC value for a specific node at time t."""
-        if callable(self.value):
-            return self.value(node, t)
-        return float(self.value)
+    @property
+    def _reader(self) -> BoundCallable | _Constant:
+        """The value's or rule's binding, made once when this condition was built (#2296)."""
+        return cast("BoundCallable | _Constant", self.__dict__["_read"])
+
+    def get_value(self, node: int, t: float | None) -> float:
+        """This condition's value at ``node`` and time ``t``, through the binding made when it was built (#2296)."""
+        if self.bc_type is GraphBCType.CUSTOM:
+            raise TypeError(f"NodeBC {self.name!r}: a CUSTOM condition has a rule, read with the field, not a value.")
+        return _graph_value_at(self._reader, f"NodeBC {self.name!r}: value", t=t, node=node)
 
 
 @dataclass(frozen=True)
@@ -475,7 +586,7 @@ class GraphApplicator(BaseGraphApplicator):
                 f"GraphApplicator.from_network_geometry: boundary_type={boundary_type!r} reads "
                 f"{sorted(read[boundary_type] | {'boundary_value'})}, and not {unread} (#2292)."
             )
-        _value(kwargs.get("boundary_value", 0.0), "GraphApplicator.from_network_geometry: boundary_value")
+        _value_reader(kwargs.get("boundary_value", 0.0), "GraphApplicator.from_network_geometry: boundary_value")
         num_nodes = _num_nodes(geometry)
 
         applicator = cls(num_nodes)
@@ -594,7 +705,7 @@ class GraphApplicator(BaseGraphApplicator):
     def set_dirichlet_nodes(
         self,
         nodes: Sequence[int] | Callable[[int], list[int]],
-        value: float | Callable[[int, float], float] = 0.0,
+        value: float | Callable[..., float] = 0.0,
         name: str = "dirichlet",
     ) -> GraphApplicator:
         """
@@ -602,7 +713,7 @@ class GraphApplicator(BaseGraphApplicator):
 
         Args:
             nodes: Node indices or callable(num_nodes) -> indices
-            value: BC value (constant or callable(node, t) -> value)
+            value: BC value, a constant or a callable of (t, node), time first (#2296)
             name: Name for this BC region
 
         Returns:
@@ -612,7 +723,7 @@ class GraphApplicator(BaseGraphApplicator):
             >>> applicator.set_dirichlet_nodes([0, 99], value=0.0, name="exit")
             >>> applicator.set_dirichlet_nodes(
             ...     nodes=[10],
-            ...     value=lambda node, t: np.sin(t),
+            ...     value=lambda t, node: np.sin(t),
             ...     name="oscillating"
             ... )
         """
@@ -646,7 +757,7 @@ class GraphApplicator(BaseGraphApplicator):
     def set_source_nodes(
         self,
         nodes: Sequence[int] | Callable[[int], list[int]],
-        value: float | Callable[[int, float], float] = 1.0,
+        value: float | Callable[..., float] = 1.0,
         name: str = "source",
     ) -> GraphApplicator:
         """
@@ -654,7 +765,7 @@ class GraphApplicator(BaseGraphApplicator):
 
         Args:
             nodes: Node indices or callable
-            value: Source strength (constant or callable)
+            value: Source strength, a constant or a callable of (t, node), time first (#2296)
             name: Name for this BC region
 
         Returns:
@@ -670,7 +781,7 @@ class GraphApplicator(BaseGraphApplicator):
     def set_custom_bc(
         self,
         nodes: Sequence[int] | Callable[[int], list[int]],
-        bc_func: Callable[[NDArray, int, float], float],
+        bc_func: Callable[..., float],
         name: str = "custom",
     ) -> GraphApplicator:
         """
@@ -678,26 +789,21 @@ class GraphApplicator(BaseGraphApplicator):
 
         Args:
             nodes: Node indices or callable
-            bc_func: Function(field, node, t) -> new_value
+            bc_func: The rule, a callable of (t, node, field) -> the node's new value, time first (#2296)
             name: Name for this BC region
 
         Returns:
             self (for method chaining)
 
         Example:
-            >>> def robin_bc(field, node, t):
+            >>> def robin_bc(t, node, field):
             ...     # Robin-like: u + alpha * du/dn = g
             ...     return 0.5 * field[node]
             >>> applicator.set_custom_bc([0, 99], robin_bc)
         """
-
-        # Wrap bc_func to match NodeBC value signature
-        def value_func(node: int, t: float) -> float:
-            # Note: This requires field to be passed separately in apply()
-            return 0.0  # Placeholder - actual value set during apply
-
-        _value(bc_func, "GraphApplicator.set_custom_bc: bc_func")  # named as the caller gave it (#2292 review 4, S1)
-        bc = NodeBC(nodes=nodes, bc_type=GraphBCType.CUSTOM, value=bc_func, name=name)
+        # Checked here first, so a refusal names bc_func as the caller gave it (#2292 review 4, S1).
+        _rule_reader(bc_func, "GraphApplicator.set_custom_bc: bc_func")
+        bc = NodeBC(nodes=nodes, bc_type=GraphBCType.CUSTOM, rule=bc_func, name=name)
         return self.add_node_bc(bc)
 
     def add_node_bc(self, bc: NodeBC) -> GraphApplicator:
@@ -757,7 +863,7 @@ class GraphApplicator(BaseGraphApplicator):
     def apply(
         self,
         field: NDArray[np.floating],
-        t: float = 0.0,
+        t: float | None = None,
         field_type: Literal["value", "density"] = "value",
     ) -> NDArray[np.floating]:
         """
@@ -765,7 +871,7 @@ class GraphApplicator(BaseGraphApplicator):
 
         Args:
             field: Node values (shape: (num_nodes,) or (Nt, num_nodes))
-            t: Current time
+            t: Current time. A condition whose value reads t needs it, and is refused on a 2-D field (#2296).
             field_type: Type of field
                 - "value": HJB value function (u)
                 - "density": FP density (m)
@@ -802,7 +908,7 @@ class GraphApplicator(BaseGraphApplicator):
                     # Issue #1471: a Dirichlet value pin belongs to the VALUE field (HJB u), not the
                     # density field (FP m) — pinning m to a value-function value is wrong.
                     if field_type == "value":
-                        value = bc.get_value(node, t)
+                        value = self._value_of(bc, node, t, is_2d)
                         if is_2d:
                             result[:, node] = value
                         else:
@@ -813,7 +919,7 @@ class GraphApplicator(BaseGraphApplicator):
                     # (adjoint duality): the HJB value carries the exit cost (Dirichlet u = value), and
                     # the FP density is absorbed (m -> 0, mass exits). Apply the right one per field.
                     if field_type == "value":
-                        value = bc.get_value(node, t)
+                        value = self._value_of(bc, node, t, is_2d)
                         if is_2d:
                             result[:, node] = value
                         else:
@@ -826,7 +932,7 @@ class GraphApplicator(BaseGraphApplicator):
 
                 elif bc.bc_type == GraphBCType.SOURCE:
                     if field_type == "density":
-                        value = bc.get_value(node, t)
+                        value = self._value_of(bc, node, t, is_2d)
                         if is_2d:
                             result[:, node] = value
                         else:
@@ -838,19 +944,29 @@ class GraphApplicator(BaseGraphApplicator):
                     pass
 
                 elif bc.bc_type == GraphBCType.CUSTOM:
-                    if callable(bc.value):
-                        if is_2d:
-                            for t_idx in range(result.shape[0]):
-                                result[t_idx, node] = bc.value(result[t_idx], node, t)
-                        else:
-                            result[node] = bc.value(result, node, t)
+                    where = f"NodeBC {bc.name!r}: rule"
+                    if is_2d:
+                        _refuse_a_time_read_into_rows(bc._reader, where)
+                        for t_idx in range(result.shape[0]):
+                            result[t_idx, node] = _graph_value_at(
+                                bc._reader, where, t=t, node=node, field=result[t_idx]
+                            )
+                    else:
+                        result[node] = _graph_value_at(bc._reader, where, t=t, node=node, field=result)
 
         return result
+
+    @staticmethod
+    def _value_of(bc: NodeBC, node: int, t: float | None, is_2d: bool) -> float:
+        """``bc``'s value at ``node``, where a branch of `apply` writes it: on a 2-D field, not one that reads t (#2296)."""
+        if is_2d:
+            _refuse_a_time_read_into_rows(bc._reader, f"NodeBC {bc.name!r}: value")
+        return bc.get_value(node, t)
 
     def apply_hjb(
         self,
         u: NDArray[np.floating],
-        t: float = 0.0,
+        t: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Apply BCs to HJB value function.
@@ -859,7 +975,7 @@ class GraphApplicator(BaseGraphApplicator):
 
         Args:
             u: Value function at nodes
-            t: Current time
+            t: Current time, needed by a value that reads t (#2296)
 
         Returns:
             Value function with BCs applied
@@ -869,7 +985,7 @@ class GraphApplicator(BaseGraphApplicator):
     def apply_fp(
         self,
         m: NDArray[np.floating],
-        t: float = 0.0,
+        t: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Apply BCs to Fokker-Planck density.
@@ -878,7 +994,7 @@ class GraphApplicator(BaseGraphApplicator):
 
         Args:
             m: Density at nodes
-            t: Current time
+            t: Current time, needed by a value that reads t (#2296)
 
         Returns:
             Density with BCs applied
@@ -893,8 +1009,8 @@ class GraphApplicator(BaseGraphApplicator):
         self,
         field: NDArray[np.floating],
         boundary_nodes: list[int],
-        values: list[float] | float | Callable[[int, float], float],
-        t: float = 0.0,
+        values: list[float] | float | Callable[..., float],
+        t: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Apply Dirichlet BC directly to specified nodes.
@@ -904,8 +1020,8 @@ class GraphApplicator(BaseGraphApplicator):
         Args:
             field: Node values
             boundary_nodes: List of node indices
-            values: BC values (single float, list, or callable(node, t))
-            t: Current time
+            values: BC values: a value (a float, or a callable of (t, node), time first), or one float per node
+            t: Current time, needed by a callable that reads t (#2296)
 
         Returns:
             Field with BCs applied
@@ -915,11 +1031,14 @@ class GraphApplicator(BaseGraphApplicator):
             >>> u_bc = applicator.apply_direct(u, [0, 99], [0.0, 1.0])
 
             >>> # With callable
-            >>> u_bc = applicator.apply_direct(u, [0], lambda n, t: np.sin(t))
+            >>> u_bc = applicator.apply_direct(u, [0], lambda t, node: np.sin(t), t=0.5)
         """
         result = field.copy()
         nodes = self._checked_nodes(boundary_nodes, "GraphApplicator.apply_direct", "boundary_nodes")
         per_node = _node_values(values, len(nodes), "GraphApplicator.apply_direct")
+        read = _value_reader(values, "GraphApplicator.apply_direct: values") if per_node is None else None
+        if read is not None and result.ndim == 2:
+            _refuse_a_time_read_into_rows(read, "GraphApplicator.apply_direct: values")
         if per_node is not None:
             repeated = sorted(n for n, count in Counter(nodes).items() if count > 1)
             if repeated:
@@ -929,12 +1048,10 @@ class GraphApplicator(BaseGraphApplicator):
                 )
 
         for i, node in enumerate(nodes):
-            if callable(values):
-                value = values(node, t)
-            elif per_node is not None:
-                value = per_node[i]
+            if read is not None:
+                value = _graph_value_at(read, "GraphApplicator.apply_direct: values", t=t, node=node)
             else:
-                value = float(cast("float", values))
+                value = per_node[i]
 
             if result.ndim == 2:
                 result[:, node] = value
@@ -1111,8 +1228,8 @@ def create_graph_applicator(
 
     # Each read once into a tuple, or refused by name: a truth test on the given object dropped a bare 0 and a
     # one-element array of node 0, and raised on a longer array. None or empty is no condition (#2292).
-    _value(boundary_value, "create_graph_applicator: boundary_value")
-    _value(source_value, "create_graph_applicator: source_value")
+    _value_reader(boundary_value, "create_graph_applicator: boundary_value")
+    _value_reader(source_value, "create_graph_applicator: source_value")
     boundary = _given_nodes(boundary_nodes, "create_graph_applicator: boundary_nodes")
     source = _given_nodes(source_nodes, "create_graph_applicator: source_nodes")
     absorbing = _given_nodes(absorbing_nodes, "create_graph_applicator: absorbing_nodes")
