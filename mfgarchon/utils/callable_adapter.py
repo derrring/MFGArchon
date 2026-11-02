@@ -39,7 +39,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import CONDITION_SLOTS, BoundCallable, bind_user_callable, out_of_order
+from mfgarchon.types.callable_protocols import (
+    CONDITION_SLOTS,
+    BoundCallable,
+    bind_user_callable,
+    out_of_order,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,8 +119,9 @@ def adapt_ic_callable(
     if isinstance(func, functools.partial) and frozen:
         raise TypeError(
             f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
-            f"reads {role} at its own time. It takes (t, x) or (x): pass lambda x: f({func.keywords[frozen[0]]!r}, x) "
-            f"to fix the time yourself."
+            f"reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
+            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that takes "
+            f"just x and {frozen[0]}, with T the time you want."
         )
 
     names = _positional_names(func)
@@ -145,7 +151,7 @@ def adapt_ic_callable(
         if "x" not in bound.passes:
             raise TypeError(
                 f"{role} {getattr(func, '__qualname__', func)!r} takes time and no space. It is a function of "
-                f"space: it takes (t, x), time first, or (x). Name its space parameter x."
+                f"space. Name its space parameter x."
             )
         result, err = _try_call(functools.partial(bound, t=time_value), x=sample)
         if err is None and _is_valid_output(result):
@@ -174,7 +180,7 @@ def adapt_ic_callable(
             (
                 "f(*args, **kwargs)",
                 f"names none of its parameters, so which argument is time cannot be read. If {role} wraps "
-                f"another function, decorate the wrapper with functools.wraps; otherwise take (t, x) or (x)",
+                f"another function, decorate the wrapper with functools.wraps; otherwise name its parameters after what they read",
             )
         )
         raise refuse()

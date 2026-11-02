@@ -498,11 +498,9 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
             Nt=4,
         )
 
-    with pytest.raises(
-        TypeError, match=r"V takes \(t, x\).*SeparableHamiltonian\(potential=lambda t, x.*x\[\.\.\., 0\]"
-    ):
+    with pytest.raises(TypeError, match=r"V takes \(t, x\).*SeparableHamiltonian\(potential=\.\.\.\).*x\[\.\.\., 0\]"):
         timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda t, x: x * (1 + t)))
-    with pytest.raises(TypeError, match=r"V takes the point x alone.*SeparableHamiltonian\(potential=lambda t, x"):
+    with pytest.raises(TypeError, match=r"V takes the point x alone.*SeparableHamiltonian\(potential=\.\.\.\)"):
         timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x, t: x * (1 + t)))
     sweeps = MFGSolverConfig(picard=PicardConfig(max_iterations=3, tolerance=1e-6, verbose=False))
     moving, frozen = (

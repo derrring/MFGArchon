@@ -92,6 +92,25 @@ VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)
 _TIME_NAMES = ("t", "time")
 
 
+# What a refusal advises for a callable that cannot be bound by name. In words, never a lambda: one written from the slots
+# reads a callable written in another order swapped, and one with a defaulted parameter passes a slot into it (#2861).
+_WRITE_A_FUNCTION = "a function named for the slots it reads that passes each argument to the parameter that reads it"
+
+
+def _reorder_advice(order: tuple[str, ...]) -> str:
+    """A refusal's advice, by what each parameter reads. Named after the slots in the order they are written, a callable
+    keeps that order, and one written time last would read its arguments in the wrong slots (#2861)."""
+    if "t" in order:
+        time_last = ", ".join([*(slot for slot in order if slot != "t"), "time"])
+        target, swapped = f"({', '.join(order)}), time first", f"one written ({time_last})"
+    else:
+        target, swapped = f"({', '.join(order)})", "one written in another order"
+    return (
+        f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order)} in the "
+        f"order it is written, {swapped} would read its arguments in the wrong slots."
+    )
+
+
 def bind_user_callable(
     fn: Callable[..., Any],
     slots: Slots,
@@ -164,8 +183,7 @@ def bind_user_callable(
             # arguments than it did (#2406 review: `(x, *rest)` got t as x). Neither is the old call.
             raise TypeError(
                 f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}): "
-                f"{', '.join(misplaced_here)} would receive another slot's value. It takes "
-                f"({', '.join(order_)}); name its parameters in that order."
+                f"{', '.join(misplaced_here)} would receive another slot's value. {_reorder_advice(order_)}"
             )
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
@@ -187,17 +205,7 @@ def bind_user_callable(
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
-    # Named after the slots in the order they are written, a callable keeps that order, and one written time last
-    # would read its arguments in the wrong slots: the advice is to reorder, by what each parameter reads.
-    if "t" in order_:
-        time_last = ", ".join([*(slot for slot in order_ if slot != "t"), "time"])
-        target, swapped_ = f"({', '.join(order_)}), time first", f"one written ({time_last})"
-    else:
-        target, swapped_ = f"({', '.join(order_)})", "one written in another order"
-    reorder = (
-        f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order_)} in the "
-        f"order it is written, {swapped_} would read its arguments in the wrong slots."
-    )
+    reorder = _reorder_advice(order_)
     if misplaced:
         why = f": {', '.join(misplaced)} would receive another slot's value. {reorder}"
     elif passes is not None and not var_positional:
@@ -205,26 +213,19 @@ def bind_user_callable(
             f": none of its parameters is named after a slot whose position #2375 ruling 8 changed, so they "
             f"read the same in the old order and the new. {reorder}"
         )
-    elif slots.reordered:
-        # A reordered role binds a positional callable only if a parameter name says which order it is in, so
-        # "take them positionally" would lead an unnamed callable into the refusal above (#2512 row B2).
-        why = f". Name its parameters {', '.join(order_)}, time first (#2378 phase 5, #2375 ruling 8)."
     else:
-        why = f". Name its parameters {', '.join(order_)}, or take exactly {len(order_)} positionally in that order."
+        # Not "take them positionally": a reordered role binds a positional callable only if a parameter name says which
+        # order it is in, so that would lead an unnamed callable into the refusal above (#2512 row B2).
+        why = f". {reorder}"
     raise TypeError(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
         f"matched to ({', '.join(order_)}){why}"
     )
 
 
-def bind_by_name(
-    fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str, wrap: str, wrap_unnamed: str
-) -> BoundCallable:
+def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str) -> BoundCallable:
     """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
-    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal, and ``wrap``
-    and ``wrap_unnamed`` are the wraps advised for another callable and for one that cannot be called by name. The
-    caller writes them, since a wrap is right only for the callables its role meets: one built from the slots alone,
-    ``lambda t, node: f(t, node)``, reads a callable written ``(node, t)`` swapped.
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal.
 
     Called by name, a callable is passed only the slots it names, and every one of them: so a ``*args`` or ``**kwargs``
     parameter is refused, since nothing reaches it, and then a ``functools.partial`` that freezes a parameter named
@@ -239,11 +240,10 @@ def bind_by_name(
     It is a function the user writes, a ``def`` or a ``lambda``, or a ``functools.partial`` of one (user ruling,
     2026-10-11): another callable's parameter names were not written against the slots. A SciPy interpolant takes
     ``(x, ...)`` and would read time data at the position; a class instance, a bound method, a builtin, a ufunc, a
-    vectorized or jax-wrapped function are refused the same way, with the wrap that makes each one a function. Bound by
+    vectorized or jax-wrapped function are refused the same way, with the advice to wrap it. Bound by
     position instead, a callable with no readable signature written in another order would be read swapped (#2296).
     """
     name = getattr(fn, "__qualname__", fn)
-    names = ", ".join(slots.order)
     target = fn
     frozen: list[str] = []
     while isinstance(target, functools.partial):
@@ -253,7 +253,7 @@ def bind_by_name(
         raise TypeError(
             f"{role} {name!r} is of type {type(fn).__name__}, not a plain def or lambda: a {role} is a function whose "
             "parameter names declare what it reads, and a def that a decorator turned into another object "
-            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it, such as {wrap} "
+            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it in {_WRITE_A_FUNCTION} "
             f"({ruling})."
         )
     try:
@@ -268,21 +268,21 @@ def bind_by_name(
             else f"takes {inspect.signature(fn)}, with positional-only parameters"
         )
         raise TypeError(
-            f"{role} {name!r} {what}, so it cannot be called by name: wrap it in a function that names what it reads, "
-            f"such as {wrap_unnamed} ({ruling})."
+            f"{role} {name!r} {what}, so it cannot be called by name: wrap it in {_WRITE_A_FUNCTION} ({ruling})."
         )
     variadic = [p for p in declared if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
     if variadic:
         stars = ", ".join(f"{'*' if p.kind is inspect.Parameter.VAR_POSITIONAL else '**'}{p.name}" for p in variadic)
         raise TypeError(
             f"{role} {name!r} takes {inspect.signature(fn)}: called by name, it is passed only the slots it names, so "
-            f"nothing reaches {stars}. Name each slot it reads as a parameter, such as `lambda {names}: ...` ({ruling})."
+            f"nothing reaches {stars} ({ruling}). {_reorder_advice(slots.order)}"
         )
     if frozen:
+        # Not "freeze it by position": that freezes the first parameter, whichever it is (#2861).
         raise TypeError(
             f"{role} {name!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: called by name, a "
-            f"{role} is passed every slot it names, so the frozen value would be overridden. Freeze it by position, or "
-            f"write a function of the slots it reads ({ruling})."
+            f"{role} is passed every slot it names, so the frozen value would be overridden. Write "
+            f"{_WRITE_A_FUNCTION}, passing the frozen value by keyword ({ruling})."
         )
     bound = bind_user_callable(fn, slots, role=role)
     if bound.binding != "keyword":
@@ -291,8 +291,8 @@ def bind_by_name(
         except (TypeError, ValueError):
             params = "an unreadable signature"
         raise TypeError(
-            f"{role} {name!r} takes ({params}), whose parameters are not all named after the slots: a {role} names "
-            f"them {names}, time first (#2378 phase 5, #2375 ruling 8), and is called by name."
+            f"{role} {name!r} takes ({params}), whose parameters are not all named after the slots, and a {role} is "
+            f"called by name (#2378 phase 5, #2375 ruling 8). {_reorder_advice(slots.order)}"
         )
     return bound
 
@@ -333,8 +333,8 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
         if out_of_order(names, slots):
             raise TypeError(
                 f"{cls.__qualname__}.{name} takes ({', '.join(names)}), which is out of order. Since #2378 phase 5 "
-                f"(#2375 ruling 8) it takes ({', '.join(slots.order)}), time first: reorder the parameters, and "
-                f"call the method by keyword."
+                f"(#2375 ruling 8) it takes ({', '.join(slots.order)}){', time first' if 't' in slots.order else ''}: "
+                f"reorder the parameters, and call the method by keyword."
             )
 
 
