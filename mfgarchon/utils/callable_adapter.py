@@ -92,7 +92,8 @@ def adapt_ic_callable(
       it is read only if x alone works (a wrapper decorated with ``functools.wraps`` is read by the
       wrapped function's names);
     - anything else that needs more than ``x`` is refused: names out of order (``f(x, t)``), time
-      without space, a ``functools.partial`` that fixes time, and names that say neither order.
+      without space, a ``functools.partial`` that fixes time, one that freezes by keyword a slot it would be passed by
+      name, and names that say neither order.
 
     Args:
         func: User-provided IC/BC callable.

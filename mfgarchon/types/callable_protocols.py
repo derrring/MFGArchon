@@ -65,7 +65,8 @@ class Slots:
 
 # The argument order of each user-supplied callable the library invokes: time, then space, then the
 # u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
-# These are the one statement of it: every invocation goes through `bind_user_callable`.
+# These are the one statement of it. `CoefficientField`, `DualHamiltonian`, `DualLagrangian` and the validators' reading
+# of a family's method call a callable by name with no binding, and read `refuse_overridden` (#2864).
 POTENTIAL_SLOTS = Slots(("t", "x"))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
@@ -299,7 +300,7 @@ def bind_user_callable(
 
 def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str) -> BoundCallable:
     """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
-    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal raised here.
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in the refusals of a callable's kind, signature and stars.
 
     Called by name, a callable is passed only the slots it names, and every one of them: so a ``*args`` or ``**kwargs``
     parameter is refused, since nothing reaches it, and `bind_user_callable` refuses a ``functools.partial`` that freezes
