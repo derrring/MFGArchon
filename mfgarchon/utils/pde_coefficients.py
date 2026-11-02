@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import Slots, refuse_overridden
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -636,6 +638,11 @@ class CoefficientMode(Enum):
     SPACE_DENSITY = "space_density"  # σ(x, m) - space and density
 
 
+# What `CoefficientField` passes a callable by name. It reads the partial it would override with the binders' check; it
+# does not yet bind through them (#2864).
+COEFFICIENT_CALL_SLOTS = Slots(("t", "x", "m"))
+
+
 class CoefficientField:
     """
     Unified interface for scalar, array, and callable PDE coefficients.
@@ -698,6 +705,7 @@ class CoefficientField:
         dimension: int = 1,
         mode: CoefficientMode | str | None = None,
     ):
+        refuse_overridden(field, COEFFICIENT_CALL_SLOTS, role=field_name)
         self.field = field
         self.default = default_value
         self.name = field_name

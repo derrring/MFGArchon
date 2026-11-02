@@ -42,12 +42,11 @@ import numpy as np
 from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
     BoundCallable,
+    FrozenSlotError,
     bind_user_callable,
     freezes_by_position,
     frozen_by_keyword,
-    frozen_refusal,
     out_of_order,
-    overridden_by_name,
     rewrite_advice,
 )
 
@@ -119,19 +118,6 @@ def adapt_ic_callable(
     def refuse() -> TypeError:
         return TypeError(_format_signature_error(func, dimension, attempts))
 
-    time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
-    frozen = sorted(set(frozen_by_keyword(func, CONDITION_SLOTS)) & set(time_names))
-    if frozen:
-        raise TypeError(
-            f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
-            f"reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
-            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that takes "
-            f"just x and {frozen[0]}, with T the time you want."
-        )
-    overridden = overridden_by_name(func, CONDITION_SLOTS)
-    if overridden:
-        raise TypeError(frozen_refusal(func, overridden, CONDITION_SLOTS, role))
-
     names = _positional_names(func)
     if names is None:
         # No readable signature (a builtin, a C extension): x alone is all that can be read.
@@ -143,6 +129,17 @@ def adapt_ic_callable(
 
     try:
         bound = bind_user_callable(func, CONDITION_SLOTS, role=role, spatial_only=True)
+    except FrozenSlotError as refusal:
+        time_frozen = [name for name in refusal.frozen if CONDITION_SLOTS.slot_of()[name] == "t"]
+        if not time_frozen:
+            raise
+        name = time_frozen[0]
+        raise TypeError(
+            f"{role} is a functools.partial that fixes {name}={frozen_by_keyword(func, CONDITION_SLOTS)[name]!r}, but the "
+            f"library reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
+            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {name}=T)` for an f that takes "
+            f"just x and {name}, with T the time you want."
+        ) from refusal
     except TypeError as refusal:
         if out_of_order(names, CONDITION_SLOTS):
             raise
@@ -188,8 +185,8 @@ def adapt_ic_callable(
             (
                 "f(*args, **kwargs)",
                 f"names none of its parameters, so which argument is time cannot be read. If {role} wraps "
-                f"another function, decorate the wrapper with functools.wraps; "
-                f"{rewrite_advice(func, CONDITION_SLOTS) if freezes_by_position(func) else 'otherwise name its parameters after what they read'}",
+                f"another function, decorate the wrapper with functools.wraps"
+                f"{f'. {rewrite_advice(func, CONDITION_SLOTS)}' if freezes_by_position(func) else '; otherwise name its parameters after what they read'}",
             )
         )
         raise refuse()
@@ -350,17 +347,23 @@ def _format_signature_error(
         lines.append(f"    -> {error}")
 
     lines.append("")
+    # Naming a function a partial froze by position moves what it froze, as `rewrite_advice` says (#2861).
+    naming = (
+        f". {rewrite_advice(func, CONDITION_SLOTS)}"
+        if freezes_by_position(func)
+        else "; name time t (or time), or name the space parameter x"
+    )
     if dimension == 1:
         lines.append(
             "Accepted signatures for 1D:\n"
             "  f(x)      -- x is a Python float\n"
             "  f(x)      -- x is ndarray of shape (1,)\n"
-            "  f(t, x)   -- spatiotemporal, time first; name time t (or time), or name the space parameter x"
+            f"  f(t, x)   -- spatiotemporal, time first{naming}"
         )
     else:
         lines.append(
             f"Accepted signatures for {dimension}D:\n"
             f"  f(x)      -- x is ndarray of shape ({dimension},)\n"
-            f"  f(t, x)   -- spatiotemporal, time first; name time t (or time), or name the space parameter x"
+            f"  f(t, x)   -- spatiotemporal, time first{naming}"
         )
     return "\n".join(lines)

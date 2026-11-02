@@ -25,6 +25,7 @@ from mfgarchon.types.callable_protocols import (
     bind_user_callable,
     bound_attribute,
     refuse_methods_out_of_order,
+    refuse_overridden,
 )
 from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights
@@ -633,6 +634,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # spatial dependence, users with Stratonovich-derived drift must apply
         # the correction `alpha_Ito = alpha_Strat - (1/2) sigma * d_x sigma`
         # before passing the drift. mfgarchon does NOT add this correction.
+        from mfgarchon.utils.pde_coefficients import COEFFICIENT_CALL_SLOTS
+
+        refuse_overridden(vola_value, COEFFICIENT_CALL_SLOTS, role="volatility")
         self._volatility = vola_value
         self._volatility_kind = volatility_kind
         self.drift_field = drift

@@ -70,7 +70,14 @@ import numpy as np
 
 # Issue #700: Import HamiltonianJacobians for jacobian_fd() method
 from mfgarchon.types import HamiltonianJacobians
-from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, BoundCallable, bound_attribute
+from mfgarchon.types.callable_protocols import (
+    HAMILTONIAN_SLOTS,
+    POTENTIAL_SLOTS,
+    BoundCallable,
+    Slots,
+    bound_attribute,
+    refuse_overridden,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -2089,6 +2096,7 @@ class DualHamiltonian(HamiltonianBase):
         n_search: int = 100,
     ):
         super().__init__()
+        refuse_overridden(lagrangian, Slots(("t", "x", "alpha", "m")), role="lagrangian")
         self.lagrangian = lagrangian
         self.alpha_bounds = alpha_bounds
         self.n_search = n_search
@@ -2260,6 +2268,7 @@ class DualLagrangian(LagrangianBase):
         n_search: int = 100,
     ):
         super().__init__()
+        refuse_overridden(hamiltonian, HAMILTONIAN_SLOTS, role="hamiltonian")
         self.hamiltonian = hamiltonian
         self.p_bounds = p_bounds
         self.n_search = n_search

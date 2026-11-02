@@ -490,7 +490,7 @@ Time-first also agrees with § *Arrays, grids and time* and with `scipy.integrat
   meshfree `bc_value`, and a `value` reassigned later are bound when first read. `x` is one boundary point of shape
   `(d,)`. A reader with no point, such as the FDM ghost layer, refuses one that declares `x`, even with a default;
   one with no time refuses one that declares `t` (#2512, row B2).
-- **Currying the measure needs a keyword**: `partial(H, m=mu)`, for your own calls. Handed to the library, a partial that freezes a slot by keyword is refused, since the slot passed by name would override it (#2869): write `lambda t, x, p, m: H(t=t, x=x, p=p, m=mu)`. One that freezes by position freezes the first parameter, whichever it is.
+- **Currying the measure needs a keyword**: `partial(H, m=mu)`, for your own calls. A partial handed to a callable parameter is refused where the library passes that slot by name, since the slot passed would override the frozen value (#2869): as a raw Hamiltonian callable, write `lambda t, x, p: H(t=t, x=x, p=p, m=mu)`. One that freezes by position freezes the first parameter, whichever it is.
 
 *Not yet met (#2429): the per-point adapter `problem.H` / `problem.dH_dm` is not time-first and
 defaults its time to 0, and some per-point solver paths call it without one.
