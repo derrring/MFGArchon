@@ -170,7 +170,12 @@ def test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges():
     for n in (41, 81, 161):
         t_star, m, out, weights = _release(n)
         times.append(t_star)
-        assert np.max(np.abs(m @ weights + out - 1.0)) < 1e-12
+        # The record closes the mass to round-off: the closure is the measure-weighted residual of the steps' solves,
+        # whose scale grows with the diffusive CFL, D (n - 1) here since dt = dx, so the bound is steps * n * eps * mass
+        # (mass 1). A fixed 1e-12 failed on Linux at n = 161, 1.07e-12 (#2858).
+        bound = (len(out) - 1) * len(weights) * np.finfo(float).eps
+        closure = float(np.max(np.abs(m @ weights + out - 1.0)))
+        assert closure < bound, f"n = {n}: closure {closure:.3e}, over steps * n * eps * mass = {bound:.3e}"
         assert m.min() >= 0.0
     assert abs(times[2] - times[1]) < 0.75 * abs(times[1] - times[0]), times
 

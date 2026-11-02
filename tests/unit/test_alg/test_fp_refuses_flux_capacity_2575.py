@@ -137,13 +137,20 @@ def test_fp_fdm_honours_the_cap_on_its_own_bc():
     problem = _grid_problem(_exit(1, None))
     weights = problem.geometry.measure_weights()
     m0 = np.asarray(problem.m_initial, dtype=float)
-    outflow = {}
+    outflow, steps = {}, {}
     for cap in (None, CAP, 0.0):
         solver = FPFDMSolver(problem, boundary_conditions=_exit(1, cap))
         m = np.asarray(solver.solve_fp_system(m0, show_progress=False))
         out = solver._boundary_outflow["exit"]
         assert np.max(np.abs(m @ weights + out - m[0] @ weights)) < 1e-12
-        outflow[cap] = out[-1]
-    assert 0.0 < outflow[CAP] <= CAP * 0.5 * (1 + 1e-12)
+        outflow[cap], steps[cap] = out[-1], len(out) - 1
+    # Over the cap by round-off only. The record is read off one row, the exit node's, which the switch caps at every
+    # step: each step's excess over cap * dt is that row's solve residual times its measure and dt, round-off on a row
+    # whose scale is below the mass. So the bound is steps * eps * mass. A bound relative to the 5e-7 outflow was 5e-19,
+    # below double precision there, and failed on Linux at 1.3e-17 (#2858).
+    bound = steps[CAP] * np.finfo(float).eps * float(m0 @ weights)
+    excess = outflow[CAP] - CAP * 0.5
+    assert outflow[CAP] > 0.0
+    assert excess <= bound, f"the capped outflow exceeds cap * T by {excess:.3e}, over steps * eps * mass = {bound:.3e}"
     assert outflow[None] > 1e3 * outflow[CAP]
     assert abs(outflow[0.0]) < 1e-12
