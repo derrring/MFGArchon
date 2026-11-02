@@ -97,7 +97,7 @@ _TIME_NAMES = ("t", "time")
 _WRITE_A_FUNCTION = "a function named for the slots it reads that passes each argument to the parameter that reads it"
 
 
-def _partial_levels(fn: Callable[..., Any]) -> Iterator[functools.partial]:
+def _partial_levels(fn: Any) -> Iterator[functools.partial]:
     """Each ``functools.partial`` in ``fn``, outermost first. Python flattens a partial of a partial only when the inner one
     has no ``__dict__``, so one given an attribute, or wrapped by ``functools.update_wrapper``, stays a level of its own."""
     while isinstance(fn, functools.partial):
@@ -105,7 +105,7 @@ def _partial_levels(fn: Callable[..., Any]) -> Iterator[functools.partial]:
         fn = fn.func
 
 
-def frozen_by_keyword(fn: Callable[..., Any], slots: Slots) -> dict[str, Any]:
+def frozen_by_keyword(fn: Any, slots: Slots) -> dict[str, Any]:
     """The names identifying a slot that a ``functools.partial`` froze by keyword, with the value each call would see."""
     slot_of = slots.slot_of()
     frozen: dict[str, Any] = {}
@@ -116,7 +116,7 @@ def frozen_by_keyword(fn: Callable[..., Any], slots: Slots) -> dict[str, Any]:
     return frozen
 
 
-def overridden_by_name(fn: Callable[..., Any], slots: Slots) -> list[str]:
+def overridden_by_name(fn: Any, slots: Slots) -> list[str]:
     """What `frozen_by_keyword` finds that is still a named parameter of the partial. Called by name, the slot passed
     overrides the frozen value (#2869). One frozen into ``**kw`` is not named, so it is not passed, and it stands."""
     frozen = frozen_by_keyword(fn, slots)
@@ -137,7 +137,7 @@ class FrozenSlotError(TypeError):
         self.frozen = frozen
 
 
-def refuse_overridden(fn: Callable[..., Any], slots: Slots, *, role: str) -> None:
+def refuse_overridden(fn: Any, slots: Slots, *, role: str) -> None:
     """Refuse ``fn``, about to be called with ``slots`` by name, if that would override what a partial froze (#2869).
 
     Where it is not called by name, as a positional binding is not, the frozen value stands, and this does not apply.

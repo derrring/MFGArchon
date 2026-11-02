@@ -19,7 +19,6 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import DualHamiltonian, DualLagrangian, QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import applicator_graph as graph
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -330,29 +329,10 @@ def test_a_frozen_volatility_is_refused_before_the_solve_starts():
     assert not calls
 
 
-@pytest.mark.parametrize(
-    "read",
-    [
-        lambda v: MFGProblem(
-            geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[5], boundary_conditions=no_flux_bc(dimension=1)),
-            T=0.5,
-            Nt=2,
-            volatility=v,
-            components=MFGComponents(
-                hamiltonian=SeparableHamiltonian(
-                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m
-                ),
-                m_initial=lambda x: 1.0,
-                u_terminal=lambda x: 0.0,
-            ),
-        ),
-        lambda v: CoefficientField(v, 0.1, "volatility"),
-    ],
-    ids=["MFGProblem", "CoefficientField, a solver's argument"],
-)
-def test_the_other_ways_a_volatility_arrives_refuse_it_too(read):
+def test_a_solvers_own_volatility_argument_is_refused_too():
+    """A solver takes a volatility as its own argument, into `CoefficientField`, with no problem to read it first."""
     with pytest.raises(TypeError, match=r"^volatility .* freezes t by keyword: called by name"):
-        read(functools.partial(lambda t, x, m: 0.2 + t, t=0.45))
+        CoefficientField(functools.partial(lambda t, x, m: 0.2 + t, t=0.45), 0.1, "volatility")
 
 
 def test_what_a_raw_hamiltonian_is_told_about_a_frozen_measure_is_accepted_and_reads_it():
