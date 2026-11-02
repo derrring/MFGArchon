@@ -1,0 +1,1 @@
+- **`uv.lock` moves numpy from 2.5.2 to 2.5.4**, the version the nightly suite already runs on Linux. No other package's version changes. `uv` 0.13.6 also rewrites the lock's `revision`, from 3 to 5, and reorders its `resolution-markers`.
