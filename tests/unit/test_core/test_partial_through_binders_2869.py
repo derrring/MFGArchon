@@ -435,7 +435,8 @@ class _FamilyWithStars(SeparableHamiltonian):
         lambda: DualLagrangian(functools.partial(lambda t, x, p, **kw: kw["m"], m=0.5)),
         lambda: _call_h(
             functools.partial(
-                _FamilyWithStars(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m).custom, m=0.5
+                _FamilyWithStars(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m).custom,
+                m=0.5,
             ),
             0.0,
             7.0,
@@ -459,7 +460,9 @@ def test_a_door_that_passes_every_slot_overrides_what_is_frozen_into_kw(read):
         read()
 
 
-@pytest.mark.parametrize("partial", [lambda x, m, time=0.0: 0.2 + time, lambda time, x, m: 0.2 + time], ids=["last", "first"])
+@pytest.mark.parametrize(
+    "partial", [lambda x, m, time=0.0: 0.2 + time, lambda time, x, m: 0.2 + time], ids=["last", "first"]
+)
 def test_an_alias_a_door_never_passes_stands(partial):
     field = CoefficientField(functools.partial(partial, time=0.45), 0.1, "volatility")
     assert field.evaluate_at(2, np.linspace(0.0, 1.0, 3), np.ones(3), 0.25) == pytest.approx(0.65)
@@ -512,4 +515,6 @@ def test_what_the_validators_tell_a_positional_partial_keeps_what_it_froze(valid
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
     result = validate(functools.partial(lambda a, b, c, d: a + b + c + d, 9.0), grid)
     assert not result.is_valid
-    assert any("passing the frozen value by keyword" in (issue.suggestion or "") for issue in result.issues), result.issues
+    assert any("passing the frozen value by keyword" in (issue.suggestion or "") for issue in result.issues), (
+        result.issues
+    )
