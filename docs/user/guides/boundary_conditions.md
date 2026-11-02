@@ -353,12 +353,12 @@ not have:
 - HJB-GFDM (through `BCSegment.get_value`) passes both, so it reads `inlet_profile(t, x)` above.
 
 A boundary value is a function you write, a `def` or a `lambda` (or a `functools.partial` of one), since its
-parameter names are what tell the library what it reads. A partial freezes a slot by position, `partial(g, 0.25)`
-for `g(t, x)`: one that freezes it by keyword is refused, since the slot passed by name would override it. Any other callable is refused when the segment is built:
+parameter names are what tell the library what it reads. A partial that freezes by position freezes the first
+parameter, whichever it is: `partial(g, 0.25)` fixes `t` for `g(t, x)`, and `x` for a `g(x, t)`. One that freezes a slot by keyword is refused, since the slot passed by name would override it: write `lambda x: g(x=x, t=0.25)` instead. Any other callable is refused when the segment is built:
 a SciPy interpolant, a class instance, a bound method, a builtin or NumPy ufunc, a vectorized or jax-wrapped
 function. Wrap it in a function that names what it reads. An interpolant over time data takes `(x, ...)` and would
 read the time data at the position, so for `s = CubicSpline(times, values)` or `s = interp1d(times, values)` pass
-`value=lambda t: s(t)`; for `np.sin`, `value=lambda t: np.sin(t)`.
+`value=lambda t: s(t)`; for `np.sin`, `value=lambda t: np.sin(t)`. A callable that reads space is wrapped as `value=lambda x: f(x)`, and one that reads both as a function of `(t, x)` that passes each argument to the parameter that reads it.
 
 ## Lazy Dimension Binding
 

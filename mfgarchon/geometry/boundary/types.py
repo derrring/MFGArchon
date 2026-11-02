@@ -886,8 +886,6 @@ def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
         BOUNDARY_VALUE_SLOTS,
         role="boundary value",
         ruling="#2512 row B2",
-        wrap="`lambda t: f(t)`, `lambda t: s(t)` for an interpolant over time, or `lambda t: np.sin(t)`",
-        wrap_unnamed="`lambda t: f(t)` or `lambda x: f(x[0])`",
     )
 
 
