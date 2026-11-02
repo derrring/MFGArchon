@@ -81,7 +81,7 @@ jobs:
           # The test_visualization --ignore removes nothing: the directory tracks only __init__.py.
           # It mirrors nightly.yml's and stays as #1659's record. tests/unit/test_backends runs here
           # since #1659; its torch tests skip on the test itself. -n auto as nightly.yml: run serially
-          # the same version took 16 minutes in one run and passed the 30-minute budget in another (#2854). --all counts the
+          # the same version took 16 minutes in one run and passed the then 30-minute budget in another (#2854). --all counts the
           # installed CPUs: plain nproc honours OMP_NUM_THREADS, set above, and would print 1. xdist's "created: N/N workers"
           # line records the workers a run used.
           nproc --all
