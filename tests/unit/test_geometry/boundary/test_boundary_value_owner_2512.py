@@ -21,7 +21,7 @@ from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, SOLVER_SOURCE_SL
 _OUT_OF_ORDER = r"out of order\. Since #2378 phase 5 \(#2375 ruling 8\) a boundary value takes \(t, x\), time first"
 _NOT_ALL_NAMED = r"whose parameters are not all named after the slots: a boundary value names them t, x, time first"
 _REFUSED = {
-    "unnamed one-arg": (lambda s: s, r"cannot be matched to \(t, x\)\. Name its parameters t, x, time first"),
+    "unnamed one-arg": (lambda s: s, r"cannot be matched to \(t, x\)\. Name each parameter after what it reads"),
     "unnamed two-arg": (lambda a, b: a, r"none of its parameters is named after a slot"),
     "(x, t)": (lambda x, t: t, _OUT_OF_ORDER),
     "(point, time)": (lambda point, time: time, _OUT_OF_ORDER),
@@ -73,7 +73,7 @@ def test_the_unnamed_refusal_offers_no_positional_binding_to_a_reordered_role():
     with pytest.raises(TypeError) as excinfo:
         bind_user_callable(lambda s: s, POTENTIAL_SLOTS, role="potential")
     assert "positionally" not in str(excinfo.value)
-    assert "time first (#2378 phase 5, #2375 ruling 8)" in str(excinfo.value)
+    assert "put them in the order (t, x), time first" in str(excinfo.value)
     with pytest.raises(TypeError, match="or take exactly 2 positionally in that order"):
         bind_user_callable(lambda s: s, SOLVER_SOURCE_SLOTS, role="source term")
     assert bind_user_callable(lambda a, b: a, SOLVER_SOURCE_SLOTS, role="source term")(t=0.5, x=0.9) == 0.5

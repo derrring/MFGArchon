@@ -92,6 +92,20 @@ VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)
 _TIME_NAMES = ("t", "time")
 
 
+def _reorder_advice(order: tuple[str, ...]) -> str:
+    """A refusal's advice, by what each parameter reads. Named after the slots in the order they are written, a callable
+    keeps that order, and one written time last would read its arguments in the wrong slots (#2861)."""
+    if "t" in order:
+        time_last = ", ".join([*(slot for slot in order if slot != "t"), "time"])
+        target, swapped = f"({', '.join(order)}), time first", f"one written ({time_last})"
+    else:
+        target, swapped = f"({', '.join(order)})", "one written in another order"
+    return (
+        f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order)} in the "
+        f"order it is written, {swapped} would read its arguments in the wrong slots."
+    )
+
+
 def bind_user_callable(
     fn: Callable[..., Any],
     slots: Slots,
@@ -164,8 +178,7 @@ def bind_user_callable(
             # arguments than it did (#2406 review: `(x, *rest)` got t as x). Neither is the old call.
             raise TypeError(
                 f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}): "
-                f"{', '.join(misplaced_here)} would receive another slot's value. It takes "
-                f"({', '.join(order_)}); name its parameters in that order."
+                f"{', '.join(misplaced_here)} would receive another slot's value. {_reorder_advice(order_)}"
             )
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
@@ -187,17 +200,7 @@ def bind_user_callable(
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
-    # Named after the slots in the order they are written, a callable keeps that order, and one written time last
-    # would read its arguments in the wrong slots: the advice is to reorder, by what each parameter reads.
-    if "t" in order_:
-        time_last = ", ".join([*(slot for slot in order_ if slot != "t"), "time"])
-        target, swapped_ = f"({', '.join(order_)}), time first", f"one written ({time_last})"
-    else:
-        target, swapped_ = f"({', '.join(order_)})", "one written in another order"
-    reorder = (
-        f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order_)} in the "
-        f"order it is written, {swapped_} would read its arguments in the wrong slots."
-    )
+    reorder = _reorder_advice(order_)
     if misplaced:
         why = f": {', '.join(misplaced)} would receive another slot's value. {reorder}"
     elif passes is not None and not var_positional:
@@ -208,7 +211,7 @@ def bind_user_callable(
     elif slots.reordered:
         # A reordered role binds a positional callable only if a parameter name says which order it is in, so
         # "take them positionally" would lead an unnamed callable into the refusal above (#2512 row B2).
-        why = f". Name its parameters {', '.join(order_)}, time first (#2378 phase 5, #2375 ruling 8)."
+        why = f". {reorder}"
     else:
         why = f". Name its parameters {', '.join(order_)}, or take exactly {len(order_)} positionally in that order."
     raise TypeError(
@@ -333,8 +336,8 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
         if out_of_order(names, slots):
             raise TypeError(
                 f"{cls.__qualname__}.{name} takes ({', '.join(names)}), which is out of order. Since #2378 phase 5 "
-                f"(#2375 ruling 8) it takes ({', '.join(slots.order)}), time first: reorder the parameters, and "
-                f"call the method by keyword."
+                f"(#2375 ruling 8) it takes ({', '.join(slots.order)}){', time first' if 't' in slots.order else ''}: "
+                f"reorder the parameters, and call the method by keyword."
             )
 
 

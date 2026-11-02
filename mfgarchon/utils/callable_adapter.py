@@ -114,8 +114,7 @@ def adapt_ic_callable(
     if isinstance(func, functools.partial) and frozen:
         raise TypeError(
             f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
-            f"reads {role} at its own time. It takes (t, x) or (x): pass lambda x: f({func.keywords[frozen[0]]!r}, x) "
-            f"to fix the time yourself."
+            f"reads {role} at its own time. It takes (t, x) or (x): {_advice_to_fix_the_time(func, frozen[0])}"
         )
 
     names = _positional_names(func)
@@ -186,6 +185,28 @@ def adapt_ic_callable(
         if found is not None:
             return found
     raise refuse()
+
+
+def _advice_to_fix_the_time(partial: functools.partial, time_name: str) -> str:
+    """How to fix a partial's time by hand. By keyword, with the names its function reads, since a lambda that passes
+    the time first reads an ``f(x, t)`` swapped (#2861). Where those names cannot be read, or more than the one space
+    parameter is left to pass, the advice writes no lambda."""
+    kinds = inspect.Parameter
+    try:
+        left = [
+            p
+            for p in inspect.signature(partial).parameters.values()
+            if p.default is kinds.empty and p.kind not in (kinds.VAR_POSITIONAL, kinds.VAR_KEYWORD)
+        ]
+    except (TypeError, ValueError):  # a builtin, a ufunc, a C extension
+        left = []
+    if len(left) == 1 and left[0].kind is not kinds.POSITIONAL_ONLY and not partial.args and len(partial.keywords) == 1:
+        return (
+            f"pass lambda x: f({left[0].name}=x, {time_name}={partial.keywords[time_name]!r}) to fix the time yourself."
+        )
+    return (
+        "pass a function of x alone that fixes the time itself, passing each argument to the parameter that reads it."
+    )
 
 
 def _probe_space_only(
