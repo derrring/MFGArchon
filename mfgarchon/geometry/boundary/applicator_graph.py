@@ -198,9 +198,11 @@ class _Constant:
 # The wraps a refusal advises, for each order a callable may be written in: one written in the order before #2378
 # phase 5 and wrapped time first would be read swapped.
 _VALUE_WRAP = "`lambda t, node: f(t, node)`, or `lambda t, node: f(node, t)` for one that takes the node first"
+# A rule has six orders, so each wrap names the one it is for, and any other is wrapped by what each parameter reads.
 _RULE_WRAP = (
-    "`lambda t, node, field: f(t, node, field)`, or `lambda t, node, field: f(field, node, t)` for one written in "
-    "`set_custom_bc`'s old order"
+    "`lambda t, node, field: f(t, node, field)` for one written (t, node, field), "
+    "`lambda t, node, field: f(field, node, t)` for one written in `set_custom_bc`'s old order, (field, node, t), and "
+    "for one written in any other order a wrap that passes each argument to the parameter that reads it"
 )
 
 
