@@ -128,16 +128,6 @@ def test_a_slot_frozen_on_an_unnamed_tail_stands_where_the_library_does_not_pass
             309.0,
         ),
         (
-            lambda f: adapt_ic_callable(f, 1, 3.0, role="m_initial")[1](3.0),
-            functools.partial(lambda a, t=0.0: 100.0 * t + a, t=0.5),
-            53.0,
-        ),
-        (
-            lambda f: adapt_ic_callable(f, 1, 3.0, role="m_initial")[1](3.0),
-            functools.partial(lambda x, **kw: 100.0 * kw["t"] + x, t=0.5),
-            53.0,
-        ),
-        (
             lambda f: cp.bind_user_callable(f, cp.SOLVER_SOURCE_SLOTS, role="r")(t=0.25, x=3.0),
             functools.partial(lambda *a, t=0.0: a[0] + 100.0 * a[1] + 1000.0 * t, t=0.7),
             1000.25,
@@ -148,7 +138,7 @@ def test_a_slot_frozen_on_an_unnamed_tail_stands_where_the_library_does_not_pass
             710.0,
         ),
     ],
-    ids=["a condition, x", "a condition, time", "a condition, time into **kw", "a source, *a", "a Lagrangian, *a"],
+    ids=["a condition, x", "a source, *a", "a Lagrangian, *a"],
 )
 def test_a_slot_frozen_where_the_library_does_not_pass_it_reads_what_it_froze(read, partial, meant):
     assert read(partial) == meant
@@ -286,6 +276,22 @@ def test_a_slot_other_than_time_frozen_on_a_condition_keeps_its_refusal():
         adapt_ic_callable(functools.partial(lambda t, x: 100.0 * t + x, x=9.0), 1, 3.0, role="m_initial")
     with pytest.raises(TypeError, match=r"fixes t=0\.7, but the library reads m_initial at its own time"):
         adapt_ic_callable(functools.partial(lambda t, x: 100.0 * t + x, t=0.7), 1, 3.0, role="m_initial")
+
+
+@pytest.mark.parametrize(
+    "partial",
+    [
+        functools.partial(lambda a, t=0.0: 100.0 * t + a, t=0.5),
+        functools.partial(lambda x, **kw: 100.0 * kw["t"] + x, t=0.5),
+        functools.partial(lambda c, t=0.0, x=0.0: 100.0 * x + c + 1000.0 * t, t=0.5),
+    ],
+    ids=["no name for x", "into **kw", "x keeps its default"],
+)
+def test_a_condition_refuses_a_frozen_time_wherever_it_is_frozen(partial):
+    """No binding passes these their ``t``, so a binder would let them stand, and the last would read 503.0 at x = 3 with no
+    error and its ``x`` at its default. The library reads a condition at its own time, so the frozen one is refused."""
+    with pytest.raises(TypeError, match=r"fixes t=0\.5, but the library reads m_initial at its own time"):
+        adapt_ic_callable(partial, 1, 3.0, role="m_initial")
 
 
 def _problem(*, hamiltonian=None, model=None, problem=None):

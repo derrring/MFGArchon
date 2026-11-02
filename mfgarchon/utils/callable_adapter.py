@@ -119,6 +119,17 @@ def adapt_ic_callable(
     def refuse() -> TypeError:
         return TypeError(_format_signature_error(func, dimension, attempts))
 
+    time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
+    frozen_time = frozen_by_keyword(func, time_names)
+    if frozen_time:
+        name, value = next(iter(frozen_time.items()))
+        raise TypeError(
+            f"{role} is or wraps a functools.partial that fixes {name}={value!r}, but the library reads {role} at its own "
+            f"time: pass a function of x alone that fixes the time itself, passing each argument to the parameter that "
+            f"reads it, such as `lambda x: f(x=x, {name}=T)` for an f that takes just x and {name}, with T the time you "
+            f"want."
+        )
+
     names = _positional_names(func)
     if names is None:
         # No readable signature (a builtin, a C extension): x alone is all that can be read.
@@ -130,17 +141,8 @@ def adapt_ic_callable(
 
     try:
         bound = bind_user_callable(func, CONDITION_SLOTS, role=role, spatial_only=True)
-    except FrozenSlotError as refusal:
-        time_frozen = [name for name in refusal.frozen if CONDITION_SLOTS.slot_of()[name] == "t"]
-        if not time_frozen:
-            raise
-        name = time_frozen[0]
-        raise TypeError(
-            f"{role} is a functools.partial that fixes {name}={frozen_by_keyword(func, (name,))[name]!r}, but the "
-            f"library reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
-            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {name}=T)` for an f that takes "
-            f"just x and {name}, with T the time you want."
-        ) from refusal
+    except FrozenSlotError:
+        raise
     except TypeError as refusal:
         if out_of_order(names, CONDITION_SLOTS):
             raise
