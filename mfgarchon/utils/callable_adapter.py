@@ -120,8 +120,8 @@ def adapt_ic_callable(
         raise TypeError(
             f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
             f"reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
-            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that names "
-            f"them x and {frozen[0]}, with T the time you want."
+            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that takes "
+            f"just x and {frozen[0]}, with T the time you want."
         )
 
     names = _positional_names(func)

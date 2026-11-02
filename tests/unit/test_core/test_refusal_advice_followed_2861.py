@@ -118,13 +118,13 @@ def test_a_callable_that_cannot_be_bound_by_name_is_told_in_words_not_with_a_lam
     ids=["t,x", "x,t", "time,x", "x,time"],
 )
 def test_the_example_for_a_partial_fixing_time_reads_right_in_either_order(written):
-    """It was ``lambda x: f(0.25, x)``, whatever order f is written in. The example holds for an f that names x and the
+    """It was ``lambda x: f(0.25, x)``, whatever order f is written in. The example holds for an f that takes just x and the
     time, and takes the time the caller wants: frozen at 0.7 and read at T = 0.25, a value copied from the partial, or a
     slot left to override it, would not read 28.0."""
     time_name = "time" if "time" in written.__code__.co_varnames else "t"
     with pytest.raises(TypeError) as refused:
         adapt_ic_callable(functools.partial(written, **{time_name: 0.7}), 1, 3.0, role="m_initial")
-    example = re.search(r"such as `(lambda x: f\(.*?\))` for an f that names them x and (\w+)", str(refused.value))
+    example = re.search(r"such as `(lambda x: f\(.*?\))` for an f that takes just x and (\w+)", str(refused.value))
     assert example.group(2) == time_name, str(refused.value)
     _, read = adapt_ic_callable(eval(example.group(1), {"f": written, "T": 0.25}), 1, 3.0, role="m_initial")
     assert read(3.0) == 28.0
