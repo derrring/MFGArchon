@@ -85,12 +85,29 @@ def test_newtons_result_lists_its_inner_failures_as_every_coupler_does():
 
 
 @pytest.mark.parametrize(("stop", "max_iterations"), [("a named stop", 20), ("an exhausted budget", 6)])
-def test_newtons_reason_says_how_it_stopped(stop, max_iterations):
+def test_newtons_reason_says_how_it_stopped(stop, max_iterations, monkeypatch):
     """Newton's reason follows its stop (#2644 review 3, M-2). On a named stop, here line_search_failed, NewtonSolver
     returns the iterate its last verdict judged; when its budget runs out, it evaluates F at its last iterate without a
-    verdict, so that verdict read the iterate before. The stop is read from NewtonSolver's own warning."""
-    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+    verdict, so that verdict read the iterate before. The stop is read from NewtonSolver's own warning.
 
+    The named stop is made at the line search, which returns its failure value, 0.0, at its third call: the first whose
+    iterate a verdict has judged to meet the criteria and refused for the failed inner solves, at ||F|| near 1e-7.
+    NewtonSolver's own handling of a 0.0 step then stops the solve. Left to itself this fixture fails a line search only
+    at the round-off floor, at ||F|| near 1e-16 with a best Armijo ratio of 1.000000000191: at the 8th search on one
+    stack, at the 6th on another, and within 20 iterations not at all on Linux (#2858). Its budget of 6 runs out after 3
+    searches, every one accepted."""
+    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+    from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver
+
+    searched = []
+    if stop == "a named stop":
+        real = NewtonSolver._backtracking_line_search
+
+        def fails_at_its_third_call(self, F, x, delta_x, F_x, *args, **kwargs):
+            searched.append(float(np.linalg.norm(F_x)))
+            return 0.0 if len(searched) == 3 else real(self, F, x, delta_x, F_x, *args, **kwargs)
+
+        monkeypatch.setattr(NewtonSolver, "_backtracking_line_search", fails_at_its_third_call)
     p = _problem(n=5, nt=3)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -105,6 +122,7 @@ def test_newtons_reason_says_how_it_stopped(stop, max_iterations):
     reason = info["convergence_reason"]
     if stop == "a named stop":
         assert stops == {"line_search_failed"}, stops
+        assert len(searched) == 3 and searched[2] > 1e-10, searched  # it stopped at that call, far above round-off
         assert reason.startswith(
             "Newton stopped: line_search_failed; its last verdict, on the iterate returned: inner_hjb_not_converged"
         ), reason
