@@ -151,6 +151,7 @@ def test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value(ki
     - every step solves the discrete Bellman equation, with the minimum over each node's fan sectors taken here
       (`_sector_hamiltonian`) and not from the scheme's policy: the largest interior residual over the steps is at
       most 1e-7 of the largest |u_next / dt|."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     (e_coarse, solver, U, nt, points, interior), (e_fine, *_) = _lq_run(225, kind), _lq_run(400, kind)
     order = np.log(e_coarse / e_fine) / np.log(np.sqrt(L_BOX**2 / 225) / np.sqrt(L_BOX**2 / 400))
     assert order >= 0.6, f"{kind}: EOC {order:.3f} from L2 errors {e_coarse:.4e} -> {e_fine:.4e}"
@@ -173,6 +174,7 @@ def test_positive_qp_fan_solves_the_discrete_bellman_equation_at_a_control_cost_
     """The LQ problem at c = 4 on the jittered cloud, N_int = 225: every step solves the discrete Bellman equation to
     1e-7 of the largest |u_next / dt|, as at c = 1. At c = 1 a policy that projects -g instead of -g / c onto a
     sector's rays is the same policy, and the lambda test's linear u never needs the projection (#2750 review 3)."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     _, solver, U, nt, _, interior = _lq_run(225, "jittered", cost=4.0)
     worst, scale = _bellman_residual(solver, U, nt, interior, 4.0)
     assert worst <= 1e-7 * scale, f"c = 4: Bellman residual {worst:.3e} against max|u_next / dt| {scale:.3e}"
@@ -185,6 +187,7 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
     sector gradient is ``a``, the projection of ``-a / lam`` onto its sector is exact, and L is exact on P2. #2750's
     round 2 measured max|U - u*| 1.6e-12 (lam 0.25) and 7.8e-12 (lam 4) here; with the control cost's lambda set to 1
     in the policy and the Lagrangian, 0.78 and 0.19; in the policy alone, 0.59 and 7.6e+111."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     a, potential = np.array([0.3, -0.2]), 0.5
 
     def u_linear(t, x):
@@ -226,6 +229,8 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
     """Each refusal names what it cannot do (D5 of #1689 comment 6246915117). The boundary conditions the scheme
     cannot close, and a reflecting face adopted after construction, are refused in
     `test_positive_qp_fan_reflecting_1689.py` (#1689 PR 4), which closes a reflecting face."""
+    if row == "a fan that cannot close":  # the others refuse before the fan is built
+        pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     if row == "one dimension":
         from mfgarchon.geometry.boundary import dirichlet_bc
 
@@ -278,6 +283,7 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
 def test_a_dirichlet_frame_valued_by_a_provider_constructs():
     """The scheme's boundary check reads each point's condition type and evaluates no value, so a Dirichlet frame whose
     value a provider resolves per iteration is admitted (#2750 review 1)."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     from mfgarchon.geometry.boundary import ConstantProvider
 
     bc = BoundaryConditions(
@@ -301,6 +307,7 @@ def test_the_positive_laplacian_scales_with_the_cloud():
     """The cloud scaled from a box of side 20 to one of side 1e-3 gives the Laplacian scaled by (20 / 1e-3)^2: the
     row's QP is solved in units of the node's h6. Solved in the cloud's own units, CLARABEL called
     every row of the small box infeasible and the operator refused all 225 (#2750 review 2)."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     points, _ = _cloud(225, "jittered")
     interior = np.arange(225)
     big = PositiveQPFan(points, interior, GuardedFanParameters())

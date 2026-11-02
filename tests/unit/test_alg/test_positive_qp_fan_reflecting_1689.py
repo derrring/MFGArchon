@@ -133,6 +133,7 @@ def test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator(
     mirror rows are as many as the paper's reach places, every interior node whose nearest reflecting face lies within
     3/5 of its pool's radius, x_max not mirrored where it is Dirichlet (R-D4). And every matrix Howard solves has the
     M-matrix sign pattern, boundary rows included: no off-diagonal entry is positive (review 1 of #2783, B3)."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     from mfgarchon.alg.numerical.hjb_solvers import hjb_howard
 
     solved = []
@@ -171,6 +172,7 @@ def test_each_mirror_row_is_the_papers_qp():
     with ``s_ij`` the source's inward distance to the face and ``delta_i`` the pool's radius (chap_01
     eq:bc_gamma_main), the ghosts then folded onto their sources. Solved in units of ``delta_i``. A different
     ``s_ij`` or ``delta_i`` moves the rows where the certificate binds."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     import cvxpy as cp
 
     points, boundary = _sobol(900)
@@ -246,6 +248,19 @@ def _frame_problem(bc, nt=4):
     )
 
 
+#: The rows refused only after the positive fan's QP has built an operator, which takes cvxpy. The others are refused first.
+_REFUSED_AFTER_THE_FAN_IS_BUILT = {
+    "an obstacle in a domain with a reflecting face",
+    "a layer node no mirror row places",
+    "a layer node failing only the obliqueness certificate",
+    "a layer node with no complete physical fan",
+    "a reflecting face adopted after construction",
+    "a reflecting face adopted after construction, solved by HJBHowardSolver directly",
+    "a corner given a value-copy row after construction",
+    "a corner given a Dirichlet row after construction",
+}
+
+
 @pytest.mark.parametrize(
     "row",
     [
@@ -276,6 +291,8 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
     either direction. A no-flux datum is read as a Neumann one is, since HJB-GFDM writes them as one row (review 1 of
     #2783, B1), and zero is what the library's one owner of that question calls zero, so a complex datum is refused
     (review 2, N1)."""
+    if row in _REFUSED_AFTER_THE_FAN_IS_BUILT:
+        pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     from mfgarchon.geometry.boundary import neumann_bc, periodic_bc, robin_bc
 
     points, boundary = _frame_cloud()
@@ -418,6 +435,7 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
 def test_a_stored_all_zero_datum_reflects():
     """Review 2 of #2783: a reflecting datum is zero where `bc_utils._describe_bc_value`, the library's one owner of
     that question, calls it zero, so an all-zero array closes the faces by value-copy rows as 0 does."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     points, boundary = _frame_cloud()
     walls = BoundaryConditions(
         segments=[BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=np.zeros(3))], dimension=2

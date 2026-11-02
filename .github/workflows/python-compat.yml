@@ -74,7 +74,10 @@ jobs:
         run: |
           # The test_visualization --ignore removes nothing: the directory tracks only __init__.py.
           # It mirrors nightly.yml's and stays as #1659's record. tests/unit/test_backends runs here
-          # since #1659; its torch tests skip on the test itself.
-          pytest tests/unit -q -p no:cacheprovider \
+          # since #1659; its torch tests skip on the test itself. -n auto as ci.yml and nightly.yml: run serially
+          # the same version took 16 minutes in one run and passed the 30-minute budget in another (#2854). nproc records
+          # what each run drew.
+          nproc
+          pytest tests/unit -q -n auto -p no:cacheprovider \
             --ignore=tests/unit/test_visualization/ \
             -m "not slow and not benchmark and not experimental and not optional_torch and not environment"

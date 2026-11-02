@@ -256,6 +256,7 @@ def test_positive_qp_fan_reads_a_zero_neumann_datum_as_its_reflecting_face():
     """``hjb_gfdm_positive_qp_fan/neumann_2d``'s routing pin (owed by #2512 comment 6333097202): positive_qp_fan admits
     NEUMANN with a zero datum as a reflecting face (``reflecting_types``), so on 1689's box it solves as NO_FLUX, array
     for array, whether written uniform or per face. A nonzero datum is refused (1689's reflecting test)."""
+    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
     points, boundary = _sobol(900, seed=42)
 
     def solve(bc):
