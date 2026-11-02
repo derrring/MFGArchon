@@ -482,7 +482,7 @@ Time-first also agrees with § *Arrays, grids and time* and with `scipy.integrat
   `lambda` (or a `functools.partial` of one); any other callable is refused, with the advice to wrap it, such as
   `lambda t: s(t)` for an interpolant `s`. Called by name, it is passed only the slots it names: a `*args` or
   `**kwargs` parameter, which nothing reaches, is refused, and so is a partial that freezes a slot by keyword, which
-  the slot passed by name would override; freeze it by position instead. This is stricter than a potential or a raw Hamiltonian, which may be a
+  the slot passed by name would override; write a function of the slots it reads instead, passing the frozen value by keyword, such as `lambda x: g(x=x, t=0.25)`. This is stricter than a potential or a raw Hamiltonian, which may be a
   class instance: the readers of a boundary value differ in what they can pass, and boundary data are often time
   series, whose interpolants name their argument `x`, so a callable whose names were not written for the slots
   would be read at the wrong argument.

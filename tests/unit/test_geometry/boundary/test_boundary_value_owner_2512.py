@@ -19,7 +19,7 @@ from mfgarchon.geometry.boundary.types import segment_value
 from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, SOLVER_SOURCE_SLOTS, bind_user_callable
 
 _OUT_OF_ORDER = r"out of order\. Since #2378 phase 5 \(#2375 ruling 8\) a boundary value takes \(t, x\), time first"
-_NOT_ALL_NAMED = r"whose parameters are not all named after the slots: a boundary value names them t, x, time first"
+_NOT_ALL_NAMED = r"whose parameters are not all named after the slots, and a boundary value is called by name"
 _REFUSED = {
     "unnamed one-arg": (lambda s: s, r"cannot be matched to \(t, x\)\. Name each parameter after what it reads"),
     "unnamed two-arg": (lambda a, b: a, r"none of its parameters is named after a slot"),
@@ -69,13 +69,11 @@ def test_a_callable_named_after_its_slots_is_called_by_keyword_with_what_it_decl
 def test_the_unnamed_refusal_offers_no_positional_binding_to_a_reordered_role():
     """The binder's advice for an unnamed callable used to end "or take exactly 2 positionally in that order", which
     under a reordered role leads into the next refusal. Pinned on a second reordered role, the potential, and with a
-    control: a role ruling 8 did not reorder still binds positionally, so the advice stays there, and holds."""
+    control: a role ruling 8 did not reorder still binds positionally, though the advice no longer says so (#2861)."""
     with pytest.raises(TypeError) as excinfo:
         bind_user_callable(lambda s: s, POTENTIAL_SLOTS, role="potential")
     assert "positionally" not in str(excinfo.value)
     assert "put them in the order (t, x), time first" in str(excinfo.value)
-    with pytest.raises(TypeError, match="or take exactly 2 positionally in that order"):
-        bind_user_callable(lambda s: s, SOLVER_SOURCE_SLOTS, role="source term")
     assert bind_user_callable(lambda a, b: a, SOLVER_SOURCE_SLOTS, role="source term")(t=0.5, x=0.9) == 0.5
 
 

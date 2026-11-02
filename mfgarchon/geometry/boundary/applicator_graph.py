@@ -219,7 +219,6 @@ def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
                 role="graph node value",
                 ruling="#2296",
                 wrap=_VALUE_WRAP,
-                wrap_unnamed=_VALUE_WRAP,
             )
         except TypeError as refused:
             raise TypeError(f"{where}: {refused}") from refused
@@ -235,9 +234,7 @@ def _rule_reader(rule: object, where: str) -> BoundCallable:
     if not callable(rule):
         raise TypeError(f"{where} is {_shown(rule)}; it takes {ACCEPTED_FORMS['rule']} (#2296).")
     try:
-        return bind_by_name(
-            rule, NODE_RULE_SLOTS, role="graph CUSTOM rule", ruling="#2296", wrap=_RULE_WRAP, wrap_unnamed=_RULE_WRAP
-        )
+        return bind_by_name(rule, NODE_RULE_SLOTS, role="graph CUSTOM rule", ruling="#2296", wrap=_RULE_WRAP)
     except TypeError as refused:
         raise TypeError(f"{where}: {refused}") from refused
 

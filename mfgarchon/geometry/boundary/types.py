@@ -886,8 +886,8 @@ def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
         BOUNDARY_VALUE_SLOTS,
         role="boundary value",
         ruling="#2512 row B2",
-        wrap="`lambda t: f(t)`, `lambda t: s(t)` for an interpolant over time, or `lambda t: np.sin(t)`",
-        wrap_unnamed="`lambda t: f(t)` or `lambda x: f(x[0])`",
+        wrap="`lambda t: f(t)` for one that reads time, `lambda x: f(x)` for one that reads space, or for one that reads "
+        "both a function of (t, x) that passes each argument to the parameter that reads it",
     )
 
 
