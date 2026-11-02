@@ -65,8 +65,8 @@ class Slots:
 
 # The argument order of each user-supplied callable the library invokes: time, then space, then the
 # u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
-# These are the one statement of it. `CoefficientField`, `DualHamiltonian`, `DualLagrangian` and the validators' reading
-# of a family's method call a callable by name with no binding, and read `refuse_overridden` (#2864).
+# These are the one statement of it. `CoefficientField` (#2864), `DualHamiltonian`, `DualLagrangian` and the validators'
+# reading of a family's method call a callable by name with no binding, and read `refuse_overridden` (#2869).
 POTENTIAL_SLOTS = Slots(("t", "x"))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
