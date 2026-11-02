@@ -43,7 +43,6 @@ from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
     BoundCallable,
     bind_user_callable,
-    lambda_fixing,
     out_of_order,
 )
 
@@ -118,16 +117,11 @@ def adapt_ic_callable(
     time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
     frozen = sorted(set(getattr(func, "keywords", None) or {}) & set(time_names))
     if isinstance(func, functools.partial) and frozen:
-        wrapped = lambda_fixing(func, CONDITION_SLOTS, other_reads="x")
         raise TypeError(
             f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
-            f"reads {role} at its own time: "
-            + (
-                f"pass {wrapped} to fix the time yourself."
-                if wrapped
-                else "pass a function of x alone that fixes the time itself, passing each argument to the parameter "
-                "that reads it."
-            )
+            f"reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
+            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that names "
+            f"them x and {frozen[0]}, with T the time you want."
         )
 
     names = _positional_names(func)
@@ -157,7 +151,7 @@ def adapt_ic_callable(
         if "x" not in bound.passes:
             raise TypeError(
                 f"{role} {getattr(func, '__qualname__', func)!r} takes time and no space. It is a function of "
-                f"space: it takes (t, x), time first, or (x). Name its space parameter x."
+                f"space. Name its space parameter x."
             )
         result, err = _try_call(functools.partial(bound, t=time_value), x=sample)
         if err is None and _is_valid_output(result):
@@ -186,7 +180,7 @@ def adapt_ic_callable(
             (
                 "f(*args, **kwargs)",
                 f"names none of its parameters, so which argument is time cannot be read. If {role} wraps "
-                f"another function, decorate the wrapper with functools.wraps; otherwise take (t, x) or (x)",
+                f"another function, decorate the wrapper with functools.wraps; otherwise name its parameters after what they read",
             )
         )
         raise refuse()

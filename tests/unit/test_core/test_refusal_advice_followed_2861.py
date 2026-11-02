@@ -1,8 +1,8 @@
 """A refusal's advice, followed as it says on a callable written in another order, reads right (#2861).
 
 Each row reads the advice from the message, follows every arm it offers, and reads the result. A rename in place keeps
-the order the callable is written in, and a freeze by position freezes the first parameter, so either reads a callable
-written another way swapped, with no error. Here f = 100 t + x at t = 0.25, x = 3: 28.0 read right, 300.25 swapped.
+the order the callable is written in, so it reads a callable written another way swapped, with no error. Here
+f = 100 t + x at t = 0.25, x = 3: 28.0 read right, 300.25 swapped.
 """
 
 from __future__ import annotations
@@ -74,49 +74,37 @@ def test_every_arm_of_a_binders_advice_reads_right(read, names, reads, star):
         assert read(arm)(**{slot: _AT[slot] for slot in slots}) == sum(_COEF[slot] * _AT[slot] for slot in slots)
 
 
-@pytest.mark.parametrize(
-    ("read", "names", "frozen"),
-    [
-        (bind_boundary_value, ["x", "t"], "t"),
-        (bind_boundary_value, ["t", "x"], "x"),
-        (lambda f: graph._value_reader(f, "r"), ["t", "node"], "node"),
-        (lambda f: graph._rule_reader(f, "r"), ["node", "t", "field"], "t"),
-    ],
-    ids=["grid, x then t", "grid, t then x", "graph value", "graph rule"],
-)
-def test_the_advice_for_a_slot_frozen_by_keyword_reads_right(read, names, frozen):
-    """It said "Freeze it by position", which freezes the first parameter, whichever it is."""
-    f = _written(names, names)
-    with pytest.raises(TypeError) as refused:
-        read(functools.partial(f, **{frozen: _AT[frozen]}))
-    message = str(refused.value)
-    want = sum(_COEF[slot] * _AT[slot] for slot in names)
-    if "Freeze it by position" in message:
-        kept = read(functools.partial(f, _AT[frozen]))
-        assert kept(**{slot: _AT[slot] for slot in kept.passes}) == want
-    wrapped = re.search(r"`(lambda [^`]*: f\([^`]*\))`", message)
-    assert wrapped, message
-    bound = read(eval(wrapped.group(1), {"f": f}))
-    assert bound(**{slot: _AT[slot] for slot in names}) == want
+def _positional_only(t, x, /):
+    return 100.0 * t + x
 
 
 @pytest.mark.parametrize(
-    ("f", "wants", "reads"),
+    ("read", "refused"),
     [
-        (np.vectorize(lambda s: 100.0 * s), 25.0, "time"),
-        (np.vectorize(lambda s: 100.0 * s), 300.0, "space"),
-        (functools.lru_cache(lambda s: 100.0 * s), 25.0, "time"),
+        (bind_boundary_value, np.vectorize(lambda s: 100.0 * s)),
+        (bind_boundary_value, _positional_only),
+        (bind_boundary_value, functools.partial(lambda x, t: 100.0 * t + x, t=0.25)),
+        (lambda f: graph._value_reader(f, "r"), np.vectorize(lambda node, gain=2.0: gain * node)),
+        (lambda f: graph._rule_reader(f, "r"), np.vectorize(lambda t, node, field: 0.0)),
     ],
-    ids=["vectorized, of time", "vectorized, of space", "cached, of time"],
+    ids=[
+        "grid, another callable",
+        "grid, positional-only",
+        "grid, a slot frozen by keyword",
+        "graph value",
+        "graph rule",
+    ],
 )
-def test_the_wrap_for_another_callable_reads_what_it_reads(f, wants, reads):
-    """It offered only ``lambda t: f(t)``, which reads time into a function of space."""
-    with pytest.raises(TypeError) as refused:
-        bind_boundary_value(f)
-    named = re.search(rf"`(lambda \w+: f\([^`]*\))` for one that reads {reads}", str(refused.value))
-    wrap = named.group(1) if named else re.search(r"`(lambda \w+: f\([^`]*\))`", str(refused.value)).group(1)
-    got = bind_boundary_value(eval(wrap, {"f": f}))(t=0.25, x=np.array([3.0]))
-    assert float(np.ravel(got)[0]) == wants
+def test_a_callable_that_cannot_be_bound_by_name_is_told_in_words_not_with_a_lambda(read, refused):
+    """Each lambda these refusals used to write read some callable wrong with no error: ``lambda t: f(t)`` a function of
+    space, ``lambda t, node: f(node, t)`` one with a defaulted parameter, which t landed in, and "Freeze it by position"
+    froze the first parameter, whichever it was."""
+    with pytest.raises(TypeError) as excinfo:
+        read(refused)
+    message = str(excinfo.value)
+    assert "that passes each argument to the parameter that reads it" in message, message
+    assert "`lambda" not in message, message
+    assert "Freeze it by position" not in message, message
 
 
 @pytest.mark.parametrize(
@@ -126,59 +114,29 @@ def test_the_wrap_for_another_callable_reads_what_it_reads(f, wants, reads):
         lambda x, t: 100.0 * t + x,
         lambda time, x: 100.0 * time + x,
         lambda x, time: 100.0 * time + x,
-        lambda y, t: 100.0 * t + y,
-        lambda t, x=0.0: 100.0 * t + x,
-        lambda x=0.0, t=1.0: 100.0 * t + x,
-        lambda t, x, c=0.0: 100.0 * t + x + c,
-        lambda x, *, t: 100.0 * t + x,
-        lambda x, **kw: 100.0 * kw["t"] + x,
     ],
-    ids=["t,x", "x,t", "time,x", "x,time", "y,t", "t,x=0", "x=0,t=1", "t,x,c=0", "x,*,t", "x,**kw"],
+    ids=["t,x", "x,t", "time,x", "x,time"],
 )
-def test_the_advice_for_a_partial_fixing_time_reads_right_in_either_order(written):
-    """The advice was ``lambda x: f(0.25, x)``, whatever order f is written in."""
+def test_the_example_for_a_partial_fixing_time_reads_right_in_either_order(written):
+    """It was ``lambda x: f(0.25, x)``, whatever order f is written in. The example holds for an f that names x and the
+    time, and takes the time the caller wants: frozen at 0.7 and read at T = 0.25, a value copied from the partial, or a
+    slot left to override it, would not read 28.0."""
     time_name = "time" if "time" in written.__code__.co_varnames else "t"
     with pytest.raises(TypeError) as refused:
-        adapt_ic_callable(functools.partial(written, **{time_name: 0.25}), 1, 3.0, role="m_initial")
-    advice = re.search(r"pass (lambda x: f\(.*?\)) to fix the time yourself", str(refused.value)).group(1)
-    _, read = adapt_ic_callable(eval(advice, {"f": written}), 1, 3.0, role="m_initial")
+        adapt_ic_callable(functools.partial(written, **{time_name: 0.7}), 1, 3.0, role="m_initial")
+    example = re.search(r"such as `(lambda x: f\(.*?\))` for an f that names them x and (\w+)", str(refused.value))
+    assert example.group(2) == time_name, str(refused.value)
+    _, read = adapt_ic_callable(eval(example.group(1), {"f": written, "T": 0.25}), 1, 3.0, role="m_initial")
     assert read(3.0) == 28.0
 
 
-def _positional_only(x, /, t):
-    return 100.0 * t + x
-
-
 @pytest.mark.parametrize(
-    "partial",
-    [
-        functools.partial(max, t=0.25),
-        functools.partial(np.add, t=0.25),
-        functools.partial(lambda t, x, c: 100.0 * t + x + c, t=0.25),
-        functools.partial(lambda t, c, x=0.0: 100.0 * t + x, t=0.25),
-        functools.partial(lambda c, t, x=0.0: 100.0 * t + x, t=0.25),
-        functools.partial(lambda t, time: 100.0 * time + t, time=0.25),
-        functools.partial(lambda c, x, t: 100.0 * t + x + c, 1.0, t=0.25),
-        functools.partial(lambda t, x, c: 100.0 * t + x + c, t=0.25, c=1.0),
-        functools.partial(lambda t: t, t=0.25),
-        functools.partial(_positional_only, t=0.25),
-    ],
-    ids=[
-        "builtin",
-        "ufunc",
-        "two required left",
-        "a required parameter beside a defaulted x",
-        "the same, written first",
-        "a time name left",
-        "a parameter frozen by position",
-        "a second keyword frozen",
-        "no space",
-        "positional only",
-    ],
+    "refused",
+    [functools.partial(lambda t, x: 100.0 * t + x, t=0.25), lambda t: t, lambda *c, **k: c[1]],
+    ids=["a partial fixing time", "time and no space", "names nothing"],
 )
-def test_the_advice_writes_no_lambda_where_one_would_not_read_right(partial):
-    """Where f's names cannot be read, a lambda written from the slots could swap. Where something else is left or frozen,
-    it would raise, or pass space to a parameter that does not read it."""
-    with pytest.raises(TypeError, match="fixes the time itself, passing each argument") as refused:
-        adapt_ic_callable(partial, 1, 3.0, role="m_initial")
-    assert "lambda" not in str(refused.value)
+def test_no_refusal_says_a_signature_that_is_false_of_a_potential(refused):
+    """``PotentialCost`` reads its ``V`` through this adapter, and a ``V`` that takes (t, x) is refused."""
+    with pytest.raises(TypeError) as excinfo:
+        adapt_ic_callable(refused, 1, 3.0, role="V")
+    assert not re.search(r"\(t, x\)(, time first,)? or \(x\)", str(excinfo.value)), str(excinfo.value)

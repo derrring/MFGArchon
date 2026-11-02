@@ -195,17 +195,6 @@ class _Constant:
         self.constant = constant
 
 
-# The wraps a refusal advises, for each order a callable may be written in: one written in the order before #2378
-# phase 5 and wrapped time first would be read swapped.
-_VALUE_WRAP = "`lambda t, node: f(t, node)`, or `lambda t, node: f(node, t)` for one that takes the node first"
-# A rule has six orders, so each wrap names the one it is for, and any other is wrapped by what each parameter reads.
-_RULE_WRAP = (
-    "`lambda t, node, field: f(t, node, field)` for one written (t, node, field), "
-    "`lambda t, node, field: f(field, node, t)` for one written in `set_custom_bc`'s old order, (field, node, t), and "
-    "for one written in any other order a wrap that passes each argument to the parameter that reads it"
-)
-
-
 def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
     """``value`` in the form ``ACCEPTED_FORMS["value"]`` names, as the one object every reader calls, or refused by
     name. A callable is bound here, once, to ``(t, node)`` by its parameter names, by the rule a grid boundary value is
@@ -218,7 +207,6 @@ def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
                 NODE_VALUE_SLOTS,
                 role="graph node value",
                 ruling="#2296",
-                wrap=_VALUE_WRAP,
             )
         except TypeError as refused:
             raise TypeError(f"{where}: {refused}") from refused
@@ -234,7 +222,7 @@ def _rule_reader(rule: object, where: str) -> BoundCallable:
     if not callable(rule):
         raise TypeError(f"{where} is {_shown(rule)}; it takes {ACCEPTED_FORMS['rule']} (#2296).")
     try:
-        return bind_by_name(rule, NODE_RULE_SLOTS, role="graph CUSTOM rule", ruling="#2296", wrap=_RULE_WRAP)
+        return bind_by_name(rule, NODE_RULE_SLOTS, role="graph CUSTOM rule", ruling="#2296")
     except TypeError as refused:
         raise TypeError(f"{where}: {refused}") from refused
 

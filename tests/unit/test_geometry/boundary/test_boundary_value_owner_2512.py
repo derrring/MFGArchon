@@ -434,7 +434,7 @@ def test_a_positional_only_function_is_refused_and_its_advised_wrap_reads():
     reads sin(0.5) at the FDM wall."""
     import math
 
-    with pytest.raises(TypeError, match=r"takes \(t, /\), with positional-only parameters.*`lambda t: f\(t\)`"):
+    with pytest.raises(TypeError, match=r"takes \(t, /\), with positional-only parameters.*wrap it in a function named for the slots"):
         _segment(eval("lambda t, /: t"))
     assert _fdm_ghost_wall(_fdm_bc(lambda t: math.sin(t))) == pytest.approx(math.sin(0.5), abs=1e-12)
 

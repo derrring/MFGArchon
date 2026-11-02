@@ -92,6 +92,11 @@ VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)
 _TIME_NAMES = ("t", "time")
 
 
+# What a refusal advises for a callable that cannot be bound by name. In words, never a lambda: one written from the slots
+# reads a callable written in another order swapped, and one with a defaulted parameter passes a slot into it (#2861).
+_WRITE_A_FUNCTION = "a function named for the slots it reads that passes each argument to the parameter that reads it"
+
+
 def _reorder_advice(order: tuple[str, ...]) -> str:
     """A refusal's advice, by what each parameter reads. Named after the slots in the order they are written, a callable
     keeps that order, and one written time last would read its arguments in the wrong slots (#2861)."""
@@ -104,46 +109,6 @@ def _reorder_advice(order: tuple[str, ...]) -> str:
         f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order)} in the "
         f"order it is written, {swapped} would read its arguments in the wrong slots."
     )
-
-
-def lambda_fixing(partial: functools.partial, slots: Slots, *, other_reads: str | None = None) -> str | None:
-    """The function of the slots a ``functools.partial`` leaves, as source: ``lambda x: f(x=x, t=0.25)``, where ``f`` is
-    what the partial wraps. By keyword, with the names ``f`` reads, since a lambda that passes the frozen value first
-    reads an ``f(x, t)`` swapped (#2861).
-
-    ``other_reads`` is the slot that one required parameter named after no slot reads, where the role has one (a
-    condition's space, ``f(y, t)``). ``None`` where no such lambda reads right: the signature cannot be read (a builtin,
-    a ufunc, a C extension), the partial froze anything but a slot by keyword, a parameter left cannot be passed by
-    keyword or named for a slot it can be said to read, or a parameter left is named after the slot frozen."""
-    kinds = inspect.Parameter
-    slot_of = slots.slot_of()
-    frozen = {slot_of.get(name) for name in partial.keywords}
-    try:
-        parameters = inspect.signature(partial).parameters
-    except (TypeError, ValueError):
-        return None
-    if partial.args or None in frozen:
-        return None
-    passed: dict[str, str] = {}
-    other = []
-    for name, p in parameters.items():
-        if name in partial.keywords or p.kind in (kinds.VAR_POSITIONAL, kinds.VAR_KEYWORD):
-            continue
-        if p.kind is kinds.POSITIONAL_ONLY or slot_of.get(name) in frozen:
-            return None
-        if name in slot_of:
-            passed[slot_of[name]] = name
-        elif p.default is kinds.empty:
-            other.append(name)
-    if other and (len(other) > 1 or other_reads is None or other_reads in passed):
-        return None
-    if other:
-        passed[other_reads] = other[0]
-    if not passed:
-        return None
-    left = [slot for slot in slots.order if slot in passed]
-    keywords = [f"{passed[slot]}={slot}" for slot in left] + [f"{k}={v!r}" for k, v in partial.keywords.items()]
-    return f"lambda {', '.join(left)}: f({', '.join(keywords)})"
 
 
 def bind_user_callable(
@@ -251,20 +216,16 @@ def bind_user_callable(
     else:
         # Not "take them positionally": a reordered role binds a positional callable only if a parameter name says which
         # order it is in, so that would lead an unnamed callable into the refusal above (#2512 row B2).
-        unnamed = [slot for slot in slots.required if slot not in {slot_of[name] for name in named}]
-        why = f"{': it names no ' + ', '.join(unnamed) if unnamed else ''}. {reorder}"
+        why = f". {reorder}"
     raise TypeError(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
         f"matched to ({', '.join(order_)}){why}"
     )
 
 
-def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str, wrap: str) -> BoundCallable:
+def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str) -> BoundCallable:
     """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
-    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal, and ``wrap`` is
-    the wrap advised for another callable, or one that cannot be called by name. The caller writes it, since a wrap is
-    right only for the callables its role meets: one built from the slots alone, ``lambda t, node: f(t, node)``, reads a
-    callable written ``(node, t)`` swapped.
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal.
 
     Called by name, a callable is passed only the slots it names, and every one of them: so a ``*args`` or ``**kwargs``
     parameter is refused, since nothing reaches it, and then a ``functools.partial`` that freezes a parameter named
@@ -279,7 +240,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
     It is a function the user writes, a ``def`` or a ``lambda``, or a ``functools.partial`` of one (user ruling,
     2026-10-11): another callable's parameter names were not written against the slots. A SciPy interpolant takes
     ``(x, ...)`` and would read time data at the position; a class instance, a bound method, a builtin, a ufunc, a
-    vectorized or jax-wrapped function are refused the same way, with the wrap that makes each one a function. Bound by
+    vectorized or jax-wrapped function are refused the same way, with the advice to wrap it. Bound by
     position instead, a callable with no readable signature written in another order would be read swapped (#2296).
     """
     name = getattr(fn, "__qualname__", fn)
@@ -293,7 +254,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
         raise TypeError(
             f"{role} {name!r} is of type {type(fn).__name__}, not a plain def or lambda: a {role} is a function whose "
             "parameter names declare what it reads, and a def that a decorator turned into another object "
-            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it, such as {wrap} "
+            f"(functools.cache, lru_cache, numba.njit) counts as another callable. Wrap it in {_WRITE_A_FUNCTION} "
             f"({ruling})."
         )
     try:
@@ -308,8 +269,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
             else f"takes {inspect.signature(fn)}, with positional-only parameters"
         )
         raise TypeError(
-            f"{role} {name!r} {what}, so it cannot be called by name: wrap it in a function that names what it reads, "
-            f"such as {wrap} ({ruling})."
+            f"{role} {name!r} {what}, so it cannot be called by name: wrap it in {_WRITE_A_FUNCTION} ({ruling})."
         )
     variadic = [p for p in declared if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
     if variadic:
@@ -319,15 +279,11 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
             f"nothing reaches {stars}. Name each slot it reads as a parameter, such as `lambda {names}: ...` ({ruling})."
         )
     if frozen:
-        # Not "freeze it by position": that freezes the first parameter, whichever it is, so it reads a callable written
-        # with that slot elsewhere swapped (#2861).
-        assert isinstance(fn, functools.partial)  # only a partial froze anything
-        wrapped = lambda_fixing(fn, slots)
-        such_as = f", such as `{wrapped}` where f is what the partial wraps" if wrapped else ""
+        # Not "freeze it by position": that freezes the first parameter, whichever it is (#2861).
         raise TypeError(
             f"{role} {name!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: called by name, a "
-            f"{role} is passed every slot it names, so the frozen value would be overridden. Write a function of the "
-            f"slots it reads that passes each argument to the parameter that reads it{such_as} ({ruling})."
+            f"{role} is passed every slot it names, so the frozen value would be overridden. Write "
+            f"{_WRITE_A_FUNCTION} ({ruling})."
         )
     bound = bind_user_callable(fn, slots, role=role)
     if bound.binding != "keyword":
