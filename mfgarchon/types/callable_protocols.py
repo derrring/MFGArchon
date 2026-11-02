@@ -244,7 +244,6 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
     position instead, a callable with no readable signature written in another order would be read swapped (#2296).
     """
     name = getattr(fn, "__qualname__", fn)
-    names = ", ".join(slots.order)
     target = fn
     frozen: list[str] = []
     while isinstance(target, functools.partial):
@@ -276,14 +275,14 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
         stars = ", ".join(f"{'*' if p.kind is inspect.Parameter.VAR_POSITIONAL else '**'}{p.name}" for p in variadic)
         raise TypeError(
             f"{role} {name!r} takes {inspect.signature(fn)}: called by name, it is passed only the slots it names, so "
-            f"nothing reaches {stars}. Name each slot it reads as a parameter, such as `lambda {names}: ...` ({ruling})."
+            f"nothing reaches {stars} ({ruling}). {_reorder_advice(slots.order)}"
         )
     if frozen:
         # Not "freeze it by position": that freezes the first parameter, whichever it is (#2861).
         raise TypeError(
             f"{role} {name!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: called by name, a "
             f"{role} is passed every slot it names, so the frozen value would be overridden. Write "
-            f"{_WRITE_A_FUNCTION} ({ruling})."
+            f"{_WRITE_A_FUNCTION}, passing the frozen value by keyword ({ruling})."
         )
     bound = bind_user_callable(fn, slots, role=role)
     if bound.binding != "keyword":

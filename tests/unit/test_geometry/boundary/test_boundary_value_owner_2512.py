@@ -18,7 +18,7 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.types import segment_value
 from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, SOLVER_SOURCE_SLOTS, bind_user_callable
 
-_OUT_OF_ORDER = r"out of order\. Since #2378 phase 5 \(#2375 ruling 8\) a boundary value takes \(t, x\), time first"
+_OUT_OF_ORDER = r"out of order\. Since #2378 phase 5 \(#2375 ruling 8\) a boundary value takes \(t, x\), time first: reorder its parameters"
 _NOT_ALL_NAMED = r"whose parameters are not all named after the slots, and a boundary value is called by name"
 _REFUSED = {
     "unnamed one-arg": (lambda s: s, r"cannot be matched to \(t, x\)\. Name each parameter after what it reads"),

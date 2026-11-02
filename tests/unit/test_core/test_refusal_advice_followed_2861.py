@@ -56,19 +56,36 @@ def _arms(refusal, names, reads):
         (lambda f: bind_user_callable(f, SOLVER_SOURCE_SLOTS, role="r"), ["x", "b"], ["x", "t"], "*rest"),
         (lambda f: bind_user_callable(f, SOLVER_SOURCE_SLOTS, role="r"), ["a", "b", "c"], ["x", "t", "extra"], ""),
         (lambda f: graph._rule_reader(f, "r"), ["t", "a", "b"], ["t", "field", "node"], ""),
+        (bind_boundary_value, ["a", "b"], ["x", "t"], "*rest"),
+        (bind_boundary_value, ["a", "b"], ["x", "t"], "**kw"),
+        (lambda f: graph._value_reader(f, "r"), ["a", "b"], ["node", "t"], "*rest"),
+        (lambda f: graph._value_reader(f, "r"), ["a", "b"], ["node", "t"], "**kw"),
+        (lambda f: graph._rule_reader(f, "r"), ["a", "b", "c"], ["field", "t", "node"], "*rest"),
+        (lambda f: graph._rule_reader(f, "r"), ["a", "b", "c"], ["field", "t", "node"], "**kw"),
     ],
     ids=[
         "a reordered role, *rest",
         "never reordered, a misplaced name",
         "never reordered, a wrong count",
         "not all named",
+        "by name, grid, *rest",
+        "by name, grid, **kw",
+        "by name, graph value, *rest",
+        "by name, graph value, **kw",
+        "by name, graph rule, *rest",
+        "by name, graph rule, **kw",
     ],
 )
 def test_every_arm_of_a_binders_advice_reads_right(read, names, reads, star):
+    """By name, the refusal of a variadic parameter was ``such as `lambda t, x: ...```, a rename in place that read
+    ``lambda a, b, *rest: 100*b + a`` swapped."""
     with pytest.raises(TypeError) as refused:
         read(_written(names, reads, star))
-    arms = _arms(str(refused.value), names, reads)
-    assert arms, str(refused.value)
+    message = str(refused.value)
+    assert "`lambda" not in message, message
+    assert "would read its arguments in the wrong slots" in message, message
+    arms = _arms(message, names, reads)
+    assert arms, message
     for arm in arms:
         slots = [slot for slot in reads if slot != "extra"]
         assert read(arm)(**{slot: _AT[slot] for slot in slots}) == sum(_COEF[slot] * _AT[slot] for slot in slots)
@@ -105,6 +122,7 @@ def test_a_callable_that_cannot_be_bound_by_name_is_told_in_words_not_with_a_lam
     assert "that passes each argument to the parameter that reads it" in message, message
     assert "`lambda" not in message, message
     assert "Freeze it by position" not in message, message
+    assert ("passing the frozen value by keyword" in message) == isinstance(refused, functools.partial), message
 
 
 @pytest.mark.parametrize(
