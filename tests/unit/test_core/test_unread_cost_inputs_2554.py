@@ -59,7 +59,7 @@ def test_a_sixth_positional_argument_is_refused():
 @pytest.mark.parametrize(
     ("keyword", "row"),
     [
-        ("hamiltonian", r"'hamiltonian' -> Model\(hamiltonian=\.\.\.\)"),
+        ("hamiltonian", r"'hamiltonian' -> Model\(hamiltonian=\.\.\.\), or MFGComponents\(hamiltonian=\.\.\.\)"),
         ("dH_dm", r"'dH_dm' -> the Hamiltonian's coupling_dm=, which takes f'\(m\); H carries -f"),
         ("dH_dp", r"'dH_dp' -> the Hamiltonian's control_cost=, whose dp\(\) is dH/dp"),
         ("running_cost", r"'running_cost' -> the Hamiltonian's potential= \(a cost of x\) or coupling="),
@@ -68,8 +68,8 @@ def test_a_sixth_positional_argument_is_refused():
 )
 def test_each_retired_keyword_names_the_api_that_replaces_it(keyword, row):
     """Each row used to name an ``MFGComponents.hamiltonian_*`` field that does not exist, or the refused
-    ``potential_func``. ``hamiltonian`` is a named parameter of ``MFGProblem``, so its row is reached through
-    ``components.parameters``; the validator the constructor calls is called directly for every row."""
+    ``potential_func``. The validator the constructor calls is called directly for every row;
+    ``test_unread_inputs_refused_2678.py`` reaches the ``hamiltonian`` row through the constructor."""
     with pytest.raises(ValueError, match=row) as refusal:
         _problem()._validate_kwargs({keyword: lambda *args: 0.0})
     assert "hamiltonian_func" not in str(refusal.value)

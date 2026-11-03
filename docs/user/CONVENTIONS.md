@@ -943,7 +943,7 @@ The problem decomposes into components, each parameter owned by exactly one:
 
 | component | holds | parameters |
 |---|---|---|
-| `Model` | the game rules | `hamiltonian` or `lagrangian`, `volatility`, `volatility_kind`, `drift_field`, `coupling_cost`, `terminal_coupling` |
+| `Model` | the game rules | `hamiltonian` or `lagrangian`, `volatility`, `volatility_kind`, `coupling_cost`, `terminal_coupling` |
 | `Conditions` | the problem data | `u_terminal`, `m_initial`, `T` |
 | domain | the spatial arena | the grid or geometry |
 | `MFGProblem` | the assembly | `model` + domain + `conditions` + `Nt`, and the assembly-level `source_term_hjb` and `state_penalty` |
