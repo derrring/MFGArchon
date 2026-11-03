@@ -95,8 +95,8 @@ How the solvers use it differs, and the difference is part of the convention:
 - The Newton and explicit assemblies — FDM, GFDM, WENO, the weak-form family and `NetworkHJBSolver` —
   add $H$ whole.
 - HJB semi-Lagrangian's update assembles the running cost at the optimal control from the same object, as
-  $p \cdot \partial_p H - H$. With `diffusion_method='canonical_cs'` it reads the control cost's `lagrangian` and
-  $H(0)$, and so takes a `SeparableHamiltonian` only.
+  $p \cdot \partial_p H - H$. `diffusion_method='canonical_cs'` hand-codes the quadratic running cost in its objective,
+  so it takes only a `SeparableHamiltonian` with a `QuadraticControlCost`, and refuses anything else when built.
 - The policy-iteration assemblies assemble control cost $+\,V + f$ as a running cost:
   `HJBGFDMSolver(inner_solver="howard")` takes each part from the same Hamiltonian object;
   `NetworkPolicyIterationHJBSolver` recomputes the built-in quadratic control cost itself and refuses a

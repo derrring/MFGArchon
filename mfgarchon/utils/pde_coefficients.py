@@ -21,6 +21,13 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def has_quadratic_control_cost(hamiltonian: Any) -> bool:
+    """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` whose control cost is quadratic."""
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+    return isinstance(hamiltonian, SeparableHamiltonian) and isinstance(hamiltonian.control_cost, QuadraticControlCost)
+
+
 def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     """Fail loud if ``problem.hamiltonian_class`` is a ``SeparableHamiltonian`` whose control cost is
     NOT quadratic -- the case where the scalar FP drift ``-c*grad(U)`` misrepresents the optimal
@@ -66,15 +73,12 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     NotImplementedError
         If ``hamiltonian_class`` is a ``SeparableHamiltonian`` with a non-quadratic control cost.
     """
-    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
     h_class = getattr(problem, "hamiltonian_class", None)
-    if not isinstance(h_class, SeparableHamiltonian):
+    if not isinstance(h_class, SeparableHamiltonian) or has_quadratic_control_cost(h_class):
         return
-    control_cost = h_class.control_cost
-    if isinstance(control_cost, QuadraticControlCost):
-        return
-    detail = type(control_cost).__name__
+    detail = type(h_class.control_cost).__name__
     raise NotImplementedError(
         f"{context}: the scalar FP drift `-c*grad(U)` is defined only for a "
         f"quadratic SeparableHamiltonian, but got a {detail} control cost. Its optimal "

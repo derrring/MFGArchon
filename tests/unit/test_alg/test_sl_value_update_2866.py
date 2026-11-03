@@ -13,6 +13,7 @@ import sys
 import pytest
 
 import numpy as np
+from scipy.integrate import quad
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
@@ -48,26 +49,19 @@ class _Cubic(ControlCostBase):
         return 2.0 * np.linalg.norm(alpha, axis=-1) ** 1.5 / 3.0
 
 
-class _CubicWithAnotherLambda(_Cubic):
-    """Whose ``lambda_`` is not its scale, so a control box scaled by ``1/lambda_`` cuts the optimal control."""
-
-    lambda_ = 100.0
-
-
 _COSTS = {
     "quadratic": (QuadraticControlCost(lambda_=2.0), 1.5),
     "cubic": (_Cubic(), 1.0),
     "L1, regularized": (L1ControlCost(lambda_=0.5).regularize(0.1), 1.5),
     "Bounded, regularized": (BoundedControlCost(lambda_=1.0, max_control=0.5).regularize(0.1), 1.5),
 }
-# The call site of the update each path holds, by function, so a row cannot quietly stop reaching its path. canonical_cs has
-# no such call: its objective is the value step.
+# The call site of the update each path holds, by function, so a row cannot quietly stop reaching its path.
 _PATHS = {
     "adi": ({}, "_solve_timestep_semi_lagrangian"),
     "rk4, per point": ({"characteristic_solver": "rk4"}, "_advect_pointwise"),
     "stochastic": ({"diffusion_method": "stochastic"}, "_stochastic_sl_step"),
-    "canonical_cs": ({"diffusion_method": "canonical_cs", "interpolation_method": "linear"}, None),
 }
+_CANONICAL_CS = {"diffusion_method": "canonical_cs", "interpolation_method": "linear"}
 
 
 def _read(hamiltonian, slope, n, nt, **solver_options):
@@ -124,7 +118,7 @@ def test_each_path_reads_the_exact_solution_in_1d(cost, path, state):
     control_cost, slope = _COSTS[cost]
     options, caller = _PATHS[path]
     U, terminal, callers = _read(_separable(control_cost, state=state), slope, 41, 20, **options)
-    assert caller is None or caller in callers, callers
+    assert caller in callers, callers
     np.testing.assert_allclose(U, _exact(control_cost, slope, terminal, state=state), rtol=0, atol=2e-5)
 
 
@@ -148,24 +142,6 @@ def test_the_substepped_path_reads_the_exact_solution():
     np.testing.assert_allclose(U, _exact(control_cost, slope, terminal), rtol=0, atol=2e-5)
 
 
-@pytest.mark.parametrize(
-    "control_cost",
-    [L1ControlCost(lambda_=0.5), BoundedControlCost(lambda_=1.0, max_control=0.5)],
-    ids=["L1", "Bounded"],
-)
-def test_canonical_cs_reads_a_nonsmooth_cost_inside_what_it_admits(control_cost):
-    """Its hand-coded quadratic read these at -0.248 and -0.100 from the exact solution."""
-    U, terminal, _ = _read(_separable(control_cost), 1.5, 41, 20, **_PATHS["canonical_cs"][0])
-    np.testing.assert_allclose(U, _exact(control_cost, 1.5, terminal), rtol=0, atol=2e-5)
-
-
-def test_canonical_cs_searches_past_a_box_scaled_by_a_lambda_that_is_not_the_costs_scale():
-    """``alpha* = p^2`` here has nothing to do with ``lambda_``: scaled by ``1/lambda_``, the box cut it, +0.066 off."""
-    control_cost = _CubicWithAnotherLambda()
-    U, terminal, _ = _read(_separable(control_cost), 1.0, 41, 20, **_PATHS["canonical_cs"][0])
-    np.testing.assert_allclose(U, _exact(control_cost, 1.0, terminal), rtol=0, atol=2e-5)
-
-
 def _congestion():
     return CongestionHamiltonian(QuadraticControlCost(lambda_=1.0), congestion_factor=lambda m: 1.0 + 3.0 * m)
 
@@ -177,10 +153,96 @@ def test_a_non_separable_hamiltonian_reads_right_where_the_update_reads_its_own_
     np.testing.assert_allclose(U, terminal - _T * 1.5 * 1.5 / 8.0, rtol=0, atol=2e-5)
 
 
-def test_canonical_cs_refuses_a_hamiltonian_whose_running_cost_has_no_owner():
-    """It read a ``CongestionHamiltonian`` as its control cost alone, -0.169 off with no error (#1547)."""
-    with pytest.raises(NotImplementedError, match=r"CongestionHamiltonian .*#1547"):
-        _read(_congestion(), 1.5, 21, 5, **_PATHS["canonical_cs"][0])
+def _problem(hamiltonian, slope=1.5, n=21, nt=5):
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+    return MFGProblem(
+        model=Model(hamiltonian=hamiltonian, volatility=0.05),
+        domain=grid,
+        conditions=Conditions(
+            m_initial=lambda y: 1.0, u_terminal=lambda y: slope * np.asarray(y, dtype=float)[..., 0], T=_T
+        ),
+        Nt=nt,
+    )
+
+
+_NOT_QUADRATIC = {
+    "cubic": _separable(_Cubic()),
+    "L1, regularized": _separable(L1ControlCost(lambda_=0.5).regularize(0.1)),
+    "Bounded, regularized": _separable(BoundedControlCost(lambda_=1.0, max_control=0.5).regularize(0.1)),
+    "L1": _separable(L1ControlCost(lambda_=0.5)),
+    "Bounded": _separable(BoundedControlCost(lambda_=1.0, max_control=0.5)),
+    "congestion": _congestion(),
+}
+
+
+@pytest.mark.parametrize("hamiltonian", list(_NOT_QUADRATIC))
+def test_canonical_cs_refuses_what_it_cannot_read_when_it_is_built(hamiltonian):
+    """Its hand-coded quadratic read plain L1 at -0.248 and congestion at -0.169 from the exact solution, with no error."""
+    with pytest.raises(
+        NotImplementedError, match=r"reads only a quadratic control cost.*#2866.*diffusion_method='adi'"
+    ):
+        HJBSemiLagrangianSolver(_problem(_NOT_QUADRATIC[hamiltonian]), **_CANONICAL_CS)
+
+
+@pytest.mark.parametrize("cost", ["cubic", "L1, regularized", "Bounded, regularized"])
+@pytest.mark.parametrize("path", ["adi", "stochastic"])
+def test_each_cure_the_refusal_names_reads_a_differentiable_cost(cost, path):
+    control_cost, slope = _COSTS[cost]
+    U, terminal, _ = _read(_separable(control_cost), slope, 41, 20, **_PATHS[path][0])
+    np.testing.assert_allclose(U, _exact(control_cost, slope, terminal), rtol=0, atol=2e-5)
+
+
+@pytest.mark.parametrize(
+    "control_cost",
+    [L1ControlCost(lambda_=0.5), BoundedControlCost(lambda_=1.0, max_control=0.5)],
+    ids=["L1", "Bounded"],
+)
+def test_the_cure_named_for_a_cost_that_is_not_differentiable_reads_it(control_cost):
+    """Plain L1 and Bounded have no ``stochastic`` path, which the refusal says. The optimum here is on a candidate of the search."""
+    U, terminal, _ = _read(_separable(control_cost), 1.5, 41, 20, **_PATHS["adi"][0])
+    np.testing.assert_allclose(U, _exact(control_cost, 1.5, terminal), rtol=0, atol=2e-5)
+    with pytest.raises(NotImplementedError):
+        _read(_separable(control_cost), 1.5, 21, 5, **_PATHS["stochastic"][0])
+
+
+@pytest.mark.parametrize(("slope", "n", "nt"), [(1.5, 41, 20), ((1.0, 0.5), 15, 6)], ids=["1-D", "2-D"])
+def test_canonical_cs_keeps_a_quadratic_cost(slope, n, nt):
+    control_cost = QuadraticControlCost(lambda_=2.0)
+    U, terminal, _ = _read(_separable(control_cost), slope, n, nt, **_CANONICAL_CS)
+    np.testing.assert_allclose(U, _exact(control_cost, slope, terminal), rtol=0, atol=2e-5)
+
+
+@pytest.mark.parametrize("path", list(_PATHS))
+def test_the_update_refines_with_a_potential_and_a_coupling_that_vary(path):
+    """``V = (1 + 2t)x + 0.3t`` and ``f = 0.4*m`` on ``m = 0.5 + x``, terminal ``0.8x``. Then ``u = c(t)x + e(t)``, with
+    ``c' = -(1 + 2t + 0.4)`` and ``e' = c^3/3 - 0.3t - 0.2`` for the cubic cost. The old update's plateau cannot halve."""
+    control_cost = _Cubic()
+    hamiltonian = SeparableHamiltonian(
+        control_cost=control_cost,
+        potential=lambda t, x: (1.0 + 2.0 * t) * np.asarray(x, dtype=float)[..., 0] + 0.3 * t,
+        coupling=lambda m: 0.4 * m,
+    )
+
+    def slope_at(t):
+        return 0.8 + 1.4 * (_T - t) + (_T**2 - t**2)
+
+    drop = quad(lambda s: slope_at(s) ** 3 / 3.0 - 0.3 * s - 0.2, 0.0, _T, epsabs=1e-11)[0]
+    errors = []
+    for n, nt in ((81, 40), (161, 80)):
+        x = np.linspace(0.0, 1.0, n)
+        problem = MFGProblem(
+            model=Model(hamiltonian=hamiltonian, volatility=0.05),
+            domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
+            conditions=Conditions(
+                m_initial=lambda y: 1.0, u_terminal=lambda y: 0.8 * np.asarray(y, dtype=float)[..., 0], T=_T
+            ),
+            Nt=nt,
+        )
+        solver = HJBSemiLagrangianSolver(problem, **_PATHS[path][0])
+        U = np.asarray(solver.solve_hjb_system(np.tile(0.5 + x, (nt + 1, 1)), 0.8 * x, np.tile(0.8 * x, (nt + 1, 1))))
+        box = (x > 0.55) & (x < 0.75)
+        errors.append(np.abs(U[0][box] - (slope_at(0.0) * x[box] - drop)).max())
+    assert errors[1] < 0.65 * errors[0], errors
 
 
 @pytest.mark.parametrize(

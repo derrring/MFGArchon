@@ -27,7 +27,6 @@ import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
-from mfgarchon.core.hamiltonian import SeparableHamiltonian
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 from mfgarchon.geometry.boundary.bc_utils import per_axis_diffusion_types, per_axis_operations
@@ -40,6 +39,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     check_adi_compatibility,
     diffusion_from_volatility,
+    has_quadratic_control_cost,
     resolve_volatility_override,
     retired_volatility_keywords,
     scalar_volatility,
@@ -318,6 +318,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"diffusion_method='canonical_cs' requires interpolation_method='linear' "
                 f"(monotone Q1), got '{self.interpolation_method}'. The Carlini-Silva 2014 "
                 f"stability proof only covers monotone interpolation; cubic/quintic break it."
+            )
+        # Its objective hand-codes the quadratic running cost `0.5*lambda*|alpha|^2`, so any other cost would solve a
+        # different equation with no error (#2866, #1547). The LQ path with no Hamiltonian is the quadratic it means.
+        hamiltonian = self.problem.hamiltonian_class
+        if (
+            self.diffusion_method == "canonical_cs"
+            and hamiltonian is not None
+            and not has_quadratic_control_cost(hamiltonian)
+        ):
+            read = getattr(hamiltonian, "control_cost", hamiltonian)
+            raise NotImplementedError(
+                f"diffusion_method='canonical_cs' reads only a quadratic control cost on a SeparableHamiltonian: its "
+                f"objective hand-codes 0.5*lambda*|alpha|^2, so {type(read).__name__} would solve a different equation "
+                f"(#2866, #1547). Use diffusion_method='adi', or 'stochastic' for a differentiable cost: they read dH/dp."
             )
 
         # Issue #1547 / RFC #1574 Phase 0 carried a refusal here for a MAXIMIZE control cost, whose
@@ -1870,54 +1884,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             dt = self.dt
         return self._canonical_cs_step(U_next, M_next, time_idx, dt)
 
-    def _canonical_cs_running_cost(self) -> Callable[[np.ndarray], Any]:
-        """``L(alpha)`` for the DPP objective: the control cost's own Lagrangian (#1547, #2866).
-
-        A Hamiltonian other than a separable one has no such owner: ``CongestionHamiltonian``'s kinetic Lagrangian carries
-        ``c(m)``, which ``control_cost.lagrangian(alpha)`` cannot express, so reading it would solve a different problem.
-        """
-        H_class = self.problem.hamiltonian_class
-        if H_class is None:
-            # The legacy no-Hamiltonian LQ path, as `_characteristic_foot_velocity`: lambda is the only source.
-            lam = self._control_cost_lambda()
-            return lambda alpha: 0.5 * lam * np.sum(alpha * alpha, axis=-1)
-        if not isinstance(H_class, SeparableHamiltonian):
-            raise NotImplementedError(
-                f"HJBSemiLagrangianSolver(diffusion_method='canonical_cs') reads the running cost from a "
-                f"SeparableHamiltonian's control cost, and {type(H_class).__name__} has none that holds for it, so it "
-                f"would solve a different problem (#1547). Use diffusion_method='adi' or 'stochastic', which read dH/dp."
-            )
-        return H_class.control_cost.lagrangian
-
-    def _canonical_cs_alpha_bound(
-        self,
-        natural_speed: np.ndarray,
-        axes: tuple[np.ndarray, ...],
-        U_next: np.ndarray,
-        M_next: np.ndarray,
-        t: float,
-    ) -> np.ndarray:
-        """The box the DPP's control search runs in, per axis.
-
-        ``natural_speed`` scales with a quadratic cost's ``lambda``, which says nothing about the optimal control of any
-        other, and a search that stops at the box returns a value silently off. So it also covers twice the largest
-        ``dH/dp`` at this step's gradient, and stays inside what the control cost admits (#2866).
-        """
-        H_class = self.problem.hamiltonian_class
-        if H_class is None:
-            return natural_speed
-        grads = np.gradient(U_next, *axes)
-        grads = [grads] if len(axes) == 1 else grads
-        mesh = np.meshgrid(*axes, indexing="ij")
-        x_flat = np.stack([coordinate.ravel() for coordinate in mesh], axis=1)
-        p_flat = np.stack([grad.ravel() for grad in grads], axis=1)
-        speed = np.abs(self._characteristic_foot_velocity(x_flat, np.asarray(M_next).ravel(), p_flat, t)).max(axis=0)
-        bound = np.maximum(natural_speed, 2.0 * speed)
-        admissible = H_class.control_cost.effective_domain()
-        if admissible is not None:
-            bound = np.minimum(bound, max(abs(admissible[0]), abs(admissible[1])))
-        return bound
-
     def _canonical_cs_step(
         self,
         U_next: np.ndarray,
@@ -1952,16 +1918,19 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         foot_offset = self._brownian_foot_offset(sqrt_dt)
 
         H_class = self.problem.hamiltonian_class
-        running_cost = self._canonical_cs_running_cost()
+        # Issue #1420: control-cost lambda from the single source. The DPP running cost is
+        # L(alpha) = (lambda/2)|alpha|^2, so the per-node minimizer gives alpha* = -grad(u)/lambda.
+        # Hardcoding (1/2)|alpha|^2 (lambda=1) below undercut the solver's lambda != 1 support.
+        lam = self._control_cost_lambda()
         # Allow up to 4x natural-traversal speed (scale-invariant heuristic, per the validated
         # prototype): alpha is bounded by 4 * domain_length / T per axis, scaled by 1/lambda since
-        # the quadratic optimal control alpha* = -grad(u)/lambda grows as 1/lambda (no-op at lambda=1).
-        natural_speed = 4.0 * span / float(self.problem.T) / self._control_cost_lambda()
+        # the optimal control alpha* = -grad(u)/lambda grows as 1/lambda (no-op at lambda=1).
+        alpha_bound = 4.0 * span / float(self.problem.T) / lam
 
         if d == 1:
             Nx = len(U_next)
             diff_off = float(foot_offset[0])
-            bound = float(self._canonical_cs_alpha_bound(natural_speed, (self.x_grid,), U_next, M_next, t_n)[0])
+            bound = float(alpha_bound[0])
 
             # h_i = H(x_i, m_i, p=0, t_n): potential + coupling, single-source via H_class.
             if H_class is not None:
@@ -1988,7 +1957,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 feet_plus = fold_into_domain((y_drift + diff_off).reshape(-1, 1), x_min, x_max, bc_op).ravel()
                 feet_minus = fold_into_domain((y_drift - diff_off).reshape(-1, 1), x_min, x_max, bc_op).ravel()
                 u_pm = 0.5 * (interp_fn(feet_plus) + interp_fn(feet_minus))
-                return dt * np.asarray(running_cost(alpha[..., None]), dtype=float) - dt * h + u_pm
+                return 0.5 * lam * dt * alpha * alpha - dt * h + u_pm
 
             invphi = (np.sqrt(5.0) - 1.0) / 2.0  # 0.618...
             invphi2 = 1.0 - invphi  # 0.382...
@@ -2050,7 +2019,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         else:
             h_flat = np.zeros(x_flat.shape[0])
 
-        alpha_bound = self._canonical_cs_alpha_bound(natural_speed, grid_coords, U_shaped, M_shaped, t_n)
         box = [(-float(alpha_bound[ax]), float(alpha_bound[ax])) for ax in range(d)]
         U_current = np.empty(grid_shape)
         for flat_i, multi_idx in enumerate(np.ndindex(grid_shape)):
@@ -2061,7 +2029,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 drift = _xi + np.asarray(alpha_vec) * dt  # (d,)
                 feet = fold_into_domain(drift[None, :] + depart_offsets, x_min, x_max, bc_op)  # (2d, d)
                 u_pm = interp_fn(feet)  # (2d,)
-                return dt * float(running_cost(np.asarray(alpha_vec))) - dt * _hi + float(u_pm.mean())
+                return 0.5 * lam * dt * float(np.dot(alpha_vec, alpha_vec)) - dt * _hi + float(u_pm.mean())
 
             res = minimize(
                 phi_nd,
@@ -2586,7 +2554,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         equation, for any ``H``. ``∂_pH`` is read from the owner the foot reads, ``eval_dH_dp_batch``.
 
         Its form ``u_at_foot + dt·(H(p) - 2·H(0))`` agrees where ``H_control`` is 2-homogeneous in ``p``, a quadratic control
-        cost, and elsewhere is off by ``dt·(2·H_control - p·∂_pH)`` at every step, which does not refine away (#2866).
+        cost, and elsewhere is off by ``dt·(2·(H_control(p) - H_control(0)) - p·∂_pH)`` at every step, which does not refine
+        away (#2866).
         """
         H_class = self.problem.hamiltonian_class
         p_arr = np.atleast_1d(np.asarray(p, dtype=float))
