@@ -67,13 +67,13 @@ class ObstacleConstraint:
     - *Obstacle problem* (this class) constrains the VALUES a field may take -- ``u ≥ ψ``, with
       a free boundary between the contact set and the continuation set. ψ is a level-set
       function on the same grid as ``u``; nothing is removed from the domain.
-    - *Geometric obstacle* (``implicit_domain=``, ``obstacle_sdf``, maze walls, the GFDM
+    - *Geometric obstacle* (``geometry=DifferenceDomain(...)``, ``obstacle_sdf``, maze walls, the GFDM
       stencil-visibility machinery) removes a REGION from the domain. Nothing there constrains
       the value of anything.
 
     The name is kept because "obstacle problem" is the standard term for this variational
-    inequality, but a reader arriving from ``MFGProblem(obstacles=[Hypersphere(...)])`` -- the
-    same package, a nearly identical word -- will read it the other way. Hence this paragraph.
+    inequality, but a reader arriving from a geometric obstacle -- the same package, a nearly
+    identical word -- will read it the other way. Hence this paragraph.
 
     A third thing that is NEITHER: a soft wall, i.e. a cost for being somewhere. That is
     ``alpha``-free and ``u``-free, so it is a POTENTIAL, and it lives at

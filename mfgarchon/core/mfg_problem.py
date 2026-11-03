@@ -331,7 +331,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 components=components
             )
 
-            # Mode 6: Dual geometry (Issue #257) - REFUSED when the two geometries differ.
+            # Mode 5: Dual geometry (Issue #257) - REFUSED when the two geometries differ.
             # Nothing downstream honours the difference: the FP geometry was accepted and then
             # discarded, so the FP equation silently solved on the HJB grid (Issue #1765).
             # Differing geometries now raise NotImplementedError. To resample between two
@@ -2541,7 +2541,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         "object such as SeparableHamiltonian(...). Beside components=, put the one you mean there: that is the one read "
         "(#2563)",
         "obstacles": "FPParticleSolver(implicit_domain=DifferenceDomain(...)), which holds the density out of the region; "
-        "it does not cover the value function. No solver reads a problem-level obstacle (#2678)",
+        "it does not cover the value function. No solver reads this keyword (#2678)",
         "dH_dm": "the Hamiltonian's coupling_dm=, which takes f'(m); H carries -f, so dH/dm = -f'(m), e.g. "
         "SeparableHamiltonian(coupling=..., coupling_dm=...)",
         "dH_dp": "the Hamiltonian's control_cost=, whose dp() is dH/dp, e.g. QuadraticControlCost(...)",
@@ -2614,7 +2614,7 @@ Build the grid and pass it as the domain:
 
 See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
             elif set(kwargs) & set(self._DEPRECATED_KWARGS) <= {"hamiltonian", "obstacles"}:
-                # The components= form is not told to migrate (user ruling, 2026-10-12), and its row names both routes.
+                # The components= form is not told to migrate (user ruling, 2026-10-12), and each row names its own route.
                 migration_guide = ""
             else:
                 migration_guide = """

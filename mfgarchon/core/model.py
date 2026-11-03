@@ -32,7 +32,7 @@ UNREAD_DRIFT = (
     "No solver reads a problem-level drift (#2678). To prescribe one, pass a callable to solve_fp_system(drift_field=) "
     "on FPFDMSolver or FPParticleSolver, or to FixedPointIterator(drift_field=) over FPFDMSolver. It replaces the drift "
     "the Hamiltonian gives, and is read by position as (t, x, m), with x in the form that solver hands it (#2864). On "
-    "FPFDMSolver its density at a no-flux wall does not converge at fixed a dt/dx (#2878). On FPParticleSolver that "
+    "FPFDMSolver its density at a no-flux wall does not converge at fixed velocity * dt / dx (#2878). On FPParticleSolver that "
     "route returns Nt+2 slices (#2412). An array means different things by solver: a velocity on "
     "FPFDMSolver, and a value function on FPParticleSolver. A number has no route."
 )

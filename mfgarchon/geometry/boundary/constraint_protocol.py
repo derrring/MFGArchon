@@ -52,7 +52,7 @@ class ConstraintProtocol(Protocol):
     Protocol for inequality constraints in variational inequality problems.
 
     Constrains the VALUES a field may take. It has nothing to do with geometric obstacles
-    (`implicit_domain=`, `obstacle_sdf`), which remove a region from the domain, nor with a
+    (`geometry=DifferenceDomain(...)`, `obstacle_sdf`), which remove a region from the domain, nor with a
     soft wall (`problem.state_penalty`), which is a potential. `ObstacleConstraint`'s
     docstring has the full three-way disambiguation; it is not repeated here.
 
