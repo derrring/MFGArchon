@@ -5,6 +5,9 @@ Each of these was accepted and changed the default solve by 0.0 in U and in M, w
 feasibility check runs, and ``hamiltonian=`` beside ``components=``. ``coupling_coefficient`` and ``lambda_`` are read by
 another Hamiltonian, and stay with #2681.
 
+``hamiltonian=`` is no longer a parameter, and the retired-keyword table is all that refuses it: without its row the
+keyword warns as unrecognized and is dropped, which is #2563 again.
+
 The refusal of a drift names routes, so each route has a row that follows it. Its bodies read both ``t`` and ``x``,
 since a constant reads the same in either order (#2864).
 """
@@ -200,22 +203,60 @@ def test_suppress_warnings_is_read_where_the_library_builds_the_grid(suppress, w
     assert any("HIGH DIMENSION WARNING" in str(w.message) for w in caught) is warned
 
 
+_HAMILTONIAN_ROW = r"'hamiltonian' -> Model\(hamiltonian=\.\.\.\), or MFGComponents\(hamiltonian=\.\.\.\).*#2563"
+
+
+class _ProblemWithItsOwnFunctions(MFGProblem):
+    """The one route that built with ``hamiltonian=`` and no components: no class in this repository takes it."""
+
+    def _initialize_functions(self, **kwargs):
+        pass
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "hamiltonian", [_hamiltonian(3.0), lambda t, x, p, m: 0.0], ids=["a Hamiltonian", "a callable"]
+    "hamiltonian",
+    [_hamiltonian(3.0), lambda t, x, p, m: 0.0, None],
+    ids=["a Hamiltonian", "a callable", "None"],
 )
-def test_a_hamiltonian_beside_components_is_refused_and_names_the_one_to_keep(hamiltonian):
-    with pytest.raises(
-        ValueError, match=r"hamiltonian=\.\.\., components=\.\.\.\) is refused \(#2563\).*Keep components="
-    ):
+def test_a_hamiltonian_beside_components_is_refused_and_names_both_routes(hamiltonian):
+    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
         _components_form(hamiltonian=hamiltonian)
 
 
 @pytest.mark.unit
-def test_what_the_hamiltonian_refusal_says_to_do_moves_the_solve():
+@pytest.mark.parametrize(
+    "hamiltonian", [_hamiltonian(3.0), lambda t, x, p, m: 0.0], ids=["a Hamiltonian", "a callable"]
+)
+def test_a_hamiltonian_with_no_components_is_refused_by_the_same_row(hamiltonian):
+    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+        MFGProblem(geometry=_grid(), T=0.5, Nt=10, volatility=0.4, hamiltonian=hamiltonian)
+
+
+@pytest.mark.unit
+def test_a_hamiltonian_beside_a_model_is_refused_by_the_same_row():
+    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+        _model_form(hamiltonian=_hamiltonian(3.0))
+
+
+@pytest.mark.unit
+def test_a_subclass_with_its_own_functions_is_refused_by_the_same_row():
+    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+        _ProblemWithItsOwnFunctions(geometry=_grid(), T=0.5, Nt=10, volatility=0.4, hamiltonian=_hamiltonian())
+
+
+@pytest.mark.unit
+def test_each_route_the_hamiltonian_row_names_moves_the_solve():
     one = _components_form().solve(verbose=False)
-    three = _components_form(components=_components(_hamiltonian(3.0))).solve(verbose=False)
-    assert _gap(one.U, three.U) > 1e-2
+    through_components = _components_form(components=_components(_hamiltonian(3.0))).solve(verbose=False)
+    through_model = MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(3.0), volatility=0.4),
+        domain=_grid(),
+        conditions=Conditions(m_initial=_m_initial, u_terminal=_u_terminal, T=0.5),
+        Nt=10,
+    ).solve(verbose=False)
+    assert _gap(one.U, through_components.U) > 1e-2
+    assert _gap(through_model.U, through_components.U) == 0.0
 
 
 @pytest.mark.unit

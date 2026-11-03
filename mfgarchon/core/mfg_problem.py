@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 import numpy as np
 
 # Import MFGComponents and mixins from the dedicated module
-from mfgarchon.core.hamiltonian import HamiltonianBase
 from mfgarchon.core.mfg_components import (
     ConditionsMixin,
     HamiltonianMixin,
@@ -238,8 +237,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         coupling_coefficient: float = 0.5,
         # MFG coupling parameters
         lambda_: float | None = None,  # Control cost (H uses |p|²/(2λ))
-        # Class-based Hamiltonian (Issue #673 - recommended)
-        hamiltonian: Any | None = None,  # HamiltonianBase instance
         # Advanced
         components: MFGComponents | None = None,
         suppress_warnings: bool = False,
@@ -431,7 +428,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     ("T", T),
                     ("time_domain", time_domain),
                     ("components", components),
-                    ("hamiltonian", hamiltonian),
                 ]
                 if v is not None
             }
@@ -504,7 +500,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "volatility_kind": volatility_kind,
                 "coupling_coefficient": coupling_coefficient,
                 "lambda_": lambda_,
-                "hamiltonian": hamiltonian,
                 "components": components,
                 "suppress_warnings": suppress_warnings,
                 **kwargs,
@@ -762,8 +757,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             constraints=constraints,
             drift=drift,
             suppress_warnings=suppress_warnings,
-            hamiltonian=hamiltonian,
-            components=components,
         )
 
         # Dispatch to appropriate initializer
@@ -828,20 +821,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # Note: has_obstacles and obstacles already initialized explicitly (lines 334-335)
         # Specialized init methods may override these defaults
-
-        # Issue #673: Handle class-based Hamiltonian parameter
-        # If hamiltonian= provided without components, create MFGComponents
-        if hamiltonian is not None and components is None:
-            if isinstance(hamiltonian, HamiltonianBase):
-                components = MFGComponents(hamiltonian=hamiltonian)
-            else:
-                raise TypeError(
-                    f"hamiltonian must be a HamiltonianBase instance, got {type(hamiltonian).__name__}.\n"
-                    "Use class-based Hamiltonian:\n"
-                    "  from mfgarchon.core.hamiltonian import SeparableHamiltonian, QuadraticControlCost\n"
-                    "  H = SeparableHamiltonian(control_cost=QuadraticControlCost(...))\n"
-                    "  problem = MFGProblem(hamiltonian=H, ...)"
-                )
 
         # Store custom components if provided
         self.components = components
@@ -1038,11 +1017,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         constraints: list | None,
         drift: Any,
         suppress_warnings: bool,
-        hamiltonian: Any,
-        components: MFGComponents | None,
     ) -> None:
-        """Refuse an input no solve on this construction would read, by name (#2678, #2563). Accepted, each changed U
-        and M by 0.0 on the default solve, with nothing said."""
+        """Refuse an input no solve on this construction would read, by name (#2678). Accepted, each changed U and M by
+        0.0 on the default solve, with nothing said."""
         from mfgarchon.core.model import UNREAD_DRIFT
 
         if drift is not None:
@@ -1059,12 +1036,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"MFGProblem(suppress_warnings=True) is refused on a {mode} (#2678). It skips the "
                 "computational-feasibility check, which runs only when the library builds the grid itself, from "
                 "spatial_bounds= or the default domain, so nothing reads it here."
-            )
-        if hamiltonian is not None and components is not None:
-            raise ValueError(
-                "MFGProblem(hamiltonian=..., components=...) is refused (#2563): the solve reads the components' "
-                "Hamiltonian and nothing reads hamiltonian=. Keep components=, with the Hamiltonian you mean in "
-                "MFGComponents(hamiltonian=...)."
             )
 
     def _detect_init_mode(
@@ -1451,7 +1422,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Example:
             >>> from mfgarchon.core.hamiltonian import SeparableHamiltonian
             >>> H = SeparableHamiltonian(...)
-            >>> problem = MFGProblem(hamiltonian=H, ...)
+            >>> problem = MFGProblem(model=Model(hamiltonian=H), ...)
             >>> problem.hamiltonian_class.dp(t, x, p, m)  # Direct access
         """
         if self.components is not None:
@@ -2572,7 +2543,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     # Retired kwargs, each refused with the API that replaces it (Issue #666, #670, #2554)
     _DEPRECATED_KWARGS: ClassVar[dict[str, str]] = {
-        "hamiltonian": "Model(hamiltonian=...), a Hamiltonian object such as SeparableHamiltonian(...)",
+        "hamiltonian": "Model(hamiltonian=...), or MFGComponents(hamiltonian=...) in the components= form, a Hamiltonian "
+        "object such as SeparableHamiltonian(...). Beside components=, put the one you mean there: that is the one read "
+        "(#2563)",
         "dH_dm": "the Hamiltonian's coupling_dm=, which takes f'(m); H carries -f, so dH/dm = -f'(m), e.g. "
         "SeparableHamiltonian(coupling=..., coupling_dm=...)",
         "dH_dp": "the Hamiltonian's control_cost=, whose dp() is dH/dp, e.g. QuadraticControlCost(...)",
