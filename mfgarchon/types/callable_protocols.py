@@ -27,7 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class Slots:
     ruling 8 reversed (``v``/``m``, ``p``/``m``): a name for ``t`` or ``x`` separates the new order
     from the full old one but not from the half-migration that moved only ``t`` to the front, so a
     positional callable of such a role must also name one of the pair. ``required`` are slots a callable must declare to
-    be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a positional
+    be bound by name (a raw Hamiltonian reads ``p``, and may read nothing else). ``optional`` are slots a positional
     callable may leave out (a conditional Hamiltonian's ``t``, as it always could); what remains
     must be in the same order before ruling 8 as after it, so a positional callable without them
     needs no name to say which order it is in. ``reordered`` is False for a callable ruling 8 did
@@ -65,7 +65,8 @@ class Slots:
 
 # The argument order of each user-supplied callable the library invokes: time, then space, then the
 # u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
-# These are the one statement of it: every invocation goes through `bind_user_callable`.
+# These are the one statement of it. `CoefficientField` (#2864), `DualHamiltonian`, `DualLagrangian` and the validators'
+# reading of a family's method call a callable by name with no binding, and read `refuse_overridden` (#2869).
 POTENTIAL_SLOTS = Slots(("t", "x"))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
@@ -74,7 +75,7 @@ CONDITION_SLOTS = Slots(("t", "x"))
 BOUNDARY_VALUE_SLOTS = Slots(("t", "x"))
 SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",), swapped=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
-HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
+HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("p",))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
 # A graph's node plays x; its adjacency stays with it (user ruling 2026-09-25).
@@ -97,6 +98,60 @@ _TIME_NAMES = ("t", "time")
 _WRITE_A_FUNCTION = "a function named for the slots it reads that passes each argument to the parameter that reads it"
 
 
+def _partial_levels(fn: Any) -> Iterator[functools.partial]:
+    """Each ``functools.partial`` in ``fn``, outermost first. Python flattens a partial of a partial only when the inner one
+    has no ``__dict__``, so one given an attribute, or wrapped by ``functools.update_wrapper``, stays a level of its own. A
+    ``functools.wraps`` wrapper over a partial is walked through too: ``inspect.signature`` reads through ``__wrapped__``, so
+    the wrapper is called with the partial's names and hands them on. A partial held where a method goes, as a class's
+    ``__call__`` or a ``MethodType``, or behind a hand-set ``__signature__``, is not reached (#2871)."""
+    while True:
+        fn = inspect.unwrap(fn, stop=lambda f: isinstance(f, functools.partial))
+        if not isinstance(fn, functools.partial):
+            return
+        yield fn
+        fn = fn.func
+
+
+def frozen_by_keyword(fn: Any, names: Collection[str]) -> dict[str, Any]:
+    """Those of ``names`` that a ``functools.partial`` in ``fn`` froze by keyword, with the value each call would see."""
+    frozen: dict[str, Any] = {}
+    for level in _partial_levels(fn):
+        for keyword, value in level.keywords.items():
+            if keyword in names:
+                frozen.setdefault(keyword, value)
+    return frozen
+
+
+class FrozenSlotError(TypeError):
+    """The refusal of a partial the library would override, naming what it froze in ``frozen``."""
+
+    def __init__(self, message: str, frozen: list[str]) -> None:
+        super().__init__(message)
+        self.frozen = frozen
+
+
+def refuse_overridden(fn: Any, passes: Collection[str], *, role: str) -> None:
+    """Refuse ``fn``, about to be called by name with ``passes``, if that would override what a partial froze (#2869).
+
+    A binding passes the names it read, so a slot frozen into ``**kw`` stands. A door with no binding passes every name it
+    has, whatever the signature says, so a slot frozen into ``**kw`` is overridden there too, and an alias it never passes
+    stands. Where ``fn`` is not called by name, as a positional binding is not, the frozen value stands, and this does not
+    apply.
+    """
+    frozen = list(frozen_by_keyword(fn, passes))
+    if frozen:
+        raise FrozenSlotError(
+            f"{role} {getattr(fn, '__qualname__', fn)!r} is or wraps a functools.partial that freezes {', '.join(frozen)} by keyword: "
+            f"called by name, it is passed that slot, so the frozen value would be overridden. Write "
+            f"{_WRITE_A_FUNCTION}, passing the frozen value by keyword (#2869).",
+            frozen,
+        )
+
+
+def freezes_by_position(fn: Callable[..., Any]) -> bool:
+    return any(level.args for level in _partial_levels(fn))
+
+
 def _reorder_advice(order: tuple[str, ...]) -> str:
     """A refusal's advice, by what each parameter reads. Named after the slots in the order they are written, a callable
     keeps that order, and one written time last would read its arguments in the wrong slots (#2861)."""
@@ -109,6 +164,15 @@ def _reorder_advice(order: tuple[str, ...]) -> str:
         f"Name each parameter after what it reads and put them in the order {target}: named {', '.join(order)} in the "
         f"order it is written, {swapped} would read its arguments in the wrong slots."
     )
+
+
+def rewrite_advice(fn: Callable[..., Any], slots: Slots) -> str:
+    """What a refusal tells ``fn`` to do. Reordering a function a partial froze by position moves the frozen value to
+    another parameter, with no error: `functools.partial(lambda t, x: ..., 9.0)` freezes t, whichever the 9.0 was
+    written for (#2861)."""
+    if freezes_by_position(fn):
+        return f"Write {_WRITE_A_FUNCTION}, passing the frozen value by keyword."
+    return _reorder_advice(slots.order)
 
 
 def bind_user_callable(
@@ -145,6 +209,7 @@ def bind_user_callable(
       a time parameter would receive ``x`` as time.
     - A parameter named after one slot at another slot's position: bound positionally, it would
       receive the wrong one (``V(x, tau)`` would get ``t`` as ``x``).
+    - A ``functools.partial`` bound by name that froze a slot by keyword: the slot passed by name would override it.
     - Anything else that cannot be matched to the slots.
     """
     order_ = slots.order
@@ -157,10 +222,14 @@ def bind_user_callable(
     positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
     order = [p.name for p in positional]
     if out_of_order(order, slots):
+        advice = (
+            f". {rewrite_advice(fn, slots)}"
+            if freezes_by_position(fn)
+            else ": reorder its parameters, and call it by keyword wherever you call it yourself."
+        )
         raise TypeError(
             f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(order)}), which is out of order. Since "
-            f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(order_)}), time first: reorder its "
-            f"parameters, and call it by keyword wherever you call it yourself."
+            f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(order_)}), time first{advice}"
         )
     named = [
         p.name for p in params if p.name in slot_of and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)
@@ -183,10 +252,11 @@ def bind_user_callable(
             # arguments than it did (#2406 review: `(x, *rest)` got t as x). Neither is the old call.
             raise TypeError(
                 f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}): "
-                f"{', '.join(misplaced_here)} would receive another slot's value. {_reorder_advice(order_)}"
+                f"{', '.join(misplaced_here)} would receive another slot's value. {rewrite_advice(fn, slots)}"
             )
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
+        refuse_overridden(fn, named, role=role)
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
     # Positionally it receives every slot, or every slot but the optional ones.
     shortened = tuple(slot for slot in order_ if slot not in slots.optional)
@@ -205,7 +275,7 @@ def bind_user_callable(
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
-    reorder = _reorder_advice(order_)
+    reorder = rewrite_advice(fn, slots)
     if misplaced:
         why = f": {', '.join(misplaced)} would receive another slot's value. {reorder}"
     elif passes is not None and not var_positional:
@@ -225,11 +295,11 @@ def bind_user_callable(
 
 def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str) -> BoundCallable:
     """Bind ``fn`` to ``slots`` by its parameter names, and refuse it otherwise: a boundary value's rule, the grid's
-    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in each refusal.
+    (#2512 row B2) and a graph node's value and rule (#2296) alike. ``ruling`` is cited in the refusals of a callable's kind, signature and stars.
 
     Called by name, a callable is passed only the slots it names, and every one of them: so a ``*args`` or ``**kwargs``
-    parameter is refused, since nothing reaches it, and then a ``functools.partial`` that freezes a parameter named
-    after a slot by keyword, since the slot passed by name would override it (#2296 reviews 2 and 3). A partial that
+    parameter is refused, since nothing reaches it, and `bind_user_callable` refuses a ``functools.partial`` that freezes
+    a parameter named after a slot by keyword, since the slot passed by name would override it (#2869). A partial that
     freezes a slot by position, or a keyword that names no slot, is a function of the slots it leaves.
 
     Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
@@ -245,9 +315,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
     """
     name = getattr(fn, "__qualname__", fn)
     target = fn
-    frozen: list[str] = []
     while isinstance(target, functools.partial):
-        frozen += [keyword for keyword in target.keywords if keyword in slots.slot_of()]
         target = target.func
     if not inspect.isfunction(target):
         raise TypeError(
@@ -275,14 +343,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
         stars = ", ".join(f"{'*' if p.kind is inspect.Parameter.VAR_POSITIONAL else '**'}{p.name}" for p in variadic)
         raise TypeError(
             f"{role} {name!r} takes {inspect.signature(fn)}: called by name, it is passed only the slots it names, so "
-            f"nothing reaches {stars} ({ruling}). {_reorder_advice(slots.order)}"
-        )
-    if frozen:
-        # Not "freeze it by position": that freezes the first parameter, whichever it is (#2861).
-        raise TypeError(
-            f"{role} {name!r} is a functools.partial that freezes {', '.join(frozen)} by keyword: called by name, a "
-            f"{role} is passed every slot it names, so the frozen value would be overridden. Write "
-            f"{_WRITE_A_FUNCTION}, passing the frozen value by keyword ({ruling})."
+            f"nothing reaches {stars} ({ruling}). {rewrite_advice(fn, slots)}"
         )
     bound = bind_user_callable(fn, slots, role=role)
     if bound.binding != "keyword":
@@ -292,7 +353,7 @@ def bind_by_name(fn: Callable[..., Any], slots: Slots, *, role: str, ruling: str
             params = "an unreadable signature"
         raise TypeError(
             f"{role} {name!r} takes ({params}), whose parameters are not all named after the slots, and a {role} is "
-            f"called by name (#2378 phase 5, #2375 ruling 8). {_reorder_advice(slots.order)}"
+            f"called by name (#2378 phase 5, #2375 ruling 8). {rewrite_advice(fn, slots)}"
         )
     return bound
 

@@ -274,16 +274,25 @@ def test_alpha_star_takes_time_first_with_t_idx_for_t():
             bind_user_callable(old_order, ALPHA_STAR_SLOTS, role="alpha_star")
 
 
-def test_a_raw_hamiltonian_must_declare_all_four_slots_and_name_one_that_moved():
-    """Validation has always demanded (t, x, p, m) of a raw callable; ruling 8 moved t, x and m."""
+def test_a_raw_hamiltonian_by_name_must_declare_p_and_one_by_position_must_name_one_that_moved():
+    """A Hamiltonian need read no more than p, so a raw callable must declare only that; bound positionally it must name a slot
+    ruling 8 moved, t, x or m, since p is at index 2 in both orders."""
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
 
     by_name = bind_user_callable(lambda t, x, p, m: p - m, HAMILTONIAN_SLOTS, role="h")
     pinned = bind_user_callable(lambda t, x, grad, m: grad - m, HAMILTONIAN_SLOTS, role="h")  # m pins the pair
     assert by_name(t=0.0, x=0.0, p=2.0, m=0.5) == pinned(t=0.0, x=0.0, p=2.0, m=0.5) == 1.5
-    # Omits slots; or names only p, which is at index 2 in both orders (#2404 review).
+    for reads_less, read in (
+        (lambda t, x, p: 100.0 * p + x, 203.0),
+        (lambda x, p: 100.0 * p + x, 203.0),
+        (lambda p: 100.0 * p, 200.0),
+        (lambda t, p, m: 100.0 * p + 1000.0 * m, 7200.0),
+    ):
+        assert bind_user_callable(reads_less, HAMILTONIAN_SLOTS, role="h")(t=0.25, x=3.0, p=2.0, m=7.0) == read
+    # Does not read p; or names only p, which is at index 2 in both orders (#2404 review).
     for incomplete in (
         lambda x: 0.0,
+        lambda t, m: 0.0,
         lambda x_, m_, p, t_: 0.0,
         lambda t, x, a, b: 0.0,
         lambda t, pos, dens, grad: 0.0,
