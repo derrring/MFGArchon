@@ -1,17 +1,17 @@
 {
   "_measured_at": {
-    "collected": 5495,
-    "commit": "ac8eae9f",
+    "collected": 7024,
+    "commit": "d98d4b64",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
     ],
     "reproduce": "the `commit` key above is a pre-merge branch sha and does not survive the squash merge that ships this file. `git log --oneline --follow scripts/discrimination_killmatrix.json` and check out its FIRST entry -- squash merges here are single-parent, so there is no merge commit to find. That yields the tree this artifact SHIPPED in, which is not necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` if the difference matters",
-    "swept_on": "2026-10-15"
+    "swept_on": "2026-11-03"
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
-  "baseline_seconds": 153.2,
+  "baseline_seconds": 238.7,
   "killed_by": {
     "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M": [
       "quadrature_wall_node_counting_measure",
@@ -55,6 +55,27 @@
     "tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence::test_the_drift_scale_is_inert_at_the_solve": [
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_population_solves_with_its_own_source[source_term_fp]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_population_solves_with_its_own_source[source_term_hjb]": [
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_regime_adds_its_own_fp_source_under_the_integrating_factor": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_regime_adds_its_own_hjb_source_to_the_cross_regime_term": [
+      "picard_criterion_reads_as_or",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_fp]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_hjb]": [
+      "picard_criterion_reads_as_or",
+      "terminal_condition_pinned_at_initial_index",
+      "hjb_marches_forward_in_time"
     ],
     "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]": [
       "diffusion_scalar_2x"
@@ -103,6 +124,9 @@
     "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversNumericalProperties::test_initial_condition_satisfaction": [
       "fp_initial_condition_written_at_final_index"
     ],
+    "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversNumericalProperties::test_terminal_condition_satisfaction": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/integration/test_fem_robin_bc.py::TestRobinSolveLoopWiring::test_hjb_linear_loop_fixed_point": [
       "diffusion_scalar_2x"
     ],
@@ -111,6 +135,9 @@
     ],
     "tests/integration/test_hjb_with_obstacle.py::TestObstacleConvergenceProperties::test_tolerance_scaling": [
       "hjb_marches_forward_in_time"
+    ],
+    "tests/integration/test_interaction_lions_bridge.py::TestGate3LionsBridgeEquivalence::test_the_nonlocal_source_refuses_the_library_s_weighted_operators[GraphonCouplingOperator]": [
+      "quadrature_wall_node_counting_measure"
     ],
     "tests/integration/test_mass_conservation_1d.py::TestExplicitDriftNoFluxDiffusionConservation::test_pure_diffusion_no_flux_conserves_mass": [
       "quadrature_wall_node_counting_measure",
@@ -123,8 +150,6 @@
     "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array": [
       "diffusion_scalar_2x",
       "diffusion_field_2x",
-      "picard_criterion_reads_as_or",
-      "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/integration/test_mms_validation.py::TestCoupledHJBFPValidation::test_coupled_mass_conservation": [
@@ -305,6 +330,9 @@
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_bc_checked_at_every_read_1699.py::test_a_bc_swapped_onto_the_geometry_is_checked_before_it_is_solved[hjb_fdm-1d-robin]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_callback_abort_is_not_convergence_1684.py::test_a_callback_that_does_not_return_false_does_not_stop_the_loop[None]": [
       "picard_criterion_reads_as_or"
     ],
@@ -323,6 +351,9 @@
     ],
     "tests/unit/test_alg/test_constraint_projected_per_step_2036.py::test_each_returned_step_is_the_projection_of_one_step_from_the_next": [
       "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_constraint_projected_per_step_2036.py::test_the_terminal_condition_must_lie_in_the_constraint_set[round_off_accepted-1d]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_an_absolute_bound_applies_only_when_asked_for[block]": [
       "drift_coefficient_2x",
@@ -534,6 +565,9 @@
     "tests/unit/test_alg/test_fem_one_facet_rule_2595.py::test_a_load_named_by_an_empty_tag_is_refused_and_the_tagged_one_is_placed[hjb-shared-NEUMANN]": [
       "diffusion_scalar_2x"
     ],
+    "tests/unit/test_alg/test_fem_one_facet_rule_2595.py::test_a_load_named_by_an_empty_tag_is_refused_and_the_tagged_one_is_placed[hjb-shared-ROBIN]": [
+      "diffusion_scalar_2x"
+    ],
     "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[named]": [
       "diffusion_scalar_2x"
     ],
@@ -554,6 +588,36 @@
     ],
     "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[row 6: the exit named by the alias 'right']": [
       "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_a_capped_face_off_axis_0_lets_out_c_times_its_measure": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[0.5]": [
       "optimal_control_sign"
@@ -584,6 +648,51 @@
     ],
     "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[2.5]": [
       "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "periodic_endpoint_convention_inverted",
+      "periodic_wrap_endpoint_inverted",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "periodic_endpoint_convention_inverted",
+      "periodic_wrap_endpoint_inverted",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_the_2d_exit_absorbs_and_matches_the_decaying_modes": [
+      "diffusion_scalar_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_fdm_dirichlet_rows_2531.py::test_problem_solve_holds_a_shared_exit_at_zero_under_a_problem_source": [
       "picard_criterion_reads_as_or"
@@ -628,7 +737,6 @@
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d": [
-      "diffusion_scalar_2x",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverBasicSolution::test_solve_fp_system_initial_condition_preserved": [
@@ -809,6 +917,119 @@
       "diffusion_scalar_2x",
       "optimal_control_sign"
     ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_dirichlet_face_beside_a_flux_face_takes_nothing_from_it[fdm]": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fem]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_2d]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fem_1d]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fem_2d]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-1]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-2]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_an_outflow_that_drains_the_wall_is_refused_on_upwind": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fdm]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fem]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[0.0]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[1e-20]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_round_off_pass_within_the_gate": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face": [
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_fem_is_refused_where_the_first_negative_is_off_the_flux_face": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_fp_fdm_names_the_inflow_remedy_on_centered_and_it_clears_the_row": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_1d]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_2d]": [
+      "drift_coefficient_2x",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fem_1d]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-1-_q_t]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-2-_q_y]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fem-1-_q_t]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_with_no_drift_the_flux_and_the_drift_dropped_wall_coincide[fdm]": [
+      "diffusion_scalar_2x",
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_with_no_drift_the_flux_and_the_drift_dropped_wall_coincide[fem]": [
+      "diffusion_scalar_2x"
+    ],
     "tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py::test_the_alternatives_the_refusal_names_hold_a_wall[GFDM HJB with FP-FDM]": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -817,6 +1038,111 @@
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_initial_density_refused_1683.py::test_an_initial_density_that_touches_zero_still_solves": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_flux_under_a_field_volatility_moves_the_mass_by_its_q": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[adjoint_mode-1-no_flux]": [
+      "diffusion_scalar_2x",
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[adjoint_mode-1-periodic]": [
+      "diffusion_scalar_2x",
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[explicit_callable_drift-1-no_flux]": [
+      "diffusion_scalar_2x",
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[explicit_callable_drift-1-periodic]": [
+      "diffusion_scalar_2x",
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[implicit-1-no_flux]": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[implicit-1-periodic]": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[implicit-2-no_flux]": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[adjoint_mode-1]": [
+      "periodic_endpoint_convention_inverted",
+      "quadrature_wall_node_counting_measure",
+      "periodic_wrap_endpoint_inverted"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-1]": [
+      "periodic_endpoint_convention_inverted",
+      "quadrature_wall_node_counting_measure",
+      "periodic_wrap_endpoint_inverted",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-2]": [
+      "periodic_endpoint_convention_inverted",
+      "quadrature_wall_node_counting_measure",
+      "periodic_wrap_endpoint_inverted",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[implicit-1]": [
+      "periodic_endpoint_convention_inverted",
+      "quadrature_wall_node_counting_measure",
+      "periodic_wrap_endpoint_inverted",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[tensor-2]": [
+      "periodic_endpoint_convention_inverted",
+      "quadrature_wall_node_counting_measure",
+      "periodic_wrap_endpoint_inverted",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[explicit_callable_drift]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fv_upwind_donor_cell_swapped",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_1d]": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_2d]": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_drifted]": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[tensor]": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[explicit_callable_drift]": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[implicit]": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[implicit_2d]": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[tensor]": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_coupled_solve_conserves_mass_with_a_field_volatility": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_tensor_step_is_the_ito_sum_component_by_component[negative]": [
+      "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_tensor_step_is_the_ito_sum_component_by_component[zero_on_a_line]": [
+      "grid_spacing_uses_point_count",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_conservative_operator_column_sum_zero_no_flux": [
@@ -962,6 +1288,23 @@
       "particle_mass_counting_measure",
       "picard_criterion_reads_as_or"
     ],
+    "tests/unit/test_alg/test_fp_particle_obstacle_every_path_2688.py::test_no_step_path_records_a_particle_outside_the_domain[1-D grid, absorbing, preserve_indices]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_particle_obstacle_every_path_2688.py::test_no_step_path_records_a_particle_outside_the_domain[1-D grid, absorbing]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_keeps_each_particle_s_row_under_an_absorbing_wall[1-D grid drift]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_rows_follow_their_own_particles[1-D grid drift]": [
+      "optimal_control_sign",
+      "grid_spacing_uses_point_count"
+    ],
+    "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_rows_follow_their_own_particles[2-D grid drift]": [
+      "optimal_control_sign",
+      "grid_spacing_uses_point_count"
+    ],
     "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_compute_gradient": [
       "grid_spacing_uses_point_count"
     ],
@@ -1014,6 +1357,11 @@
       "optimal_control_sign",
       "terminal_condition_pinned_at_initial_index"
     ],
+    "tests/unit/test_alg/test_fp_refuses_flux_capacity_2575.py::test_fp_fdm_honours_the_cap_on_its_own_bc": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
     "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_a_coupled_exit_cost_holds_u_at_g_and_absorbs_m": [
       "picard_criterion_reads_as_or",
       "terminal_condition_pinned_at_initial_index"
@@ -1061,6 +1409,18 @@
     "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion": [
       "diffusion_field_2x"
     ],
+    "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[per_face]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[uniform]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_periodic_solution_that_is_not_even_about_the_seam_is_reproduced_at_second_order[1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_periodic_solution_that_is_not_even_about_the_seam_is_reproduced_at_second_order[2]": [
+      "diffusion_scalar_2x"
+    ],
     "tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[dirichlet-per_face-howard]": [
       "diffusion_scalar_2x"
     ],
@@ -1085,11 +1445,48 @@
     "tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[neumann-uniform-newton]": [
       "diffusion_scalar_2x"
     ],
+    "tests/unit/test_alg/test_gfdm_grid_collocation_transfer_2756.py::test_the_particle_drift_reaches_a_particle_on_the_last_node": [
+      "optimal_control_sign",
+      "grid_spacing_uses_point_count"
+    ],
     "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_mms_reaches_gfdm_and_it_converges": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_the_howard_inner_solver_also_honours_the_source": [
       "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_the_per_point_residual_path_also_honours_the_source": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_newton_imposes_dirichlet_2599.py::test_both_inner_solvers_impose_it_in_2d[constant-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_newton_imposes_dirichlet_2599.py::test_both_inner_solvers_impose_it_in_2d[linear-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_newton_imposes_dirichlet_2599.py::test_newton_imposes_the_dirichlet_value_whatever_the_terminal[zero]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-3]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-42]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-7]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-3]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-42]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-7]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_full_solve_invocation_split": [
+      "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_harmonic_is_fictitious_play_2415.py::test_fictitious_play_follows_the_average": [
       "picard_criterion_reads_as_or",
@@ -1264,6 +1661,7 @@
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]": [
+      "engquist_osher_derivative_drops_the_forward_branch",
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-newton]": [
@@ -1325,6 +1723,16 @@
     ],
     "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-picard]": [
       "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[two bindings of one G]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost[grid, another cost]": [
+      "quadrature_wall_node_counting_measure",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost[grid, swapped populations]": [
+      "quadrature_wall_node_counting_measure"
     ],
     "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]": [
       "drift_coefficient_2x",
@@ -1403,6 +1811,9 @@
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_scalar_l_H": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_dirichlet_value": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_hjb_inputs_are_required_2642.py::test_an_explicit_zero_iterate_still_solves_the_heat_equation": [
@@ -1894,6 +2305,36 @@
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
     ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_coupled_solve_is_not_converged_over_a_failed_inner_step[30-block gauss-seidel]": [
+      "terminal_condition_pinned_at_initial_index",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_coupled_solve_is_not_converged_over_a_failed_inner_step[30-fixed point]": [
+      "terminal_condition_pinned_at_initial_index",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_solver_in_one_slot_is_read_by_its_report": [
+      "terminal_condition_pinned_at_initial_index",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_newtons_reason_says_how_it_stopped[a named stop-20]": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[graph]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[multi-population]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[regime switching]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch",
+      "hjb_marches_forward_in_time"
+    ],
     "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty": [
       "picard_criterion_reads_as_or",
       "terminal_condition_pinned_at_initial_index",
@@ -2089,6 +2530,47 @@
       "quadrature_wall_node_counting_measure",
       "fp_initial_condition_written_at_final_index"
     ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_deposited_level_carries_the_callers_mass": [
+      "optimal_control_sign",
+      "grid_spacing_uses_point_count",
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D GPU]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[2-D callable drift]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[2-D]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[beta]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[cic]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[reflection]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[renormalization]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[standard]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read[a callable bandwidth, 0.05 times Scott's]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read[at a corner, three quarters outside]": [
+      "quadrature_wall_node_counting_measure"
+    ],
     "tests/unit/test_alg/test_meshless_galerkin_declares_bcs.py::test_a_coupled_exit_cost_runs_through_the_factory": [
       "optimal_control_sign",
       "picard_criterion_reads_as_or"
@@ -2165,6 +2647,18 @@
     "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d": [
       "optimal_control_sign"
     ],
+    "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_reflecting_conditions_with_a_placed_segment_reflect_per_point[REFLECTING door placed by region, NO_FLUX default]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_reflecting_conditions_with_a_placed_segment_reflect_per_point[REFLECTING placed by region_name, NO_FLUX default]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_two_reflecting_conditions_keep_the_fast_path[1]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_two_reflecting_conditions_keep_the_fast_path[2]": [
+      "optimal_control_sign"
+    ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPFDMSolver-NEUMANN]": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -2189,6 +2683,18 @@
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLSolver-NO_FLUX]": [
       "quadrature_wall_node_counting_measure"
     ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-DIRICHLET]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NEUMANN]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NO_FLUX]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-PERIODIC]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_fp_solve_conserves_mass_in_the_limit[FPFDMSolver]": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -2206,6 +2712,7 @@
     ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[HJBFDMSolver]": [
       "periodic_endpoint_convention_inverted",
+      "engquist_osher_derivative_drops_the_forward_branch",
       "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[HJBWENOSolver]": [
@@ -2282,9 +2789,46 @@
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
+    "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_solver_without_the_report_is_not_tracked_rather_than_an_error": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_the_verdict_reads_the_sweep_that_met_the_criteria[first_solve_only-<lambda>]": [
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[sobol]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost[0.25]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost[4.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_solves_the_discrete_bellman_equation_at_a_control_cost_other_than_one": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[mixed-1600-0.0036-143]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[mixed-900-0.0042-99]": [
+      "diffusion_scalar_2x",
+      "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_regime_switching_iterator.py::TestDiagonalOutflowIsNotALaggedSource::test_regime_masses_track_the_markov_chain_closed_form": [
       "fp_initial_condition_written_at_final_index"
@@ -2670,6 +3214,148 @@
     "tests/unit/test_core/test_control_cost_weight_is_validated_2373.py::test_the_optimal_control_convention_is_minus_dh_dp": [
       "optimal_control_sign"
     ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_at_hjb_gfdm_collocation_points[coupled]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_at_hjb_gfdm_collocation_points[standalone]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Newton, HJB-FDM]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Picard, HJB-FDM]": [
+      "quadrature_wall_node_counting_measure",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Picard, HJB-SL]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game": [
+      "drift_coefficient_2x",
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "engquist_osher_derivative_drops_the_forward_branch",
+      "terminal_condition_pinned_at_initial_index",
+      "hjb_marches_forward_in_time",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_users_coupling_cost_sums_with_the_librarys": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game": [
+      "drift_coefficient_2x",
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "engquist_osher_derivative_drops_the_forward_branch",
+      "terminal_condition_pinned_at_initial_index",
+      "hjb_marches_forward_in_time",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BaseHJBSolver.solve]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator, diverged]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "terminal_condition_pinned_at_initial_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator, diverged]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "terminal_condition_pinned_at_initial_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FictitiousPlayIterator, diverged]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FictitiousPlayIterator]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator, diverged]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "terminal_condition_pinned_at_initial_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver, diverged]": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver]": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver warm-up, diverged]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver warm-up]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver]": [
+      "quadrature_wall_node_counting_measure",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[RegimeSwitchingIterator, diverged]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[RegimeSwitchingIterator]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_population_s_coupling_cost_reads_its_own_density": [
+      "quadrature_wall_node_counting_measure",
+      "picard_criterion_reads_as_or",
+      "terminal_condition_pinned_at_initial_index",
+      "hjb_marches_forward_in_time",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_bound_interaction_cost_integrates_on_the_problems_measure": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_bound_nodes_and_the_density_slice_share_the_grids_order": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy[1]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy[2]": [
+      "grid_spacing_uses_point_count",
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given[HJBFDMSolver-t_n with m_n]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given[HJBSemiLagrangianSolver-t_{n+1} with m_{n+1}]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given[HJBWENOSolver-each stage time t with m at round(t / dt)]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_what_stage_two_does_not_bind_is_refused": [
+      "quadrature_wall_node_counting_measure"
+    ],
     "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_minimize": [
       "optimal_control_sign"
     ],
@@ -2764,6 +3450,9 @@
       "diffusion_scalar_2x",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_without_a_wall_the_value_is_flat": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_volatility": [
       "diffusion_scalar_2x"
     ],
@@ -2815,11 +3504,32 @@
     "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_each_cell_either_applies_or_refuses[FDMApplicator-ROBIN]": [
       "ghost_spacing_ignored"
     ],
+    "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[BCType.NEUMANN]]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[BCType.NO_FLUX]]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[BCType.ROBIN]]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[neumann]]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[no_flux]]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[robin]]": [
+      "bc_noflux_reads_as_clamp"
+    ],
     "tests/unit/test_geometry/boundary/test_extrapolation_reaches_the_buffer_1958.py::test_every_other_member_is_untouched[mixed-PERIODIC]": [
       "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/boundary/test_extrapolation_reaches_the_buffer_1958.py::test_every_other_member_is_untouched[uniform-PERIODIC]": [
       "periodic_wrap_endpoint_inverted"
+    ],
+    "tests/unit/test_geometry/boundary/test_face_owner_b1a_2512.py::test_fixture_c_one_wall_is_not_read_by_two_rules_in_one_solve_2624": [
+      "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_an_inhomogeneous_flux_is_exact_at_every_layer[high-1]": [
       "ghost_spacing_ignored"
@@ -2889,6 +3599,18 @@
     "tests/unit/test_geometry/boundary/test_node_centred_wall_1935.py::test_the_no_flux_wall_row_converges_at_second_order": [
       "grid_spacing_uses_point_count"
     ],
+    "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a BC whose domain is its domain_sdf-a BC handed to the solver]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a BC whose domain is its domain_sdf-the problem's BC]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a box BC-a BC handed to the solver]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a box BC-the problem's BC]": [
+      "optimal_control_sign"
+    ],
     "tests/unit/test_geometry/boundary/test_per_face_bc_path_1937.py::test_each_axis_uses_its_own_spacing": [
       "ghost_spacing_ignored"
     ],
@@ -2923,6 +3645,9 @@
     "tests/unit/test_geometry/boundary/test_per_face_bc_path_1937.py::test_the_two_ghost_paths_agree_on_an_inhomogeneous_neumann_flux[2.0]": [
       "ghost_spacing_ignored",
       "neumann_low_wall_flux_sign"
+    ],
+    "tests/unit/test_geometry/boundary/test_region_named_segments_2472.py::test_a_zero_flux_region_route_solves_as_plain_no_flux": [
+      "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_geometry/boundary/test_region_named_segments_2472.py::test_only_a_default_some_face_reads_counts_as_an_operation[mixed_default_read]": [
       "bc_noflux_reads_as_clamp"
@@ -3430,6 +4155,33 @@
     "tests/unit/test_operators/test_gradient.py::TestPartialDerivOperator::test_upwind_scheme": [
       "rouy_tourin_branch_swap"
     ],
+    "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_cell_volume_ontology_sums_to_domain_measure": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[combined]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[potential]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[quadratic]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::test_from_problem_reads_the_grid_the_measure_and_the_topology[uniform grid]": [
+      "grid_spacing_uses_point_count"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[1-dense]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[1-fft]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[2-dense]": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[2-fft]": [
+      "quadrature_wall_node_counting_measure"
+    ],
     "tests/unit/test_operators/test_interface_jump.py::TestInterfaceJumpOperator1D::test_1d_gradient_jump": [
       "grid_interval_count_reads_as_points"
     ],
@@ -3452,6 +4204,19 @@
       "quadrature_wall_node_counting_measure"
     ],
     "tests/unit/test_operators/test_laplacian.py::TestLaplacianVariableCoefficient::test_varying_field_is_column_conservative": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_point_measure_1642.py::test_a_measure_that_is_not_a_quadrature_on_its_domain_is_refused": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_point_measure_1642.py::test_a_v_that_writes_into_its_point_moves_no_point_off_the_nodes": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_point_measure_1642.py::test_the_grid_s_domain_is_what_its_measure_integrates_over": [
+      "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_operators/test_point_measure_1642.py::test_the_grid_s_fft_path_is_the_direct_quadrature_on_the_same_measure": [
+      "grid_spacing_uses_point_count",
       "quadrature_wall_node_counting_measure"
     ],
     "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_engquist_osher_is_monotone_and_the_integral_flux": [
@@ -3562,17 +4327,23 @@
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_each_axis_gets_the_operation_its_faces_ask_for[none]"
       ],
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
-      "seconds": 174.1,
+      "seconds": 293.5,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
     },
     "bc_noflux_reads_as_clamp": {
-      "kill_count": 22,
+      "kill_count": 28,
       "killed": [
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticSLUnificationPinning::test_1d_step_byte_identical_to_legacy[cubic]",
         "tests/unit/test_alg/test_solver_failure_fallback_keeps_the_cost_1689.py::test_a_constant_potential_shifts_the_value_by_v_times_t",
         "tests/unit/test_docstring_examples_2346.py::test_every_example_in_this_module_still_runs[mfgarchon.geometry.boundary.bc_utils]",
         "tests/unit/test_gate_refuses_a_mutated_tree.py::test_the_guard_test_leaves_the_running_checkout_untouched",
+        "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[BCType.NEUMANN]]",
+        "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[BCType.NO_FLUX]]",
+        "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[BCType.ROBIN]]",
+        "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[neumann]]",
+        "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[no_flux]]",
+        "tests/unit/test_geometry/boundary/test_applicator_bc_type_contract_1948.py::test_the_gate_takes_each_input_it_can_impose[geometric_operation[robin]]",
         "tests/unit/test_geometry/boundary/test_region_named_segments_2472.py::test_only_a_default_some_face_reads_counts_as_an_operation[mixed_default_read]",
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]",
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]",
@@ -3593,7 +4364,7 @@
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_per_axis_owner_does_not_read_the_lookup_2284"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
-      "seconds": 143.8,
+      "seconds": 327.5,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
     },
@@ -3608,7 +4379,7 @@
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_5_neumann_both_boundaries_accurate"
       ],
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-      "seconds": 169.0,
+      "seconds": 255.5,
       "status": "ok",
       "verify": "abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - _ghost0(neumann_bc(dimension=1, value=2.0), 2)) < 1e-12"
     },
@@ -3627,14 +4398,21 @@
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-rouy_tourin]"
       ],
       "owner": "the numerical Hamiltonian a solver is CONSTRUCTED with is the one every one of its paths evaluates -- `numerical_hamiltonian` is validated and stored in `HJBFDMSolver.__init__` and read at eight further sites: the refusal check, `solve_hjb_system`, `_compute_gradients_nd`, `_build_advection_matrix_1d`, and twice each in `_build_linearized_operator_1d` and `_build_linearized_operator_nd`, which read the momentum and its derivatives separately (#2313, user ruling of 2026-09-16); the presets differ only at a discrete local maximum along an axis, so an argument accepted and dropped is invisible on any smooth fixture, and the strict-adjoint FP coupling consumes the linearisation as A_fp = J^T (#707, #2338). It drops a threaded ARGUMENT rather than altering arithmetic, and the validation still raises on a bad preset, so the constructor looks like it honoured the request. Not the first of that shape in this matrix: `ghost_spacing_ignored` (#1904) has a constructor accept `spacing`, validate its length, and store `None` -- the precedent is the reason the class is worth a row. What is new here is that the replacement is another VALID value rather than a sentinel: an `engquist_osher` solver works, it is simply not the one asked for. It drops the preset at all eight sites at once -- the union over single-site mutations is 4 distinct tests, so six of the ten killers fire only on a total drop",
-      "seconds": 164.8,
+      "seconds": 359.8,
       "status": "ok",
       "verify": "float(np.abs(_linearised_1d(\"rouy_tourin\") - _linearised_1d(\"engquist_osher\")).max()) == 0.0"
     },
     "diffusion_field_2x": {
-      "kill_count": 12,
+      "kill_count": 19,
       "killed": [
         "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[adjoint_mode-1-no_flux]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[adjoint_mode-1-periodic]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[explicit_callable_drift-1-no_flux]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[explicit_callable_drift-1-periodic]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[implicit-1-no_flux]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[implicit-1-periodic]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[implicit-2-no_flux]",
         "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion",
         "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian",
         "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_vector_matches_diag_half_sigma_sq",
@@ -3648,12 +4426,12 @@
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
       ],
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-      "seconds": 155.7,
+      "seconds": 308.3,
       "status": "ok",
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 263,
+      "kill_count": 312,
       "killed": [
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
@@ -3678,6 +4456,7 @@
         "tests/unit/test_alg/test_fem_one_facet_rule_2595.py::test_a_load_named_by_an_alias_is_placed_on_the_tag_it_aliases[hjb-shared-ROBIN]",
         "tests/unit/test_alg/test_fem_one_facet_rule_2595.py::test_a_load_named_by_an_empty_tag_is_refused_and_the_tagged_one_is_placed[fp-explicit-ROBIN]",
         "tests/unit/test_alg/test_fem_one_facet_rule_2595.py::test_a_load_named_by_an_empty_tag_is_refused_and_the_tagged_one_is_placed[hjb-shared-NEUMANN]",
+        "tests/unit/test_alg/test_fem_one_facet_rule_2595.py::test_a_load_named_by_an_empty_tag_is_refused_and_the_tagged_one_is_placed[hjb-shared-ROBIN]",
         "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[named]",
         "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[row 11: the exit named 'all']",
         "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[row 1: a global exit, the wall at priority 0]",
@@ -3685,9 +4464,18 @@
         "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[row 3: the exit placed by region]",
         "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[row 5a: the exit is the DIRICHLET default]",
         "tests/unit/test_alg/test_fem_reads_the_face_owner_2595.py::test_each_spelling_of_a_wall_and_an_exit_solves_to_the_exact_solution[row 6: the exit named by the alias 'right']",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_the_2d_exit_absorbs_and_matches_the_decaying_modes",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[1]",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]",
-        "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_isotropic_tensor_matches_scalar_diffusion",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]",
@@ -3705,6 +4493,23 @@
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_2d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[reflecting_1d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[reflecting_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fem]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fem_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fem_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fem]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_fp_fdm_names_the_inflow_remedy_on_centered_and_it_clears_the_row",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fem_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_with_no_drift_the_flux_and_the_drift_dropped_wall_coincide[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_with_no_drift_the_flux_and_the_drift_dropped_wall_coincide[fem]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[adjoint_mode-1-no_flux]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[adjoint_mode-1-periodic]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[explicit_callable_drift-1-no_flux]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_nearly_uniform_field_is_the_scalar_step[explicit_callable_drift-1-periodic]",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[1--1]",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[1-1]",
@@ -3720,6 +4525,10 @@
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[41-40-0.0003]",
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fem_absorbs_a_shared_exit_and_matches_the_decaying_mode",
         "tests/unit/test_alg/test_fpsl_convergence_norm_2468.py::test_with_diffusion_the_density_converges_pointwise",
+        "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[per_face]",
+        "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_neumann_datum_is_reproduced_at_second_order_on_every_face_and_corner[uniform]",
+        "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_periodic_solution_that_is_not_even_about_the_seam_is_reproduced_at_second_order[1]",
+        "tests/unit/test_alg/test_gfdm_bc_oracles_2512.py::test_a_periodic_solution_that_is_not_even_about_the_seam_is_reproduced_at_second_order[2]",
         "tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[dirichlet-per_face-howard]",
         "tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[dirichlet-per_face-newton]",
         "tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[dirichlet-uniform-howard]",
@@ -3730,6 +4539,16 @@
         "tests/unit/test_alg/test_gfdm_bc_value_2513.py::test_the_bc_value_reaches_the_solution_at_second_order[neumann-uniform-newton]",
         "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_mms_reaches_gfdm_and_it_converges",
         "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_the_howard_inner_solver_also_honours_the_source",
+        "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_the_per_point_residual_path_also_honours_the_source",
+        "tests/unit/test_alg/test_gfdm_newton_imposes_dirichlet_2599.py::test_both_inner_solvers_impose_it_in_2d[constant-newton]",
+        "tests/unit/test_alg/test_gfdm_newton_imposes_dirichlet_2599.py::test_both_inner_solvers_impose_it_in_2d[linear-newton]",
+        "tests/unit/test_alg/test_gfdm_newton_imposes_dirichlet_2599.py::test_newton_imposes_the_dirichlet_value_whatever_the_terminal[zero]",
+        "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-3]",
+        "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-42]",
+        "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[howard-7]",
+        "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-3]",
+        "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-42]",
+        "tests/unit/test_alg/test_gfdm_no_flux_rate_2d_2512.py::test_the_default_stencils_converge_at_their_equations_order_on_reflecting_walls[newton-7]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_1d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_faced_x_2d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_faced_y_2d]",
@@ -3770,6 +4589,7 @@
         "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_cone_constant_effect",
         "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_per_node_l_H",
         "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_scalar_l_H",
+        "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_dirichlet_value",
         "tests/unit/test_alg/test_hjb_inputs_are_required_2642.py::test_an_explicit_zero_iterate_still_solves_the_heat_equation",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_3d_diffusion_matches_analytic",
@@ -3845,6 +4665,13 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[sobol]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_solves_the_discrete_bellman_equation_at_a_control_cost_other_than_one",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[mixed-1600-0.0036-143]",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[mixed-900-0.0042-99]",
         "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_matches_manual_D",
         "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestKernelConvention::test_scalar_is_half_sigma_squared",
         "tests/unit/test_alg/test_sl_cn_wall_2243.py::test_the_1d_crank_nicolson_call_site_is_second_order_at_the_wall",
@@ -3920,12 +4747,12 @@
         "tests/unit/test_utils/test_neumann_cn_wall_2237.py::test_order_at_the_wall[mirror-2.0]"
       ],
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
-      "seconds": 138.5,
+      "seconds": 269.6,
       "status": "ok",
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
     "drift_coefficient_2x": {
-      "kill_count": 54,
+      "kill_count": 73,
       "killed": [
         "tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence::test_the_drift_scale_follows_lambda_not_coupling_coefficient",
         "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
@@ -3946,8 +4773,25 @@
         "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
         "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]",
         "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
         "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
         "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_fp_fdm_names_the_inflow_remedy_on_centered_and_it_clears_the_row",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_2d]",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[1--1]",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[1-1]",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[2--1]",
@@ -3978,18 +4822,21 @@
         "tests/unit/test_alg/test_sl_wall_control_from_values_2467.py::test_the_fp_drift_moves_wall_mass_at_the_velocity_of_u",
         "tests/unit/test_alg/test_weakform_fp_drift_single_source.py::test_fp_drift_coefficient_sources_from_control_cost_not_coupling",
         "tests/unit/test_check_single_source.py::test_repo_baseline_is_current",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]",
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[1.0]",
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
       ],
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-      "seconds": 164.5,
+      "seconds": 282.2,
       "status": "ok",
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 80,
+      "kill_count": 99,
       "killed": [
+        "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversNumericalProperties::test_terminal_condition_satisfaction",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
         "tests/integration/test_three_mode_api.py::TestExpertMode::test_expert_mode_mismatched_solvers_warning",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
@@ -4000,6 +4847,9 @@
         "tests/unit/test_alg/test_batch_unsafe_hamiltonian_refused_1884.py::test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path[p]",
         "tests/unit/test_alg/test_batch_unsafe_hamiltonian_refused_1884.py::test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path[p_dead_zone]",
         "tests/unit/test_alg/test_batch_unsafe_hamiltonian_refused_1884.py::test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path[x]",
+        "tests/unit/test_alg/test_bc_checked_at_every_read_1699.py::test_a_bc_swapped_onto_the_geometry_is_checked_before_it_is_solved[hjb_fdm-1d-robin]",
+        "tests/unit/test_alg/test_constraint_projected_per_step_2036.py::test_the_terminal_condition_must_lie_in_the_constraint_set[round_off_accepted-1d]",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_full_solve_invocation_split",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[41]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[81]",
@@ -4014,6 +4864,7 @@
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverIntegration::test_solver_with_gaussian_density",
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverIntegration::test_solver_with_uniform_density",
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverNumericalProperties::test_solution_finiteness",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[2d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_backward_solve_returns_a_root_of_its_own_presets_residual[engquist_osher]",
@@ -4066,18 +4917,32 @@
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-engquist_osher]",
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-engquist_osher]",
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-engquist_osher]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[graph]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[multi-population]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[regime switching]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-DIRICHLET]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NEUMANN]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NO_FLUX]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-PERIODIC]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[HJBFDMSolver]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_converged_result_satisfies_the_discrete_hjb_at_every_step",
+        "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_solver_without_the_report_is_not_tracked_rather_than_an_error",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
         "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_a_wall_is_a_cost_not_a_reward",
         "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_scaling_the_wall_costs_more",
-        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local"
+        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local",
+        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_without_a_wall_the_value_is_flat",
+        "tests/unit/test_geometry/boundary/test_face_owner_b1a_2512.py::test_fixture_c_one_wall_is_not_read_by_two_rules_in_one_solve_2624",
+        "tests/unit/test_geometry/boundary/test_region_named_segments_2472.py::test_a_zero_flux_region_route_solves_as_plain_no_flux"
       ],
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
-      "seconds": 259.2,
+      "seconds": 441.6,
       "status": "ok",
       "verify": "float(upwind_momentum_derivatives(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[1][0]) == 0.0"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 61,
+      "kill_count": 64,
       "killed": [
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
@@ -4138,16 +5003,19 @@
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-engquist_osher]",
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-engquist_osher]",
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-engquist_osher]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[graph]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[multi-population]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[regime switching]",
         "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_engquist_osher_is_monotone_and_the_integral_flux"
       ],
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
-      "seconds": 238.2,
+      "seconds": 306.6,
       "status": "ok",
       "verify": "float(upwind_momentum(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[0]) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 154,
+      "kill_count": 208,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -4205,6 +5073,18 @@
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[keyword]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[nt_reentry]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_absolute_bound_reaches_the_callback_and_config_paths",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_a_capped_face_off_axis_0_lets_out_c_times_its_measure",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_the_2d_exit_absorbs_and_matches_the_decaying_modes",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[1]",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]",
@@ -4246,9 +5126,40 @@
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[divergence_upwind-quadratic]",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-l1]",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-quadratic]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_dirichlet_face_beside_a_flux_face_takes_nothing_from_it[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-1]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-2]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_an_outflow_that_drains_the_wall_is_refused_on_upwind",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fdm_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-1-_q_t]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-2-_q_y]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_with_no_drift_the_flux_and_the_drift_dropped_wall_coincide[fdm]",
         "tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py::test_the_alternatives_the_refusal_names_hold_a_wall[GFDM HJB with FP-FDM]",
         "tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py::test_the_alternatives_the_refusal_names_hold_a_wall[dual scheme]",
         "tests/unit/test_alg/test_fp_initial_density_refused_1683.py::test_an_initial_density_that_touches_zero_still_solves",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_flux_under_a_field_volatility_moves_the_mass_by_its_q",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-2]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[implicit-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[tensor-2]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[explicit_callable_drift]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_1d]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_2d]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_drifted]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[tensor]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[explicit_callable_drift]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[implicit]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[implicit_2d]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_one_over_d_is_a_fixed_point_of_every_fdm_path[tensor]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_coupled_solve_conserves_mass_with_a_field_volatility",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_tensor_step_is_the_ito_sum_component_by_component[negative]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_tensor_step_is_the_ito_sum_component_by_component[zero_on_a_line]",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_mass_conserved_no_flux_zero_drift",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_mass_conserved_periodic_zero_drift",
@@ -4268,12 +5179,17 @@
         "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_mass_conservation_with_drift_field",
         "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_quartic_control_drift",
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[FDM]",
+        "tests/unit/test_alg/test_fp_refuses_flux_capacity_2575.py::test_fp_fdm_honours_the_cap_on_its_own_bc",
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[21-10-0.001]",
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[41-40-0.0003]",
         "tests/unit/test_alg/test_harmonic_is_fictitious_play_2415.py::test_fictitious_play_follows_the_average",
         "tests/unit/test_alg/test_harmonic_is_fictitious_play_2415.py::test_fictitious_play_records_the_map_residual",
         "tests/unit/test_alg/test_harmonic_is_fictitious_play_2415.py::test_hybrid_mode_records_the_u_map_residual",
         "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_coupled_solve_is_not_converged_over_a_failed_inner_step[30-block gauss-seidel]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_coupled_solve_is_not_converged_over_a_failed_inner_step[30-fixed point]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_solver_in_one_slot_is_read_by_its_report",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_newtons_reason_says_how_it_stopped[a named stop-20]",
         "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty",
         "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py::TestD1SolveMustForwardVolatilityField::test_array_sigma_solve_differs_from_mean_sigma_solve",
         "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py::TestD1SolveMustForwardVolatilityField::test_scalar_sigma_solve_is_unchanged",
@@ -4301,28 +5217,35 @@
         "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid",
         "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_fp_fdm_reads_a_declared_field_on_a_d_by_d_grid_on_the_same_object_route",
         "tests/unit/test_alg/test_volatility_override_by_kind_2378.py::test_fp_fdm_callable_drift_reads_a_tensor_override",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_population_s_coupling_cost_reads_its_own_density",
         "tests/unit/test_fp_fvm.py::test_gate4_fvm_fdm_agreement_shrinks",
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
-      "seconds": 207.8,
+      "seconds": 245.3,
       "status": "ok",
       "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
     },
     "fv_upwind_donor_cell_swapped": {
-      "kill_count": 8,
+      "kill_count": 9,
       "killed": [
         "tests/integration/test_fdm_centered_conservation.py::test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverCallableDrift::test_callable_drift_2d",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverCallableDrift::test_callable_drift_with_callable_diffusion",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_tensor_with_drift",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[explicit_callable_drift]",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_default_leaks_but_conservative_holds_at_wall",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_explicit_drift_fp_conserves_mass_into_wall",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_tensor_explicit_path_records_its_wall_drift",
         "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat"
       ],
       "owner": "the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-      "seconds": 153.4,
+      "seconds": 259.5,
       "status": "ok",
       "verify": "float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0"
     },
@@ -4489,7 +5412,7 @@
         "tests/unit/test_geometry/test_wall_spacing_refused_1936.py::test_a_spacing_dependent_wall_refuses_without_a_spacing[robin-uniform]"
       ],
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-      "seconds": 204.7,
+      "seconds": 229.3,
       "status": "ok",
       "verify": "_neumann_ghost_or_refusal() == 'refused'"
     },
@@ -4529,27 +5452,58 @@
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
-      "seconds": 140.9,
+      "seconds": 231.5,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 106,
+      "kill_count": 145,
       "killed": [
         "tests/integration/test_three_mode_api.py::TestSafeMode::test_safe_mode_sl_linear",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_a_capped_face_off_axis_0_lets_out_c_times_its_measure",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_1d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_minus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[no_flux_2d_plus]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_the_2d_exit_absorbs_and_matches_the_decaying_modes",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[1]",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-1]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-2]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fdm]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[0.0]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[1e-20]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_round_off_pass_within_the_gate",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-1-_q_t]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-2-_q_y]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_with_no_drift_the_flux_and_the_drift_dropped_wall_coincide[fdm]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_flux_under_a_field_volatility_moves_the_mass_by_its_q",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[explicit_callable_drift]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_tensor_step_is_the_ito_sum_component_by_component[negative]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_tensor_step_is_the_ito_sum_component_by_component[zero_on_a_line]",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestGradientBCOverrideThreaded::test_gradient_uses_periodic_override_not_noflux_geometry",
+        "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_rows_follow_their_own_particles[1-D grid drift]",
+        "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_rows_follow_their_own_particles[2-D grid drift]",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_compute_gradient",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_compute_gradient_bc_aware_at_boundary",
+        "tests/unit/test_alg/test_fp_refuses_flux_capacity_2575.py::test_fp_fdm_honours_the_cap_on_its_own_bc",
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[21-10-0.001]",
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_fp_fdm_absorbs_a_shared_exit_and_matches_the_decaying_mode[41-40-0.0003]",
         "tests/unit/test_alg/test_fpsl_convergence_norm_2468.py::test_at_sigma_zero_the_density_converges_in_w1_and_l1",
         "tests/unit/test_alg/test_fpsl_convergence_norm_2468.py::test_at_sigma_zero_the_stagnation_node_is_not_converged_pointwise",
         "tests/unit/test_alg/test_fpsl_convergence_norm_2468.py::test_the_linear_deposit_gives_the_stagnation_node_twice_the_equations_inflow",
         "tests/unit/test_alg/test_fpsl_convergence_norm_2468.py::test_with_diffusion_the_density_converges_pointwise",
+        "tests/unit/test_alg/test_gfdm_grid_collocation_transfer_2756.py::test_the_particle_drift_reaches_a_particle_on_the_last_node",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_surviving_enforcement_uses_the_grids_own_spacing",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_1d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_faced_x_2d]",
@@ -4564,6 +5518,7 @@
         "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_neumann_wall_holds_its_slope_to_second_order",
         "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian",
         "tests/unit/test_alg/test_hjb_weno_boundary_time_2605.py::test_a_time_dependent_neumann_value_converges_at_second_order",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_deposited_level_carries_the_callers_mass",
         "tests/unit/test_alg/test_nd_velocity_batch_shape_2330.py::test_a_one_population_cross_density_is_read_per_node",
         "tests/unit/test_alg/test_nd_velocity_batch_shape_2330.py::test_the_velocity_is_the_optimal_control_at_each_points_own_density[CongestionHamiltonian]",
         "tests/unit/test_alg/test_nd_velocity_batch_shape_2330.py::test_the_velocity_is_the_optimal_control_at_each_points_own_density[user_subclass]",
@@ -4609,6 +5564,11 @@
         "tests/unit/test_alg/test_weno_mms_order_1991.py::test_diffusion_dominated_order_is_two",
         "tests/unit/test_alg/test_weno_one_dimensional_solve_2021.py::test_the_2d_solve_still_reproduces_the_pre_consolidation_output",
         "tests/unit/test_alg/test_weno_one_dimensional_solve_2021.py::test_the_3d_solve_runs_at_all",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_bound_interaction_cost_integrates_on_the_problems_measure",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_bound_nodes_and_the_density_slice_share_the_grids_order",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy[1]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy[2]",
         "tests/unit/test_core/test_mfg_problem.py::test_mfg_problem_custom_domain",
         "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order",
         "tests/unit/test_geometry/boundary/test_node_centred_wall_1935.py::test_a_robin_wall_with_a_slope_converges_at_second_order[-0.5-2.0]",
@@ -4641,19 +5601,23 @@
         "tests/unit/test_geometry/test_tensor_product_grid.py::TestSpacingQueries::test_get_spacing_uniform_1d",
         "tests/unit/test_geometry/test_tensor_product_grid.py::TestSpacingQueries::test_get_spacing_uniform_2d",
         "tests/unit/test_geometry/test_tensor_product_grid_ndim.py::TestNDimensionalGrids::test_spacing_4d",
+        "tests/unit/test_operators/test_interaction_energy.py::test_from_problem_reads_the_grid_the_measure_and_the_topology[uniform grid]",
+        "tests/unit/test_operators/test_point_measure_1642.py::test_the_grid_s_fft_path_is_the_direct_quadrature_on_the_same_measure",
         "tests/validation/test_stefan_analytical.py::TestNeumannSolution::test_convergence_with_grid_refinement"
       ],
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
-      "seconds": 154.9,
+      "seconds": 251.9,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 42,
+      "kill_count": 52,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_pre_fix_drift_field_produces_wrong_M",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_population_solves_with_its_own_source[source_term_hjb]",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_regime_adds_its_own_hjb_source_to_the_cross_regime_term",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_hjb]",
         "tests/integration/test_hjb_with_obstacle.py::TestObstacleConvergenceProperties::test_tolerance_scaling",
-        "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_constraint_projected_per_step_2036.py::test_a_y_independent_2d_solve_reproduces_the_1d_solve",
@@ -4675,10 +5639,14 @@
         "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[11-0.2-0.5]",
         "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[21-0.1-0.25]",
         "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]",
+        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost[grid, another cost]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_backward_solve_returns_a_root_of_its_own_presets_residual[engquist_osher]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_backward_solve_returns_a_root_of_its_own_presets_residual[rouy_tourin]",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[1.0]",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[2.0]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[graph]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[multi-population]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_one_hjb_solver_in_two_slots_is_refused[regime switching]",
         "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]",
         "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[picard]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_converged_result_satisfies_the_discrete_hjb_at_every_step",
@@ -4692,10 +5660,14 @@
         "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar",
         "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[-3.0]",
         "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[1.0]",
-        "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[2.0]"
+        "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[2.0]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Picard, HJB-FDM]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_population_s_coupling_cost_reads_its_own_density"
       ],
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
-      "seconds": 164.3,
+      "seconds": 234.8,
       "status": "ok",
       "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
     },
@@ -4706,7 +5678,7 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
-      "seconds": 216.6,
+      "seconds": 251.7,
       "status": "ok",
       "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, volatility=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
     },
@@ -4755,7 +5727,7 @@
         "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_order2_low_ghost_plus_dx_v"
       ],
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
-      "seconds": 144.8,
+      "seconds": 267.7,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 1.8"
     },
@@ -4769,12 +5741,12 @@
         "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable"
       ],
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "seconds": 152.8,
+      "seconds": 240.7,
       "status": "ok",
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
     "optimal_control_sign": {
-      "kill_count": 60,
+      "kill_count": 91,
       "killed": [
         "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass",
         "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
@@ -4808,7 +5780,19 @@
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_2d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[reflecting_1d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[reflecting_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fem]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fem_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fem_2d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_clause_two_refuses_a_step_the_flux_takes_past_the_gate[fem]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_fem_is_refused_where_the_first_negative_is_off_the_flux_face",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_flux_read_with_the_drift_dropped_at_the_wall_misses[fem_1d]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fem-1-_q_t]",
         "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_a_coupled_exit_cost_reaches_the_hjb_and_the_fp_absorbs",
+        "tests/unit/test_alg/test_fp_particle_obstacle_every_path_2688.py::test_no_step_path_records_a_particle_outside_the_domain[1-D grid, absorbing, preserve_indices]",
+        "tests/unit/test_alg/test_fp_particle_obstacle_every_path_2688.py::test_no_step_path_records_a_particle_outside_the_domain[1-D grid, absorbing]",
+        "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_keeps_each_particle_s_row_under_an_absorbing_wall[1-D grid drift]",
+        "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_rows_follow_their_own_particles[1-D grid drift]",
+        "tests/unit/test_alg/test_fp_particle_preserve_indices_every_path_2490.py::test_preserve_indices_rows_follow_their_own_particles[2-D grid drift]",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverInitialization::test_solve_with_non_zero_drift",
         "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-2.0]",
         "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-5.0]",
@@ -4818,13 +5802,28 @@
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[Meshless]",
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[Particle]",
         "tests/unit/test_alg/test_fp_refuses_a_shared_robin_2512.py::test_the_robin_refusals_advice_runs",
+        "tests/unit/test_alg/test_gfdm_grid_collocation_transfer_2756.py::test_the_particle_drift_reaches_a_particle_on_the_last_node",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_deposited_level_carries_the_callers_mass",
         "tests/unit/test_alg/test_meshless_galerkin_declares_bcs.py::test_a_coupled_exit_cost_runs_through_the_factory",
         "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]",
         "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[picard]",
         "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d",
+        "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_reflecting_conditions_with_a_placed_segment_reflect_per_point[REFLECTING door placed by region, NO_FLUX default]",
+        "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_reflecting_conditions_with_a_placed_segment_reflect_per_point[REFLECTING placed by region_name, NO_FLUX default]",
+        "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_two_reflecting_conditions_keep_the_fast_path[1]",
+        "tests/unit/test_alg/test_particle_routing_reads_default_bc_2490.py::test_two_reflecting_conditions_keep_the_fast_path[2]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-DIRICHLET]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-PERIODIC]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_fp_solve_conserves_mass_in_the_limit[FPParticleSolver]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[sobol]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost[0.25]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost[4.0]",
+        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_solves_the_discrete_bellman_equation_at_a_control_cost_other_than_one",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-1600-0.0048-190]",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[box-900-0.0073-130]",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[mixed-1600-0.0036-143]",
+        "tests/unit/test_alg/test_positive_qp_fan_reflecting_1689.py::test_the_mirror_rows_close_a_reflecting_face_below_the_no_mirror_operator[mixed-900-0.0042-99]",
         "tests/unit/test_core/test_control_cost_weight_is_validated_2373.py::test_the_optimal_control_convention_is_minus_dh_dp",
         "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_minimize",
         "tests/unit/test_core/test_hamiltonian_classes.py::TestHamiltonianBase::test_hamiltonian_optimal_control",
@@ -4835,15 +5834,19 @@
         "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0]",
         "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1]",
         "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2]",
+        "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a BC whose domain is its domain_sdf-a BC handed to the solver]",
+        "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a BC whose domain is its domain_sdf-the problem's BC]",
+        "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a box BC-a BC handed to the solver]",
+        "tests/unit/test_geometry/boundary/test_particle_applicator_leaves_the_bc_2738.py::test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to[a box BC-the problem's BC]",
         "tests/unit/test_utils/test_manufactured.py::TestAgreesWithTheHandAssembly::test_fp_source_reproduces_it"
       ],
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
-      "seconds": 147.6,
+      "seconds": 287.4,
       "status": "ok",
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 23,
+      "kill_count": 29,
       "killed": [
         "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_fp_particle_outputs_to_grid",
         "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_mass_conservation_particle_fp",
@@ -4861,6 +5864,12 @@
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_normalize_density_outside_and_inside_a_solve",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverInitialization::test_solve_fp_system_initial_condition",
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[Particle]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_deposited_level_carries_the_callers_mass",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D GPU]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[2-D callable drift]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[2-D]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_ALL_pins_and_NONE_carries_so_the_modes_are_not_the_same_solve",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_a_later_slice_carries_the_mass_too",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_a_sub_probability_density_keeps_its_mass[all]",
@@ -4870,17 +5879,24 @@
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_two_populations_keep_their_shares"
       ],
       "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
-      "seconds": 177.9,
+      "seconds": 250.0,
       "status": "ok",
       "verify": "abs(_measure_probe() - 21.0) < 1e-9"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 31,
+      "kill_count": 38,
       "killed": [
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_periodic_bc_solution",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_operator_follows_the_solvers_resolved_boundary_conditions",
         "tests/unit/test_alg/test_fd_jacobian_does_not_clip_1884.py::test_every_row_linearises_the_residual_at_a_gradient_beyond_the_old_clip[upwind-periodic]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverBoundaryConditions::test_periodic_boundary_conditions",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[adjoint_mode-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-2]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[implicit-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[tensor-2]",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_mass_conserved_periodic_zero_drift",
         "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestGradientBCOverrideThreaded::test_gradient_uses_periodic_override_not_noflux_geometry",
@@ -4910,18 +5926,25 @@
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
-      "seconds": 145.0,
+      "seconds": 263.6,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 57,
+      "kill_count": 64,
       "killed": [
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_periodic_bc_solution",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_operator_follows_the_solvers_resolved_boundary_conditions",
         "tests/unit/test_alg/test_advection_coupled_conservation.py::TestCoupledAdvectionConservation::test_conservative_branch_accepts_explicit_periodic_bc",
         "tests/unit/test_alg/test_fd_jacobian_does_not_clip_1884.py::test_every_row_linearises_the_residual_at_a_gradient_beyond_the_old_clip[upwind-periodic]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
+        "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverBoundaryConditions::test_periodic_boundary_conditions",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[adjoint_mode-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-2]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[implicit-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[tensor-2]",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_mass_conserved_periodic_zero_drift",
         "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestGradientBCOverrideThreaded::test_gradient_uses_periodic_override_not_noflux_geometry",
@@ -4976,15 +5999,19 @@
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianBCFailLoud1071::test_bc_none_still_periodic"
       ],
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
-      "seconds": 142.3,
+      "seconds": 247.8,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1, spacing=1.0)[0] == 2.0"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 75,
+      "kill_count": 91,
       "killed": [
         "tests/integration/test_block_iterators.py::TestBlockIteratorBasic::test_jacobi_executes",
-        "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_population_solves_with_its_own_source[source_term_fp]",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_regime_adds_its_own_fp_source_under_the_integrating_factor",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_regime_adds_its_own_hjb_source_to_the_cross_regime_term",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_fp]",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_hjb]",
         "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
         "tests/integration/test_newton_mfg_solver.py::test_one_newton_step_reduces_the_mfg_residual",
         "tests/integration/test_newton_picard_agreement.py::test_newton_matches_picard_small",
@@ -5056,16 +6083,28 @@
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_absolute_error_alone_is_not_convergence",
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_convergence_unless_an_absolute_bound_is_asked_for",
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_one_field_converging_is_not_enough_either",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FictitiousPlayIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FictitiousPlayIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_population_s_coupling_cost_reads_its_own_density",
         "tests/unit/test_utils/test_runtime_validation.py::test_fixed_point_nan_early_termination",
         "tests/unit/test_utils/test_runtime_validation.py::test_fp_is_not_solved_after_hjb_returns_nonfinite"
       ],
       "owner": "The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
-      "seconds": 156.0,
+      "seconds": 229.3,
       "status": "ok",
       "verify": "check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, 1e-6)[0]"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 102,
+      "kill_count": 185,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -5078,6 +6117,7 @@
         "tests/integration/test_fdm_centered_conservation.py::test_fdm_centered_conserves_mass_under_no_flux",
         "tests/integration/test_fdm_centered_conservation.py::test_fdm_centered_coupled_solve_conserves_mass",
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_solution_non_negativity",
+        "tests/integration/test_interaction_lions_bridge.py::TestGate3LionsBridgeEquivalence::test_the_nonlocal_source_refuses_the_library_s_weighted_operators[GraphonCouplingOperator]",
         "tests/integration/test_mass_conservation_1d.py::TestExplicitDriftNoFluxDiffusionConservation::test_pure_diffusion_no_flux_conserves_mass",
         "tests/integration/test_mass_conservation_1d.py::TestMassConservation1D::test_coupled_fdm_mass_conservation_fast_tier",
         "tests/integration/test_multi_population_cross_coupling.py::test_k1_matches_single_population_fp_convention",
@@ -5096,6 +6136,11 @@
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_change_is_the_l2_norm_in_the_geometrys_own_measure[1d]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_change_is_the_l2_norm_in_the_geometrys_own_measure[2d_tall]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_change_is_the_l2_norm_in_the_geometrys_own_measure[graded]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_a_capped_face_off_axis_0_lets_out_c_times_its_measure",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[1]",
+        "tests/unit/test_alg/test_fp_capped_exit_2581.py::test_the_saturated_branch_converges_at_the_steps_order[2]",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_rows_2531.py::test_the_source_still_enters_every_balance_row",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverCallableDrift::test_callable_drift_2d",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverCallableDrift::test_callable_drift_with_callable_diffusion",
@@ -5107,6 +6152,25 @@
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[divergence_upwind-quadratic]",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-l1]",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-quadratic]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-1]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-2]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[0.0]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[1e-20]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_round_off_pass_within_the_gate",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-1-_q_t]",
+        "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_the_mass_leaves_at_the_prescribed_rate[fdm-2-_q_y]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_flux_under_a_field_volatility_moves_the_mass_by_its_q",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[adjoint_mode-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[explicit_callable_drift-2]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[implicit-1]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_periodic_grid_reads_its_seam_at_the_first_copy[tensor-2]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[explicit_callable_drift]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_1d]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_2d]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[implicit_drifted]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_a_varying_volatility_conserves_mass_under_no_flux[tensor]",
+        "tests/unit/test_alg/test_fp_ito_diffusion_2841.py::test_the_coupled_solve_conserves_mass_with_a_field_volatility",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_conservative_operator_column_sum_zero_no_flux",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_default_leaks_but_conservative_holds_at_wall",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_explicit_drift_fp_conserves_mass_into_wall",
@@ -5115,8 +6179,19 @@
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_normalize_density_all",
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[FVM]",
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[SL]",
+        "tests/unit/test_alg/test_fp_refuses_flux_capacity_2575.py::test_fp_fdm_honours_the_cap_on_its_own_bc",
         "tests/unit/test_alg/test_fpsl_convergence_norm_2468.py::test_at_sigma_zero_the_density_converges_in_w1_and_l1",
+        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[two bindings of one G]",
+        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost[grid, another cost]",
+        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost[grid, swapped populations]",
         "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py::TestD1SolveMustForwardVolatilityField::test_scalar_sigma_solve_is_unchanged",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[beta]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[cic]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[reflection]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[renormalization]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[standard]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read[a callable bandwidth, 0.05 times Scott's]",
+        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read[at a corner, three quarters outside]",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_ALL_pins_and_NONE_carries_so_the_modes_are_not_the_same_solve",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPFVMSolver-NEUMANN]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPFVMSolver-NO_FLUX]",
@@ -5133,6 +6208,41 @@
         "tests/unit/test_alg/test_sl_wall_control_from_values_2467.py::test_the_fp_drift_moves_wall_mass_at_the_velocity_of_u",
         "tests/unit/test_alg/test_solver_bc_support_census_1975.py::test_the_conservative_schemes_conserve_mass_at_a_drifted_wall[divergence_centered]",
         "tests/unit/test_alg/test_solver_bc_support_census_1975.py::test_the_conservative_schemes_conserve_mass_at_a_drifted_wall[divergence_upwind]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_at_hjb_gfdm_collocation_points[coupled]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_at_hjb_gfdm_collocation_points[standalone]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Newton, HJB-FDM]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Picard, HJB-FDM]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian[Picard, HJB-SL]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_users_coupling_cost_sums_with_the_librarys",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BaseHJBSolver.solve]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FictitiousPlayIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FictitiousPlayIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[GraphMFGSolver]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver warm-up, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver warm-up]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[NewtonMFGSolver]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[RegimeSwitchingIterator, diverged]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[RegimeSwitchingIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_population_s_coupling_cost_reads_its_own_density",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_bound_interaction_cost_integrates_on_the_problems_measure",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_bound_nodes_and_the_density_slice_share_the_grids_order",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy[1]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy[2]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given[HJBFDMSolver-t_n with m_n]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given[HJBSemiLagrangianSolver-t_{n+1} with m_{n+1}]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given[HJBWENOSolver-each stage time t with m at round(t / dt)]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_what_stage_two_does_not_bind_is_refused",
         "tests/unit/test_core/test_initial_density_mass_1888.py::TestTheReportedMass::test_it_matches_an_independently_derived_integral[1-11]",
         "tests/unit/test_core/test_initial_density_mass_1888.py::TestTheReportedMass::test_it_matches_an_independently_derived_integral[1-21]",
         "tests/unit/test_core/test_initial_density_mass_1888.py::TestTheReportedMass::test_it_matches_an_independently_derived_integral[2-11]",
@@ -5160,18 +6270,30 @@
         "tests/unit/test_geometry/test_noflux_cross_terms_2232.py::test_the_operator_conserves_mass_under_no_flux[diagonal-tensor0]",
         "tests/unit/test_geometry/test_noflux_cross_terms_2232.py::test_the_operator_is_self_adjoint_for_a_symmetric_tensor[diagonal-tensor0]",
         "tests/unit/test_geometry/test_tensor_operators.py::TestBoundaryConditions::test_no_flux_bc",
+        "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_cell_volume_ontology_sums_to_domain_measure",
+        "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[combined]",
+        "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[potential]",
+        "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[quadratic]",
+        "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[1-dense]",
+        "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[1-fft]",
+        "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[2-dense]",
+        "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[2-fft]",
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianMassConservative::test_conservative_noflux_is_row_conservative_and_w_column_conservative[1]",
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianMassConservative::test_conservative_noflux_is_row_conservative_and_w_column_conservative[2]",
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianMassConservative::test_unweighted_column_sums_are_nonzero_and_that_is_not_a_leak",
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianVariableCoefficient::test_varying_field_2d_column_conservative",
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianVariableCoefficient::test_varying_field_is_column_conservative",
+        "tests/unit/test_operators/test_point_measure_1642.py::test_a_measure_that_is_not_a_quadrature_on_its_domain_is_refused",
+        "tests/unit/test_operators/test_point_measure_1642.py::test_a_v_that_writes_into_its_point_moves_no_point_off_the_nodes",
+        "tests/unit/test_operators/test_point_measure_1642.py::test_the_grid_s_domain_is_what_its_measure_integrates_over",
+        "tests/unit/test_operators/test_point_measure_1642.py::test_the_grid_s_fft_path_is_the_direct_quadrature_on_the_same_measure",
         "tests/unit/test_utils/test_flux_diagnostics_grid_measure_2260.py::TestTheGridMeasureIsWhatIsReported::test_a_trajectory_exactly_conservative_in_the_grid_measure_is_reported_as_conservative",
         "tests/unit/test_utils/test_flux_diagnostics_grid_measure_2260.py::TestTheGridMeasureIsWhatIsReported::test_two_dimensional_trajectories_use_the_same_measure",
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_centered]",
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
-      "seconds": 262.1,
+      "seconds": 228.0,
       "status": "ok",
       "verify": "abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12"
     },
@@ -5224,14 +6346,15 @@
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
-      "seconds": 162.3,
+      "seconds": 235.5,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 23,
+      "kill_count": 33,
       "killed": [
         "tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence::test_the_drift_scale_is_inert_at_the_solve",
+        "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_hjb]",
         "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
         "tests/integration/test_newton_picard_agreement.py::test_newton_matches_picard_small",
         "tests/integration/test_newton_picard_agreement.py::test_residual_consistent_with_picard_fixed_point",
@@ -5247,16 +6370,25 @@
         "tests/unit/test_alg/test_fp_shared_dirichlet_exit_2525.py::test_a_coupled_exit_cost_holds_u_at_g_and_absorbs_m",
         "tests/unit/test_alg/test_harmonic_is_fictitious_play_2415.py::test_hybrid_mode_records_the_u_map_residual",
         "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_coupled_solve_is_not_converged_over_a_failed_inner_step[30-block gauss-seidel]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_coupled_solve_is_not_converged_over_a_failed_inner_step[30-fixed point]",
+        "tests/unit/test_alg/test_inner_failure_owner_2644.py::test_a_solver_in_one_slot_is_read_by_its_report",
         "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_converged_result_satisfies_the_discrete_hjb_at_every_step",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_fixed_point_over_inner_solves_that_cannot_converge_is_not_reported_converged[criteria]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_the_verdict_reads_the_sweep_that_met_the_criteria[first_solve_only-<lambda>]",
         "tests/unit/test_alg/test_sl_diffusion_monotone_2463.py::test_the_clip_names_a_theta_that_lets_the_solve_through",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_a_terminal_coupling_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockGaussSeidelIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[BlockJacobiIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_hjb_solve_is_given_u_T_at_its_own_density[FixedPointIterator]",
+        "tests/unit/test_core/test_coupling_cost_binds_1642.py::test_each_population_s_coupling_cost_reads_its_own_density",
         "tests/unit/test_core/test_rebuild_carries_inputs_2667.py::test_every_rebuild_solves_as_the_fresh_build_of_its_inputs",
         "tests/unit/test_utils/test_runtime_validation.py::test_terminal_condition_survives_an_hjb_divergence"
       ],
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
-      "seconds": 180.0,
+      "seconds": 287.7,
       "status": "ok",
       "verify": "preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0"
     },
@@ -5299,7 +6431,7 @@
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
-      "seconds": 164.1,
+      "seconds": 314.1,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, -1.0, 1.0]), axis=0, h=1.0)[1]) == -1.0"
     }
