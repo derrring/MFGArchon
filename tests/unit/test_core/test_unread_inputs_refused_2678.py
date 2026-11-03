@@ -35,7 +35,10 @@ from mfgarchon.geometry.boundary import no_flux_bc
 # These rows hand the components= form what it refuses, so its notice that the form is planned to be replaced is noise.
 pytestmark = pytest.mark.filterwarnings("ignore:The components= form of MFGProblem:PendingDeprecationWarning")
 
-_ROUTES = ("solve_fp_system(drift_field=)", "FPFDMSolver", "FPParticleSolver", "FixedPointIterator(drift_field=)")
+_ROUTES = (
+    "solve_fp_system(drift_field=) on FPFDMSolver or FPParticleSolver",
+    "FixedPointIterator(drift_field=) over FPFDMSolver",
+)
 
 
 def _x(y):
