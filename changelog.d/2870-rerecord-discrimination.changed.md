@@ -1,0 +1,1 @@
+- **The discrimination baseline and kill matrix are re-recorded from a full sweep at d98d4b64** (Issue #2870). 27 of 27 mutations live, on 7,024 tests. Three kills left, each explained by #2841, and 368 joined. Two more that fired in the sweep are left out of both files, since they need torch and the weekly runner does not install it.
