@@ -9,6 +9,7 @@ quadratic ``canonical_cs`` objective by more.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,6 +29,7 @@ from mfgarchon.core.hamiltonian import (
 )
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 _T = 0.2
 _V0, _F0 = 0.7, 0.3
@@ -183,6 +185,11 @@ def test_canonical_cs_refuses_what_it_cannot_read_when_it_is_built(hamiltonian):
         match=r"reads only a quadratic control cost.*#2866.*'adi', or 'stochastic' for a differentiable cost",
     ):
         HJBSemiLagrangianSolver(_problem(_NOT_QUADRATIC[hamiltonian]), **_CANONICAL_CS)
+
+
+def test_the_fp_drift_guard_sharing_that_test_still_passes_a_non_separable_hamiltonian():
+    """``assert_quadratic_drift`` now reads the test this refusal reads, and its no-op there is another caller's to refuse."""
+    assert assert_quadratic_drift(SimpleNamespace(hamiltonian_class=_congestion()), context="row") is None
 
 
 @pytest.mark.parametrize("cost", ["cubic", "L1, regularized", "Bounded, regularized"])
