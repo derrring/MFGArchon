@@ -236,7 +236,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                   objective (NOT the at-grid gradient), so it is consistent with the departure
                   point it induces -- the hypothesis under which CS 2014 prove unconditional
                   stability for monotone (Q1/linear) interpolation. Requires
-                  interpolation_method='linear'. Per-point optimization (slower) in exchange for
+                  interpolation_method='linear' and a SeparableHamiltonian with a QuadraticControlCost,
+                  and refuses anything else when built. Per-point optimization (slower) in exchange for
                   unconditional stability; targets reflecting/no-flux boundaries.
                 - 'none': No diffusion (for testing or zero-diffusion problems)
             use_rbf_fallback: Use RBF interpolation as fallback for boundary cases
@@ -319,20 +320,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"(monotone Q1), got '{self.interpolation_method}'. The Carlini-Silva 2014 "
                 f"stability proof only covers monotone interpolation; cubic/quintic break it."
             )
-        # Its objective hand-codes the quadratic running cost `0.5*lambda*|alpha|^2`, so any other cost would solve a
-        # different equation with no error (#2866, #1547). The LQ path with no Hamiltonian is the quadratic it means.
-        hamiltonian = self.problem.hamiltonian_class
-        if (
-            self.diffusion_method == "canonical_cs"
-            and hamiltonian is not None
-            and not has_quadratic_control_cost(hamiltonian)
-        ):
-            read = getattr(hamiltonian, "control_cost", hamiltonian)
-            raise NotImplementedError(
-                f"diffusion_method='canonical_cs' reads only a quadratic control cost on a SeparableHamiltonian: its "
-                f"objective hand-codes 0.5*lambda*|alpha|^2, so {type(read).__name__} would solve a different equation "
-                f"(#2866, #1547). Use diffusion_method='adi', or 'stochastic' for a differentiable cost: they read dH/dp."
-            )
+        # Its objective hand-codes the quadratic running cost `0.5*lambda*|alpha|^2`, and it cannot tell whether another
+        # cost has that running cost, where one that does not returns a value with no error (#2866, #1547). A problem
+        # with no Hamiltonian builds, and raises in the solve.
+        if self.diffusion_method == "canonical_cs":
+            hamiltonian = self.problem.hamiltonian_class
+            if hamiltonian is not None and not has_quadratic_control_cost(hamiltonian):
+                control_cost = getattr(hamiltonian, "control_cost", None)
+                raise NotImplementedError(
+                    f"diffusion_method='canonical_cs' needs a SeparableHamiltonian with a QuadraticControlCost: its "
+                    f"objective hand-codes 0.5*lambda*|alpha|^2, and this problem's Hamiltonian is "
+                    f"{type(hamiltonian).__name__} with {type(control_cost).__name__} (#2866, #1547). Use HJBFDMSolver, "
+                    f"or, where the Hamiltonian's is_smooth() is True, diffusion_method='adi' or 'stochastic', which "
+                    f"read dH/dp."
+                )
 
         # Issue #1547 / RFC #1574 Phase 0 carried a refusal here for a MAXIMIZE control cost, whose
         # alpha* = +grad_u/lambda would have traced the characteristic feet in the wrong direction.

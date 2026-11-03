@@ -2,8 +2,7 @@
 
 With terminal ``c.x`` and no state term, ``p = c`` everywhere, so ``-u_t + H_control(p) = V0 + f0`` has
 ``u(0, x) = c.x - T*(H_control(c) - V0 - f0)``. The value update ``H(p) - 2*H(0)`` holds only for a control cost
-2-homogeneous in ``p``; for any other it is off by ``T*(2*H_control - p*dH/dp)`` at every refinement, and the hand-coded
-quadratic ``canonical_cs`` objective by more.
+2-homogeneous in ``p``; for any other it is off by ``T*(2*(H_control(p) - H_control(0)) - p*dH/dp)`` at every refinement.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import numpy as np
 from scipy.integrate import quad
 
 from mfgarchon import Conditions, MFGProblem, Model
-from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBSemiLagrangianSolver
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
 from mfgarchon.core.hamiltonian import (
     BoundedControlCost,
@@ -179,12 +178,18 @@ _NOT_QUADRATIC = {
 
 @pytest.mark.parametrize("hamiltonian", list(_NOT_QUADRATIC))
 def test_canonical_cs_refuses_what_it_cannot_read_when_it_is_built(hamiltonian):
-    """Its hand-coded quadratic read plain L1 at -0.248 and congestion at -0.169 from the exact solution, with no error."""
+    """Its hand-coded quadratic read plain L1 at -0.248 and congestion at -0.169 from the exact solution, with no error.
+
+    The names are the point of the match: congestion holds a quadratic control cost, and that alone is not what is refused.
+    """
+    given = _NOT_QUADRATIC[hamiltonian]
+    named = f"{type(given).__name__} with {type(given.control_cost).__name__}"
     with pytest.raises(
         NotImplementedError,
-        match=r"reads only a quadratic control cost.*#2866.*'adi', or 'stochastic' for a differentiable cost",
+        match=rf"needs a SeparableHamiltonian with a QuadraticControlCost.*Hamiltonian is {named} .*#2866.*"
+        r"Use HJBFDMSolver, or, where the Hamiltonian's is_smooth\(\) is True, diffusion_method='adi' or 'stochastic'",
     ):
-        HJBSemiLagrangianSolver(_problem(_NOT_QUADRATIC[hamiltonian]), **_CANONICAL_CS)
+        HJBSemiLagrangianSolver(_problem(given), **_CANONICAL_CS)
 
 
 def test_the_fp_drift_guard_sharing_that_test_still_passes_a_non_separable_hamiltonian():
@@ -194,23 +199,31 @@ def test_the_fp_drift_guard_sharing_that_test_still_passes_a_non_separable_hamil
 
 @pytest.mark.parametrize("cost", ["cubic", "L1, regularized", "Bounded, regularized"])
 @pytest.mark.parametrize("path", ["adi", "stochastic"])
-def test_each_cure_the_refusal_names_reads_a_differentiable_cost(cost, path):
+def test_each_cure_the_refusal_names_for_a_smooth_cost_reads_it(cost, path):
     control_cost, slope = _COSTS[cost]
+    assert _separable(control_cost).is_smooth()
     U, terminal, _ = _read(_separable(control_cost), slope, 41, 20, **_PATHS[path][0])
     np.testing.assert_allclose(U, _exact(control_cost, slope, terminal), rtol=0, atol=2e-5)
 
 
 @pytest.mark.parametrize(
-    "control_cost",
-    [L1ControlCost(lambda_=0.5), BoundedControlCost(lambda_=1.0, max_control=0.5)],
+    ("control_cost", "slope"),
+    [(L1ControlCost(lambda_=0.5), 0.75), (BoundedControlCost(lambda_=1.0, max_control=5.0), 0.5)],
     ids=["L1", "Bounded"],
 )
-def test_the_cure_named_for_a_cost_that_is_not_differentiable_reads_it(control_cost):
-    """Plain L1 and Bounded have no ``stochastic`` path, which the refusal says. The optimum here is on a candidate of the search."""
-    U, terminal, _ = _read(_separable(control_cost), 1.5, 41, 20, **_PATHS["adi"][0])
-    np.testing.assert_allclose(U, _exact(control_cost, 1.5, terminal), rtol=0, atol=2e-5)
+def test_the_cure_the_refusal_names_for_a_cost_that_is_not_smooth_reads_it(control_cost, slope):
+    """``stochastic`` raises on these, and ``adi`` runs the DPP search: this Bounded optimum is between its 11 samples."""
+    hamiltonian = _separable(control_cost)
+    assert not hamiltonian.is_smooth()
+    n, nt = 81, 40
+    x = np.linspace(0.0, 1.0, n)
+    terminal = slope * x
+    solver = HJBFDMSolver(_problem(hamiltonian, slope, n, nt))
+    U = np.asarray(solver.solve_hjb_system(np.ones((nt + 1, n)), terminal, np.tile(terminal, (nt + 1, 1))))
+    interior = (x > 0.55) & (x < 0.75)
+    np.testing.assert_allclose(U[0][interior], _exact(control_cost, slope, terminal[interior]), rtol=0, atol=1e-4)
     with pytest.raises(NotImplementedError):
-        _read(_separable(control_cost), 1.5, 21, 5, **_PATHS["stochastic"][0])
+        _read(hamiltonian, slope, 21, 5, **_PATHS["stochastic"][0])
 
 
 @pytest.mark.parametrize(("slope", "n", "nt"), [(1.5, 41, 20), ((1.0, 0.5), 15, 6)], ids=["1-D", "2-D"])
