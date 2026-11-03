@@ -179,7 +179,8 @@ _NOT_QUADRATIC = {
 def test_canonical_cs_refuses_what_it_cannot_read_when_it_is_built(hamiltonian):
     """Its hand-coded quadratic read plain L1 at -0.248 and congestion at -0.169 from the exact solution, with no error."""
     with pytest.raises(
-        NotImplementedError, match=r"reads only a quadratic control cost.*#2866.*diffusion_method='adi'"
+        NotImplementedError,
+        match=r"reads only a quadratic control cost.*#2866.*'adi', or 'stochastic' for a differentiable cost",
     ):
         HJBSemiLagrangianSolver(_problem(_NOT_QUADRATIC[hamiltonian]), **_CANONICAL_CS)
 
