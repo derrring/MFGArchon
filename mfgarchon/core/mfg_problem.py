@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
     from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
-    from mfgarchon.types.pde_coefficients import DriftField
 
 
 _RETIRED_VOLATILITY_ATTRIBUTE = (
@@ -205,9 +204,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     hjb_geometry: GeometryProtocol | None
     fp_geometry: GeometryProtocol | None
 
-    # drift_field: Optional drift (float, array, or callable). The volatility is the read-only
-    # property `volatility`, and the diffusion `A = 1/2 Sigma Sigma^T` is derived from it (#2375 ruling 6).
-    drift_field: DriftField
+    # The volatility is the read-only property `volatility`, and the diffusion `A = 1/2 Sigma Sigma^T` is derived from
+    # it (#2375 ruling 6).
 
     def __init__(
         self,
@@ -215,7 +213,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         model: Any | None = None,  # Model instance (game rules)
         domain: GeometryProtocol | None = None,  # Spatial geometry
         conditions: Any | None = None,  # Conditions instance (time + IC/TC)
-        constraints: list | None = None,  # Optional constraints (future)
+        constraints: list | None = None,  # Refused when given: no solve reads it (#2678)
         # === The components= form (planned to be replaced by model/domain/conditions; #2184) ===
         # N-D grid parameters
         spatial_bounds: list[tuple[float, float]] | None = None,
@@ -236,7 +234,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         diffusion: float | NDArray[np.floating] | Callable | None = None,  # PDE diffusion A
         volatility: float | NDArray[np.floating] | Callable | None = None,  # SDE volatility Sigma
         volatility_kind: str | None = None,  # "field" | "tensor"; required for an array
-        drift: float | NDArray[np.floating] | Callable | None = None,  # Optional drift field
+        drift: float | NDArray[np.floating] | Callable | None = None,  # Refused when given (#2678)
         coupling_coefficient: float = 0.5,
         # MFG coupling parameters
         lambda_: float | None = None,  # Control cost (H uses |p|²/(2λ))
@@ -295,15 +293,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 volatility it implies -- sqrt(2D), or for a tensor the symmetric square root of
                 2A -- so ``problem.volatility`` is always Sigma. Same types as volatility=, with
                 the same ``volatility_kind`` rule for an array. Mutually exclusive with volatility=.
-            drift: Drift field α(t, x, m) for FP equation. None → 0 (no drift).
-                Supports:
-                - None: No drift (no advection)
-                - float: Constant drift (same in all directions)
-                - ndarray: Precomputed drift array
-                - Callable: State-dependent α(t, x, m) -> float | ndarray
+            constraints: Refused when given: no solve reads it (#2678).
+            drift: Refused when given: no solver reads a problem-level drift (#2678). The refusal names the routes.
             coupling_coefficient: Control cost coefficient
             components: Optional MFGComponents for custom problem definition
-            suppress_warnings: Suppress computational feasibility warnings
+            suppress_warnings: Skip the computational-feasibility check, which runs only when the library builds the
+                grid itself, from spatial_bounds= or the default domain. True is refused on a geometry or a network,
+                where nothing reads it (#2678).
             **kwargs: Additional parameters
 
         Examples:
@@ -374,15 +370,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 time_domain=(1.0, 50)
             )
 
-            # Advanced: Custom drift field
-            def crowd_avoidance_drift(t, x, m):
-                grad_m = np.gradient(m)  # Density gradient
-                return -np.stack(grad_m, axis=-1)  # Move down gradient
-            problem = MFGProblem(
-                geometry=domain,
-                drift=crowd_avoidance_drift,
-                time_domain=(1.0, 50)
-            )
         """
         import warnings
 
@@ -454,12 +441,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     f"Got legacy parameters: {', '.join(_legacy_params.keys())}"
                 )
 
-            if drift is not None:
-                raise ValueError(
-                    "MFGProblem(model=, domain=, conditions=, drift=...): drift= is refused in this form (#2667). "
-                    "No solver reads the problem's drift field, whether it comes from drift= or from "
-                    "Model(drift_field=) (#2678), so the solve ran without it."
-                )
             # Every input this form was given beside model, domain, conditions and Nt, as given: the one record the
             # rebuilds read (`_rebuilt`), so solve(Nt=) and with_* do not drop what the constructor accepted (#2667).
             # lambda_ is the fallback BaseHJBSolver._control_cost_lambda reads when the Hamiltonian exposes no
@@ -467,11 +448,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # a quadratic SeparableHamiltonian (#2681); whether they should exist is decided where those readers are
             # repaired.
             self._v1_inputs: dict[str, Any] = {
-                "constraints": constraints,
                 "obstacles": obstacles,
                 "lambda_": lambda_,
                 "coupling_coefficient": coupling_coefficient,
-                "suppress_warnings": suppress_warnings,
                 **kwargs,
             }
 
@@ -496,9 +475,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 u_terminal=conditions.u_terminal,
                 m_initial=conditions.m_initial,
             )
-            # Drift-only models: pass drift through
-            if model.drift_field is not None:
-                drift = model.drift_field
             # Store the model/domain/conditions objects for solve() and with_*() methods
             self._v1_model = model
             self._v1_conditions = conditions
@@ -513,7 +489,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # `state_penalty`: the constructor composes the wall into the caller's MFGComponents itself, so a replay of
             # this record composes it again (#2702). No public route replays it with a state penalty today.
             self._components_inputs: dict[str, Any] = {
-                "constraints": constraints,
                 "spatial_bounds": spatial_bounds,
                 "spatial_discretization": spatial_discretization,
                 "geometry": geometry,
@@ -527,7 +502,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "diffusion": diffusion,
                 "volatility": volatility,
                 "volatility_kind": volatility_kind,
-                "drift": drift,
                 "coupling_coefficient": coupling_coefficient,
                 "lambda_": lambda_,
                 "hamiltonian": hamiltonian,
@@ -622,10 +596,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if Nt is None:
             Nt = 51
 
-        # drift default
-        if drift is None:
-            drift = 0.0
-
         # The volatility is held as supplied -- scalar, array or callable -- and never collapsed to
         # a representative scalar (#2376). A consumer that can only use a scalar asks
         # `scalar_volatility(problem.volatility, consumer=...)`, which refuses anything else.
@@ -639,7 +609,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         refuse_overridden(vola_value, COEFFICIENT_CALL_NAMES, role="volatility")
         self._volatility = vola_value
         self._volatility_kind = volatility_kind
-        self.drift_field = drift
 
         # Extended PDE form fields (Issue #921).
         # These enable generalized MFG equations beyond the classical form:
@@ -788,6 +757,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # For dual geometry, pass the hjb_geometry to mode detection
         geometry_for_detection = final_hjb_geometry if final_hjb_geometry is not None else geometry
         mode = self._detect_init_mode(spatial_bounds=spatial_bounds, geometry=geometry_for_detection, network=network)
+        self._refuse_unread_inputs(
+            mode,
+            constraints=constraints,
+            drift=drift,
+            suppress_warnings=suppress_warnings,
+            hamiltonian=hamiltonian,
+            components=components,
+        )
 
         # Dispatch to appropriate initializer
         if mode == "nd_grid":
@@ -811,7 +788,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 Nt,
                 coupling_coefficient,
                 lambda_,
-                suppress_warnings,
             )
             # For dual geometry mode, store both geometries explicitly
             if self.geometry_projector is not None:
@@ -1055,6 +1031,42 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 stacklevel=3,
             )
 
+    def _refuse_unread_inputs(
+        self,
+        mode: str,
+        *,
+        constraints: list | None,
+        drift: Any,
+        suppress_warnings: bool,
+        hamiltonian: Any,
+        components: MFGComponents | None,
+    ) -> None:
+        """Refuse an input no solve on this construction would read, by name (#2678, #2563). Accepted, each changed U
+        and M by 0.0 on the default solve, with nothing said."""
+        from mfgarchon.core.model import UNREAD_DRIFT
+
+        if drift is not None:
+            raise ValueError(f"MFGProblem(drift=...) is refused. {UNREAD_DRIFT}")
+        if constraints is not None:
+            raise ValueError("MFGProblem(constraints=...) is refused: no solve reads it (#2678).")
+        if self.state_penalty is None and self.state_penalty_scale != 1.0:
+            raise ValueError(
+                "MFGProblem(state_penalty_scale=...) is refused with no state_penalty=: it multiplies that penalty, and "
+                "nothing else reads it (#2678)."
+            )
+        if suppress_warnings and mode in ("geometry", "network"):
+            raise ValueError(
+                f"MFGProblem(suppress_warnings=True) is refused on a {mode} (#2678). It skips the "
+                "computational-feasibility check, which runs only when the library builds the grid itself, from "
+                "spatial_bounds= or the default domain, so nothing reads it here."
+            )
+        if hamiltonian is not None and components is not None:
+            raise ValueError(
+                "MFGProblem(hamiltonian=..., components=...) is refused (#2563): the solve reads the components' "
+                "Hamiltonian and nothing reads hamiltonian=. Keep components=, with the Hamiltonian you mean in "
+                "MFGComponents(hamiltonian=...)."
+            )
+
     def _detect_init_mode(
         self,
         spatial_bounds: list[tuple[float, float]] | None,
@@ -1112,7 +1124,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Nt: int,
         coupling_coefficient: float,
         lambda_: float | None,
-        suppress_warnings: bool,
     ) -> None:
         """
         Initialize problem with geometry object implementing GeometryProtocol.
@@ -1126,7 +1137,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             T, Nt: Time domain parameters
             coupling_coefficient: Physical parameters
             lambda_: control cost parameter
-            suppress_warnings: Suppress warnings
         """
         # Import geometry protocol
         try:
@@ -1583,38 +1593,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             dimension=self.dimension if dimension is None else dimension,
         )
 
-    def get_drift_coefficient_field(self) -> Any:
-        """
-        Get a CoefficientField wrapper for the drift field.
-
-        Returns a CoefficientField that handles array and callable drift
-        coefficients uniformly. Use this in solvers instead of directly
-        accessing self.drift_field.
-
-        Returns:
-            CoefficientField wrapping self.drift_field (default is zero drift)
-
-        Example:
-            >>> drift = problem.get_drift_coefficient_field()
-            >>> alpha_at_t = drift.evaluate_at(
-            ...     timestep_idx=5,
-            ...     grid=x_coords,
-            ...     density=m,
-            ...     dt=problem.dt
-            ... )
-        """
-        from mfgarchon.utils.pde_coefficients import CoefficientField
-
-        # Default drift is zero
-        default_drift = 0.0
-
-        return CoefficientField(
-            field=self.drift_field,
-            default_value=default_drift,
-            field_name="drift",
-            dimension=self.dimension,
-        )
-
     def has_state_dependent_coefficients(self) -> bool:
         """
         Check if problem has state-dependent (callable) PDE coefficients.
@@ -1623,9 +1601,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         constant/precomputed ones (e.g., re-evaluate at each timestep).
 
         Returns:
-            True if the volatility or drift_field is callable
+            True if the volatility is callable
         """
-        return callable(self._volatility) or callable(self.drift_field)
+        return callable(self._volatility)
 
     def __repr__(self) -> str:
         """
@@ -2119,15 +2097,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 if not func_result.is_valid:
                     raise ValidationError(func_result)
 
-            # Validate drift if callable
-            if callable(self.drift_field):
-                from mfgarchon.utils.validation import validate_drift
-
-                drift_result = validate_drift(self.drift_field, self.geometry)
-                if not drift_result.is_valid:
-                    raise ValidationError(drift_result)
-
-        # Issue #687: Validate array-type diffusion/drift fields
+        # Issue #687: Validate an array-type diffusion field
         if self.geometry is not None and self.spatial_shape is not None:
             from mfgarchon.utils.validation import (
                 ValidationResult,
@@ -2168,20 +2138,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     validate_array_dtype(vol, "volatility"),
                     *shape_check,
                     validate_finite(vol, "volatility"),
-                ]:
-                    arr_result.issues.extend(check.issues)
-                    if not check.is_valid:
-                        arr_result.is_valid = False
-                if not arr_result.is_valid:
-                    raise ValidationError(arr_result)
-
-            # Validate drift_field if ndarray
-            if isinstance(self.drift_field, np.ndarray):
-                arr_result = ValidationResult()
-                for check in [
-                    validate_array_dtype(self.drift_field, "drift_field"),
-                    validate_field_shape(self.drift_field, self.spatial_shape, "drift_field"),
-                    validate_finite(self.drift_field, "drift_field"),
                 ]:
                     arr_result.issues.extend(check.issues)
                     if not check.is_valid:

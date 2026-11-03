@@ -4,8 +4,8 @@
 form. Each restated its own argument list -- model, domain, conditions, constraints, Nt -- so every other input the
 constructor accepted was dropped: a problem built with ``source_term_hjb=50`` solved at another Nt as if it had none,
 with nothing reported. The four now read one owner, `MFGProblem._rebuilt`, which builds from the record the
-constructor keeps. Two inputs nothing read are refused by name instead: ``drift=`` in this form (#2678), and
-``boundary_conditions=`` in every form.
+constructor keeps. An input nothing reads is refused by name instead: ``boundary_conditions=`` here, and the inputs
+#2678 names in `test_unread_inputs_refused_2678.py`.
 
 The components= form has its own record (#2666), read by the one rebuild of that form the library makes:
 `StochasticMFGProblem.create_conditional_problem`, which built each noise path's problem by hand from five fields.
@@ -121,14 +121,13 @@ def test_every_rebuild_carries_every_input_the_constructor_took():
 @pytest.mark.parametrize(
     ("form", "keyword"),
     [
-        ("model", {"drift": lambda t, x, m: np.zeros_like(np.asarray(x, dtype=float))}),
         ("model", {"boundary_conditions": dirichlet_bc(dimension=1, value=0.0)}),
         ("components", {"boundary_conditions": dirichlet_bc(dimension=1, value=0.0)}),
     ],
 )
 def test_an_input_nothing_reads_is_refused_by_name(form, keyword):
     """Measured before the refusal: a Dirichlet ``boundary_conditions=`` beside a no-flux geometry changed the solve by
-    0, and a ``drift=`` changed it by 0 -- no solver reads the problem's drift field (#2678)."""
+    0."""
     name = next(iter(keyword))
     if form == "model":
         with pytest.raises((TypeError, ValueError), match=rf"{name}=.*refused.*#2667"):
@@ -194,7 +193,16 @@ def test_the_conditional_problem_carries_every_input_of_the_components_form():
     assert conditional.components.parameters == {"label": "parent"}
     assert conditional.components.parameters is not parent.components.parameters
 
-    named = set(inspect.signature(MFGProblem.__init__).parameters) - {"self", "model", "domain", "conditions", "kwargs"}
+    # constraints= and drift= are refused when given (#2678), so a built problem has nothing of them to keep.
+    named = set(inspect.signature(MFGProblem.__init__).parameters) - {
+        "self",
+        "model",
+        "domain",
+        "conditions",
+        "kwargs",
+        "constraints",
+        "drift",
+    }
     missing = sorted(named - set(parent._components_inputs))
     assert not missing, f"MFGProblem.__init__ takes {missing}, which the components form's record does not keep"
 

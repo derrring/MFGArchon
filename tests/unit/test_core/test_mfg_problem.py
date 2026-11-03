@@ -149,9 +149,8 @@ def test_mfg_problem_default_initialization():
     assert problem.Nt == 51
     assert problem.dt == pytest.approx(1.0 / 51)
 
-    # Physical parameters (None → 0 for volatility/drift)
+    # Physical parameters (None → 0 for volatility)
     assert problem.volatility == 0.0
-    assert problem.drift_field == 0.0
     assert problem.coupling_coefficient == 0.5
 
     # Custom components (now required)
@@ -1171,52 +1170,6 @@ def test_diffusion_volatility_equivalence():
 
 
 @pytest.mark.unit
-def test_drift_field_none():
-    """Test MFGProblem with no drift field (default). None → 0."""
-    problem = create_test_problem()
-
-    assert problem.drift_field == 0.0
-    assert not problem.has_state_dependent_coefficients()
-
-
-@pytest.mark.unit
-def test_drift_field_array():
-    """Test MFGProblem with array drift field."""
-    # Create a drift field array (default_geometry has 11 grid points)
-    drift_array = np.ones(11) * 0.1  # Constant drift
-
-    problem = create_test_problem(drift=drift_array)
-
-    assert isinstance(problem.drift_field, np.ndarray)
-    assert np.array_equal(problem.drift_field, drift_array)
-    assert not problem.has_state_dependent_coefficients()
-
-
-@pytest.mark.unit
-def test_drift_field_scalar():
-    """Test MFGProblem with scalar drift (constant drift)."""
-    problem = create_test_problem(drift=0.05)
-
-    assert problem.drift_field == 0.05
-    assert not problem.has_state_dependent_coefficients()
-
-
-@pytest.mark.unit
-def test_drift_field_callable():
-    """Test MFGProblem with callable drift field."""
-
-    def drift_func(t, x, m):
-        """Drift towards high-density regions."""
-        return -0.1 * x
-
-    problem = create_test_problem(drift=drift_func)
-
-    assert callable(problem.drift_field)
-    assert problem.drift_field is drift_func
-    assert problem.has_state_dependent_coefficients()
-
-
-@pytest.mark.unit
 def test_get_diffusion_coefficient_field():
     """Test get_diffusion_coefficient_field returns CoefficientField wrapper."""
     problem = create_test_problem(volatility=0.5)
@@ -1267,41 +1220,18 @@ def test_get_diffusion_coefficient_field_name_and_dimension_params():
 
 
 @pytest.mark.unit
-def test_get_drift_coefficient_field():
-    """Test get_drift_coefficient_field returns CoefficientField wrapper."""
-    # default_geometry has 11 grid points
-    drift_array = np.ones(11) * 0.1
-    problem = create_test_problem(drift=drift_array)
-
-    coeff_field = problem.get_drift_coefficient_field()
-
-    # Should return a CoefficientField instance
-    from mfgarchon.utils.pde_coefficients import CoefficientField
-
-    assert isinstance(coeff_field, CoefficientField)
-    assert coeff_field.name == "drift"
-
-
-@pytest.mark.unit
 def test_has_state_dependent_coefficients_mixed():
     """Test has_state_dependent_coefficients with mixed coefficient types."""
 
     def sigma_func(t, x, m):
         return 0.1 + 0.5 * m
 
-    # Scalar drift, callable volatility (default_geometry has 11 grid points)
-    problem1 = create_test_problem(volatility=sigma_func, drift=np.zeros(11))
+    # Callable volatility
+    problem1 = create_test_problem(volatility=sigma_func)
     assert problem1.has_state_dependent_coefficients()
 
-    # Callable drift, scalar diffusion
-    def drift_func(t, x, m):
-        return -0.1 * x
-
-    problem2 = create_test_problem(volatility=0.5, drift=drift_func)
-    assert problem2.has_state_dependent_coefficients()
-
-    # Both scalar
-    problem3 = create_test_problem(volatility=0.5, drift=np.zeros(11))
+    # Scalar volatility
+    problem3 = create_test_problem(volatility=0.5)
     assert not problem3.has_state_dependent_coefficients()
 
 
