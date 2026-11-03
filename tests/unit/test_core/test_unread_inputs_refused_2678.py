@@ -19,6 +19,7 @@ import functools
 import pytest
 
 import numpy as np
+from scipy.integrate import trapezoid
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
@@ -29,6 +30,9 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# These rows hand the components= form what it refuses, so its notice that the form is planned to be replaced is noise.
+pytestmark = pytest.mark.filterwarnings("ignore:The components= form of MFGProblem:PendingDeprecationWarning")
+
 _ROUTES = ("solve_fp_system(drift_field=)", "FPFDMSolver", "FPParticleSolver", "FixedPointIterator(drift_field=)")
 
 
@@ -36,8 +40,16 @@ def _x(y):
     return np.asarray(y, dtype=float)[..., 0]
 
 
+def _gaussian(points):
+    return np.exp(-40 * (points - 0.3) ** 2)
+
+
+_POINTS = np.linspace(0.0, 1.0, 21)
+_MASS = float(trapezoid(_gaussian(_POINTS), _POINTS))
+
+
 def _m_initial(x):
-    return np.exp(-40 * (_x(x) - 0.3) ** 2)
+    return _gaussian(_x(x)) / _MASS
 
 
 def _u_terminal(x):
@@ -94,9 +106,7 @@ def _zero_drift(t, x, m):
 
 
 def _density():
-    points = np.linspace(0.0, 1.0, 21)
-    values = np.exp(-40 * (points - 0.3) ** 2)
-    return values / (values.sum() * 0.05)
+    return _gaussian(_POINTS) / _MASS
 
 
 def _gap(a, b):
