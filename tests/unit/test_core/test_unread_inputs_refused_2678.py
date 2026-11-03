@@ -262,6 +262,7 @@ def test_an_empty_spatial_discretization_is_refused_off_its_grid():
 
 
 @pytest.mark.unit
+@pytest.mark.filterwarnings("ignore:No spatial domain specified")
 @pytest.mark.parametrize("value", [[object()], [], None], ids=["an obstacle", "empty", "None"])
 @pytest.mark.parametrize("route", ["a geometry", "spatial_bounds", "the default domain"])
 def test_obstacles_are_refused_on_every_route_by_the_table(route, value):
