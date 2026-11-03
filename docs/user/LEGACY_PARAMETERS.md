@@ -119,18 +119,6 @@ problem = MFGProblem(geometry=geometry, Nt=50)
 
 ## For Test Writers
 
-### Testing Legacy API Behavior
-
-If you're explicitly testing legacy parameter behavior (e.g., `TestLegacy1DMode`), **don't migrate**. Instead, suppress warnings:
-
-```python
-# Test the deprecated API - suppress warnings
-problem = MFGProblem(
-    xmin=0, xmax=1, Nx=100, Nt=50,
-    suppress_warnings=True  # ← Add this
-)
-```
-
 ### Testing Other Functionality
 
 If you're testing solver behavior, physics, mass conservation, etc., **do migrate** to the modern API.

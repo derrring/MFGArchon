@@ -47,9 +47,9 @@ class MultiPopulationProblem:
 
     Examples
     --------
-    >>> from mfgarchon import MFGProblem
-    >>> prob_A = MFGProblem(hamiltonian=H_A, ...)
-    >>> prob_B = MFGProblem(hamiltonian=H_B, ...)
+    >>> from mfgarchon import MFGProblem, Model
+    >>> prob_A = MFGProblem(model=Model(hamiltonian=H_A), ...)
+    >>> prob_B = MFGProblem(model=Model(hamiltonian=H_B), ...)
     >>> multi = MultiPopulationProblem(
     ...     populations=[prob_A, prob_B],
     ...     population_names=["commuters", "residents"],

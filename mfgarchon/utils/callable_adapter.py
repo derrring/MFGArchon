@@ -42,8 +42,12 @@ import numpy as np
 from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
     BoundCallable,
+    FrozenSlotError,
     bind_user_callable,
+    freezes_by_position,
+    frozen_by_keyword,
     out_of_order,
+    rewrite_advice,
 )
 
 if TYPE_CHECKING:
@@ -88,7 +92,8 @@ def adapt_ic_callable(
       it is read only if x alone works (a wrapper decorated with ``functools.wraps`` is read by the
       wrapped function's names);
     - anything else that needs more than ``x`` is refused: names out of order (``f(x, t)``), time
-      without space, a ``functools.partial`` that fixes time, and names that say neither order.
+      without space, a ``functools.partial`` that fixes time, one that freezes by keyword a slot it would be passed by
+      name, and names that say neither order.
 
     Args:
         func: User-provided IC/BC callable.
@@ -115,13 +120,14 @@ def adapt_ic_callable(
         return TypeError(_format_signature_error(func, dimension, attempts))
 
     time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
-    frozen = sorted(set(getattr(func, "keywords", None) or {}) & set(time_names))
-    if isinstance(func, functools.partial) and frozen:
+    frozen_time = frozen_by_keyword(func, time_names)
+    if frozen_time:
+        name, value = next(iter(frozen_time.items()))
         raise TypeError(
-            f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
-            f"reads {role} at its own time: pass a function of x alone that fixes the time itself, passing each "
-            f"argument to the parameter that reads it, such as `lambda x: f(x=x, {frozen[0]}=T)` for an f that takes "
-            f"just x and {frozen[0]}, with T the time you want."
+            f"{role} is or wraps a functools.partial that fixes {name}={value!r}, but the library reads {role} at its own "
+            f"time: pass a function of x alone that fixes the time itself, passing each argument to the parameter that "
+            f"reads it, such as `lambda x: f(x=x, {name}=T)` for an f that takes just x and {name}, with T the time you "
+            f"want."
         )
 
     names = _positional_names(func)
@@ -135,6 +141,8 @@ def adapt_ic_callable(
 
     try:
         bound = bind_user_callable(func, CONDITION_SLOTS, role=role, spatial_only=True)
+    except FrozenSlotError:
+        raise
     except TypeError as refusal:
         if out_of_order(names, CONDITION_SLOTS):
             raise
@@ -151,7 +159,7 @@ def adapt_ic_callable(
         if "x" not in bound.passes:
             raise TypeError(
                 f"{role} {getattr(func, '__qualname__', func)!r} takes time and no space. It is a function of "
-                f"space. Name its space parameter x."
+                f"space. {rewrite_advice(func, CONDITION_SLOTS) if freezes_by_position(func) else 'Name its space parameter x.'}"
             )
         result, err = _try_call(functools.partial(bound, t=time_value), x=sample)
         if err is None and _is_valid_output(result):
@@ -180,7 +188,8 @@ def adapt_ic_callable(
             (
                 "f(*args, **kwargs)",
                 f"names none of its parameters, so which argument is time cannot be read. If {role} wraps "
-                f"another function, decorate the wrapper with functools.wraps; otherwise name its parameters after what they read",
+                f"another function, decorate the wrapper with functools.wraps"
+                f"{f'. {rewrite_advice(func, CONDITION_SLOTS)}' if freezes_by_position(func) else '; otherwise name its parameters after what they read'}",
             )
         )
         raise refuse()
@@ -341,17 +350,23 @@ def _format_signature_error(
         lines.append(f"    -> {error}")
 
     lines.append("")
+    # Naming a function a partial froze by position moves what it froze, as `rewrite_advice` says (#2861).
+    naming = (
+        f". {rewrite_advice(func, CONDITION_SLOTS)}"
+        if freezes_by_position(func)
+        else "; name time t (or time), or name the space parameter x"
+    )
     if dimension == 1:
         lines.append(
             "Accepted signatures for 1D:\n"
             "  f(x)      -- x is a Python float\n"
             "  f(x)      -- x is ndarray of shape (1,)\n"
-            "  f(t, x)   -- spatiotemporal, time first; name time t (or time), or name the space parameter x"
+            f"  f(t, x)   -- spatiotemporal, time first{naming}"
         )
     else:
         lines.append(
             f"Accepted signatures for {dimension}D:\n"
             f"  f(x)      -- x is ndarray of shape ({dimension},)\n"
-            f"  f(t, x)   -- spatiotemporal, time first; name time t (or time), or name the space parameter x"
+            f"  f(t, x)   -- spatiotemporal, time first{naming}"
         )
     return "\n".join(lines)

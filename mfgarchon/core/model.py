@@ -26,6 +26,17 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
 
+# What Model(drift_field=) and MFGProblem(drift=) are told, one text for both. Each route it names has a row in
+# tests/unit/test_core/test_unread_inputs_refused_2678.py.
+UNREAD_DRIFT = (
+    "No solver reads a problem-level drift (#2678). To prescribe one, pass a callable to solve_fp_system(drift_field=) "
+    "on FPFDMSolver or FPParticleSolver, or to FixedPointIterator(drift_field=) over FPFDMSolver. It replaces the drift "
+    "the Hamiltonian gives, and is read by position as (t, x, m), with x in the form that solver hands it (#2864). On "
+    "FPFDMSolver its density at a no-flux wall does not converge at fixed velocity * dt / dx (#2878). On FPParticleSolver that "
+    "route returns Nt+2 slices (#2412). An array means different things by solver: a velocity on "
+    "FPFDMSolver, and a value function on FPParticleSolver. A number has no route."
+)
+
 
 @runtime_checkable
 class CouplingCost(Protocol):
@@ -63,7 +74,8 @@ class Model:
         volatility_kind: For an array volatility, ``"field"`` (isotropic per-point sigma) or
             ``"tensor"`` (a square ``(d, d)`` matrix, or ``(*grid, d, d)`` per point; a non-square
             matrix is refused). Required for an array.
-        drift_field: Prescribed drift for FP-only problems (no optimization).
+        drift_field: Refused when given: no solver reads a problem-level drift (#2678). A solver's and an iterator's own
+            ``drift_field=`` are the routes, and the refusal names them.
         coupling_cost: The coupling cost F[m], a `CouplingCost` -- ``InteractionCost(kernel)``,
             ``PotentialCost(V)`` or their sum (``mfgarchon.operators.interaction``). ``MFGProblem`` binds it to its grid
             and measure, and the HJB carries its flat derivative ``delta F / delta m`` as a source, cost-signed, summed
@@ -103,22 +115,23 @@ class Model:
         raise AttributeError(_RETIRED_SIGMA)
 
     def __post_init__(self) -> None:
+        self.refuse_what_is_not_bound()
         has_h = self.hamiltonian is not None
         has_l = self.lagrangian is not None
-        has_d = self.drift_field is not None
 
-        if not has_h and not has_l and not has_d:
-            raise ValueError("Model requires at least one of: hamiltonian, lagrangian, or drift_field")
+        if not has_h and not has_l:
+            raise ValueError("Model requires a hamiltonian or a lagrangian")
         if has_h and has_l:
             raise ValueError(
                 "Provide hamiltonian OR lagrangian, not both. They are dual descriptions of the same game; supply one."
             )
-        self.refuse_what_is_not_bound()
 
     def refuse_what_is_not_bound(self) -> None:
         """The refusals of what a problem cannot bind, read at construction and again where a problem binds this model,
         since a ``Model`` is a mutable dataclass (#1642): a ``coupling_cost`` or ``terminal_coupling`` that is not a
-        `CouplingCost`."""
+        `CouplingCost`, and a ``drift_field``, which no solver reads (#2678)."""
+        if self.drift_field is not None:
+            raise ValueError(f"Model(drift_field=...) is refused. {UNREAD_DRIFT}")
         for field in ("coupling_cost", "terminal_coupling"):
             _refuse_unbindable_cost(field, getattr(self, field))
 
