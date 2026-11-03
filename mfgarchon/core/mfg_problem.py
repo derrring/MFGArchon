@@ -55,6 +55,14 @@ _RETIRED_VOLATILITY_ATTRIBUTE = (
 # inside each conditional solve printed once per noise path, and it is process-global, so not thread-safe.
 _REPLAYING_A_RECORD: ContextVar[bool] = ContextVar("mfgproblem_replaying_a_record", default=False)
 
+# What a refusal calls each mode of `_detect_init_mode`.
+_MODE_NAMES = {
+    "nd_grid": "a grid built from spatial_bounds=",
+    "geometry": "a geometry=",
+    "network": "a network=",
+    "default": "the default domain",
+}
+
 
 # ============================================================================
 # Unified MFG Problem Class
@@ -757,6 +765,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             constraints=constraints,
             drift=drift,
             suppress_warnings=suppress_warnings,
+            spatial_discretization=spatial_discretization,
+            obstacles=obstacles,
+            lambda_=lambda_,
         )
 
         # Dispatch to appropriate initializer
@@ -1017,9 +1028,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         constraints: list | None,
         drift: Any,
         suppress_warnings: bool,
+        spatial_discretization: list[int] | None,
+        obstacles: list | None,
+        lambda_: float | None,
     ) -> None:
         """Refuse an input no solve on this construction would read, by name (#2678). Accepted, each changed U and M by
-        0.0 on the default solve, with nothing said."""
+        0.0 on the default solve, with nothing said. An input read on one route and dropped on another is refused on the
+        route that drops it."""
         from mfgarchon.core.model import UNREAD_DRIFT
 
         if drift is not None:
@@ -1036,6 +1051,21 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"MFGProblem(suppress_warnings=True) is refused on a {mode} (#2678). It skips the "
                 "computational-feasibility check, which runs only when the library builds the grid itself, from "
                 "spatial_bounds= or the default domain, so nothing reads it here."
+            )
+        if spatial_discretization is not None and mode != "nd_grid":
+            raise ValueError(
+                f"MFGProblem(spatial_discretization=...) is refused on {_MODE_NAMES[mode]} (#2678): it sets the points of "
+                "a grid built from spatial_bounds=, so nothing reads it here."
+            )
+        if obstacles is not None and mode != "geometry":
+            raise ValueError(
+                f"MFGProblem(obstacles=...) is refused on {_MODE_NAMES[mode]} (#2678): only a geometry= reads it, so the "
+                "solve would run on a domain with no obstacle."
+            )
+        if lambda_ is not None and mode in ("nd_grid", "default"):
+            raise ValueError(
+                f"MFGProblem(lambda_=...) is refused on {_MODE_NAMES[mode]} (#2678): a grid built here does not keep it, "
+                "so nothing reads it. A Hamiltonian's control_cost= is the route."
             )
 
     def _detect_init_mode(
@@ -2617,6 +2647,9 @@ Build the grid and pass it as the domain:
   )
 
 See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
+            elif set(kwargs) & set(self._DEPRECATED_KWARGS) == {"hamiltonian"}:
+                # The components= form is not told to migrate (user ruling, 2026-10-12), and its row names both routes.
+                migration_guide = ""
             else:
                 migration_guide = """
 

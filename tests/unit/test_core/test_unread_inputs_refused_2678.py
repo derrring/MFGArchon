@@ -2,8 +2,10 @@
 
 Each of these was accepted and changed the default solve by 0.0 in U and in M, with nothing said: ``Model(drift_field=)``,
 ``drift=``, ``constraints=``, ``state_penalty_scale`` with no ``state_penalty``, ``suppress_warnings=True`` where no
-feasibility check runs, and ``hamiltonian=`` beside ``components=``. ``coupling_coefficient`` and ``lambda_`` are read by
-another Hamiltonian, and stay with #2681.
+feasibility check runs, ``hamiltonian=`` beside ``components=``, and three that are read on one route and dropped on
+another: ``spatial_discretization=`` off a grid built from ``spatial_bounds=``, ``obstacles=`` off a geometry, and
+``lambda_=`` on a grid. ``coupling_coefficient``, and ``lambda_`` where it is kept, are read by another Hamiltonian, and
+stay with #2681.
 
 ``hamiltonian=`` is no longer a parameter, and the retired-keyword table is all that refuses it: without its row the
 keyword warns as unrecognized and is dropped, which is #2563 again.
@@ -27,7 +29,7 @@ from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry import Hypersphere, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 # These rows hand the components= form what it refuses, so its notice that the form is planned to be replaced is noise.
@@ -122,8 +124,15 @@ def test_a_model_refuses_a_drift_field_and_names_the_routes(given):
         Model(drift_field=_drift, **given)
     for route in _ROUTES:
         assert route in str(refused.value)
-    assert "replaces the drift the Hamiltonian gives" in str(refused.value)
-    assert "(t, x, m)" in str(refused.value)
+    for claim in (
+        "pass a callable",
+        "replaces the drift the Hamiltonian gives",
+        "(t, x, m)",
+        "Nt+2 slices (#2412)",
+        "a velocity on FPFDMSolver, and a value function on FPParticleSolver",
+        "A number has no route",
+    ):
+        assert claim in str(refused.value)
 
 
 @pytest.mark.unit
@@ -149,7 +158,7 @@ def test_a_model_still_needs_a_hamiltonian_or_a_lagrangian():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("form", _FORMS)
-@pytest.mark.parametrize("drift", [_drift, 0.05, np.zeros(21)], ids=["callable", "float", "array"])
+@pytest.mark.parametrize("drift", [_drift, 0.05, 0.0, np.zeros(21)], ids=["callable", "float", "zero", "array"])
 def test_a_problem_refuses_a_drift_and_names_the_routes(form, drift):
     with pytest.raises(ValueError, match=r"MFGProblem\(drift=\.\.\.\) is refused.*#2678") as refused:
         _FORMS[form](drift=drift)
@@ -160,16 +169,18 @@ def test_a_problem_refuses_a_drift_and_names_the_routes(form, drift):
 @pytest.mark.unit
 @pytest.mark.parametrize("form", _FORMS)
 def test_constraints_are_refused_when_given(form):
-    with pytest.raises(ValueError, match=r"constraints=.*refused.*#2678"):
-        _FORMS[form](constraints=["anything"])
+    for given in (["anything"], []):
+        with pytest.raises(ValueError, match=r"constraints=.*refused.*#2678"):
+            _FORMS[form](constraints=given)
     assert _FORMS[form](constraints=None) is not None
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("form", _FORMS)
 def test_a_state_penalty_scale_with_no_state_penalty_is_refused(form):
-    with pytest.raises(ValueError, match=r"state_penalty_scale=.*no state_penalty=.*#2678"):
-        _FORMS[form](state_penalty_scale=3.0)
+    for scale in (3.0, 0.5):
+        with pytest.raises(ValueError, match=r"state_penalty_scale=.*no state_penalty=.*#2678"):
+            _FORMS[form](state_penalty_scale=scale)
     assert _FORMS[form](state_penalty_scale=1.0) is not None
 
 
@@ -204,6 +215,65 @@ def test_suppress_warnings_false_is_accepted_on_a_geometry(form):
 
 
 @pytest.mark.unit
+@pytest.mark.filterwarnings("ignore:No spatial domain specified", "ignore:initial density mass")
+def test_suppress_warnings_is_accepted_on_the_default_domain():
+    """The library builds that grid too, so the check runs there."""
+    assert MFGProblem(components=_components(), T=0.5, Nt=10, volatility=0.4, suppress_warnings=True) is not None
+
+
+_ROUTES_BUILT = {
+    "a geometry": {"geometry": _grid()},
+    "the default domain": {},
+    "a network": {"network": object()},
+    "spatial_bounds": {"spatial_bounds": [(0.0, 1.0)], "spatial_discretization": [20]},
+}
+
+
+def _on(route, **given):
+    return MFGProblem(
+        **{"components": _components(), "T": 0.5, "Nt": 10, "volatility": 0.4, **_ROUTES_BUILT[route], **given}
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("route", ["a geometry", "the default domain", "a network"])
+def test_spatial_discretization_is_refused_off_a_grid_built_from_spatial_bounds(route):
+    with pytest.raises(ValueError, match=rf"spatial_discretization=\.\.\.\) is refused on {route}.*#2678"):
+        _on(route, spatial_discretization=[40])
+
+
+@pytest.mark.unit
+@pytest.mark.filterwarnings("ignore:initial density mass")
+def test_spatial_discretization_is_read_beside_spatial_bounds():
+    assert _on("spatial_bounds").spatial_shape != _on("spatial_bounds", spatial_discretization=[40]).spatial_shape
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("route", ["spatial_bounds", "the default domain", "a network"])
+def test_obstacles_are_refused_off_a_geometry(route):
+    """On those routes the solve ran on a domain with no obstacle, with nothing said."""
+    with pytest.raises(ValueError, match=r"obstacles=\.\.\.\) is refused on .*#2678"):
+        _on(route, obstacles=[object()])
+
+
+@pytest.mark.unit
+def test_obstacles_are_read_on_a_geometry():
+    assert _on("a geometry", obstacles=[Hypersphere(center=[0.5], radius=0.1)]).has_obstacles
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("route", ["spatial_bounds", "the default domain"])
+def test_lambda_is_refused_on_a_grid_that_keeps_it_nowhere(route):
+    with pytest.raises(ValueError, match=r"lambda_=\.\.\.\) is refused on .*#2678"):
+        _on(route, lambda_=2.0)
+
+
+@pytest.mark.unit
+def test_lambda_is_kept_on_a_geometry():
+    assert _on("a geometry", lambda_=2.0).lambda_ == 2.0
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(("suppress", "warned"), [(False, True), (True, False)])
 def test_suppress_warnings_is_read_where_the_library_builds_the_grid(suppress, warned):
     """The path it stays on: the feasibility warning moves with the flag."""
@@ -230,8 +300,10 @@ class _ProblemWithItsOwnFunctions(MFGProblem):
     ids=["a Hamiltonian", "a callable", "None"],
 )
 def test_a_hamiltonian_beside_components_is_refused_and_names_both_routes(hamiltonian):
-    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW) as refused:
         _components_form(hamiltonian=hamiltonian)
+    assert "Beside components=, put the one you mean there" in str(refused.value)
+    assert "pass it through Model" not in str(refused.value), "a components= caller is not told to migrate"
 
 
 @pytest.mark.unit
@@ -296,6 +368,42 @@ def test_the_advice_on_fpparticlesolver_moves_the_density_and_reads_by_position(
     assert _gap(written_as_told, repeat) > 1e-3
     assert _gap(written_as_told, solve(_drift_unnamed)) == 0.0
     assert _gap(written_as_told, solve(_drift_written_x_first)) > 1e-3
+
+
+@pytest.mark.unit
+def test_an_array_is_a_velocity_on_fpfdmsolver():
+    def solve(velocity):
+        return FPFDMSolver(_model_form()).solve_fp_system(_density(), drift_field=velocity, show_progress=False)
+
+    assert _gap(solve(np.full((11, 21), 0.5)), solve(np.zeros((11, 21)))) > 1e-2
+
+
+@pytest.mark.unit
+def test_an_array_is_a_value_function_on_fpparticlesolver():
+    """A constant has no gradient, so the same constant that moves FP-FDM's density moves nothing here."""
+
+    def solve(**kwargs):
+        solver = FPParticleSolver(_model_form(), num_particles=2000, seed=7)
+        return solver.solve_fp_system(_density(), show_progress=False, **kwargs)
+
+    field = 0.2 * (0.5 - np.linspace(0.0, 1.0, 21)) * np.ones((11, 21))
+    assert _gap(solve(drift_field=field), solve(potential_field=field)) == 0.0
+    assert _gap(solve(drift_field=np.full((11, 21), 0.5)), solve(drift_field=np.zeros((11, 21)))) == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("solver", [FPFDMSolver, FPParticleSolver])
+def test_a_number_has_no_route(solver):
+    with pytest.raises(TypeError):
+        solver(_model_form()).solve_fp_system(_density(), drift_field=0.5, show_progress=False)
+
+
+@pytest.mark.unit
+def test_the_particle_route_returns_nt_plus_2_slices():
+    """RECORDED DEFECT, not a contract: #2412. The refusal says so, and fixing it trips this row and that sentence."""
+    solver = FPParticleSolver(_model_form(), num_particles=200, seed=7)
+    density = solver.solve_fp_system(_density(), drift_field=_drift, show_progress=False)
+    assert density.shape[0] == 12, "#2412 is fixed: remove this row and the sentence in UNREAD_DRIFT"
 
 
 @pytest.mark.unit

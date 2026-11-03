@@ -29,10 +29,11 @@ if TYPE_CHECKING:
 # What Model(drift_field=) and MFGProblem(drift=) are told, one text for both. Each route it names has a row in
 # tests/unit/test_core/test_unread_inputs_refused_2678.py.
 UNREAD_DRIFT = (
-    "No solver reads a problem-level drift (#2678). To prescribe one, pass it to solve_fp_system(drift_field=) on "
-    "FPFDMSolver or FPParticleSolver, or to FixedPointIterator(drift_field=) over FPFDMSolver. It replaces the drift "
-    "the Hamiltonian gives. A callable is read by position as (t, x, m), with x in the form that solver hands it "
-    "(#2864)."
+    "No solver reads a problem-level drift (#2678). To prescribe one, pass a callable to solve_fp_system(drift_field=) "
+    "on FPFDMSolver or FPParticleSolver, or to FixedPointIterator(drift_field=) over FPFDMSolver. It replaces the drift "
+    "the Hamiltonian gives, and is read by position as (t, x, m), with x in the form that solver hands it (#2864). On "
+    "FPParticleSolver that route returns Nt+2 slices (#2412). An array means different things by solver: a velocity on "
+    "FPFDMSolver, and a value function on FPParticleSolver. A number has no route."
 )
 
 
