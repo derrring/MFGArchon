@@ -50,6 +50,13 @@ _WITNESS_NOISE_SAFETY = 1e4
 _SMOOTHNESS_RTOL = 1e-3
 
 
+def _raw_callable_advice(fn: Any) -> str:
+    """What a raw callable `_call_h` could not call is told, which keeps what a partial froze."""
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, rewrite_advice
+
+    return rewrite_advice(fn, HAMILTONIAN_SLOTS)
+
+
 def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     """Evaluate a Hamiltonian, or one of its derivatives, the way its kind expects.
 
@@ -60,10 +67,11 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     import functools
 
     from mfgarchon.core.hamiltonian import MFGOperatorBase
-    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable, refuse_overridden
 
     target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
+        refuse_overridden(fn, HAMILTONIAN_SLOTS.order, role="Hamiltonian callable")
         return fn(t=t, x=x, p=p, m=m)
     return bind_user_callable(fn, HAMILTONIAN_SLOTS, role="Hamiltonian callable")(t=t, x=x, p=p, m=m)
 
@@ -165,7 +173,7 @@ def validate_hamiltonian(
     geometry: GeometryProtocol,
 ) -> ValidationResult:
     """
-    Validate a Hamiltonian: a HamiltonianBase instance, or a raw callable H(t, x, p, m).
+    Validate a Hamiltonian: a HamiltonianBase instance, or a raw callable of (t, x, p, m), which declares p and what else it reads.
 
     Supports HamiltonianBase instances (called as H(t, x, p, m) by keyword)
     and raw callables (tried with same signature).
@@ -195,7 +203,7 @@ def validate_hamiltonian(
         result.add_error(
             f"Hamiltonian has wrong signature: {e}",
             location="hamiltonian",
-            suggestion="A Hamiltonian takes (t, x, p, m) (#2375 ruling 8); name a raw callable's parameters t, x, p, m",
+            suggestion=f"A Hamiltonian takes (t, x, p, m) (#2375 ruling 8). {_raw_callable_advice(hamiltonian)}",
         )
         return result
     except Exception as e:
@@ -261,7 +269,7 @@ def validate_hamiltonian_derivative(
         result.add_error(
             f"{name} has wrong signature: {e}",
             location=name,
-            suggestion=f"{name} takes (t, x, p, m) (#2375 ruling 8); name a raw callable's parameters t, x, p, m",
+            suggestion=f"{name} takes (t, x, p, m) (#2375 ruling 8). {_raw_callable_advice(derivative_func)}",
         )
         return result
     except Exception as e:

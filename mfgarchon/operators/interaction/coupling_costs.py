@@ -143,7 +143,7 @@ class PotentialCost(_SummableCost):
         return bind_on_measure(self, GridPointMeasure(problem))
 
     def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
-        from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, _reorder_advice
+        from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, rewrite_advice
         from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
 
         def copies(points: np.ndarray) -> np.ndarray:
@@ -158,7 +158,7 @@ class PotentialCost(_SummableCost):
         d = nodes.shape[1]
         in_the_hamiltonian = (
             "A time-dependent potential goes in the Hamiltonian, as SeparableHamiltonian(potential=...). "
-            f"{_reorder_advice(POTENTIAL_SLOTS.order)} "
+            f"{rewrite_advice(self.V, POTENTIAL_SLOTS)} "
             "HJB-FDM and HJB-SL read it at each time; HJB-WENO reads a Hamiltonian at t = 0 (#2429), so with it the "
             "potential is V(0, x) for the whole horizon. There x is a point or an array of points, of shape (d,) or "
             "(N, d), so a V written for one point reads x[..., 0] in 1-D (#1642)."
