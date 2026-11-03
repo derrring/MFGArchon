@@ -102,7 +102,8 @@ def _partial_levels(fn: Any) -> Iterator[functools.partial]:
     """Each ``functools.partial`` in ``fn``, outermost first. Python flattens a partial of a partial only when the inner one
     has no ``__dict__``, so one given an attribute, or wrapped by ``functools.update_wrapper``, stays a level of its own. A
     ``functools.wraps`` wrapper over a partial is walked through too: ``inspect.signature`` reads through ``__wrapped__``, so
-    the wrapper is called with the partial's names and hands them on."""
+    the wrapper is called with the partial's names and hands them on. A partial held where a method goes, as a class's
+    ``__call__`` or a ``MethodType``, or behind a hand-set ``__signature__``, is not reached (#2871)."""
     while True:
         fn = inspect.unwrap(fn, stop=lambda f: isinstance(f, functools.partial))
         if not isinstance(fn, functools.partial):
