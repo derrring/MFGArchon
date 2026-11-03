@@ -2535,9 +2535,6 @@
       "grid_spacing_uses_point_count",
       "particle_mass_counting_measure"
     ],
-    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D GPU]": [
-      "particle_mass_counting_measure"
-    ],
     "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D]": [
       "particle_mass_counting_measure"
     ],
@@ -2561,9 +2558,6 @@
     ],
     "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method[standard]": [
       "quadrature_wall_node_counting_measure"
-    ],
-    "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall": [
-      "particle_mass_counting_measure"
     ],
     "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_interpolation_utility_deposits_a_sample_its_lattice_cannot_read[a callable bandwidth, 0.05 times Scott's]": [
       "quadrature_wall_node_counting_measure"
@@ -5846,7 +5840,7 @@
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 29,
+      "kill_count": 27,
       "killed": [
         "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_fp_particle_outputs_to_grid",
         "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_mass_conservation_particle_fp",
@@ -5865,11 +5859,9 @@
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverInitialization::test_solve_fp_system_initial_condition",
         "tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_the_refusals_advice_runs[Particle]",
         "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_deposited_level_carries_the_callers_mass",
-        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D GPU]",
         "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[1-D]",
         "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[2-D callable drift]",
         "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_a_kernel_level_after_a_deposited_one_calibrates_the_factor[2-D]",
-        "tests/unit/test_alg/test_kde_bandwidth_owner_2556.py::test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_ALL_pins_and_NONE_carries_so_the_modes_are_not_the_same_solve",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_a_later_slice_carries_the_mass_too",
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_a_sub_probability_density_keeps_its_mass[all]",
