@@ -204,6 +204,10 @@ unauditable; adding to it casually is how it got there.
        --write-baseline scripts/discrimination_baseline.json
    ```
 
+   Before recording, compare the sweep's kill lists with the latest `kill-matrix-shard-*` artifacts of
+   `discrimination.yml` (kept 90 days), and remove by script any pair the runner cannot fire, since
+   `$MFG_PYTHON` holds backends the runner does not install.
+
    Write **both** files from the one run: `--write-baseline` alone leaves the matrix at the old run,
    which the script says in its own error message.
 
