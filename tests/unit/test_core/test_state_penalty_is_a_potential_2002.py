@@ -115,7 +115,7 @@ def test_the_retired_obstacle_field_refuses_and_names_both_successors():
     assert "RETIRED" in message
     assert "state_penalty" in message, "must name the soft-wall successor"
     assert "constraint=" in message, "must name the reserved VI slot"
-    assert "obstacles" in message, "must disambiguate from the geometry field of almost the same name"
+    assert "obstacles" in message, "must disambiguate from a geometric obstacle"
 
 
 def test_a_hamiltonian_that_cannot_carry_a_potential_refuses():

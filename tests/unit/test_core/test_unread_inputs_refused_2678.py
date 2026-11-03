@@ -2,13 +2,13 @@
 
 Each of these was accepted and changed the default solve by 0.0 in U and in M, with nothing said: ``Model(drift_field=)``,
 ``drift=``, ``constraints=``, ``state_penalty_scale`` with no ``state_penalty``, ``suppress_warnings=True`` where no
-feasibility check runs, ``hamiltonian=`` beside ``components=``, and three that are read on one route and dropped on
-another: ``spatial_discretization=`` off a grid built from ``spatial_bounds=``, ``obstacles=`` off a geometry, and
-``lambda_=`` on a grid. ``coupling_coefficient``, and ``lambda_`` where it is kept, are read by another Hamiltonian, and
-stay with #2681.
+feasibility check runs, ``hamiltonian=`` beside ``components=``, ``obstacles=``, which only took ``fdm`` off a problem's
+compatible solvers, and two that are read on one route and dropped on another: ``spatial_discretization=`` off a grid
+built from ``spatial_bounds=``, and ``lambda_=`` on a grid. ``coupling_coefficient``, and ``lambda_`` where it is kept,
+are read by another Hamiltonian, and stay with #2681.
 
-``hamiltonian=`` is no longer a parameter, and the retired-keyword table is all that refuses it: without its row the
-keyword warns as unrecognized and is dropped, which is #2563 again.
+``hamiltonian=`` and ``obstacles=`` are no longer parameters, and the retired-keyword table is all that refuses them:
+without a row the keyword warns as unrecognized and is dropped, which is #2563 again.
 
 The refusal of a drift names routes, so each route has a row that follows it. Its bodies read both ``t`` and ``x``,
 since a constant reads the same in either order (#2864).
@@ -29,8 +29,9 @@ from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.geometry import Hypersphere, TensorProductGrid
+from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
 
 # These rows hand the components= form what it refuses, so its notice that the form is planned to be replaced is noise.
 pytestmark = pytest.mark.filterwarnings("ignore:The components= form of MFGProblem:PendingDeprecationWarning")
@@ -241,7 +242,9 @@ def _on(route, **given):
 @pytest.mark.unit
 @pytest.mark.parametrize("route", ["a geometry", "the default domain", "a network"])
 def test_spatial_discretization_is_refused_off_a_grid_built_from_spatial_bounds(route):
-    with pytest.raises(ValueError, match=rf"spatial_discretization=\.\.\.\) is refused on {route}.*#2678"):
+    with pytest.raises(
+        ValueError, match=rf"spatial_discretization=\.\.\.\) is refused on {route}.*#2678.*sets the points"
+    ):
         _on(route, spatial_discretization=[40])
 
 
@@ -252,23 +255,88 @@ def test_spatial_discretization_is_read_beside_spatial_bounds():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("route", ["spatial_bounds", "the default domain", "a network"])
-def test_obstacles_are_refused_off_a_geometry(route):
-    """On those routes the solve ran on a domain with no obstacle, with nothing said."""
-    with pytest.raises(ValueError, match=r"obstacles=\.\.\.\) is refused on .*#2678"):
-        _on(route, obstacles=[object()])
+def test_an_empty_spatial_discretization_is_refused_off_its_grid():
+    with pytest.raises(ValueError, match="spatial_discretization"):
+        _on("a geometry", spatial_discretization=[])
 
 
 @pytest.mark.unit
-def test_obstacles_are_read_on_a_geometry():
-    assert _on("a geometry", obstacles=[Hypersphere(center=[0.5], radius=0.1)]).has_obstacles
+@pytest.mark.parametrize("value", [[object()], [], None], ids=["an obstacle", "empty", "None"])
+@pytest.mark.parametrize("route", ["a geometry", "spatial_bounds", "the default domain"])
+def test_obstacles_are_refused_on_every_route_by_the_table(route, value):
+    """No solver read them: ``sl_linear`` moved by 0.0, and particles entered the region as if nothing had been passed."""
+    with pytest.raises(
+        ValueError, match=r"FPParticleSolver\(implicit_domain=DifferenceDomain.*value function"
+    ) as refused:
+        _on(route, obstacles=value)
+    assert "kwargs-based Hamiltonian API" not in str(refused.value)
+
+
+@pytest.mark.unit
+def test_obstacles_are_refused_on_a_network_by_the_table():
+    class Network:
+        nodes = list(range(5))
+        adjacency_matrix = np.eye(5)
+
+    with pytest.raises(ValueError, match=r"FPParticleSolver\(implicit_domain=DifferenceDomain"):
+        MFGProblem(network=Network(), components=_components(), T=0.5, Nt=10, volatility=0.4, obstacles=[object()])
+
+
+@pytest.mark.unit
+def test_the_advice_on_obstacles_holds_a_density_out_of_the_region():
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
+    x = np.linspace(0.0, 1.0, 101)
+    start = np.exp(-200.0 * (x - 0.2) ** 2)
+    start[x > 0.34] = 0.0
+    start /= trapezoid(start, x)
+    inside = (x > 0.42) & (x < 0.58)
+
+    def peak(**given):
+        problem = MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.05),
+            domain=grid,
+            conditions=Conditions(m_initial=lambda y: 1.0 + 0.0 * _x(y), u_terminal=lambda y: 0.0 * _x(y), T=0.3),
+            Nt=15,
+        )
+        solver = FPParticleSolver(problem, num_particles=1000, seed=2688, **given)
+        density = solver.solve_fp_system(
+            M_initial=start,
+            drift_field=lambda t, y, m: 2.0 + 0.0 * np.asarray(y, dtype=float),
+            drift_needs_density=False,
+            show_progress=False,
+        )
+        return max(trapezoid(slice_ * inside, x) / trapezoid(slice_, x) for slice_ in np.asarray(density))
+
+    region = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0]])), Hyperrectangle(np.array([[0.4, 0.6]])))
+    assert peak() > 0.5
+    assert peak(implicit_domain=region) < 0.01
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("route", ["spatial_bounds", "the default domain"])
 def test_lambda_is_refused_on_a_grid_that_keeps_it_nowhere(route):
-    with pytest.raises(ValueError, match=r"lambda_=\.\.\.\) is refused on .*#2678"):
+    with pytest.raises(ValueError, match=r"lambda_=\.\.\.\) is refused on .*#2678.*control_cost= is the route"):
         _on(route, lambda_=2.0)
+
+
+@pytest.mark.unit
+def test_a_lambda_of_zero_is_refused_on_a_grid_that_keeps_it_nowhere():
+    with pytest.raises(ValueError, match=r"lambda_=\.\.\.\) is refused on a grid built from spatial_bounds="):
+        _on("spatial_bounds", lambda_=0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.filterwarnings("ignore:initial density mass")
+def test_what_the_refusal_of_lambda_names_moves_the_solve_beside_spatial_bounds():
+    def solve(control_cost):
+        hamiltonian = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=control_cost), coupling=lambda m: m
+        )
+        components = MFGComponents(hamiltonian=hamiltonian, m_initial=_m_initial, u_terminal=_u_terminal)
+        built = _ROUTES_BUILT["spatial_bounds"]
+        return MFGProblem(components=components, T=0.5, Nt=10, volatility=0.4, **built).solve(verbose=False)
+
+    assert np.abs(solve(1.0).U - solve(2.0).U).max() > 0.01
 
 
 @pytest.mark.unit

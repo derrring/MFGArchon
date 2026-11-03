@@ -67,7 +67,7 @@ class ObstacleConstraint:
     - *Obstacle problem* (this class) constrains the VALUES a field may take -- ``u ≥ ψ``, with
       a free boundary between the contact set and the continuation set. ψ is a level-set
       function on the same grid as ``u``; nothing is removed from the domain.
-    - *Geometric obstacle* (``problem.obstacles``, ``obstacle_sdf``, maze walls, the GFDM
+    - *Geometric obstacle* (``implicit_domain=``, ``obstacle_sdf``, maze walls, the GFDM
       stencil-visibility machinery) removes a REGION from the domain. Nothing there constrains
       the value of anything.
 

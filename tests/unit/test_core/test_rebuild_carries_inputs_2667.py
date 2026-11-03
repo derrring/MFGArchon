@@ -97,7 +97,6 @@ def test_every_rebuild_carries_every_input_the_constructor_took():
         "nonlocal_operator": 0.3 * np.eye(21),
         "state_penalty": lambda x: np.maximum(0.0, np.asarray(x) - 0.5),
         "state_penalty_scale": 3.0,
-        "obstacles": [object()],
         "lambda_": 2.0,
         "coupling_coefficient": 0.9,
     }

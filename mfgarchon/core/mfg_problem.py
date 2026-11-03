@@ -227,7 +227,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         spatial_discretization: list[int] | None = None,
         # Complex geometry parameters (NEW)
         geometry: GeometryProtocol | None = None,
-        obstacles: list | None = None,
         # Dual geometry parameters (Issue #257)
         hjb_geometry: GeometryProtocol | None = None,
         fp_geometry: GeometryProtocol | None = None,
@@ -255,7 +254,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         Supports four initialization modes:
         1. N-D grid mode: Specify spatial_bounds, spatial_discretization
-        2. Geometry mode: Specify geometry object (with optional obstacles)
+        2. Geometry mode: Specify geometry object
         3. Network mode: Specify network graph
         4. Custom components: Full mathematical control via MFGComponents
 
@@ -274,7 +273,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 three attempts at deciding whether two objects describe the same discretisation
                 each shipped a wrong answer. Nothing downstream resamples between two geometries,
                 so bind one object to both names, or drive GeometryProjector yourself.
-            obstacles: List of obstacle geometries
             hjb_geometry: Geometry for HJB solver (dual geometry mode, Issue #257)
             fp_geometry: Geometry for FP solver (dual geometry mode, Issue #257)
                         Note: Both hjb_geometry and fp_geometry must be specified together
@@ -319,23 +317,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 Nt=50
             )
 
-            # Mode 3: Complex geometry with obstacles
-            from mfgarchon.geometry import Hyperrectangle, Hypersphere
-            domain = Hyperrectangle(bounds=[[0, 1], [0, 1]])
-            obstacle = Hypersphere(center=[0.5, 0.5], radius=0.1)
-            problem = MFGProblem(
-                geometry=domain,
-                obstacles=[obstacle],
-                time_domain=(1.0, 50),
-                diffusion=0.1
-            )
-
-            # Mode 4: Network MFG
+            # Mode 3: Network MFG
             import networkx as nx
             graph = nx.grid_2d_graph(10, 10)
             problem = MFGProblem(network=graph, time_domain=(1.0, 100))
 
-            # Mode 5: Custom components
+            # Mode 4: Custom components
             components = MFGComponents(hamiltonian=SeparableHamiltonian(...), m_initial=..., u_terminal=...)
             problem = MFGProblem(
                 spatial_bounds=[(0, 1)],
@@ -452,7 +439,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # a quadratic SeparableHamiltonian (#2681); whether they should exist is decided where those readers are
             # repaired.
             self._v1_inputs: dict[str, Any] = {
-                "obstacles": obstacles,
                 "lambda_": lambda_,
                 "coupling_coefficient": coupling_coefficient,
                 **kwargs,
@@ -496,7 +482,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "spatial_bounds": spatial_bounds,
                 "spatial_discretization": spatial_discretization,
                 "geometry": geometry,
-                "obstacles": obstacles,
                 "hjb_geometry": hjb_geometry,
                 "fp_geometry": fp_geometry,
                 "network": network,
@@ -676,8 +661,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "`constraint=ObstacleConstraint(psi, 'lower')` to `HJBFDMSolver` (#591). That slot "
                 "is reserved and deliberately unfinished: it projects rather than solving the VI, "
                 "and only that one solver carries it (#2046).\n\n"
-                "Note also that `obstacles` (plural) is a different field entirely -- geometric "
-                "regions excluded from the domain -- and was never related to this one."
+                "Note also that geometric obstacles, regions excluded from the domain, are a "
+                "different thing entirely, and were never related to this one."
             )
 
         # Initialize geometry-related attributes explicitly (Issue #543 - fail-fast principle)
@@ -686,8 +671,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.hjb_geometry = None  # type: GeometryProtocol | None
         self.fp_geometry = None  # type: GeometryProtocol | None
         self.spatial_shape = None  # type: tuple[int, ...] | None
-        self.has_obstacles = False
-        self.obstacles = []
         self.geometry_projector = None  # Will be set if dual geometries provided
         self.solver_compatible = {}  # type: dict[str, bool]
         self.solver_recommendations = {}  # type: dict[str, str]
@@ -766,7 +749,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             drift=drift,
             suppress_warnings=suppress_warnings,
             spatial_discretization=spatial_discretization,
-            obstacles=obstacles,
             lambda_=lambda_,
         )
 
@@ -787,7 +769,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # Mode 2: Complex geometry
             self._init_geometry(
                 final_hjb_geometry,
-                obstacles,
                 T,
                 Nt,
                 coupling_coefficient,
@@ -829,9 +810,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if self.hjb_geometry is None:
             self.hjb_geometry = getattr(self, "geometry", None)
             self.fp_geometry = getattr(self, "geometry", None)
-
-        # Note: has_obstacles and obstacles already initialized explicitly (lines 334-335)
-        # Specialized init methods may override these defaults
 
         # Store custom components if provided
         self.components = components
@@ -1029,7 +1007,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         drift: Any,
         suppress_warnings: bool,
         spatial_discretization: list[int] | None,
-        obstacles: list | None,
         lambda_: float | None,
     ) -> None:
         """Refuse an input no solve on this construction would read, by name (#2678). Accepted, each changed U and M by
@@ -1056,11 +1033,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 f"MFGProblem(spatial_discretization=...) is refused on {_MODE_NAMES[mode]} (#2678): it sets the points of "
                 "a grid built from spatial_bounds=, so nothing reads it here."
-            )
-        if obstacles is not None and mode != "geometry":
-            raise ValueError(
-                f"MFGProblem(obstacles=...) is refused on {_MODE_NAMES[mode]} (#2678): only a geometry= reads it, so the "
-                "solve would run on a domain with no obstacle."
             )
         if lambda_ is not None and mode in ("nd_grid", "default"):
             raise ValueError(
@@ -1120,7 +1092,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     def _init_geometry(
         self,
         geometry: GeometryProtocol,
-        obstacles: list | None,
         T: float,
         Nt: int,
         coupling_coefficient: float,
@@ -1134,7 +1105,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         Args:
             geometry: Any object implementing GeometryProtocol
-            obstacles: List of obstacle geometries (for domain geometries)
             T, Nt: Time domain parameters
             coupling_coefficient: Physical parameters
             lambda_: control cost parameter
@@ -1160,8 +1130,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Store geometry
         self.geometry = geometry
         self.dimension = geometry.dimension
-        self.obstacles = obstacles or []
-        self.has_obstacles = len(self.obstacles) > 0
 
         # Time domain
         self.T = T
@@ -1291,8 +1259,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.spatial_shape = (self.num_nodes,)
         self.num_spatial_points = self.num_nodes  # For networks, spatial points = nodes
         self.spatial_bounds = None
-        self.obstacles = None
-        self.has_obstacles = False
 
     # =========================================================================
     # Geometry Type Helper Properties (Phase 2 of Issue #435)
@@ -1713,7 +1679,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         dim = self.dimension if isinstance(self.dimension, int) else None
 
         # FDM: Requires regular grid, no complex geometry, works best for dim <= 3
-        if is_grid and not self.has_obstacles:
+        if is_grid:
             compatible.append("fdm")
             if dim and dim <= 2:
                 recommendations["fast"] = "fdm"
@@ -1728,7 +1694,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # GFDM: Works with grids and complex geometry (particle collocation)
         if is_grid or is_implicit:
             compatible.append("gfdm")
-            if is_implicit or self.has_obstacles:
+            if is_implicit:
                 recommendations["obstacles"] = "gfdm"
                 recommendations["complex_geometry"] = "gfdm"
 
@@ -1796,8 +1762,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"Solver type '{solver_type}' is incompatible with this problem.\n\n"
                 f"Problem Configuration:\n"
                 f"  Domain type: {self.domain_type}\n"
-                f"  Dimension: {self.dimension}\n"
-                f"  Has obstacles: {self.has_obstacles}\n\n"
+                f"  Dimension: {self.dimension}\n\n"
                 f"Reason: {reason}\n\n"
                 f"Compatible solvers: {self.solver_compatible}\n\n"
                 f"Suggestion: {suggestion}"
@@ -1885,7 +1850,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             "recommendations": self.solver_recommendations,
             "dimension": self.dimension,
             "domain_type": self.domain_type,
-            "has_obstacles": self.has_obstacles,
             "complexity": self._estimate_complexity(),
             "default_solver": self.solver_recommendations.get("default", None),
         }
@@ -2576,6 +2540,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         "hamiltonian": "Model(hamiltonian=...), or MFGComponents(hamiltonian=...) in the components= form, a Hamiltonian "
         "object such as SeparableHamiltonian(...). Beside components=, put the one you mean there: that is the one read "
         "(#2563)",
+        "obstacles": "FPParticleSolver(implicit_domain=DifferenceDomain(...)), which holds the density out of the region; "
+        "it does not cover the value function. No solver reads a problem-level obstacle (#2678)",
         "dH_dm": "the Hamiltonian's coupling_dm=, which takes f'(m); H carries -f, so dH/dm = -f'(m), e.g. "
         "SeparableHamiltonian(coupling=..., coupling_dm=...)",
         "dH_dp": "the Hamiltonian's control_cost=, whose dp() is dH/dp, e.g. QuadraticControlCost(...)",
@@ -2647,7 +2613,7 @@ Build the grid and pass it as the domain:
   )
 
 See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
-            elif set(kwargs) & set(self._DEPRECATED_KWARGS) == {"hamiltonian"}:
+            elif set(kwargs) & set(self._DEPRECATED_KWARGS) <= {"hamiltonian", "obstacles"}:
                 # The components= form is not told to migrate (user ruling, 2026-10-12), and its row names both routes.
                 migration_guide = ""
             else:
