@@ -17,6 +17,7 @@ since a constant reads the same in either order (#2864).
 from __future__ import annotations
 
 import functools
+import types
 
 import pytest
 
@@ -274,12 +275,9 @@ def test_obstacles_are_refused_on_every_route_by_the_table(route, value):
 
 @pytest.mark.unit
 def test_obstacles_are_refused_on_a_network_by_the_table():
-    class Network:
-        nodes = list(range(5))
-        adjacency_matrix = np.eye(5)
-
+    network = types.SimpleNamespace(nodes=list(range(5)), adjacency_matrix=np.eye(5))
     with pytest.raises(ValueError, match=r"FPParticleSolver\(implicit_domain=DifferenceDomain"):
-        MFGProblem(network=Network(), components=_components(), T=0.5, Nt=10, volatility=0.4, obstacles=[object()])
+        MFGProblem(network=network, components=_components(), T=0.5, Nt=10, volatility=0.4, obstacles=[object()])
 
 
 @pytest.mark.unit
