@@ -375,7 +375,8 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 1. the defect class, named;
 2. its population: the predicate, counting members that are still defective (a site kept with a pin showing it matches the owner is not a member); a control the predicate must find at both shas, outside the count; and the count at the base sha and at the head sha;
 3. a census that does not use the predicate, selected by what is called, or by input and route. The plan's approver names it, and runs it if the author has not;
-4. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
+4. what a case the census did not select does at the head, per arm: reads right, raises, reds a test enumerating the class, or returns silently; one case on an axis the census held constant, with its output. If silent, the open issue;
+5. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
 A partial fix is admitted only when:
 - it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records the plan's approval by someone other than its author and that the class line links;
@@ -385,6 +386,10 @@ A partial fix is admitted only when:
 Urgency is not an admission: it changes the order of work, not its level. Nor is "keep changes minimal + focused" (§ *Bug fixes from research*): that bounds a change to its defect's class.
 
 The class line is checked when the plan is approved, and again at review (§ *Review before merge*).
+
+How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan. A raise: *Before filing an issue*.
+
+A census is written once per theme, at plan, by script, and re-run at the head. A review tries one case on an axis it held constant. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
 
 ### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
 

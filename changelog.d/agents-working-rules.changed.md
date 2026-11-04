@@ -1,7 +1,8 @@
 - **AGENTS.md: working rules, and the rules that had gone stale** (user approval, 2026-11-04), in § *Development workflow*, *Review before merge*, *GitHub issue/PR management*, *Pre-commit / pre-merge checks*, *Admission*.
   - A rule states what to do and why; its incident, measurement or figure stays in the issue or pull request that holds it, and the passages that held one are rewritten to their rule.
   - The input contract is `docs/user/CONVENTIONS.md`: code that reads a user's input accepts no form the contract does not name.
-  - The class line gains a census that does not use the predicate, named by the plan's approver.
+  - The class line gains a census that does not use the predicate, named by the plan's approver, and what a case the census did not select does at the head.
+  - How soon a class is searched follows its worst known member; a census is written once per theme and re-run at the head, and a second miss returns to the plan.
   - Between fix rounds, push, so the hook runs the gate; the second stack and a repeated fuzz run once, at a MERGE-OK.
   - A refusal, a warning and the advice in either say what was run, and state no universal.
   - A review rebuilds the claims that gate the merge; a number no gating claim rests on moves to the issue comment or is deleted.
