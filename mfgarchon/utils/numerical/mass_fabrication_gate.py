@@ -171,21 +171,25 @@ def negative_density_report(
 ) -> dict[str, Any]:
     """The negative part of ``density``, one row per time level, for a solver that keeps it (#2845).
 
-    ``fraction`` is `mass_fabricated_by_clip` of each level, the negative part's share of that level's mass. Nothing is
-    added to the mass, so ``cumulative``, the sum of those fractions, is a size and not an injection. ``minimum`` is
+    ``fraction`` is `mass_fabricated_by_clip` of each level, the negative part against that level's positive part. Nothing
+    is added to the mass, so ``cumulative``, the sum of those fractions, is a size and not an injection. ``minimum`` is
     beside it because on weights that go negative, such as P2 on tetrahedra, a fraction is not a mass, so ``largest`` is
-    by magnitude.
+    by magnitude. A NaN does not hide what else a level holds: each reads the rest, and a level that is all NaN has a
+    ``minimum`` of NaN and a ``fraction`` of 0, so a report can hold no negative while the density holds NaN.
     """
     levels = np.atleast_2d(np.asarray(density, dtype=float))
     fraction = [mass_fabricated_by_clip(level, weights=weights) for level in levels]
-    minimum = [float(np.min(level)) for level in levels]
-    largest_level = int(np.argmax(np.abs(fraction)))
-    lowest_level = int(np.argmin(minimum))
+    minimum = [
+        float(np.min(level[~np.isnan(level)])) if not np.isnan(level).all() else float("nan") for level in levels
+    ]
+    magnitude = np.abs(np.array(fraction))
+    largest_level = 0 if np.isnan(magnitude).all() else int(np.nanargmax(magnitude))
+    lowest_level = 0 if np.isnan(minimum).all() else int(np.nanargmin(minimum))
     return {
         "fraction": fraction,
         "minimum": minimum,
-        "cumulative": float(np.sum(fraction)),
-        "largest": abs(fraction[largest_level]),
+        "cumulative": float(np.nansum(fraction)),
+        "largest": float(magnitude[largest_level]),
         "largest_level": largest_level,
         "lowest": minimum[lowest_level],
         "lowest_level": lowest_level,

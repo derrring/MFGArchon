@@ -335,10 +335,13 @@ def inner_failures_recorded(hjb_solvers: Iterable[Any]) -> Iterator[None]:
 @contextmanager
 def negative_density_recorded(fp_solvers: Iterable[Any]) -> Iterator[None]:
     """For a coupled solve: each FP solver that keeps a negative value records it instead of warning at each sweep, and
-    the coupler reports the density it returns (#2845). A duck-typed solver without the attribute is left alone."""
+    the coupler reports the density it returns (#2845). Its record starts empty, so a solve that raises before any FP
+    step has nothing of an earlier solve's to report. A duck-typed solver without the attribute is left alone."""
     switched: list = []
     try:
         for solver in fp_solvers:
+            if getattr(solver, "reports_negative_density", False):
+                solver.last_negative_density = None
             if getattr(solver, "on_negative_density", None) == "warn":
                 solver.on_negative_density = "record"
                 switched.append(solver)
@@ -378,7 +381,7 @@ SOLVE_CALLER_STACKLEVEL = 3
 def verdict_reads_inner_failures(
     hjb_solvers_of: Callable[[Any], list[object]],
     *,
-    fp_solvers_of: Callable[[Any], list[object]],
+    fp_solvers_of: Callable[[Any], list[Any]],
     check: bool = True,
 ) -> Callable[
     [Callable[Concatenate[_Solver, _Params], _Result]],
@@ -404,7 +407,16 @@ def verdict_reads_inner_failures(
             refuse_a_shared_hjb_solver(solvers, type(self).__name__)
             fp_solvers = fp_solvers_of(self)
             with inner_failures_recorded(solvers), negative_density_recorded(fp_solvers):
-                result = solve(self, *args, **kwargs)
+                try:
+                    result = solve(self, *args, **kwargs)
+                except Exception:
+                    # A body that raises keeps its own exception. There is no result to measure, so this says what
+                    # the last FP solve of this solve left, if one ran (#2845).
+                    for solver in fp_solvers:
+                        report = getattr(solver, "last_negative_density", None)
+                        if report is not None:
+                            solver.warn_negative_density(report)
+                    raise
             _report_negative_density(result, fp_solvers)
             if not check:
                 return result
@@ -650,6 +662,7 @@ def diverged_value_function(
     U_terminal: np.ndarray,
     *,
     site: str,
+    density: np.ndarray,
     iteration: int | None = None,
 ) -> np.ndarray | None:
     """The publishable form of a non-finite value function, or ``None`` when it is finite.
@@ -682,6 +695,8 @@ def diverged_value_function(
         U_terminal: The terminal value the HJB solve was given, u(T) at that solve's m(T) (#1642).
         site: Which coupling loop is reporting, named in the log line. The whole point of the
             check is attribution, so an unnamed one would be half a fix.
+        density: The density this HJB solve read. The log line states its minimum, what was measured, and
+            names no cause, so it holds on every solver (#2845).
         iteration: Iteration index, 0-based, if the site has one. Reported 1-based.
 
     Returns:
@@ -692,10 +707,11 @@ def diverged_value_function(
         return None
     where = f" at iteration {iteration + 1}" if iteration is not None else ""
     logger.warning(
-        "NaN/Inf in the value function%s (source: HJB (Newton divergence)), reported by %s. "
+        "NaN/Inf in the value function%s, reported by %s: the density this solve read has a minimum of %.3e. "
         "Terminating early; FP was not solved with this iterate.",
         where,
         site,
+        float(np.nanmin(np.asarray(density, dtype=float))),
     )
     published = np.asarray(U_new).copy()
     return preserve_terminal_condition(published, U_terminal)

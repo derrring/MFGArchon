@@ -378,7 +378,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # Issue #1718: the FP call below composes its drift from U_new, so a non-finite U_new
             # makes the FP solver raise a CFL diagnostic for an HJB failure. One owner for the
             # check, the terminal-condition restore, and which iterate gets published.
-            diverged = diverged_value_function(U_new, U_terminal, site="FictitiousPlayIterator", iteration=k)
+            diverged = diverged_value_function(
+                U_new, U_terminal, site="FictitiousPlayIterator", density=M_old, iteration=k
+            )
             if diverged is not None:
                 self.U = diverged
                 converged = False

@@ -72,7 +72,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
-from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute, checked_density_field
+from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute
 
 from .graph_coupling import _get_time_slice
 
@@ -271,9 +271,7 @@ def _problem_hjb_source_terms(
         out["source"] = _call_problem_source(problem, "source_term_hjb", t=t, x=x, m=m_t, v=v_t)
     if "coupling_cost" in fields:
         bound = coupling_binding_for(problem, binding, reader)
-        out["coupling"] = checked_density_field(
-            _coupling_part(bound.energy, bound.nodes, m_t, x, t), m_t, read="coupling_cost", t=t
-        )
+        out["coupling"] = _coupling_part(bound.energy, bound.nodes, m_t, x, t)
     if "nonlocal_operator" in fields:
         out["nonlocal"] = problem.nonlocal_operator @ v_t
     return out

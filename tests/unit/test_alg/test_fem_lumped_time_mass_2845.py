@@ -1,11 +1,10 @@
 """P1 FEM lumps the mass in its time derivative (#2845), so FP-FEM's implicit pure-diffusion step with no-flux or
-Dirichlet walls is an M-matrix step wherever every off-diagonal of the stiffness is <= 0, and takes no density negative:
-the clip after it has nothing to add. A Robin wall's boundary mass is lumped too, so with alpha/beta >= 0 it only adds to
+Dirichlet walls is an M-matrix step wherever every off-diagonal of the stiffness is <= 0, and takes no density negative.
+A Robin wall's boundary mass is lumped too, so with alpha/beta >= 0 it only adds to
 the diagonal and the condition holds with it.
 
 The oracle is the scheme's own invariant: a no-flux, pure-diffusion solve conserves mass exactly, so `solve_fp_system`'s
-mass is pinned to round-off. With the consistent mass the step goes negative at this dt, and the clip injects 1.2e-2 to
-6.3e-2 of the mass per step on a one-node spike (#2845's table). Each mesh first asserts the hypothesis, K's
+mass is pinned to round-off. With the consistent mass the step goes negative at this dt (#2845's table). Each mesh first asserts the hypothesis, K's
 off-diagonals <= 0: in 1-D P1 always gives it; in 2-D it needs each interior edge's opposite angles to sum to at most pi
 and each boundary edge's opposite angle to be at most pi/2, which a random Delaunay mesh does not always give, so a mesh
 failing it is no evidence either way. The Delaunay mesh keeps its random points 0.03 off the boundary, which is how it

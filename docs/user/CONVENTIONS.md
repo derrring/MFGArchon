@@ -633,20 +633,24 @@ axes and refused. The sequence form is the convention, and library code uses it.
 
 - **The library does not rescale `m_initial`.** A density whose integral is not 1 is reported and
   used as given; normalising is a modelling decision, not a requirement.
-- **The library applies no processing of its own to data a callable reads or a solver produces** (user ruling,
-  2026-11-04). It does not floor, shift, regularize or renormalize a density, and a callable may do so at its own choice,
-  which changes the equation being solved. The round-off clamp behind FP-FDM's refusal is the ruled exception.
-  - **FP-FEM and the meshless FP keep a step's negative values,** and report their size in a warning and in
-    `result.metadata["fp_negative_density"]`: per time level, `fraction`, the negative part's share of that level's
-    mass, and `minimum`; then `cumulative`, `largest`, `largest_level`, `lowest`, `lowest_level`, `levels_negative` and
-    `levels`. On the meshless FP these are MLS coefficients, not the density at a point (#2672).
-  - **A density read that cannot take a negative stops there.** A non-finite value from `coupling`, `coupling_dm`,
-    `congestion_factor`, `congestion_factor_dm`, a `coupling_cost` or a `terminal_coupling` raises `ValueError`, on every
-    solver, naming the read, the time and the minimum of `m`. So `np.log(m)` or `np.sqrt(m)` stops at a negative, and at
-    `np.log(0)`. A read that stays finite, such as `1/m`, is not caught, and only the warning covers it.
+- **The library applies no processing of its own to data** (user ruling, 2026-11-04; `AGENTS.md` § *The library does
+  not repair data*). A value is not moved to where the code would like it to be: no clip, floor, shift, regularization or
+  renormalization of a density. A callable may do so at its own choice, which changes the equation being solved. The
+  census of the sites that do not meet this yet is open under #2485.
+  - **FP-FEM and the meshless FP keep a step's negative values.** Nothing is added to the mass. Their size goes in a
+    logged warning, one per FP solver in a solve, and a `warnings` filter does not see it, and in
+    `result.metadata["fp_negative_density"]`: per time level, `fraction`, the negative part against that level's positive
+    part, and `minimum`; then `cumulative`, `largest`, `largest_level`, `lowest`, `lowest_level`, `levels_negative` and
+    `levels`. The record is a list on several FP solvers, is in `info` on `NewtonMFGSolver`, and is absent with
+    `return_tuple=True`. A solver called alone holds it as `last_negative_density`. On the meshless FP these are MLS
+    coefficients, not the density at a point (#2672). A level that is all NaN holds no negative in this record.
+  - **A non-finite value function ends a coupled solve.** All seven couplers log the site, the iteration and the minimum
+    of the density that solve read, and return `converged=False`. It does not raise, and a direct `H(t, x, p, m)` returns
+    what the body returns. So `np.log(m)` in a `coupling` or a `source_term_hjb` ends there at a negative. A body that
+    raises keeps its own exception. A read that stays finite, such as `1/m`, is not caught, and only the warning covers it.
   - **To clip a step anyway is a change of scheme, and it is the caller's:** a subclass of `FPFEMSolver` whose
     `solve_fp_system` clips what it returns has run, and the coupled solve converged with `np.log(np.maximum(m, 1e-10))`
-    on 81 and 289 nodes where the solver alone stops.
+    on 81 and 289 nodes where the solver alone blows up.
 - **The measure has one owner**, `mfgarchon.utils.numerical.quadrature`, exposed on
   `TensorProductGrid` as `integrate`, `measure_weights` and `quadrature_weights`, and correct on
   graded axes. A bare `np.sum(m) * dx` is a *different functional* even on a uniform grid: it gives

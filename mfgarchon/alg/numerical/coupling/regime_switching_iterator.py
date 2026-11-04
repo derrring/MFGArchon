@@ -536,7 +536,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # below reads the whole `Us_new` list, so one regime's NaN would reach every other
                 # regime's mass-transfer source before the FP solver failed and blamed its own CFL.
                 diverged = diverged_value_function(
-                    U_k, terminal_k, site=f"RegimeSwitchingIterator[regime {k}]", iteration=iteration
+                    U_k, terminal_k, site=f"RegimeSwitchingIterator[regime {k}]", density=M_k, iteration=iteration
                 )
                 if diverged is not None:
                     Us_new[k] = diverged

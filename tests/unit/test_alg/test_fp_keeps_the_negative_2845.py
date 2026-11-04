@@ -1,7 +1,7 @@
-"""FP-FEM and the meshless FP keep a negative value and report it, and a density read that cannot take one stops (#2845).
+"""FP-FEM and the meshless FP keep a negative value and report it, and a non-finite value function ends the solve (#2845).
 
 The oracles: a step's mass is the row sums of its mass matrix on the values it computed, so a clip's gain shows there; the
-report is rebuilt from the array the result returns; and a stop names its read, its time and the minimum of ``m``.
+report is rebuilt from the array the result returns; and the guard's line names the site and the minimum of what it read.
 """
 
 import logging
@@ -16,17 +16,30 @@ from scipy.spatial import Delaunay
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.block_iterators import BlockIterator
+from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
+from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fem import HJBFEMSolver
 from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+from mfgarchon.factory.scheme_factory import create_paired_solvers
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
 from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
 from mfgarchon.geometry.meshes.mesh_3d import Mesh3D
-from mfgarchon.operators.interaction import PotentialCost
+from mfgarchon.types import NumericalScheme
+from mfgarchon.utils.numerical.mass_fabrication_gate import negative_density_report
 
 _FACES = ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max")
 _LOGGER = "mfgarchon.alg.numerical.weak_form_fp_solver"
@@ -275,21 +288,13 @@ def test_a_solver_alone_warns_and_holds_its_report(mfg_caplog):
 def test_the_meshless_report_says_these_are_coefficients(mfg_caplog):
     with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
         _solve(_meshless_row(), _gaussian, 1.0)
-    assert any("MLS coefficients, not the density at a point" in m for m in mfg_caplog.messages)
-
-
-@pytest.mark.parametrize(
-    ("coupling", "dm"),
-    [(np.log, lambda m: 1 / m), (np.sqrt, lambda m: 0.5 / np.sqrt(m))],
-    ids=["log", "sqrt"],
-)
-def test_a_density_read_that_cannot_take_a_negative_stops_and_names_it(coupling, dm):
-    """On the coupled row where the clip converged, naming the read, its time and the minimum of m."""
-    with (
-        pytest.raises(ValueError, match=r"coupling returned a non-finite value at t=[\d.]+: the minimum of m is -"),
-        np.errstate(invalid="ignore", divide="ignore"),
-    ):
-        _coupled(2, coupling=coupling, coupling_dm=dm).solve(verbose=False)
+    assert any(
+        m.endswith(
+            "These are MLS coefficients, not the density at a point (#2672). What has cleared one: "
+            "streamline_diffusion_scale = 1.0 on a line at D = 0.01, v = 1, dt = 1e-2; in 2-D at the same values it has not."
+        )
+        for m in mfg_caplog.messages
+    )
 
 
 def test_a_polynomial_coupling_reads_the_negative_and_converges():
@@ -298,93 +303,253 @@ def test_a_polynomial_coupling_reads_the_negative_and_converges():
     assert np.asarray(result.M).min() < 0.0
 
 
-def _hamiltonian(coupling):
-    return SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=coupling)
+def _fem_pair(problem):
+    return HJBFEMSolver(problem), FPFEMSolver(problem)
 
 
-_POINT = (0.25, np.zeros(1), np.zeros(1))
-_BATCH = (0.25, np.zeros((3, 1)), np.zeros((3, 1)))
-_WITH_A_NEGATIVE = np.array([0.5, -0.1, 0.2])
+def _meshless_pair(problem):
+    return create_paired_solvers(
+        problem,
+        NumericalScheme.MESHLESS_GALERKIN,
+        hjb_config={"collocation_points": np.linspace(0.0, 1.0, 21)[:, None], "delta": 0.18},
+        fp_config={},
+    )
 
 
-def _refuses_a_negative(m):
-    if float(m) < 0:
-        raise ValueError("this body takes no negative")
-    return float(m)
+def _on_meshless(coupling, coupling_dm):
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    return MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0), coupling=coupling, coupling_dm=coupling_dm
+            ),
+            volatility=0.1,
+        ),
+        domain=grid,
+        conditions=Conditions(
+            u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
+            m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+            T=0.5,
+        ),
+        Nt=10,
+    )
 
 
-@pytest.mark.parametrize(
-    ("coupling", "message", "cause"),
-    [
-        (lambda m: math.log(m), r"raised ValueError: math domain error, at t=0\.25", ValueError),
-        (lambda m: float(m) ** 0.5, r"raised TypeError: .*complex.* at t=0\.25", TypeError),
-        (_refuses_a_negative, r"raised ValueError: this body takes no negative, at t=0\.25", ValueError),
-    ],
-    ids=["math.log", "complex", "own raise"],
-)
-def test_a_body_that_raises_on_a_negative_stops_with_its_own_message(coupling, message, cause):
-    for args in [(*_BATCH, _WITH_A_NEGATIVE), (*_POINT, -0.1)]:
-        with pytest.raises(ValueError, match=message) as stopped:
-            _hamiltonian(coupling)(*args)
-        assert "the minimum of m is -1.000e-01" in str(stopped.value)
-        assert isinstance(stopped.value.__cause__, cause)
+def _fixed_point(f, df):
+    problem = _coupled(2, coupling=f, coupling_dm=df)
+    hjb, fp = _fem_pair(problem)
+    return FixedPointIterator(problem, hjb, fp, relaxation=0.5).solve(
+        max_iterations=30, tolerance=1e-6, verbose=False
+    ), [fp]
 
 
-def test_a_body_that_raises_with_no_negative_is_left_alone():
-    def always(m):
-        raise ValueError("not about a negative")
-
-    with pytest.raises(ValueError, match=r"^not about a negative$"):
-        _hamiltonian(always)(*_POINT, 0.3)
-    with pytest.raises(ZeroDivisionError):
-        _hamiltonian(lambda m: 1 / m)(*_POINT, 0.0)
+def _block(f, df):
+    problem = _coupled(2, coupling=f, coupling_dm=df)
+    hjb, fp = _fem_pair(problem)
+    return BlockIterator(problem, hjb, fp).solve(max_iterations=12, tolerance=1e-6, verbose=False), [fp]
 
 
-def test_an_exact_zero_stops_too():
-    with pytest.raises(ValueError, match=r"the minimum of m is 0\.000e\+00"), np.errstate(divide="ignore"):
-        _hamiltonian(np.log)(*_POINT, 0.0)
+def _fictitious(f, df):
+    problem = _on_meshless(f, df)
+    hjb, fp = _meshless_pair(problem)
+    return FictitiousPlayIterator(problem, hjb, fp).solve(max_iterations=2, tolerance=1e-6, verbose=False), [fp]
 
 
-class _Logarithmic:
-    """A user's own cost: its derivative reads log(m), which the shipped costs do not."""
-
-    def __init__(self, inner):
-        self._inner = inner
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-    def flat_derivative(self, m, *, t=None):
-        with np.errstate(invalid="ignore", divide="ignore"):
-            return np.log(np.asarray(m, dtype=float))
+def _newton(f, df):
+    # 25 nodes, which still hold a negative, since its finite-difference Jacobian is the row's whole cost.
+    problem = _coupled(1, coupling=f, coupling_dm=df)
+    hjb, fp = _fem_pair(problem)
+    return NewtonMFGSolver(problem, hjb, fp, picard_warmup=1).solve(max_iterations=1, tolerance=1e-6, verbose=False), [
+        fp
+    ]
 
 
-class _LogarithmicCost(PotentialCost):
-    def __init__(self):
-        super().__init__(lambda x: 0.0)
+def _multi_population(f, df):
+    problem = _coupled(2, coupling=f, coupling_dm=df)
+    hjb, fp = _fem_pair(problem)
+    populations = MultiPopulationProblem(populations=[problem], population_names=["a"])
+    return MultiPopulationIterator(populations, [hjb], [fp]).solve(max_iterations=12, tolerance=1e-6), [fp]
 
-    def bind_on(self, measure):
-        return _Logarithmic(super().bind_on(measure))
+
+def _regime(f, df):
+    a, b = _coupled(2, coupling=f, coupling_dm=df), _coupled(2, coupling=f, coupling_dm=df)
+    (ha, fa), (hb, fb) = _fem_pair(a), _fem_pair(b)
+    config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]]))
+    return RegimeSwitchingIterator([a, b], config, [ha, hb], [fa, fb], max_iterations=6, tolerance=1e-5).solve(), [
+        fa,
+        fb,
+    ]
 
 
-def test_a_users_coupling_cost_that_cannot_take_a_negative_stops_at_its_read():
-    with pytest.raises(
-        ValueError, match=r"coupling_cost returned a non-finite value at t=[\d.]+: the minimum of m is -"
+def _graph(f, df):
+    a, b = _coupled(2, coupling=f, coupling_dm=df), _coupled(2, coupling=f, coupling_dm=df)
+    (ha, fa), (hb, fb) = _fem_pair(a), _fem_pair(b)
+    coupling = AdjacencyCoupling(np.array([[0.0, 1.0], [1.0, 0.0]]), alpha=0.1, beta=0.05)
+    return GraphMFGSolver([a, b], coupling, [ha, hb], [fa, fb], max_iterations=6, tolerance=1e-5).solve(), [fa, fb]
+
+
+_COUPLERS = {
+    "FixedPointIterator": _fixed_point,
+    "BlockIterator": _block,
+    "FictitiousPlayIterator": _fictitious,
+    "NewtonMFGSolver": _newton,
+    "MultiPopulationIterator": _multi_population,
+    "RegimeSwitchingIterator": _regime,
+    "GraphMFGSolver": _graph,
+}
+
+
+def _density_and_record(result):
+    if isinstance(result, tuple):  # Newton's (U, M, info)
+        return result[1], result[2]
+    densities = getattr(result, "densities", None)
+    return (result.M if densities is None else densities), result.metadata
+
+
+@pytest.mark.parametrize("coupler", list(_COUPLERS))
+def test_each_coupler_records_the_density_it_returns_and_warns_per_solver(coupler, mfg_caplog):
+    """Newton's record is in its ``info``; on several FP solvers the record is one per solver."""
+    with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
+        result, solvers = _COUPLERS[coupler](lambda m: m, lambda m: 1.0)
+    density, record = _density_and_record(result)
+    per_solver = [density] if len(solvers) == 1 else list(density)
+    reports = record["fp_negative_density"]
+    reports = [reports] if len(solvers) == 1 else reports
+    for solver, one, report in zip(solvers, per_solver, reports, strict=True):
+        assert report["minimum"] == solver.negative_density_of(one)["minimum"]
+        assert report["fraction"] == solver.negative_density_of(one)["fraction"]
+        assert solver.on_negative_density == "warn"
+    negative = sum(1 for report in reports if report["largest"] > 1e-8)
+    assert negative >= 1, "the fixture must hold a negative for this row to say anything"
+    assert len([m for m in mfg_caplog.messages if "time levels hold a negative value" in m]) == negative
+
+
+@pytest.mark.parametrize("coupler", list(_COUPLERS))
+def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_read(coupler, mfg_caplog):
+    """The stop is the guard all seven share: it reports the array, the site and the density's minimum, and it does not raise."""
+    with (
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
+        np.errstate(invalid="ignore", divide="ignore"),
     ):
-        _coupled(2, coupling_cost=_LogarithmicCost()).solve(verbose=False)
+        result, _ = _COUPLERS[coupler](lambda m: np.log(m), lambda m: 1 / m)
+    if isinstance(result, tuple):
+        assert not result[2]["converged"]
+    else:
+        assert not result.converged
+    lines = [m for m in mfg_caplog.messages if "NaN/Inf in the value function" in m]
+    assert lines, "the guard must fire on this row"
+    assert coupler in lines[0]
+    assert "has a minimum of" in lines[0]
+    assert "source:" not in lines[0]
 
 
-def test_a_users_terminal_coupling_that_cannot_take_a_negative_stops_at_its_read():
-    """Directly, since on the coupled row a first sweep's blow-up ends the solve before a negative m(T) reaches this read."""
-    problem = _coupled(2, terminal_coupling=_LogarithmicCost())
-    hjb = HJBFEMSolver(problem)
-    m_terminal = np.full(problem.get_u_terminal().size, 0.1)
-    assert problem.terminal_value(m_terminal, binding=hjb.terminal_binding()).size == m_terminal.size
-    m_terminal[0] = -0.1
-    with pytest.raises(
-        ValueError, match=r"terminal_coupling returned a non-finite value at t=0\.5: the minimum of m is -"
+def _flag_after_the_first_solve():
+    """A coupling whose body raises once ``flag["on"]``, before any FP solve of the second solve runs."""
+    flag = {"on": False}
+
+    def body(m):
+        if flag["on"]:
+            raise RuntimeError("this body raises")
+        return m
+
+    return flag, body
+
+
+def test_a_raise_keeps_its_exception_restores_the_policy_and_reports_no_earlier_solve(mfg_caplog):
+    """A reused iterator: the first solve leaves a negative, and the second's HJB raises before any FP step runs."""
+    flag, body = _flag_after_the_first_solve()
+    problem = _coupled(2, coupling=body, coupling_dm=lambda m: 1.0)
+    hjb, fp = _fem_pair(problem)
+    iterator = FixedPointIterator(problem, hjb, fp, relaxation=0.5)
+    with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
+        iterator.solve(max_iterations=30, tolerance=1e-6, verbose=False)
+    assert any("time levels hold a negative value" in m for m in mfg_caplog.messages)
+    assert fp.on_negative_density == "warn"
+
+    mfg_caplog.clear()
+    flag["on"] = True
+    with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(RuntimeError, match=r"^this body raises$"):
+        iterator.solve(max_iterations=30, tolerance=1e-6, verbose=False)
+    assert not [m for m in mfg_caplog.messages if "time levels hold a negative value" in m]
+    assert fp.last_negative_density is None
+    assert fp.on_negative_density == "warn"
+
+
+def test_a_body_that_raises_on_a_negative_keeps_its_exception_and_the_last_solve_is_reported(mfg_caplog):
+    """``math.log`` meets a negative on a later sweep: its own ``ValueError``, and one warning from the last FP solve."""
+    with (
+        mfg_caplog.at_level(logging.WARNING, logger=_LOGGER),
+        pytest.raises(ValueError, match=r"^math domain error$") as raised,
     ):
-        problem.terminal_value(m_terminal, binding=hjb.terminal_binding())
+        _coupled(2, coupling=lambda m: math.log(m), coupling_dm=lambda m: 1 / m).solve(verbose=False)
+    assert raised.value.__cause__ is None
+    assert len([m for m in mfg_caplog.messages if "time levels hold a negative value" in m]) == 1
+
+
+@pytest.mark.parametrize(("build", "checked"), [(_fem_pair, False), (None, True)], ids=["FP-FEM", "FP-FDM"])
+def test_the_validators_density_check_is_off_only_where_the_solver_reports_it(build, checked, monkeypatch):
+    """On FP-FEM the solver's report says the same thing, and row one above goes red if it is lost. Elsewhere it stays."""
+    import mfgarchon.utils.validation.runtime as runtime
+
+    seen = []
+    validate = runtime.validate_solver_output
+
+    def recording(*args, **kwargs):
+        seen.append(kwargs["check_density_positive"])
+        return validate(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "validate_solver_output", recording)
+    if build is None:
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
+            ),
+            domain=grid,
+            conditions=Conditions(
+                u_terminal=lambda x: 0.0, m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)), T=0.5
+            ),
+            Nt=10,
+        )
+        hjb, fp = HJBFDMSolver(problem), FPFDMSolver(problem)
+    else:
+        problem = _coupled(3)
+        hjb, fp = build(problem)
+    FixedPointIterator(problem, hjb, fp, relaxation=0.5).solve(max_iterations=3, tolerance=1e-6, verbose=False)
+    assert seen == [checked]
+
+
+def test_the_warning_states_the_reports_numbers(mfg_caplog):
+    """Each number by its place: a swap of the largest and the sum, or of two levels, reads differently here."""
+    solver = _fem_row()
+    n = solver.n_dof
+    density = np.ones((3, n))
+    density[1, 0] = -0.25
+    density[2, 1] = -0.5
+    report = solver.negative_density_of(density)
+    assert report["levels_negative"] == 2
+    assert report["lowest"] == -0.5
+    assert report["lowest_level"] == 2
+    assert report["largest_level"] != 1 or report["fraction"][1] > report["fraction"][2]
+    with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
+        solver.warn_negative_density(report)
+    line = next(m for m in mfg_caplog.messages if "time levels hold a negative value" in m)
+    assert line.startswith(
+        f"FPFEMSolver: 2 of 3 time levels hold a negative value, down to {report['lowest']:.3e} at level 2, at most "
+        f"{report['largest']:.3e} of a level's positive mass (sum over levels {report['cumulative']:.3e})."
+    )
+    assert report["cumulative"] == pytest.approx(report["fraction"][1] + report["fraction"][2])
+
+
+def test_a_nan_in_a_level_does_not_hide_its_negative():
+    """Each reads the rest of the level. A level that is all NaN holds no negative, and the report says NaN there."""
+    report = negative_density_report(np.array([[1.0, -0.5, 1.0], [np.nan, np.nan, np.nan]]))
+    assert report["lowest"] == -0.5
+    assert report["levels_negative"] == 1
+    assert np.isnan(report["minimum"][1])
+    assert negative_density_report(np.array([[1.0, np.nan, -0.5]]))["levels_negative"] == 1
+    assert negative_density_report(np.array([[np.nan, np.nan]]))["levels_negative"] == 0
+    assert negative_density_report(np.array([[np.nan, np.nan]]))["largest"] == 0.0
 
 
 # (mesh with a negative past the gate, mesh that holds none, D, v, dt, nt, data, element order on each)
@@ -446,8 +611,6 @@ class _ClipsWhatItReturns(FPFEMSolver):
 @pytest.mark.parametrize("refine", [2, 3])
 def test_a_subclass_may_clip_what_it_returns(refine):
     """``log(max(m, 1e-10))``, 81 and 289 nodes: the solver alone blows up, and the subclass's run converges."""
-    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
-
     floor = 1e-10
 
     def run(fp_type):

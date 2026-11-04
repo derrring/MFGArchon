@@ -65,7 +65,7 @@ class WeakFormFPSolver(BaseFPSolver):
 
     #: What the warning says about a negative on this solver: what has cleared one, and on what. Each subclass states
     #: its own runs (#2845).
-    _negative_density_note: str
+    _negative_density_note = ""
 
     def __init__(
         self,
@@ -348,11 +348,11 @@ class WeakFormFPSolver(BaseFPSolver):
         return negative_density_report(np.asarray(M, dtype=float).reshape(-1, self._n_dof), weights=self._mass_weights)
 
     def warn_negative_density(self, report: dict[str, Any]) -> None:
-        """One warning for ``report``, past the gate's threshold of a level's mass (#2845)."""
+        """One logged warning for ``report``, past the gate's threshold of a level's positive mass (#2845)."""
         if report["largest"] > MAX_CLIP_MASS_FABRICATION:
             logger.warning(
                 "%s: %d of %d time levels hold a negative value, down to %.3e at level %d, at most %.3e of a level's "
-                "mass (sum over levels %.3e). The values are kept: nothing is added to the mass. %s",
+                "positive mass (sum over levels %.3e). The values are kept: nothing is added to the mass. %s",
                 type(self).__name__,
                 report["levels_negative"],
                 report["levels"],

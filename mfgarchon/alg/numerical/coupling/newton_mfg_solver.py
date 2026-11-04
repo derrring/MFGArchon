@@ -249,6 +249,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 U_new,
                 U_terminal,
                 site="NewtonMFGSolver._run_picard_warmup",
+                density=M_old,
                 iteration=i,
             )
             if diverged is not None:

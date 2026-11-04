@@ -143,7 +143,7 @@ def _owner():
 
 def test_finite_value_function_returns_none():
     diverged_value_function, value_function_is_finite = _owner()
-    assert diverged_value_function(np.ones((3, 4)), np.arange(4.0), site="probe") is None
+    assert diverged_value_function(np.ones((3, 4)), np.arange(4.0), site="probe", density=np.ones(4)) is None
     assert value_function_is_finite(np.ones((3, 4))) is True
 
 
@@ -153,7 +153,7 @@ def test_every_non_finite_value_is_caught(bad):
     U = np.ones((3, 4))
     U[1, 2] = bad
     assert value_function_is_finite(U) is False
-    assert diverged_value_function(U, np.arange(4.0), site="probe") is not None
+    assert diverged_value_function(U, np.arange(4.0), site="probe", density=np.ones(4)) is not None
 
 
 def test_the_diverged_iterate_is_published_with_its_terminal_row_restored():
@@ -161,7 +161,7 @@ def test_the_diverged_iterate_is_published_with_its_terminal_row_restored():
     U = np.ones((3, 4))
     U[0, 0] = np.nan
     terminal = np.arange(4.0)
-    out = diverged_value_function(U, terminal, site="probe", iteration=2)
+    out = diverged_value_function(U, terminal, site="probe", density=np.ones(4), iteration=2)
     assert np.isnan(out[0, 0]), "the NaN must survive: it is the diagnostic"
     np.testing.assert_array_equal(out[-1], terminal)
     assert np.isnan(U[0, 0]), "the caller's NaN must survive; the array is not ours to clean"
