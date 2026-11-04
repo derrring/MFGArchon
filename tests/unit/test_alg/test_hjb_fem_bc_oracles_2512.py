@@ -91,7 +91,7 @@ class Cell:
         return self.psi.f(X) + _w(t) * self.phi.f(X)
 
     def source(self, t, x):
-        X = np.asarray(x[0], dtype=float).reshape(-1, self.dim)
+        X = np.asarray(x, dtype=float).reshape(-1, self.dim)
         grad = self.psi.grad(X) + _w(t) * self.phi.grad(X)
         lap = self.psi.lap(X) + _w(t) * self.phi.lap(X)
         return -_DW * self.phi.f(X) + 0.5 * np.sum(grad**2, axis=-1) - D * lap

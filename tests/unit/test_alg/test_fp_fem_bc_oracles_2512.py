@@ -94,7 +94,7 @@ def _cos_x(k: float, eps: float) -> tuple[Callable, Callable, Callable]:
 
 def _bump(k: float) -> tuple[Callable, Callable, Callable]:
     """``1 - cos(k x)``: with ``k = 2 pi / L`` it and its derivative vanish at both ends of [0, L]."""
-    return (lambda x: 1 - np.cos(k * x[0]), lambda x: k * np.sin(k * x[0]), lambda x: k**2 * np.cos(k * x[0]))
+    return (lambda x: 1 - np.cos(k * x), lambda x: k * np.sin(k * x), lambda x: k**2 * np.cos(k * x))
 
 
 def _shape(dim: int, x_factor, y_factor=None) -> Shape:
@@ -133,7 +133,7 @@ class Cell:
         return -D * _w(t) * self._e(X)[..., None] * self.g.grad(X) + self.q0 * VEL[: self.dim]
 
     def source(self, t, x):
-        X = np.asarray(x[0], dtype=float).reshape(-1, self.dim)
+        X = np.asarray(x, dtype=float).reshape(-1, self.dim)
         e, gv = self._e(X), self.g.f(X)
         # S = d_t m + div J, div J = -D w e (Lap g - grad(phi).grad g / D) and grad(phi) = -v.
         return _DW * e * gv - D * _w(t) * e * (self.g.lap(X) + (self.g.grad(X) @ VEL[: self.dim]) / D)
