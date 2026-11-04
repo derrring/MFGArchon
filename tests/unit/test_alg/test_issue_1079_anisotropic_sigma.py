@@ -150,7 +150,7 @@ class TestGFDMFullTensorSigmaRaises:
             coupling_dm=lambda m: 1.0,
         )
         components = MFGComponents(
-            m_initial=lambda x: np.exp(-5.0 * float(sum((xi - 0.5) ** 2 for xi in x))),
+            m_initial=lambda x: np.exp(-5.0 * sum((xi - 0.5) ** 2 for xi in x)),
             u_terminal=lambda x: 0.0,
             hamiltonian=ham,
         )
@@ -218,7 +218,7 @@ class TestGFDMFullTensorSigmaRaises:
             coupling_dm=lambda m: 1.0,
         )
         components = MFGComponents(
-            m_initial=lambda x: np.exp(-5.0 * float(sum((xi - 0.5) ** 2 for xi in x))),
+            m_initial=lambda x: np.exp(-5.0 * sum((xi - 0.5) ** 2 for xi in x)),
             u_terminal=lambda x: 0.0,
             hamiltonian=ham,
         )

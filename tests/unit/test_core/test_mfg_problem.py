@@ -296,7 +296,7 @@ def test_mfg_problem_with_custom_initial_density_2d():
     """Test MFGProblem with callable m_initial in 2D (Issue #777)."""
 
     def gaussian_2d(x):
-        x_arr = np.stack(x[0], axis=-1)
+        x_arr = np.stack(x, axis=-1)
         return np.exp(-5 * np.sum(x_arr**2, axis=-1))
 
     geometry = default_geometry(
@@ -329,7 +329,7 @@ def test_mfg_problem_with_custom_final_value_2d():
     """Test MFGProblem with callable u_terminal in 2D."""
 
     def quadratic_2d(x):
-        x_arr = np.stack(x[0], axis=-1)
+        x_arr = np.stack(x, axis=-1)
         return 0.5 * np.sum(x_arr**2, axis=-1)
 
     geometry = default_geometry(

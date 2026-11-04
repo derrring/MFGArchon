@@ -58,7 +58,7 @@ def _circle_sdf(x):
     """SDF for unit circle in 2D."""
     x = np.stack(x, axis=-1)
     if x.ndim == 1:
-        return float(np.linalg.norm(x, axis=-1) - 1.0)
+        return np.linalg.norm(x, axis=-1) - 1.0
     return np.linalg.norm(x, axis=1) - 1.0
 
 

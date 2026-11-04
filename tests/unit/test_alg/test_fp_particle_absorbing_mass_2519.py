@@ -47,7 +47,7 @@ def _problem(dim: int, n: int, nt: int):
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
         ),
         domain=grid,
-        conditions=Conditions(u_terminal=lambda *z: 0.0, m_initial=lambda *z: 1.0, T=T),
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=T),
         Nt=nt,
     )
     return grid, m0, problem

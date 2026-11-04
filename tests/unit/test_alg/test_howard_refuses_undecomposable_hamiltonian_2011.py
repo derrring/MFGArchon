@@ -113,7 +113,7 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1))
 
     def _uT(x):
-        return float(np.cos(2.0 * np.pi * np.asarray(x[0]).ravel()[0])) if terminal == "cos" else 0.0
+        return np.cos(2.0 * np.pi * x[0]) if terminal == "cos" else 0.0
 
     components = MFGComponents(hamiltonian=hamiltonian, m_initial=lambda x: 1.0, u_terminal=_uT)
     problem = MFGProblem(geometry=grid, components=components, T=T, Nt=NT, volatility=0.5)

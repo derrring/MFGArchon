@@ -142,7 +142,7 @@ def hamiltonian_potential(t: float, x: np.ndarray) -> float:
     Returns:
         Potential value at position x
     """
-    x_scalar = float(x[0]) if hasattr(x[0], "__len__") else float(x[0])
+    x_scalar = x[0] if hasattr(x[0], "__len__") else x[0]
     return potential_field(x_scalar)
 
 

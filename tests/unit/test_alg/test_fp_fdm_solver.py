@@ -51,7 +51,7 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         # x is [x, y] coordinate - compute Gaussian at center (0.5, 0.5)
-        x_arr = np.stack(x[0], axis=-1)
+        x_arr = np.stack(x, axis=-1)
         return np.exp(-10 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     return MFGComponents(

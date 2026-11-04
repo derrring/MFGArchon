@@ -74,7 +74,7 @@ class TestLQCommonNoiseAnalytical:
         geometry = TensorProductGrid(bounds=[(-2.0, 2.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[42])
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            potential=lambda t, x: 0.5 * float(sum(xi**2 for xi in x)),
+            potential=lambda t, x: 0.5 * sum(xi**2 for xi in x),
         )
         components = MFGComponents(
             hamiltonian=hamiltonian,
@@ -193,7 +193,7 @@ class TestLQCommonNoiseAnalytical:
         geometry = TensorProductGrid(bounds=[(-2.0, 2.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[42])
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            potential=lambda t, x: 0.5 * float(sum(xi**2 for xi in x)),
+            potential=lambda t, x: 0.5 * sum(xi**2 for xi in x),
         )
         components = MFGComponents(
             hamiltonian=hamiltonian,

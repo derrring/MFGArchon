@@ -27,7 +27,7 @@ def _grid(dim: int, n: int) -> TensorProductGrid:
     )
 
 
-def _problem(grid: TensorProductGrid, nt: int, t_end: float, m_initial=lambda p: 1.0, **volatility) -> MFGProblem:
+def _problem(grid: TensorProductGrid, nt: int, t_end: float, m_initial=lambda x: 1.0, **volatility) -> MFGProblem:
     model = Model(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)),
         **(volatility or {"volatility": 0.4}),

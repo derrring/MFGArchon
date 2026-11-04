@@ -87,7 +87,7 @@ def _build_mixed_bc_solver(Nx: int = 9, LX: float = 1.0, LY: float = 1.0):
     )
 
     def m_initial(x):
-        x_arr = np.stack(x[0], axis=-1)
+        x_arr = np.stack(x, axis=-1)
         return np.exp(-10.0 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     components = MFGComponents(

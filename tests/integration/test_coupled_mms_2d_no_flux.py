@@ -242,8 +242,8 @@ def _points(x):
 def _build_problem(nx: int, nt: int):
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
-        m_initial=lambda x: m_star(0.0, np.asarray(x[0]).ravel()[0], np.asarray(x[0]).ravel()[1]),
-        u_terminal=lambda x: u_star(T, np.asarray(x[0]).ravel()[0], np.asarray(x[0]).ravel()[1]),
+        m_initial=lambda x: m_star(0.0, x[0], np.asarray(x[0]).ravel()[1]),
+        u_terminal=lambda x: u_star(T, x[0], np.asarray(x[0]).ravel()[1]),
         hamiltonian=SeparableHamiltonian(
             # LAMBDA, not a literal: the source's Hamiltonian is a separate OBJECT by design
             # (see _TRUE_HAMILTONIAN) but the two must agree on the VALUE, or the source

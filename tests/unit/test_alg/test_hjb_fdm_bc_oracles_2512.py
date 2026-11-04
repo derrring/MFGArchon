@@ -444,7 +444,7 @@ def solve_level(cell: Cell, n: int, nt: int) -> Level:
         domain=grid,
         # Unit mass on the domain (area LY in 2-D); the HJB solve reads M_density below, never m_initial.
         conditions=Conditions(
-            m_initial=lambda x, c=(1.0 if cell.dim == 1 else 1.0 / LY): c + 0.0 * float(sum(xi for xi in x)),
+            m_initial=lambda x, c=(1.0 if cell.dim == 1 else 1.0 / LY): c + 0.0 * sum(xi for xi in x),
             u_terminal=lambda x: 0.0,
             T=cell.exact.T,
         ),

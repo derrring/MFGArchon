@@ -113,7 +113,7 @@ def _solver(bc, n: int = N, solver_type: str = "newton") -> tuple[HJBFDMSolver, 
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * float(sum(xi for xi in x)), u_terminal=lambda x: 0.0, T=T),
+        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * sum(xi for xi in x), u_terminal=lambda x: 0.0, T=T),
         Nt=NT,
     )
     X, Y = np.meshgrid(*grid.coordinates, indexing="ij")
