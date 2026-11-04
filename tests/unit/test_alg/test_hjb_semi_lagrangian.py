@@ -993,7 +993,7 @@ class TestStochasticSLUnificationPinning:
         """The pre-#1050 `_stochastic_sl_step_1d`, inlined as the reference."""
         from scipy.interpolate import PchipInterpolator
 
-        from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
+        from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
         from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
         from mfgarchon.geometry.boundary.bc_utils import (
             bc_type_to_geometric_operation,
@@ -1036,10 +1036,10 @@ class TestStochasticSLUnificationPinning:
         x_batch = solver.x_grid.reshape(-1, 1)
         p_batch = grad_u.reshape(-1, 1)
         H_class = solver.problem.hamiltonian_class
-        # Issue #1413: Lax-Oleinik value update u_avg + dt*(H(p) - 2*H(0)), where H(0) = V+f.
+        # Issues #1413, #2866: the value update u_avg + dt*(p*dH/dp - H).
         H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).ravel()
-        H_0 = eval_H_batch(H_class, x_batch, M_next, np.zeros_like(p_batch), time_idx * dt).ravel()
-        U_current = u_avg + dt * (H_values - 2.0 * H_0)
+        H_p = eval_dH_dp_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).reshape(p_batch.shape)
+        U_current = u_avg + dt * (np.sum(p_batch * H_p, axis=-1) - H_values)
         if bc:
             U_current = solver.bc_applicator.enforce_values(
                 U_current, boundary_conditions=bc, spacing=(solver.dx,), time=time_idx * dt

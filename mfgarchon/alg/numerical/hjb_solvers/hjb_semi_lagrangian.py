@@ -39,6 +39,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     check_adi_compatibility,
     diffusion_from_volatility,
+    has_quadratic_control_cost,
     resolve_volatility_override,
     retired_volatility_keywords,
     scalar_volatility,
@@ -235,7 +236,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                   objective (NOT the at-grid gradient), so it is consistent with the departure
                   point it induces -- the hypothesis under which CS 2014 prove unconditional
                   stability for monotone (Q1/linear) interpolation. Requires
-                  interpolation_method='linear'. Per-point optimization (slower) in exchange for
+                  interpolation_method='linear' and a SeparableHamiltonian with a QuadraticControlCost,
+                  and refuses any other Hamiltonian when built. Per-point optimization (slower) in exchange for
                   unconditional stability; targets reflecting/no-flux boundaries.
                 - 'none': No diffusion (for testing or zero-diffusion problems)
             use_rbf_fallback: Use RBF interpolation as fallback for boundary cases
@@ -318,6 +320,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"(monotone Q1), got '{self.interpolation_method}'. The Carlini-Silva 2014 "
                 f"stability proof only covers monotone interpolation; cubic/quintic break it."
             )
+        # Its objective hand-codes the quadratic running cost `0.5*lambda*|alpha|^2`, and it cannot tell whether another
+        # cost has that running cost, where one that does not returns a value with no error (#2866, #1547). A problem
+        # with no Hamiltonian builds, and raises in the solve.
+        if self.diffusion_method == "canonical_cs":
+            hamiltonian = self.problem.hamiltonian_class
+            if hamiltonian is not None and not has_quadratic_control_cost(hamiltonian):
+                control_cost = getattr(hamiltonian, "control_cost", None)
+                raise NotImplementedError(
+                    f"diffusion_method='canonical_cs' needs a SeparableHamiltonian with a QuadraticControlCost: its "
+                    f"objective hand-codes 0.5*lambda*|alpha|^2, and this problem's Hamiltonian is "
+                    f"{type(hamiltonian).__name__} with {type(control_cost).__name__} (#2866, #1547). Use HJBFDMSolver, "
+                    f"or, where the Hamiltonian's is_smooth() is True, diffusion_method='adi' or 'stochastic', which "
+                    f"read dH/dp."
+                )
 
         # Issue #1547 / RFC #1574 Phase 0 carried a refusal here for a MAXIMIZE control cost, whose
         # alpha* = +grad_u/lambda would have traced the characteristic feet in the wrong direction.
@@ -1385,10 +1401,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # Extract momentum p = ∇u (vector for nD)
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
-                # Issue #1413: trace along the characteristic velocity ∂H/∂p, then apply the
-                # Lax-Oleinik value update (the foot carries advection; cost = dt·H_control +
-                # dt·(V+f)). Replaces the inconsistent `u_departure - dt·H` with a non-λ-scaled
-                # foot (Issue #575/#1413). Issue #1547: ∂H/∂p is the Hamiltonian's, not p/λ.
+                # Issue #1413: trace along the characteristic velocity ∂H/∂p, then apply the value
+                # update (see _sl_value_update). Issue #1547: ∂H/∂p is the Hamiltonian's, not p/λ.
                 vel = vel_grid[multi_idx]
                 x_departure = self._trace_characteristic_backward(x_current, vel, self.dt)
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
@@ -1590,13 +1604,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         The diffusion enters directly through 2*d stochastic departure points
         (one pair per spatial dimension), eliminating the operator-splitting
-        diffusion solve. For a separable Hamiltonian H = H_control(p) - V(x) - f(m)
-        the characteristic velocity is dH/dp (= p/lambda for the quadratic control
-        cost) and the Lax-Oleinik update is (Issue #1413)
+        diffusion solve. The characteristic velocity is dH/dp (= p/lambda for the quadratic
+        control cost) and the value update is `_sl_value_update`'s (Issues #1413, #2866)
 
             U^n_i = (1/(2d)) * sum_{k=1..d} [I[U^{n+1}](y_k^+) + I[U^{n+1}](y_k^-)]
-                    + dt * H_control(p_i) + dt * (V + f)
-                  = u_avg + dt * (H(x_i, p_i, m) - 2 * H(x_i, 0, m))
+                    + dt * (p_i * (dH/dp)_i - H(x_i, p_i, m))
 
         with y_k^pm = x_i - (dH/dp)_i * dt +/- sqrt(d) * sigma * sqrt(dt) * e_k (the
         sqrt(d) restores the full (sigma^2/2) Lap(u) under the 1/(2d) average, Issue #1543). (The prior
@@ -2532,31 +2544,25 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         t: float,
         dt: float,
     ) -> np.ndarray | float:
-        """Consistent semi-Lagrangian value update (Issue #1413).
+        """The semi-Lagrangian value update, the running cost at the optimal control (Issues #1413, #2866).
 
-        For the backward HJB ``-∂_t u + H(x, ∇u, m) = 0`` with a separable
-        ``H = H_control(p) - V(x) - f(m)`` (#2375 ruling 3), the Lax-Oleinik / DPP step is
+        For the backward HJB ``-∂_t u + H(x, ∇u, m) = 0``, the step along the characteristic is
 
-            u^n(x) = u^{n+1}(x - dt·∂_pH) + dt·H_control(p) + dt·(V + f),
+            u^n(x) = u^{n+1}(x - dt·∂_pH) + dt·(p·∂_pH - H(p)),
 
-        where the departure foot ``x - dt·∂_pH`` carries the advection (``∂_pH`` is the
-        characteristic velocity, ``= p/λ`` for the quadratic control cost). With the
-        departure value ``u_at_foot = u^{n+1}(foot)`` already interpolated and
-        ``-(V + f) = H(x, m, p=0)``:
+        where the departure foot ``x - dt·∂_pH`` carries the advection and ``u_at_foot = u^{n+1}(foot)`` is already
+        interpolated. To first order the foot gives ``u^{n+1}(x) - dt·p·∂_pH``, so the step is ``u^{n+1}(x) - dt·H``: the
+        equation, for any ``H``. ``∂_pH`` is read from the owner the foot reads, ``eval_dH_dp_batch``.
 
-            u^n = u_at_foot + dt·(H(p) - H(0)) - dt·H(0) = u_at_foot + dt·(H(p) - 2·H(0)).
-
-        This replaces the prior ``u_at_foot - dt·H(p)`` (with a non-λ-scaled foot), which
-        double-counted the kinetic term (≈3× too large) and was λ=1-only on the foot —
-        ~24% off the analytic Hopf-Lax solution even at λ=1 (FDM matches it to 0.6%). See
-        Issue #575 (which corrected the state term but left the kinetic error) and Issue
-        #1413. ``H`` comes from the single source (``eval_H_batch`` → ``hamiltonian_class``).
+        Its form ``u_at_foot + dt·(H(p) - 2·H(0))`` agrees where ``H_control`` is 2-homogeneous in ``p``, a quadratic control
+        cost, and elsewhere is off by ``dt·(2·(H_control(p) - H_control(0)) - p·∂_pH)`` at every step, which does not refine
+        away (#2866).
         """
         H_class = self.problem.hamiltonian_class
         p_arr = np.atleast_1d(np.asarray(p, dtype=float))
         H_full = np.asarray(eval_H_batch(H_class, x, m, p_arr, t), dtype=float)
-        H_state = np.asarray(eval_H_batch(H_class, x, m, np.zeros_like(p_arr), t), dtype=float)
-        return u_at_foot + dt * (H_full - 2.0 * H_state)
+        H_p = np.asarray(eval_dH_dp_batch(H_class, x, m, p_arr, t), dtype=float).reshape(p_arr.shape)
+        return u_at_foot + dt * (np.sum(p_arr * H_p, axis=-1) - H_full)
 
     def _evaluate_hamiltonian(self, x: np.ndarray | float, p: np.ndarray | float, m: float, time_idx: int) -> float:
         """
