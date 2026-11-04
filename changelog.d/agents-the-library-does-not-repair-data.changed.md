@@ -1,0 +1,3 @@
+- **AGENTS.md: the library does not repair data, whatever the quantity** (user ruling, 2026-11-04), in § *The library does not repair data*, which was § *The library does not clip on its own*.
+  - No clip, floor, renormalization, filled NaN or fallback of the library's own, warned or not. A step is the method's only if its equations or a cited source define it.
+  - The round-off clamp behind a refusal stays, as ruled 2026-10-04.
