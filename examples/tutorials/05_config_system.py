@@ -28,7 +28,7 @@ if __name__ == "__main__":
         """
         Create a Linear-Quadratic MFG model.
 
-        H(p,m) = (1/2)|p|^2 + coupling * m
+        H(p,m) = (1/2)|p|^2 - coupling * m
         """
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
