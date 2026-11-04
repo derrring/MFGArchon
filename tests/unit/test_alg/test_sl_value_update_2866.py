@@ -2,7 +2,7 @@
 
 With terminal ``c.x`` and no state term, ``p = c`` everywhere, so ``-u_t + H_control(p) = V0 + f0`` has
 ``u(0, x) = c.x - T*(H_control(c) - V0 - f0)``. The value update ``H(p) - 2*H(0)`` holds only for a control cost
-2-homogeneous in ``p``; for any other it is off by ``T*(2*(H_control(p) - H_control(0)) - p*dH/dp)`` at every refinement.
+2-homogeneous in ``p``, up to a constant; for any other it is off by ``T*(2*(H_control(p) - H_control(0)) - p*dH/dp)`` at every refinement.
 """
 
 from __future__ import annotations
@@ -264,6 +264,36 @@ def test_the_update_refines_with_a_potential_and_a_coupling_that_vary(path):
         box = (x > 0.55) & (x < 0.75)
         errors.append(np.abs(U[0][box] - (slope_at(0.0) * x[box] - drop)).max())
     assert errors[1] < 0.65 * errors[0], errors
+
+
+def _curved(x):
+    return 0.25 * np.sin(2.0 * np.pi * x)
+
+
+@pytest.mark.parametrize("cost", ["cubic", "L1, regularized"])
+@pytest.mark.parametrize("path", ["adi", "stochastic"])
+def test_the_update_agrees_with_fdm_where_p_varies_in_x(cost, path):
+    """The other rows have ``u`` linear in ``x``, where the foot and the update cancel ``dH/dp``, whatever it is:
+    ``c*(x - dt*v) + dt*(c*v - H) = c*x - dt*H``. FDM is a second solver and not an exact solution, so the bound sits between
+    this update's distance from it, 0.009 at most, and the old update's, 0.06 on the regularized L1 and 0.11 on the cubic.
+    """
+    n, nt = 161, 40
+    problem = MFGProblem(
+        model=Model(hamiltonian=_separable(_COSTS[cost][0]), volatility=0.05),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
+        conditions=Conditions(
+            m_initial=lambda y: 1.0, u_terminal=lambda y: _curved(np.asarray(y, dtype=float)[..., 0]), T=_T
+        ),
+        Nt=nt,
+    )
+    x = np.linspace(0.0, 1.0, n)
+    terminal = _curved(x)
+    semi_lagrangian, fdm = (
+        np.asarray(solver.solve_hjb_system(np.ones((nt + 1, n)), terminal, np.tile(terminal, (nt + 1, 1))))[0]
+        for solver in (HJBSemiLagrangianSolver(problem, **_PATHS[path][0]), HJBFDMSolver(problem))
+    )
+    interior = (x > 0.2) & (x < 0.8)
+    np.testing.assert_allclose(semi_lagrangian[interior], fdm[interior], rtol=0, atol=0.015)
 
 
 @pytest.mark.parametrize(

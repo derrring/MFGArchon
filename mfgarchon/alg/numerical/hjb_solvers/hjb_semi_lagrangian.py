@@ -237,7 +237,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                   point it induces -- the hypothesis under which CS 2014 prove unconditional
                   stability for monotone (Q1/linear) interpolation. Requires
                   interpolation_method='linear' and a SeparableHamiltonian with a QuadraticControlCost,
-                  and refuses anything else when built. Per-point optimization (slower) in exchange for
+                  and refuses any other Hamiltonian when built. Per-point optimization (slower) in exchange for
                   unconditional stability; targets reflecting/no-flux boundaries.
                 - 'none': No diffusion (for testing or zero-diffusion problems)
             use_rbf_fallback: Use RBF interpolation as fallback for boundary cases

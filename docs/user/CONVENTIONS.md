@@ -96,7 +96,7 @@ How the solvers use it differs, and the difference is part of the convention:
   add $H$ whole.
 - HJB semi-Lagrangian's update assembles the running cost at the optimal control from the same object, as
   $p \cdot \partial_p H - H$. `diffusion_method='canonical_cs'` hand-codes the quadratic running cost in its objective,
-  so it takes only a `SeparableHamiltonian` with a `QuadraticControlCost`, and refuses anything else when built.
+  so it takes only a `SeparableHamiltonian` with a `QuadraticControlCost`, and refuses any other Hamiltonian when built.
 - The policy-iteration assemblies assemble control cost $+\,V + f$ as a running cost:
   `HJBGFDMSolver(inner_solver="howard")` takes each part from the same Hamiltonian object;
   `NetworkPolicyIterationHJBSolver` recomputes the built-in quadratic control cost itself and refuses a
