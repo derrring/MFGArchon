@@ -1,8 +1,9 @@
 """A graph node's constant is read by the reader its return is read by, `types._read_constant` (#2861, #2512 row B2).
 
 Its form stays the graph's own, a real number a float holds, so what a grid constant takes beyond that stays refused by
-name. No value reads differently: a NaN or an infinity, which the graph wrote into the field, is refused at each door, as
-the grid refuses it (#2593) and as a graph callable's return already was.
+name at the doors that take one value. A NaN or an infinity, which the graph wrote into the field, is refused at each
+door, as the grid refuses it (#2593) and as a graph callable's return already was. A finite value reads as it did, but for
+the sign of a zero: the reader's zero test reads ``-0.0`` as ``0.0``.
 """
 
 import math
@@ -16,7 +17,6 @@ from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, NodeBC
 from mfgarchon.geometry.boundary.types import _read_constant, boundary_value
 
 _WRITTEN_BEFORE = [math.nan, math.inf, -math.inf, np.float64(np.inf), np.float32(np.nan)]
-_TOO_LARGE = 10**400
 
 
 def _maze():
@@ -72,24 +72,32 @@ def test_a_fraction_is_read_where_it_is_given():
 
 
 @pytest.mark.parametrize(
-    "value",
-    [None, np.ma.masked, np.array([5.0]), np.array(5.0), "0", True],
-    ids=["None", "masked", "[5.0]", "5.0", "'0'", "True"],
+    "value", [None, np.ma.masked, np.array([5.0]), np.array(5.0), "0"], ids=["None", "masked", "[5.0]", "5.0", "'0'"]
 )
 def test_a_form_only_the_grid_takes_stays_refused_on_a_graph_constant(value):
-    """Where the two still differ, the graph refuses by name, and no number reads differently."""
+    """Where the two differ at a door that takes one value, the graph refuses by name, and no number reads differently.
+    `apply_direct`'s ``values`` takes one value per node, so a one-element array is that door's own form, and reads."""
     with pytest.raises(TypeError, match=r"it takes a finite real number a float holds"):
         _at_a_node(value)
 
 
-def test_a_number_no_float_holds_is_refused_by_name_on_each_path():
-    """Each was Python's unnamed ``OverflowError`` but the graph's constant, which keeps its own refusal."""
+@pytest.mark.parametrize("too_large", [10**400, 10**5000], ids=["10**400", "10**5000"])
+def test_a_number_no_float_holds_is_refused_by_name_on_each_path(too_large):
+    """Each was Python's unnamed ``OverflowError`` but the graph's constant, which keeps its own refusal. The refusal
+    prints its type: ``10**5000`` raises ``ValueError`` on being printed, past Python's limit on an int's digits."""
     where = {"kind": "a value", "where": "a grid"}
     with pytest.raises(NotImplementedError, match=r"a value has a value of type int no float holds"):
-        _read_constant(_TOO_LARGE, **where)
+        _read_constant(too_large, **where)
     with pytest.raises(NotImplementedError, match=r"of type int no float holds"):
-        boundary_value(lambda t, x: _TOO_LARGE, t=0.0, x=np.zeros(1), **where)
+        boundary_value(lambda t, x: too_large, t=0.0, x=np.zeros(1), **where)
     with pytest.raises(NotImplementedError, match=r"of type int no float holds"):
-        GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: _TOO_LARGE).apply(np.zeros(4), t=0.0)
+        GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: too_large).apply(np.zeros(4), t=0.0)
     with pytest.raises(TypeError, match=r"a real number no float holds"):
-        _at_a_node(_TOO_LARGE)
+        _at_a_node(too_large)
+
+
+def test_a_non_finite_refusal_says_what_to_pass():
+    with pytest.raises(NotImplementedError, match=r"non-finite solution: pass a finite real number"):
+        _at_a_node(math.inf)
+    with pytest.raises(NotImplementedError, match=r"non-finite solution: return one real number"):
+        boundary_value(lambda t, x: math.inf, kind="a value", t=0.0, x=np.zeros(1), where="a grid")

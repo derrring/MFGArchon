@@ -496,7 +496,9 @@ def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
     )
 
 
-@pytest.mark.parametrize("value", [2.5, lambda t, node: 0.0], ids=["non_zero", "callable"])
+@pytest.mark.parametrize(
+    "value", [2.5, lambda t, node: 0.0, math.nan, math.inf], ids=["non_zero", "callable", "nan", "inf"]
+)
 def test_a_non_zero_graph_neumann_flux_is_refused(value):
     """Graph NEUMANN is zero flux; `apply` leaves both fields unchanged for it. A flux it would drop is
     refused when the `NodeBC` is built (maintainer ruling 2026-10-04). A callable cannot be checked for

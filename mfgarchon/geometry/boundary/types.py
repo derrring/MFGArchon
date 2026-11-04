@@ -956,7 +956,7 @@ def boundary_value(
     is refused at the container, whatever it holds, as is a boolean or complex scalar. Then one unwrap: an array of
     one element is that element, and a return of more than one number is refused. Then the value:
     ``None`` (0 for a constant, refused for a return), a masked element and whatever `_describe_bc_value` calls zero
-    are 0, a finite real is its value, and anything else, a non-finite number included, is refused.
+    are 0, a finite real a float holds is its value, and anything else, a non-finite number included, is refused.
 
     **A** ``BCValueProvider`` is resolved with ``state``, and its result is read as a return is: one number, since
     a value per node is a separate capability (#2600). Without ``state`` it is refused (``NotImplementedError``): the
@@ -975,6 +975,7 @@ def boundary_value(
             kind=f"{kind} (what its provider computed)",
             where=where,
             returned=True,
+            advice="compute one real number",
             many=" A value per node is a planned capability, tracked in #2600.",
         )
     if callable(value):
@@ -1001,7 +1002,13 @@ def boundary_value(
             )
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
-        return _read_constant(bound(t=t, x=x), kind=f"{kind} (what its callable returned)", where=where, returned=True)
+        return _read_constant(
+            bound(t=t, x=x),
+            kind=f"{kind} (what its callable returned)",
+            where=where,
+            returned=True,
+            advice="return one real number",
+        )
     return _read_constant(value, kind=kind, where=where)
 
 
@@ -1044,8 +1051,8 @@ def _read_constant(
        zero and refused otherwise. A returned array of
        more than one element is refused here too, since a callable returns one number at a point.
     3. **the value:** ``None`` is 0 for a constant and refused for a return, which a function with no ``return``
-       gives; a masked element is 0, and so is whatever `_describe_bc_value` calls zero; a finite real is its
-       value; anything else, and a non-finite number, is refused.
+       gives; a masked element is 0, and so is whatever `_describe_bc_value` calls zero; a finite real a float holds
+       is its value; anything else, a non-finite number, and an int too large for a float, is refused.
 
     One function for constants and returns, so a value reads the same whichever way it arrives (#2512 row B2; the
     layers close reviews 1 and 2 of #2598, one class rather than one corner at a time).
@@ -1099,8 +1106,8 @@ def _read_constant(
         ) from None
     if not np.isfinite(constant):
         raise NotImplementedError(
-            f"{kind} has a non-finite value {constant}; {where} would impose it and return a non-finite solution "
-            "(#2593)."
+            f"{kind} has a non-finite value {constant}; {where} would impose it and return a non-finite solution: "
+            f"{advice} (#2593)."
         )
     return constant
 

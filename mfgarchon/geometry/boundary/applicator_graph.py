@@ -94,7 +94,8 @@ _NODES = "a list, tuple or range of nodes, or a 1-D integer numpy array (an ndar
 _FLOATS = (np.float16, np.float32, np.float64)
 _RULE = "a callable that takes the graph's node count and returns such nodes"
 #: Each class of graph BC input and the forms it is taken in. Every acceptor reads its input through the reader of its
-#: class below and coerces nothing on its own; any other form is refused by name, in these words.
+#: class below and coerces nothing on its own; any other form is refused by name, in these words, and a NaN or an
+#: infinity, which has a value's form, by `_read_graph_constant`.
 ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
     {
         "node": "an int (a numbers.Integral that is not a bool) from 0 to the graph's last node",
@@ -188,7 +189,7 @@ def _conditions(items: object, where: str, of: str) -> tuple:
 def _read_graph_constant(value: object, kind: str) -> float:
     """A constant in the form `_is_value` tests, read by `types._read_constant`, as a grid boundary value's constant and
     what a graph callable returns are, so one value reads the same whichever way it arrives (#2861, #2512 row B2)."""
-    return _read_constant(value, kind=kind, where="the graph applicator", advice="pass one real number")
+    return _read_constant(value, kind=kind, where="the graph applicator", advice="pass a finite real number")
 
 
 class _Constant:
@@ -345,16 +346,19 @@ class NodeBC:
                     f"NodeBC {self.name!r}: rule= is a CUSTOM condition's; a {self.bc_type.name} condition takes value "
                     "(#2296)."
                 )
+            # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
+            # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
+            # dropped without a word, so it is refused (#1948), a NaN or an infinity included: that
+            # is what is wrong with one here, before the reader below refuses it as a value it would impose.
+            if self.bc_type == GraphBCType.NEUMANN and (
+                callable(self.value) or (_is_value(self.value) and self.value != 0)
+            ):
+                raise NotImplementedError(
+                    f"NodeBC {self.name!r}: GraphBCType.NEUMANN is zero flux, and a non-zero flux "
+                    f"(value={self.value!r}) is not implemented on graphs. It would be dropped rather than "
+                    "imposed. Use value=0.0 (the default), or a SOURCE node to inject mass (#1948)."
+                )
             object.__setattr__(self, "_read", _value_reader(self.value, f"NodeBC {self.name!r}: value"))
-        # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
-        # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
-        # dropped without a word, so it is refused (#1948).
-        if self.bc_type == GraphBCType.NEUMANN and (callable(self.value) or self.value != 0):
-            raise NotImplementedError(
-                f"NodeBC {self.name!r}: GraphBCType.NEUMANN is zero flux, and a non-zero flux "
-                f"(value={self.value!r}) is not implemented on graphs. It would be dropped rather than "
-                "imposed. Use value=0.0 (the default), or a SOURCE node to inject mass (#1948)."
-            )
 
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
