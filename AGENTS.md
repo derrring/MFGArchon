@@ -33,9 +33,9 @@ Novel/experimental algorithms, unpublished methods. **Key principle**: MFG-Resea
 |:----------|:-----------------|:-----------------------|
 | Maturity | Production-ready, tested | Experimental |
 | Publication | Published methods | Unpublished |
-| Stability | Stable API, versioned | Breaking changes OK |
+| Stability | Pre-1.0; breaking changes ship as changelog fragments | Breaking changes OK |
 | Documentation | Comprehensive | Minimal |
-| Testing | Full coverage | Exploratory |
+| Testing | Admitted tests only (§ *Admission*) | Exploratory |
 
 **Migration (research → infra)**: when research matures — add tests, write docs, ensure API consistency, open a PR in MFGArchon.
 
@@ -55,9 +55,9 @@ Keep changes minimal + focused; no legacy fallbacks (use mature utilities direct
 
 ## 🏗️ Repository Structure
 
-**Top-level**: `mfgarchon/` (package), `tests/` (unit + integration only), `benchmarks/` (perf scripts), `examples/` (`basic/ advanced/ notebooks/ tutorials/`), `docs/`. There is no `archive/`: git history is the archive (#1710).
+**Top-level**: `mfgarchon/` (package), `tests/`, `benchmarks/`, `examples/` (`basic/ advanced/ applications/ tutorials/ validation/ outputs/`), `scripts/`, `changelog.d/`, `docs/`. There is no `archive/`: git history is the archive (#1710).
 
-**Package** (`mfgarchon/`): `alg/ backends/ config/ core/ factory/ geometry/ hooks/ solvers/ types/ utils/ visualization/ workflow/ compat/ meta/`.
+**Package** (`mfgarchon/`): `alg/ backends/ config/ core/ extensions/ factory/ geometry/ hooks/ meta/ operators/ types/ utils/ visualization/ workflow/`.
 
 ---
 
@@ -72,10 +72,9 @@ result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)    # Safe Mode: pick t
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)         # Expert Mode: bring your own pair
 result = problem.solve(max_iterations=200, tolerance=1e-8)   # explicit params, not magic "mode=" strings
 ```
-There is no factory to reach for. `create_standard_solver` does not exist and
-`create_fast_solver` / `create_research_solver` / `create_basic_solver` /
-`create_accurate_solver` raise on call; `create_solver` is deprecated in favour of the
-same three modes (#580).
+There is no factory to reach for. `create_fast_solver` / `create_research_solver` /
+`create_basic_solver` / `create_accurate_solver` raise on call, and so does `create_standard_solver`
+in `factory/solver_factory.py`, which `mfgarchon.factory` does not export; `create_solver` is deprecated in favour of the same three modes (#580).
 
 No interface is fixed for v1.0 yet, so user-facing text does not call any constructor form "the v1.0 API" (user ruling, 2026-10-12). `MFGProblem(model=Model(...), domain=..., conditions=Conditions(...))` is "the model/domain/conditions form", and `MFGProblem(geometry=, components=, ...)` is "the components= form".
 
@@ -109,12 +108,11 @@ caller's density. Not clips in this sense include:
   weight, a kernel's compact support. A position clamped onto a wall while a boundary condition is
   applied is not this case: that clamp chooses the condition (see #2485, class 10).
 - **A clamp bounded by a refusal**: `clip_nonnegative_or_raise` zeroes a negative density only while
-  that adds at most its `threshold` of the mass, and raises beyond it. The default,
-  `MAX_CLIP_MASS_FABRICATION` = 1e-8, sits above round-off and is admitted (ruled 2026-10-04).
-  `fp_network.py` passes 1e-4, a measured scheme tolerance (#1758); whether that is admitted is open
-  on #2485.
+  that adds at most its `threshold` of the mass, and raises beyond it. The default threshold,
+  `MAX_CLIP_MASS_FABRICATION`, is admitted (ruled 2026-10-04). A threshold set to a scheme's own tolerance is
+  not admitted until ruled, and the open case is on #2485.
 
-#2485 classifies the 57 `np.clip` calls against this and lists the other shapes it keeps; the
+#2485 classifies the `np.clip` calls against this and lists the other shapes it keeps; the
 `np.maximum(·, 0)` clamps are not yet classified.
 
 ### File-path anchoring ⚠️ CRITICAL
@@ -126,6 +124,8 @@ Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve(
 
 ### Admission ⚠️ — a test earns its place before it is written (#2227)
 
+Before a stable version, write few tests; a necessary oracle is exempt (user ruling, 2026-09-10).
+
 **Do not write a test because a change "should have one".** Most of this suite was deleted for being
 unauditable; adding to it casually is how it got there.
 
@@ -134,50 +134,29 @@ unauditable; adding to it casually is how it got there.
 1. **It kills a mutation.** `scripts/discrimination_killmatrix.json` maps node ID → mutations killed:
    read it. **The matrix is evidence FOR keeping a test; its complement is not a delete-list.** A
    sweep validates this ground and only this one, while a test earns its place on any of the four
-   here — so the zero-killer set is full of classes 2–4 that are invisible to it. Measured at
-   `2c923694` (#2285): **91 zero-killer files holding 1,451 tests**, among them 463 named defect pins
-   and every ratchet guard in `scripts/`; the largest is `tests/unit/test_utils/test_convergence.py`
-   at 66. `test_discrimination_ratchet.py` is **not** among them and must be subtracted from any such
-   count — `--ignore={SELF_TESTS}` removes it from every run, because it fails under *every* mutation
-   and would add +1 to every kill count. Deleting on a zero count is the error #1715 and #1901
-   already record.
+   here, so the zero-killer set is full of classes 2–4 that are invisible to it. `test_discrimination_ratchet.py`
+   must be subtracted from any such count: `--ignore={SELF_TESTS}` removes it from every run, because it
+   fails under *every* mutation and would add +1 to every kill count. Deleting on a zero count is the
+   error #1715 and #1901 already record.
 
-   **Kill count is a property column, not a criterion** — neither sufficient nor necessary, which is
-   the same shape this repo already found in mass conservation (`feedback_mutation_testing_calibration`;
-   a scheme can conserve to 1e-12 with a decaying wall-gradient ratio, and `FPSLJacobianSolver`, removed
-   in #1756, was non-conservative by construction and correct). Not sufficient: a test can kill `optimal_control_sign`
-   incidentally while pinning nothing it claims. Not necessary, and this is the direction that is
-   invisible: the mutations are a **fixed, small alphabet** — `MUTATIONS` declares them and
-   `test_the_mutation_list_matches_the_parametrisation` owns the count — so a test pinning a convention outside it
-   reads zero however sharp it is. Measured 2026-09-11 —
-   `test_fem_inhomogeneous_neumann_2294.py` and `test_resolver_no_image_contract_2293.py` are both
-   zero-killers here while together killing seven mutations written against their own targets
-   (a dropped `D`, a sum-preserving lump, a wall swap, four of the `natural_bc` machinery).
+   **Kill count is a property column, not a criterion**, neither sufficient nor necessary. Not
+   sufficient: a test can kill a mutation incidentally while pinning nothing it claims. Not necessary,
+   and this is the direction that is invisible: the mutations are a **fixed, small alphabet**
+   (`MUTATIONS` declares them and `test_the_mutation_list_matches_the_parametrisation` owns the count),
+   so a test pinning a convention outside it reads zero however sharp it is.
 
    **And every count is over `tests` under `scripts/ci_markers.txt`, a selection whose complement is
-   not merely unmeasured but unmeasurable by this instrument.** pytest counts the excluded set
-   itself: `3822/4030 tests collected (208 deselected)` at `2c923694` — **208 tests, 5.2%**, spread
-   over 42 files and disproportionately the oracles (`test_weak_form_source_mms_2020.py`,
-   `tests/validation/test_duality_convergence.py`, `test_mass_conservation_1d.py`), because value
-   correlates with runtime, runtime with `slow`, and `slow` with exclusion.
+   not merely unmeasured but unmeasurable by this instrument.** The excluded set is disproportionately
+   the oracles, because value correlates with runtime, runtime with `slow`, and `slow` with exclusion.
 
-   Measured 2026-09-11: one run over 28 of those 42 files did not finish in 3600 s, against 160.5 s
-   per run for the whole filtered suite — **>= 22x, so a sweep over them costs >= 22x the filtered
-   suite per mutation, which at the matrix's current size is tens of hours.** That ratio is per RUN
-   and is a lower bound twice over: the run was truncated, and it
-   covered two thirds of the excluded files. A per-TEST figure is NOT derivable from it — the 3600 s
-   covers 28 files while 208 is the count over all 42, which is the two-denominators error this very
-   paragraph exists to prevent.
+   A cost quoted over the excluded tests takes numerator and denominator from the same set. A run over
+   part of the set gives no per-test figure, and does not license widening the marker filter.
 
    So `kill_count: 2` means two defenders *in that selection*, and the marker filter is not a knob
-   that could be widened. Re-running the sweep is not the price of admission — so re-measure only when adding a
-   mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive** —
-   **derive the current cost, do not read it here.** ~~about 26 min~~ ~~67 min~~ [CORRECTED 2026-09-18,
-   #2349]: the derivation below returned **136.07 min** (`baseline_seconds` 237.1 plus 7927.2s over 27
-   mutations, matrix measured at `76f2d9e8`), against the 67 min this line stated from `2c923694`. The
-   figure is a property of the file beside it and the re-derivability clause was already written here —
-   it was tested by two re-records and failed both, because a present-tense headline is what a reader
-   takes away. So the number now lives only in the command:
+   that could be widened. Re-running the sweep is not the price of
+   admission, so re-measure only when adding a mutation. It leaves mutations in the tree when killed
+   (#1849, #2229), and it is **expensive**. Derive its current cost, which is a property of the file
+   beside it:
 
    ```bash
    "$MFG_PYTHON" -c "import json; d = json.load(open('scripts/discrimination_killmatrix.json')); print((d['baseline_seconds'] + sum(m['seconds'] for m in d['mutations'].values())) / 60)"
@@ -187,15 +166,13 @@ unauditable; adding to it casually is how it got there.
    place (`REPO = Path(__file__).resolve().parent.parent`) and its own docstring records #1677 — a
    run that leaves the *original* module imported gives all-zero kills that read as "nothing
    discriminates". Both `.venv` and `mfg_env` editable-install `mfgarchon` to the main checkout, so
-   that is the tree an import can fall back to. **Measured, and weaker than it sounds:** setuptools
-   *appends* `_EditableFinder` to `sys.meta_path`, after `PathFinder` — so under `-c` and `-m`, which
-   both put cwd on `sys.path`, a `cd <worktree>` alone already resolves `mfgarchon` to the worktree
-   with no `PYTHONPATH`. **Not under script form**: `python scripts/foo.py` puts the *script's*
-   directory on `sys.path[0]` and never cwd, and the import then falls through to the editable
-   install — measured, it resolves to the main checkout. Bind `PYTHONPATH` because of that asymmetry,
-   not as a belt-and-braces token, and because the script's own
-   `_assert_import_is_the_mutated_tree` (`test_discrimination.py:532`) then *confirms* the tree
-   rather than you assuming it. The recipe:
+   that is the tree an import can fall back to. Setuptools *appends* `_EditableFinder` to
+   `sys.meta_path`, after `PathFinder`, so under `-c` and `-m`, which both put cwd on `sys.path`, a
+   `cd <worktree>` alone resolves `mfgarchon` to the worktree with no `PYTHONPATH`. **Not under script
+   form**: `python scripts/foo.py` puts the *script's* directory on `sys.path[0]` and never cwd, and the
+   import then falls through to the editable install. Bind `PYTHONPATH` because of that asymmetry, and
+   because `_assert_import_is_the_mutated_tree` in `scripts/test_discrimination.py` then *confirms* the
+   tree rather than you assuming it. The recipe:
 
    ```bash
    git worktree add --detach /tmp/wt-discrim <sha>
@@ -221,10 +198,9 @@ unauditable; adding to it casually is how it got there.
    ```
 
    `--force` is **required**, not a convenience: the sweep leaves mutations in the tree when killed,
-   so the worktree is dirty by construction and plain `git worktree remove` refuses it every time
-   (measured, git 2.54.0: *"contains modified or untracked files, use --force to delete it"*). The
-   `&&` chain is what makes that safe — `--force` deletes the only copy of a 67-minute measurement,
-   so a failed `cp` must not reach it. The `cp` clobbers silently, so check `git status` afterwards
+   so the worktree is dirty by construction and plain `git worktree remove` refuses it every time. The
+   `&&` chain is what makes that safe: `--force` deletes the only copy of a long measurement, so a
+   failed `cp` must not reach it. The `cp` clobbers silently, so check `git status` afterwards
    rather than assuming you were the only writer.
 
    And **do not let two sessions write these files**: they are one artifact pair recorded by one run,
@@ -248,20 +224,15 @@ unauditable; adding to it casually is how it got there.
 | does a proposed **test** earn its place? | here |
 | **where** does an admitted test live? | the table below, under this same `##`. It says which *kind* a thing gets **if** a test is written; it does not oblige one |
 
-~~This section is the same ladder as § *Closing out a fix*, used for admission rather than as a
-report.~~ **[RETRACTED 2026-09-03]** The ladders differ in order and in membership. The residue is
-real and is not dissolved: that section's class 4 is a happy-path assertion this one does not admit.
-Read it as — a happy-path assertion can be an honest way to **close** a fix, admitted as such and
-saying what it would not catch; it is not a reason to **add** a test. Writing one anyway is the
-moment to file the "no oracle yet" issue instead.
+This section and § *Closing out a fix* differ in order and in membership. A happy-path assertion can
+be an honest way to **close** a fix, admitted as such and saying what it would not catch; it is not a
+reason to **add** a test. Writing one anyway is the moment to file the "no oracle yet" issue instead.
 
 **"Which convention does it defend" is a question, not a lookup.** The Joplin `[Principle]
-Conventions Index` names 35 conventions and `scripts/discrimination_baseline.json` carries one
-mutation per entry in `MUTATIONS`, and **the two sets are nearly disjoint** (measured in #2227).
-~~24 mutations~~ [CORRECTED 2026-09-18, #2349] — the parenthetical anchors the DISJOINTNESS, not
-the count. Neither is the list. A test defending something on neither is admissible
-under class 1 or 2 on its own merits. The index is a private Joplin note that a reader outside this
-machine cannot open, so state the convention in the test rather than cite the index.
+Conventions Index` and the mutations in `scripts/discrimination_baseline.json` are nearly disjoint (#2227),
+and neither is the list. A test defending something on neither is admissible under class 1 or 2 on its
+own merits. The index is a private Joplin note that a reader outside this machine cannot open, so state
+the convention in the test rather than cite the index.
 
 **Nothing here licenses deleting a test on a count.** The deletable set is the structurally
 tautological one, found by **reading**; inert-by-counting is a different set, and #1715 records five
@@ -270,7 +241,7 @@ never by matching a keyword.
 
 Cross-project testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
-- **Unit tests (`tests/unit`, `tests/integration`)** — stable public APIs (`problem.solve()`, factories), core infra (config/problem/result/backend), numerical correctness that must not regress. Run in CI on every commit.
+- **Unit tests (`tests/unit`, `tests/integration`)** — public APIs (`problem.solve()`), core infra (config/problem/result/backend), numerical correctness that must not regress. They run in the local gate on every push, and on GitHub in the smoke subset, `python-compat.yml`, `discrimination.yml`, nightly and release.
 - **Inline smoke tests (`if __name__ == "__main__"`)** — rapidly-changing algorithm implementations; visual verification; low-maintenance; delete naturally on refactor. `python mfgarchon/alg/numerical/hjb_solvers/my_solver.py`.
 - **Examples (`examples/`)** — complete user workflows, not quick algorithm testing.
 
@@ -339,27 +310,24 @@ assertion on the same logger name**, so a typo fails the presence half loudly.
 
 "Add a test" is **not** the default close-out for a fix here. Most of this suite does not react when
 the physics the library exists to get right is broken, and the conventions that are defended are
-defended very unevenly — some by a single-digit number of tests, some by over a hundred.
+defended very unevenly.
 
 **The current numbers are not written here, on purpose.** `./scripts/local_ci.sh` prints them beside
 the suite result, with its own staleness flag when the suite has moved since the baseline was
-recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves,
-and both move — the baseline was re-recorded six times in the month to 2026-08-22.
+recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves.
 
 **The same expiry governs a quantified claim in an issue; where the number is mandatory
 (§ *Bug fixes from research*), so is the anchor.** Write it over something that cannot move — a
 commit sha, a count over past commits, a published constant — or name the command that owns it.
-`Seven of ten HJB solvers drop source_term` expires on the next fix; the same sentence at a named
-sha does not, and neither does `26 of the 85 tests this campaign added`, which is quantified over
-history rather than over the tree. That is the whole test: **a claim quantified over the current
+A count of solvers that drop a source term expires on the next fix; the same sentence at a named sha
+does not, and neither does a count of the tests one campaign added, which is quantified over history
+rather than over the tree. That is the whole test: **a claim quantified over the current
 tree drifts the moment someone fixes it; one quantified over immutable history cannot.** It also
 runs backwards — read what an existing claim quantifies over and you know whether it has already
 expired, without executing it.
 
-The **title** carries this hardest, because it is what a reader takes without opening anything:
-measured at `dccc66bd`, #1991's title read "Seven of ten" where the tree gave three, and #1878's
-read "78-90%" where the fixture gave 24%. When a re-derivation moves the number, move the title
-with it in the same pass.
+The **title** carries this hardest, because it is what a reader takes without opening anything. When
+a re-derivation moves the number, move the title with it in the same pass.
 
 **Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
 held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
@@ -390,8 +358,12 @@ the relevant disagreement, not merely on validity; every defect above sat on a c
 
 ## 🔧 Development workflow
 
+A rule here states what to do and why. An incident, a measurement or a figure that supports it stays in the issue or pull request that holds it; a passage here that holds one is rewritten to its rule.
+
 ### Deprecation policy ⚠️ CRITICAL
-Deprecated code MUST immediately redirect to the new standard: (1) old API calls new internally (zero behavior difference); (2) **mandatory equivalence test** (old == new); (3) update ALL call sites (direct, factory, defaults, examples, tests); (4) timeline 3 minor versions OR 6 months before removal, **whichever comes FIRST** (user ruling, #2366). Ref: the last in-repo version of the policy, `cc21745c^:docs/development/DEPRECATION_LIFECYCLE_POLICY.md` — historical, and a git ref rather than a path because the document left this repository in `cc21745c` and the bare filename here named nothing after `68691252` truncated it. **These four clauses are not the only statement of the removal rule in-tree, and they are not its owner.** The owner is `_removable_by_policy` in `mfgarchon/utils/deprecation.py` — it implements the timeline, and `check_removal_readiness` gates on further conditions clause (4) does not name. Every other statement restates it and must agree with it: `docs/user/LEGACY_PARAMETERS.md` for users, and `scripts/audit_deprecated_symbols.py`'s module docstring for the audit. Do not take that list as complete — it is a statement about the tree, which moves; `git grep "3 minor versions"` enumerates the live population, and #2366 reconciled the ones standing when it landed. Today the rule means "3 minor versions", since no deprecation records a `deprecated_on` date for the 6-month arm to use.
+Deprecated code MUST immediately redirect to the new standard: (1) old API calls new internally (zero behavior difference); (2) **mandatory equivalence test** (old == new); (3) update ALL call sites (direct, factory, defaults, examples, tests); (4) timeline 3 minor versions OR 6 months before removal, **whichever comes FIRST** (user ruling, #2366). Ref: the last in-repo version of the policy, `cc21745c^:docs/development/DEPRECATION_LIFECYCLE_POLICY.md` — historical, and a git ref rather than a path because the document left this repository in `cc21745c`. **These four clauses are not the only statement of the removal rule in-tree, and they are not its owner.** The owner is `_removable_by_policy` in `mfgarchon/utils/deprecation.py` — it implements the timeline, and `check_removal_readiness` gates on further conditions clause (4) does not name. Every other statement restates it and must agree with it: `docs/user/LEGACY_PARAMETERS.md` for users, and `scripts/audit_deprecated_symbols.py`'s module docstring for the audit. Do not take that list as complete — it is a statement about the tree, which moves; `git grep "3 minor versions"` enumerates the live population, and #2366 reconciled the ones standing when it landed. A deprecation with no `deprecated_on` is judged by versions alone.
+
+The input contract is `docs/user/CONVENTIONS.md`. Code that reads a user's input accepts no form the contract does not name. A defect in reading a form is fixed by refusing it there, and widening the contract is the user's ruling, written there before the code.
 
 This repository is pre-1.0: fix a cross-cutting defect at the highest owning abstraction and remove
 the redundant path instead of preserving a local fork. Breaking changes accumulate as `changelog.d/` fragments (#1521) and ship in the current `v0.MINOR.x` patch line unless the
@@ -403,7 +375,9 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 
 1. the defect class, named;
 2. its population: the predicate, counting members that are still defective (a site kept with a pin showing it matches the owner is not a member); a control the predicate must find at both shas, outside the count; and the count at the base sha and at the head sha;
-3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
+3. a census that does not use the predicate, selected by what is called, or by input and route. The plan's approver names it, and runs it if the author has not;
+4. what a case the census did not select does at the head, per arm: reads right, raises, reds a test enumerating the class, or returns silently; one case on an axis the census held constant, with its output. If silent, the open issue;
+5. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
 A partial fix is admitted only when:
 - it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records the plan's approval by someone other than its author and that the class line links;
@@ -413,6 +387,10 @@ A partial fix is admitted only when:
 Urgency is not an admission: it changes the order of work, not its level. Nor is "keep changes minimal + focused" (§ *Bug fixes from research*): that bounds a change to its defect's class.
 
 The class line is checked when the plan is approved, and again at review (§ *Review before merge*).
+
+How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan, unless *Before filing an issue* ledgers it as low priority. A raise: *Before filing an issue*.
+
+A census is written once per theme, at plan, by script, and re-run at the head. A review tries one case on an axis it held constant. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
 
 ### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
 
@@ -436,28 +414,31 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 
 ### Branches & PRs
 - **Branch naming (MANDATORY)**: `<type>/<short-description>` — `feature/ fix/ chore/ docs/ refactor/ test/`.
-- **Never commit directly to `main`.** ⚠️ **Nothing enforces this — not the server, and not the local hook either.** Re-check with `gh api repos/derrring/MFGArchon/rules/branches/main` (the effective-rules endpoint, which covers org rules and migrated required workflows); an empty array means no branch rule applies. The pre-push hook does not close the gap: it runs `scripts/local_ci.sh`, which contains no branch logic at all (`grep -i branch scripts/local_ci.sh` → nothing) and no `no-commit-to-branch` hook is configured — it gates *test quality*, not *which ref you are on*, so a green suite on `main` pushes cleanly. Treat this as a discipline you keep, not a wall that stops you. Create the PR when you push; delete merged branches.
+- **Never commit directly to `main`.** The server enforces it: a ruleset on `main` requires a pull request, signed commits and the fast-tier status checks, and refuses a force push or deletion; re-check with `gh api repos/derrring/MFGArchon/rules/branches/main`. The local hook does not check the ref. Create the PR when you push; delete merged branches.
 - **Prune local branches periodically**: `./scripts/prune_local_branches.sh` **classifies and prints evidence; it never deletes.** Deletion stays manual because each of its three signals can be wrong in a way that costs unmerged work — the content check reverse-applies against the *working tree* rather than `main`, so its verdict moves with the checkout and with uncommitted edits; the merged-PR check matches head-ref *names*, and a head-ref name can belong to more than one merged PR; and a 3–4 digit run in a branch name may be a grid size rather than an issue. Read the branch, record the sha, then `git branch -D`. The script aborts rather than guessing if the merged-PR fetch looks truncated. Note `git status` never reports what a worktree costs: one `??` entry at best, and nothing at all under an ignored path such as `.claude/worktrees/` (`.gitignore:77`), so use `git worktree list`.
 - **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when the plan is made, to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless.
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises and re-reviewing. Local-green ≠ correct. A review blocks only on substance (user ruling, 2026-10-08):
   - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it; or a partial fix that no admission in § *Local patches are the anti-pattern* covers, whatever its class line says. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
+  - **A refusal, a warning and the advice in either say what was run**: what has cleared the case, and on what. They state no universal ("any", "always", a mechanism given as the reason for every case), because one input nobody ran refutes it, and the review then rebuilds the sentence rather than the fix.
   - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem; or a missing or incomplete class line, or a false number in one. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
   - **Should-fix**: wording, clarity, style. Fix it or file it; it never blocks.
   - A review whose findings are all must-fix or should-fix returns MERGE-OK, and the must-fix corrections are a condition of merging.
   - After a MERGE-OK, its must-fix and should-fix corrections merge without a further review, whatever they touch; a test change among them needs revert-red evidence. A Blocker's correction is re-reviewed whatever it touches.
   - **A re-review is narrow** (user rulings, 2026-10-13). Review 1 reads the whole PR. Every later review reads only each finding of the review before it with the change that answers it, every file the fix round touched, the PR body's class line and gating claims at the new head, and a regression pass over the PR's own tests and the gate's result; it does not re-read what did not change. When the only blockers were user-facing false statements, it reads only the corrected text, as the Blocker bullet says. Whatever it finds is classified as above.
   - **A code change ordered between reviews owes its reach first** (user ruling, 2026-10-20). The order — the author's, a reviewer's prescription, or a ruling — states the reach: the inputs each condition the change adds, removes or alters admits, and every reader of each value it removes, moves or adds, found by following the code path. The session that pushes it does not push an order without one. Before the next review, the change is measured at the base sha and the head on one case of each input class — one combination of the branches those readers take, and of where each value a reader compares with another comes from — not only on the probe that raised the finding, and the PR body states each case beside its command and both shas. Evidence counts only for the classes it holds a case of. The statement owes no test row; a missing or incomplete one is a must-fix, as a class line is.
-  - **A boundary or geometric-kernel PR is fuzzed before review 1** (user rulings, 2026-10-26 and 2026-10-27). Its author runs a seeded fuzz with an oracle written from the rules, not from the code, and at least one rival that must fire on it. Its inputs are aimed at the edge of each branch condition the diff adds, removes or alters. For a boundary, that means starts and ends, each exactly on the face, inside the tolerance, just past it or clear, with every BC kind and priority the code reads. For a kernel, it means n, d, the sample's shape, scale per axis and placement, and the bandwidth, with samples at the edge of each refusal (a point, a line, a plane, a sample thin in its own units) and against walls and corners. The PR's plan names the population against the code's branch table, and the rival it must catch. When a correction after a review adds kernel or predicate logic, that logic gets a fuzz of its own before the next review, whose population reaches the branches it adds. The fuzz stays in scratch; only the few pins it motivates are committed. #2808's review-1 oracle was clean over 13,768 rows at 509040ef (two seeds), where the exit fuzz, whose steps start on and near a corner's faces, found 279 wrong and 192 raised in 3000 rows (seed 0): the oracle's starts were all interior. C3-1's review-2 and review-3 Blockers (#2819) were in the deposit and the spread predicate, written after review 1. The pre-review-1 fuzz was re-run on each correction and passed, but it reached neither: its only sample without spread was a 1-D point, which the n-D deposit never sees, and every sample was at unit scale, where a bound in absolute units and one in the sample's own units agree. The fuzz built for review 3's correction found another defect before review 4 (e9f6f6c9), and missed review 4's, in the floor that correction added: its population held no axis near its floor beside a correlated pair.
+  - **A boundary or geometric-kernel PR is fuzzed before review 1** (user rulings, 2026-10-26 and 2026-10-27). Its author runs a seeded fuzz with an oracle written from the rules, not from the code, and at least one rival that must fire on it. Its inputs are aimed at the edge of each branch condition the diff adds, removes or alters. For a boundary, that means starts and ends, each exactly on the face, inside the tolerance, just past it or clear, with every BC kind and priority the code reads. For a kernel, it means n, d, the sample's shape, scale per axis and placement, and the bandwidth, with samples at the edge of each refusal (a point, a line, a plane, a sample thin in its own units) and against walls and corners. The PR's plan names the population against the code's branch table, and the rival it must catch. When a correction after a review adds kernel or predicate logic, that logic gets a fuzz of its own before the next review, whose population reaches the branches it adds. The fuzz stays in scratch; only the few pins it motivates are committed.
   - **A defect that predates the PR stays out of its fix rounds** (user ruling, 2026-10-20). A defect present at the base sha, found once review 1 has begun, goes through § *GitHub issue/PR management*'s *Before filing an issue*, unless its fix is a class fix with its own class line (§ *Local patches are the anti-pattern*). A defect the diff newly exposes is a behaviour defect in the diff.
-  - **The PR body carries claims, not tallies** (user ruling, 2026-10-13). It states what changed, the class line where the PR fixes a defect, and the evidence for each claim that gates the merge. Every number in it sits beside the command that printed it and the sha it ran at; a number with no command is not written, except the one-line record of each review (its number, verdict and tokens), which stays in the body. Measurements no gating claim rests on go in a comment on an issue the PR addresses, which the body links.
+  - **The PR body carries claims, not tallies** (user ruling, 2026-10-13). It states what changed, the class line where the PR fixes a defect, and the evidence for each claim that gates the merge. Every number in it sits beside the command that printed it and the sha it ran at; a number with no command is not written, except the one-line record of each review (its number, verdict and tokens), which stays in the body. Measurements no gating claim rests on go in a comment on an issue the PR addresses, which the body links. A review rebuilds the claims that gate the merge. A number no gating claim rests on is not rebuilt: it moves to the issue comment or is deleted, as a must-fix.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
 
+**What needs no per-item approval.** Filing an issue under the filing rule, a comment, a label, a fold line, a push and opening a PR need no per-item approval. A merge needs none when its last review is MERGE-OK, its gate is green and it is not a partial fix. Everything else stays with the user: a merge with a Blocker outstanding or under an admission, a fourth review, a change to `AGENTS.md`, anything sent to an external contributor, and any ruling other than a plan approver's on its plan's scope and structure.
+
 **A quantified claim in an issue — above all in its title — must be anchored or it expires**; see § *Closing out a fix*, which owns the rule.
 
-**Every issue carries all 4 label dimensions**: `priority:` (high/medium/low), `area:` (algorithms/config/core/documentation/geometry/performance/testing/visualization), `size:` (small=hrs–1d / medium=1–3d / large=1+wk), `type:` (bug/enhancement/chore/refactor/infrastructure/research/type-checking/question). Multiple `area:` allowed; one `priority:`/`size:` each; no bare labels (all prefixed). Workflow-state prefixes: `status:` (blocked/in-review/needs-testing), `resolution:` (merged/superseded/wontfix/duplicate/invalid). Non-taxonomic (GitHub conventions): `good first issue`, `help wanted`, `automated`.
+**Every issue carries all 4 label dimensions**: `priority:` (high/medium/low), `area:` (algorithms/config/core/documentation/geometry/performance/testing/visualization), `size:` (small=hrs–1d / medium=1–3d / large=1+wk), `type:` (bug/enhancement/chore/refactor/infrastructure/research/type-checking/question). Multiple `area:` allowed; one `priority:`/`size:` each. Family prefixes: `family:` (a defect family), `blocks:` (what an issue stands in front of). Workflow-state prefixes: `status:` (blocked/in-review/needs-testing), `resolution:` (merged/superseded/wontfix/duplicate/invalid). Bare, and no others (GitHub conventions): `good first issue`, `help wanted`, `automated`, `chore`, `documentation`.
 
 ```bash
 gh issue edit N --add-label "priority: medium,area: algorithms,size: small,type: enhancement"
@@ -490,27 +471,29 @@ ruff check mfgarchon/affected_module.py && ruff format --check mfgarchon/affecte
 mypy mfgarchon/affected_module.py
 ```
 ⚠️ **Do not run the full gate by hand before pushing — the `pre-push` hook runs it.** Running it
-manually and then pushing pays for it twice, ~2.5 min each, and the second run is the one that
-decides. The ladder for this repo is:
+manually and then pushing pays for it twice, and the second run is the one that decides. The ladder
+for this repo is:
 
-| step | command | cost |
-|---|---|---|
-| after every edit | `ruff check --fix … && ruff format …`, or `./scripts/local_ci.sh --fast` | seconds |
-| after every edit | the test files you touched, by path | seconds |
-| when behaviour could have changed | the blast radius **by path**, not by `-k` name match | ~30 s |
-| at the boundary | **`git push`** — the hook runs the gate, once | ~150 s |
+| step | command |
+|---|---|
+| after every edit | `ruff check --fix … && ruff format …`, or `./scripts/local_ci.sh --fast` |
+| after every edit | the test files you touched, by path |
+| when behaviour could have changed | the blast radius **by path**, not by `-k` name match |
+| at the boundary | **`git push`** — the hook runs the gate, once |
 
 The one case for running it by hand: you need to *read* its diagnostics (discrimination fraction,
 capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
 `--no-verify` only if the working tree has not moved since.
+
+Between fix rounds, push, so the hook runs the gate, and run what the fix's reach touches and the mutants for the pins the round adds. The second stack (main's `.venv`, beside `mfg_env`) and a repeated fuzz run once, when a review returns MERGE-OK; a failure there that does not reproduce at the base sha is a Blocker, and one that does goes through *Before filing an issue*. Logic a correction adds still gets its own fuzz before the next review.
 
 ⚠️ **From a `git worktree` the gate names the tree it measured, and refuses if it is the wrong
 one.** `gate package : <path>` sits beside `gate interpreter`, in the head and in the pasted tail,
 and `scripts/local_ci.sh` exits before any check when that path is not under the tree being gated
 (#2154).
 
-**No static count tells you which steps import.** `capability_census.py:78` is
-`importlib.import_module(package)` — a real in-process import that no import-shaped text pattern and
+**No static count tells you which steps import.** `capability_census.py` calls
+`importlib.import_module(package)`, a real in-process import that no import-shaped text pattern and
 no AST import-scan can see. Run the blocking finder over the actual invocation instead.
 
 **Set `MFG_PYTHON`; `PYTHONPATH` is not yours to remember** — the gate binds it for itself
@@ -526,21 +509,21 @@ runs the wrong toolchain and reports warning identities the pinned one cannot em
 reproduces the project's resolved set; ruff is not in it and has one owner:
 `uv pip install "ruff==$(python scripts/update_ruff_version.py --print-current)"`.
 
-The gate names the mismatch while it happens, in a line that reads as a nag: `WARN ruff 0.13.1 ran,
-but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
+The gate names the mismatch while it happens, in a line that reads as a nag: `WARN ruff <version> ran,
+but .pre-commit-config.yaml pins <version>`. Treat that WARN as a refusal.
 
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 
-**CI shape — the full suite runs LOCALLY, not on GitHub (2026-07-19):**
+**CI shape — the full suite runs LOCALLY, not on GitHub:**
 
-| Tier | What | Where | Cost |
-|:-----|:-----|:------|:-----|
-| Gate (authoritative) | fail-fast ratchet, capability matrix, full suite (CI marker set, `-n auto`, no coverage) | **local**, `./scripts/local_ci.sh` | ~4 min |
-| PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_backends`) | GitHub `ci.yml` | ~3 min |
-| Backstop | full suite **incl. `@slow`**, excluding `@manual`; plus the capability matrix + its self-test | GitHub `nightly.yml`, 03:00 | `timeout-minutes: 300` |
-| Release | full suite incl. `@slow`, excluding `@manual`, with coverage | GitHub `ci.yml` on `release` | 35 min budget |
+| Tier | What | Where |
+|:-----|:-----|:------|
+| Gate (authoritative) | fail-fast ratchet, capability matrix, full suite (CI marker set, `-n auto`, no coverage) | **local**, `./scripts/local_ci.sh` |
+| PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_backends`) | GitHub `ci.yml` |
+| Backstop | full suite **incl. `@slow`**, excluding `@manual`; plus the capability matrix + its self-test | GitHub `nightly.yml`, 03:00 |
+| Release | full suite incl. `@slow`, excluding `@manual`, with coverage | GitHub `ci.yml` on `release` |
 
-**The consequence you must not forget:** a GitHub-green PR has NOT had its tests run. `./scripts/local_ci.sh` before every push is the gate; state its result in the PR. A regression outside `test_core`/`test_backends` will otherwise reach `main` and only surface in nightly.
+**The consequence you must not forget:** a GitHub-green PR has NOT had its tests run. The gate is `scripts/local_ci.sh`, run by the pre-push hook; state its result in the PR. A regression outside `test_core`/`test_backends` will otherwise reach `main` and only surface in nightly.
 
 ---
 
@@ -572,7 +555,7 @@ Log incrementally, summarize at milestones only. During work: technical notes + 
 
 - **Plotting**: matplotlib with immediate `plt.show()` (primary); Plotly/Bokeh on demand. Publication-ready; notation `u(t,x)`, `m(t,x)`.
 - **Notebook-based reporting** ⚠️ is the primary research-output form (algorithm comparisons, convergence, validation). Track `.ipynb` with cleared outputs + exported HTML.
-- **Output dirs**: `examples/outputs/` (gitignored), `examples/outputs/reference/` (tracked), `benchmarks/results/` (gitignored), `benchmarks/reports/*.html` (tracked). Python scripts → `examples/outputs/[category]/`, never root.
+- **Output dirs**: `examples/outputs/` and `benchmarks/results/`, both gitignored. Python scripts → `examples/outputs/[category]/`, never root.
 - **Incremental data saving** ⚠️: long computations (GFDM, Picard sweeps) save after each iteration to HDF5 (append + metadata) — a crash must not lose progress.
 - **Heavy tasks** ⚠️: never cap timeouts on long solvers; run in background (`run_in_background` / `&`); monitor via logs; trust incremental saves.
 
@@ -598,13 +581,6 @@ Rich-only backend (v0.16.15+; external tqdm removed — legacy alias kept). Use 
 ---
 
 ## 📜 Solo Maintainer's Protocol
-1. Propose in issue → 2. implement in a feature-branch PR → 3. **independent adversarial review** (fresh reviewer, not just self-review — mandatory, see *Branches & PRs*) → 4. **verify issue completion** → 5. merge only after review is MERGE-OK **and** all checks pass. **Self-enforced** — see *Branches & PRs*: the `main` ruleset exists but is `enforcement=disabled`, so no step of this protocol is blocked server-side.
+1. Propose in issue → 2. implement in a feature-branch PR → 3. **independent adversarial review** (fresh reviewer, not just self-review — mandatory, see *Branches & PRs*) → 4. **verify issue completion** → 5. merge under § *Review before merge* with the gate green and all checks passing.
 
 **Issue-completion verification** ⚠️ (before closing an issue / opening a PR): read the *original* issue (not commit messages); check every acceptance criterion; answer every discussion point; confirm all subtasks; document deviations (update the issue before closing). Anti-pattern: closing on commit messages without re-reading the requirements.
-
----
-
-## 🤖 AI interaction design
-Pointer: `mfg-research/docs/archon-notes/development/AI_INTERACTION_DESIGN.md` (graduate-level rigor, complexity analysis, journal-quality exposition).
-
----
