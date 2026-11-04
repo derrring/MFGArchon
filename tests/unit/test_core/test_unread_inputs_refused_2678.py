@@ -104,8 +104,8 @@ def _drift_written_x_first(x, t, m):
     return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
 
 
-def _drift_unnamed(t, x, m):
-    return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
+def _drift_unnamed(a, b, c):
+    return 0.2 * (0.5 - np.asarray(b)) * (1.0 + np.asarray(a))
 
 
 def _zero_drift(t, x, m):
