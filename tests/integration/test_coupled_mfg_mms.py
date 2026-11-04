@@ -219,7 +219,7 @@ class CoupledSinusoid1D(ManufacturedSolution):
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(lambda_=lam),
             coupling=lambda m: self.c_f * m,
-            coupling_dm=lambda _m: self.c_f,
+            coupling_dm=lambda m: self.c_f,
         )
         self.pair = pair
         self._hjb = hjb_source(pair, hamiltonian, self.sigma)

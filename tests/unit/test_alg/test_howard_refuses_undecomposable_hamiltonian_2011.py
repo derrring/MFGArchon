@@ -112,10 +112,10 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
     x = np.linspace(0.0, L, NX)
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1))
 
-    def _uT(point):
-        return float(np.cos(2.0 * np.pi * np.asarray(point).ravel()[0])) if terminal == "cos" else 0.0
+    def _uT(x):
+        return float(np.cos(2.0 * np.pi * np.asarray(x).ravel()[0])) if terminal == "cos" else 0.0
 
-    components = MFGComponents(hamiltonian=hamiltonian, m_initial=lambda p: 1.0, u_terminal=_uT)
+    components = MFGComponents(hamiltonian=hamiltonian, m_initial=lambda x: 1.0, u_terminal=_uT)
     problem = MFGProblem(geometry=grid, components=components, T=T, Nt=NT, volatility=0.5)
     solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), inner_solver=inner_solver, **solver_kwargs)
     m = np.tile(np.exp(-((x - 0.3) ** 2) / 0.02), (NT + 1, 1))

@@ -33,7 +33,7 @@ def _solve_with_exit_on(boundary: str):
     problem = MFGProblem(
         model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.8),
         domain=geo,
-        conditions=Conditions(m_initial=lambda p: 1.0 / 1.1, u_terminal=lambda p: 0.0, T=0.5),
+        conditions=Conditions(m_initial=lambda x: 1.0 / 1.1, u_terminal=lambda x: 0.0, T=0.5),
         Nt=5,
     )
     result = problem.solve()

@@ -159,12 +159,12 @@ def create_santa_fe_problem(
     attendance_cache = {"m_attend": 0.5}  # Start with neutral assumption
 
     # Initial distribution: Gaussian centered at θ=0 (no strong preference)
-    def initial_density_func(theta):
+    def initial_density_func(x):
         """Gaussian initial distribution."""
-        return np.exp(-0.5 * (theta / 1.0) ** 2)
+        return np.exp(-0.5 * (x / 1.0) ** 2)
 
     # Terminal value: zero
-    def terminal_value_func(theta):
+    def terminal_value_func(x):
         """Zero terminal cost."""
         return 0.0
 

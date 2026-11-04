@@ -115,7 +115,7 @@ def _fem_problem(g: float):
     return MFGProblem(
         model=Model(hamiltonian=_hamiltonian(), volatility=SIGMA),
         domain=geometry,
-        conditions=Conditions(m_initial=lambda p: scale * _mode(p[0]), u_terminal=lambda p: 0.0, T=T),
+        conditions=Conditions(m_initial=lambda x: scale * _mode(x[0]), u_terminal=lambda x: 0.0, T=T),
         Nt=20,
     )
 

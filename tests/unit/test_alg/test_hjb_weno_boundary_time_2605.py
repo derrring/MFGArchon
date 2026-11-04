@@ -77,7 +77,7 @@ def _problem(bc, d=1, n=21):
                 volatility=SIGMA,
             ),
             domain=grid,
-            conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=T),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=T),
             Nt=NT,
         )
 

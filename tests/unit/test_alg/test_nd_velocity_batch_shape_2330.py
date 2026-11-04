@@ -74,7 +74,7 @@ def _velocity(hamiltonian, cross_density=None):
             T=0.3,
             Nt=3,
             volatility=0.3,
-            components=MFGComponents(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, hamiltonian=hamiltonian),
+            components=MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=hamiltonian),
         )
     p = np.stack([SLOPES[0] + TWIST * y + 0.1 * steps, np.broadcast_to(SLOPES[1] + TWIST * x, U.shape)], axis=1)
     shift = np.zeros(2) if isinstance(hamiltonian, CongestionHamiltonian) else SHIFT

@@ -62,7 +62,7 @@ def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos
     x = np.linspace(0.0, 1.0, n)
     comps = MFGComponents(
         m_initial=m_init,
-        u_terminal=lambda xx: 0.0 * np.asarray(xx),
+        u_terminal=lambda x: 0.0 * np.asarray(x),
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
@@ -363,8 +363,8 @@ class TestConservativeAdvection:
             coupling_dm=lambda m: 0.0 * np.asarray(m),
         )
         comps = MFGComponents(
-            m_initial=lambda xx: np.exp(-((np.asarray(xx) - 0.18) ** 2) / 0.005),
-            u_terminal=lambda xx: 0.0 * np.asarray(xx),
+            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.18) ** 2) / 0.005),
+            u_terminal=lambda x: 0.0 * np.asarray(x),
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=0.4, Nt=50, volatility=0.05, components=comps)

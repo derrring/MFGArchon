@@ -151,7 +151,7 @@ def _problem(domain, bc):
     problem = MFGProblem(
         model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=SIGMA),
         domain=grid,
-        conditions=Conditions(m_initial=lambda z: 1.0 / volume, u_terminal=lambda z: 0.0, T=T),
+        conditions=Conditions(m_initial=lambda x: 1.0 / volume, u_terminal=lambda x: 0.0, T=T),
         Nt=NT,
     )
     return problem, tuple(npts), np.meshgrid(*grid.coordinates, indexing="ij")

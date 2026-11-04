@@ -32,7 +32,7 @@ def _problem(grid: TensorProductGrid, nt: int, t_end: float, m_initial=lambda p:
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)),
         **(volatility or {"volatility": 0.4}),
     )
-    conditions = Conditions(m_initial=m_initial, u_terminal=lambda p: 0.0, T=t_end)
+    conditions = Conditions(m_initial=m_initial, u_terminal=lambda x: 0.0, T=t_end)
     return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=nt)
 
 
@@ -73,7 +73,7 @@ def test_a_varying_volatility_conserves_mass_under_no_flux(path: str):
     solver = FPFDMSolver(_problem(grid, nt, t_end), boundary_conditions=no_flux_bc(dimension=dim))
     if path == "explicit_callable_drift":
         m = solver.solve_fp_system(
-            m0, drift_field=lambda t, xx, mm: 0.5 * np.ones_like(mm), show_progress=False, **volatility
+            m0, drift_field=lambda t, x, m: 0.5 * np.ones_like(m), show_progress=False, **volatility
         )
     else:
         u = np.broadcast_to(x[0] if path == "implicit_drifted" else 0.0 * x[0], (nt + 1, *m0.shape)).copy()
@@ -93,7 +93,7 @@ def test_the_coupled_solve_conserves_mass_with_a_field_volatility():
         grid,
         40,
         2.0,
-        m_initial=lambda p: 1 + 0.5 * np.cos(np.pi * np.asarray(p, dtype=float)),
+        m_initial=lambda x: 1 + 0.5 * np.cos(np.pi * np.asarray(x, dtype=float)),
         volatility=0.3 + 0.2 * x,
         volatility_kind="field",
     )
@@ -117,7 +117,7 @@ def test_one_over_d_is_a_fixed_point_of_every_fdm_path(path: str):
     elif path == "explicit_callable_drift":
         m1 = solver.solve_fp_system(
             m0,
-            drift_field=lambda t, xx, mm: np.zeros_like(mm),
+            drift_field=lambda t, x, m: np.zeros_like(m),
             volatility=sigma,
             volatility_kind="field",
             show_progress=False,
@@ -215,8 +215,8 @@ def _one_solve(grid, path: str, m0: np.ndarray, nt: int, dt: float, bc, **volati
         return np.asarray(steps)
     if path == "explicit_callable_drift":
 
-        def drift(t, xx, mm):
-            return 0.2 * (np.ones_like(mm) if m0.ndim == 1 else np.ones((m0.ndim, *np.shape(mm))))
+        def drift(t, x, m):
+            return 0.2 * (np.ones_like(m) if m0.ndim == 1 else np.ones((m0.ndim, *np.shape(m))))
 
         return np.asarray(solver.solve_fp_system(m0, drift_field=drift, show_progress=False, **volatility))
     u = np.broadcast_to(0.1 * np.cos(2 * np.pi * _nodes(grid)[0]), (nt + 1, *m0.shape)).copy()

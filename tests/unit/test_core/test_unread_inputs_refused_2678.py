@@ -104,8 +104,8 @@ def _drift_written_x_first(x, t, m):
     return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
 
 
-def _drift_unnamed(a, b, c):
-    return 0.2 * (0.5 - np.asarray(b)) * (1.0 + np.asarray(a))
+def _drift_unnamed(t, x, m):
+    return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
 
 
 def _zero_drift(t, x, m):
@@ -294,13 +294,13 @@ def test_the_advice_on_obstacles_holds_a_density_out_of_the_region():
         problem = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.05),
             domain=grid,
-            conditions=Conditions(m_initial=lambda y: 1.0 + 0.0 * _x(y), u_terminal=lambda y: 0.0 * _x(y), T=0.3),
+            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * _x(x), u_terminal=lambda x: 0.0 * _x(x), T=0.3),
             Nt=15,
         )
         solver = FPParticleSolver(problem, num_particles=1000, seed=2688, **given)
         density = solver.solve_fp_system(
             M_initial=start,
-            drift_field=lambda t, y, m: 2.0 + 0.0 * np.asarray(y, dtype=float),
+            drift_field=lambda t, x, m: 2.0 + 0.0 * np.asarray(x, dtype=float),
             drift_needs_density=False,
             show_progress=False,
         )

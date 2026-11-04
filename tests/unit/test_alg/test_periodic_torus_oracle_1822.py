@@ -61,8 +61,8 @@ def _problem(nx, sigma, k=1.0):
         Nt=NT,
         volatility=sigma,
         components=MFGComponents(
-            m_initial=lambda z: _datum(z, k),
-            u_terminal=lambda z: np.zeros_like(np.asarray(z)),
+            m_initial=lambda x: _datum(x, k),
+            u_terminal=lambda x: np.zeros_like(np.asarray(x)),
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m,

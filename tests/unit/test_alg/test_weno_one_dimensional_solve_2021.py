@@ -46,8 +46,8 @@ def _solve(dim, n, nt):
         volatility=0.3,
         coupling_coefficient=0.0,
         components=MFGComponents(
-            m_initial=lambda q: 1.0,
-            u_terminal=lambda q: 0.0,
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 # Negative on purpose: the sums pinned below were captured under the pre-#2375

@@ -52,8 +52,8 @@ def _problem() -> MFGProblem:
             T=0.5,
             volatility=0.3,
             components=MFGComponents(
-                m_initial=lambda z: 1.0,
-                u_terminal=lambda z: 0.0,
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.0,
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
                 ),
