@@ -33,7 +33,13 @@ import numpy as np
 
 from mfgarchon.core.hamiltonian import HamiltonianBase
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
-from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS, Slots, bound_attribute
+from mfgarchon.types.callable_protocols import (
+    CONDITION_SLOTS,
+    CONDITIONAL_HAMILTONIAN_SLOTS,
+    CONDITIONAL_TERMINAL_SLOTS,
+    Slots,
+    bound_attribute,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -275,12 +281,14 @@ class StochasticMFGProblem(MFGProblem):
             # Default: no dependence on terminal noise
             # Use normalized terminal cost attribute (set in __init__)
             if self._terminal_cost_normalized is not None:
-                return self._terminal_cost_normalized(x)
+                bound = bound_attribute(self, "_terminal_cost_normalized", CONDITION_SLOTS, role="u_terminal")
+                return bound(x=x, t=self.T)
             else:
                 # No terminal cost defined - use zero
                 return 0.0
 
-        return self.conditional_terminal_cost(x, theta_T)
+        bound = bound_attribute(self, "conditional_terminal_cost", CONDITIONAL_TERMINAL_SLOTS, role="conditional_terminal_cost")
+        return bound(x=x, theta=theta_T)
 
     def create_conditional_problem(self, noise_path: np.ndarray) -> MFGProblem:
         """

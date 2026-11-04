@@ -17,14 +17,15 @@ from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
 from mfgarchon.types.callable_protocols import (
+    COEFFICIENT_SLOTS,
     HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
+    REGION_SLOTS,
     SOURCE_TERM_SLOTS,
     Slots,
     bind_user_callable,
     bound_attribute,
     refuse_methods_out_of_order,
-    refuse_overridden,
 )
 from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights
@@ -560,10 +561,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             from mfgarchon.utils.pde_coefficients import volatility_from_diffusion
 
             if callable(diffusion):
-                _D_callable = diffusion
+                _D_callable = bind_user_callable(diffusion, COEFFICIENT_SLOTS, role="diffusion")
 
                 def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
-                    D = _D(t, x, m)
+                    D = _D(t=t, x=x, m=m)
                     kind = _callable_output_kind(D, _kind, self.dimension, _evaluation_shape(x, m))
                     return volatility_from_diffusion(D, kind=kind)
             else:
@@ -592,10 +593,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # spatial dependence, users with Stratonovich-derived drift must apply
         # the correction `alpha_Ito = alpha_Strat - (1/2) sigma * d_x sigma`
         # before passing the drift. mfgarchon does NOT add this correction.
-        from mfgarchon.utils.pde_coefficients import COEFFICIENT_CALL_NAMES
-
-        refuse_overridden(vola_value, COEFFICIENT_CALL_NAMES, role="volatility")
         self._volatility = vola_value
+        self._volatility_binding = (
+            bind_user_callable(vola_value, COEFFICIENT_SLOTS, role="volatility") if callable(vola_value) else None
+        )
         self._volatility_kind = volatility_kind
 
         # Extended PDE form fields (Issue #921).
@@ -836,6 +837,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Hamiltonian becomes available.
         if self.state_penalty is not None:
             self._compose_state_penalty_into_potential()
+
+        self._refuse_a_hamiltonian_whose_reads_disagree()
 
         # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
         # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
@@ -1367,8 +1370,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         volatility, kind = self._volatility, self._volatility_kind
         if callable(volatility):
 
+            bound = self._volatility_binding
+
             def diffusion(t, x, m):
-                value = volatility(t, x, m)
+                value = bound(t=t, x=x, m=m)
                 output_kind = _callable_output_kind(value, kind, self.dimension, _evaluation_shape(x, m))
                 return diffusion_from_volatility(value, kind=output_kind)
 
@@ -1919,6 +1924,18 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # - _u_final(): Removed - must be provided via MFGComponents.u_terminal
     # - _m_initial(): Removed - must be provided via MFGComponents.m_initial
 
+    def _refuse_a_hamiltonian_whose_reads_disagree(self) -> None:
+        """Compare the Hamiltonian's batch and point reads where it first meets this problem's points (#2875). A graph's
+        node plays x, and has no coordinates to read."""
+        from mfgarchon.core.hamiltonian import HamiltonianBase, refuse_a_hamiltonian_whose_reads_disagree
+
+        hamiltonian = getattr(self.components, "_hamiltonian_class", None) if self.components is not None else None
+        if not isinstance(hamiltonian, HamiltonianBase) or self.geometry is None:
+            return
+        grid = self.geometry.get_spatial_grid()
+        if isinstance(grid, np.ndarray) and grid.ndim == 2:
+            refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid)
+
     def _compose_state_penalty_into_potential(self) -> None:
         """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign.
 
@@ -1971,13 +1988,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         previous = getattr(hamiltonian, "_potential", None)
         if previous is not None:
             previous = bind_user_callable(previous, POTENTIAL_SLOTS, role="potential")
-        penalty = self.state_penalty
+        penalty = bind_user_callable(self.state_penalty, REGION_SLOTS, role="state_penalty")
         scale = self.state_penalty_scale
 
         def composed_potential(t: float, x: Any) -> Any:
             import numpy as _np
 
-            wall = scale * _np.asarray(penalty(x), dtype=float)
+            wall = scale * _np.asarray(penalty(x=x), dtype=float)
             if previous is None:
                 squeezed = wall.squeeze()
                 return float(squeezed) if squeezed.ndim == 0 else squeezed

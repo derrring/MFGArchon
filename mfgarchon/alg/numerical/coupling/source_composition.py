@@ -72,7 +72,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
-from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute
+from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute, coordinate_tuple
 
 from .graph_coupling import _get_time_slice
 
@@ -90,7 +90,10 @@ def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray
 
     The one place a problem's ``source_term_hjb`` or ``source_term_fp`` is invoked.
     """
-    return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=x, m=m, v=v, t=t)
+    coordinates = coordinate_tuple(x, problem.dimension)
+    if np.ndim(m) > 1 and np.size(coordinates[0]) == np.size(m):  # one entry per coordinate, of the density's shape
+        coordinates = tuple(np.reshape(entry, np.shape(m)) for entry in coordinates)
+    return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=coordinates, m=m, v=v, t=t)
 
 
 @dataclass(frozen=True)

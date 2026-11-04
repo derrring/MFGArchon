@@ -20,7 +20,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
-from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_by_name
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_user_callable
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -879,14 +879,8 @@ def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
 
 
 def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
-    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise: the strict rule of
-    `callable_protocols.bind_by_name`, the one owner of it, which a graph node's value reads too (#2512 row B2)."""
-    return bind_by_name(
-        fn,
-        BOUNDARY_VALUE_SLOTS,
-        role="boundary value",
-        ruling="#2512 row B2",
-    )
+    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise (#2512 row B2)."""
+    return bind_user_callable(fn, BOUNDARY_VALUE_SLOTS, role="boundary value")
 
 
 def _with_default(fn: Callable[..., Any], *names: str) -> str:
@@ -1002,8 +996,10 @@ def boundary_value(
             )
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
+        # One point, so the body reads a tuple of scalars and there is no batch read to compare.
+        slots = {"t": t} if x is None else {"t": t, "x": tuple(np.asarray(x, dtype=float))}
         return _read_constant(
-            bound(t=t, x=x),
+            bound(**slots),
             kind=f"{kind} (what its callable returned)",
             where=where,
             returned=True,

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.types.callable_protocols import REGION_SLOTS, bind_user_callable
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
@@ -689,7 +690,7 @@ class LevelSetEvolver:
                 X = np.array(self.geometry.meshgrid())
             else:
                 raise ValueError("Geometry must support meshgrid() for callable velocity")
-            V_array = velocity(X)
+            V_array = bind_user_callable(velocity, REGION_SLOTS, role="velocity")(x=tuple(X))
         elif isinstance(velocity, (int, float)):
             V_array = np.full_like(phi, float(velocity))
         else:

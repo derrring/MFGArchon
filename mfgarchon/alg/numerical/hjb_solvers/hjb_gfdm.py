@@ -3187,7 +3187,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # - D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
-                s_n = np.asarray(evaluate_solver_source(source_term, t=n * _dt, x=_x), dtype=float)
+                s_n = np.asarray(evaluate_solver_source(source_term, t=n * _dt, x=_x, dimension=self.problem.dimension), dtype=float)
                 # Shape-check rather than reshape. A 2D source handed back in the wrong point
                 # order has the right SIZE and silently yields a different value function --
                 # measured, an F-ordered (nx, ny) array is accepted and changes Linf from

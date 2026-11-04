@@ -26,7 +26,7 @@ from mfgarchon.operators.stencils.finite_difference import (
     upwind_momentum,
     upwind_momentum_derivatives,
 )
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
@@ -148,8 +148,8 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(
                         p_pos[axis] = magnitude
                         p_neg = p_pos.copy()
                         p_neg[axis] = -magnitude
-                        h_pos = float(np.asarray(H(x=x, m=m, p=p_pos, t=0.0)).ravel()[0])
-                        h_neg = float(np.asarray(H(x=x, m=m, p=p_neg, t=0.0)).ravel()[0])
+                        h_pos = float(np.asarray(H(x=coordinate_tuple(x, dimension), m=m, p=p_pos, t=0.0)).ravel()[0])
+                        h_neg = float(np.asarray(H(x=coordinate_tuple(x, dimension), m=m, p=p_neg, t=0.0)).ravel()[0])
                         if h_zero is None:
                             h_zero = h_pos
                         spread = abs(h_pos - h_zero) + abs(h_neg - h_zero)
@@ -299,8 +299,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 residual and for the analytic (chain-rule) Jacobian, O(Nx) per Newton step. The
                 per-point path evaluates it one node at a time and assembles the Jacobian by
                 finite differences, O(Nx^2). A Hamiltonian that gives a different answer when
-                evaluated on several nodes at once is refused on the batch path
-                (`require_batch_safe_hamiltonian`); pass False to solve it point by point.
+                evaluated on several nodes at once is refused when the problem takes it
+                (`refuse_a_hamiltonian_whose_reads_disagree`, #2875).
                 The batch path became the default in #1884. #1607 had kept it opt-in because it
                 then converged on fewer problems, which no longer reproduces at 5a16d60f: across
                 27 coupled LQ configurations (Nx 31-81, coupling 0.02-2, sigma 0.05-0.4,
@@ -441,7 +441,6 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Initialize warning flags (Issue #545 - NO hasattr pattern)
         self._bc_warning_emitted: bool = False
-        self._batch_safety_checked: bool = False
 
         # Cached Laplacian operator for nD diffusion (Issue #787)
         self._laplacian_op: object | None = None
@@ -627,9 +626,6 @@ class HJBFDMSolver(BaseHJBSolver):
             # per-point one only for a Hamiltonian that evaluates every node correctly at once, so a single-
             # population solve checks that once, and refuses one that does not (#1884).
             effective_backend = None if (cross_density is not None or self._analytic_jacobian) else self.backend
-            if effective_backend is None and cross_density is None and not self._batch_safety_checked:
-                base_hjb.require_batch_safe_hamiltonian(self.problem)
-                self._batch_safety_checked = True
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
@@ -763,7 +759,7 @@ class HJBFDMSolver(BaseHJBSolver):
             # Evaluate source term at current timestep (if provided)
             if source_term is not None:
                 x_grid = self.problem.geometry.get_spatial_grid()  # (N, d)
-                source_at_n = evaluate_solver_source(source_term, t=t_current, x=x_grid).reshape(self.shape)
+                source_at_n = evaluate_solver_source(source_term, t=t_current, x=x_grid, dimension=self.problem.dimension).reshape(self.shape)
             else:
                 source_at_n = None
 

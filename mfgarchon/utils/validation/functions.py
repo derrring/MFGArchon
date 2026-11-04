@@ -52,9 +52,9 @@ _SMOOTHNESS_RTOL = 1e-3
 
 def _raw_callable_advice(fn: Any) -> str:
     """What a raw callable `_call_h` could not call is told, which keeps what a partial froze."""
-    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, rewrite_advice
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
 
-    return rewrite_advice(fn, HAMILTONIAN_SLOTS)
+    return f"Name each parameter of {getattr(fn, '__qualname__', fn)!r} after what it reads, from {', '.join(HAMILTONIAN_SLOTS.order)}."
 
 
 def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
@@ -69,6 +69,7 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable, refuse_overridden
 
+    x = tuple(np.atleast_1d(x))
     target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         refuse_overridden(fn, HAMILTONIAN_SLOTS.order, role="Hamiltonian callable")
@@ -548,110 +549,5 @@ def validate_hamiltonian_consistency(
     _report(result, "dH_dm", "dH_dm", x_sample, dm_witness, dm_inconsistent)
     for i in range(dimension):
         _report(result, f"dH_dp[{i}]", f"dH_dp[{i}]", x_sample, dp_witness[i], dp_inconsistent[i])
-
-    return result
-
-
-def validate_drift(
-    drift: Callable,
-    geometry: GeometryProtocol,
-) -> ValidationResult:
-    """
-    Validate drift function for FP equation.
-
-    The drift should have signature drift(x), drift(x, m), or drift(t, x, m)
-    and return a vector of the same dimension as x.
-
-    Args:
-        drift: Drift function
-        geometry: Geometry for sample point
-
-    Returns:
-        ValidationResult
-    """
-    result = ValidationResult()
-
-    x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "drift")
-    if err is not None:
-        return err
-
-    m_sample = np.ones(dimension if dimension > 1 else 1)
-
-    # Try different signatures: drift(x, m), drift(t, x, m), drift(x)
-    value = None
-    for args in [(x_sample, m_sample), (0.0, x_sample, m_sample), (x_sample,)]:
-        try:
-            value = drift(*args)
-            break
-        except TypeError:
-            continue
-
-    if value is None:
-        result.add_error(
-            "Drift has wrong signature",
-            location="drift",
-            suggestion="Drift should have signature drift(x), drift(x, m), or drift(t, x, m)",
-        )
-        return result
-
-    # Check return shape
-    if isinstance(value, np.ndarray):
-        if value.shape != (dimension,) and value.shape != ():
-            result.add_warning(
-                f"Drift returned shape {value.shape}, expected ({dimension},)",
-                location="drift",
-            )
-
-    return result
-
-
-def validate_running_cost(
-    running_cost: Callable,
-    geometry: GeometryProtocol,
-) -> ValidationResult:
-    """
-    Validate running cost function.
-
-    The running cost should have signature f(x), f(x, m), or f(t, x, m)
-    and return a scalar.
-
-    Args:
-        running_cost: Running cost function
-        geometry: Geometry for sample point
-
-    Returns:
-        ValidationResult
-    """
-    result = ValidationResult()
-
-    x_sample, _p_sample, _m_sample, _dimension, err = _get_sample_inputs(geometry, "running_cost")
-    if err is not None:
-        return err
-
-    m_sample = 1.0
-
-    # Try different signatures: f(x, m), f(t, x, m), f(x)
-    value = None
-    for args in [(x_sample, m_sample), (0.0, x_sample, m_sample), (x_sample,)]:
-        try:
-            value = running_cost(*args)
-            break
-        except TypeError:
-            continue
-
-    if value is None:
-        result.add_error(
-            "Running cost has wrong signature",
-            location="running_cost",
-            suggestion="Running cost should have signature f(x), f(x, m), or f(t, x, m)",
-        )
-        return result
-
-    # Check return type
-    if not np.isscalar(value):
-        result.add_warning(
-            f"Running cost should return scalar, got {type(value).__name__}",
-            location="running_cost",
-        )
 
     return result

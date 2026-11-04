@@ -71,7 +71,7 @@ from mfgarchon.geometry.boundary.applicator_base import (
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_every_face, repeated_endpoint_mirror
 from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, bind_user_callable, evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.numerical.mass_fabrication_gate import MAX_CLIP_MASS_FABRICATION, refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
@@ -1322,7 +1322,7 @@ def solve_fp_nd_full_system(
         # Evaluate source term at current timestep (implicit: evaluate at t_{k+1})
         if source_term is not None:
             t_next = (k + 1) * dt
-            source_values = evaluate_solver_source(source_term, t=t_next, x=x_grid).ravel()
+            source_values = np.ravel(evaluate_solver_source(source_term, t=t_next, x=x_grid, dimension=grid.dimension))
         else:
             source_values = None
 
@@ -1556,10 +1556,11 @@ def solve_timestep_tensor_explicit(
         t = timestep_idx * dt
         Sigma = np.zeros((*shape, ndim, ndim))
         axes = _grid_axes(grid)
+        bound = bind_user_callable(tensor_field, COEFFICIENT_SLOTS, role="volatility")
         for idx in np.ndindex(shape):
-            x_coords = np.array([axes[d][idx[d]] for d in range(ndim)])
+            x_coords = tuple(axes[d][idx[d]] for d in range(ndim))
             m_at_point = M_current[idx]
-            Sigma[idx] = tensor_field(t, x_coords, m_at_point)
+            Sigma[idx] = bound(t=t, x=x_coords, m=m_at_point)
 
         # Validate PSD
         coeff = CoefficientField(tensor_field, None, "volatility", dimension=ndim)

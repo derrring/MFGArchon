@@ -528,15 +528,11 @@ def _validate_callable_ic(
 ) -> ValidationResult:
     """Validate a callable initial/terminal condition.
 
-    Uses ``_get_validation_points()`` to obtain a geometry-agnostic sample
-    point, then ``adapt_ic_callable()`` to probe the callable's signature.
-    If the callable matches any supported convention the validation passes.
-    If no convention works, a detailed error lists every attempted signature
-    and what went wrong.
+    Binds it by the names it declares and reads it at one point of the geometry, ``_get_validation_points()``.
 
-    Issues #682, #684: Geometry-agnostic callable validation.
+    Issues #682, #2875: Geometry-agnostic callable validation.
     """
-    from mfgarchon.utils.callable_adapter import adapt_ic_callable
+    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable, coordinate_tuple
 
     result = ValidationResult()
 
@@ -551,46 +547,26 @@ def _validate_callable_ic(
         )
         return result
 
-    dimension = geometry.dimension
-
-    # For 1D, the callable adapter expects a scalar float
-    if dimension == 1:
-        adapter_sample: float | np.ndarray = float(sample_point[0])
-    else:
-        adapter_sample = sample_point
-
-    # Probe signature via adapter
     try:
-        sig_type, adapted = adapt_ic_callable(
-            func,
-            dimension=dimension,
-            sample_point=adapter_sample,
-            time_value=time_value,
-            role=name,
-        )
+        bound = bind_user_callable(func, CONDITION_SLOTS, role=name)
     except TypeError as e:
         result.add_error(
             str(e),
             location=name,
-            suggestion=f"Ensure {name} accepts the coordinate format from geometry",
+            suggestion=f"Name {name}'s parameters after what they read: x, and t if it reads time",
         )
         return result
 
-    # Store detected signature and geometry type in context (informational)
-    result.context["adapted_signature"] = sig_type.name
     result.context["geometry_type"] = type(geometry).__name__
 
-    # Evaluate the adapted callable at the sample point to check output quality
+    # Evaluate the callable at the sample point to check output quality
     try:
-        if dimension == 1:
-            value = adapted(adapter_sample)
-        else:
-            value = adapted(sample_point)
+        value = bound(t=time_value, x=coordinate_tuple(sample_point, geometry.dimension))
     except Exception as e:
         result.add_error(
             f"{name} callable raised exception at sample point {sample_point}: {e}",
             location=name,
-            suggestion=f"Ensure {name} accepts the coordinate format from geometry",
+            suggestion=f"x is a coordinate tuple: read {name}'s coordinates as x[0], x[1], ...",
         )
         return result
 
@@ -678,30 +654,16 @@ def _evaluate_callable_on_grid(
 
     Issue #683: Mass normalization validation.
     """
-    from mfgarchon.utils.callable_adapter import adapt_ic_callable
+    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable, coordinate_tuple
 
     try:
         points = geometry.get_collocation_points()
         if points.ndim == 1:
             points = points.reshape(-1, 1)
 
-        dimension = geometry.dimension
-
-        # Use adapter to handle different callable signatures
-        if dimension == 1:
-            sample = float(points[len(points) // 2, 0])
-        else:
-            sample = points[len(points) // 2]
-
-        _, adapted = adapt_ic_callable(func, dimension=dimension, sample_point=sample)
-
-        # Evaluate on all points
-        if dimension == 1:
-            values = np.array([adapted(float(p[0])) for p in points])
-        else:
-            values = np.array([adapted(p) for p in points])
-
-        return values
+        bound = bind_user_callable(func, CONDITION_SLOTS, role="condition")
+        values = np.asarray(bound(t=0.0, x=coordinate_tuple(points, geometry.dimension)), dtype=float)
+        return np.array(np.broadcast_to(values.ravel() if values.size > 1 else values, (points.shape[0],)))
     except Exception:
         logger.debug("Failed to evaluate callable on grid, returning None", exc_info=True)
         return None

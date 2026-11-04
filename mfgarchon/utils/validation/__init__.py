@@ -54,11 +54,9 @@ from mfgarchon.utils.validation.components import (
 # Custom function validation (Issue #686)
 from mfgarchon.utils.validation.functions import (
     validate_custom_functions,
-    validate_drift,
     validate_hamiltonian,
     validate_hamiltonian_consistency,
     validate_hamiltonian_derivative,
-    validate_running_cost,
 )
 from mfgarchon.utils.validation.protocol import (
     ValidationError,
@@ -96,8 +94,6 @@ __all__ = [
     "validate_hamiltonian",
     "validate_hamiltonian_derivative",
     "validate_hamiltonian_consistency",
-    "validate_drift",
-    "validate_running_cost",
     # Arrays
     "validate_array_dtype",
     "validate_array_shape",

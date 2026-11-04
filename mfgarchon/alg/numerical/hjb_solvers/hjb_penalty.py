@@ -150,7 +150,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
 
         def penalized_source(t: float, x: NDArray) -> NDArray:
             # Start with existing source term if any
-            base = evaluate_solver_source(source_term, t=t, x=x) if source_term is not None else np.zeros(x.shape[0])
+            base = evaluate_solver_source(source_term, t=t, x=x, dimension=x.shape[1]) if source_term is not None else np.zeros(x.shape[0])
 
             # The intended penalty, (1/eps) * max(0, Psi - v), cannot be formed here: this callable
             # receives (t, x) and never v, and the inner solver evaluates it as a source at each time

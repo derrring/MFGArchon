@@ -75,6 +75,9 @@ from mfgarchon.types.callable_protocols import (
     POTENTIAL_SLOTS,
     BoundCallable,
     bound_attribute,
+    coordinate_tuple,
+    point_at,
+    refuse_batch_disagreement,
     refuse_overridden,
 )
 
@@ -996,7 +999,8 @@ class HEvalState:
     t : float
         Time. Required, first (#2375 ruling 8).
     x : NDArray
-        Position(s), shape ``(N, d)`` (or ``(d,)`` for a single point).
+        Position(s), shape ``(N, d)`` (or ``(d,)`` for a single point). The Hamiltonian reads them as a coordinate tuple,
+        with ``d`` the last axis of ``p`` (#2875).
     p : NDArray
         Momentum ``p = ∇u``, shape ``(N, d)``. Exposed as ``grad_u`` alias.
     m : float | NDArray
@@ -1162,7 +1166,7 @@ class HamiltonianBase(MFGOperatorBase):
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
         """
-        return np.asarray(self(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(self(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
@@ -1172,7 +1176,7 @@ class HamiltonianBase(MFGOperatorBase):
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
-        return np.asarray(self.dp(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(self.dp(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def dH_dm(self, state: HEvalState) -> NDArray:
         """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
@@ -1180,7 +1184,7 @@ class HamiltonianBase(MFGOperatorBase):
         Separate from the residual/Jacobian primitives — the FP source term, not the
         HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
         """
-        return np.asarray(self.dm(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(self.dm(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate(self, state: HEvalState) -> HamiltonianValues:
         """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
@@ -1311,7 +1315,7 @@ class HamiltonianBase(MFGOperatorBase):
             except (TypeError, ValueError):
                 # __call__ doesn't support batch m — fall back to per-point loop
                 m_arr = np.asarray(m)
-                return np.stack([self._finite_diff_dp(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(N)])
+                return np.stack([self._finite_diff_dp(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(N)])
         return self._finite_diff_dp(x, m, p, t)
 
     def dm(
@@ -1361,7 +1365,7 @@ class HamiltonianBase(MFGOperatorBase):
                 return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError):
                 return np.array(
-                    [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                    [self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
                 )
         return self._finite_diff_dm(x, m, p, t)
 
@@ -1397,12 +1401,11 @@ class HamiltonianBase(MFGOperatorBase):
         NDArray
             Gradient dH/dx, shape (d,) or (N, d)
         """
-        x_arr = np.asarray(x)
-        if x_arr.ndim == 2:
+        if np.ndim(x[0]) > 0:
             p_arr = np.asarray(p)
             m_arr = np.asarray(m)
             return np.stack(
-                [self._finite_diff_dx(x_arr[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(x_arr.shape[0])]
+                [self._finite_diff_dx(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(np.size(x[0]))]
             )
         return self._finite_diff_dx(x, m, p, t)
 
@@ -1579,15 +1582,12 @@ class HamiltonianBase(MFGOperatorBase):
     ) -> NDArray:
         """Compute dH/dx using central finite differences."""
         eps = self.finite_diff_eps
-        x_flat = np.atleast_1d(x).astype(float)
-        d = len(x_flat)
+        d = len(x)
         grad = np.zeros(d)
 
         for i in range(d):
-            x_plus = x_flat.copy()
-            x_minus = x_flat.copy()
-            x_plus[i] += eps
-            x_minus[i] -= eps
+            x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
+            x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
 
             H_plus = self(x=x_plus, m=m, p=p, t=t)
             H_minus = self(x=x_minus, m=m, p=p, t=t)
@@ -2016,7 +2016,7 @@ class SeparableLagrangian(LagrangianBase):
         its own evaluate_hamiltonian by exactly 2(V+f).
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
-        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
+        V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
@@ -2030,7 +2030,7 @@ class SeparableLagrangian(LagrangianBase):
         H_ctrl = self.control_cost.evaluate(p_arr)
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
-        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
+        V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
@@ -2488,36 +2488,6 @@ class SeparableHamiltonian(HamiltonianBase):
         self._coupling_dm = coupling_dm
         if potential is not None:
             _bound_potential(self)
-        # Issue #929: Cache vectorized-callable detection result
-        self._potential_is_vectorized: bool | None = None
-
-    def _evaluate_potential_batch(self, x_batch: NDArray, t: float) -> NDArray:
-        """Evaluate V(t, x) at N points with auto-detected vectorization.
-
-        Issue #929: First call probes whether the potential callable supports
-        batch input (N, d) -> (N,). If yes, uses fast path. If no, falls back
-        to per-point loop. Detection result is cached for subsequent calls.
-        """
-        N = x_batch.shape[0]
-        if N == 0:
-            return np.zeros(0)
-
-        if self._potential_is_vectorized is None:
-            # The probe has d + 1 rows, repeating points when N is smaller. A potential written per
-            # point that is elementwise in the coordinates it indexes, x[0]**2 + x[1]**2, reads them on a
-            # batch as rows and returns one value per coordinate: shape (d,). The probe must not have d
-            # rows, or that result passes as one value per point, as it did in 2-D with two (#2714).
-            d = x_batch.shape[1] if x_batch.ndim == 2 else 1
-            rows = np.arange(d + 1) % N
-            try:
-                probe = np.asarray(_bound_potential(self)(x=x_batch[rows], t=t), dtype=float)
-                self._potential_is_vectorized = probe.shape == (d + 1,)
-            except (TypeError, IndexError, ValueError):
-                self._potential_is_vectorized = False
-
-        if self._potential_is_vectorized:
-            return np.asarray(_bound_potential(self)(x=x_batch, t=t), dtype=float)
-        return np.array([float(_bound_potential(self)(x=x_batch[i], t=t)) for i in range(N)])
 
     def __call__(
         self,
@@ -2543,10 +2513,8 @@ class SeparableHamiltonian(HamiltonianBase):
 
         # Potential term (Issue #929: auto-detect vectorized callable)
         if self._potential is not None:
-            if is_batch:
-                V = self._evaluate_potential_batch(x, t)
-            else:
-                V = float(_bound_potential(self)(x=x, t=t))
+            V = np.asarray(_bound_potential(self)(x=x, t=t), dtype=float)
+            V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2620,7 +2588,7 @@ class SeparableHamiltonian(HamiltonianBase):
         if is_batch:
             m_arr = np.asarray(m)
             return np.array(
-                [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                [self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
             )
         return self._finite_diff_dm(x, m, p, t)
 
@@ -2639,21 +2607,17 @@ class SeparableHamiltonian(HamiltonianBase):
         Uses FD on the potential callable. Returns zero if no potential.
         """
         if self._potential is None:
-            x_arr = np.atleast_1d(x)
-            return np.zeros(x_arr.shape[-1] if x_arr.ndim >= 2 else len(x_arr))
+            return np.zeros(len(x))
 
         # FD on V(t, x)
         eps = self.finite_diff_eps
-        x_flat = np.atleast_1d(x).astype(float)
-        d = len(x_flat)
+        d = len(x)
         grad = np.zeros(d)
         for i in range(d):
-            x_plus = x_flat.copy()
-            x_minus = x_flat.copy()
-            x_plus[i] += eps
-            x_minus[i] -= eps
+            x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
+            x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
             grad[i] = _central_difference(
-                float(_bound_potential(self)(x=x_plus, t=t)), float(_bound_potential(self)(x=x_minus, t=t)), eps
+                np.asarray(_bound_potential(self)(x=x_plus, t=t)).item(), np.asarray(_bound_potential(self)(x=x_minus, t=t)).item(), eps
             )
         return -grad
 
@@ -2786,10 +2750,8 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Potential term V(t, x)
         if self._potential is not None:
-            if is_batch:
-                V = np.array([float(_bound_potential(self)(x=x[i], t=t)) for i in range(x.shape[0])])
-            else:
-                V = float(_bound_potential(self)(x=x, t=t))
+            V = np.asarray(_bound_potential(self)(x=x, t=t), dtype=float)
+            V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2915,7 +2877,7 @@ class CongestionHamiltonian(HamiltonianBase):
         if is_batch:
             m_arr = np.asarray(m)
             return np.array(
-                [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                [self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
             )
         return self._finite_diff_dm(x, m, p, t)
 
@@ -3070,6 +3032,38 @@ def create_hamiltonian(
         )
 
 
+def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid: NDArray, t: float = 0.0) -> None:
+    """Refuse a Hamiltonian whose batch evaluation differs from evaluating each node alone (#1884, #2481, #2875).
+
+    A problem takes the Hamiltonian here, so its value and its ``dp`` are read on nodes of ``grid`` together and then one at
+    a time. A Hamiltonian written for one point gives a wrong solve on a batch path, and not always an error: ``0.5*p[0]**2``
+    reads node 0's momentum at every node, and Newton converges cleanly to that wrong equation (measured 0.962 off the
+    per-point solve, with no inner failure).
+
+    The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
+    passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479).
+    """
+    points = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
+    d = points.shape[1]
+    k = 4 if d == 3 else 3
+    index = np.linspace(0, points.shape[0] - 1, k).round().astype(int)
+    x = points[index]
+    p = np.linspace(-1.3, 2.1, k)[:, None] * (1.0 + 0.25 * np.arange(d))
+    m = np.linspace(0.5, 1.7, k)
+    guidance = (
+        "x is a tuple with one entry per coordinate, p has shape (N, d) and m shape (N,): write it to act row-wise on p, "
+        "such as 0.5*np.sum(p**2, axis=-1), and to read x[0] as the coordinate (#2875)."
+    )
+    for name, evaluate in (("evaluate_H", hamiltonian.evaluate_H), ("evaluate_dp", hamiltonian.evaluate_dp)):
+        refuse_batch_disagreement(
+            lambda **state: evaluate(HEvalState(**state)),
+            {"x": x, "p": p, "m": m, "t": t},
+            [{"x": x[i : i + 1], "p": p[i : i + 1], "m": m[i : i + 1], "t": t} for i in range(k)],
+            name=f"{type(hamiltonian).__name__}.{name}",
+            guidance=guidance,
+        )
+
+
 if __name__ == "__main__":
     """Quick smoke test for development."""
     print("Testing Hamiltonian abstractions...")
@@ -3113,7 +3107,7 @@ if __name__ == "__main__":
         coupling=lambda m: m**2,
         coupling_dm=lambda m: 2 * m,
     )
-    x = np.array([0.5])
+    x = (0.5,)
     m_val = 0.3
     p_val = np.array([1.0])
     t_val = 0.0

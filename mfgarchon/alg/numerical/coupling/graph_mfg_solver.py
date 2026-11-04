@@ -410,7 +410,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         dt = self._dt
 
         def composed(t: float, x_eval: NDArray) -> NDArray:
-            s = evaluate_solver_source(coupling_source, t=t, x=x_eval)
+            s = evaluate_solver_source(coupling_source, t=t, x=x_eval, dimension=p.dimension)
             # The node problem's own parts via the shared single-source primitive (Issue #1382), layered on the
             # graph coupling source and summed in the primitive's own order (source, F's part, nonlocal), which
             # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses self._dt so the slice index
@@ -437,7 +437,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         dt = self._dt
 
         def composed(t: float, x_eval: NDArray) -> NDArray:
-            s = evaluate_solver_source(coupling_source, t=t, x=x_eval)
+            s = evaluate_solver_source(coupling_source, t=t, x=x_eval, dimension=p.dimension)
             v_t = _get_time_slice(Us_new[k], t, dt)
             m_t = _get_time_slice(Ms_expanded[k], t, dt)
             s = s + _call_problem_source(p, "source_term_fp", t=t, x=x_eval, m=m_t, v=v_t)

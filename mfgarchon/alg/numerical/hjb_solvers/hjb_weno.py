@@ -1071,7 +1071,7 @@ class HJBWENOSolver(BaseHJBSolver):
             # linspace here would make one manufactured source unrunnable across two solvers,
             # which defeats the point of a shared MMS channel.
             x_grid = self.problem.geometry.get_spatial_grid()
-            forcing = lambda tt: evaluate_solver_source(source_term, t=tt, x=x_grid)  # noqa: E731
+            forcing = lambda tt: evaluate_solver_source(source_term, t=tt, x=x_grid, dimension=self.problem.dimension)  # noqa: E731
 
         # Backward time integration
         for t_idx in range(n_time_points - 2, -1, -1):
