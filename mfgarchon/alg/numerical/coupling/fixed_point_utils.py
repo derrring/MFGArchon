@@ -413,12 +413,13 @@ def verdict_reads_inner_failures(
                     returned = True
                 finally:
                     if not returned:
-                        # A body that raises keeps its own exception. There is no result to measure, so this says what
-                        # the last FP solve of this solve left, if one ran (#2845).
+                        # There is no result to measure, so this says what the last FP solve of this solve left, if one
+                        # ran (#2845).
                         for solver in fp_solvers:
-                            report = getattr(solver, "last_negative_density", None)
-                            if report is not None:
-                                solver.warn_negative_density(report)
+                            if getattr(solver, "reports_negative_density", False):
+                                report = solver.last_negative_density
+                                if report is not None:
+                                    solver.warn_negative_density(report)
             _report_negative_density(result, fp_solvers)
             if not check:
                 return result

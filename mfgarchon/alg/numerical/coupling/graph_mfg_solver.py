@@ -255,7 +255,12 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # before anything noticed, and the FP solver would then report a CFL condition for
                 # what is an HJB failure.
                 diverged = diverged_value_function(
-                    U_k, terminal_k, site=f"GraphMFGSolver[node {k}]", density=Ms_expanded[k], iteration=iteration
+                    U_k,
+                    terminal_k,
+                    site=f"GraphMFGSolver[node {k}]",
+                    # A node's source reads its neighbours' densities, so this is every node's (#2845).
+                    density=np.concatenate([np.ravel(m) for m in Ms_expanded]),
+                    iteration=iteration,
                 )
                 if diverged is not None:
                     Us_new[k] = diverged

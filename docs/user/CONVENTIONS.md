@@ -644,10 +644,15 @@ axes and refused. The sequence form is the convention, and library code uses it.
     `levels`. The record is a list on several FP solvers, is in `info` on `NewtonMFGSolver`, and is absent with
     `return_tuple=True`. A solver called alone holds it as `last_negative_density`. On the meshless FP these are MLS
     coefficients, not the density at a point (#2672). A level that is all NaN holds no negative in this record.
-  - **A non-finite value function ends a coupled solve.** All seven couplers log the site, the iteration and the minimum
-    of the density that solve read, and return `converged=False`. It does not raise, and a direct `H(t, x, p, m)` returns
-    what the body returns. So `np.log(m)` in a `coupling` or a `source_term_hjb` ends there at a negative. A body that
-    raises keeps its own exception. A read that stays finite, such as `1/m`, is not caught, and only the warning covers it.
+  - **A non-finite value function ends a coupled solve at the guard all seven couplers share.** It logs the site, the
+    iteration and the minimum of the density that solve read, and returns `converged=False`, without raising. `np.log(m)` in
+    a `coupling` or a `source_term_hjb` reached it on each coupler on FP-FEM, and on `FictitiousPlayIterator` on the meshless
+    FP, at 81 nodes and sigma 0.3, and a direct `H(t, x, p, m)` returns what the body returns. A solve can end otherwise:
+    `NewtonMFGSolver` past its warm-up raises "a sweep's change must be finite" (#2578), as does a `source_term_fp` that goes
+    non-finite on every coupler but `FixedPointIterator`; other HJB solvers on the meshless FP have raised their own errors,
+    or stayed finite to `converged=False` with only the warning. A read that stays finite, such as `1/m`, is not caught, and
+    only the warning covers it. A density with a negative past the round-off gate has no measure, so
+    `ParticleMeasure.from_density`, and `track_measure_field` through it, refuses it.
   - **To clip a step anyway is a change of scheme, and it is the caller's:** a subclass of `FPFEMSolver` whose
     `solve_fp_system` clips what it returns has run, and the coupled solve converged with `np.log(np.maximum(m, 1e-10))`
     on 81 and 289 nodes where the solver alone blows up.

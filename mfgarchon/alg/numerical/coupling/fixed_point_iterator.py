@@ -628,16 +628,6 @@ class FixedPointIterator(BaseCouplingIterator):
                 self.M = preserve_initial_condition(self.M, M_initial)
                 self.U = preserve_terminal_condition(self.U, U_terminal)
 
-                # Layer 2: Record MeasureField snapshot (#956)
-                # Use terminal density M[-1] as the measure representative —
-                # it varies most across Picard iterates (M[0] is fixed by IC).
-                if measure_field is not None:
-                    from mfgarchon.core.measure import ParticleMeasure
-
-                    grid_1d = self.problem.geometry.get_spatial_grid().ravel()
-                    mu_k = ParticleMeasure.from_density(self.M[-1], grid_1d)
-                    measure_field.add_snapshot(mu_k, self.U.copy())
-
                 # Issue #1489 (S5): a FINITE but blown-up density (e.g. the pre-overflow divergence,
                 # total mass ~5.9e4 before it becomes inf) passes the isfinite check below and would be
                 # reported converged/valid. Guard the magnitude too: a total mass that has GROWN by many
@@ -675,6 +665,17 @@ class FixedPointIterator(BaseCouplingIterator):
                     )
                     self.iterations_run = iiter + 1
                     break
+
+                # Layer 2: Record MeasureField snapshot (#956), after the guards above, which end a
+                # sweep that has no measure to record.
+                # Use terminal density M[-1] as the measure representative —
+                # it varies most across Picard iterates (M[0] is fixed by IC).
+                if measure_field is not None:
+                    from mfgarchon.core.measure import ParticleMeasure
+
+                    grid_1d = self.problem.geometry.get_spatial_grid().ravel()
+                    mu_k = ParticleMeasure.from_density(self.M[-1], grid_1d)
+                    measure_field.add_snapshot(mu_k, self.U.copy())
 
                 # Calculate convergence metrics
                 from mfgarchon.utils.convergence import sweep_change

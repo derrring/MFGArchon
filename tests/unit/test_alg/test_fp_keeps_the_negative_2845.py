@@ -30,6 +30,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.measure import ParticleMeasure
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.factory.scheme_factory import create_paired_solvers
@@ -283,6 +284,9 @@ def test_a_solver_alone_warns_and_holds_its_report(mfg_caplog):
         M = _solve(solver, _gaussian, 3.2)
     assert len([m for m in mfg_caplog.messages if "time levels hold a negative value" in m]) == 1
     assert solver.last_negative_density["lowest"] == M.min()
+    with pytest.raises(ValueError):
+        solver.solve_fp_system(np.ones(3), show_progress=False)
+    assert solver.last_negative_density is None, "a solve that raises leaves no earlier solve's report behind"
 
 
 def test_the_meshless_report_says_these_are_coefficients(mfg_caplog):
@@ -441,8 +445,173 @@ def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_read(coupl
     lines = [m for m in mfg_caplog.messages if "NaN/Inf in the value function" in m]
     assert lines, "the guard must fire on this row"
     assert coupler in lines[0]
-    assert "has a minimum of" in lines[0]
     assert "source:" not in lines[0]
+    # What the solve read is what it returns, since FP did not run on this iterate.
+    density, _ = _density_and_record(result)
+    # A regime's HJB reads its own density, and other regimes' only through their values; a node's source reads them all.
+    held = (
+        [density]
+        if isinstance(density, np.ndarray)
+        else [density[0]]
+        if coupler == "RegimeSwitchingIterator"
+        else density
+    )
+    read = min(float(np.min(one)) for one in held)
+    assert f"has a minimum of {read:.3e}" in lines[0]
+    assert f"at iteration {1 if coupler == 'NewtonMFGSolver' else 2}," in lines[0]
+
+
+def test_newton_warm_up_states_a_negative_the_solve_read(mfg_caplog):
+    """The row above has Newton stop at its initial guess, whose minimum is 0, so an absolute value would pass there."""
+    with (
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
+        np.errstate(invalid="ignore", divide="ignore"),
+    ):
+        problem = _coupled(2, coupling=lambda m: np.log(m + 1e-4), coupling_dm=lambda m: 1 / (m + 1e-4))
+        hjb, fp = _fem_pair(problem)
+        NewtonMFGSolver(problem, hjb, fp).solve(max_iterations=5, tolerance=1e-6, verbose=False)
+    line = next(m for m in mfg_caplog.messages if "NaN/Inf in the value function" in m)
+    assert "at iteration 2," in line
+    assert "has a minimum of -" in line
+
+
+def test_the_sweep_guard_names_the_array_and_the_density_the_sweep_read(mfg_caplog):
+    mesh = _on_square(skfem.MeshTri.init_sqsymmetric().refined(2))
+    mesh.boundary_conditions = no_flux_bc(dimension=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
+            ),
+            source_term_fp=lambda t, x, v, m: 0.0 * np.log(m),
+            domain=mesh,
+            conditions=Conditions(
+                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
+                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                T=0.5,
+            ),
+            Nt=8,
+        )
+    hjb, fp = _fem_pair(problem)
+    with (
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_iterator"),
+        np.errstate(invalid="ignore", divide="ignore"),
+    ):
+        result = FixedPointIterator(problem, hjb, fp, relaxation=0.5).solve(
+            max_iterations=30, tolerance=1e-6, verbose=False
+        )
+    assert not result.converged
+    line = next(m for m in mfg_caplog.messages if "NaN/Inf in the density in iteration" in m)
+    assert "source:" not in line
+    assert "has a minimum of -" in line
+
+
+def test_a_graph_nodes_line_states_the_lowest_density_any_node_holds(mfg_caplog):
+    """A node's source reads its neighbours' densities, so its own would state a minimum that solve did not stop at."""
+    read = {}
+
+    def reads_its_neighbour(i, j, v_j, m_j, t):
+        read[j] = min(read.get(j, np.inf), float(np.nanmin(m_j)))
+        return np.log(m_j + 1e-9)
+
+    high, low = _coupled(2, sigma=2.0), _coupled(2, sigma=0.05)
+    (ha, fa), (hb, fb) = _fem_pair(high), _fem_pair(low)
+    coupling = AdjacencyCoupling(
+        np.array([[0.0, 1.0], [0.0, 0.0]]), coupling_hjb=reads_its_neighbour, alpha=0.1, beta=0.0
+    )
+    with (
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
+        np.errstate(invalid="ignore", divide="ignore"),
+    ):
+        result = GraphMFGSolver([high, low], coupling, [ha, hb], [fa, fb], max_iterations=6, tolerance=1e-5).solve()
+    line = next(m for m in mfg_caplog.messages if "NaN/Inf in the value function" in m)
+    assert read[1] < 0.0, "the node must read a negative for this row to say anything"
+    lowest = min(float(np.nanmin(one)) for one in result.densities)
+    assert f"has a minimum of {lowest:.3e}" in line
+
+
+@pytest.mark.parametrize(
+    ("density", "kept"),
+    [(np.array([0.0, 1.0, 3.0]), 2), (np.array([-1e-14, 1.0, 3.0]), 2)],
+    ids=["clean", "a negative at round-off counts as zero"],
+)
+def test_a_measure_reads_a_density_with_no_negative_past_the_gate(density, kept):
+    measure = ParticleMeasure.from_density(density, np.array([0.0, 0.5, 1.0]))
+    assert measure.weights.size == kept
+
+
+@pytest.mark.parametrize(
+    ("density", "says"),
+    [
+        (np.array([-0.5, 1.0, 3.0]), r"density went to -5\.000e-01"),
+        (np.array([np.nan, 1.0, 3.0]), r"1 of 3 density values are not finite"),
+        (np.array([np.inf, 1.0, 3.0]), r"1 of 3 density values are not finite"),
+    ],
+    ids=["a negative past the gate", "NaN", "inf"],
+)
+def test_a_measure_refuses_what_it_would_have_dropped(density, says):
+    with pytest.raises(ValueError, match=says):
+        ParticleMeasure.from_density(density, np.array([0.0, 0.5, 1.0]))
+
+
+def _tracked_meshless(sigma):
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+            ),
+            volatility=sigma,
+        ),
+        domain=grid,
+        conditions=Conditions(
+            u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
+            m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+            T=0.5,
+        ),
+        Nt=10,
+    )
+    hjb, fp = create_paired_solvers(
+        problem,
+        NumericalScheme.MESHLESS_GALERKIN,
+        hjb_config={"collocation_points": np.linspace(0.0, 1.0, 21)[:, None], "delta": 0.18},
+        fp_config={},
+    )
+    return FixedPointIterator(problem, hjb, fp, relaxation=0.5)
+
+
+def test_tracking_a_solve_refuses_the_negative_and_the_advice_runs():
+    """The refusal's advice is that the same solve without tracking has run, and its result reports the negative."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValueError, match=r"density went to .*track_measure_field"):
+            _tracked_meshless(0.1).solve(max_iterations=60, tolerance=1e-6, verbose=False, track_measure_field=True)
+        result = _tracked_meshless(0.1).solve(max_iterations=60, tolerance=1e-6, verbose=False)
+    assert result.metadata["fp_negative_density"]["lowest"] < 0.0
+
+
+def test_a_tracked_sweep_the_guard_ends_records_no_snapshot(mfg_caplog):
+    """The guard names a NaN density, tracked or not: the snapshot follows it, so `from_density` does not meet the NaN."""
+    iterator = _tracked_meshless(0.3)
+    solve = iterator.fp_solver.solve_fp_system
+
+    def goes_non_finite(*args, **kwargs):
+        M = solve(*args, **kwargs)
+        M[-1, 3] = np.nan
+        return M
+
+    iterator.fp_solver.solve_fp_system = goes_non_finite
+    with (
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_iterator"),
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("ignore")
+        result = iterator.solve(max_iterations=5, tolerance=1e-6, verbose=False, track_measure_field=True)
+    assert (
+        result.convergence_reason == "diverged_nan" if hasattr(result, "convergence_reason") else not result.converged
+    )
+    assert any("NaN/Inf in the density in iteration 1" in m for m in mfg_caplog.messages)
 
 
 def _flag_after_the_first_solve():
@@ -490,7 +659,8 @@ def test_a_body_that_raises_on_a_negative_keeps_its_exception_and_the_last_solve
 
 @pytest.mark.parametrize(("build", "checked"), [(_fem_pair, False), (None, True)], ids=["FP-FEM", "FP-FDM"])
 def test_the_validators_density_check_is_off_only_where_the_solver_reports_it(build, checked, monkeypatch):
-    """On FP-FEM the solver's report says the same thing, and row one above goes red if it is lost. Elsewhere it stays."""
+    """On FP-FEM the solver's report says the same thing, and
+    `test_a_coupled_solve_reports_the_negative_it_returns_and_one_warning` goes red if it is lost. Elsewhere it stays."""
     import mfgarchon.utils.validation.runtime as runtime
 
     seen = []

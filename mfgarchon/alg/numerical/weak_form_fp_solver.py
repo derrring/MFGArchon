@@ -219,6 +219,7 @@ class WeakFormFPSolver(BaseFPSolver):
         not take the base's ``progress_callback``, which it would never call. A keyword this signature does
         not name raises (#2419).
         """
+        self.last_negative_density = None
         # Issue #1043: drift_field is the deprecated name for the U (potential) input here.
         if drift_field is not None:
             if potential_field is not None:
