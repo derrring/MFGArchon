@@ -190,7 +190,12 @@ def test_a_coupled_solve_reports_the_negative_it_returns_and_one_warning(mfg_cap
         coarse = _coupled(2).solve(verbose=False)
     warned = [m for m in mfg_caplog.messages if "time levels hold a negative value" in m]
     assert len(warned) == 1, warned
-    assert "The values are kept: nothing is added to the mass." in warned[0]
+    assert warned[0].endswith(
+        "The values are kept: nothing is added to the mass. FP-FEM's Galerkin step can go negative at a high cell Peclet "
+        "number |v|h/(2D), and on rough data or a coarse mesh at a lower one; a negative source, load, boundary value or "
+        "initial density can do it too. What has cleared one: a finer mesh, given diffusion; P1 on a simplex mesh; P1 on "
+        "skfem's MeshTri.init_tensor or MeshTet.init_tensor."
+    )
     assert coarse.converged
     M = np.asarray(coarse.M)
     assert M.min() < -1e-3
@@ -215,6 +220,36 @@ def test_a_coupled_solve_reports_the_negative_it_returns_and_one_warning(mfg_cap
     assert fine.converged
     assert fine.metadata["fp_negative_density"]["levels_negative"] == 0
     assert not [m for m in mfg_caplog.messages if "time levels hold a negative value" in m]
+
+
+def _with_an_input(kind, sign, n=32, D=0.01, dt=1e-2, nt=50):
+    """A Gaussian on a line, with the input named by ``kind`` at ``sign`` times a size past the gate."""
+    faces = {"x_min": BCSegment(name="x_min", bc_type=BCType.NO_FLUX, boundary="x_min")}
+    if kind == "boundary value":
+        faces["x_min"] = BCSegment(name="x_min", bc_type=BCType.DIRICHLET, value=sign * 0.01, boundary="x_min")
+    if kind == "load":
+        faces["x_min"] = BCSegment(
+            name="x_min", bc_type=BCType.ROBIN, alpha=1.0, beta=1.0, value=sign * 0.01, boundary="x_min"
+        )
+    wall = BCSegment(name="x_max", bc_type=BCType.NO_FLUX, boundary="x_max")
+    solver = FPFEMSolver(
+        _uncoupled(_line(n), D, dt, nt),
+        order=1,
+        boundary_conditions=BoundaryConditions(dimension=1, segments=[faces["x_min"], wall]),
+    )
+    x = _points(solver).reshape(-1)
+    m0 = np.exp(-((x - 0.5) ** 2) / (2 * 0.05**2)) + (sign * 1e-3 if kind == "initial density" else 0.0)
+    source = (lambda t, x: np.full(np.shape(x)[0], sign * 1e-3)) if kind == "source" else None
+    solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((nt + 1, len(x))), source_term=source)
+    return solver.last_negative_density["largest"]
+
+
+@pytest.mark.parametrize("kind", ["source", "load", "boundary value", "initial density"])
+def test_a_negative_input_can_take_the_density_negative_and_its_sign_flipped_does_not(kind):
+    """The note's clause, input by input, at a size where this row is past the gate: it says "can", and refining is not
+    claimed, since a small enough input does clear on a finer mesh."""
+    assert _with_an_input(kind, -1.0) > 1e-8
+    assert _with_an_input(kind, 1.0) <= 1e-8
 
 
 def test_the_result_reports_the_density_it_returns_not_the_last_sweeps_step():
