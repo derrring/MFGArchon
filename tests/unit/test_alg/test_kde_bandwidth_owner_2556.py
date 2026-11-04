@@ -616,7 +616,7 @@ def test_the_record_is_the_last_solves_and_the_result_carries_it():
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 
     solver = FPParticleSolver(_problem(11, 2, volatility=0.0), num_particles=300, seed=5, density_mode="hybrid")
-    drift = {"drift_field": lambda t, x, m: np.zeros_like(x), "show_progress": False, "M_initial": None}
+    drift = {"drift_field": lambda t, x, m: np.zeros_like(x[0]), "show_progress": False, "M_initial": None}
     result = solver.solve_fp_system(initial_particles=_narrow([0.53, 0.47]), **drift)
     assert result.deposited_levels == (1, 2, 3, 4, 5)
     result = solver.solve_fp_system(

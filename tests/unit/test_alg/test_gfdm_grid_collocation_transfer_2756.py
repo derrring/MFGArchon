@@ -73,7 +73,7 @@ def _solve(problem, points, M, u_terminal_values, **solver_kwargs):
 
 def test_a_grid_density_reaches_permuted_collocation_points_by_position_not_index():
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = _problem(grid, lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2)
+    problem = _problem(grid, lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2)
     x = np.asarray(grid.get_spatial_grid(), dtype=float).ravel()
     M = np.tile(1.0 + 0.5 * np.cos(np.pi * x), (_NT + 1, 1))
     u_T = (x - 0.7) ** 2
@@ -100,7 +100,7 @@ def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 5], boundary_conditions=no_flux_bc(dimension=2)
     )
-    problem = _problem(grid, lambda x: float((np.asarray(x, dtype=float)[0] - 0.7) ** 2 + 0.5 * np.asarray(x)[1]))
+    problem = _problem(grid, lambda x: (x[0] - 0.7) ** 2 + 0.5 * x[1])
     nodes = np.asarray(grid.get_spatial_grid(), dtype=float)
     M = np.tile(1.0 + 0.5 * np.cos(np.pi * nodes[:, 0]) + 0.3 * nodes[:, 1], (_NT + 1, 1))
     u_T = (nodes[:, 0] - 0.7) ** 2 + 0.5 * nodes[:, 1]
@@ -127,7 +127,7 @@ def test_a_graded_grid_density_is_interpolated_on_its_own_nodes():
         boundary_conditions=no_flux_bc(dimension=1),
     )
     assert not graded.is_uniform
-    problem = _problem(graded, lambda x: 0.3 * np.asarray(x, dtype=float) + 0.1)
+    problem = _problem(graded, lambda x: 0.3 * np.asarray(x[0], dtype=float) + 0.1)
     points = np.linspace(0.0, 1.0, 31)
 
     # Linear m and u_T: interpolation on the grid's nodes reproduces them at the points exactly, so the solve from the
@@ -172,7 +172,7 @@ def test_a_density_that_fits_neither_the_points_nor_a_grid_is_refused():
     with warnings.catch_warnings():
         # m = 1 has mass n*dx on the domain's uniform-cell measure, not 1; the refusal below does not depend on it.
         warnings.filterwarnings("ignore", message="initial density mass")
-        problem = _problem(Hyperrectangle(np.array([[0.0, 1.0]])), lambda x: 0.0 * np.asarray(x, dtype=float))
+        problem = _problem(Hyperrectangle(np.array([[0.0, 1.0]])), lambda x: 0.0 * np.asarray(x[0], dtype=float))
     n_samples = problem.geometry.get_grid_shape()[0]
     points = np.linspace(0.0, 1.0, 31)
     assert n_samples != 31

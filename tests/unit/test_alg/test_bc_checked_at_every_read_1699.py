@@ -37,8 +37,8 @@ N = {1: 21, 2: 9}
 
 def _terminal(dim):
     if dim == 1:
-        return lambda x: (np.asarray(x, dtype=float) - 0.3) ** 2
-    return lambda x: (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2 + 0.5 * np.asarray(x, dtype=float)[..., 1]
+        return lambda x: (np.asarray(x[0], dtype=float) - 0.3) ** 2
+    return lambda x: (x[0] - 0.3) ** 2 + 0.5 * x[1]
 
 
 def _solver(cls, dim):

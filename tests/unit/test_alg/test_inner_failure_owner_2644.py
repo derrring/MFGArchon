@@ -284,7 +284,7 @@ def test_network_policy_iteration_refuses_an_exhausted_budget_and_records_it_whe
 
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    comps = NetworkMFGComponents(node_potential_func=lambda t, i: 2.0 * i - 0.4 * i * i)
+    comps = NetworkMFGComponents(node_potential_func=lambda t, node: 2.0 * node - 0.4 * node * node)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         problem = NetworkMFGProblem(geometry=net, T=0.5, Nt=20, components=comps)

@@ -31,7 +31,7 @@ POINTS = np.linspace(0.0, 1.0, N).reshape(-1, 1)
 REFUSAL = r"FPGFDMSolver is withdrawn: FP-GFDM built no wall.*#2583.*#2584"
 
 
-def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float)) -> MFGProblem:
+def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float)) -> MFGProblem:
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3

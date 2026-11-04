@@ -77,7 +77,7 @@ def _problem(where=None, cost=None, nt=8, **mesh):
             model=Model(
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0),
-                    potential=(lambda t, x: _V(x)) if where == "H" else None,
+                    potential=(lambda t, x: _V(x[0])) if where == "H" else None,
                 ),
                 volatility=0.3,
                 coupling_cost=cost,
@@ -209,7 +209,7 @@ def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost
     from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
     def V1(x):
-        return 0.8 * np.sin(2 * np.pi * np.asarray(x, dtype=float))
+        return 0.8 * np.sin(2 * np.pi * np.asarray(x[0], dtype=float))
 
     def V2(x):
         return -1.5 * np.cos(3 * np.pi * np.asarray(x, dtype=float))
@@ -507,7 +507,7 @@ def test_a_reader_that_passes_no_binding_refuses_by_its_name(reader):
         def solve():
             # Composing node 0's source is where the graph solver refuses: before any evaluation, so a refusal deferred
             # to the source's first call would return a callable here.
-            return graph._compose_hjb_source(0, [M, M], [M, M], lambda t, x: np.zeros(len(x)))
+            return graph._compose_hjb_source(0, [M, M], [M, M], lambda t, x: np.zeros(np.shape(x[0])))
 
     with pytest.raises(NotImplementedError, match=rf"{refusal} Mesh2D"):
         solve()
@@ -528,7 +528,7 @@ def _g_problem(where=None, g=None, nt=8, **mesh):
         g = PotentialCost(lambda x: _VT(x[0]))
 
     def terminal(x):
-        return float(np.sum((np.asarray(x) - 0.7) ** 2))
+        return sum((xi - 0.7) ** 2 for xi in x)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on the mesh is not these pins' subject
@@ -540,7 +540,7 @@ def _g_problem(where=None, g=None, nt=8, **mesh):
             ),
             domain=_mesh(**mesh),
             conditions=Conditions(
-                u_terminal=(lambda x: terminal(x) + float(_VT(x))) if where == "u" else terminal,
+                u_terminal=(lambda x: terminal(x[0]) + float(_VT(x[0]))) if where == "u" else terminal,
                 m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),

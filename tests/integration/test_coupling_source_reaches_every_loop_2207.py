@@ -98,17 +98,16 @@ _LOOPS = [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator, 
 _POSITIVE_CONTROL = FixedPointIterator
 
 
-class _CountingSource:
-    """The problem-level ``(x, m, v, t)`` callback, constant ``value``, counting its own invocations."""
+def _CountingSource(value: float = _MAGNITUDE):  # noqa: N802
+    """The problem-level ``(t, x, v, m)`` callback, constant ``value``, counting its own calls in ``.calls``."""
 
-    def __init__(self, value: float = _MAGNITUDE) -> None:
-        self.value = value
-        self.calls = 0
+    def source(t, x, v, m):
+        source.calls += 1
+        return np.full(np.shape(x[0]), source.value)
 
-    def __call__(self, t, x, v, m):
-        self.calls += 1
-        a = np.asarray(x, dtype=float)
-        return np.full(a.shape[0] if a.ndim == 2 else a.size, self.value)
+    source.value = value
+    source.calls = 0
+    return source
 
 
 def _nonlocal_operator():

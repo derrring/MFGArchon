@@ -49,7 +49,7 @@ def _u_star(x: np.ndarray) -> np.ndarray:
 
 
 def _source(x: np.ndarray, D: float) -> np.ndarray:
-    return 4.0 * D * np.sin(2.0 * x)  # -D u''
+    return 4.0 * D * np.sin(2.0 * x[0])  # -D u''
 
 
 def _robin_g_ends(D: float) -> tuple[float, float]:

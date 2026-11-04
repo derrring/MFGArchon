@@ -920,7 +920,7 @@ class TestFPParticlePreserveIndices:
 
     @staticmethod
     def _drift_rightward(t, x, m):
-        return np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))])
+        return np.column_stack([np.full(np.shape(x[0]), 2.0), np.zeros(np.shape(x[0]))])
 
     def _run(self, preserve_indices, seed=42):
         np.random.seed(seed)

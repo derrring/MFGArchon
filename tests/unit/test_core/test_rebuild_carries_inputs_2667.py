@@ -59,9 +59,9 @@ def test_every_rebuild_solves_as_the_fresh_build_of_its_inputs():
     The issue's measurement is the last line: the source dropped, solve(Nt=20) gave the sourceless answer."""
 
     def source(t, x, v, m):
-        return 50.0 * np.ones(len(x))
+        return 50.0 * np.ones(np.shape(x[0]))
 
-    inputs = {"source_term_hjb": source, "state_penalty": lambda x: np.maximum(0.0, np.asarray(x) - 0.5)}
+    inputs = {"source_term_hjb": source, "state_penalty": lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5)}
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=2.0)), volatility=0.45)
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
     conditions = Conditions(
@@ -92,10 +92,10 @@ def test_every_rebuild_carries_every_input_the_constructor_took():
         return problem  # solve(Nt=) rebuilds, then calls solve on the rebuilt problem without Nt
 
     inputs = {
-        "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(len(x)),
-        "source_term_fp": lambda t, x, v, m: np.zeros(len(x)),
+        "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(np.shape(x[0])),
+        "source_term_fp": lambda t, x, v, m: np.zeros(np.shape(x[0])),
         "nonlocal_operator": 0.3 * np.eye(21),
-        "state_penalty": lambda x: np.maximum(0.0, np.asarray(x) - 0.5),
+        "state_penalty": lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5),
         "state_penalty_scale": 3.0,
         "lambda_": 2.0,
         "coupling_coefficient": 0.9,

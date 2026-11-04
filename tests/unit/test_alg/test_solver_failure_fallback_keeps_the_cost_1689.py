@@ -89,7 +89,7 @@ def _network(singularity: float) -> np.ndarray:
             geometry=CustomNetwork(csr_matrix(ring)),
             T=0.5,
             Nt=nt,
-            components=NetworkMFGComponents(node_potential_func=lambda t, i: 1.0 / (t - singularity) ** 2),
+            components=NetworkMFGComponents(node_potential_func=lambda t, node: 1.0 / (t - singularity) ** 2),
         )
     return NetworkHJBSolver(problem).solve_hjb_system(M_density=np.zeros((nt + 1, n)), U_terminal=np.zeros(n))
 

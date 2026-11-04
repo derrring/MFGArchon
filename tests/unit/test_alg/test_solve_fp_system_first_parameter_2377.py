@@ -80,7 +80,7 @@ def test_every_fp_solver_names_its_first_parameter_M_initial():
 
 def _problem():
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
-    bump = lambda x: np.exp(-10 * (np.asarray(x, dtype=float) - 0.5) ** 2)  # noqa: E731
+    bump = lambda x: np.exp(-10 * (np.asarray(x[0], dtype=float) - 0.5) ** 2)  # noqa: E731
     mass = grid.integrate(bump(grid.get_spatial_grid()[:, 0]))
     return MFGProblem(
         model=Model(

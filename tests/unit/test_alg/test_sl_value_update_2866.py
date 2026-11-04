@@ -75,7 +75,7 @@ def _read(hamiltonian, slope, n, nt, **solver_options):
             bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=no_flux_bc(dimension=d)
         ),
         conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: sum(s * xi for s, xi in zip(slope, x)), T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: sum(s * xi for s, xi in zip(slope, x[0])), T=_T
         ),
         Nt=nt,
     )

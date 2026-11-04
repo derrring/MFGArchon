@@ -64,9 +64,9 @@ def _unit_mass_gaussian(grid):
     reddens this file at 7.212e-03 / 6.188e-03. An earlier version of this docstring claimed the
     `== 1` line itself was that check; independent review measured it and it is not.
     """
-    raw_at = lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2)  # noqa: E731
+    raw_at = lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2)  # noqa: E731
     total = float(grid.integrate(raw_at(np.asarray(grid.coordinates[0]))))
-    return lambda x: raw_at(x) / total
+    return lambda x: raw_at(x[0]) / total
 
 
 def _default_components(grid):

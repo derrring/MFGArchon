@@ -53,7 +53,7 @@ def _problem(conditional_hamiltonian, u_terminal=None):
     )
     components = MFGComponents(
         hamiltonian=H,
-        u_terminal=u_terminal or (lambda x: np.zeros_like(np.asarray(x, dtype=float))),
+        u_terminal=u_terminal or (lambda x: np.zeros_like(np.asarray(x[0], dtype=float))),
         m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
     )
     return StochasticMFGProblem(

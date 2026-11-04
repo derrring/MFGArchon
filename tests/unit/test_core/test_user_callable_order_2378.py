@@ -38,7 +38,7 @@ def test_named_slots_are_passed_by_name_and_an_omitted_one_is_not_passed():
     seen = {}
 
     def source(t, x, m):  # takes no v
-        seen.update(t=t, x=x, m=m)
+        seen.update(t=t, x=x[0], m=m)
         return 0.0
 
     bind_user_callable(source, SOURCE_TERM_SLOTS, role="source_term_hjb")(t=1.0, x=(2.0,), v=3.0, m=4.0)

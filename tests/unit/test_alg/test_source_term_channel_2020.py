@@ -129,17 +129,16 @@ def _mesh_problem():
     return MFGProblem(geometry=mesh, T=0.2, Nt=5, volatility=0.3, components=_components(), coupling_coefficient=0.0)
 
 
-class _Source:
-    """A source that records whether it was ever called. A constant 5.0 is deliberate: it is large
-    against every field in this fixture, so a solver that reaches it cannot produce a zero delta."""
+def _Source():  # noqa: N802
+    """A source that records whether it was ever called. A constant 5.0 is deliberate: it is large against every field in
+    this fixture, so a solver that reaches it cannot produce a zero delta."""
 
-    def __init__(self):
-        self.calls = 0
+    def source(t, x):
+        source.calls += 1
+        return np.full(np.shape(x[0]), 5.0)
 
-    def __call__(self, _t, x):
-        self.calls += 1
-        a = np.asarray(x, dtype=float)
-        return np.full(a.shape[0] if a.ndim == 2 else a.size, 5.0)
+    source.calls = 0
+    return source
 
 
 def _hjb_fdm():

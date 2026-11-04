@@ -52,7 +52,7 @@ def test_the_variational_lagrangian_callables_are_bound_time_first():
     positionally: the binding refuses one written space-first."""
     from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
 
-    bound = bind_user_callable(lambda t, x, v, m: (t, x, v, m), VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
+    bound = bind_user_callable(lambda t, x, v, m: (t, x[0], v, m), VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
     assert bound(t=1, x=2, v=3, m=4) == (1, 2, 3, 4)
     with pytest.raises(TypeError, match=r"out of order"):
         bind_user_callable(lambda x, t, v, m: 0.0, VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
@@ -96,7 +96,7 @@ def test_remembering_a_binding_keeps_no_solve_s_arrays_alive():
         captured = np.full(1000, float(k))
 
         def source(t, x):
-            return captured[: np.shape(x)[0]] * 0.0 + t
+            return captured[: np.shape(x[0])[0]] * 0.0 + t
 
         return source, weakref.ref(captured)
 

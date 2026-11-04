@@ -76,8 +76,8 @@ def _drift(d, n, path):
     """Toward the obstacle and, in 2-D, toward the wall it meets: (1, -0.6); +2 in 1-D."""
     if path == "callable":
         if d == 1:
-            return lambda t, x, m: 2.0 + 0.0 * np.asarray(x, dtype=float)
-        return lambda t, x, m: np.column_stack([np.full(len(x), 1.0), np.full(len(x), -0.6)])
+            return lambda t, x, m: 2.0 + 0.0 * np.asarray(x[0], dtype=float)
+        return lambda t, x, m: np.column_stack([np.full(np.shape(x[0]), 1.0), np.full(np.shape(x[0]), -0.6)])
     xs = np.linspace(0.0, 1.0, n)
     if d == 1:
         return np.tile(-2.0 * xs, (_NT + 1, 1))  # the 1-D grid path differentiates U: U = -2x is drift +2
@@ -261,7 +261,7 @@ def test_what_the_placement_cannot_do_is_refused(case):
         obstacle = Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
         wide = DifferenceDomain(Hyperrectangle(np.array([[-0.5, 1.5], [-0.5, 1.5]])), obstacle)
         problem, _ = _problem(2, no_flux_bc(dimension=2))
-        drift = {"drift_field": lambda t, x, m: np.column_stack([np.full(len(x), 8.0), np.zeros(len(x))])}
+        drift = {"drift_field": lambda t, x, m: np.column_stack([np.full(np.shape(x[0]), 8.0), np.zeros(np.shape(x[0]))])}
         drift.update(drift_needs_density=False, show_progress=False)
         solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=wide, seed=0)
         with pytest.raises(ValueError, match=r"is not the grid's box"):

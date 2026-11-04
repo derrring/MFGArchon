@@ -255,8 +255,8 @@ def _periodic_problem(nx: int = NX, nt: int = NT) -> MFGProblem:
         Nt=nt,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=_M,
-            u_terminal=_U,
+            m_initial=lambda x: _M(x[0]),
+            u_terminal=lambda x: _U(x[0]),
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 # An aggregating coupling (a negative cost, #2375 ruling 3): the GFDM-vs-SL agreement
@@ -276,8 +276,8 @@ def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
         Nt=nt,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=_M,
-            u_terminal=_U,
+            m_initial=lambda x: _M(x[0]),
+            u_terminal=lambda x: _U(x[0]),
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m,

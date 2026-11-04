@@ -46,7 +46,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 def _gaussian(dimension: int):
     def m0(x):
-        arr = np.asarray(x)
+        arr = np.asarray(x[0])
         r2 = np.sum((arr - 0.5) ** 2, axis=-1) if dimension > 1 else (arr - 0.5) ** 2
         return np.exp(-30 * r2)
 
@@ -202,7 +202,7 @@ class TestTheThreeTiers:
         the check that survived is the one upstream and not the one this branch nearly kept.
         """
         with pytest.raises(ValueError, match=r"m_initial contains negative values"):
-            _problem(1, 11, m0=lambda x: np.asarray(x) - 0.5)
+            _problem(1, 11, m0=lambda x: np.asarray(x[0]) - 0.5)
 
     def test_a_non_finite_density_raises_ValidationError_and_not_ValueError(self):
         """The exception TYPE is the discriminating half, and it is not the obvious one.
@@ -220,7 +220,7 @@ class TestTheThreeTiers:
     def test_tier_1_refuses_a_zero_mass_density(self):
         """The one case tier 1 actually owns, and the only one that reaches it."""
         with pytest.raises(ValueError, match=r"m_initial has total mass .* on the grid measure"):
-            _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x, dtype=float)))
+            _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x[0], dtype=float)))
 
     def test_tier_3_warns_off_one_and_says_how_to_silence_it(self):
         """The message must carry the number, the measure, and the remedy. A bare "mass is not 1"

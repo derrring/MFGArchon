@@ -846,7 +846,7 @@ def test_no_step_crosses_an_obstacle():
     side is 0 in every case, the control included. At main: 500, 500, 0 and 9. The last two rows are #2733's thin
     feature, the folded #2710: slabs of width 1e-3 and 1e-4, under 1/32 of the drift's step 0.075. At main: 500 and
     500."""
-    drift_1d = lambda t, x, m: 3.0 * (1.0 - np.asarray(x))  # noqa: E731
+    drift_1d = lambda t, x, m: 3.0 * (1.0 - np.asarray(x[0]))  # noqa: E731
     drift_2d = lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), (*np.shape(x[0]), 2))  # noqa: E731
     cases = [
         (1, [[0.15, 0.25]], drift_1d, [0.02], [0.1], 0.25),

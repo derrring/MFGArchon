@@ -43,7 +43,7 @@ def _w(n: int, dx: float) -> np.ndarray:
 
 
 def _cos_density(x):
-    return 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(x))
+    return 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(x[0]))
 
 
 def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos_density):

@@ -50,7 +50,7 @@ def _unit_mass(density, n):
     """``density`` on [0, 1], scaled to mass 1 on the n-node grid's measure, the trapezoid."""
     xs = np.linspace(0.0, 1.0, n)
     mass = np.trapezoid(density(xs), xs)
-    return lambda x: density(np.asarray(x, dtype=float)) / mass
+    return lambda x: density(np.asarray(x[0], dtype=float)) / mass
 
 
 def _x(problem):
@@ -64,12 +64,12 @@ def _V(x):
 
 def _plumbing_problem(where, n=41, nt=20):
     """V as the Hamiltonian's potential (``"H"``), as ``PotentialCost(V)`` (``"F"``), or neither."""
-    potential = (lambda t, x: _V(np.asarray(x, dtype=float)[..., 0])) if where == "H" else None
+    potential = (lambda t, x: _V(x[0])) if where == "H" else None
     return MFGProblem(
         model=Model(
             hamiltonian=_hamiltonian(potential=potential),
             volatility=0.3,
-            coupling_cost=PotentialCost(_V) if where == "F" else None,
+            coupling_cost=PotentialCost(lambda x: _V(x[0])) if where == "F" else None,
         ),
         domain=_grid(n),
         conditions=Conditions(
@@ -387,19 +387,19 @@ def test_a_users_coupling_cost_sums_with_the_librarys():
 
     problem = _plumbing_problem("neither", n=11)
     x = _x(problem)
-    for cost in (PotentialCost(_V) + Mine(), Mine() + PotentialCost(_V), sum([PotentialCost(_V), Mine()])):
+    for cost in (PotentialCost(lambda x: _V(x[0])) + Mine(), Mine() + PotentialCost(lambda x: _V(x[0])), sum([PotentialCost(lambda x: _V(x[0])), Mine()])):
         np.testing.assert_allclose(
             cost.bind(problem).flat_derivative(np.ones(x.size)), _V(x) + 2.0 * x, rtol=0, atol=1e-14, err_msg=repr(cost)
         )
 
     class Broken:
         def bind(self, problem):
-            energy = PotentialCost(_V).bind(problem)
+            energy = PotentialCost(lambda x: _V(x[0])).bind(problem)
             return SimpleNamespace(weights=energy.weights, energy=energy.energy)
 
     with pytest.raises(TypeError, match=r"Broken\.bind\(problem\) returned SimpleNamespace.*lacks .*flat_derivative"):
         MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V) + Broken()),
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(lambda x: _V(x[0])) + Broken()),
             domain=_grid(11),
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
             Nt=2,
@@ -514,7 +514,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
 
     with pytest.raises(TypeError, match=r"Model\(terminal_coupling=\.\.\.\) takes a coupling cost.*not function"):
         Model(hamiltonian=_hamiltonian(), terminal_coupling=lambda x, m: 0.0)
-    mutated = Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V))
+    mutated = Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(lambda x: _V(x[0])))
     mutated.terminal_coupling = lambda x, m: 0.0
     with pytest.raises(TypeError, match=r"Model\(terminal_coupling=\.\.\.\) takes a coupling cost.*not function"):
         MFGProblem(
@@ -544,7 +544,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     net = GridNetwork(width=5, height=1)
     net.create_network()
     network = NetworkMFGProblem(
-        geometry=net, T=0.2, Nt=4, components=NetworkMFGComponents(node_potential_func=lambda t, i: 0.3 * i)
+        geometry=net, T=0.2, Nt=4, components=NetworkMFGComponents(node_potential_func=lambda t, node: 0.3 * node)
     )
     n = network.num_nodes
     spread = np.ptp(NetworkHJBSolver(network)._source_terms(np.ones(n) / n, 0.0))
@@ -663,7 +663,7 @@ def test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere():
 
     class AtNodes:
         def bind(self, problem):
-            energy = PotentialCost(_V).bind(problem)
+            energy = PotentialCost(lambda x: _V(x[0])).bind(problem)
             return SimpleNamespace(
                 weights=energy.weights,
                 energy=energy.energy,
@@ -675,7 +675,7 @@ def test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere():
     M = np.ones((3, 21))
     for cost, parts, refusal in (
         (AtNodes(), 1, r"SimpleNamespace, has no flat_derivative_at.*21 points it was bound on.*HJB-FDM, HJB-SL"),
-        (PotentialCost(_V) + AtNodes(), 2, r"its part, SimpleNamespace, has no flat_derivative_at"),
+        (PotentialCost(lambda x: _V(x[0])) + AtNodes(), 2, r"its part, SimpleNamespace, has no flat_derivative_at"),
     ):
         problem = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=cost),
