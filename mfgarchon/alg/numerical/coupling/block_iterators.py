@@ -657,7 +657,7 @@ class BlockIterator(BaseCouplingIterator):
 
         return U_new, M_new
 
-    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
         self,
         max_iterations: int = 100,

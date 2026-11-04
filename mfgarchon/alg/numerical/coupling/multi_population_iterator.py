@@ -130,7 +130,7 @@ class MultiPopulationIterator:
         """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
         return self.relaxation
 
-    @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers))
+    @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers), fp_solvers_of=lambda self: list(self.fp_solvers))
     def solve(
         self,
         max_iterations: int = 50,

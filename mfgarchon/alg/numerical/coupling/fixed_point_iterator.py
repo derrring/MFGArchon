@@ -258,7 +258,7 @@ class FixedPointIterator(BaseCouplingIterator):
             shape,
         )
 
-    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
         self,
         config: MFGSolverConfig | None = None,
@@ -827,7 +827,8 @@ class FixedPointIterator(BaseCouplingIterator):
             self.U,
             self.M,
             check_finite=True,
-            check_density_positive=True,
+            # A solver that keeps a negative reports it itself, and this check's advice is the user's to take or not (#2845).
+            check_density_positive=not getattr(self.fp_solver, "reports_negative_density", False),
         )
         if not output_validation.is_valid:
             metadata["output_validation"] = {

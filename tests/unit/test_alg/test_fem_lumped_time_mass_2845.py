@@ -13,8 +13,6 @@ passes; its seed is fixed. The 1-D mesh is here because the pairing below cannot
 once: on a uniform line P1's M = ML - (h^2/6) K, and <U, ML m> is then conserved under either mass.
 """
 
-import logging
-
 import pytest
 import skfem
 
@@ -90,13 +88,11 @@ def test_a_no_flux_pure_diffusion_spike_keeps_its_mass_to_round_off(build):
     assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, mass
 
 
-def test_a_spike_at_a_robin_wall_is_not_clipped(mfg_caplog, monkeypatch):
+def test_a_spike_at_a_robin_wall_stays_non_negative(monkeypatch):
     """FP-FEM from a one-node spike on y_min, Robin alpha/beta = 200 on every face, D = 0.18, dt = 1e-4, init_tensor
     33 x 33 (K has no positive off-diagonal). With the consistent boundary mass the step took the density to -1.33e-2
-    and the positivity clip injected mass, logging "FP positivity clip injected" (measured at d254acb1). The lumped
-    boundary mass keeps the step an M-matrix step, so the clip has nothing to do (#2845). The row fails on the clip's
-    own messages only, and first shows that this fixture logs them, unlumped: the clip is seen only through them, so an
-    absence alone would also pass with both reworded, renamed or moved to another level."""
+    (measured at d254acb1). The lumped boundary mass keeps the step an M-matrix step, so nothing goes negative (#2845).
+    The row first shows that this fixture goes negative, unlumped, on the same reading."""
     mesh = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
     mesh.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_tensor(np.linspace(0, 1, 33), np.linspace(0, 1, 33)))
     mesh.boundary_conditions = _walls(2, "no_flux")
@@ -111,23 +107,18 @@ def test_a_spike_at_a_robin_wall_is_not_clipped(mfg_caplog, monkeypatch):
         segments=[BCSegment(name=f, bc_type=BCType.ROBIN, alpha=200.0, beta=1.0, boundary=f) for f in FACES[2]],
     )
 
-    def clipped(solver) -> list[str]:
-        mfg_caplog.clear()
+    def lowest(solver) -> float:
         x = solver._disc.dof_coordinates
         m0 = np.zeros(len(x))
         m0[np.argmin(np.hypot(x[:, 0] - 0.5, x[:, 1]))] = 1.0
-        # The clip logs from the weak-form FP base, once per step and once for the solve (AGENTS.md: mfg_caplog, and
-        # an absence paired with a presence on the same logger name).
-        with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.weak_form_fp_solver"):
-            solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((3, len(x))))
-        return [m for m in mfg_caplog.messages if "FP positivity clip injected" in m]
+        return float(np.min(solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((3, len(x))))))
 
     with monkeypatch.context() as unlumped:
         unlumped.setattr(FEMDiscretization, "lumps_mass", property(lambda self: False))
-        assert clipped(FPFEMSolver(problem, boundary_conditions=robin)), (
-            "the control: unlumped, this fixture is clipped"
+        assert lowest(FPFEMSolver(problem, boundary_conditions=robin)) < -1e-3, (
+            "the control: unlumped, this fixture goes negative"
         )
-    assert not clipped(FPFEMSolver(problem, boundary_conditions=robin))
+    assert lowest(FPFEMSolver(problem, boundary_conditions=robin)) >= 0.0
 
 
 def _walls(dim: int, wall: str) -> BoundaryConditions:

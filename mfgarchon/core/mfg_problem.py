@@ -23,6 +23,7 @@ from mfgarchon.types.callable_protocols import (
     Slots,
     bind_user_callable,
     bound_attribute,
+    checked_density_field,
     refuse_methods_out_of_order,
     refuse_overridden,
 )
@@ -2317,7 +2318,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"{who}: m(T) has {flat.size} values and this problem has {g.size} points (#1642). Pass one time slice "
                 "of m, the one at t = T, on the points the terminal coupling was bound on."
             )
-        return g + np.asarray(energy.flat_derivative(flat, t=self.T), dtype=float).reshape(g.shape)
+        return g + checked_density_field(
+            energy.flat_derivative(flat, t=self.T), flat, read="terminal_coupling", t=self.T
+        ).reshape(g.shape)
 
     def _bind_cost(self, field: str) -> EnergyFunctional | None:
         """``model.<field>.bind(self)`` for ``coupling_cost`` and ``terminal_coupling``, where this stage binds one; the

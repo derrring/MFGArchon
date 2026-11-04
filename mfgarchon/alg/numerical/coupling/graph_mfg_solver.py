@@ -198,7 +198,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._N = N
         self._last_result: GraphMFGResult | None = None
 
-    @verdict_reads_inner_failures(lambda self: list(self._hjb))
+    @verdict_reads_inner_failures(lambda self: list(self._hjb), fp_solvers_of=lambda self: list(self._fp))
     def solve(self) -> GraphMFGResult:
         """Run Picard iteration over N-node graph.
 

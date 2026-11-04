@@ -332,6 +332,44 @@ def inner_failures_recorded(hjb_solvers: Iterable[Any]) -> Iterator[None]:
             solver.on_inner_failure = "raise"
 
 
+@contextmanager
+def negative_density_recorded(fp_solvers: Iterable[Any]) -> Iterator[None]:
+    """For a coupled solve: each FP solver that keeps a negative value records it instead of warning at each sweep, and
+    the coupler reports the density it returns (#2845). A duck-typed solver without the attribute is left alone."""
+    switched: list = []
+    try:
+        for solver in fp_solvers:
+            if getattr(solver, "on_negative_density", None) == "warn":
+                solver.on_negative_density = "record"
+                switched.append(solver)
+        yield
+    finally:
+        for solver in switched:
+            solver.on_negative_density = "warn"
+
+
+def _report_negative_density(result: Any, fp_solvers: list[Any]) -> None:
+    """One warning per solver, and ``fp_negative_density`` in the result's record, for the density the result returns
+    rather than the last sweep's step, since a coupler can damp it (#2845). Newton returns ``(U, M, info)``."""
+    if isinstance(result, tuple):
+        densities, record = result[1], result[2]
+    else:
+        densities = getattr(result, "densities", None)
+        densities = result.M if densities is None else densities
+        record = getattr(result, "metadata", None)
+    per_solver = [densities] if len(fp_solvers) == 1 else list(densities)
+    reports = []
+    for solver, density in zip(fp_solvers, per_solver, strict=True):
+        if not getattr(solver, "reports_negative_density", False):
+            reports.append(None)
+            continue
+        report = solver.negative_density_of(density)
+        solver.warn_negative_density(report)
+        reports.append(report)
+    if any(report is not None for report in reports) and isinstance(record, dict):
+        record["fp_negative_density"] = reports[0] if len(reports) == 1 else reports
+
+
 #: The ``stacklevel`` of a warning a decorated ``solve`` raises for its caller: `verdict_reads_inner_failures`' wrapper
 #: is one frame between the two (#2644).
 SOLVE_CALLER_STACKLEVEL = 3
@@ -340,6 +378,7 @@ SOLVE_CALLER_STACKLEVEL = 3
 def verdict_reads_inner_failures(
     hjb_solvers_of: Callable[[Any], list[object]],
     *,
+    fp_solvers_of: Callable[[Any], list[object]],
     check: bool = True,
 ) -> Callable[
     [Callable[Concatenate[_Solver, _Params], _Result]],
@@ -352,7 +391,8 @@ def verdict_reads_inner_failures(
     ``BlockIterator`` over the same failed steps reported ``converged=True``. One HJB solver object in several slots is
     refused before the solve (`refuse_a_shared_hjb_solver`), so each solver's latest record is its slot's in the last
     sweep. Newton takes ``check=False``: its last HJB solve can be a Jacobian probe, so it reads the record in its own
-    verdict, where the latest solve is the accepted iterate's.
+    verdict, where the latest solve is the accepted iterate's. ``fp_solvers_of`` gives one FP solver per density the
+    result returns, for its report of a kept negative (#2845).
     """
 
     def decorate(
@@ -362,8 +402,10 @@ def verdict_reads_inner_failures(
         def wrapper(self: _Solver, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Result:
             solvers = hjb_solvers_of(self)
             refuse_a_shared_hjb_solver(solvers, type(self).__name__)
-            with inner_failures_recorded(solvers):
+            fp_solvers = fp_solvers_of(self)
+            with inner_failures_recorded(solvers), negative_density_recorded(fp_solvers):
                 result = solve(self, *args, **kwargs)
+            _report_negative_density(result, fp_solvers)
             if not check:
                 return result
             failures = read_inner_solve_failures_of(solvers)

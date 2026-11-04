@@ -234,7 +234,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         )
         return M_initial, self._reshape_to(U_terminal, shape)
 
-    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
         self,
         config: MFGSolverConfig | None = None,

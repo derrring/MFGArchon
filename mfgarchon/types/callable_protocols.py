@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import math
 import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -452,6 +453,61 @@ class BoundCallable:
         if self.binding == "keyword":
             return self.fn(**{param: values[slot] for param, slot in zip(self.params, self.passes, strict=True)})
         return self.fn(*(values[slot] for slot in self.passes))
+
+
+def _density_read_stopped(read: str, t: float, m: Any, raised: Exception | None = None) -> ValueError:
+    """A density read that cannot be used, as a report: the read, the time and the minimum of ``m`` (#2845). It is not a
+    remedy, and the text records what has cleared a stopped run rather than offer a floor, which changes the equation."""
+    what = "returned a non-finite value" if raised is None else f"raised {type(raised).__name__}: {raised},"
+    return ValueError(
+        f"{read} {what} at t={t}: the minimum of m is {float(np.min(np.asarray(m, dtype=float))):.3e}. What has cleared "
+        "a stopped run: a finer mesh, on the rows run. A floor or a shift in the callable changes the equation being "
+        "solved, and the library applies none."
+    )
+
+
+def read_density_at_point(fn: Callable[..., Any], m: Any, *, read: str, t: float) -> float:
+    """``float(fn(m))``, or the stop at this read where the value is non-finite (#2845). A body that raises, or returns
+    a complex, on a negative in ``m`` is stopped with its own message kept; a body that raises with no negative there is
+    left alone, since a negative is not what it met."""
+    try:
+        value = float(fn(m))
+    except (TypeError, ValueError, ArithmeticError) as raised:
+        if float(np.min(np.asarray(m, dtype=float))) < 0.0:
+            raise _density_read_stopped(read, t, m, raised) from raised
+        raise
+    if not math.isfinite(value):
+        raise _density_read_stopped(read, t, m)
+    return value
+
+
+def read_density_batch(fn: Callable[..., Any], m: Any, n: int, *, read: str, t: float) -> NDArray:
+    """``fn(m)`` over ``n`` points, by array where the body takes one and point by point where it does not, or the stop
+    at this read where a value is non-finite, or where a point-by-point body raises on a negative in ``m`` (#2845)."""
+    m_arr = np.asarray(m)
+    try:
+        value = np.asarray(fn(m_arr), dtype=float).ravel()
+        if value.shape[0] != n:
+            raise ValueError
+    except (TypeError, ValueError):
+        try:
+            value = np.array([float(fn(float(m_arr.flat[i]))) for i in range(n)])
+        except (TypeError, ValueError, ArithmeticError) as raised:
+            if float(np.min(np.asarray(m_arr, dtype=float))) < 0.0:
+                raise _density_read_stopped(read, t, m_arr, raised) from raised
+            raise
+    if not np.all(np.isfinite(value)):
+        raise _density_read_stopped(read, t, m_arr)
+    return value
+
+
+def checked_density_field(value: Any, m: Any, *, read: str, t: float) -> NDArray:
+    """``value`` as an array, a field a coupling cost computed from ``m``, or the stop at this read where it holds a
+    non-finite value (#2845)."""
+    field_value = np.asarray(value, dtype=float)
+    if not np.all(np.isfinite(field_value)):
+        raise _density_read_stopped(read, t, m)
+    return field_value
 
 
 def bound_attribute(owner: Any, attr: str, slots: Slots, *, role: str, spatial_only: bool = False) -> BoundCallable:

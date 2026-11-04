@@ -51,6 +51,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     """Fokker-Planck on a scattered point cloud via Galerkin MLS (Type-A discrete duality)."""
 
     _scheme_family = SchemeFamily.MESHLESS_GALERKIN
+    _negative_density_note = (
+        "These are MLS coefficients, not the density at a point (#2672). What has cleared one: "
+        "streamline_diffusion_scale = 1.0 on a line at D = 0.01, v = 1, dt = 1e-2; in 2-D at the same values it has not."
+    )
 
     # No-flux, homogeneous Neumann and reflecting are the natural condition; DIRICHLET is an absorbing
     # wall (m = 0) imposed by Nitsche. A Dirichlet value on the shared BC is the HJB's exit cost and is

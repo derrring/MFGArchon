@@ -75,6 +75,8 @@ from mfgarchon.types.callable_protocols import (
     POTENTIAL_SLOTS,
     BoundCallable,
     bound_attribute,
+    read_density_at_point,
+    read_density_batch,
     refuse_overridden,
 )
 
@@ -2017,7 +2019,7 @@ class SeparableLagrangian(LagrangianBase):
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
-        f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
+        f_m = read_density_at_point(self._coupling, m, read="coupling", t=t) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
     def optimal_control(self, t, x, p, m):
@@ -2031,7 +2033,7 @@ class SeparableLagrangian(LagrangianBase):
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
         V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
-        f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
+        f_m = read_density_at_point(self._coupling, m, read="coupling", t=t) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
     def proximal(self, tau, z, *, t=0.0, x=None, m=None):
@@ -2553,15 +2555,9 @@ class SeparableHamiltonian(HamiltonianBase):
         # Coupling term
         if self._coupling is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    f_m = np.asarray(self._coupling(m_arr), dtype=float).ravel()
-                    if f_m.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    f_m = np.array([float(self._coupling(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                f_m = read_density_batch(self._coupling, m, p_arr.shape[0], read="coupling", t=t)
             else:
-                f_m = float(self._coupling(m))
+                f_m = read_density_at_point(self._coupling, m, read="coupling", t=t)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2601,15 +2597,8 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._coupling_dm is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    result = np.asarray(self._coupling_dm(m_arr), dtype=float).ravel()
-                    if result.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    result = np.array([float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
-                return -result
-            return -float(self._coupling_dm(m))
+                return -read_density_batch(self._coupling_dm, m, p_arr.shape[0], read="coupling_dm", t=t)
+            return -read_density_at_point(self._coupling_dm, m, read="coupling_dm", t=t)
 
         if self._coupling is None:
             if is_batch:
@@ -2772,15 +2761,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            m_arr = np.asarray(m)
-            try:
-                c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                if c_m.shape[0] != p_arr.shape[0]:
-                    raise ValueError
-            except (TypeError, ValueError):
-                c_m = np.array([float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+            c_m = read_density_batch(self._congestion_factor, m, p_arr.shape[0], read="congestion_factor", t=t)
         else:
-            c_m = float(self._congestion_factor(m))
+            c_m = read_density_at_point(self._congestion_factor, m, read="congestion_factor", t=t)
 
         H_kinetic = H_kinetic / c_m
 
@@ -2796,15 +2779,9 @@ class CongestionHamiltonian(HamiltonianBase):
         # Coupling term f(m)
         if self._coupling is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    f_m = np.asarray(self._coupling(m_arr), dtype=float).ravel()
-                    if f_m.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    f_m = np.array([float(self._coupling(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                f_m = read_density_batch(self._coupling, m, p_arr.shape[0], read="coupling", t=t)
             else:
-                f_m = float(self._coupling(m))
+                f_m = read_density_at_point(self._coupling, m, read="coupling", t=t)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2830,15 +2807,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            m_arr = np.asarray(m)
-            try:
-                c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                if c_m.shape[0] != p_arr.shape[0]:
-                    raise ValueError
-            except (TypeError, ValueError):
-                c_m = np.array([float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+            c_m = read_density_batch(self._congestion_factor, m, p_arr.shape[0], read="congestion_factor", t=t)
         else:
-            c_m = float(self._congestion_factor(m))
+            c_m = read_density_at_point(self._congestion_factor, m, read="congestion_factor", t=t)
 
         # Delegate to control_cost.dp(), then divide by c(m) (Issue #898)
         base_dp = self.control_cost.dp(p_arr)
@@ -2870,39 +2841,23 @@ class CongestionHamiltonian(HamiltonianBase):
                 H_kin = float(H_kin.sum())
 
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                    c_dm = np.asarray(self._congestion_factor_dm(m_arr), dtype=float).ravel()
-                    if c_m.shape[0] != p_arr.shape[0] or c_dm.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    c_m = np.array(
-                        [float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                    )
-                    c_dm = np.array(
-                        [float(self._congestion_factor_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                    )
+                c_m = read_density_batch(self._congestion_factor, m, p_arr.shape[0], read="congestion_factor", t=t)
+                c_dm = read_density_batch(
+                    self._congestion_factor_dm, m, p_arr.shape[0], read="congestion_factor_dm", t=t
+                )
 
                 kinetic_dm = -c_dm * H_kin / c_m**2
             else:
-                c_m = float(self._congestion_factor(m))
-                c_dm = float(self._congestion_factor_dm(m))
+                c_m = read_density_at_point(self._congestion_factor, m, read="congestion_factor", t=t)
+                c_dm = read_density_at_point(self._congestion_factor_dm, m, read="congestion_factor_dm", t=t)
                 kinetic_dm = -c_dm * H_kin / c_m**2
 
             # Coupling contribution f'(m)
             if self._coupling_dm is not None:
                 if is_batch:
-                    try:
-                        coupling_dm_val = np.asarray(self._coupling_dm(m_arr), dtype=float).ravel()
-                        if coupling_dm_val.shape[0] != p_arr.shape[0]:
-                            raise ValueError
-                    except (TypeError, ValueError):
-                        coupling_dm_val = np.array(
-                            [float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                        )
+                    coupling_dm_val = read_density_batch(self._coupling_dm, m, p_arr.shape[0], read="coupling_dm", t=t)
                 else:
-                    coupling_dm_val = float(self._coupling_dm(m))
+                    coupling_dm_val = read_density_at_point(self._coupling_dm, m, read="coupling_dm", t=t)
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
