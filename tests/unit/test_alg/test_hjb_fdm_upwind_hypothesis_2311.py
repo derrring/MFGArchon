@@ -63,7 +63,7 @@ def _problem(hamiltonian, dimension: int):
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.3),
         domain=grid,
-        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=0.1),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1),
         Nt=3,
     )
 

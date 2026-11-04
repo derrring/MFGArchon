@@ -350,7 +350,7 @@ def _solve(cell: Cell, n: int, newton: bool, bc=None, terminal_offset: float = 0
         domain=geometry,
         # Unit mass on the mesh's own measure: Mesh1D's uniform-cell measure gives a constant c the mass c (n+1)/n.
         conditions=Conditions(
-            m_initial=lambda p, c=(n / (n + 1) if cell.dim == 1 else 1.0): c, u_terminal=lambda p: 0.0, T=T
+            m_initial=lambda p, c=(n / (n + 1) if cell.dim == 1 else 1.0): c, u_terminal=lambda x: 0.0, T=T
         ),
         Nt=cell.nt,
     )

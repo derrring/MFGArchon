@@ -80,7 +80,7 @@ class TestGate3LionsBridgeEquivalence:
                 hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.2
             ),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(1)),
-            conditions=Conditions(u_terminal=lambda xx: 0.0, m_initial=lambda xx: 1.0, T=0.5),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
             Nt=4,
         )
         x = problem.geometry.get_spatial_grid().ravel()
@@ -518,10 +518,10 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
         coupling_dm=lambda m: 0.0,
     )
 
-    def m_initial(xx):
-        return np.exp(-((xx - 0.5) ** 2) / (2 * 0.12**2))
+    def m_initial(x):
+        return np.exp(-((x - 0.5) ** 2) / (2 * 0.12**2))
 
-    components = MFGComponents(hamiltonian=H, u_terminal=lambda xx: 0.0, m_initial=m_initial)
+    components = MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=m_initial)
     problem = MFGProblem(
         geometry=TensorProductGrid(
             bounds=[(0.0, 1.0)], Nx_points=[21 + 1], boundary_conditions=no_flux_bc(dimension=1)

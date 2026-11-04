@@ -248,7 +248,7 @@ class TestEvaluateHamiltonianValue:
         H = SeparableHamiltonian(
             control_cost=cost,
             potential=lambda t, x: 0.7,
-            coupling=lambda m_: -(m_**2),
+            coupling=lambda m: -(m**2),
         )
         dual_L = H.legendre_transform(p_bounds=(-50.0, 50.0), n_search=2001)
         np.testing.assert_allclose(

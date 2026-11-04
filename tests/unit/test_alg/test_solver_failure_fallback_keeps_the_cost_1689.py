@@ -54,7 +54,7 @@ def _solve(potential: float, monkeypatch=None, failures: list | None = None) -> 
     problem = MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.15),
         domain=grid,
-        conditions=Conditions(u_terminal=lambda z: 0.0, m_initial=lambda z: 1.0, T=T),
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=T),
         Nt=NT,
     )
     x, y = np.meshgrid(*grid.coordinates, indexing="ij")

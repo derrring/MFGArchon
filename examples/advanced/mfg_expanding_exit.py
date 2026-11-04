@@ -153,8 +153,8 @@ def create_mfg_problem(phi_current: np.ndarray) -> MFGProblem:
     m0_snapshot = m0.copy()
     u_final_snapshot = u_final.copy()
     conditions = Conditions(
-        m_initial=lambda _x: m0_snapshot,
-        u_terminal=lambda _x: u_final_snapshot,
+        m_initial=lambda x: m0_snapshot,
+        u_terminal=lambda x: u_final_snapshot,
         T=T_final,
     )
 

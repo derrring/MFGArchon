@@ -289,8 +289,8 @@ def _public_entry_problem(n: int = 41, Nt: int = 4):
             T=0.4,
             volatility=0.05,
             components=MFGComponents(
-                m_initial=lambda _x: 1.0,
-                u_terminal=lambda _x: np.cos(4 * np.pi * np.asarray(_x)),
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: np.cos(4 * np.pi * np.asarray(x)),
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
                 ),

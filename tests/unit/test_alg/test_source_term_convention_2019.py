@@ -46,8 +46,8 @@ def _problem(dim, n, nt):
         coupling_coefficient=0.0,
         components=MFGComponents(
             # Per-point callables returning a float: what the 2-D validator accepts.
-            m_initial=lambda p: 1.0,
-            u_terminal=lambda p: 0.0,
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: np.asarray(m) * 0.0,
@@ -72,7 +72,7 @@ def test_the_documented_point_array_convention_works_in_2d(name, cls):
     solver = cls(problem)
     seen: dict[str, tuple] = {}
 
-    def source(_t, x):
+    def source(t, x):
         a = np.asarray(x, dtype=float)
         seen["shape"] = a.shape
         # The documented convention: (N, d) in, one value per point out.
@@ -99,7 +99,7 @@ def test_the_source_actually_moves_the_answer(name, cls):
     base = np.asarray(solver.solve_fp_system(m0.copy(), potential_field=None))
     forced = np.asarray(
         solver.solve_fp_system(
-            m0.copy(), potential_field=None, source_term=lambda _t, x: np.full(np.asarray(x).shape[0], 2.0)
+            m0.copy(), potential_field=None, source_term=lambda t, x: np.full(np.asarray(x).shape[0], 2.0)
         )
     )
     delta = float(np.abs(forced[-1] - base[-1]).max())

@@ -200,10 +200,10 @@ def _problem_2d(n=9, volatility=0.3):
         model=Model(hamiltonian=hamiltonian, volatility=volatility),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda z: (
-                np.exp(-10 * np.sum((np.atleast_2d(z) - 0.45) ** 2, axis=-1)).reshape(np.shape(z)[:-1] or ()) / mass
+            m_initial=lambda x: (
+                np.exp(-10 * np.sum((np.atleast_2d(x) - 0.45) ** 2, axis=-1)).reshape(np.shape(x)[:-1] or ()) / mass
             ),
-            u_terminal=lambda z: 0.0,
+            u_terminal=lambda x: 0.0,
             T=0.2,
         ),
         Nt=6,

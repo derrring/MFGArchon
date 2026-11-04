@@ -45,7 +45,7 @@ def _problem(bc):
         return MFGProblem(
             model=Model(hamiltonian=hamiltonian, volatility=0.3),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=bc),
-            conditions=Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.5),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
             Nt=10,
         )
 

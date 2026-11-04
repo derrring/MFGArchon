@@ -75,7 +75,7 @@ def _read(hamiltonian, slope, n, nt, **solver_options):
             bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=no_flux_bc(dimension=d)
         ),
         conditions=Conditions(
-            m_initial=lambda y: 1.0, u_terminal=lambda y: np.sum(slope * np.asarray(y, dtype=float), axis=-1), T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: np.sum(slope * np.asarray(x, dtype=float), axis=-1), T=_T
         ),
         Nt=nt,
     )
@@ -160,7 +160,7 @@ def _problem(hamiltonian, slope=1.5, n=21, nt=5):
         model=Model(hamiltonian=hamiltonian, volatility=0.05),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda y: 1.0, u_terminal=lambda y: slope * np.asarray(y, dtype=float)[..., 0], T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: slope * np.asarray(x, dtype=float)[..., 0], T=_T
         ),
         Nt=nt,
     )
@@ -255,7 +255,7 @@ def test_the_update_refines_with_a_potential_and_a_coupling_that_vary(path):
             model=Model(hamiltonian=hamiltonian, volatility=0.05),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
             conditions=Conditions(
-                m_initial=lambda y: 1.0, u_terminal=lambda y: 0.8 * np.asarray(y, dtype=float)[..., 0], T=_T
+                m_initial=lambda x: 1.0, u_terminal=lambda x: 0.8 * np.asarray(x, dtype=float)[..., 0], T=_T
             ),
             Nt=nt,
         )
@@ -282,7 +282,7 @@ def test_the_update_agrees_with_fdm_where_p_varies_in_x(cost, path):
         model=Model(hamiltonian=_separable(_COSTS[cost][0]), volatility=0.05),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            m_initial=lambda y: 1.0, u_terminal=lambda y: _curved(np.asarray(y, dtype=float)[..., 0]), T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: _curved(np.asarray(x, dtype=float)[..., 0]), T=_T
         ),
         Nt=nt,
     )
@@ -313,7 +313,7 @@ def test_a_2_homogeneous_kinetic_term_keeps_the_update_it_had(hamiltonian):
     problem = MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.05),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)),
-        conditions=Conditions(m_initial=lambda y: 1.0, u_terminal=lambda y: 0.0, T=_T),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=_T),
         Nt=2,
     )
     solver = HJBSemiLagrangianSolver(problem)

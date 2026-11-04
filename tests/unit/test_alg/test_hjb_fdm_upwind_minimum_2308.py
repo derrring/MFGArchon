@@ -54,7 +54,7 @@ def _error(nx: int, sigma: float) -> float:
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=sigma
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=_T),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=_T),
         Nt=_NT,
     )
     x = grid.coordinates[0]

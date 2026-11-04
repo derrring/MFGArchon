@@ -93,7 +93,7 @@ def _mesh_problem(bc: BoundaryConditions, dim: int) -> MFGProblem:
     return MFGProblem(
         model=_model(),
         domain=geometry,
-        conditions=Conditions(m_initial=lambda p: c + 0.0 * np.asarray(p)[..., 0], u_terminal=lambda p: 0.0, T=T),
+        conditions=Conditions(m_initial=lambda x: c + 0.0 * np.asarray(x)[..., 0], u_terminal=lambda x: 0.0, T=T),
         Nt=NT,
     )
 

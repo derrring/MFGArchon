@@ -131,7 +131,7 @@ def test_the_fp_solver_conserves_the_grid_measure_and_not_the_rectangle_rule():
     problem = MFGProblem(
         model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, volatility=sigma),
         domain=grid,
-        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=t_end),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=t_end),
         Nt=nt,
     )
     M = np.asarray(FPSLSolver(problem).solve_fp_system(M_initial=m0.copy(), potential_field=np.zeros((nt + 1, nx))))
@@ -234,7 +234,7 @@ def test_the_transport_and_diffusion_half_steps_conserve_the_same_measure(dims):
     problem = MFGProblem(
         model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, volatility=sigma),
         domain=grid,
-        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=t_end),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=t_end),
         Nt=nt,
     )
     # A NON-ZERO potential: u = -0.5 * sum(x_d) drives a constant drift into the far walls.

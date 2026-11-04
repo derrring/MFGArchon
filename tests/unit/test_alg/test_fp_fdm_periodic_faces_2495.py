@@ -54,7 +54,7 @@ def _problem(bc):
     problem = MFGProblem(
         model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3),
         domain=grid,
-        conditions=Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.3),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.3),
         Nt=NT,
     )
     X, Y = np.meshgrid(*grid.coordinates, indexing="ij")

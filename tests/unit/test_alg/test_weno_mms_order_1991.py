@@ -136,7 +136,7 @@ def _linf_error(nx, nt, sigma):
         M_density=m,
         U_terminal=u_T,
         U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-        source_term=lambda t, xx: _source(t, xx, sigma),
+        source_term=lambda t, x: _source(t, x, sigma),
     )
     return np.abs(U[0] - _u_exact(0.0, x)).max()
 
@@ -162,7 +162,7 @@ def test_weno_accepts_a_source_term_at_all():
         M_density=m,
         U_terminal=u_T,
         U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-        source_term=lambda t, xx: _source(t, xx, sigma),
+        source_term=lambda t, x: _source(t, x, sigma),
     )
     unforced = solver.solve_hjb_system(M_density=m, U_terminal=u_T, U_coupling_prev=np.tile(u_T, (nt + 1, 1)))
     assert np.isfinite(forced).all()

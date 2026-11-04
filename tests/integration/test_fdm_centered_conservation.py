@@ -139,7 +139,7 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
     m0 = np.exp(-((x - 0.5) ** 2) / 0.01)
     m0 /= float(_mass(grid, m0))
     # callable drift signature is (t, grid, density); constant leftward velocity toward x=0
-    M = FPFDMSolver(prob).solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.full(n, -0.3))
+    M = FPFDMSolver(prob).solve_fp_system(m0.copy(), drift_field=lambda t, x, m: np.full(n, -0.3))
     assert np.all(np.isfinite(M))
     # No periodic wrap: a periodic default re-enters mass exiting the LEFT wall AT the RIGHT
     # wall, giving O(0.1) there. The direct wrap signal is the right-wall value itself.

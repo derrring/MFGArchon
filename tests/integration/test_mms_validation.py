@@ -793,7 +793,7 @@ class TestMMSHJB1D:
                 M_density=np.ones((Nt + 1, Nx)),
                 U_terminal=manufactured.terminal_condition(x_grid),
                 U_coupling_prev=np.zeros((Nt + 1, Nx)),
-                source_term=lambda t, x_arr: manufactured.hjb_source(t, x_arr),
+                source_term=lambda t, x: manufactured.hjb_source(t, x),
             )
             errors.append(np.sqrt(np.mean((U_numerical[0, :] - manufactured.solution(0.0, x_grid)) ** 2)))
 

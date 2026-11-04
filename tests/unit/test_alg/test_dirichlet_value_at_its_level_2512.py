@@ -53,7 +53,7 @@ def _problem(geometry, nt=NT):
         return MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=SIGMA),
             domain=geometry,
-            conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=T),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=T),
             Nt=nt,
         )
 

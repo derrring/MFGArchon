@@ -1316,10 +1316,10 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         x = np.linspace(0.0, 1.0, n)
         dx = x[1] - x[0]
 
-        def m_init(xx):
-            return np.exp(-((np.asarray(xx) - bump_center) ** 2) / 0.01)
+        def m_init(x):
+            return np.exp(-((np.asarray(x) - bump_center) ** 2) / 0.01)
 
-        comps = MFGComponents(m_initial=m_init, u_terminal=lambda xx: np.asarray(xx) * 0.0, hamiltonian=H)
+        comps = MFGComponents(m_initial=m_init, u_terminal=lambda x: np.asarray(x) * 0.0, hamiltonian=H)
         prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, volatility=0.1, components=comps)
         m0 = m_init(x)
         # Normalised on the control volumes (#2145), which is what the scheme conserves; the
@@ -1329,7 +1329,7 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         # A scalar has no kind; the per-point array is declared a field (#2378).
         kind = "field" if np.ndim(sigma_field) else None
         traj = FPFDMSolver(prob).solve_fp_system(
-            m0, drift_field=lambda t, g, m: np.zeros(n), volatility=sigma_field, volatility_kind=kind
+            m0, drift_field=lambda t, x, m: np.zeros(n), volatility=sigma_field, volatility_kind=kind
         )
         return np.asarray(traj)[-1], dx
 
