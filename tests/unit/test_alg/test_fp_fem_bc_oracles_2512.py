@@ -243,7 +243,7 @@ def _solve(cell: Cell, n: int, solver_cls=FPFEMSolver):
         # The problem's own initial density is evaluated at construction, but the solve is handed the manufactured one;
         # the constant only makes MFGProblem's mass report read 1 on Mesh1D's uniform-cell measure.
         conditions=Conditions(
-            m_initial=lambda p, c=(n / (n + 1) if cell.dim == 1 else 1.0): c, u_terminal=lambda p: 0.0, T=T
+            m_initial=lambda p, c=(n / (n + 1) if cell.dim == 1 else 1.0): c, u_terminal=lambda x: 0.0, T=T
         ),
         Nt=NT,
     )

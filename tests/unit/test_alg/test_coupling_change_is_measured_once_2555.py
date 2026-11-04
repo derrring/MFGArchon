@@ -418,7 +418,7 @@ def test_the_change_is_the_l2_norm_in_the_geometrys_own_measure(geometry, area):
             volatility=0.3,
         ),
         domain=geometry(),
-        conditions=Conditions(m_initial=lambda p: 1.0 / area, u_terminal=lambda p: 0.0, T=0.2),
+        conditions=Conditions(m_initial=lambda x: 1.0 / area, u_terminal=lambda x: 0.0, T=0.2),
         Nt=_NT,
     )
     shape = (problem.Nt + 1, *problem.geometry.get_grid_shape())

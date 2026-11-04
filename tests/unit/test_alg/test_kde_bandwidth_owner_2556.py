@@ -304,7 +304,7 @@ def _problem(nx=21, d=1, volatility=0.3, bounds=None):
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=volatility
     )
     volume = float(np.prod([float(hi) - float(lo) for lo, hi in bounds]))  # in float: integer bounds may wrap
-    conditions = Conditions(m_initial=lambda z: 1.0 / volume, u_terminal=lambda z: 0.0, T=0.1)
+    conditions = Conditions(m_initial=lambda x: 1.0 / volume, u_terminal=lambda x: 0.0, T=0.1)
     return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4)
 
 
@@ -666,7 +666,7 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
             bounds=[(0.0, width), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
         )
         model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.0)
-        conditions = Conditions(m_initial=lambda z, width=width: 1.0 / width, u_terminal=lambda z: 0.0, T=0.1)
+        conditions = Conditions(m_initial=lambda z, width=width: 1.0 / width, u_terminal=lambda x: 0.0, T=0.1)
         solver = FPParticleSolver(
             MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4),
             num_particles=600,
@@ -1269,7 +1269,7 @@ def test_a_kernel_level_after_a_deposited_one_calibrates_the_factor(path):
     d = 2 if path.startswith("2-D") else 1
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[21] * d, boundary_conditions=no_flux_bc(dimension=d))
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.1)
-    conditions = Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=0.3)
+    conditions = Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.3)
     problem = MFGProblem(model=model, domain=grid, conditions=conditions, Nt=6)
     spike = np.zeros([21] * d)
     spike[(1,) * d] = 3.0
@@ -1315,7 +1315,7 @@ def test_the_gpu_reader_deposits_a_float32_crowd_on_its_wall():
     problem = MFGProblem(
         model=model,
         domain=grid,
-        conditions=Conditions(m_initial=lambda z: 1 / 0.3, u_terminal=lambda z: 0.0, T=0.1),
+        conditions=Conditions(m_initial=lambda x: 1 / 0.3, u_terminal=lambda x: 0.0, T=0.1),
         Nt=4,
     )
     m0 = np.zeros(31)

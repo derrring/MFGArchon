@@ -162,7 +162,7 @@ LAMBDA = 1.0
 _TRUE_HAMILTONIAN = SeparableHamiltonian(
     control_cost=QuadraticControlCost(lambda_=LAMBDA),
     coupling=lambda m: ZETA * m,
-    coupling_dm=lambda _m: ZETA,
+    coupling_dm=lambda m: ZETA,
 )
 
 # The exact pair and its analytic derivatives. The ASSEMBLY of these into S_HJB / S_FP is owned by
@@ -242,8 +242,8 @@ def _points(x):
 def _build_problem(nx: int, nt: int):
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
-        m_initial=lambda p: float(m_star(0.0, np.asarray(p).ravel()[0], np.asarray(p).ravel()[1])),
-        u_terminal=lambda p: float(u_star(T, np.asarray(p).ravel()[0], np.asarray(p).ravel()[1])),
+        m_initial=lambda x: float(m_star(0.0, np.asarray(x).ravel()[0], np.asarray(x).ravel()[1])),
+        u_terminal=lambda x: float(u_star(T, np.asarray(x).ravel()[0], np.asarray(x).ravel()[1])),
         hamiltonian=SeparableHamiltonian(
             # LAMBDA, not a literal: the source's Hamiltonian is a separate OBJECT by design
             # (see _TRUE_HAMILTONIAN) but the two must agree on the VALUE, or the source
@@ -252,7 +252,7 @@ def _build_problem(nx: int, nt: int):
             # eye. The documented mutation protocol still works: replace this with 1.05 * LAMBDA.
             control_cost=QuadraticControlCost(control_cost=LAMBDA),
             coupling=lambda m: ZETA * m,
-            coupling_dm=lambda _m: ZETA,
+            coupling_dm=lambda m: ZETA,
         ),
     )
     problem = MFGProblem(

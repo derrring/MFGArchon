@@ -114,7 +114,7 @@ def _hamiltonian(lam=1.0):
     return SeparableHamiltonian(
         control_cost=QuadraticControlCost(lambda_=lam),
         coupling=lambda m: ZETA * m,
-        coupling_dm=lambda _m: ZETA,
+        coupling_dm=lambda m: ZETA,
     )
 
 

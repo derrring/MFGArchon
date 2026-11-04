@@ -116,15 +116,15 @@ PAIR = ManufacturedPair(
 )
 
 HAMILTONIAN = SeparableHamiltonian(
-    control_cost=QuadraticControlCost(lambda_=LAMBDA), coupling=lambda m: 0.0 * m, coupling_dm=lambda _m: 0.0
+    control_cost=QuadraticControlCost(lambda_=LAMBDA), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0
 )
 
 
 def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
-        m_initial=lambda p: M_CONST,
-        u_terminal=lambda p: float(u_star(T, np.asarray(p).reshape(1, 2))[0]),
+        m_initial=lambda x: M_CONST,
+        u_terminal=lambda x: float(u_star(T, np.asarray(x).reshape(1, 2))[0]),
         hamiltonian=HAMILTONIAN,
     )
     volatility = {"volatility": sigma, "volatility_kind": "tensor"} if sigma_kind == "tensor" else {"volatility": sigma}
@@ -161,7 +161,7 @@ def test_the_three_other_sl_variants_refuse_the_source():
     splitting path, so where the forcing enters has not been derived -- and a manufactured source in
     the wrong place verifies a different equation while still converging."""
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[11] * 2, boundary_conditions=no_flux_bc(dimension=2))
-    components = MFGComponents(m_initial=lambda p: M_CONST, u_terminal=lambda p: 0.0, hamiltonian=HAMILTONIAN)
+    components = MFGComponents(m_initial=lambda x: M_CONST, u_terminal=lambda x: 0.0, hamiltonian=HAMILTONIAN)
     problem = MFGProblem(
         geometry=grid, T=T, Nt=4, volatility=SIGMA_SCALAR, components=components, coupling_coefficient=1.0
     )

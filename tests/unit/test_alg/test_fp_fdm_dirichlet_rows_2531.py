@@ -45,7 +45,7 @@ def _problem(bc, nt: int = NT, **problem_kw) -> MFGProblem:
         ),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda z: scale * bump(z), u_terminal=lambda z: 0.0 * np.asarray(z, dtype=float), T=T
+            m_initial=lambda x: scale * bump(x), u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float), T=T
         ),
         Nt=nt,
         **problem_kw,

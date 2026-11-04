@@ -117,7 +117,7 @@ def _hjb_error(ne, nt, steady, use_newton):
             M_density=np.ones((nt + 1, n)),
             U_terminal=_u_star(_T, x, steady),
             U_coupling_prev=u_prev,
-            source_term=lambda t, pts: _s_hjb(t, np.asarray(pts)[:, 0], steady),
+            source_term=lambda t, x: _s_hjb(t, np.asarray(x)[:, 0], steady),
             use_newton=use_newton,
         )
     )
@@ -137,7 +137,7 @@ def _fp_error(ne, nt, steady):
             _m_star(0.0, x, steady),
             potential_field=None,
             volatility=_SIGMA,
-            source_term=lambda t, pts: _s_fp(t, np.asarray(pts)[:, 0], steady),
+            source_term=lambda t, x: _s_fp(t, np.asarray(x)[:, 0], steady),
         )
     )
     return float(np.sqrt(((m[-1] - _m_star(_T, x, steady)) ** 2).sum() / n))

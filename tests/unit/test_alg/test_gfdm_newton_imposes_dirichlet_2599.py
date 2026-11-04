@@ -51,8 +51,8 @@ HOWARD = {"inner_solver": "howard", "monotonicity_scheme": "none"}
 def _problem(grid):
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda xx: 1.0,
-        u_terminal=lambda xx: 0.0,
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

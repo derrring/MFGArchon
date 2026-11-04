@@ -1,0 +1,1 @@
+- **Tests and examples name a role callable's parameters after its slots** (#2877): `lambda p:` for a condition is now `lambda x:`, the form the coming binding by name reads. No library code changes.

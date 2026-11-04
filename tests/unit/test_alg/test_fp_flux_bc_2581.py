@@ -531,7 +531,7 @@ def test_b3_lets_an_upwind_inflow_round_off_pass_within_the_gate():
             for f in FACES[2]
         ],
     )
-    conditions = Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=nt * dt)
+    conditions = Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=nt * dt)
     problem = MFGProblem(model=_model(sigma), domain=grid, conditions=conditions, Nt=nt)
     m = np.asarray(
         FPFDMSolver(problem, boundary_conditions=bc).solve_fp_system(

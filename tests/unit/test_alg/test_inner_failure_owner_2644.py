@@ -355,7 +355,7 @@ def test_hjb_gfdm_records_the_residual_of_the_step_it_returns():
                 hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.5
             ),
             domain=grid,
-            conditions=Conditions(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, T=T),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=T),
             Nt=NT,
         )
     solver = HJBGFDMSolver(

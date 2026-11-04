@@ -418,8 +418,8 @@ class TestExplicitDriftNoFluxDiffusionConservation:
         )
         x = np.linspace(0.0, 1.0, n)
         comps = MFGComponents(
-            m_initial=lambda xx: np.exp(-30 * (np.asarray(xx) - 0.5) ** 2),
-            u_terminal=lambda xx: 0.0 * np.asarray(xx),
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0 * np.asarray(x),
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
@@ -427,7 +427,7 @@ class TestExplicitDriftNoFluxDiffusionConservation:
         m0 = np.exp(-30 * (x - 0.5) ** 2)
         m0 /= compute_total_mass(m0, grid)
         # callable (zero) drift routes through the explicit-drift path; pure diffusion
-        M = solver.solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.zeros(n), volatility=sigma)
+        M = solver.solve_fp_system(m0.copy(), drift_field=lambda t, x, m: np.zeros(n), volatility=sigma)
         # The drift is zero, so the FV advection kernel contributes nothing and only the node-based
         # diffusion runs. That is why this stays at machine precision on the grid measure where the
         # DRIFTED case in test_fdm_centered_conservation records 2.388e-05 (#2145/#1184).

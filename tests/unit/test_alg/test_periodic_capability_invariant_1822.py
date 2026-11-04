@@ -72,14 +72,14 @@ PARTICLES_AT_COARSEST = 5000  # scaled as Nx^2 under refinement; see the fixture
 #
 # Requirements on the datum: exactly periodic (seam 0), strictly positive for the density, and
 # neither symmetric nor antisymmetric about the midpoint.
-def _U(z):
-    z = np.asarray(z)
-    return np.sin(2 * np.pi * z + 0.7) + 0.4 * np.cos(4 * np.pi * z)
+def _U(x):
+    x = np.asarray(x)
+    return np.sin(2 * np.pi * x + 0.7) + 0.4 * np.cos(4 * np.pi * x)
 
 
-def _M(z):
-    z = np.asarray(z)
-    return 1.0 + 0.5 * np.cos(2 * np.pi * z + 1.1)
+def _M(x):
+    x = np.asarray(x)
+    return 1.0 + 0.5 * np.cos(2 * np.pi * x + 1.1)
 
 
 # The modules searched for PERIODIC-declaring solvers. Listed rather than walked, because a walk
