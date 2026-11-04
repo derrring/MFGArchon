@@ -50,7 +50,7 @@ def _particles_remaining(segments, route="own") -> int:
     solver = FPParticleSolver(_problem(grid), num_particles=200, seed=0, boundary_conditions=own)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x[0])),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -463,7 +463,7 @@ def _particles_remaining_with(segments, **bc_kw):
     solver = FPParticleSolver(_problem(grid), num_particles=200, seed=0, boundary_conditions=bc)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x[0])),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )

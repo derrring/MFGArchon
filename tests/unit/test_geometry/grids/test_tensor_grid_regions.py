@@ -243,7 +243,7 @@ class TestRegionOperations:
         # Center square
         grid.mark_region(
             "center",
-            predicate=lambda x: np.all((x[0] >= [0.4, 0.4]) & (x[0] <= [0.6, 0.6]), axis=1),
+            predicate=lambda x: np.all((np.stack(x, axis=-1) >= [0.4, 0.4]) & (np.stack(x, axis=-1) <= [0.6, 0.6]), axis=-1),
         )
 
         return grid

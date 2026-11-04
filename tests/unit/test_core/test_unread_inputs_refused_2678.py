@@ -56,11 +56,11 @@ _MASS = float(trapezoid(_gaussian(_POINTS), _POINTS))
 
 
 def _m_initial(x):
-    return _gaussian(_x(x[0])) / _MASS
+    return _gaussian(x[0]) / _MASS
 
 
 def _u_terminal(x):
-    return 2.0 * (_x(x[0]) - 0.7) ** 2
+    return 2.0 * (x[0] - 0.7) ** 2
 
 
 def _grid():
@@ -294,7 +294,7 @@ def test_the_advice_on_obstacles_holds_a_density_out_of_the_region():
         problem = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.05),
             domain=grid,
-            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * _x(x[0]), u_terminal=lambda x: 0.0 * _x(x[0]), T=0.3),
+            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0 * x[0], T=0.3),
             Nt=15,
         )
         solver = FPParticleSolver(problem, num_particles=1000, seed=2688, **given)

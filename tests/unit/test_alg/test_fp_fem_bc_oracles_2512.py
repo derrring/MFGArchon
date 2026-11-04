@@ -101,15 +101,15 @@ def _shape(dim: int, x_factor, y_factor=None) -> Shape:
     fx, dfx, d2fx = x_factor
     if dim == 1:
         return Shape(
-            lambda X: fx(X[:, 0]),
-            lambda X: dfx(X[:, 0])[:, None],
-            lambda X: d2fx(X[:, 0]),
+            lambda X: fx(X[..., 0]),
+            lambda X: dfx(X[..., 0])[:, None],
+            lambda X: d2fx(X[..., 0]),
         )
     fy, dfy, d2fy = _cos_x(KY, EPS) if y_factor is None else y_factor
     return Shape(
-        lambda X: fx(X[:, 0]) * fy(X[:, 1]),
-        lambda X: np.stack([dfx(X[:, 0]) * fy(X[:, 1]), fx(X[:, 0]) * dfy(X[:, 1])], axis=1),
-        lambda X: d2fx(X[:, 0]) * fy(X[:, 1]) + fx(X[:, 0]) * d2fy(X[:, 1]),
+        lambda X: fx(X[..., 0]) * fy(X[..., 1]),
+        lambda X: np.stack([dfx(X[..., 0]) * fy(X[..., 1]), fx(X[..., 0]) * dfy(X[..., 1])], axis=1),
+        lambda X: d2fx(X[..., 0]) * fy(X[..., 1]) + fx(X[..., 0]) * d2fy(X[..., 1]),
     )
 
 
@@ -254,7 +254,7 @@ def _solve(cell: Cell, n: int, solver_cls=FPFEMSolver):
     M = solver.solve_fp_system(
         M_initial=cell.m(0.0, X),
         potential_field=np.broadcast_to(phi, (NT + 1, X.shape[0])).copy(),
-        source_term=cell.source,
+        source_term=lambda t, x: cell.source(t, np.stack(x, axis=-1)),
     )
     return solver, X, np.asarray(M)
 
@@ -382,13 +382,13 @@ def test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses(name: s
     cell = CELLS[name]
     n = cell.ns[-1]
     _solver, X, M = _solve(cell, n)
-    exit_nodes = np.isclose(X[:, 0], 1.0)
+    exit_nodes = np.isclose(X[..., 0], 1.0)
     assert exit_nodes.any()
     assert np.abs(M[1:, exit_nodes]).max() == 0.0
     # The rival's exit nodes hold 0.7 by construction, so its miss is measured on every other node (the other
     # walls included).
     _rival, X, R = _solve(cell, n, _ExitKeepsTheValue)
-    interior = ~np.isclose(X[:, 0], 1.0)  # every node but the exit's
+    interior = ~np.isclose(X[..., 0], 1.0)  # every node but the exit's
     miss = max(np.abs(R[k][interior] - cell.m(k * T / NT, X)[interior]).max() for k in range(NT + 1))
     assert miss > 50 * MEASURED[name][-1], miss
 

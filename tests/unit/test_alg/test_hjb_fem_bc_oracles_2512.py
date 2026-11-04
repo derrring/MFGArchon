@@ -102,11 +102,11 @@ def _seg(face, bc_type, value=0.0, alpha=1.0, beta=0.0):
 
 
 def _x(X):
-    return X[:, 0]
+    return X[..., 0]
 
 
 def _y(X):
-    return X[:, 1]
+    return X[..., 1]
 
 
 def _col(*cols):
@@ -368,7 +368,7 @@ def _solve(cell: Cell, n: int, newton: bool, bc=None, terminal_offset: float = 0
             M_density=np.ones((cell.nt + 1, X.shape[0])),
             U_terminal=terminal,
             U_coupling_prev=None if newton else exact,
-            source_term=cell.source,
+            source_term=lambda t, x: cell.source(t, np.stack(x, axis=-1)),
             use_newton=newton,
             newton_tolerance=1e-12,
         )

@@ -180,7 +180,7 @@ def test_absorbing_everywhere_beside_an_obstacle_is_refused_and_its_advice_runs(
     start = np.c_[np.full(400, 0.2), np.random.default_rng(3).uniform(0.4, 0.6, 400)]
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5]) - np.asarray(x[0])),
+        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5]) - np.stack(x, axis=-1)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -829,7 +829,7 @@ def test_a_reflecting_obstacle_keeps_the_gibbs_density():
     )
     solver.solve_fp_system(
         initial_particles=np.asarray(starts[:n]),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([-a, 0.0]), np.shape(x[0])),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([-a, 0.0]), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -847,7 +847,7 @@ def test_no_step_crosses_an_obstacle():
     feature, the folded #2710: slabs of width 1e-3 and 1e-4, under 1/32 of the drift's step 0.075. At main: 500 and
     500."""
     drift_1d = lambda t, x, m: 3.0 * (1.0 - np.asarray(x))  # noqa: E731
-    drift_2d = lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x))  # noqa: E731
+    drift_2d = lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), (*np.shape(x[0]), 2))  # noqa: E731
     cases = [
         (1, [[0.15, 0.25]], drift_1d, [0.02], [0.1], 0.25),
         (2, [[0.48, 0.52], [-0.1, 1.1]], drift_2d, [0.05, 0.05], [0.4, 0.95], 0.52),
@@ -894,7 +894,7 @@ def test_a_3d_room_holds_behind_its_obstacle_the_particles_its_shadow_holds():
     start = np.c_[np.full(2000, 0.2), np.random.default_rng(3).uniform(0.3, 0.7, (2000, 2))]
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5, 0.5]) - np.asarray(x[0])),
+        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5, 0.5]) - np.stack(x, axis=-1)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -919,7 +919,7 @@ def test_a1_a_flush_obstacle_at_a_corner_lets_every_step_run(seed):
     start = np.random.default_rng(seed).uniform([0.1, 0.1], [0.2, 0.19], (600, 2))
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([-1.0, 1.0]), np.shape(x[0])),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([-1.0, 1.0]), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
