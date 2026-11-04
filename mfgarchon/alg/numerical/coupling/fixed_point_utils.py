@@ -407,16 +407,18 @@ def verdict_reads_inner_failures(
             refuse_a_shared_hjb_solver(solvers, type(self).__name__)
             fp_solvers = fp_solvers_of(self)
             with inner_failures_recorded(solvers), negative_density_recorded(fp_solvers):
+                returned = False
                 try:
                     result = solve(self, *args, **kwargs)
-                except Exception:
-                    # A body that raises keeps its own exception. There is no result to measure, so this says what
-                    # the last FP solve of this solve left, if one ran (#2845).
-                    for solver in fp_solvers:
-                        report = getattr(solver, "last_negative_density", None)
-                        if report is not None:
-                            solver.warn_negative_density(report)
-                    raise
+                    returned = True
+                finally:
+                    if not returned:
+                        # A body that raises keeps its own exception. There is no result to measure, so this says what
+                        # the last FP solve of this solve left, if one ran (#2845).
+                        for solver in fp_solvers:
+                            report = getattr(solver, "last_negative_density", None)
+                            if report is not None:
+                                solver.warn_negative_density(report)
             _report_negative_density(result, fp_solvers)
             if not check:
                 return result

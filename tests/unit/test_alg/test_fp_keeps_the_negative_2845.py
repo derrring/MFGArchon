@@ -318,21 +318,23 @@ def _meshless_pair(problem):
 
 def _on_meshless(coupling, coupling_dm):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    return MFGProblem(
-        model=Model(
-            hamiltonian=SeparableHamiltonian(
-                control_cost=QuadraticControlCost(control_cost=1.0), coupling=coupling, coupling_dm=coupling_dm
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # the density's mass on the grid is not these rows' subject
+        return MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=coupling, coupling_dm=coupling_dm
+                ),
+                volatility=0.1,
             ),
-            volatility=0.1,
-        ),
-        domain=grid,
-        conditions=Conditions(
-            u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
-            m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
-            T=0.5,
-        ),
-        Nt=10,
-    )
+            domain=grid,
+            conditions=Conditions(
+                u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
+                m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                T=0.5,
+            ),
+            Nt=10,
+        )
 
 
 def _fixed_point(f, df):
@@ -501,16 +503,21 @@ def test_the_validators_density_check_is_off_only_where_the_solver_reports_it(bu
     monkeypatch.setattr(runtime, "validate_solver_output", recording)
     if build is None:
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(
-            model=Model(
-                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
-            ),
-            domain=grid,
-            conditions=Conditions(
-                u_terminal=lambda x: 0.0, m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)), T=0.5
-            ),
-            Nt=10,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # the density's mass on the grid is not this row's subject
+            problem = MFGProblem(
+                model=Model(
+                    hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                    volatility=0.3,
+                ),
+                domain=grid,
+                conditions=Conditions(
+                    u_terminal=lambda x: 0.0,
+                    m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                    T=0.5,
+                ),
+                Nt=10,
+            )
         hjb, fp = HJBFDMSolver(problem), FPFDMSolver(problem)
     else:
         problem = _coupled(3)
