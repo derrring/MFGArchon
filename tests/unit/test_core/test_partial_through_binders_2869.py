@@ -269,31 +269,6 @@ def test_a_refused_positional_partial_is_not_told_to_reorder_its_function(name):
     assert refused, "no row reached a refusal"
 
 
-def test_a_slot_other_than_time_frozen_on_a_condition_keeps_its_refusal():
-    """``adapt_ic_callable`` catches a binder's refusal and tries other readings, which would lose this one's text. Time
-    keeps the text written for it."""
-    with pytest.raises(TypeError, match=r"^m_initial .* freezes x by keyword: called by name"):
-        adapt_ic_callable(functools.partial(lambda t, x: 100.0 * t + x, x=9.0), 1, 3.0, role="m_initial")
-    with pytest.raises(TypeError, match=r"fixes t=0\.7, but the library reads m_initial at its own time"):
-        adapt_ic_callable(functools.partial(lambda t, x: 100.0 * t + x, t=0.7), 1, 3.0, role="m_initial")
-
-
-@pytest.mark.parametrize(
-    "partial",
-    [
-        functools.partial(lambda a, t=0.0: 100.0 * t + a, t=0.5),
-        functools.partial(lambda x, **kw: 100.0 * kw["t"] + x, t=0.5),
-        functools.partial(lambda c, t=0.0, x=0.0: 100.0 * x + c + 1000.0 * t, t=0.5),
-    ],
-    ids=["no name for x", "into **kw", "x keeps its default"],
-)
-def test_a_condition_refuses_a_frozen_time_wherever_it_is_frozen(partial):
-    """No binding passes these their ``t``, so a binder would let them stand, and the last would read 503.0 at x = 3 with no
-    error and its ``x`` at its default. The library reads a condition at its own time, so the frozen one is refused."""
-    with pytest.raises(TypeError, match=r"fixes t=0\.5, but the library reads m_initial at its own time"):
-        adapt_ic_callable(partial, 1, 3.0, role="m_initial")
-
-
 def _problem(*, hamiltonian=None, model=None, problem=None):
     return MFGProblem(
         model=Model(

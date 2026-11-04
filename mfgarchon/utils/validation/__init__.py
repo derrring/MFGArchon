@@ -42,7 +42,6 @@ from mfgarchon.utils.validation.arrays import (
 
 # Components validation (Issue #679, #681-#684)
 from mfgarchon.utils.validation.components import (
-    detect_callable_signature,
     validate_boundary_conditions,
     validate_components,
     validate_m_initial,
@@ -88,7 +87,6 @@ __all__ = [
     "validate_u_final",  # Deprecated alias
     "validate_mass_normalization",
     "validate_boundary_conditions",
-    "detect_callable_signature",
     # Functions
     "validate_custom_functions",
     "validate_hamiltonian",

@@ -36,10 +36,17 @@ class Slots:
     """What one kind of user callable may read. A callable is read by the names it declares (#2875), so ``order`` says
     which names there are, and the order the operator family's methods keep them in (`refuse_methods_out_of_order`).
     ``required`` are slots it must declare to be read at all: a raw Hamiltonian reads ``p``, and may read nothing else.
+
+    What the slots beside ``x`` hold is stated, and `BoundCallable.check_on` reads the statement. ``fields`` hold a field
+    over the points ``x`` holds, such as the density: a body may read one whole, ``np.max(m)``, so a point read gets it
+    whole too. ``per_point`` hold one value per point, in step with ``x``: a point read gets that point's. Any other slot
+    is one value for the whole call, such as ``t`` or a measure.
     """
 
     order: tuple[str, ...]
     required: tuple[str, ...] = ()
+    fields: tuple[str, ...] = ()
+    per_point: tuple[str, ...] = ()
 
 
 # What each user callable the library invokes may read: time, then space, then the u-derivative family, then the
@@ -50,14 +57,14 @@ POTENTIAL_SLOTS = Slots(("t", "x"))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
 BOUNDARY_VALUE_SLOTS = Slots(("t", "x"))
-SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"))
+SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), fields=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
-COEFFICIENT_SLOTS = Slots(("t", "x", "m"))
-HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), required=("p",))
-CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"))
+COEFFICIENT_SLOTS = Slots(("t", "x", "m"), fields=("m",))
+HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), required=("p",), per_point=("p", "m"))
+CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), per_point=("p", "m"))
 CONDITIONAL_TERMINAL_SLOTS = Slots(("x", "theta"))
 # Howard's policy update reads the time index, not a time: its own slot (user ruling, 2026-11-04).
-ALPHA_STAR_SLOTS = Slots(("t_idx", "x", "p", "m"))
+ALPHA_STAR_SLOTS = Slots(("t_idx", "x", "p", "m"), per_point=("p", "m"))
 # A graph's node plays x; its adjacency stays with it (user ruling 2026-09-25).
 NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"))
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
@@ -67,7 +74,7 @@ NODE_LAGRANGIAN_SLOTS = Slots(("t", "node", "velocity", "m"))
 NODE_VALUE_SLOTS = Slots(("t", "node"))
 NODE_RULE_SLOTS = Slots(("t", "node", "field"))
 SOLVER_SOURCE_SLOTS = Slots(("t", "x"))
-VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"))
+VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), per_point=("v", "m"))
 # A region's signed distance or predicate, and an exact solution's fields, read what they name.
 REGION_SLOTS = Slots(("x",))
 EXACT_SOLUTION_SLOTS = Slots(("t", "x"))
@@ -197,7 +204,7 @@ def bind_user_callable(fn: Callable[..., Any], slots: Slots, *, role: str) -> Bo
         needs = ", ".join(missing) if missing else f"one of {', '.join(slots.order)}"
         raise TypeError(f"{role} {name!r} takes ({takes}), which does not name {needs} (#2875).")
     refuse_overridden(fn, named, role=role)
-    return BoundCallable(fn, named, role, _defined_by_the_library(fn))
+    return BoundCallable(fn, named, role, _defined_by_the_library(fn), slots)
 
 
 def _out_of_order(names: Sequence[str], slots: Slots) -> bool:
@@ -267,7 +274,7 @@ def _remembered(fn: Callable[..., Any], slots: Slots, role: str) -> tuple[BoundC
         entry = (weakref.ref(fn, functools.partial(_forget_source, key)), SourcePlan(bound.passes, False))
         _SOURCE_PLANS[key] = entry
     plan = entry[1]
-    return BoundCallable(fn, plan.passes, role, plan.checked), plan
+    return BoundCallable(fn, plan.passes, role, plan.checked, slots), plan
 
 
 def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any, dimension: int) -> Any:
@@ -309,12 +316,25 @@ def _defined_by_the_library(fn: Any) -> bool:
     couplers build one per Picard iteration (#2875)."""
     while isinstance(fn, functools.partial):
         fn = fn.func
-    return getattr(fn, "__module__", "").partition(".")[0] == "mfgarchon"
+    return (getattr(fn, "__module__", None) or "").partition(".")[0] == "mfgarchon"
 
 
 # What a body raises when it cannot read what it is handed: float() of an array (TypeError), the truth of an array or a
 # refused shape (ValueError), indexing past a point's components (IndexError). Anything else propagates as it is.
 _UNREADABLE = (TypeError, ValueError, IndexError, ArithmeticError)
+
+
+def _refuse_unless_equal(together: NDArray, alone: NDArray, described: str, guidance: str) -> None:
+    """NaN only matches NaN, and the tolerance is scaled by the finite values alone, so one infinite value cannot make the
+    comparison vacuous (#2479)."""
+    finite = np.abs(alone[np.isfinite(alone)])
+    scale = max(1.0, float(finite.max())) if finite.size else 1.0
+    if together.size != alone.size or not np.allclose(
+        together.reshape(alone.shape), alone, rtol=1e-10, atol=1e-12 * scale, equal_nan=True
+    ):
+        raise ValueError(
+            f"{described}, reads differently together ({together.ravel()}) and one at a time ({alone.ravel()}). {guidance}"
+        )
 
 
 def refuse_batch_disagreement(
@@ -323,8 +343,7 @@ def refuse_batch_disagreement(
     """Refuse a body whose read of a batch differs from its read of each point alone, or that raises on either (#2875).
 
     The library chooses when to loop and when to vectorize, so a body must read the same both ways: one that does not
-    comes back as a result and not as an error. NaN only matches NaN, and the tolerance is scaled by the finite values
-    alone, so one infinite value cannot make the comparison vacuous (#2479).
+    comes back as a result and not as an error.
     """
     described = f"{name}, at {len(points)} samples"
     try:
@@ -337,73 +356,117 @@ def refuse_batch_disagreement(
         raise ValueError(f"{described} one at a time, raised {type(e).__name__}: {e}. {guidance}") from e
     if together.size == 1:  # a constant reads the same at every sample
         together = np.full((len(points), 1), float(together.reshape(-1)[0]))
-    finite = np.abs(alone[np.isfinite(alone)])
-    scale = max(1.0, float(finite.max())) if finite.size else 1.0
-    if together.size != alone.size or not np.allclose(
-        together.reshape(alone.shape), alone, rtol=1e-10, atol=1e-12 * scale, equal_nan=True
-    ):
-        raise ValueError(
-            f"{described}, reads differently together ({together.ravel()}) and one at a time ({alone.ravel()}). {guidance}"
-        )
+    _refuse_unless_equal(together, alone, described, guidance)
 
 
-def _batch_samples(values: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
-    """``values`` cut down to a few of the points its ``x`` holds, as one batch and point by point; None if ``x`` holds one
-    point of scalars, which has no batch read to differ from.
+def _sample_count(dimension: int) -> int:
+    """How many points to compare: never one, which reads the same in either form, and never ``d``, where a coordinate
+    axis passes as a batch."""
+    return 4 if dimension == 3 else 3
 
-    The samples are spread across the batch, and cycled when it has too few: never one, which reads the same in either
-    form, and never ``d``, where a coordinate axis passes as a batch. A slot of the batch's shape is cut with it; any other
-    value is handed to every read as it is.
+
+def _entry_at(result: NDArray, batch_shape: tuple[int, ...], index: tuple[int, ...], described: str, guidance: str) -> NDArray:
+    """A read's value at ``index``, by the form it returned: a scalar holds at every point, a result of the batch's shape or
+    with it leading holds its entry there, and a point's own form, shorter than that, holds as it is. Anything else has no
+    entry to compare, and is refused by name."""
+    if result.ndim == 0 or result.size == 1:
+        return result.reshape(-1)
+    if result.shape[: len(batch_shape)] == batch_shape:
+        return np.ravel(result[index])
+    if result.ndim == 1:
+        return result
+    raise ValueError(f"{described}: a return of shape {result.shape} has no entry for a batch of shape {batch_shape}. {guidance}")
+
+
+def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: Slots, name: str, guidance: str) -> None:
+    """Compare a body's read of the batch ``values`` holds with its read of a few of those points, spread across it (#2875).
+
+    A point read gets one point's ``x`` and each ``per_point`` slot's value there, and every other slot as the batch read
+    gets it: so a body may read a field whole. A batch too small to compare, of fewer than two points or of exactly ``d``,
+    is cycled to a count that is neither, ``x`` and the slots stated to run with it together.
     """
-    x = values["x"]
-    entries = np.broadcast_arrays(*x)
+    entries = np.broadcast_arrays(*values["x"])
     shape = entries[0].shape
-    if not shape:
-        return None
+    d = len(entries)
+    samples = _sample_count(d)
     count = int(np.prod(shape))
-    which = np.linspace(0, count - 1, 4 if len(x) == 3 else 3).round().astype(int)
-
-    def cut(value: Any, index: Any) -> Any:
-        return np.ravel(value)[index] if np.shape(value) == shape else value
-
-    def at(index: Any) -> dict[str, Any]:
-        coordinates = {"x": tuple(np.ravel(entry)[index] for entry in entries)}
-        return {slot: cut(value, index) for slot, value in values.items() if slot != "x"} | coordinates
-
-    return at(which), [at(int(i)) for i in which]
+    batch = dict(values)
+    if count < 2 or count == d:
+        cycled = np.resize(np.arange(count), samples)
+        entries = [np.ravel(entry)[cycled] for entry in entries]
+        for slot in (*slots.fields, *slots.per_point):
+            if np.ndim(batch.get(slot)) > 0:
+                batch[slot] = np.asarray(batch[slot])[cycled] if slot in slots.per_point else np.ravel(batch[slot])[cycled]
+        shape = entries[0].shape
+        count = samples
+    batch["x"] = tuple(entries)
+    described = f"{name}, on a batch of {count} points"
+    try:
+        together = np.asarray(read(**batch), dtype=float)
+    except _UNREADABLE as e:
+        raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
+    if together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape:
+        raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
+    rows_together, rows_alone = [], []
+    for flat in np.linspace(0, count - 1, samples).round().astype(int):
+        index = tuple(int(i) for i in np.unravel_index(int(flat), shape))
+        point = dict(batch)
+        point["x"] = tuple(entry[index] for entry in entries)
+        for slot in slots.per_point:
+            if np.ndim(batch.get(slot)) > 0:
+                point[slot] = np.asarray(batch[slot])[index]
+        try:
+            alone = np.asarray(read(**point), dtype=float)
+        except _UNREADABLE as e:
+            raise ValueError(f"{described}, one point at a time, raised {type(e).__name__}: {e}. {guidance}") from e
+        rows_alone.append(_entry_at(alone, shape, index, described, guidance))
+        rows_together.append(_entry_at(together, shape, index, described, guidance))
+    width = max(row.size for row in (*rows_together, *rows_alone))
+    _refuse_unless_equal(
+        np.vstack([np.broadcast_to(row, (width,)) for row in rows_together]),
+        np.vstack([np.broadcast_to(row, (width,)) for row in rows_alone]),
+        described,
+        guidance,
+    )
 
 
 class BoundCallable:
     """A user callable and the slots it reads, by name, and whether the library has yet compared its batch and point reads.
     A class, not a closure, so an object holding one still pickles."""
 
-    __slots__ = ("checked", "fn", "passes", "role")
+    __slots__ = ("checked", "fn", "passes", "role", "slots")
 
-    def __init__(self, fn: Callable[..., Any], passes: tuple[str, ...], role: str = "callable", checked: bool = False):
+    def __init__(
+        self,
+        fn: Callable[..., Any],
+        passes: tuple[str, ...],
+        role: str = "callable",
+        checked: bool = False,
+        slots: Slots | None = None,
+    ):
         self.fn = fn
         self.passes = passes
         self.role = role
         self.checked = checked
+        self.slots = Slots(passes) if slots is None else slots
 
     def _read(self, **values: Any) -> Any:
         return self.fn(**{slot: values[slot] for slot in self.passes})
 
     def check_on(self, values: Mapping[str, Any]) -> None:
         """Compare this body's batch and point reads on ``values``, once. A door with samples when it accepts the callable
-        calls this there; any other is checked at its first batch, in `__call__`, on what that batch holds."""
-        if self.checked:
-            return
-        samples = _batch_samples(values)
-        if samples is None:
+        calls this there; any other is checked at its first batch, in `__call__`, on what that batch holds. A door that
+        hands one point has no batch read to compare, and this waits for one that does."""
+        if self.checked or not np.broadcast_shapes(*(np.shape(entry) for entry in values["x"])):
             return
         self.checked = True
-        name = f"{self.role} {getattr(self.fn, '__qualname__', self.fn)!r}"
         guidance = (
             "x is a tuple with one entry per coordinate, each a scalar or an array, and the library may hand either: "
             "write the body to read both the same way, such as x[0] for a coordinate and sum(xi**2 for xi in x) for a "
             "squared norm (#2875)."
         )
-        refuse_batch_disagreement(self._read, samples[0], samples[1], name=name, guidance=guidance)
+        name = f"{self.role} {getattr(self.fn, '__qualname__', self.fn)!r}"
+        _compare_reads(self._read, values, self.slots, name, guidance)
 
     def __call__(self, **values: Any) -> Any:
         if "x" in values:
