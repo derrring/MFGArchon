@@ -358,7 +358,7 @@ def _report_negative_density(result: Any, fp_solvers: list[Any]) -> None:
         densities = result.M if densities is None else densities
         record = getattr(result, "metadata", None)
     per_solver = [densities] if len(fp_solvers) == 1 else list(densities)
-    reports = []
+    reports: list[dict[str, Any] | None] = []
     for solver, density in zip(fp_solvers, per_solver, strict=True):
         if not getattr(solver, "reports_negative_density", False):
             reports.append(None)

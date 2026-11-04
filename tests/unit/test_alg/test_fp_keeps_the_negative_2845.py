@@ -285,7 +285,10 @@ def test_the_meshless_report_says_these_are_coefficients(mfg_caplog):
 )
 def test_a_density_read_that_cannot_take_a_negative_stops_and_names_it(coupling, dm):
     """On the coupled row where the clip converged, naming the read, its time and the minimum of m."""
-    with pytest.raises(ValueError, match=r"coupling returned a non-finite value at t=[\d.]+: the minimum of m is -"):
+    with (
+        pytest.raises(ValueError, match=r"coupling returned a non-finite value at t=[\d.]+: the minimum of m is -"),
+        np.errstate(invalid="ignore", divide="ignore"),
+    ):
         _coupled(2, coupling=coupling, coupling_dm=dm).solve(verbose=False)
 
 
@@ -338,7 +341,7 @@ def test_a_body_that_raises_with_no_negative_is_left_alone():
 
 
 def test_an_exact_zero_stops_too():
-    with pytest.raises(ValueError, match=r"the minimum of m is 0\.000e\+00"):
+    with pytest.raises(ValueError, match=r"the minimum of m is 0\.000e\+00"), np.errstate(divide="ignore"):
         _hamiltonian(np.log)(*_POINT, 0.0)
 
 
@@ -352,7 +355,8 @@ class _Logarithmic:
         return getattr(self._inner, name)
 
     def flat_derivative(self, m, *, t=None):
-        return np.log(np.asarray(m, dtype=float))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.log(np.asarray(m, dtype=float))
 
 
 class _LogarithmicCost(PotentialCost):
