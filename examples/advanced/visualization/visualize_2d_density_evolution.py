@@ -45,14 +45,14 @@ def create_simple_coupled_problem(
     Create a simple coupled MFG problem for visualization.
 
     Agents navigate from (0.3, 0.3) to (0.7, 0.7) while avoiding congestion.
-    Hamiltonian: H = (1/2)|p|^2 + coupling_strength * m
+    Hamiltonian: H = (1/2)|p|^2 - coupling_strength * m
     """
     if goal_position is None:
         goal_position = [0.7, 0.7]
 
     T, Nt = time_domain
 
-    # Class-based Hamiltonian: H = (1/2)|p|^2 + coupling_strength * m
+    # Class-based Hamiltonian: H = (1/2)|p|^2 - coupling_strength * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: coupling_strength * m,

@@ -16,7 +16,7 @@ Components Demonstrated:
     1. Terminal condition: u(T, x) = u_final(x)
     2. Initial density: m(0, x) = m_initial(x)
     3. Potential field: V(x) in Hamiltonian
-    4. Hamiltonian: H(x, m, p) = (1/2)|p|^2 + V(x) + coupling * m
+    4. Hamiltonian: H(x, m, p) = (1/2)|p|^2 - V(x) - coupling * m
 
 Issue #670, #671: These functions were previously silent defaults.
 Now they must be explicitly provided for clarity and correctness.
@@ -121,7 +121,7 @@ def potential_field(x: float) -> float:
         x: Spatial position in [0, 1]
 
     Returns:
-        Potential energy at position x
+        State cost at position x
     """
     Lx = x_max - x_min
     return 50.0 * (
@@ -182,7 +182,7 @@ geometry = TensorProductGrid(
 #   m_raw = np.array([initial_density(x) for x in x_grid])
 #   m_normalized = m_raw / (np.sum(m_raw) * dx)  # Now ∫m dx = 1
 #
-# Class-based Hamiltonian: H = (1/2)|p|² + V(x) + coupling * m
+# Class-based Hamiltonian: H = (1/2)|p|² - V(x) - coupling * m
 # The density coupling is part of the Hamiltonian; it has no separate parameter.
 hamiltonian = SeparableHamiltonian(
     control_cost=QuadraticControlCost(control_cost=1.0),

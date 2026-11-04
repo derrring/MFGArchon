@@ -40,7 +40,7 @@ def main():
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[26], boundary_conditions=no_flux_bc(dimension=1))
     bc = no_flux_bc(dimension=1)
 
-    # Model: H = (1/2)|p|^2 + m
+    # Model: H = (1/2)|p|^2 - m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: m,

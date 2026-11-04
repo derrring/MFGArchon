@@ -73,7 +73,7 @@ def create_crowd_motion_2d(
         boundary_conditions=no_flux_bc(dimension=2),
     )
 
-    # Model: H = (1/2)|p|^2 + kappa * m
+    # Model: H = (1/2)|p|^2 - kappa * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: congestion_weight * m,

@@ -12,7 +12,7 @@ Mathematical Setup:
 -------------------
 HJB equation:
     -du/dt + H(x, m, grad(u)) - (1/2) tr(Sigma * D^2 u) = 0
-    H = (alpha/2)|grad(u)|^2 + F(m)   (convective Hamiltonian via H_class)
+    H = (alpha/2)|grad(u)|^2 - F(m)   (convective Hamiltonian via H_class)
 
 FP equation:
     dm/dt = sum_i d/dx_i(sigma_i^2 dm/dx_i) - div(alpha m grad(u))
