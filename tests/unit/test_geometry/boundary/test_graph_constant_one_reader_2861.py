@@ -13,7 +13,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, NodeBC, create_graph_applicator
+from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, GraphBCType, NodeBC, create_graph_applicator
 from mfgarchon.geometry.boundary.types import _read_constant, boundary_value
 
 _WRITTEN_BEFORE = [math.nan, math.inf, -math.inf, np.float64(np.inf), np.float32(np.nan)]
@@ -79,6 +79,12 @@ def test_a_form_only_the_grid_takes_stays_refused_on_a_graph_constant(value):
     `apply_direct`'s ``values`` takes one value per node, so a one-element array is that door's own form, and reads."""
     with pytest.raises(TypeError, match=r"it takes a finite real number a float holds"):
         _at_a_node(value)
+
+
+def test_a_neumann_node_refuses_a_form_as_any_node_does():
+    """Its zero-flux check comes first, so it reads a value only once that value has the form: an array has no truth."""
+    with pytest.raises(TypeError, match=r"it takes a finite real number a float holds"):
+        NodeBC(nodes=[2], bc_type=GraphBCType.NEUMANN, value=np.array([1.0, 2.0]))
 
 
 @pytest.mark.parametrize("too_large", [10**400, 10**5000], ids=["10**400", "10**5000"])
