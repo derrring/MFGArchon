@@ -531,13 +531,13 @@ def test_the_warning_states_the_reports_numbers(mfg_caplog):
     solver = _fem_row()
     n = solver.n_dof
     density = np.ones((3, n))
-    density[1, 0] = -0.25
-    density[2, 1] = -0.5
+    density[1, 5:9] = -0.25  # the larger negative part, on level 1
+    density[2, 5] = -0.5  # the lower minimum, on level 2
     report = solver.negative_density_of(density)
     assert report["levels_negative"] == 2
     assert report["lowest"] == -0.5
     assert report["lowest_level"] == 2
-    assert report["largest_level"] != 1 or report["fraction"][1] > report["fraction"][2]
+    assert report["largest_level"] == 1
     with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
         solver.warn_negative_density(report)
     line = next(m for m in mfg_caplog.messages if "time levels hold a negative value" in m)
