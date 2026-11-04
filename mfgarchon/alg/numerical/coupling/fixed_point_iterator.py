@@ -648,7 +648,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     break
 
                 # Issue #688: Early termination on NaN/Inf (runtime safety). It says which array is non-finite and
-                # what the sweep read, and guesses no cause (#2845).
+                # what the sweep was handed, and guesses no cause (#2845).
                 if not np.all(np.isfinite(self.U)) or not np.all(np.isfinite(self.M)):
                     hjb_bad = not np.all(np.isfinite(U_new))
                     fp_bad = not np.all(np.isfinite(M_new))
@@ -657,7 +657,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     ]
                     convergence_reason = "diverged_nan"
                     logger.warning(
-                        "NaN/Inf in %s in iteration %d, reported by FixedPointIterator: the density the sweep read has "
+                        "NaN/Inf in %s in iteration %d, reported by FixedPointIterator: the density the sweep was handed has "
                         "a minimum of %.3e. Terminating early.",
                         " and ".join(bad) or "the damped iterate",
                         iiter + 1,

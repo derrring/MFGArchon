@@ -698,7 +698,7 @@ def diverged_value_function(
         U_terminal: The terminal value the HJB solve was given, u(T) at that solve's m(T) (#1642).
         site: Which coupling loop is reporting, named in the log line. The whole point of the
             check is attribution, so an unnamed one would be half a fix.
-        density: The density this HJB solve read. The log line states its minimum, what was measured, and
+        density: The density this HJB solve was handed. The log line states its minimum, what was measured, and
             names no cause, so it holds on every solver (#2845).
         iteration: Iteration index, 0-based, if the site has one. Reported 1-based.
 
@@ -710,7 +710,7 @@ def diverged_value_function(
         return None
     where = f" at iteration {iteration + 1}" if iteration is not None else ""
     logger.warning(
-        "NaN/Inf in the value function%s, reported by %s: the density this solve read has a minimum of %.3e. "
+        "NaN/Inf in the value function%s, reported by %s: the density this solve was handed has a minimum of %.3e. "
         "Terminating early; FP was not solved with this iterate.",
         where,
         site,

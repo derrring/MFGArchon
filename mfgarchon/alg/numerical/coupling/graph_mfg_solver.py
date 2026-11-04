@@ -258,7 +258,7 @@ class GraphMFGSolver(BaseCouplingIterator):
                     U_k,
                     terminal_k,
                     site=f"GraphMFGSolver[node {k}]",
-                    # A node's source reads its neighbours' densities, so this is every node's (#2845).
+                    # `compute_hjb_source` is handed every node's density, whichever of them a coupling reads (#2845).
                     density=np.concatenate([np.ravel(m) for m in Ms_expanded]),
                     iteration=iteration,
                 )

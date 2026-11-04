@@ -645,9 +645,10 @@ axes and refused. The sequence form is the convention, and library code uses it.
     `return_tuple=True`. A solver called alone holds it as `last_negative_density`. On the meshless FP these are MLS
     coefficients, not the density at a point (#2672). A level that is all NaN holds no negative in this record.
   - **A non-finite value function ends a coupled solve at the guard all seven couplers share.** It logs the site, the
-    iteration and the minimum of the density that solve read, and returns `converged=False`, without raising. `np.log(m)` in
-    a `coupling` or a `source_term_hjb` reached it on each coupler on FP-FEM, and on `FictitiousPlayIterator` on the meshless
-    FP, at 81 nodes and sigma 0.3, and a direct `H(t, x, p, m)` returns what the body returns. A solve can end otherwise:
+    iteration and the minimum of the density that solve was handed, and returns `converged=False`, without raising. `np.log(m)`
+    in a `coupling` or a `source_term_hjb` reached it on the six couplers that take FP-FEM, at 81 nodes and sigma 0.3, and on
+    `FictitiousPlayIterator` on the meshless FP, at 21 points and sigma 0.1. A direct `H(t, x, p, m)` returns what the body
+    returns. A solve can end otherwise:
     `NewtonMFGSolver` past its warm-up raises "a sweep's change must be finite" (#2578), as does a `source_term_fp` that goes
     non-finite on every coupler but `FixedPointIterator`; other HJB solvers on the meshless FP have raised their own errors,
     or stayed finite to `converged=False` with only the warning. A read that stays finite, such as `1/m`, is not caught, and

@@ -1,7 +1,7 @@
 """FP-FEM and the meshless FP keep a negative value and report it, and a non-finite value function ends the solve (#2845).
 
 The oracles: a step's mass is the row sums of its mass matrix on the values it computed, so a clip's gain shows there; the
-report is rebuilt from the array the result returns; and the guard's line names the site and the minimum of what it read.
+report is rebuilt from the array the result returns; and the guard's line names the site and the minimum of what it was handed.
 """
 
 import logging
@@ -431,7 +431,7 @@ def test_each_coupler_records_the_density_it_returns_and_warns_per_solver(couple
 
 
 @pytest.mark.parametrize("coupler", list(_COUPLERS))
-def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_read(coupler, mfg_caplog):
+def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_was_handed(coupler, mfg_caplog):
     """The stop is the guard all seven share: it reports the array, the site and the density's minimum, and it does not raise."""
     with (
         mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
@@ -446,9 +446,9 @@ def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_read(coupl
     assert lines, "the guard must fire on this row"
     assert coupler in lines[0]
     assert "source:" not in lines[0]
-    # What the solve read is what it returns, since FP did not run on this iterate.
+    # What the solve was handed is what it returns, since FP did not run on this iterate.
     density, _ = _density_and_record(result)
-    # A regime's HJB reads its own density, and other regimes' only through their values; a node's source reads them all.
+    # A regime's HJB is handed its own density; a graph node's is handed every node's.
     held = (
         [density]
         if isinstance(density, np.ndarray)
@@ -507,8 +507,8 @@ def test_the_sweep_guard_names_the_array_and_the_density_the_sweep_read(mfg_capl
     assert "has a minimum of -" in line
 
 
-def test_a_graph_nodes_line_states_the_lowest_density_any_node_holds(mfg_caplog):
-    """A node's source reads its neighbours' densities, so its own would state a minimum that solve did not stop at."""
+def test_a_graph_nodes_line_states_the_lowest_density_it_was_handed(mfg_caplog):
+    """A node's solve is handed every node's density, and its own would state a minimum above what it was handed."""
     read = {}
 
     def reads_its_neighbour(i, j, v_j, m_j, t):
