@@ -96,12 +96,9 @@ drift owner, and what the FP solver receives); *Volatility and diffusion* (the k
 table, the one converter); *Callable signatures*; *Arrays, grids and time*. Where the code does not yet
 meet a convention, the file says so and points at the tracking issue; #2429 collects them.
 
-### The library does not clip on its own ⚠️
+### The library does not repair data ⚠️
 
-A value the computation produced, or the caller supplied, is not moved to where the code would like
-it to be (maintainer ruling, #1884). Refuse it, report it, or expose the bound as a parameter the
-caller sets. `docs/user/CONVENTIONS.md` § *The measure* states the input-side rule for rescaling a
-caller's density. Not clips in this sense include:
+A value the computation produced, or the caller supplied, is not moved to where the code would like it to be, whatever the quantity: no clip, floor, renormalization, filled NaN or fallback of the library's own, warned or not (maintainer ruling, #1884; user ruling, 2026-11-04). A step is the method's only if its equations or a cited source define it; describing it does not qualify. Refuse it, report it with its size, or expose the bound as a parameter the caller sets. Any other change is the caller's, because it changes the equation solved. `docs/user/CONVENTIONS.md` § *The measure* states the input-side rule for rescaling a caller's density. Not repairs in this sense include:
 
 - **The operator itself**: a projection onto an admissible set (a bounded cost's proximal map or
   optimal control, an obstacle projection, a closest-point query the caller asked for), a blend
@@ -111,6 +108,7 @@ caller's density. Not clips in this sense include:
   that adds at most its `threshold` of the mass, and raises beyond it. The default threshold,
   `MAX_CLIP_MASS_FABRICATION`, is admitted (ruled 2026-10-04). A threshold set to a scheme's own tolerance is
   not admitted until ruled, and the open case is on #2485.
+- **What is not data**: an array index, an optimiser's start, library-generated points, a diagnostic's denominator.
 
 #2485 classifies the `np.clip` calls against this and lists the other shapes it keeps; the
 `np.maximum(·, 0)` clamps are not yet classified.
