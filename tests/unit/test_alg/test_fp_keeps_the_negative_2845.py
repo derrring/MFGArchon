@@ -557,21 +557,23 @@ def test_a_measure_refuses_what_it_would_have_dropped(density, says):
 
 def _tracked_meshless(sigma):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(
-        model=Model(
-            hamiltonian=SeparableHamiltonian(
-                control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # the density's mass is not this row's subject
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+                ),
+                volatility=sigma,
             ),
-            volatility=sigma,
-        ),
-        domain=grid,
-        conditions=Conditions(
-            u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
-            m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
-            T=0.5,
-        ),
-        Nt=10,
-    )
+            domain=grid,
+            conditions=Conditions(
+                u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
+                m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                T=0.5,
+            ),
+            Nt=10,
+        )
     hjb, fp = create_paired_solvers(
         problem,
         NumericalScheme.MESHLESS_GALERKIN,
