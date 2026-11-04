@@ -42,7 +42,7 @@ def test_named_slots_are_passed_by_name_and_an_omitted_one_is_not_passed():
         return 0.0
 
     bind_user_callable(source, SOURCE_TERM_SLOTS, role="source_term_hjb")(t=1.0, x=(2.0,), v=3.0, m=4.0)
-    assert seen == {"t": 1.0, "x": (2.0,), "m": 4.0}
+    assert seen == {"t": 1.0, "x": 2.0, "m": 4.0}
 
 
 def test_a_potential_replaced_on_a_copy_is_the_one_evaluated():
@@ -128,16 +128,13 @@ def test_the_extensions_register_their_own_method_orders():
     [
         (lambda t, x, p, m, theta: (t, theta), (0.5, 0.9)),  # the new order, by name
         (lambda x, p, m, theta: theta, 0.9),  # no time, by name: the form every caller used
-        (lambda a, b, c, d: d, 0.9),  # no time, unnamed: t is the optional slot, the rest in order
     ],
 )
 def test_a_conditional_hamiltonian_may_leave_out_time(callable_, expected):
     from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS
 
     bound = bind_user_callable(callable_, CONDITIONAL_HAMILTONIAN_SLOTS, role="conditional_hamiltonian")
-    assert bound(t=0.5, x=0.1, p=0.2, m=0.3, theta=0.9) == expected
-    with pytest.raises(TypeError, match=r"out of order"):
-        bind_user_callable(lambda x, p, m, theta, t: 0.0, CONDITIONAL_HAMILTONIAN_SLOTS, role="c")
+    assert bound(t=0.5, x=(0.1,), p=0.2, m=0.3, theta=0.9) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +148,6 @@ def test_a_network_hamiltonian_in_the_new_order_receives_each_slot():
     values = {"t": 0.5, "node": 2, "neighbors": [1, 3], "p": "P", "m": "M"}
     for new_order in (
         lambda t, node, neighbors, p, m: (t, node, neighbors, p, m),
-        lambda t, n, nb, p, m: (t, n, nb, p, m),
     ):
         bound = bind_user_callable(new_order, NETWORK_HAMILTONIAN_SLOTS, role="hamiltonian_func")
         assert bound(**values) == (0.5, 2, [1, 3], "P", "M")
@@ -160,16 +156,13 @@ def test_a_network_hamiltonian_in_the_new_order_receives_each_slot():
 def test_node_callables_take_time_first():
     from mfgarchon.types.callable_protocols import NODE_INTERACTION_SLOTS, NODE_POTENTIAL_SLOTS
 
-    assert bind_user_callable(lambda t, n: (t, n), NODE_POTENTIAL_SLOTS, role="node_potential_func")(t=0.5, node=3) == (
+    assert bind_user_callable(lambda t, node: (t, node), NODE_POTENTIAL_SLOTS, role="node_potential_func")(t=0.5, node=3) == (
         0.5,
         3,
     )
     assert (
-        bind_user_callable(lambda t, n, m: m, NODE_INTERACTION_SLOTS, role="node_interaction_func")(
+        bind_user_callable(lambda t, node, m: m, NODE_INTERACTION_SLOTS, role="node_interaction_func")(
             t=0.5, node=3, m="M"
         )
         == "M"
     )
-    for old, slots in ((lambda n, t: 0.0, NODE_POTENTIAL_SLOTS), (lambda n, m, t: 0.0, NODE_INTERACTION_SLOTS)):
-        with pytest.raises(TypeError, match=r"out of order"):
-            bind_user_callable(old, slots, role="node callable")

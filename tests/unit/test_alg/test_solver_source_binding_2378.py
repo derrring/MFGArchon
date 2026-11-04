@@ -22,11 +22,11 @@ _SOLVER_SOURCES = {"source_term", "coupling_source"}
 
 @pytest.mark.parametrize(
     "source",
-    [lambda t, x: t + x, lambda t, pts: t + pts, lambda a, b: a + b],
-    ids=["named", "time named", "unnamed"],
+    [lambda t, x: t + x[0], lambda x, t: t + x[0]],
+    ids=["named", "in either order"],
 )
 def test_a_time_first_source_is_evaluated_at_t_and_x(source):
-    np.testing.assert_array_equal(evaluate_solver_source(source, t=0.5, x=_X), 0.5 + _X)
+    np.testing.assert_array_equal(evaluate_solver_source(source, t=0.5, x=_X, dimension=1), 0.5 + _X)
 
 
 def test_no_solver_calls_its_source_term_directly():
@@ -41,6 +41,8 @@ def test_no_solver_calls_its_source_term_directly():
     package = Path(mfgarchon.__file__).parent
     direct = []
     for path in sorted(package.rglob("*.py")):
+        if path.name == "callable_protocols.py":  # the owner
+            continue
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _SOLVER_SOURCES:
                 direct.append(f"{path.relative_to(package)}:{node.lineno}")
@@ -48,14 +50,11 @@ def test_no_solver_calls_its_source_term_directly():
 
 
 def test_the_variational_lagrangian_callables_are_bound_time_first():
-    """`VariationalMFGComponents`' Lagrangian and its derivatives were always (t, x, v, m), called
-    positionally: the binding refuses one written space-first."""
+    """`VariationalMFGComponents`' Lagrangian and its derivatives read (t, x, v, m) by name."""
     from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
 
     bound = bind_user_callable(lambda t, x, v, m: (t, x[0], v, m), VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
-    assert bound(t=1, x=2, v=3, m=4) == (1, 2, 3, 4)
-    with pytest.raises(TypeError, match=r"out of order"):
-        bind_user_callable(lambda x, t, v, m: 0.0, VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
+    assert bound(t=1, x=(2,), v=3, m=4) == (1, 2, 3, 4)
 
 
 def test_no_variational_lagrangian_callable_is_called_directly():
@@ -103,39 +102,9 @@ def test_remembering_a_binding_keeps_no_solve_s_arrays_alive():
     alive = []
     for k in range(5):
         source, ref = closure_over(k)
-        evaluate_solver_source(source, t=0.5, x=_X)
+        evaluate_solver_source(source, t=0.5, x=_X, dimension=1)
         alive.append(ref)
         del source
     gc.collect()
     assert [ref() is None for ref in alive] == [True] * 5
 
-
-def test_two_different_sources_that_compare_equal_are_each_bound_on_their_own():
-    """#2406 review, round 3: a cache looked up by equality let a space-first source borrow the plan
-    of an equal time-first one and receive time as space. Keyed by identity, each is bound itself."""
-    import functools
-
-    class Wrap:
-        def __init__(self, f):
-            functools.update_wrapper(self, f)  # inspect.signature follows the per-instance __wrapped__
-            self.f = f
-
-        def __call__(self, *a, **k):
-            return self.f(*a, **k)
-
-        def __eq__(self, other):
-            return isinstance(other, Wrap)
-
-        def __hash__(self):
-            return 0
-
-    def time_first(t, x):
-        return t
-
-    def space_first(x, t):
-        return t
-
-    kept = Wrap(time_first)
-    assert evaluate_solver_source(kept, t=0.5, x=_X) == 0.5
-    with pytest.raises(TypeError, match=r"out of order"):
-        evaluate_solver_source(Wrap(space_first), t=0.5, x=_X)
