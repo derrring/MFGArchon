@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical.mass_fabrication_gate import clip_nonnegative_or_raise
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -335,7 +336,9 @@ class ParticleMeasure:
         by placing particles at grid points with weights proportional to m(x_i).
 
         Args:
-            density: Density values, shape (N,). Must be non-negative.
+            density: Density values, shape (N,). A value past the round-off gate below zero, or a non-finite one, is
+                refused (#2845): a measure holds neither, and dropping it would be a repair. A negative at round-off
+                counts as zero, by `clip_nonnegative_or_raise`.
             grid_points: Grid point positions, shape (N,) for 1D or (N, d) for dD.
             n_particles: If None, use all grid points with non-zero density.
                 If specified, subsample to n_particles by importance sampling.
@@ -344,6 +347,19 @@ class ParticleMeasure:
             ParticleMeasure with particles at grid points.
         """
         density = np.asarray(density, dtype=float).ravel()
+        if not np.all(np.isfinite(density)):
+            raise ValueError(
+                f"ParticleMeasure.from_density: {int(np.count_nonzero(~np.isfinite(density)))} of {density.size} density "
+                "values are not finite, and a measure has no weight to give them."
+            )
+        density = clip_nonnegative_or_raise(
+            density,
+            context="ParticleMeasure.from_density",
+            remedy=(
+                "A measure has no negative weight, so this density has no snapshot. What has run: the same solve without "
+                "track_measure_field, whose result reports the negative."
+            ),
+        )
         grid = np.asarray(grid_points, dtype=float)
         if grid.ndim == 1:
             grid = grid.reshape(-1, 1)

@@ -154,7 +154,7 @@ def test_a_linear_coupling_cost_solves_as_the_same_potential_on_hjb_fem(route):
         source = compose_hjb_source(problem, M, U, binding=hjb.coupling_binding())
         return np.asarray(hjb.solve_hjb_system(M, U[-1], U, source_term=source))
 
-    logging.disable(logging.WARNING)  # the FP's positivity-clip notices are not this pin's subject
+    logging.disable(logging.WARNING)  # the FP's report of a negative is not this pin's subject
     try:
         gap = np.max(np.abs(solve("H") - solve("F")))
         dropped = np.max(np.abs(solve("H") - solve(None)))
@@ -567,7 +567,7 @@ def test_a_linear_terminal_coupling_solves_as_the_same_terminal_cost_on_hjb_fem(
         result = loop.solve(max_iterations=5, tolerance=1e-12, verbose=False)
         return np.asarray(result.U)
 
-    logging.disable(logging.WARNING)  # the FP's positivity-clip notices are not this pin's subject
+    logging.disable(logging.WARNING)  # the FP's report of a negative is not this pin's subject
     try:
         gap = np.max(np.abs(solve("u") - solve("G")))
         dropped = np.max(np.abs(solve("u") - solve(None)))

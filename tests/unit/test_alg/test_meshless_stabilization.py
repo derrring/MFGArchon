@@ -2,7 +2,7 @@
 meshless-Galerkin scheme.
 
 The central (Bubnov-)Galerkin FP advection is not an M-matrix, so undamped it produces
-negative density undershoots that the positivity clip rectifies into injected mass and
+negative density undershoots, which the solver keeps and reports, and
 blows up the coupled solve; and the Picard inner path treats the quadratic Hamiltonian
 explicitly and self-amplifies. The recipe adds (opt-in) a symmetric streamline-diffusion
 block to BOTH operators (preserving A_FP = A_HJB^T) and an opt-in Newton inner solver.

@@ -1,19 +1,16 @@
 """P1 FEM lumps the mass in its time derivative (#2845), so FP-FEM's implicit pure-diffusion step with no-flux or
-Dirichlet walls is an M-matrix step wherever every off-diagonal of the stiffness is <= 0, and takes no density negative:
-the clip after it has nothing to add. A Robin wall's boundary mass is lumped too, so with alpha/beta >= 0 it only adds to
+Dirichlet walls is an M-matrix step wherever every off-diagonal of the stiffness is <= 0, and takes no density negative.
+A Robin wall's boundary mass is lumped too, so with alpha/beta >= 0 it only adds to
 the diagonal and the condition holds with it.
 
 The oracle is the scheme's own invariant: a no-flux, pure-diffusion solve conserves mass exactly, so `solve_fp_system`'s
-mass is pinned to round-off. With the consistent mass the step goes negative at this dt, and the clip injects 1.2e-2 to
-6.3e-2 of the mass per step on a one-node spike (#2845's table). Each mesh first asserts the hypothesis, K's
+mass is pinned to round-off. With the consistent mass the step goes negative at this dt (#2845's table). Each mesh first asserts the hypothesis, K's
 off-diagonals <= 0: in 1-D P1 always gives it; in 2-D it needs each interior edge's opposite angles to sum to at most pi
 and each boundary edge's opposite angle to be at most pi/2, which a random Delaunay mesh does not always give, so a mesh
 failing it is no evidence either way. The Delaunay mesh keeps its random points 0.03 off the boundary, which is how it
 passes; its seed is fixed. The 1-D mesh is here because the pairing below cannot see a 1-D revert of both solvers at
 once: on a uniform line P1's M = ML - (h^2/6) K, and <U, ML m> is then conserved under either mass.
 """
-
-import logging
 
 import pytest
 import skfem
@@ -90,13 +87,11 @@ def test_a_no_flux_pure_diffusion_spike_keeps_its_mass_to_round_off(build):
     assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, mass
 
 
-def test_a_spike_at_a_robin_wall_is_not_clipped(mfg_caplog, monkeypatch):
+def test_a_spike_at_a_robin_wall_stays_non_negative(monkeypatch):
     """FP-FEM from a one-node spike on y_min, Robin alpha/beta = 200 on every face, D = 0.18, dt = 1e-4, init_tensor
     33 x 33 (K has no positive off-diagonal). With the consistent boundary mass the step took the density to -1.33e-2
-    and the positivity clip injected mass, logging "FP positivity clip injected" (measured at d254acb1). The lumped
-    boundary mass keeps the step an M-matrix step, so the clip has nothing to do (#2845). The row fails on the clip's
-    own messages only, and first shows that this fixture logs them, unlumped: the clip is seen only through them, so an
-    absence alone would also pass with both reworded, renamed or moved to another level."""
+    (measured at d254acb1). The lumped boundary mass keeps the step an M-matrix step, so nothing goes negative (#2845).
+    The row first shows that this fixture goes negative, unlumped, on the same reading."""
     mesh = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
     mesh.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_tensor(np.linspace(0, 1, 33), np.linspace(0, 1, 33)))
     mesh.boundary_conditions = _walls(2, "no_flux")
@@ -111,23 +106,18 @@ def test_a_spike_at_a_robin_wall_is_not_clipped(mfg_caplog, monkeypatch):
         segments=[BCSegment(name=f, bc_type=BCType.ROBIN, alpha=200.0, beta=1.0, boundary=f) for f in FACES[2]],
     )
 
-    def clipped(solver) -> list[str]:
-        mfg_caplog.clear()
+    def lowest(solver) -> float:
         x = solver._disc.dof_coordinates
         m0 = np.zeros(len(x))
         m0[np.argmin(np.hypot(x[:, 0] - 0.5, x[:, 1]))] = 1.0
-        # The clip logs from the weak-form FP base, once per step and once for the solve (AGENTS.md: mfg_caplog, and
-        # an absence paired with a presence on the same logger name).
-        with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.weak_form_fp_solver"):
-            solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((3, len(x))))
-        return [m for m in mfg_caplog.messages if "FP positivity clip injected" in m]
+        return float(np.min(solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((3, len(x))))))
 
     with monkeypatch.context() as unlumped:
         unlumped.setattr(FEMDiscretization, "lumps_mass", property(lambda self: False))
-        assert clipped(FPFEMSolver(problem, boundary_conditions=robin)), (
-            "the control: unlumped, this fixture is clipped"
+        assert lowest(FPFEMSolver(problem, boundary_conditions=robin)) < -1e-3, (
+            "the control: unlumped, this fixture goes negative"
         )
-    assert not clipped(FPFEMSolver(problem, boundary_conditions=robin))
+    assert lowest(FPFEMSolver(problem, boundary_conditions=robin)) >= 0.0
 
 
 def _walls(dim: int, wall: str) -> BoundaryConditions:

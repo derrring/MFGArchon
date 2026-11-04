@@ -633,6 +633,30 @@ axes and refused. The sequence form is the convention, and library code uses it.
 
 - **The library does not rescale `m_initial`.** A density whose integral is not 1 is reported and
   used as given; normalising is a modelling decision, not a requirement.
+- **The library applies no processing of its own to data** (user ruling, 2026-11-04; `AGENTS.md` § *The library does
+  not repair data*). A value is not moved to where the code would like it to be: no clip, floor, shift, regularization or
+  renormalization of a density. A callable may do so at its own choice, which changes the equation being solved. The
+  census of the sites that do not meet this yet is open under #2485.
+  - **FP-FEM and the meshless FP keep a step's negative values.** Nothing is added to the mass. Their size goes in a
+    logged warning, one per FP solver in a solve, and a `warnings` filter does not see it, and in
+    `result.metadata["fp_negative_density"]`: per time level, `fraction`, the negative part against that level's positive
+    part, and `minimum`; then `cumulative`, `largest`, `largest_level`, `lowest`, `lowest_level`, `levels_negative` and
+    `levels`. The record is a list on several FP solvers, is in `info` on `NewtonMFGSolver`, and is absent with
+    `return_tuple=True`. A solver called alone holds it as `last_negative_density`. On the meshless FP these are MLS
+    coefficients, not the density at a point (#2672). A level that is all NaN holds no negative in this record.
+  - **A non-finite value function ends a coupled solve at the guard all seven couplers share.** It logs the site, the
+    iteration and the minimum of the density that solve was handed, and returns `converged=False`, without raising. `np.log(m)`
+    in a `coupling` or a `source_term_hjb` reached it on the six couplers that take FP-FEM, at 81 nodes and sigma 0.3, and on
+    `FictitiousPlayIterator` on the meshless FP, at 21 points and sigma 0.1. A direct `H(t, x, p, m)` returns what the body
+    returns. A solve can end otherwise:
+    `NewtonMFGSolver` past its warm-up raises "a sweep's change must be finite" (#2578), as does a `source_term_fp` that goes
+    non-finite on every coupler but `FixedPointIterator`; other HJB solvers on the meshless FP have raised their own errors,
+    or stayed finite to `converged=False` with only the warning. A read that stays finite, such as `1/m`, is not caught, and
+    only the warning covers it. A density with a negative past the round-off gate has no measure, so
+    `ParticleMeasure.from_density`, and `track_measure_field` through it, refuses it.
+  - **To clip a step anyway is a change of scheme, and it is the caller's:** a subclass of `FPFEMSolver` whose
+    `solve_fp_system` clips what it returns has run, and the coupled solve converged with `np.log(np.maximum(m, 1e-10))`
+    on 81 and 289 nodes where the solver alone blows up.
 - **The measure has one owner**, `mfgarchon.utils.numerical.quadrature`, exposed on
   `TensorProductGrid` as `integrate`, `measure_weights` and `quadrature_weights`, and correct on
   graded axes. A bare `np.sum(m) * dx` is a *different functional* even on a uniform grid: it gives
@@ -895,18 +919,16 @@ face, and FP-FEM the load $-\int_\Gamma q\,\varphi\,dS$, each with its operator 
 mass by exactly $-\Delta t \int_\Gamma q(t_{k+1})\,dS$, the integral on the scheme's own face quadrature (FP-FDM's
 nodal values on the trapezoid face weights, FP-FEM's facet quadrature), on a step that conserves mass under NO_FLUX,
 with no Dirichlet face (a Dirichlet row exchanges mass of its own),
-and where the solver's positivity clip leaves the step alone.
+and, on FP-FDM, where its positivity clip leaves the step alone.
 
-B-3 refuses a step, rather than clip it past the gate, where the clip would fabricate mass the flux decides
-(`refuse_what_a_flux_takes_negative`, one owner for both solvers; user rulings 2026-10-09 and 2026-10-30). First,
-where the negatives the flux's part makes, at nodes the step without it leaves non-negative, would fabricate more than
-`MAX_CLIP_MASS_FABRICATION` of the step's mass; round-off within the gate is clipped, as any clip's is. Otherwise,
-where the step without it passes the clip gate and either the flux's part deepens that step's negatives past it,
-counted without netting on the mass of the step that holds them, or the step with the flux fails the gate itself, as a
-flux that drains the positive mass makes it; neither refuses a step with no negative. Any other step whose own clip is
-past the gate is the scheme's, the flux's share included, and its clip decides it as it decides any step: FP-FDM's
-guard refuses it where clipping would fabricate more than the gate allows, and FP-FEM, whose Galerkin advection is not
-monotone, clips it, warning above $10^{-6}$ of the mass. Every other solver refuses FLUX by name (#2581).
+B-3 refuses a step where the flux takes the density negative past the gate (`refuse_what_a_flux_takes_negative`, one
+owner for both solvers; user rulings 2026-10-09 and 2026-10-30). First, where the negatives the flux's part makes, at
+nodes the step without it leaves non-negative, are more than `MAX_CLIP_MASS_FABRICATION` of the step's mass. Otherwise,
+where the step without it is within the gate and either the flux's part deepens that step's negatives past it, counted
+without netting on the mass of the step that holds them, or the step with the flux is past the gate itself, as a flux
+that drains the positive mass makes it; neither refuses a step with no negative. Any other step whose own negatives are
+past the gate is the scheme's, the flux's share included: FP-FDM's guard refuses it, and FP-FEM keeps its negative
+values and reports them, as on any step. Every other solver refuses FLUX by name (#2581).
 
 ### A capacity-limited exit at the FP
 

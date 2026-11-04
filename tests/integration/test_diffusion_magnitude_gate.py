@@ -160,7 +160,7 @@ def test_weak_form_fem_fp_diffusion_magnitude():
     magnitude was named-but-unpinned; ``FPFEMSolver`` inherits ``_diffusion_coefficient`` /
     ``solve_fp_system`` from ``WeakFormFPSolver`` unchanged, so this exercises that magnitude path.
     Pure diffusion (zero coupling, no potential) keeps ``1 + a*cos(2*pi*x)`` positive, so the
-    positivity clip never fires and the recovered decay reads the diffusion coefficient directly."""
+    step never goes negative and the recovered decay reads the diffusion coefficient directly."""
     pytest.importorskip("skfem", reason="scikit-fem required for the weak-form FEM FP solver")
     from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
     from mfgarchon.geometry import Mesh1D

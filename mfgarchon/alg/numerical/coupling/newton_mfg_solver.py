@@ -249,6 +249,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 U_new,
                 U_terminal,
                 site="NewtonMFGSolver._run_picard_warmup",
+                density=M_old,
                 iteration=i,
             )
             if diverged is not None:
@@ -276,7 +277,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         return U, M, residuals, diverged_at
 
-    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], check=False)
+    @verdict_reads_inner_failures(
+        lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver], check=False
+    )
     def solve(
         self,
         max_iterations: int = 30,
