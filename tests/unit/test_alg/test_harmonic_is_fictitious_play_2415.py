@@ -69,7 +69,7 @@ def _problem() -> MFGProblem:
             )
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda x: bump(x) / mass, u_terminal=lambda x: 0.0, T=0.2),
+        conditions=Conditions(m_initial=lambda x: bump(x[0]) / mass, u_terminal=lambda x: 0.0, T=0.2),
         Nt=4,
     )
 

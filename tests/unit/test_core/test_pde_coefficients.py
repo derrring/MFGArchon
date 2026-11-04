@@ -35,7 +35,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )
@@ -237,7 +237,7 @@ class TestCoefficientFieldCallable:
 
         def spatial_diffusion(t, x, m):
             # Diffusion increases with x
-            return 0.05 + 0.1 * x
+            return 0.05 + 0.1 * x[0]
 
         field = CoefficientField(spatial_diffusion, default_value=0.1, field_name="diffusion", dimension=1)
 
@@ -519,7 +519,7 @@ class TestResolveDiffusionSource:
 
     def test_callable_per_point_evaluates_at_point(self):
         def sigma(x):
-            return 0.5 + 0.5 * float(np.atleast_1d(x)[0])
+            return 0.5 + 0.5 * float(x[0])
 
         assert resolve_diffusion_source(sigma, index=0, points=self._POINTS) == pytest.approx(0.5)
         assert resolve_diffusion_source(sigma, index=10, points=self._POINTS) == pytest.approx(1.0)

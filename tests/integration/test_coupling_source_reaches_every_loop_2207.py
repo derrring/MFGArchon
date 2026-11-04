@@ -136,7 +136,7 @@ def _u_terminal(x):
     nonlocal row on all four loops INCLUDING the positive control. That is the file's own control
     doing its job: when the control row fails, the fixture is wrong and not the library.
     """
-    a = np.asarray(x, dtype=float)
+    a = np.asarray(x[0], dtype=float)
     return (a - 0.5) ** 2
 
 
@@ -149,7 +149,7 @@ def _m_initial(x):
     returns ``0.9999999999999999``, which is what matters because that is the value its warning
     tests. An earlier draft of this line said "exactly 1", which is true of one of those two
     measures and was written without running the other."""
-    return 1.0 + 0.5 * np.cos(2.0 * np.pi * np.asarray(x, dtype=float))
+    return 1.0 + 0.5 * np.cos(2.0 * np.pi * np.asarray(x[0], dtype=float))
 
 
 def _problem(**source_fields):

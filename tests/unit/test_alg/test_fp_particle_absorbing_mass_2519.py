@@ -59,7 +59,7 @@ def _solve(dim: int, n: int, nt: int, particles: int, route: str, seed: int = 0)
     if route == "grid":
         M = solver.solve_fp_system(m0, np.zeros((nt + 1, *m0.shape)))
     else:
-        M = solver.solve_fp_system(m0, drift_field=lambda t, x, m: np.zeros_like(np.asarray(x, dtype=float)))
+        M = solver.solve_fp_system(m0, drift_field=lambda t, x, m: np.zeros_like(np.asarray(x[0], dtype=float)))
     return grid, m0, np.asarray(M), solver
 
 

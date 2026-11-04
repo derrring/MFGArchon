@@ -30,7 +30,7 @@ class TestMeasureFieldProtocol:
         assert isinstance(field, MeasureFieldProtocol)
 
     def test_functional_field_satisfies_protocol(self):
-        field = FunctionalMeasureField(lambda t, x, mu: np.zeros_like(x))
+        field = FunctionalMeasureField(lambda t, x, mu: np.zeros_like(x[0]))
         assert isinstance(field, MeasureFieldProtocol)
 
 
@@ -217,7 +217,7 @@ class TestGridMeasureFieldContinuity:
 class TestFunctionalMeasureField:
     def test_evaluate(self):
         def v(t, x, mu):
-            return np.sin(np.pi * x) * t
+            return np.sin(np.pi * x[0]) * t
 
         field = FunctionalMeasureField(v)
         x = np.linspace(0, 1, 11)
@@ -244,7 +244,7 @@ class TestFunctionalMeasureField:
             return x**2
 
         def grad_v(t, x, mu):
-            return 2 * x
+            return 2 * x[0]
 
         field = FunctionalMeasureField(v, gradient_fn=grad_v)
         x = np.linspace(0, 1, 11)
@@ -253,5 +253,5 @@ class TestFunctionalMeasureField:
         np.testing.assert_allclose(grad, 2 * x)
 
     def test_repr(self):
-        field = FunctionalMeasureField(lambda t, x, mu: x)
+        field = FunctionalMeasureField(lambda t, x, mu: x[0])
         assert "FunctionalMeasureField" in repr(field)

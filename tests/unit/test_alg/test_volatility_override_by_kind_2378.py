@@ -201,7 +201,7 @@ def _problem_2d(n=9, volatility=0.3):
         domain=grid,
         conditions=Conditions(
             m_initial=lambda x: (
-                np.exp(-10 * np.sum((np.atleast_2d(x) - 0.45) ** 2, axis=-1)).reshape(np.shape(x)[:-1] or ()) / mass
+                np.exp(-10 * sum((np.atleast_2d(xi) - 0.45) ** 2 for xi in x)).reshape(np.shape(x[0]) or ()) / mass
             ),
             u_terminal=lambda x: 0.0,
             T=0.2,

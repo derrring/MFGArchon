@@ -104,7 +104,7 @@ def test_a_zero_flux_region_route_solves_as_plain_no_flux():
                         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3
                     ),
                     domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=bc),
-                    conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: np.cos(np.pi * x), T=0.5),
+                    conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: np.cos(np.pi * x[0]), T=0.5),
                     Nt=nt,
                 )
                 x = np.linspace(0.0, 1.0, nx)
@@ -155,7 +155,7 @@ def test_a_raw_region_segment_goes_through_the_shared_resolver():
 
 def test_a_region_covering_part_of_a_face_keeps_its_name_and_is_refused_face_level():
     grid = _grid()
-    grid.mark_region("strip", predicate=lambda x: x[:, 0] > 0.6)
+    grid.mark_region("strip", predicate=lambda x: x[0] > 0.6)
     bc = mixed_bc_from_regions(grid, {"strip": _OUTLET, "default": _WALL})
     assert bc.segments[0].region_name == "strip"
     with pytest.raises(ValueError, match="covers part of the"):
@@ -164,7 +164,7 @@ def test_a_region_covering_part_of_a_face_keeps_its_name_and_is_refused_face_lev
 
 def test_a_marked_region_covering_no_face_is_refused_where_its_condition_would_be_dropped():
     grid = _grid()
-    grid.mark_region("centre", predicate=lambda x: np.all(np.abs(x - 0.5) < 0.2, axis=1))
+    grid.mark_region("centre", predicate=lambda x: np.all(np.abs(x[0] - 0.5) < 0.2, axis=1))
     with pytest.raises(ValueError, match="cover no node of any face's interior"):
         pad_array_with_ghosts(np.ones((N, N)), _raw("centre"), geometry=grid)
 
@@ -215,7 +215,7 @@ def test_a_kept_region_may_not_be_named_like_a_face():
     """A partial region named "top" would be read as the whole y_max face by every reader without the
     geometry (review 2, N2)."""
     grid = _grid()
-    grid.mark_region("top", predicate=lambda x: (x[:, 1] > 0.99) & (x[:, 0] < 0.4))
+    grid.mark_region("top", predicate=lambda x: (x[1] > 0.99) & (x[0] < 0.4))
     with pytest.raises(ValueError, match="reads as a face"):
         mixed_bc_from_regions(grid, {"top": _OUTLET, "default": _WALL})
 
@@ -243,7 +243,7 @@ def test_a_zero_flux_region_covering_part_of_a_face_enforces_as_plain_no_flux():
     from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 
     grid = _grid()
-    grid.mark_region("strip", predicate=lambda x: x[:, 0] > 0.6)
+    grid.mark_region("strip", predicate=lambda x: x[0] > 0.6)
     region_bc = mixed_bc_from_regions(
         grid, {"strip": BCSegment(name="s", bc_type=BCType.NEUMANN, value=0.0), "default": _WALL}
     )
@@ -263,7 +263,7 @@ def test_the_only_region_on_every_face_is_uniform():
     from mfgarchon.geometry.boundary import periodic_bc
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=periodic_bc(dimension=1))
-    grid.mark_region("ends", predicate=lambda x: np.isclose(x[:, 0], 0.0) | np.isclose(x[:, 0], 1.0))
+    grid.mark_region("ends", predicate=lambda x: np.isclose(x[0], 0.0) | np.isclose(x[0], 1.0))
     bc = mixed_bc_from_regions(grid, {"ends": BCSegment(name="p", bc_type=BCType.PERIODIC)})
     assert bc.is_uniform
     assert [(s.boundary, s.region_name) for s in bc.segments] == [(None, None)]

@@ -40,7 +40,7 @@ def _default_components_2d():
     """Default MFGComponents for 2D testing (Issue #670: explicit specification required)."""
 
     def m_initial_2d(x):
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
 
     return MFGComponents(

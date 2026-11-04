@@ -97,8 +97,8 @@ def _solve(kind: str, bc, g_left: float, g_right: float, nx: int, nt: int = 20, 
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[nx], boundary_conditions=bc)
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)) / L,
-        u_terminal=lambda x: u(T, np.asarray(x, dtype=float)),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / L,
+        u_terminal=lambda x: u(T, np.asarray(x[0], dtype=float)),
     )
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=SIGMA)
     if solver_bc is not None:
@@ -163,8 +163,8 @@ def _small_problem():
     )
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)) / L,
-        u_terminal=lambda x: np.zeros_like(np.asarray(x, dtype=float)),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / L,
+        u_terminal=lambda x: np.zeros_like(np.asarray(x[0], dtype=float)),
     )
     return MFGProblem(geometry=grid, components=comps, T=T, Nt=4, volatility=SIGMA), np.linspace(0.0, L, 11).reshape(
         -1, 1

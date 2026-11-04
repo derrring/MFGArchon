@@ -519,7 +519,7 @@ def test_fem_passes_each_dof_as_x_of_shape_d():
         segments=[_segment(lambda x: 0.5 + x[0]), BCSegment(name="w", bc_type=BCType.NO_FLUX, boundary="x_min")],
     )
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
-    conditions = Conditions(m_initial=lambda x: 8 / 9 + 0.0 * x[..., 0], u_terminal=lambda x: 0.0, T=0.5)
+    conditions = Conditions(m_initial=lambda x: 8 / 9 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5)
     solver = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=conditions, Nt=4))
     x = solver._disc.dof_coordinates[:, 0]
     U = np.asarray(

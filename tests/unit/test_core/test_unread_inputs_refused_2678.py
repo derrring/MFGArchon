@@ -56,11 +56,11 @@ _MASS = float(trapezoid(_gaussian(_POINTS), _POINTS))
 
 
 def _m_initial(x):
-    return _gaussian(_x(x)) / _MASS
+    return _gaussian(_x(x[0])) / _MASS
 
 
 def _u_terminal(x):
-    return 2.0 * (_x(x) - 0.7) ** 2
+    return 2.0 * (_x(x[0]) - 0.7) ** 2
 
 
 def _grid():
@@ -97,11 +97,11 @@ _FORMS = {"model form": _model_form, "components form": _components_form}
 
 
 def _drift(t, x, m):
-    return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
+    return 0.2 * (0.5 - np.asarray(x[0])) * (1.0 + np.asarray(t))
 
 
 def _drift_written_x_first(x, t, m):
-    return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
+    return 0.2 * (0.5 - np.asarray(x[0])) * (1.0 + np.asarray(t))
 
 
 def _drift_unnamed(a, b, c):
@@ -109,7 +109,7 @@ def _drift_unnamed(a, b, c):
 
 
 def _zero_drift(t, x, m):
-    return np.zeros_like(np.asarray(x, dtype=float))
+    return np.zeros_like(np.asarray(x[0], dtype=float))
 
 
 def _density():
@@ -294,13 +294,13 @@ def test_the_advice_on_obstacles_holds_a_density_out_of_the_region():
         problem = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.05),
             domain=grid,
-            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * _x(x), u_terminal=lambda x: 0.0 * _x(x), T=0.3),
+            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * _x(x[0]), u_terminal=lambda x: 0.0 * _x(x[0]), T=0.3),
             Nt=15,
         )
         solver = FPParticleSolver(problem, num_particles=1000, seed=2688, **given)
         density = solver.solve_fp_system(
             M_initial=start,
-            drift_field=lambda t, x, m: 2.0 + 0.0 * np.asarray(x, dtype=float),
+            drift_field=lambda t, x, m: 2.0 + 0.0 * np.asarray(x[0], dtype=float),
             drift_needs_density=False,
             show_progress=False,
         )

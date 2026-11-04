@@ -75,7 +75,7 @@ def _read(hamiltonian, slope, n, nt, **solver_options):
             bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=no_flux_bc(dimension=d)
         ),
         conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: np.sum(slope * np.asarray(x, dtype=float), axis=-1), T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: sum(slope * xi for xi in x), T=_T
         ),
         Nt=nt,
     )
@@ -103,7 +103,7 @@ def _separable(cost, *, state=False):
     return SeparableHamiltonian(
         control_cost=cost,
         coupling=lambda m: _F0 + 0.0 * m,
-        potential=lambda t, x: _V0 + 0.0 * np.asarray(x, dtype=float)[..., 0],
+        potential=lambda t, x: _V0 + 0.0 * x[0],
     )
 
 
@@ -160,7 +160,7 @@ def _problem(hamiltonian, slope=1.5, n=21, nt=5):
         model=Model(hamiltonian=hamiltonian, volatility=0.05),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: slope * np.asarray(x, dtype=float)[..., 0], T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: slope * x[0], T=_T
         ),
         Nt=nt,
     )
@@ -240,7 +240,7 @@ def test_the_update_refines_with_a_potential_and_a_coupling_that_vary(path):
     control_cost = _Cubic()
     hamiltonian = SeparableHamiltonian(
         control_cost=control_cost,
-        potential=lambda t, x: (1.0 + 2.0 * t) * np.asarray(x, dtype=float)[..., 0] + 0.3 * t,
+        potential=lambda t, x: (1.0 + 2.0 * t) * x[0] + 0.3 * t,
         coupling=lambda m: 0.4 * m,
     )
 
@@ -255,7 +255,7 @@ def test_the_update_refines_with_a_potential_and_a_coupling_that_vary(path):
             model=Model(hamiltonian=hamiltonian, volatility=0.05),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
             conditions=Conditions(
-                m_initial=lambda x: 1.0, u_terminal=lambda x: 0.8 * np.asarray(x, dtype=float)[..., 0], T=_T
+                m_initial=lambda x: 1.0, u_terminal=lambda x: 0.8 * x[0], T=_T
             ),
             Nt=nt,
         )
@@ -282,7 +282,7 @@ def test_the_update_agrees_with_fdm_where_p_varies_in_x(cost, path):
         model=Model(hamiltonian=_separable(_COSTS[cost][0]), volatility=0.05),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: _curved(np.asarray(x, dtype=float)[..., 0]), T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: _curved(x[0]), T=_T
         ),
         Nt=nt,
     )

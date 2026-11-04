@@ -90,7 +90,7 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
         wall = BCSegment(name="w", bc_type=BCType.NO_FLUX, region={0: (0.5, 1.0)}, priority=1)
         bc = {
             "1-D region": _bc(_dirichlet(region={0: (0.5, 1.0)})),
-            "1-D sdf_region": _bc(_dirichlet(sdf_region=lambda x: np.asarray(x)[..., 0] - 0.5)),
+            "1-D sdf_region": _bc(_dirichlet(sdf_region=lambda x: x[0] - 0.5)),
             "1-D no-flux region before a Dirichlet face": _bc(wall, _dirichlet(boundary="x_max")),
             "1-D no-flux region beside a Dirichlet default": _bc(wall, default=BCType.DIRICHLET, default_value=0.0),
         }[case]
@@ -113,7 +113,7 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
     disc = discretization_from_cloud(cloud, delta=delta, degree=2, n_gauss=4)
     grid, bc = _bound_to_a_grid(BoundaryConditions(dimension=2, segments=[segment], default_bc=BCType.NO_FLUX), n)
     if marked:
-        grid.mark_region(name, predicate=lambda x: (np.asarray(x)[..., 0] > 0.99) & (np.asarray(x)[..., 1] > 0.3))
+        grid.mark_region(name, predicate=lambda x: (x[0] > 0.99) & (x[1] > 0.3))
     with pytest.raises(NotImplementedError, match=refusal):
         refuse_what_nitsche_cannot_place(bc, 2)
     face = BoundaryConditions(dimension=2, segments=[_dirichlet(boundary="x_max")], default_bc=BCType.NO_FLUX)

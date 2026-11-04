@@ -48,7 +48,7 @@ def _problem(bc: BoundaryConditions, nx: int = 21, nt: int = 15, sigma: float = 
             volatility=sigma,
         ),
         domain=grid,
-        conditions=Conditions(u_terminal=lambda x: np.squeeze(0.0 * np.asarray(x)), m_initial=lambda x: 1.0, T=0.5),
+        conditions=Conditions(u_terminal=lambda x: np.squeeze(0.0 * np.asarray(x[0])), m_initial=lambda x: 1.0, T=0.5),
         Nt=nt,
     )
 
@@ -237,7 +237,7 @@ class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
         init = np.random.uniform([0.5, 0.5], [1.5, 1.5], (500, 2))
         solver.solve_fp_system(
             initial_particles=init,
-            drift_field=lambda t, x, m: np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))]),
+            drift_field=lambda t, x, m: np.column_stack([np.full(np.shape(x[0]), 2.0), np.zeros(np.shape(x[0]))]),
             volatility=0.3,
             drift_needs_density=False,
             show_progress=False,

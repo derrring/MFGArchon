@@ -49,7 +49,7 @@ def _solve(potential: float, monkeypatch=None, failures: list | None = None) -> 
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[N, N], boundary_conditions=no_flux_bc(dimension=2)
     )
     hamiltonian = SeparableHamiltonian(
-        control_cost=L1ControlCost(lambda_=1.0), potential=lambda t, x: potential * np.ones(np.asarray(x).shape[:-1])
+        control_cost=L1ControlCost(lambda_=1.0), potential=lambda t, x: potential * np.ones(np.shape(x[0]))
     )
     problem = MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.15),

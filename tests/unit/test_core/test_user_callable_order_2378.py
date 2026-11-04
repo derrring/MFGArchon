@@ -102,10 +102,10 @@ def test_a_potential_replaced_on_a_copy_is_the_one_evaluated():
 
 
 def test_a_measure_field_takes_time_first_and_refuses_the_old_order():
-    field = FunctionalMeasureField(lambda t, x, mu: t + x)
+    field = FunctionalMeasureField(lambda t, x, mu: t + x[0])
     np.testing.assert_array_equal(field.evaluate(t=0.5, x=_X, mu=None), 0.5 + _X)
     with pytest.raises(TypeError, match=r"out of order"):
-        FunctionalMeasureField(lambda x, mu, t: x)
+        FunctionalMeasureField(lambda x, mu, t: x[0])
 
 
 def test_detect_callable_signature_tells_the_two_orders_apart():

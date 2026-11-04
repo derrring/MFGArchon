@@ -700,7 +700,7 @@ _EXIT = BCType.DIRICHLET
                     "exit",
                     _EXIT,
                     priority=1,
-                    sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1,
+                    sdf_region=lambda x: np.abs(x[1] - 0.5) - 0.1,
                     normal_direction=np.array([1.0, 0.0]),
                 ),
                 _seg("wall", BCType.NO_FLUX),
@@ -715,7 +715,7 @@ _EXIT = BCType.DIRICHLET
                     "exit",
                     _EXIT,
                     priority=1,
-                    sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1,
+                    sdf_region=lambda x: np.abs(x[1] - 0.5) - 0.1,
                     normal_direction=np.array([1.0, 0.0]),
                 ),
                 _seg("wall", BCType.NO_FLUX),
@@ -756,7 +756,7 @@ def _sdf_exit_on_part_of_x_max():
         dimension=2,
         default_bc=BCType.NO_FLUX,
         segments=[
-            _seg("exit", _EXIT, priority=1, sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1),
+            _seg("exit", _EXIT, priority=1, sdf_region=lambda x: np.abs(x[1] - 0.5) - 0.1),
             _seg("wall", BCType.NO_FLUX),
         ],
     )
@@ -803,7 +803,7 @@ def test_a_particle_solver_handed_an_sdf_placed_bc_reads_it_on_its_grid():
 def test_an_sdf_returning_a_one_element_array_is_read_as_its_value_by_the_face_owner_too():
     """`matches_point` reads an sdf's one-element array as its value; the face owner's grid mask stacked them and
     failed to broadcast (#2634, found re-checking #2490's sdf row)."""
-    disc = _seg("D", _EXIT, sdf_region=lambda x: np.linalg.norm(np.atleast_2d(x) - np.array([1.0, 0.5]), axis=-1) - 0.2)
+    disc = _seg("D", _EXIT, sdf_region=lambda x: np.sqrt(sum((np.atleast_2d(xi) - np.array([1.0, 0.5])) ** 2 for xi in x)) - 0.2)
     grid = _grid(BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[disc]))
     with pytest.raises(ValueError, match="'D' covers part of the x_max face"):
         grid.get_boundary_conditions().segment_for_face("x_max")
@@ -855,7 +855,7 @@ def _strip_between_nodes(bc_type):
     strip = _seg(
         "strip",
         bc_type,
-        sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.42) - 0.02,
+        sdf_region=lambda x: np.abs(x[1] - 0.42) - 0.02,
         normal_direction=np.array([1.0, 0.0]),
     )
     return BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, default_bc=BCType.NO_FLUX, segments=[strip])

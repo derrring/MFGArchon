@@ -89,7 +89,7 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
     geometry.boundary_conditions = dirichlet_bc(dimension=d, value=0.0)
     c = FP_RATE if arm == "fp" else _rate(_problem(geometry), d)
     u = _exact(c, d)
-    g = dirichlet_bc(dimension=d, value=lambda t, x: float(u(t, x)))
+    g = dirichlet_bc(dimension=d, value=lambda t, x: u(t, x[0]))
     if arm != "fp":
         geometry.boundary_conditions = g
     problem = _problem(geometry)
@@ -99,7 +99,7 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
         X = solver._disc.dof_coordinates
         exact = np.stack([u(t, X) for t in levels])
         result = solver.solve_fp_system(
-            exact[0], np.zeros((NT + 1, len(X))), source_term=lambda t, x: np.full(len(x), FP_RATE)
+            exact[0], np.zeros((NT + 1, len(X))), source_term=lambda t, x: np.full(np.shape(x[0]), FP_RATE)
         )
     else:
         solver = HJBFEMSolver(problem, order=1)
@@ -134,7 +134,7 @@ def test_gfdm_reads_a_dirichlet_value_at_its_level(d, inner):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * d,
         Nx_points=[n] * d,
-        boundary_conditions=dirichlet_bc(dimension=d, value=lambda t, x: float(u(t, x))),
+        boundary_conditions=dirichlet_bc(dimension=d, value=lambda t, x: u(t, x[0])),
     )
     points = np.stack(np.meshgrid(*[np.linspace(0.0, 1.0, n)] * d, indexing="ij"), axis=-1).reshape(-1, d)
     exact = np.stack([u(t, points) for t in np.linspace(0.0, T, NT + 1)])

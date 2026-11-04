@@ -532,7 +532,7 @@ def _validate_callable_ic(
 
     Issues #682, #2875: Geometry-agnostic callable validation.
     """
-    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable, coordinate_tuple
+    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable
 
     result = ValidationResult()
 
@@ -561,7 +561,7 @@ def _validate_callable_ic(
 
     # Evaluate the callable at the sample point to check output quality
     try:
-        value = bound(t=time_value, x=coordinate_tuple(sample_point, geometry.dimension))
+        value = bound(t=time_value, x=tuple(np.atleast_1d(sample_point)))
     except Exception as e:
         result.add_error(
             f"{name} callable raised exception at sample point {sample_point}: {e}",
@@ -662,7 +662,7 @@ def _evaluate_callable_on_grid(
             points = points.reshape(-1, 1)
 
         bound = bind_user_callable(func, CONDITION_SLOTS, role="condition")
-        values = np.asarray(bound(t=0.0, x=coordinate_tuple(points, geometry.dimension)), dtype=float)
+        values = np.asarray(bound(t=0.0, x=coordinate_tuple(points, points.shape[1])), dtype=float)
         return np.array(np.broadcast_to(values.ravel() if values.size > 1 else values, (points.shape[0],)))
     except Exception:
         logger.debug("Failed to evaluate callable on grid, returning None", exc_info=True)

@@ -41,7 +41,7 @@ class _PointOrBatch(HamiltonianBase):
     """A user Hamiltonian written to the shapes `HamiltonianBase` documents, with the base finite-difference dp."""
 
     def __call__(self, t, x, p, m):
-        q = np.asarray(p) - SHIFT * np.asarray(x)
+        q = np.asarray(p) - SHIFT * np.asarray(x[0])
         if q.ndim == 1:
             return 0.5 * float(q @ q) / (1.0 + LAM * float(m))
         return 0.5 * np.sum(q * q, axis=1) / (1.0 + LAM * np.asarray(m).ravel())

@@ -84,10 +84,10 @@ class _H(HamiltonianBase):
         self._dp = dp
 
     def __call__(self, t, x, p, m):
-        return self._formula(t, x, p, m)
+        return self._formula(t, x[0], p, m)
 
     def dp(self, t, x, p, m):
-        return super().dp(t, x, p, m) if self._dp is None else self._dp(t, x, p, m)
+        return super().dp(t, x[0], p, m) if self._dp is None else self._dp(t, x[0], p, m)
 
 
 def _solve(hamiltonian, **solver_kwargs):
@@ -100,7 +100,7 @@ def _solve(hamiltonian, **solver_kwargs):
                 domain=TensorProductGrid(
                     bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1)
                 ),
-                conditions=Conditions(u_terminal=lambda x: np.cos(np.pi * x), m_initial=lambda x: 1.0, T=0.5),
+                conditions=Conditions(u_terminal=lambda x: np.cos(np.pi * x[0]), m_initial=lambda x: 1.0, T=0.5),
                 Nt=NT,
             )
             u_terminal = np.cos(np.pi * X)

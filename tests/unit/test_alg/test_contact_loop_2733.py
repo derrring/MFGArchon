@@ -94,7 +94,7 @@ def _disc_bc(segment):
     "segment",
     [
         BCSegment(name="exit", bc_type=D, value=0.0, normal_direction=np.array([1.0, 0.0]), normal_tolerance=0.5),
-        BCSegment(name="exit", bc_type=D, value=0.0, sdf_region=lambda x: float(0.75 - np.asarray(x)[0])),
+        BCSegment(name="exit", bc_type=D, value=0.0, sdf_region=lambda x: 0.75 - x[0]),
     ],
     ids=["normal_direction under domain_sdf", "sdf_region"],
 )
@@ -116,7 +116,7 @@ def test_an_absorbing_exit_placed_by_name_all_region_or_region_name_beside_an_ob
     surface (400 of 400, none on the box) and a ``region`` exit covering the obstacle absorbed none of 400 after 2359
     contacts (review 1 of #2791)."""
     geometry = _grid()
-    geometry.mark_region("door", predicate=lambda x: x[:, 0] > 0.5)
+    geometry.mark_region("door", predicate=lambda x: x[0] > 0.5)
     bc = BoundaryConditions(
         segments=[BCSegment(name="exit", bc_type=D, value=0.0, **placement)], dimension=2, default_bc=NF
     )
@@ -151,7 +151,7 @@ def test_what_the_owner_answers_on_the_box_alone_is_admitted(label, geometry, im
     solver = FPParticleSolver(_problem(geometry, T=0.1, nt=2), num_particles=50, seed=1, boundary_conditions=bc, **kw)
     start = np.c_[np.full(50, 0.15), np.linspace(0.45, 0.55, 50)]
     solver.solve_fp_system(
-        initial_particles=start, drift_field=lambda t, x, m: np.zeros_like(np.asarray(x)), drift_needs_density=False
+        initial_particles=start, drift_field=lambda t, x, m: np.zeros_like(np.asarray(x[0])), drift_needs_density=False
     )
 
 
@@ -180,7 +180,7 @@ def test_absorbing_everywhere_beside_an_obstacle_is_refused_and_its_advice_runs(
     start = np.c_[np.full(400, 0.2), np.random.default_rng(3).uniform(0.4, 0.6, 400)]
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5]) - np.asarray(x)),
+        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5]) - np.asarray(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -734,7 +734,7 @@ def test_no_particle_passes_two_touching_obstacles():
     )
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform(0.02, 0.2, (2000, 1)),
-        drift_field=lambda t, x, m: 4.0 * (0.9 - np.asarray(x)),
+        drift_field=lambda t, x, m: 4.0 * (0.9 - np.asarray(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -829,7 +829,7 @@ def test_a_reflecting_obstacle_keeps_the_gibbs_density():
     )
     solver.solve_fp_system(
         initial_particles=np.asarray(starts[:n]),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([-a, 0.0]), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([-a, 0.0]), np.shape(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -894,7 +894,7 @@ def test_a_3d_room_holds_behind_its_obstacle_the_particles_its_shadow_holds():
     start = np.c_[np.full(2000, 0.2), np.random.default_rng(3).uniform(0.3, 0.7, (2000, 2))]
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5, 0.5]) - np.asarray(x)),
+        drift_field=lambda t, x, m: 3.0 * (np.array([1.3, 0.5, 0.5]) - np.asarray(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -919,7 +919,7 @@ def test_a1_a_flush_obstacle_at_a_corner_lets_every_step_run(seed):
     start = np.random.default_rng(seed).uniform([0.1, 0.1], [0.2, 0.19], (600, 2))
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([-1.0, 1.0]), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([-1.0, 1.0]), np.shape(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -991,7 +991,7 @@ def test_a_box_only_solve_starts_every_particle_in_the_box(path):
         with pytest.raises(ValueError, match=r"of the particles given as initial_particles, 1 of 4000 are outside"):
             solver.solve_fp_system(
                 initial_particles=outside,
-                drift_field=lambda t, x, m: np.zeros_like(np.asarray(x)),
+                drift_field=lambda t, x, m: np.zeros_like(np.asarray(x[0])),
                 drift_needs_density=False,
             )
         return

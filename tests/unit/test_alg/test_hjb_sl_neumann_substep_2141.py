@@ -35,7 +35,7 @@ def _relative_error(n: int, u, du, bc) -> float:
     """Stationary exact u at sigma = 0: V = u'(x)^2 / 2 makes H(x, u') = |u'|^2 / 2 - V vanish."""
 
     def potential(t, x):
-        v = 0.5 * du(np.asarray(x, dtype=float)) ** 2
+        v = 0.5 * du(np.asarray(x[0], dtype=float)) ** 2
         return float(np.ravel(v)[0]) if np.size(v) == 1 else v
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=bc)
@@ -45,7 +45,7 @@ def _relative_error(n: int, u, du, bc) -> float:
             volatility=0.0,
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: u(np.asarray(x, dtype=float)), T=1.0),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: u(np.asarray(x[0], dtype=float)), T=1.0),
         Nt=n - 1,
     )
     exact = u(grid.coordinates[0])

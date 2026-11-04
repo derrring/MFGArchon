@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from mfgarchon.types.callable_protocols import read_region
 from scipy.spatial import Voronoi
 
 if TYPE_CHECKING:
@@ -63,7 +65,7 @@ def _clip_halfplane(poly: NDArray, n: NDArray, c: float, eps: float = 1e-12) -> 
 
 def _clip_sdf(poly: NDArray, sdf: Callable[[NDArray], NDArray], eps: float = 1e-12) -> NDArray:
     """Clip ``poly`` to ``{sdf <= 0}`` (boundary arc approximated by chords between crossings)."""
-    s = np.asarray(sdf(poly), dtype=np.float64).ravel()
+    s = np.asarray(read_region(sdf, poly, role="sdf"), dtype=np.float64).ravel()
     out = []
     m = len(poly)
     for i in range(m):

@@ -47,7 +47,7 @@ def test_a_region_named_segment_is_read_at_a_point_as_on_its_face(row):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
     )
-    grid.mark_region("strip", predicate=lambda x: x[:, 1] > 0.4)
+    grid.mark_region("strip", predicate=lambda x: x[1] > 0.4)
     segments = [
         BCSegment(name="strip", bc_type=BCType.DIRICHLET, value=0.0, region_name="strip"),
         BCSegment(name="rest", bc_type=BCType.NO_FLUX, value=0.0),
@@ -129,7 +129,7 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
     segment = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, region_name="exit")
     if row == "an implicit domain that marks it":
         disk = Hypersphere(center=[0.5, 0.5], radius=0.5)
-        disk.mark_region("exit", predicate=lambda x: x[:, 0] > 0.9)
+        disk.mark_region("exit", predicate=lambda x: x[0] > 0.9)
         with pytest.raises(ValueError, match=r"Hypersphere marks a region of that name.*sdf_region"):
             segment.matches_point(np.array([1.0, 0.5]), "x_max", np.array([[0.0, 1.0], [0.0, 1.0]]), geometry=disk)
         return
@@ -137,7 +137,7 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
         grid = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
         )
-        grid.mark_region("exit", predicate=lambda x: x[:, 1] > 0.4)
+        grid.mark_region("exit", predicate=lambda x: x[1] > 0.4)
         with pytest.raises(ValueError, match=r"has 3 coordinates where the TensorProductGrid that marks it has 2 axes"):
             segment.matches_point(np.array([1.0, 0.75, 0.0]), None, None, geometry=grid)
         return
@@ -152,7 +152,7 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
         custom_coordinates=[np.array(xs), np.array([0.0, 0.5, 1.0])],
         boundary_conditions=no_flux_bc(dimension=2),
     )
-    grid.mark_region("exit", predicate=lambda x: x[:, 0] > 0.5)
+    grid.mark_region("exit", predicate=lambda x: x[0] > 0.5)
     segments = [segment, BCSegment(name="rest", bc_type=BCType.NO_FLUX, value=0.0)]
     if row == "outside the grid's own box":
         wide = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[-0.2, 1.0], [0.0, 1.0]]))

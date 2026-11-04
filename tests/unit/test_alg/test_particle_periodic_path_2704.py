@@ -280,7 +280,7 @@ def test_an_exit_strip_beside_periodic_faces_absorbs_what_its_path_crosses():
         )
         solver.solve_fp_system(
             initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-            drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x)),
+            drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x[0])),
             drift_needs_density=False,
             show_progress=False,
         )
@@ -502,7 +502,7 @@ def test_a_step_at_a_corner_acts_only_by_the_faces_it_leaves_through(row):
 
 
 def _drift_x(t, x, m):
-    return np.broadcast_to(np.array([2.0, 0.0]), np.shape(x))
+    return np.broadcast_to(np.array([2.0, 0.0]), np.shape(x[0]))
 
 
 _TOUCHING = {  # an obstacle in the channel, and the face of the periodic axis x it meets
@@ -563,7 +563,7 @@ def test_a_particle_domain_under_a_periodic_face_is_refused_in_three_dimensions(
     with pytest.raises(NotImplementedError, match=r"in 3-D with a periodic condition on the outer boundary.*#2807"):
         solver.solve_fp_system(
             initial_particles=np.random.default_rng(0).uniform(0.1, 0.5, (10, 3)),
-            drift_field=lambda t, x, m: np.broadcast_to(np.array([2.0, 0.0, 0.0]), np.shape(x)),
+            drift_field=lambda t, x, m: np.broadcast_to(np.array([2.0, 0.0, 0.0]), np.shape(x[0])),
             drift_needs_density=False,
             show_progress=False,
         )

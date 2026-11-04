@@ -1227,6 +1227,7 @@ class _DriftDispatcher:
         dimension: int = 1,
     ):
         self.field = drift_field
+        self._bound = bind_user_callable(self.field, COEFFICIENT_SLOTS, role="drift_field") if callable(self.field) else None
         self.Nt = Nt
         self.spatial_shape = spatial_shape
         self.dimension = dimension

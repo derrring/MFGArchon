@@ -88,7 +88,7 @@ def _noflux(a: float, b: float) -> tuple[Callable, Callable, Callable]:
 
     def m(t: float, x: list[np.ndarray], d: int) -> np.ndarray:
         y = np.cos(np.pi * x[1]) if d == 2 else 1.0
-        return exponent(x, d) * (1 + C * t * np.cos(np.pi * x[0]) * y)
+        return exponent(np.stack(x, axis=-1), d) * (1 + C * t * np.cos(np.pi * x[0]) * y)
 
     def source(t: float, x: list[np.ndarray], d: int) -> np.ndarray:
         y = np.cos(np.pi * x[1]) if d == 2 else 1.0
@@ -96,7 +96,7 @@ def _noflux(a: float, b: float) -> tuple[Callable, Callable, Callable]:
         drift_dot_grad = a * (-np.pi * np.sin(np.pi * x[0]) * y)
         if d == 2:
             drift_dot_grad = drift_dot_grad + b * (-np.pi * np.cos(np.pi * x[0]) * np.sin(np.pi * x[1]))
-        return exponent(x, d) * (C * psi - C * t * (drift_dot_grad - D * np.pi**2 * d * psi))
+        return exponent(np.stack(x, axis=-1), d) * (C * psi - C * t * (drift_dot_grad - D * np.pi**2 * d * psi))
 
     def u(x: list[np.ndarray], d: int) -> np.ndarray:
         return -(a * x[0] + (b * x[1] if d == 2 else 0.0))

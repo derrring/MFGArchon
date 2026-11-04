@@ -70,7 +70,7 @@ def _mesh(refine=2, stretch=(1.0, 1.0), bc=None, d=2):
 def _problem(where=None, cost=None, nt=8, **mesh):
     """V as the Hamiltonian's potential (``"H"``), as ``PotentialCost(V)`` (``"F"``), or ``cost``."""
     if where == "F":
-        cost = PotentialCost(lambda x: float(_V(x)))
+        cost = PotentialCost(lambda x: _V(x[0]))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on the mesh is not these pins' subject
         return MFGProblem(
@@ -84,8 +84,8 @@ def _problem(where=None, cost=None, nt=8, **mesh):
             ),
             domain=_mesh(**mesh),
             conditions=Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=nt,
@@ -171,8 +171,8 @@ def _grid_problem(model):
         model=model,
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
-            m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float) - 0.3) ** 2),
+            u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2,
+            m_initial=lambda x: np.exp(-40 * (np.asarray(x[0], dtype=float) - 0.3) ** 2),
             T=0.3,
         ),
         Nt=6,
@@ -246,8 +246,8 @@ def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost
             built = _problem("F")
             solved = built.with_conditions(
                 Conditions(
-                    u_terminal=lambda x: float(np.sum(np.asarray(x) ** 2)),
-                    m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.6) ** 2))),
+                    u_terminal=lambda x: sum(xi ** 2 for xi in x),
+                    m_initial=lambda x: np.exp(-10 * sum((xi - 0.6) ** 2 for xi in x)),
                     T=0.5,
                 )
             )
@@ -525,7 +525,7 @@ def _VT(x):
 def _g_problem(where=None, g=None, nt=8, **mesh):
     """``_VT`` added to ``u_terminal`` (``"u"``), ``PotentialCost(_VT)`` as G (``"G"``), or ``g`` as G."""
     if where == "G":
-        g = PotentialCost(lambda x: float(_VT(x)))
+        g = PotentialCost(lambda x: _VT(x[0]))
 
     def terminal(x):
         return float(np.sum((np.asarray(x) - 0.7) ** 2))
@@ -541,7 +541,7 @@ def _g_problem(where=None, g=None, nt=8, **mesh):
             domain=_mesh(**mesh),
             conditions=Conditions(
                 u_terminal=(lambda x: terminal(x) + float(_VT(x))) if where == "u" else terminal,
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=nt,

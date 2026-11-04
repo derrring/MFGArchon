@@ -81,7 +81,7 @@ def _steep_1d_problem(nx: int = 41, nt: int = 8) -> MFGProblem:
         volatility=0.2,
         components=MFGComponents(
             m_initial=lambda x: 1.0,
-            u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x[0]) - 0.5) ** 2),
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m,
@@ -216,7 +216,7 @@ class TestTheFoldOvershootsAndTheInterpolantMustSurviveIt:
             volatility=0.2,
             components=MFGComponents(
                 m_initial=lambda x: 1.0,
-                u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x) - 0.5) ** 2),
+                u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x[0]) - 0.5) ** 2),
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0),
                     coupling=lambda m: m,

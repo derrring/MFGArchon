@@ -252,7 +252,22 @@ class SourcePlan:
 # the callable: the couplers build a fresh closure per Picard iteration that captures that
 # iteration's arrays, and holding it kept every one alive (#2406 review, round 2). Not by equality
 # either: two different callables that compare equal would share one plan (round 3).
-_SOURCE_PLANS: dict[int, tuple[weakref.ref, SourcePlan]] = {}
+_SOURCE_PLANS: dict[tuple[int, Slots], tuple[weakref.ref, SourcePlan]] = {}
+
+
+def _remembered(fn: Callable[..., Any], slots: Slots, role: str) -> tuple[BoundCallable, SourcePlan]:
+    """``fn`` bound to ``slots``, and what is remembered of it: how it binds, and whether its reads have been compared. Per
+    callable and not on a bound object, which held here would keep the callable alive, so a loop inspects the signature
+    once (#2406 review: +7.5% on a small FP solve) and compares once. Whatever `bind_user_callable` accepts, a function or a
+    partial of one, can be weakly referenced."""
+    key = (id(fn), slots)
+    entry = _SOURCE_PLANS.get(key)
+    if entry is None or entry[0]() is not fn:
+        bound = bind_user_callable(fn, slots, role=role)
+        entry = (weakref.ref(fn, functools.partial(_forget_source, key)), SourcePlan(bound.passes, False))
+        _SOURCE_PLANS[key] = entry
+    plan = entry[1]
+    return BoundCallable(fn, plan.passes, role, plan.checked), plan
 
 
 def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any, dimension: int) -> Any:
@@ -260,26 +275,30 @@ def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any, d
 
     A closure the library composed is called with the solver's own ``x``, since it is not a user input: what it wraps reads
     its own door, and it is not checked, so the fresh one a coupler builds per Picard iteration adds no calls. Anything else
-    reads ``x`` as a coordinate tuple. How it binds, and whether its reads have been compared, is remembered per callable
-    and not on a bound object, which held here would keep the callable alive: a time loop inspects the signature once
-    (#2406 review: +7.5% on a small FP solve) and compares once.
+    reads ``x`` as a coordinate tuple.
     """
     if _defined_by_the_library(source_term):
         return source_term(t, x)
-    key = id(source_term)
-    entry = _SOURCE_PLANS.get(key)
-    if entry is None or entry[0]() is not source_term:
-        bound = bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")
-        entry = (weakref.ref(source_term, functools.partial(_forget_source, key)), SourcePlan(bound.passes, False))
-        _SOURCE_PLANS[key] = entry
-    plan = entry[1]
-    bound = BoundCallable(source_term, plan.passes, "source_term", plan.checked)
+    bound, plan = _remembered(source_term, SOLVER_SOURCE_SLOTS, "source_term")
     result = bound(t=t, x=coordinate_tuple(x, dimension))
     plan.checked = bound.checked
     return result
 
 
-def _forget_source(key: int, dead: weakref.ref) -> None:
+def read_region(region: Callable[..., Any], points: Any, *, role: str = "region") -> Any:
+    """A region's signed distance or predicate at ``points`` of shape ``(d,)`` or ``(..., d)``: the one place a door reads
+    one (#2875). A function the user wrote reads ``x`` as a coordinate tuple. The library's own region classes are not user
+    callables, and take the points as they are."""
+    if _defined_by_the_library(region):
+        return region(points)
+    points = np.asarray(points, dtype=float)
+    bound, plan = _remembered(region, REGION_SLOTS, role)
+    result = bound(x=coordinate_tuple(points, points.shape[-1]))
+    plan.checked = bound.checked
+    return result
+
+
+def _forget_source(key: tuple[int, Slots], dead: weakref.ref) -> None:
     entry = _SOURCE_PLANS.get(key)
     if entry is not None and entry[0] is dead:
         del _SOURCE_PLANS[key]

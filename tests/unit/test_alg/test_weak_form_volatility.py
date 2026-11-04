@@ -26,7 +26,7 @@ def _problem(sigma, n=15):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     comp = MFGComponents(
-        hamiltonian=H, m_initial=lambda x: np.exp(-20 * (x - 0.5) ** 2), u_terminal=lambda x: 0.5 * (x - 0.5) ** 2
+        hamiltonian=H, m_initial=lambda x: np.exp(-20 * (x[0] - 0.5) ** 2), u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2
     )
     return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=sigma, coupling_coefficient=0.5)
 

@@ -108,9 +108,9 @@ def _hamiltonian(phi):
         return np.exp(-phi(x)[0] / NU) / Z_M
 
     def potential(t, x):
-        _, lap, grad2 = phi(x)
-        v = C_TIME - NU * lap + 0.5 * grad2 - ZETA * m_star(x)
-        return float(v[0]) if np.ndim(x) == 1 else v
+        _, lap, grad2 = phi(x[0])
+        v = C_TIME - NU * lap + 0.5 * grad2 - ZETA * m_star(x[0])
+        return float(v[0]) if np.ndim(x[0]) == 1 else v
 
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0), potential=potential, coupling=lambda m: ZETA * m

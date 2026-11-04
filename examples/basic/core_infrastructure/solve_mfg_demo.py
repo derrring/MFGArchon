@@ -46,8 +46,8 @@ def build_problem(Nx: int = 20, Nt: int = 10) -> MFGProblem:
         volatility=0.15,
     )
     conditions = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50.0 * (x - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50.0 * (x[0] - 0.5) ** 2),
         T=1.0,
     )
     domain = TensorProductGrid(

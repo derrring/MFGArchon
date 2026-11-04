@@ -117,8 +117,8 @@ def solve_lq_mfg_with_value_iteration():
         ),
         components=MFGComponents(
             hamiltonian=lq_hamiltonian,
-            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,  # cost to deviate from center
-            m_initial=lambda x: np.ones_like(x),  # uniform baseline density
+            u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,  # cost to deviate from center
+            m_initial=lambda x: np.ones_like(x[0]),  # uniform baseline density
         ),
         Nt=50,
         T=1.0,

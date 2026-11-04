@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -106,7 +108,7 @@ def sdf_region(
     """
 
     def predicate(points: NDArray) -> NDArray[np.bool_]:
-        return sdf(points) <= 0
+        return read_region(sdf, points, role="sdf") <= 0
 
     return predicate
 

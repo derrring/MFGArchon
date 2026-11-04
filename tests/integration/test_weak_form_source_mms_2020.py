@@ -90,8 +90,8 @@ def _problem(ne, nt):
         volatility=_SIGMA,
         coupling_coefficient=0.0,
         components=MFGComponents(
-            m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-            u_terminal=lambda x: np.asarray(x, dtype=float) * 0.0,
+            m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
+            u_terminal=lambda x: np.asarray(x[0], dtype=float) * 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=_LAM),
                 coupling=lambda m: np.asarray(m) * 0.0,
@@ -117,7 +117,7 @@ def _hjb_error(ne, nt, steady, use_newton):
             M_density=np.ones((nt + 1, n)),
             U_terminal=_u_star(_T, x, steady),
             U_coupling_prev=u_prev,
-            source_term=lambda t, x: _s_hjb(t, np.asarray(x)[:, 0], steady),
+            source_term=lambda t, x: _s_hjb(t, x[0], steady),
             use_newton=use_newton,
         )
     )
@@ -137,7 +137,7 @@ def _fp_error(ne, nt, steady):
             _m_star(0.0, x, steady),
             potential_field=None,
             volatility=_SIGMA,
-            source_term=lambda t, x: _s_fp(t, np.asarray(x)[:, 0], steady),
+            source_term=lambda t, x: _s_fp(t, x[0], steady),
         )
     )
     return float(np.sqrt(((m[-1] - _m_star(_T, x, steady)) ** 2).sum() / n))

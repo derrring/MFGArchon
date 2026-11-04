@@ -96,13 +96,13 @@ class LocalCoupling(HamiltonianBase):
         # Hamiltonian -- caught by the mutation check below, not by any assertion.
         pa = np.asarray(p, dtype=float)
         kinetic = 0.5 * np.sum(pa**2, axis=-1) if pa.ndim > 1 else 0.5 * pa**2
-        return kinetic + self.g * _first_coord(x) * np.asarray(m, dtype=float)
+        return kinetic + self.g * _first_coord(x[0]) * np.asarray(m, dtype=float)
 
     def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
     def dm(self, t, x, p, m):
-        return self.g * _first_coord(x) * np.ones_like(np.asarray(m, dtype=float))
+        return self.g * _first_coord(x[0]) * np.ones_like(np.asarray(m, dtype=float))
 
 
 def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
@@ -113,7 +113,7 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1))
 
     def _uT(x):
-        return float(np.cos(2.0 * np.pi * np.asarray(x).ravel()[0])) if terminal == "cos" else 0.0
+        return float(np.cos(2.0 * np.pi * np.asarray(x[0]).ravel()[0])) if terminal == "cos" else 0.0
 
     components = MFGComponents(hamiltonian=hamiltonian, m_initial=lambda x: 1.0, u_terminal=_uT)
     problem = MFGProblem(geometry=grid, components=components, T=T, Nt=NT, volatility=0.5)

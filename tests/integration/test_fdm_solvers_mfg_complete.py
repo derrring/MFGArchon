@@ -31,7 +31,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -115,7 +115,7 @@ class TestFDMSolversMFGIntegration:
             bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=periodic_bc(dimension=1)
         )  # Nx=40 -> 41 points
         components = MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.3) ** 2),
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=_default_hamiltonian(),
         )

@@ -30,12 +30,12 @@ def _problem(v_amp: float, nx: int, nt: int) -> MFGProblem:
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
     hamiltonian = SeparableHamiltonian(
         control_cost=L1ControlCost(lambda_=1.0),
-        potential=lambda t, x: v_amp * np.ones_like(np.atleast_1d(x)).squeeze(),
+        potential=lambda t, x: v_amp * np.ones_like(np.atleast_1d(x[0])).squeeze(),
     )
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.15),
         domain=grid,
-        conditions=Conditions(u_terminal=lambda x: (x - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
+        conditions=Conditions(u_terminal=lambda x: (x[0] - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
         Nt=nt,
     )
 

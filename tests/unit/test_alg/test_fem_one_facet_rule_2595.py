@@ -78,7 +78,7 @@ def _solve(route: str, domain, bc: BoundaryConditions):
     c = 16 / 17 if isinstance(geometry, Mesh1D) else 1.0
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
     conditions = Conditions(
-        m_initial=lambda x: c + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=0.5
+        m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5
     )
     problem = MFGProblem(model=model, domain=geometry, conditions=conditions, Nt=NT)
     if route == "hjb-shared":

@@ -310,8 +310,8 @@ def test_problem_solve_threads_the_absolute_bound(route):
             ),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),
             conditions=Conditions(
-                m_initial=lambda x: 10.0 * np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2) / mass,
-                u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
+                m_initial=lambda x: 10.0 * np.exp(-30 * (np.asarray(x[0], dtype=float) - 0.3) ** 2) / mass,
+                u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2,
                 T=0.2,
             ),
             Nt=_NT,

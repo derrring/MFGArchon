@@ -95,7 +95,7 @@ def create_custom_problem(
 
     # Define the potential V(t, x) = |x - target|
     def potential(t, x):
-        return float(np.abs(x[0] - target_x))
+        return np.abs(x[0] - target_x)
 
     # Define the density coupling f(m) = gamma * m and its derivative df/dm = gamma
     def coupling(m):
@@ -117,7 +117,7 @@ def create_custom_problem(
     model = Model(hamiltonian=hamiltonian, volatility=sigma)
     conditions = Conditions(
         u_terminal=lambda x: 0.0,
-        m_initial=lambda x: np.exp(-((x - 0.5) ** 2) / 0.5),
+        m_initial=lambda x: np.exp(-((x[0] - 0.5) ** 2) / 0.5),
         T=T,
     )
 
@@ -160,7 +160,7 @@ def demonstrate_hamiltonian_methods():
 
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=control_cost),
-        potential=lambda t, x: float(np.abs(x[0] - target_x)),
+        potential=lambda t, x: np.abs(x[0] - target_x),
         coupling=lambda m: congestion_cost * m,
         coupling_dm=lambda m: congestion_cost,
     )

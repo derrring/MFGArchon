@@ -38,7 +38,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -313,7 +313,7 @@ class TestMassConservation1D:
                 std = domain_L * sfrac
 
                 def m_initial(x):
-                    density = np.exp(-((x - center) ** 2) / (2 * std**2))
+                    density = np.exp(-((x[0] - center) ** 2) / (2 * std**2))
                     return density
 
                 return MFGComponents(m_initial=m_initial, u_terminal=lambda x: 0.0, hamiltonian=_default_hamiltonian())
@@ -384,8 +384,8 @@ class TestMassConservation1D:
             coupling_dm=lambda m: np.ones_like(np.asarray(m)),
         )
         comps = MFGComponents(
-            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
-            u_terminal=lambda x: 0.0 * np.asarray(x),
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x[0]) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0]),
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, coupling_coefficient=1.0, components=comps)
@@ -418,8 +418,8 @@ class TestExplicitDriftNoFluxDiffusionConservation:
         )
         x = np.linspace(0.0, 1.0, n)
         comps = MFGComponents(
-            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
-            u_terminal=lambda x: 0.0 * np.asarray(x),
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x[0]) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0]),
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)

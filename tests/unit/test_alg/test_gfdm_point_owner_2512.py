@@ -124,11 +124,11 @@ def test_gfdm_judges_a_corner_by_the_row_it_writes():
 
 
 def _box_sdf(x):
-    return float(np.max(np.abs(np.asarray(x, dtype=float) - 0.5)) - 0.5)
+    return np.max(np.abs(np.asarray(x[0], dtype=float) - 0.5)) - 0.5
 
 
 def _obstacle_sdf(x):
-    return float(0.2 - np.linalg.norm(np.asarray(x, dtype=float) - 0.5))
+    return 0.2 - np.sqrt(sum((np.asarray(xi, dtype=float) - 0.5) ** 2 for xi in x))
 
 
 def _inlet_and_wall(**kwargs) -> BoundaryConditions:
@@ -155,7 +155,7 @@ def test_a_bc_with_its_own_sdf_is_classified_by_the_faces_its_sdf_gives():
 
 
 def _circle_sdf(x):
-    return float(np.linalg.norm(np.asarray(x, dtype=float) - 0.5) - 0.4)
+    return np.sqrt(sum((np.asarray(xi, dtype=float) - 0.5) ** 2 for xi in x)) - 0.4
 
 
 def _on_a_circle(segments: list[BCSegment]) -> HJBGFDMSolver:

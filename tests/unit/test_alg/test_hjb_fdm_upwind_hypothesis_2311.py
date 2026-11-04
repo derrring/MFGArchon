@@ -46,14 +46,14 @@ class _QuadraticPlusTilt(HamiltonianBase):
 
     def __call__(self, t, x, p, m):
         p = np.atleast_1d(p)
-        return float(0.5 * np.sum(p**2) + self.tilt(np.atleast_1d(x), m, p))
+        return 0.5 * np.sum(p**2) + self.tilt(np.atleast_1d(x[0]), m, p)
 
     def dp(self, t, x, p, m):
         p = np.atleast_1d(p)
-        return p + np.asarray(self.tilt_dp(np.atleast_1d(x), m, p))
+        return p + np.asarray(self.tilt_dp(np.atleast_1d(x[0]), m, p))
 
     def dm(self, t, x, p, m):
-        return self.tilt_dm(np.atleast_1d(x), m, np.atleast_1d(p))
+        return self.tilt_dm(np.atleast_1d(x[0]), m, np.atleast_1d(p))
 
 
 def _problem(hamiltonian, dimension: int):

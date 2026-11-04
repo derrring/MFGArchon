@@ -102,8 +102,8 @@ def _linf(nx, nt=20, sigma=1.0, sign=-1.0, **solver_kw):
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)) / L,
-        u_terminal=lambda x: _u_exact(T, x),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / L,
+        u_terminal=lambda x: _u_exact(T, x[0]),
     )
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=sigma)
     solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), delta=3.0 * L / (nx - 1), **solver_kw)
@@ -113,7 +113,7 @@ def _linf(nx, nt=20, sigma=1.0, sign=-1.0, **solver_kw):
         M_density=m,
         U_terminal=u_T,
         U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-        source_term=lambda t, x: -sign * _source(t, x, sigma),
+        source_term=lambda t, x: -sign * _source(t, x[0], sigma),
     )
     return float(np.abs(np.asarray(U)[0].reshape(-1) - _u_exact(0.0, x)).max())
 
@@ -204,8 +204,8 @@ def test_the_source_reaches_gfdm_in_2d():
     )
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x, y: np.ones_like(np.asarray(x, dtype=float)) / (L * L),
-        u_terminal=lambda x, y: _a1(T) * (np.cos(C * np.asarray(x)) + np.cos(C * np.asarray(y))),
+        m_initial=lambda x, y: np.ones_like(np.asarray(x[0], dtype=float)) / (L * L),
+        u_terminal=lambda x, y: _a1(T) * (np.cos(C * np.asarray(x[0])) + np.cos(C * np.asarray(y))),
     )
     nt = 8
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=1.0)
@@ -218,7 +218,7 @@ def test_the_source_reaches_gfdm_in_2d():
             M_density=m,
             U_terminal=u_T,
             U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-            source_term=lambda t, x: -sign * src(t, np.asarray(x).reshape(-1, 2)),
+            source_term=lambda t, x: -sign * src(t, np.asarray(x[0]).reshape(-1, 2)),
         )
         return float(np.abs(np.asarray(U)[0].reshape(-1) - u_ex(0.0, pts)).max())
 

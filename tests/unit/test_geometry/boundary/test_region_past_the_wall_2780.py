@@ -35,7 +35,7 @@ def _remaining(placement: dict, start=((0.8, 0.43), (0.95, 0.47)), drift=(3.0, 0
     solver = FPParticleSolver(problem, num_particles=200, seed=0, boundary_conditions=bc)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform(start[0], start[1], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array(drift), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array(drift), np.shape(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )

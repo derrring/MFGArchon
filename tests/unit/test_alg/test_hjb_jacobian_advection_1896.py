@@ -85,7 +85,7 @@ def _fixture(bc_name: str, sigma: float = 0.3, hamiltonian=None):
         T=1.0,
         volatility=sigma,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=hamiltonian
             or SeparableHamiltonian(
@@ -478,7 +478,7 @@ def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branc
         T=1.0,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
@@ -552,7 +552,7 @@ def test_a_time_dependent_boundary_reaches_the_advection_block(upwind: bool):
         T=1.0,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),

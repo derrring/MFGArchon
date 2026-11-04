@@ -20,7 +20,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
-from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_user_callable, read_region
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -462,7 +462,7 @@ def sdf_region_holds(segment: BCSegment, points: np.ndarray, tolerance: float) -
     """For each point (a row of ``points``), is it inside ``segment.sdf_region``, to ``tolerance``? The point family's
     one reading of ``sdf_region``, as `region_holds` is of ``region``."""
     points = np.atleast_2d(np.asarray(points, dtype=float))
-    return np.array([segment.sdf_region(point) <= tolerance for point in points], dtype=bool)
+    return np.array([read_region(segment.sdf_region, point, role="sdf_region") <= tolerance for point in points], dtype=bool)
 
 
 def refuse_a_non_continuum_bc_type(bc_type: object, where: str, field_name: str) -> None:

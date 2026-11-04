@@ -33,7 +33,7 @@ def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
         m_initial=lambda x: np.exp(
-            -10 * (np.asarray(x) - 0.5) ** 2 if np.ndim(x) == 0 else -10 * np.sum((np.asarray(x) - 0.5) ** 2)
+            -10 * (np.asarray(x[0]) - 0.5) ** 2 if np.ndim(x[0]) == 0 else -10 * sum((xi - 0.5) ** 2 for xi in x)
         ),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
@@ -44,7 +44,7 @@ def _default_components_2d():
     """Default MFGComponents for 2D testing (Issue #670: explicit specification required)."""
 
     def m_initial_2d(x):
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
 
     return MFGComponents(
@@ -65,11 +65,11 @@ def _problem_crossing_zero():
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: -m,
         coupling_dm=lambda m: -1.0,
-        potential=lambda t, x: 0.1 * np.cos(2 * np.pi * np.asarray(x, dtype=float)[..., 0]),
+        potential=lambda t, x: 0.1 * np.cos(2 * np.pi * x[0]),
     )
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx=[100])
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2)),
+        m_initial=lambda x: np.exp(-10 * sum((xi - 0.5) ** 2 for xi in x)),
         u_terminal=lambda x: 0.0,
         hamiltonian=hamiltonian,
     )

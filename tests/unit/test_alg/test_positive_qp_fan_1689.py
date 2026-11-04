@@ -65,7 +65,7 @@ def _cloud(n_interior, kind, seed=42):
 
 def _lq_problem(nt, control_cost=None, hamiltonian=None, cost=COST):
     bc = BoundaryConditions(
-        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(_u_star(t, x, cost)[0]))],
+        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: _u_star(t, x[0], cost)[0])],
         dimension=2,
         domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
     )
@@ -195,7 +195,7 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
 
     nt = 20
     bc = BoundaryConditions(
-        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(u_linear(t, x)[0]))],
+        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: u_linear(t, x[0])[0])],
         dimension=2,
         domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
     )

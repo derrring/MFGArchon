@@ -50,7 +50,7 @@ def _particles_remaining(segments, route="own") -> int:
     solver = FPParticleSolver(_problem(grid), num_particles=200, seed=0, boundary_conditions=own)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -319,7 +319,7 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
         _gfdm(behind, no_x_max, delta=0.45)
     assert _reading(_gfdm([behind[0], _seg("S", D, 1.0, boundary="x_max", priority=2)], no_x_max, delta=0.45), "S") == 2
 
-    disk = lambda x: float(np.linalg.norm(np.asarray(x, dtype=float) - [0.0, 1.0]) - 0.08)  # noqa: E731
+    disk = lambda x: np.sqrt(sum((np.asarray(xi, dtype=float) - [0.0, 1.0]) ** 2 for xi in x)) - 0.08  # noqa: E731
     unread = BoundaryConditions(
         segments=[_seg("wall", NF, priority=1), _seg("S", D, 1.0, sdf_region=disk)],
         dimension=2,
@@ -463,7 +463,7 @@ def _particles_remaining_with(segments, **bc_kw):
     solver = FPParticleSolver(_problem(grid), num_particles=200, seed=0, boundary_conditions=bc)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )

@@ -84,6 +84,9 @@ class NetworkHamiltonian(HamiltonianBase):
         ``NetworkMFGProblem.density_coupling`` (Issue #1470 reconciliation).
     """
 
+    # A graph's node plays x, and it is read node by node.
+    reads_a_batch = False
+
     def __init__(
         self,
         network_data,

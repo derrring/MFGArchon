@@ -57,7 +57,7 @@ def _hjb(geometry, nt: int = NT):
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
     )
     conditions = Conditions(
-        m_initial=lambda x: c + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
+        m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T
     )
     return HJBFEMSolver(MFGProblem(model=model, domain=geometry, conditions=conditions, Nt=nt))
 

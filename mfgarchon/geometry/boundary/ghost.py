@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 
 if TYPE_CHECKING:
@@ -122,8 +124,8 @@ def compute_normal_from_sdf(
         point_plus = (point + shift).reshape(1, -1)
         point_minus = (point - shift).reshape(1, -1)
 
-        sdf_plus = sdf_func(point_plus)[0]
-        sdf_minus = sdf_func(point_minus)[0]
+        sdf_plus = np.ravel(read_region(sdf_func, point_plus, role="sdf"))[0]
+        sdf_minus = np.ravel(read_region(sdf_func, point_minus, role="sdf"))[0]
 
         grad[dim] = (sdf_plus - sdf_minus) / (2 * eps)
 

@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
 from mfgarchon.geometry.boundary.periodic import periodic_distance, wrap_positions
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
@@ -1868,7 +1870,7 @@ class TensorProductGrid(
             # Predicate-based specification
             # Evaluate predicate at all grid points
             points = self.flatten()  # Shape: (total_points, dimension)
-            region_mask = predicate(points)
+            region_mask = np.asarray(read_region(predicate, points, role="predicate"))
 
             if region_mask.shape != (total_pts,):
                 raise ValueError(

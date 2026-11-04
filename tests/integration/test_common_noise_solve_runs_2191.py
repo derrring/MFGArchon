@@ -54,7 +54,7 @@ def _problem(conditional_hamiltonian, u_terminal=None):
     components = MFGComponents(
         hamiltonian=H,
         u_terminal=u_terminal or (lambda x: np.zeros_like(np.asarray(x, dtype=float))),
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
     )
     return StochasticMFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),

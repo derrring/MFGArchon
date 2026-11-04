@@ -47,7 +47,7 @@ def _fem(n: int, nt: int, g: float = G) -> tuple[HJBFEMSolver, np.ndarray]:
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
     )
     conditions = Conditions(
-        m_initial=lambda x: n / (n + 1) + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
+        m_initial=lambda x: n / (n + 1) + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T
     )
     solver = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=conditions, Nt=nt), order=1)
     return solver, solver._disc.dof_coordinates[:, 0]
@@ -95,7 +95,7 @@ def _grid_problem(n: int = 15) -> MFGProblem:
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.5)
     conditions = Conditions(
-        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=0.5
+        m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5
     )
     return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=10)
 

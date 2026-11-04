@@ -40,7 +40,7 @@ def _problem(domain) -> MFGProblem:
         model=_model(),
         domain=domain,
         conditions=Conditions(
-            m_initial=lambda x: c + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
+            m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T
         ),
         Nt=NT,
     )

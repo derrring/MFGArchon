@@ -51,8 +51,8 @@ def _hamiltonian(c: float):
 
 def _components(c: float):
     return MFGComponents(
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-        u_terminal=lambda x: np.asarray(x, dtype=float) * 0.0,
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
+        u_terminal=lambda x: np.asarray(x[0], dtype=float) * 0.0,
         hamiltonian=_hamiltonian(c),
     )
 

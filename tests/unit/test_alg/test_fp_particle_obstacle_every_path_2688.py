@@ -367,7 +367,7 @@ def test_every_reflection_in_a_solve_reads_its_own_particles_start(path):
         )
         solver.solve_fp_system(
             initial_particles=starts,
-            drift_field=lambda t, x, m: rate * (target - np.asarray(x)),
+            drift_field=lambda t, x, m: rate * (target - np.asarray(x[0])),
             drift_needs_density=False,
             show_progress=False,
         )

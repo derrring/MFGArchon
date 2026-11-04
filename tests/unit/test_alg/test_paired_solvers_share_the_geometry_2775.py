@@ -75,8 +75,8 @@ def _problem(domain, conditions=None):
             domain=domain,
             conditions=conditions
             or Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x, dtype=float) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x, dtype=float) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.3,
             ),
             Nt=4,
@@ -333,7 +333,7 @@ def test_a_pair_on_the_solved_points_or_undeclared_on_an_implicit_domain_is_admi
         warnings.simplefilter("ignore", UserWarning)  # the rebuild's density mass is not this pin's subject
         rebuild = box.with_conditions(
             Conditions(
-                u_terminal=lambda x: 0.0, m_initial=lambda x: float(np.exp(-10 * (np.asarray(x)[0] - 0.6) ** 2)), T=0.3
+                u_terminal=lambda x: 0.0, m_initial=lambda x: np.exp(-10 * (x[0] - 0.6) ** 2), T=0.3
             )
         )
     rebuild.components.boundary_conditions = no_flux_bc(dimension=1)

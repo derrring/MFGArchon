@@ -429,8 +429,8 @@ def test_an_unsupported_bc_raises_at_construction():
             boundary_conditions=_mixed(BCType.ROBIN, alpha=1.0, beta=1.0, value=0.0),
         ),
         conditions=Conditions(
-            u_terminal=lambda x: (x - 0.5) ** 2,
-            m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+            u_terminal=lambda x: (x[0] - 0.5) ** 2,
+            m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
             T=0.2,
         ),
         Nt=5,

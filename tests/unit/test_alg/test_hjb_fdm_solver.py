@@ -30,7 +30,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for 1D testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -41,7 +41,7 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         # x is [x, y] coordinate - compute Gaussian at center (0.5, 0.5)
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
 
     return MFGComponents(

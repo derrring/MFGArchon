@@ -107,8 +107,8 @@ _SWALLOWERS: set[str] = set()
 
 def _components():
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
             coupling=lambda m: np.asarray(m) * 0.0,

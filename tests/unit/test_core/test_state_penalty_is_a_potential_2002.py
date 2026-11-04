@@ -44,7 +44,7 @@ _MID = _N // 2
 
 def _wall(x):
     """A cost: expensive in the middle, negligible at the walls."""
-    return 5.0 * np.exp(-60.0 * (np.atleast_1d(x) - 0.5) ** 2)
+    return 5.0 * np.exp(-60.0 * (np.atleast_1d(x[0]) - 0.5) ** 2)
 
 
 def _problem(**kwargs):
@@ -54,7 +54,7 @@ def _problem(**kwargs):
         model=Model(hamiltonian=hamiltonian, volatility=0.2),
         domain=grid,
         conditions=Conditions(
-            u_terminal=lambda x: np.zeros_like(np.atleast_1d(x)).squeeze(),
+            u_terminal=lambda x: np.zeros_like(np.atleast_1d(x[0])).squeeze(),
             m_initial=lambda x: 1.0,
             T=0.3,
         ),
@@ -154,7 +154,7 @@ def _problem_with(hamiltonian, **kwargs):
         model=Model(hamiltonian=hamiltonian, volatility=0.2),
         domain=grid,
         conditions=Conditions(
-            u_terminal=lambda x: np.zeros_like(np.atleast_1d(x)).squeeze(),
+            u_terminal=lambda x: np.zeros_like(np.atleast_1d(x[0])).squeeze(),
             m_initial=lambda x: 1.0,
             T=0.3,
         ),
@@ -207,7 +207,7 @@ def test_a_zero_wall_is_a_no_op_on_a_vectorised_base_potential():
     """
 
     def vectorised_base(t, x):
-        column = np.atleast_1d(np.asarray(x, dtype=float))
+        column = np.atleast_1d(np.asarray(x[0], dtype=float))
         values = np.sin(2 * np.pi * (column[..., 0] if column.ndim > 1 else column))
         return float(values[0]) if values.size == 1 else values
 
@@ -217,7 +217,7 @@ def test_a_zero_wall_is_a_no_op_on_a_vectorised_base_potential():
     bare = _problem_with(_hamiltonian_with(potential=vectorised_base)).components._hamiltonian_class
     walled = _problem_with(
         _hamiltonian_with(potential=vectorised_base),
-        state_penalty=lambda x: np.zeros_like(np.atleast_1d(x)),
+        state_penalty=lambda x: np.zeros_like(np.atleast_1d(x[0])),
     ).components._hamiltonian_class
 
     assert np.allclose(bare._evaluate_potential_batch(batch, 0.0), truth), "control: base is wrong"
@@ -237,17 +237,17 @@ def test_the_composed_potential_returns_what_the_base_returns():
     seen = {}
 
     def recording_base(t, x):
-        column = np.atleast_1d(np.asarray(x, dtype=float))
+        column = np.atleast_1d(np.asarray(x[0], dtype=float))
         value = np.sin(2 * np.pi * (column[..., 0] if column.ndim > 1 else column))
         # Per-point callers wrap this in float(), so a size-1 answer must be scalar. That is the
         # contract the wrapper has to reproduce, not one it may normalise away.
         out = float(value[0]) if value.size == 1 else value
-        seen[np.shape(np.asarray(x))] = np.shape(out)
+        seen[np.shape(np.asarray(x[0]))] = np.shape(out)
         return out
 
     composed = _problem_with(
         _hamiltonian_with(potential=recording_base),
-        state_penalty=lambda x: np.zeros_like(np.atleast_1d(x)),
+        state_penalty=lambda x: np.zeros_like(np.atleast_1d(x[0])),
     ).components._hamiltonian_class._potential
 
     for probe in (np.array([0.3]), np.linspace(0.0, 1.0, 5).reshape(-1, 1)):

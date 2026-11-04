@@ -113,8 +113,8 @@ def _problem(nx, nt, sigma, dimension=1):
         bounds=bounds, Nx_points=[nx] * dimension, boundary_conditions=no_flux_bc(dimension=dimension)
     )
     if dimension == 1:
-        m_initial = lambda x: np.ones_like(np.asarray(x, dtype=float)) / L  # noqa: E731
-        u_terminal = lambda x: _u_exact(T, x)  # noqa: E731
+        m_initial = lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / L  # noqa: E731
+        u_terminal = lambda x: _u_exact(T, x[0])  # noqa: E731
     else:
         m_initial = lambda x, y: np.ones_like(np.asarray(x, dtype=float)) / (L * L)  # noqa: E731
         u_terminal = lambda x, y: np.zeros_like(np.asarray(x, dtype=float))  # noqa: E731
@@ -136,7 +136,7 @@ def _linf_error(nx, nt, sigma):
         M_density=m,
         U_terminal=u_T,
         U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-        source_term=lambda t, x: _source(t, x, sigma),
+        source_term=lambda t, x: _source(t, x[0], sigma),
     )
     return np.abs(U[0] - _u_exact(0.0, x)).max()
 
@@ -162,7 +162,7 @@ def test_weno_accepts_a_source_term_at_all():
         M_density=m,
         U_terminal=u_T,
         U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-        source_term=lambda t, x: _source(t, x, sigma),
+        source_term=lambda t, x: _source(t, x[0], sigma),
     )
     unforced = solver.solve_hjb_system(M_density=m, U_terminal=u_T, U_coupling_prev=np.tile(u_T, (nt + 1, 1)))
     assert np.isfinite(forced).all()
@@ -208,5 +208,5 @@ def test_source_term_is_refused_rather_than_dropped_in_multi_d():
             U_coupling_prev=np.tile(u_T, (6, 1, 1)),
             # Shape-correct even though it is never called: a scalar return is not a valid
             # source under the base contract, and the test should not model an unsupported call.
-            source_term=lambda t, x: np.zeros(np.asarray(x).shape[0]),
+            source_term=lambda t, x: np.zeros(np.shape(x[0])),
         )

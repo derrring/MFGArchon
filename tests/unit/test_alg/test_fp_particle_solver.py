@@ -30,7 +30,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for 1D testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -41,7 +41,7 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         # x is [x, y] coordinate - compute Gaussian at center (0.5, 0.5)
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
 
     return MFGComponents(
@@ -386,7 +386,7 @@ class TestFPParticleSolverIntegration:
         m_initial /= np.sum(m_initial)
 
         def rightward_drift(t, x, m):
-            return 0.5 * np.ones_like(x)
+            return 0.5 * np.ones_like(x[0])
 
         # Fraction of the mass sitting in the leftmost 5 cells at the final time. Measured over 25
         # seeds: periodic 0.616..0.761 (the wrapped mass), no_flux exactly 0.0 (nothing crosses a
@@ -580,7 +580,7 @@ class TestFPParticleSolverCallableDrift:
 
         # Constant drift pushing right
         def constant_drift(t, x, m):
-            return 0.5 * np.ones_like(x)
+            return 0.5 * np.ones_like(x[0])
 
         # Initial condition (Gaussian centered at 0.3)
         x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
@@ -617,7 +617,7 @@ class TestFPParticleSolverCallableDrift:
         # Diagonal drift pushing toward upper-right
         def diagonal_drift(t, x, m):
             # x is (N, 2) for 2D
-            drift = np.zeros_like(x)
+            drift = np.zeros_like(x[0])
             drift[:, 0] = 0.4  # x-drift
             drift[:, 1] = 0.4  # y-drift
             return drift
@@ -689,7 +689,7 @@ class TestFPParticleSolverCallableDrift:
 
         # Drift that oscillates over time
         def oscillating_drift(t, x, m):
-            return 0.3 * np.sin(2 * np.pi * t) * np.ones_like(x)
+            return 0.3 * np.sin(2 * np.pi * t) * np.ones_like(x[0])
 
         # Initial condition
         x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
@@ -734,7 +734,7 @@ class TestFPParticleSolverCallableDrift:
 
         # Callable drift
         def simple_drift(t, x, m):
-            return 0.2 * np.ones_like(x)
+            return 0.2 * np.ones_like(x[0])
 
         # Initial condition
         x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx_points)

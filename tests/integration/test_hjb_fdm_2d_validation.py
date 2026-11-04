@@ -36,12 +36,12 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         """Gaussian centered at origin for 2D."""
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         return np.exp(-5 * np.sum(x_arr**2))
 
     def u_final_2d(x):
         """Quadratic terminal cost for 2D."""
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         return 0.5 * np.sum(x_arr**2)
 
     return MFGComponents(

@@ -118,7 +118,7 @@ def test_the_clip_names_a_theta_that_lets_the_solve_through():
         model=Model(hamiltonian=hamiltonian, volatility=0.5),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2) / mass, u_terminal=lambda x: 0.0, T=1.0
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2) / mass, u_terminal=lambda x: 0.0, T=1.0
         ),
         Nt=10,
     )

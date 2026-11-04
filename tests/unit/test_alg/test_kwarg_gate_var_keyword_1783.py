@@ -166,7 +166,7 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
         Nt=5,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
@@ -272,7 +272,7 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
         Nt=5,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
@@ -407,7 +407,7 @@ def test_the_newton_path_refuses_a_swallowing_solver():
         Nt=5,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),

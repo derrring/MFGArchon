@@ -43,7 +43,7 @@ def _solve(solver, start, target):
     """Callable drift toward ``target``; the recorded particles at every time, stacked."""
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: 3.0 * (np.asarray(target) - np.asarray(x)),
+        drift_field=lambda t, x, m: 3.0 * (np.asarray(target) - np.asarray(x[0])),
         drift_needs_density=False,
         show_progress=False,
     )

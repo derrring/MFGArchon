@@ -1138,6 +1138,9 @@ class HamiltonianBase(MFGOperatorBase):
     DualLagrangian : Lagrangian from Hamiltonian via inverse Legendre
     """
 
+    # Whether a problem compares this Hamiltonian's batch and point reads (`refuse_a_hamiltonian_whose_reads_disagree`).
+    reads_a_batch = True
+
     @property
     def is_hamiltonian(self) -> bool:
         """Return True - this is a Hamiltonian operator."""
@@ -2087,6 +2090,9 @@ class DualHamiltonian(HamiltonianBase):
     DualLagrangian : Lagrangian created from Hamiltonian via Legendre transform
     LagrangianBase.legendre_transform : Symmetric operation (L → H)
     """
+
+    # One optimization per point: it has no batch read to compare.
+    reads_a_batch = False
 
     def __init__(
         self,
@@ -3043,6 +3049,8 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
     The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
     passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479).
     """
+    if not hamiltonian.reads_a_batch:
+        return
     points = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
     d = points.shape[1]
     k = 4 if d == 3 else 3

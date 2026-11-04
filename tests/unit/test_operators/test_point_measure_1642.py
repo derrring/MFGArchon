@@ -160,7 +160,7 @@ def test_the_grid_s_domain_is_what_its_measure_integrates_over():
         custom_coordinates=[np.arange(20) / 20 + 1 / 40],
         boundary_conditions=no_flux_bc(dimension=1),
     )
-    cost = PotentialCost(lambda x: x) + InteractionCost(GaussianKernel(amplitude=1.0, length_scale=0.2))
+    cost = PotentialCost(lambda x: x[0]) + InteractionCost(GaussianKernel(amplitude=1.0, length_scale=0.2))
     problem = _problem(cells, cost, m0=1 / 0.95)
     assert GridPointMeasure(problem).domain_measure == pytest.approx(0.95, rel=1e-15)
     np.testing.assert_allclose(np.sum(problem.coupling_energy.weights), 0.95, rtol=1e-15)

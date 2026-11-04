@@ -169,24 +169,24 @@ _TRUE_HAMILTONIAN = SeparableHamiltonian(
 # `mfgarchon.utils.manufactured` (#2201) and is no longer written here: the sign conventions in this
 # file's header are what that module encodes, and stating them twice is how they drift apart.
 PAIR = ManufacturedPair(
-    u=lambda t, x: u_star(t, x[..., 0], x[..., 1]),
-    u_t=lambda t, x: _a1p(t) * (np.cos(C * x[..., 0]) + BETA * np.cos(C * x[..., 1])),
+    u=lambda t, x: u_star(t, x[0], x[1]),
+    u_t=lambda t, x: _a1p(t) * (np.cos(C * x[0]) + BETA * np.cos(C * x[1])),
     grad_u=lambda t, x: np.stack(
-        [-_a1(t) * C * np.sin(C * x[..., 0]), -BETA * _a1(t) * C * np.sin(C * x[..., 1])], axis=-1
+        [-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1
     ),
     hess_u=lambda t, x: _diag_hessian(
-        -_a1(t) * C**2 * np.cos(C * x[..., 0]), -BETA * _a1(t) * C**2 * np.cos(C * x[..., 1])
+        -_a1(t) * C**2 * np.cos(C * x[0]), -BETA * _a1(t) * C**2 * np.cos(C * x[1])
     ),
-    m=lambda t, x: m_star(t, x[..., 0], x[..., 1]),
-    m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+    m=lambda t, x: m_star(t, x[0], x[1]),
+    m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
     grad_m=lambda t, x: np.stack(
         [
-            -2 * C * _a2(t) * np.sin(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
-            -4 * C * _a2(t) * np.cos(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2,
+            -2 * C * _a2(t) * np.sin(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
+            -4 * C * _a2(t) * np.cos(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2,
         ],
         axis=-1,
     ),
-    hess_m=lambda t, x: _hess_m(t, x),
+    hess_m=lambda t, x: _hess_m(t, x[0]),
     name="coupled_2d_no_flux",
 )
 
@@ -242,8 +242,8 @@ def _points(x):
 def _build_problem(nx: int, nt: int):
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
-        m_initial=lambda x: float(m_star(0.0, np.asarray(x).ravel()[0], np.asarray(x).ravel()[1])),
-        u_terminal=lambda x: float(u_star(T, np.asarray(x).ravel()[0], np.asarray(x).ravel()[1])),
+        m_initial=lambda x: m_star(0.0, np.asarray(x[0]).ravel()[0], np.asarray(x[0]).ravel()[1]),
+        u_terminal=lambda x: u_star(T, np.asarray(x[0]).ravel()[0], np.asarray(x[0]).ravel()[1]),
         hamiltonian=SeparableHamiltonian(
             # LAMBDA, not a literal: the source's Hamiltonian is a separate OBJECT by design
             # (see _TRUE_HAMILTONIAN) but the two must agree on the VALUE, or the source
@@ -267,8 +267,8 @@ def _build_problem(nx: int, nt: int):
         # against a control where sigma=1.1 moves the same solve by 1.672e-02.
         coupling_coefficient=1.0,
         components=components,
-        source_term_hjb=lambda t, x, v, m: s_hjb(t, _points(x)),
-        source_term_fp=lambda t, x, v, m: s_fp(t, _points(x)),
+        source_term_hjb=lambda t, x, v, m: s_hjb(t, _points(x[0])),
+        source_term_fp=lambda t, x, v, m: s_fp(t, _points(x[0])),
     )
     return problem
 

@@ -51,8 +51,8 @@ if __name__ == "__main__":
     # want a probability density, divide by `grid.integrate(...)` yourself -- and note it is not
     # `sum(m) * dx`, because the two wall nodes own half a cell each (Issue #2145).
     conditions = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
         T=1.0,
     )
 

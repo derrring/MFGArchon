@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
@@ -2012,7 +2014,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
             positions = self.get_node_positions()
             if positions is None:
                 raise ValueError("Cannot use predicate on abstract graphs without spatial embedding. Use mask instead.")
-            self._regions[name] = np.asarray(predicate(positions), dtype=np.bool_)
+            self._regions[name] = np.asarray(read_region(predicate, positions, role="predicate"), dtype=np.bool_)
         else:
             assert mask is not None
             self._regions[name] = np.asarray(mask, dtype=np.bool_)

@@ -69,7 +69,7 @@ def terminal_condition(x: float) -> float:
         Terminal cost at position x
     """
     Lx = x_max - x_min
-    return 5.0 * (np.cos(x * 2 * np.pi / Lx) + 0.4 * np.sin(x * 4 * np.pi / Lx))
+    return 5.0 * (np.cos(x[0] * 2 * np.pi / Lx) + 0.4 * np.sin(x[0] * 4 * np.pi / Lx))
 
 
 def initial_density_unnormalized(x: float) -> float:
@@ -107,7 +107,7 @@ def initial_density(x: float) -> float:
     Returns:
         Initial density at position x
     """
-    return initial_density_unnormalized(x)
+    return initial_density_unnormalized(x[0])
 
 
 def potential_field(x: float) -> float:
@@ -142,7 +142,7 @@ def hamiltonian_potential(t: float, x: np.ndarray) -> float:
     Returns:
         Potential value at position x
     """
-    x_scalar = float(x[0]) if hasattr(x, "__len__") else float(x)
+    x_scalar = float(x[0]) if hasattr(x[0], "__len__") else float(x[0])
     return potential_field(x_scalar)
 
 

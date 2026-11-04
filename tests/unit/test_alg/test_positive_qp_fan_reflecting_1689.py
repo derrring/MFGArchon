@@ -62,9 +62,9 @@ def _u_star(t, x):
 
 def _potential(t, x):
     """V = C - nu Lap phi + |grad phi|^2 / 2 - zeta m*: a point gives a number, a batch an array."""
-    _, lap, grad2 = _phi(x)
-    v = C_TIME - NU * lap + 0.5 * grad2 - ZETA * _m_star(x)
-    return float(v[0]) if np.ndim(x) == 1 else v
+    _, lap, grad2 = _phi(x[0])
+    v = C_TIME - NU * lap + 0.5 * grad2 - ZETA * _m_star(x[0])
+    return float(v[0]) if np.ndim(x[0]) == 1 else v
 
 
 def _sobol(n_int, seed=42):
@@ -85,7 +85,7 @@ def _bc(fixture):
     return BoundaryConditions(
         segments=[
             BCSegment(
-                name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=lambda t, x: float(_u_star(t, x)[0])
+                name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=lambda t, x: _u_star(t, x[0])[0]
             ),
             BCSegment(name="walls", bc_type=BCType.NO_FLUX),
         ],
@@ -394,7 +394,7 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
                 segments=[BCSegment(name="walls", bc_type=BCType.NO_FLUX)],
                 dimension=2,
                 domain_bounds=np.array([[0.0, 20.0], [0.0, 20.0]]),
-                domain_sdf=lambda x: float(np.max(np.abs(np.asarray(x) - 10.0)) - 10.0),
+                domain_sdf=lambda x: np.max(np.abs(np.asarray(x[0]) - 10.0)) - 10.0,
             ),
             r"a reflecting point on a boundary read from domain_sdf",
         ),

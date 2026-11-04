@@ -31,7 +31,7 @@ def _problem(**kwargs):
         Nt=10,
         T=1.0,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         ),
@@ -129,7 +129,7 @@ def test_a_solve_that_loses_mass_reports_an_order_one_error():
         T=1.0,
         volatility=1.0,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         ),

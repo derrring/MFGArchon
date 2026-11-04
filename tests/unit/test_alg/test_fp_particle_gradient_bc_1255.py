@@ -44,7 +44,7 @@ def _default_components():
     from mfgarchon.core.mfg_components import MFGComponents
 
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )

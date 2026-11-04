@@ -50,8 +50,8 @@ def main():
 
     # Conditions
     conditions = Conditions(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
-        u_terminal=lambda x: np.zeros_like(x),  # Zero terminal cost
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
+        u_terminal=lambda x: np.zeros_like(x[0]),  # Zero terminal cost
         T=1.0,
     )
 

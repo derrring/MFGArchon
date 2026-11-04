@@ -34,7 +34,7 @@ def _problem(hamiltonian, nx: int, nt: int) -> MFGProblem:
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.15),
         domain=_grid(nx),
-        conditions=Conditions(u_terminal=lambda x: (x - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
+        conditions=Conditions(u_terminal=lambda x: (x[0] - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
         Nt=nt,
     )
 

@@ -54,7 +54,7 @@ def test_a_solver_refuses_a_space_first_source_instead_of_computing_with_it():
     shape = (problem.Nt + 1, *problem.geometry.get_grid_shape())
     args = (np.ones(shape), np.zeros(shape[1:]), np.zeros(shape))
     with pytest.raises(TypeError, match=r"source_term .* out of order"):
-        HJBFDMSolver(problem).solve_hjb_system(*args, source_term=lambda x, t: np.zeros(np.shape(x)[0]))
+        HJBFDMSolver(problem).solve_hjb_system(*args, source_term=lambda x, t: np.zeros(np.shape(x[0])[0]))
 
 
 def test_no_solver_calls_its_source_term_directly():

@@ -144,7 +144,7 @@ def _make_lq_problem(control_cost: float = 1.0) -> MFGProblem:
             coupling=lambda m: 0.1 * m,
             coupling_dm=lambda m: 0.1,
         ),
-        m_initial=lambda x: np.exp(-30 * (np.atleast_1d(x)[0] - 0.5) ** 2) / scale,
+        m_initial=lambda x: np.exp(-30 * (x[0] - 0.5) ** 2) / scale,
         u_terminal=lambda x: 0.0,
     )
     return MFGProblem(geometry=grid, T=0.2, Nt=10, volatility=0.3, components=components)

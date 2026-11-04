@@ -57,8 +57,8 @@ def test_tensor_grid_unknown_bc_type_fails_loud():
 def _small_1d_problem(n=11):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     comps = MFGComponents(
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-        u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
+        u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float),
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
     )
     return MFGProblem(geometry=grid, T=0.1, Nt=2, volatility=0.3, components=comps)

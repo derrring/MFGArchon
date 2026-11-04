@@ -93,7 +93,7 @@ def test_the_coupled_solve_conserves_mass_with_a_field_volatility():
         grid,
         40,
         2.0,
-        m_initial=lambda x: 1 + 0.5 * np.cos(np.pi * np.asarray(x, dtype=float)),
+        m_initial=lambda x: 1 + 0.5 * np.cos(np.pi * np.asarray(x[0], dtype=float)),
         volatility=0.3 + 0.2 * x,
         volatility_kind="field",
     )

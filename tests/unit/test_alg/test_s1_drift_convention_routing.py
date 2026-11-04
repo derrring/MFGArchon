@@ -52,8 +52,8 @@ def _problem(control_cost) -> MFGProblem:
         boundary_conditions=no_flux_bc(dimension=1),
     )
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-        u_terminal=lambda x: (x - 0.8) ** 2,
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.8) ** 2,
         hamiltonian=SeparableHamiltonian(
             control_cost=control_cost,
             coupling=lambda m: m,

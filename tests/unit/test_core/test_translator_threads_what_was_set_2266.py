@@ -56,7 +56,7 @@ def _problem():
         ),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            u_terminal=lambda x: np.squeeze(0.5 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: np.squeeze(0.5 * (np.asarray(x[0]) - 0.5) ** 2),
             m_initial=lambda x: 1.0,  # uniform on [0, 1]: grid-measure mass is exactly 1
             T=0.1,
         ),

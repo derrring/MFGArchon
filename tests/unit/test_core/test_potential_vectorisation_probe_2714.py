@@ -27,7 +27,7 @@ def _per_point(d):
 
 
 def _vectorised(t, x):
-    return np.sum(np.asarray(x) ** 2, axis=-1)
+    return sum(xi ** 2 for xi in x)
 
 
 def _potential_values(H, X):

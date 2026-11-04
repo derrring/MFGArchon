@@ -267,7 +267,7 @@ def main():
         volatility=sigma,
         coupling_coefficient=0.0,  # No density coupling for clarity
         components=MFGComponents(
-            m_initial=lambda x: float(np.exp(-100 * (x - 0.2) ** 2)),
+            m_initial=lambda x: np.exp(-100 * (x[0] - 0.2) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost_lambda)),
         ),

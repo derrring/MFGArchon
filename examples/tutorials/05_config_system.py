@@ -43,8 +43,8 @@ if __name__ == "__main__":
         # not rescale it (#1887): whether the initial mass should be 1 is your modelling
         # decision. Dividing by `grid.integrate(...)` would evaluate the coupling f(m) at
         # 3.9894x these values, which is a different problem, so this tutorial leaves it be.
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
-        u_terminal=lambda x: (x - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
         T=1.0,
     )
 

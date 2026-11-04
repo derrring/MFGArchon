@@ -39,7 +39,7 @@ class TestMarkRegionBasicFunctionality:
     def test_mark_region_with_predicate(self, grid_2d):
         """Test marking region with predicate function."""
         # Mark left half of domain
-        grid_2d.mark_region("left_half", predicate=lambda x: x[:, 0] < 0.5)
+        grid_2d.mark_region("left_half", predicate=lambda x: x[0] < 0.5)
 
         # Verify region exists
         assert "left_half" in grid_2d.get_region_names()
@@ -82,10 +82,10 @@ class TestMarkRegionBasicFunctionality:
 
     def test_mark_region_duplicate_name_raises(self, grid_2d):
         """Test that marking duplicate region name raises error."""
-        grid_2d.mark_region("test", predicate=lambda x: x[:, 0] < 0.5)
+        grid_2d.mark_region("test", predicate=lambda x: x[0] < 0.5)
 
         with pytest.raises(ValueError, match="already exists"):
-            grid_2d.mark_region("test", predicate=lambda x: x[:, 1] < 0.5)
+            grid_2d.mark_region("test", predicate=lambda x: x[1] < 0.5)
 
     def test_mark_region_no_specification_raises(self, grid_2d):
         """Test that omitting all specification methods raises error."""
@@ -99,7 +99,7 @@ class TestMarkRegionBasicFunctionality:
         with pytest.raises(ValueError, match="Cannot specify multiple"):
             grid_2d.mark_region(
                 "test",
-                predicate=lambda x: x[:, 0] < 0.5,
+                predicate=lambda x: x[0] < 0.5,
                 mask=mask,
             )
 
@@ -187,8 +187,8 @@ class TestRegionRetrieval:
         """Create grid with several marked regions."""
         grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx=[20, 20], boundary_conditions=no_flux_bc(dimension=2))
 
-        grid.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
-        grid.mark_region("outlet", predicate=lambda x: x[:, 0] > 0.9)
+        grid.mark_region("inlet", predicate=lambda x: x[0] < 0.1)
+        grid.mark_region("outlet", predicate=lambda x: x[0] > 0.9)
         grid.mark_region("walls", boundary="y_min")
 
         return grid
@@ -237,13 +237,13 @@ class TestRegionOperations:
         grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx=[20, 20], boundary_conditions=no_flux_bc(dimension=2))
 
         # Left half
-        grid.mark_region("left", predicate=lambda x: x[:, 0] < 0.5)
+        grid.mark_region("left", predicate=lambda x: x[0] < 0.5)
         # Bottom half
-        grid.mark_region("bottom", predicate=lambda x: x[:, 1] < 0.5)
+        grid.mark_region("bottom", predicate=lambda x: x[1] < 0.5)
         # Center square
         grid.mark_region(
             "center",
-            predicate=lambda x: np.all((x >= [0.4, 0.4]) & (x <= [0.6, 0.6]), axis=1),
+            predicate=lambda x: np.all((x[0] >= [0.4, 0.4]) & (x[0] <= [0.6, 0.6]), axis=1),
         )
 
         return grid
@@ -385,9 +385,9 @@ class TestRegionMarkingUseCases:
         grid = TensorProductGrid(bounds=[(0, 1)], Nx=[100], boundary_conditions=no_flux_bc(dimension=1))
 
         # Mark regions by intervals
-        grid.mark_region("left_third", predicate=lambda x: x[:, 0] < 1.0 / 3.0)
-        grid.mark_region("middle_third", predicate=lambda x: (x[:, 0] >= 1.0 / 3.0) & (x[:, 0] < 2.0 / 3.0))
-        grid.mark_region("right_third", predicate=lambda x: x[:, 0] >= 2.0 / 3.0)
+        grid.mark_region("left_third", predicate=lambda x: x[0] < 1.0 / 3.0)
+        grid.mark_region("middle_third", predicate=lambda x: (x[0] >= 1.0 / 3.0) & (x[0] < 2.0 / 3.0))
+        grid.mark_region("right_third", predicate=lambda x: x[0] >= 2.0 / 3.0)
 
         # Verify: three regions partition the domain
         left = grid.get_region_mask("left_third")

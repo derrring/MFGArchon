@@ -26,6 +26,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+
+from mfgarchon.types.callable_protocols import read_region
 from numpy.typing import NDArray
 
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
@@ -1312,7 +1314,7 @@ def _leave_out_cells_with_no_navigable_point(
     carrying = np.flatnonzero(probs > 0)
     multi = np.unravel_index(carrying, grid_shape)
     nodes = np.column_stack([coordinates[d][multi[d]] for d in range(dimension)])
-    suspect = ~np.atleast_1d(np.asarray(navigable(nodes), dtype=bool))
+    suspect = ~np.atleast_1d(np.asarray(read_region(navigable, nodes, role="navigable"), dtype=bool))
     if not suspect.any():
         return probs
     spacings = np.array([c[1] - c[0] if len(c) > 1 else 0.0 for c in coordinates])
@@ -1320,7 +1322,7 @@ def _leave_out_cells_with_no_navigable_point(
     offsets = np.stack(np.meshgrid(*([ticks] * dimension), indexing="ij"), axis=-1).reshape(-1, dimension) * spacings
     centres = nodes[suspect]
     probes = (centres[:, None, :] + offsets[None, :, :]).reshape(-1, dimension)
-    blocked_here = ~np.asarray(navigable(probes), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
+    blocked_here = ~np.asarray(read_region(navigable, probes, role="navigable"), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
     if not blocked_here.any():
         return probs
     blocked = np.zeros(probs.shape, dtype=bool)
@@ -1338,7 +1340,7 @@ def _leave_out_cells_with_no_navigable_point(
         ),
         remedy=(
             "Set the density to zero at the nodes outside the navigable set: density * "
-            "navigable(nodes).reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
+            "read_region(navigable, nodes, role="navigable").reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
             'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
         ),
     )
@@ -1351,12 +1353,12 @@ def _redraw_until_navigable(
     within: str,
 ) -> None:
     """Redraw, in place, the particles where ``navigable`` is False, until none is (#2688)."""
-    pending = np.flatnonzero(~np.asarray(navigable(particles), dtype=bool))
+    pending = np.flatnonzero(~np.asarray(read_region(navigable, particles, role="navigable"), dtype=bool))
     for _ in range(_MAX_REDRAW_ROUNDS):
         if pending.size == 0:
             return
         particles[pending] = redraw(pending)
-        pending = pending[~np.asarray(navigable(particles[pending]), dtype=bool)]
+        pending = pending[~np.asarray(read_region(navigable, particles[pending], role="navigable"), dtype=bool)]
     if pending.size:
         raise ValueError(
             f"sample_from_density: {pending.size} particle(s) found no navigable position within {within} in "

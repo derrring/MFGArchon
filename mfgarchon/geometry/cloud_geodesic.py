@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
@@ -153,7 +155,7 @@ def compute_geodesic_distance(
                 continue
             if obstacles_sdf is not None:
                 seg = pts[i][None, :] + s_lin[:, None] * (pts[j] - pts[i])[None, :]
-                sd = np.asarray(obstacles_sdf(seg))
+                sd = np.asarray(read_region(obstacles_sdf, seg, role="obstacles_sdf"))
                 if (sd <= 0.0).any():
                     n_filtered_obstacle += 1
                     continue

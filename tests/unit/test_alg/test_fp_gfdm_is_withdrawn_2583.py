@@ -38,7 +38,7 @@ def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float)) -> M
         ),
         domain=domain,
         conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=u_terminal, T=0.5
+            m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=u_terminal, T=0.5
         ),
         Nt=10,
     )
@@ -93,7 +93,7 @@ def test_the_alternatives_the_refusal_names_hold_a_wall(route):
 
     The refusal says the second pair is not dual and that Expert Mode warns about it, so that warning is
     asserted too."""
-    problem = _problem(_grid(no_flux_bc(dimension=1)), u_terminal=lambda x: -2.0 * np.asarray(x, dtype=float))
+    problem = _problem(_grid(no_flux_bc(dimension=1)), u_terminal=lambda x: -2.0 * np.asarray(x[0], dtype=float))
     if route == "dual scheme":
         result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=20, verbose=False)
     else:

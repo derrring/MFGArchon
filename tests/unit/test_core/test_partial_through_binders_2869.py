@@ -304,8 +304,8 @@ def _problem(*, hamiltonian=None, model=None, problem=None):
         ),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2),
-            u_terminal=lambda x: 2.0 * (np.asarray(x, dtype=float)[..., 0] - 0.7) ** 2,
+            m_initial=lambda x: np.exp(-40 * (x[0] - 0.3) ** 2),
+            u_terminal=lambda x: 2.0 * (x[0] - 0.7) ** 2,
             T=0.5,
         ),
         Nt=4,

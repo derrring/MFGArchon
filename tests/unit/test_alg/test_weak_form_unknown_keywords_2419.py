@@ -30,7 +30,7 @@ def _setup(use_newton=False):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3)
     conditions = Conditions(
-        u_terminal=lambda x: 0.5 * (x - 0.5) ** 2, m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * x), T=0.5
+        u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2, m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * x[0]), T=0.5
     )
     problem = MFGProblem(model=model, domain=grid, conditions=conditions, Nt=_NT)
     points = np.linspace(0.0, 1.0, _N).reshape(-1, 1)

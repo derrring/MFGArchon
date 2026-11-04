@@ -40,8 +40,8 @@ XS = np.linspace(0.0, 1.0, NX)[:, None]
 def _problem(bc) -> MFGProblem:
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-        u_terminal=lambda x: np.cos(np.pi * np.asarray(x, dtype=float)),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
+        u_terminal=lambda x: np.cos(np.pi * np.asarray(x[0], dtype=float)),
     )
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=bc)
     return MFGProblem(geometry=grid, T=0.5, Nt=4, volatility=0.3, components=comps)

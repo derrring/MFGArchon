@@ -101,8 +101,8 @@ class TestCapabilityDispatchBehavior:
         )
         comp = MFGComponents(
             lagrangian=L,
-            m_initial=lambda x: np.ones_like(x) / 10.0,
-            u_terminal=lambda x: np.zeros_like(x),
+            m_initial=lambda x: np.ones_like(x[0]) / 10.0,
+            u_terminal=lambda x: np.zeros_like(x[0]),
         )
         # Must have derived a SeparableHamiltonian (not a DualHamiltonian)
         assert isinstance(comp.hamiltonian, SeparableHamiltonian), (
@@ -126,8 +126,8 @@ class TestCapabilityDispatchBehavior:
 
         comp = MFGComponents(
             lagrangian=L,
-            m_initial=lambda x: np.ones_like(x) / 10.0,
-            u_terminal=lambda x: np.zeros_like(x),
+            m_initial=lambda x: np.ones_like(x[0]) / 10.0,
+            u_terminal=lambda x: np.zeros_like(x[0]),
         )
         # General Lagrangian without as_hamiltonian() → DualHamiltonian
         assert isinstance(comp.hamiltonian, DualHamiltonian), (
@@ -149,8 +149,8 @@ class TestCapabilityDispatchBehavior:
         )
         comp = MFGComponents(
             hamiltonian=H,
-            m_initial=lambda x: np.ones_like(x) / 10.0,
-            u_terminal=lambda x: np.zeros_like(x),
+            m_initial=lambda x: np.ones_like(x[0]) / 10.0,
+            u_terminal=lambda x: np.zeros_like(x[0]),
         )
         # Must have derived a SeparableLagrangian from the separable hamiltonian
         assert isinstance(comp._lagrangian_class, SeparableLagrangian), (
@@ -182,8 +182,8 @@ class TestCapabilityDispatchBehavior:
         H = _MinimalH()
         comp = MFGComponents(
             hamiltonian=H,
-            m_initial=lambda x: np.ones_like(x) / 10.0,
-            u_terminal=lambda x: np.zeros_like(x),
+            m_initial=lambda x: np.ones_like(x[0]) / 10.0,
+            u_terminal=lambda x: np.zeros_like(x[0]),
         )
         assert comp._lagrangian_class is None, (
             f"Expected _lagrangian_class=None for non-separable H, got {comp._lagrangian_class!r}."
@@ -248,8 +248,8 @@ class TestCapabilityDispatchBehavior:
 
         comp = MFGComponents(
             hamiltonian=H,
-            m_initial=lambda x: np.ones_like(x),
-            u_terminal=lambda x: np.zeros_like(x),
+            m_initial=lambda x: np.ones_like(x[0]),
+            u_terminal=lambda x: np.zeros_like(x[0]),
         )
         problem = MFGProblem(
             geometry=grid,

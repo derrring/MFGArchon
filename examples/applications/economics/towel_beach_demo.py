@@ -135,7 +135,7 @@ def create_towel_beach_problem(
     # Initial distribution: Uniform with small perturbation
     def initial_density_func(x):
         """Slightly perturbed uniform distribution."""
-        return 1.0 + 0.1 * np.cos(2 * np.pi * x / beach_length)
+        return 1.0 + 0.1 * np.cos(2 * np.pi * x[0] / beach_length)
 
     # Terminal value: zero (standard for running cost problems)
     def terminal_value_func(x):

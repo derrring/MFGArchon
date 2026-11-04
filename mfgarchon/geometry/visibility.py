@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -102,7 +104,7 @@ def segments_clear(
     flat_samples = samples.reshape(-1, d)
 
     # Evaluate SDF at all sample points
-    sdf_values = obstacle_sdf(flat_samples)  # (n_segments * n_samples,)
+    sdf_values = read_region(obstacle_sdf, flat_samples, role="obstacle_sdf")  # (n_segments * n_samples,)
     sdf_values = np.asarray(sdf_values).reshape(n_segments, n_samples)
 
     # Segment is clear if ALL samples are outside obstacle (SDF > margin)

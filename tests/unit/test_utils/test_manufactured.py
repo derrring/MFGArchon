@@ -64,26 +64,26 @@ def _a2p(t):
 
 
 def _u(t, x):
-    return _a1(t) * (np.cos(C * x[..., 0]) + BETA * np.cos(C * x[..., 1]))
+    return _a1(t) * (np.cos(C * x[0]) + BETA * np.cos(C * x[1]))
 
 
 def _m(t, x):
-    return (1.0 + _a2(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1])) / L**2
+    return (1.0 + _a2(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1])) / L**2
 
 
 def _hess_u(t, x):
-    hess = np.zeros((len(x), 2, 2))
-    hess[:, 0, 0] = -_a1(t) * C**2 * np.cos(C * x[..., 0])
-    hess[:, 1, 1] = -BETA * _a1(t) * C**2 * np.cos(C * x[..., 1])
+    hess = np.zeros((*np.shape(x[0]), 2, 2))
+    hess[:, 0, 0] = -_a1(t) * C**2 * np.cos(C * x[0])
+    hess[:, 1, 1] = -BETA * _a1(t) * C**2 * np.cos(C * x[1])
     return hess
 
 
 def _hess_m(t, x):
-    hess = np.zeros((len(x), 2, 2))
-    common = _a2(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2
+    hess = np.zeros((*np.shape(x[0]), 2, 2))
+    common = _a2(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2
     hess[:, 0, 0] = -4 * C**2 * common
     hess[:, 1, 1] = -16 * C**2 * common
-    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2
+    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2
     return hess
 
 
@@ -91,17 +91,17 @@ def _hess_m(t, x):
 def pair():
     return ManufacturedPair(
         u=_u,
-        u_t=lambda t, x: _a1p(t) * (np.cos(C * x[..., 0]) + BETA * np.cos(C * x[..., 1])),
+        u_t=lambda t, x: _a1p(t) * (np.cos(C * x[0]) + BETA * np.cos(C * x[1])),
         grad_u=lambda t, x: np.stack(
-            [-_a1(t) * C * np.sin(C * x[..., 0]), -BETA * _a1(t) * C * np.sin(C * x[..., 1])], axis=-1
+            [-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1
         ),
         hess_u=_hess_u,
         m=_m,
-        m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+        m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
         grad_m=lambda t, x: np.stack(
             [
-                -2 * C * _a2(t) * np.sin(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
-                -4 * C * _a2(t) * np.cos(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2,
+                -2 * C * _a2(t) * np.sin(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
+                -4 * C * _a2(t) * np.cos(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2,
             ],
             axis=-1,
         ),

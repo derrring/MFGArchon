@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -566,6 +568,10 @@ class SDFParticleBCHandler:
         self.bisection_tolerance = bisection_tolerance
         self.epsilon = epsilon
 
+
+    def _signed_distance(self, points: NDArray) -> NDArray:
+        return read_region(self.sdf, points, role="sdf")
+
     def apply_bc(
         self,
         X_old: NDArray[np.floating],
@@ -595,8 +601,8 @@ class SDFParticleBCHandler:
             velocities = np.atleast_2d(velocities).copy()
 
         # Evaluate SDF at old and new positions
-        sdf_old = self.sdf(X_old)
-        sdf_new = self.sdf(X_new)
+        sdf_old = self._signed_distance(X_old)
+        sdf_new = self._signed_distance(X_new)
 
         # Detect boundary crossings: was inside (< 0), now outside (> 0)
         crossed = (sdf_old < 0) & (sdf_new > 0)
@@ -623,7 +629,7 @@ class SDFParticleBCHandler:
 
             # If still outside after reflection, project to boundary
             # (handles grazing angles and numerical issues)
-            if self.sdf(X_new[i].reshape(1, -1))[0] > 0:
+            if self._signed_distance(X_new[i].reshape(1, -1))[0] > 0:
                 X_new[i] = X_boundary
 
             # Reflect velocity if provided (elastic collision)
@@ -654,7 +660,7 @@ class SDFParticleBCHandler:
         for _ in range(self.max_bisection_iterations):
             t_mid = (a + b) / 2
             p_mid = p_inside + t_mid * direction
-            sdf_mid = self.sdf(p_mid.reshape(1, -1))[0]
+            sdf_mid = self._signed_distance(p_mid.reshape(1, -1))[0]
 
             if abs(sdf_mid) < self.bisection_tolerance:
                 return p_mid
@@ -690,7 +696,7 @@ class SDFParticleBCHandler:
             p_plus[0, i] += self.epsilon
             p_minus[0, i] -= self.epsilon
 
-            grad[i] = (self.sdf(p_plus)[0] - self.sdf(p_minus)[0]) / (2 * self.epsilon)
+            grad[i] = (self._signed_distance(p_plus)[0] - self._signed_distance(p_minus)[0]) / (2 * self.epsilon)
 
         # Normalize
         norm = np.linalg.norm(grad)
@@ -720,7 +726,7 @@ class SDFParticleBCHandler:
         Returns:
             Boolean array, True if inside domain
         """
-        return self.sdf(np.atleast_2d(points)) < 0
+        return self._signed_distance(np.atleast_2d(points)) < 0
 
 
 class ParticleReflector:

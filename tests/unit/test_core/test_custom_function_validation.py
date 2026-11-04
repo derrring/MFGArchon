@@ -535,8 +535,8 @@ def test_running_cost_wrong_signature_raises():
 def test_mfg_problem_valid_hamiltonian_accepted():
     """MFGProblem with valid Hamiltonian should construct without error."""
     problem = _problem(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-        u_terminal=lambda x: x**2,
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: x[0]**2,
     )
     assert problem is not None
 
@@ -555,8 +555,8 @@ def test_mfg_problem_nan_hamiltonian_rejected():
 
     with pytest.raises(ValidationError, match="NaN"):
         _problem(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: x**2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: x[0]**2,
             hamiltonian=NaNHamiltonian(),
         )
 
@@ -577,8 +577,8 @@ def test_mfg_problem_rejects_hamiltonian_with_wrong_dm():
 
     with pytest.raises(ValidationError, match="dH_dm"):
         _problem(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: x**2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: x[0]**2,
             hamiltonian=WrongDmHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m**2,
@@ -604,8 +604,8 @@ def test_mfg_problem_accepts_every_shipped_control_cost(control_cost):
     test for the gate as a whole.
     """
     problem = _problem(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-        u_terminal=lambda x: x**2,
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: x[0]**2,
         hamiltonian=SeparableHamiltonian(
             control_cost=control_cost,
             coupling=lambda m: m**2,

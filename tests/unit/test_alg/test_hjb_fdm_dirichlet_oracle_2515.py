@@ -39,7 +39,7 @@ def _u(t, x):
 
 
 def _source(t, x):
-    u_x = np.exp(-D * K**2 * (T - t)) * K * np.cos(K * np.asarray(x, dtype=float))
+    u_x = np.exp(-D * K**2 * (T - t)) * K * np.cos(K * np.asarray(x[0], dtype=float))
     return 0.5 * u_x**2
 
 
@@ -48,7 +48,7 @@ def _error(nx: int, analytic_jacobian: bool) -> tuple[float, np.ndarray]:
         bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=dirichlet_bc(dimension=1, value=G)
     )
     comps = MFGComponents(
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
     )

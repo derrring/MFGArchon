@@ -47,8 +47,8 @@ def _tiny_problem(Nx: int = 13, Nt: int = 6) -> MFGProblem:
         model=Model(hamiltonian=ham, volatility=0.2),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            u_terminal=lambda x: (x - 0.5) ** 2,
-            m_initial=lambda x: np.exp(-20 * (x - 0.5) ** 2),
+            u_terminal=lambda x: (x[0] - 0.5) ** 2,
+            m_initial=lambda x: np.exp(-20 * (x[0] - 0.5) ** 2),
             T=0.5,
         ),
         Nt=Nt,
