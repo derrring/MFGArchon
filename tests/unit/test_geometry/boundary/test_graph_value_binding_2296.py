@@ -14,8 +14,8 @@ import numpy as np
 from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, GraphBCConfig, GraphBCType, NodeBC
 
 
-def _g(t, node):
-    return t + 10.0 * node
+def _g(t, x):
+    return t + 10.0 * x[0]
 
 
 def test_a_node_value_is_read_at_its_time_through_a_network_solve():
@@ -98,7 +98,7 @@ def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
         ),
         # main wrote None as NaN; a return is read by the grid's one reader, `types._read_constant`
         (
-            lambda: GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: None).apply(np.zeros(4), t=0.5),
+            lambda: GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, x: None).apply(np.zeros(4), t=0.5),
             NotImplementedError,
             "does the function lack a `return`",
         ),

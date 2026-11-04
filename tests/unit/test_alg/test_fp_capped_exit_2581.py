@@ -63,9 +63,9 @@ def _exact(t: float, x: np.ndarray) -> np.ndarray:
     return np.exp(K * x) * (1 + BETA * x**2 + GAMMA * np.exp(-t) * np.cos(np.pi * x))
 
 
-def _source(t: float, points: np.ndarray) -> np.ndarray:
+def _source(t: float, x: np.ndarray) -> np.ndarray:
     """``S = m_t + J_x``, with J = -D e^{kx} f'."""
-    x = np.asarray(points)[:, 0]
+    x = np.asarray(x)[:, 0]
     g = GAMMA * np.exp(-t)
     f1 = 2 * BETA * x - g * np.pi * np.sin(np.pi * x)
     f2 = 2 * BETA - g * np.pi**2 * np.cos(np.pi * x)

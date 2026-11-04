@@ -609,7 +609,7 @@ def test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy(d):
         bounds, shape, centre, width = [(-1.0, 1.0)], [161], [0.3], [0.2]
 
         def V(x):
-            return _V(x)
+            return _V(x[0])
 
         bound = 1e-6
     else:

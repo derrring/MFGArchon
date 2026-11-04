@@ -116,8 +116,8 @@ def _problem(nx, nt, sigma, dimension=1):
         m_initial = lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / L  # noqa: E731
         u_terminal = lambda x: _u_exact(T, x[0])  # noqa: E731
     else:
-        m_initial = lambda x, y: np.ones_like(np.asarray(x, dtype=float)) / (L * L)  # noqa: E731
-        u_terminal = lambda x, y: np.zeros_like(np.asarray(x, dtype=float))  # noqa: E731
+        m_initial = lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / (L * L)  # noqa: E731
+        u_terminal = lambda x: np.zeros_like(np.asarray(x[0], dtype=float))  # noqa: E731
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         m_initial=m_initial,

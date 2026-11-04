@@ -74,7 +74,7 @@ def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem
             ),
             domain=grid,
             conditions=Conditions(
-                m_initial=lambda z, c=centre, k=scale: np.exp(-50.0 * (np.asarray(z) - c) ** 2) / k,
+                m_initial=lambda x, c=centre, k=scale: np.exp(-50.0 * (np.asarray(x[0]) - c) ** 2) / k,
                 u_terminal=lambda x: 0.0,
                 T=0.2,
             ),

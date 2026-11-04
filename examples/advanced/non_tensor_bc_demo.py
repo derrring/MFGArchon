@@ -134,7 +134,7 @@ def top_sector_sdf(x: np.ndarray) -> float:
     Region: Points on circle boundary with y > center_y + 0.8*radius
     """
     # Check if on boundary (distance from center ≈ radius)
-    dist_from_center = np.sqrt(sum((xi - center) ** 2 for xi in x))
+    dist_from_center = np.sqrt(sum((xi - center) ** 2 for xi in np.stack(x, axis=-1)))
     on_boundary = abs(dist_from_center - radius) < 0.01
 
     # Check if in top sector

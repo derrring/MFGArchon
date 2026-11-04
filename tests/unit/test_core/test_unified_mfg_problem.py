@@ -52,8 +52,8 @@ def _default_components_nd(dimension: int):
     """Default MFGComponents for N-D testing (Issue #670: explicit specification required)."""
 
     def m_initial_nd(x):
-        x_arr = np.asarray(x[0])
-        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
+        x_arr = np.stack(x[0], axis=-1)
+        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     return MFGComponents(
         m_initial=m_initial_nd,

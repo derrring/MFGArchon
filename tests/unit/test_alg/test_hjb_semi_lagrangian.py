@@ -1449,7 +1449,7 @@ class TestSLValueUpdateND:
     @staticmethod
     def _build_2d(lam):
         def V(t, x):
-            return 0.2 * (x[:, 0] ** 2 + x[:, 1] ** 2)
+            return 0.2 * (x[0] ** 2 + x[1] ** 2)
 
         geom = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)],

@@ -107,7 +107,7 @@ CASES = {
         _NOWHERE.format(_GFDM_POINTS),
     ),
     "an sdf_region off the box (S5)": (
-        [_seg("exit", D, sdf_region=lambda p: float(np.hypot(p[0] - 2.0, p[1] - 2.0) - 0.1))],
+        [_seg("exit", D, sdf_region=lambda x: np.hypot(x[0] - 2.0, x[1] - 2.0) - 0.1)],
         _NOWHERE.format(_PARTICLE_POINTS),
         _NOWHERE.format(_GFDM_POINTS),
     ),
@@ -190,7 +190,7 @@ def test_hjb_gfdms_admission_no_longer_depends_on_whether_its_cloud_samples_a_co
 
 
 def _sdf_disk_exit(radius):
-    return [_seg("exit", D, sdf_region=lambda p: float(np.hypot(p[0] - 1.0, p[1] - 0.5) - radius))]
+    return [_seg("exit", D, sdf_region=lambda x: np.hypot(x[0] - 1.0, x[1] - 0.5) - radius)]
 
 
 def test_an_sdf_exit_held_on_less_than_a_lattice_cell_is_refused_naming_the_lattice():
@@ -537,7 +537,7 @@ def test_the_lattice_keeps_its_cell_budget_in_every_dimension(dimension):
     from mfgarchon.geometry.boundary.conditions import FACE_LATTICE_CELLS
 
     bc = BoundaryConditions(
-        segments=[_seg("exit", D, sdf_region=lambda p: float(np.linalg.norm(np.asarray(p) - 1.0) - 0.1))],
+        segments=[_seg("exit", D, sdf_region=lambda x: np.sqrt(sum((np.asarray(xi) - 1.0) ** 2 for xi in x)) - 0.1)],
         dimension=dimension,
         default_bc=NF,
     )

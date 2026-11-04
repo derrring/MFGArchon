@@ -229,7 +229,7 @@ class TestFunctionalMeasureField:
         """FD gradient of sin(pi*x) should be pi*cos(pi*x)."""
 
         def v(t, x, mu):
-            return np.sin(np.pi * x)
+            return np.sin(np.pi * x[0])
 
         field = FunctionalMeasureField(v, grid_spacing=0.001)
         x = np.linspace(0.1, 0.9, 9)
@@ -241,7 +241,7 @@ class TestFunctionalMeasureField:
         """Provided gradient function should be used."""
 
         def v(t, x, mu):
-            return x**2
+            return x[0]**2
 
         def grad_v(t, x, mu):
             return 2 * x[0]

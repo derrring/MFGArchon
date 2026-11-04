@@ -529,7 +529,7 @@ class TestResolveDiffusionSource:
         hardcoded placeholder (the #1316 sigma=1.0 regression class this single source kills)."""
 
         def sigma(x):
-            return 0.5 + 0.5 * float(np.atleast_1d(x)[0])
+            return 0.5 + 0.5 * float(x[0])
 
         assert resolve_diffusion_source(sigma, index=None, points=self._POINTS) == pytest.approx(0.75)
 

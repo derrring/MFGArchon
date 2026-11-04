@@ -204,8 +204,8 @@ def test_the_source_reaches_gfdm_in_2d():
     )
     comps = MFGComponents(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x, y: np.ones_like(np.asarray(x[0], dtype=float)) / (L * L),
-        u_terminal=lambda x, y: _a1(T) * (np.cos(C * np.asarray(x[0])) + np.cos(C * np.asarray(y))),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)) / (L * L),
+        u_terminal=lambda x: _a1(T) * (np.cos(C * np.asarray(x[0])) + np.cos(C * np.asarray(x[1]))),
     )
     nt = 8
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=1.0)

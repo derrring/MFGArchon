@@ -243,7 +243,7 @@ def _hjb_howard():
     p = _grid_problem()
     provider = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
     with pytest.warns(UserWarning, match="non-SOCP"):
-        s = HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t, x, p, m: -p)
+        s = HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t_idx, x, p, m: -p)
     return lambda f: s.solve_hjb_system(None, np.zeros(_N), **({"source_term": f} if f else {}))
 
 
@@ -555,7 +555,7 @@ def test_howard_refuses_a_volatility_field_its_constructor_owns():
 
     def howard(**kwargs):
         with pytest.warns(UserWarning, match="non-SOCP"):
-            return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t, x, p, m: -p, **kwargs)
+            return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t_idx, x, p, m: -p, **kwargs)
 
     # 0.0 as well as 3.0: a truthiness check (`if volatility:`) refuses 3.0 and ignores 0.0,
     # and 0.0 through the constructor is not a no-op -- it removes the diffusion.

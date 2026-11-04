@@ -359,8 +359,8 @@ class TestRegionMarkingUseCases:
         center = np.array([0.5, 0.5])
         radius = 0.2
 
-        def is_in_obstacle(points):
-            distances = np.linalg.norm(points - center, axis=1)
+        def is_in_obstacle(x):
+            distances = np.linalg.norm(x[0] - center, axis=1)
             return distances < radius
 
         grid.mark_region("obstacle", predicate=is_in_obstacle)

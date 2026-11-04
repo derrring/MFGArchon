@@ -87,8 +87,8 @@ def _build_mixed_bc_solver(Nx: int = 9, LX: float = 1.0, LY: float = 1.0):
     )
 
     def m_initial(x):
-        x_arr = np.asarray(x[0])
-        return np.exp(-10.0 * np.sum((x_arr - 0.5) ** 2))
+        x_arr = np.stack(x[0], axis=-1)
+        return np.exp(-10.0 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     components = MFGComponents(
         m_initial=m_initial,
@@ -318,7 +318,7 @@ def test_1d_dirichlet_bc_nonzero_uses_violation():
     )
 
     def m_init_1d(x):
-        return float(np.exp(-10.0 * (np.asarray(x) - 0.5) ** 2))
+        return np.exp(-10.0 * (np.asarray(x[0]) - 0.5) ** 2)
 
     components = MFGComponents(
         m_initial=m_init_1d,
@@ -387,7 +387,7 @@ def test_neumann_bc_residual_encodes_current_violation():
     )
 
     def m_init_1d(x):
-        return float(np.exp(-10.0 * (np.asarray(x) - 0.5) ** 2))
+        return np.exp(-10.0 * (np.asarray(x[0]) - 0.5) ** 2)
 
     components = MFGComponents(
         m_initial=m_init_1d,

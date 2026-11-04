@@ -376,8 +376,8 @@ class TestMMSFokkerPlanck1D:
             U_zero = np.zeros((problem.Nt + 1, Nx))
 
             # Source term: callable (t, x_grid) -> values
-            def source_fn(t, x_arr, _mfg=manufactured):
-                return _mfg.fp_source(t, x_arr)
+            def source_fn(t, x, _mfg=manufactured):
+                return _mfg.fp_source(t, x[0])
 
             M_numerical = solver.solve_fp_system(
                 M_initial=m_init,
