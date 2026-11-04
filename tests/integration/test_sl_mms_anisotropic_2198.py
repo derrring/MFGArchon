@@ -92,8 +92,8 @@ def _hess_u(t, x):
     hess = np.zeros((*np.shape(x[0]), 2, 2))
     c1, c2 = np.cos(C * x[0]), np.cos(C * x[1])
     s1, s2 = np.sin(C * x[0]), np.sin(C * x[1])
-    hess[:, 0, 0] = hess[:, 1, 1] = -_a(t) * C**2 * c1 * c2
-    hess[:, 0, 1] = hess[:, 1, 0] = _a(t) * C**2 * s1 * s2
+    hess[..., 0, 0] = hess[..., 1, 1] = -_a(t) * C**2 * c1 * c2
+    hess[..., 0, 1] = hess[..., 1, 0] = _a(t) * C**2 * s1 * s2
     return hess
 
 

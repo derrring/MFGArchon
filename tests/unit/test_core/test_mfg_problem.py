@@ -997,10 +997,10 @@ def test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor():
     D_of_x = 0.02 + 0.1 * x
 
     from_diffusion = create_test_problem(diffusion=lambda t, x, m: 0.02 + 0.1 * np.asarray(x[0]))
-    np.testing.assert_allclose(from_diffusion.volatility(0.0, x, None), np.sqrt(2.0 * D_of_x), rtol=1e-15)
+    np.testing.assert_allclose(from_diffusion.volatility(0.0, (x,), None), np.sqrt(2.0 * D_of_x), rtol=1e-15)
 
     from_volatility = create_test_problem(volatility=lambda t, x, m: np.sqrt(2.0 * (0.02 + 0.1 * np.asarray(x[0]))))
-    np.testing.assert_allclose(from_volatility.diffusion(0.0, x, None), D_of_x, rtol=1e-14)
+    np.testing.assert_allclose(from_volatility.diffusion(0.0, (x,), None), D_of_x, rtol=1e-14)
 
 
 @pytest.mark.unit
@@ -1023,19 +1023,19 @@ def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
         return create_test_problem(geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: S, **kind)
 
     with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes.*volatility_kind='tensor'"):
-        build().diffusion(0.0, np.zeros((4, 2)), None)
-    np.testing.assert_allclose(build(volatility_kind="tensor").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S @ S.T)
-    np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S**2)
+        build().diffusion(0.0, tuple(np.zeros((2, 4))), None)
+    np.testing.assert_allclose(build(volatility_kind="tensor").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S @ S.T)
+    np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S**2)
     # A (N,) output from N points is per point, declared or not.
     per_point = create_test_problem(
         geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: np.full(np.shape(x[0]), 0.3)
     )
-    np.testing.assert_allclose(per_point.diffusion(0.0, np.zeros((4, 2)), None), np.full(4, 0.045))
+    np.testing.assert_allclose(per_point.diffusion(0.0, tuple(np.zeros((2, 4))), None), np.full(4, 0.045))
 
     with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
         create_test_problem(
             geometry=grid_2d, components=components_2d, diffusion=lambda t, x, m: 0.5 * S @ S.T
-        ).volatility(0.0, np.zeros((4, 2)), None)
+        ).volatility(0.0, tuple(np.zeros((2, 4))), None)
 
     # On a 2 x 2 grid a (2, 2) output from the grid's own points is either reading: still refused.
     grid_2x2 = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[2, 2], dimension=2)
@@ -1077,7 +1077,7 @@ def test_a_per_point_callable_on_a_grid_ending_in_d_by_d_is_read_per_point():
     per_point = create_test_problem(
         geometry=grid_3d, components=components_3d, diffusion=lambda t, x, m: np.full((4, 3, 3), 0.02)
     )
-    np.testing.assert_allclose(per_point.volatility(0.0, [x, y, z], None), np.full((4, 3, 3), 0.2))
+    np.testing.assert_allclose(per_point.volatility(0.0, (x, y, z), None), np.full((4, 3, 3), 0.2))
     with pytest.raises(ValueError, match=r"trailing \(3, 3\) axes"):
         per_point.volatility(0.0, [np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3)], None)
 
@@ -1098,7 +1098,7 @@ def test_callable_volatility_is_held_as_supplied():
     problem = create_test_problem(volatility=sigma_func)
 
     assert problem.volatility is sigma_func
-    assert problem.diffusion(0.0, 0.3, 0.4) == pytest.approx(0.5 * (0.1 + 0.5 * 0.4) ** 2)
+    assert problem.diffusion(0.0, (0.3,), 0.4) == pytest.approx(0.5 * (0.1 + 0.5 * 0.4) ** 2)
     with pytest.raises(NotImplementedError, match="SomeSolver uses one scalar volatility"):
         scalar_volatility(problem.volatility, consumer="SomeSolver")
     assert problem.has_state_dependent_coefficients()

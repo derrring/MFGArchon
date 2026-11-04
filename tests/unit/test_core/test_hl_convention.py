@@ -76,7 +76,7 @@ from mfgarchon.core.hamiltonian import (
 #   8.0  deep saturation, where an unrestricted conjugate diverges worst
 P_SWEEP = [0.0, 0.5, 1.5, 3.0, 8.0]
 
-X_POINT = np.array([0.25])
+X_POINT = (0.25,)
 M_VALUE = 2.0
 
 # Non-trivial V and f: constant-in-x V is enough because the fork is an additive

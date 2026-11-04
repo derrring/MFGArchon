@@ -21,6 +21,8 @@ WHAT EACH GROUP PINS, AND WHAT WOULD CATCH IT
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 import numpy as np
@@ -73,17 +75,17 @@ def _m(t, x):
 
 def _hess_u(t, x):
     hess = np.zeros((*np.shape(x[0]), 2, 2))
-    hess[:, 0, 0] = -_a1(t) * C**2 * np.cos(C * x[0])
-    hess[:, 1, 1] = -BETA * _a1(t) * C**2 * np.cos(C * x[1])
+    hess[..., 0, 0] = -_a1(t) * C**2 * np.cos(C * x[0])
+    hess[..., 1, 1] = -BETA * _a1(t) * C**2 * np.cos(C * x[1])
     return hess
 
 
 def _hess_m(t, x):
     hess = np.zeros((*np.shape(x[0]), 2, 2))
     common = _a2(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2
-    hess[:, 0, 0] = -4 * C**2 * common
-    hess[:, 1, 1] = -16 * C**2 * common
-    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2
+    hess[..., 0, 0] = -4 * C**2 * common
+    hess[..., 1, 1] = -16 * C**2 * common
+    hess[..., 0, 1] = hess[..., 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2
     return hess
 
 
@@ -251,7 +253,7 @@ class TestRefusals:
 
     def test_a_field_of_the_wrong_shape_is_refused(self, pair, points):
         """An ``(N, 1)`` where an ``(N,)`` is expected broadcasts to ``(N, N)`` with no error."""
-        wrong = ManufacturedPair(**{**pair.__dict__, "m_t": lambda t, x: pair.m_t(t, x)[:, None]})
+        wrong = dataclasses.replace(pair, m_t=lambda t, x: np.stack([pair.m_t(t, x[0])], axis=-1))
         with pytest.raises(ValueError, match=r"m_t must return shape \(200,\)"):
             fp_source(wrong, _hamiltonian(), SIGMA)(1.3, points)
 
@@ -263,9 +265,7 @@ class TestRefusals:
 class TestCheckPair:
     @staticmethod
     def _cross_flipped(pair):
-        return ManufacturedPair(
-            **{**pair.__dict__, "hess_m": lambda t, x: _hess_m(t, x) * np.array([[1, -1], [-1, 1]])}
-        )
+        return dataclasses.replace(pair, hess_m=lambda t, x: _hess_m(t, x[0]) * np.array([[1, -1], [-1, 1]]))
 
     def test_an_isotropic_source_cannot_see_a_wrong_cross_derivative(self, pair, points):
         """The measurement that justifies check_pair existing: ``tr(D . Hess)`` with a diagonal D
@@ -297,7 +297,7 @@ class TestCheckPair:
         assert set(baseline) == {"u_t", "grad_u", "hess_u", "m_t", "grad_m", "hess_m"}
         assert all(value < 1e-4 for value in baseline.values()), baseline
         for field in baseline:
-            mutated = ManufacturedPair(**{**pair.__dict__, field: lambda t, x, f=field: 1.3 * getattr(pair, f)(t, x)})
+            mutated = dataclasses.replace(pair, **{field: lambda t, x, f=field: 1.3 * getattr(pair, f)(t, x)})
             assert pair_derivative_errors(mutated, 1.3, points)[field] > 1e-2, field
 
 

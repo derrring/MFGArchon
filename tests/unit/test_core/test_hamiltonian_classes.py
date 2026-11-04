@@ -400,7 +400,7 @@ class TestBatchPolymorphism:
     def test_separable_call_batch(self, separable_2d, batch_data_2d):
         """Batch __call__ returns shape (N,)."""
         x, m, p = batch_data_2d
-        result = separable_2d(x=x, m=m, p=p, t=0.0)
+        result = separable_2d(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (5,)
 
@@ -453,7 +453,7 @@ class TestBatchPolymorphism:
         m = rng.uniform(0.1, 2.0, size=N)
         p = rng.standard_normal((N, d))
 
-        result = H.dp(x=x, m=m, p=p, t=0.0)
+        result = H.dp(x=tuple(x.T), m=m, p=p, t=0.0)
         assert result.shape == (N, d)
 
         # Verify against pointwise
@@ -575,7 +575,7 @@ class TestCongestionHamiltonian:
         x = np.array([0.5])
         m = 1.0
         p = np.array([3.0])
-        result = congestion_1d(x=x, m=m, p=p, t=0.0)
+        result = congestion_1d(x=tuple(x), m=m, p=p, t=0.0)
         assert isinstance(result, float)
         # Manual: |p|^2/(2*lambda*c(m)) - V(x)
         # = 9/(2*2*(1+1)) - 0.25 = 9/8 - 0.25 = 0.875

@@ -102,13 +102,13 @@ def _shape(dim: int, x_factor, y_factor=None) -> Shape:
     if dim == 1:
         return Shape(
             lambda X: fx(X[..., 0]),
-            lambda X: dfx(X[..., 0])[:, None],
+            lambda X: dfx(X[..., 0])[..., None],
             lambda X: d2fx(X[..., 0]),
         )
     fy, dfy, d2fy = _cos_x(KY, EPS) if y_factor is None else y_factor
     return Shape(
         lambda X: fx(X[..., 0]) * fy(X[..., 1]),
-        lambda X: np.stack([dfx(X[..., 0]) * fy(X[..., 1]), fx(X[..., 0]) * dfy(X[..., 1])], axis=1),
+        lambda X: np.stack([dfx(X[..., 0]) * fy(X[..., 1]), fx(X[..., 0]) * dfy(X[..., 1])], axis=-1),
         lambda X: d2fx(X[..., 0]) * fy(X[..., 1]) + fx(X[..., 0]) * d2fy(X[..., 1]),
     )
 
@@ -130,7 +130,7 @@ class Cell:
 
     def flux(self, t, X):
         """J = v m - D grad m = -D w exp(-phi/D) grad g + v q0."""
-        return -D * _w(t) * self._e(X)[:, None] * self.g.grad(X) + self.q0 * VEL[: self.dim]
+        return -D * _w(t) * self._e(X)[..., None] * self.g.grad(X) + self.q0 * VEL[: self.dim]
 
     def source(self, t, x):
         X = np.asarray(x[0], dtype=float).reshape(-1, self.dim)
@@ -407,7 +407,7 @@ def test_the_exit_loses_the_integrated_boundary_flux(name: str):
         out = sum(float(cell.flux(t, np.array([[1.0]]))[0, 0]) for t in times) * dt
     else:
         ys = np.linspace(0.0, LY, 401)
-        face = np.stack([np.ones_like(ys), ys], axis=1)
+        face = np.stack([np.ones_like(ys), ys], axis=-1)
         out = sum(float(np.trapezoid(cell.flux(t, face)[:, 0], ys)) for t in times) * dt
     loss = mass(M[-1]) - mass(M[0])
     expected = sourced - out

@@ -416,8 +416,8 @@ def test_the_intervals_are_where_contains_holds(case, domain, dim):
         inside = np.asarray(domain.contains(a[i] + s[:, None] * (b[i] - a[i])))
         assert np.array_equal(held[~near], inside[~near]), f"segment {i}: {a[i]} -> {b[i]}"
     assert np.array_equal(contact.inside_at_start, np.asarray(domain.contains(a)))
-    first = np.where(found.t[:, 0, 0] == 0.0, found.t[:, 0, 1], found.t[:, 0, 0])
-    expected = np.where((found.t[:, 0, 0] == 0.0) & (first == 1.0), np.nan, first)
+    first = np.where(found.t[..., 0, 0] == 0.0, found.t[..., 0, 1], found.t[..., 0, 0])
+    expected = np.where((found.t[..., 0, 0] == 0.0) & (first == 1.0), np.nan, first)
     np.testing.assert_array_equal(contact.t, expected)
 
     walk = list(_walk(domain))

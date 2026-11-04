@@ -237,7 +237,7 @@ class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
         init = np.random.uniform([0.5, 0.5], [1.5, 1.5], (500, 2))
         solver.solve_fp_system(
             initial_particles=init,
-            drift_field=lambda t, x, m: np.column_stack([np.full(np.shape(x[0]), 2.0), np.zeros(np.shape(x[0]))]),
+            drift_field=lambda t, x, m: np.stack([np.full(np.shape(x[0]), 2.0), np.zeros(np.shape(x[0]))], axis=-1),
             volatility=0.3,
             drift_needs_density=False,
             show_progress=False,

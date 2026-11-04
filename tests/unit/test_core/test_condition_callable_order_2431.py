@@ -131,15 +131,15 @@ def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
 @pytest.mark.parametrize(
     ("u_terminal", "expected"),
     [
-        (lambda x, y: x**2 + y**2, lambda X, Y: X**2 + Y**2),
-        (lambda x, y: (y - 0.5) ** 2, lambda X, Y: (Y - 0.5) ** 2),  # independent of its first coordinate
-        (lambda x, y: 1.0, lambda X, Y: np.ones_like(X)),
+        (lambda x: x**2 + x[1]**2, lambda X, Y: X**2 + Y**2),
+        (lambda x: (x[1] - 0.5) ** 2, lambda X, Y: (Y - 0.5) ** 2),  # independent of its first coordinate
+        (lambda x: 1.0, lambda X, Y: np.ones_like(X)),
         # A bare *args names nothing and takes one argument per axis, as this repository's own tests use it.
         (lambda *c: sum((float(a) - 0.5) ** 2 for a in c), lambda X, Y: (X - 0.5) ** 2 + (Y - 0.5) ** 2),
         # Later parameters defaulted: a closure capture, and a function written for 2-D and 3-D alike.
-        (lambda x, y=0.0: x**2 + y**2, lambda X, Y: X**2 + Y**2),
+        (lambda x=0.0: x**2 + x[1]**2, lambda X, Y: X**2 + Y**2),
         (lambda x, y, c=1.0: c * (x**2 + y**2), lambda X, Y: X**2 + Y**2),
-        (lambda x, y, z=0.0: x**2 + y**2 + z, lambda X, Y: X**2 + Y**2),
+        (lambda x=0.0: x**2 + x[1]**2 + x[2], lambda X, Y: X**2 + Y**2),
     ],
     ids=["both", "y_only", "constant", "varargs", "y_defaulted", "closure_capture", "z_defaulted"],
 )

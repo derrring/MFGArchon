@@ -369,8 +369,7 @@ def _mms(t, x, y):
 
 def _mms_source(t, x):
     """``S = m_t + alpha . grad m - D lap m``, for a constant alpha."""
-    x = np.asarray(x)
-    m, mx, my, lap = _mms(t, x[:, 0], x[:, 1])
+    m, mx, my, lap = _mms(t, x[0], x[1])
     return -0.3 * m + MMS_DRIFT[0] * mx + MMS_DRIFT[1] * my - (MMS_SIGMA**2 / 2) * lap
 
 

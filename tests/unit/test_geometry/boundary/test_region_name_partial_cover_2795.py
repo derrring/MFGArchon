@@ -60,9 +60,9 @@ def _window(form: str, face: tuple[int, str], cover: str, cond: str) -> tuple[Bo
         grid.mark_region(
             "window",
             predicate=lambda x: (
-                (np.abs(np.asarray(x[0])[..., axis] - at) <= 1e-9)
-                & (np.asarray(x[0])[..., other] >= lo - 1e-9)
-                & (np.asarray(x[0])[..., other] <= hi + 1e-9)
+                (np.abs(x[axis] - at) <= 1e-9)
+                & (x[other] >= lo - 1e-9)
+                & (x[other] <= hi + 1e-9)
             ),
         )
     return grid.get_boundary_conditions(), grid

@@ -616,11 +616,7 @@ class TestFPParticleSolverCallableDrift:
 
         # Diagonal drift pushing toward upper-right
         def diagonal_drift(t, x, m):
-            # x is (N, 2) for 2D
-            drift = np.zeros_like(x[0])
-            drift[:, 0] = 0.4  # x-drift
-            drift[:, 1] = 0.4  # y-drift
-            return drift
+            return np.stack([np.full(np.shape(x[0]), 0.4), np.full(np.shape(x[0]), 0.4)], axis=-1)
 
         # Initial condition (Gaussian centered at (0.3, 0.3))
         x_coords, y_coords = domain.coordinates
@@ -920,7 +916,7 @@ class TestFPParticlePreserveIndices:
 
     @staticmethod
     def _drift_rightward(t, x, m):
-        return np.column_stack([np.full(np.shape(x[0]), 2.0), np.zeros(np.shape(x[0]))])
+        return np.stack([np.full(np.shape(x[0]), 2.0), np.zeros(np.shape(x[0]))], axis=-1)
 
     def _run(self, preserve_indices, seed=42):
         np.random.seed(seed)

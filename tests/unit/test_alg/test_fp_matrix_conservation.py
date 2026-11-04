@@ -141,7 +141,7 @@ class TestFPProductionConservation:
         # a sign error in an off-diagonal (i.e. a loss of the M-matrix property this test is
         # named for) produces a negative entry rather than a merely inaccurate one.
         M_peaked, _ = _zero_drift_density_evolution(
-            periodic_bc(dimension=1), m_init=lambda x: np.exp(-500.0 * (np.asarray(x) - 0.5) ** 2)
+            periodic_bc(dimension=1), m_init=lambda x: np.exp(-500.0 * (np.asarray(x[0]) - 0.5) ** 2)
         )
         assert M_peaked.min() > -1e-12, "production FP step produced a negative density from a peaked state"
 

@@ -159,7 +159,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -171,7 +172,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -190,7 +192,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -209,7 +212,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -230,7 +234,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -247,7 +252,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -283,7 +289,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_box
 
-        def box_sdf(points):
+        def box_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_box(points, bounds=[[0, 1], [0, 1]])
 
         handler = SDFParticleBCHandler(box_sdf, dimension=2)

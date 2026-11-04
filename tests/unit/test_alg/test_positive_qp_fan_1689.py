@@ -106,8 +106,8 @@ def _sector_hamiltonian(u, sectors, lam):
         return np.einsum("mi,mi->m", coords, du) + 0.5 * lam * np.einsum("mi,mij,mj->m", coords, gram, coords)
 
     both = np.linalg.solve(lam * gram, -du[:, :, None])[:, :, 0]
-    on0 = np.column_stack([np.maximum(0.0, -du[:, 0] / (lam * gram[:, 0, 0])), np.zeros(len(du))])
-    on1 = np.column_stack([np.zeros(len(du)), np.maximum(0.0, -du[:, 1] / (lam * gram[:, 1, 1]))])
+    on0 = np.column_stack([np.maximum(0.0, -du[:, 0] / (lam * gram[..., 0, 0])), np.zeros(len(du))])
+    on1 = np.column_stack([np.zeros(len(du)), np.maximum(0.0, -du[:, 1] / (lam * gram[..., 1, 1]))])
     best = np.minimum(np.minimum(value(on0), value(on1)), 0.0)
     best = np.where(np.all(both >= 0.0, axis=1), np.minimum(best, value(both)), best)
     hamiltonian = np.full(len(u), np.inf)

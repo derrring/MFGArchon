@@ -94,7 +94,7 @@ class Cell:
         X = np.asarray(x[0], dtype=float).reshape(-1, self.dim)
         grad = self.psi.grad(X) + _w(t) * self.phi.grad(X)
         lap = self.psi.lap(X) + _w(t) * self.phi.lap(X)
-        return -_DW * self.phi.f(X) + 0.5 * np.sum(grad**2, axis=1) - D * lap
+        return -_DW * self.phi.f(X) + 0.5 * np.sum(grad**2, axis=-1) - D * lap
 
 
 def _seg(face, bc_type, value=0.0, alpha=1.0, beta=0.0):
@@ -110,7 +110,7 @@ def _y(X):
 
 
 def _col(*cols):
-    return np.stack(cols, axis=1)
+    return np.stack(cols, axis=-1)
 
 
 # ------------------------------------------------------------------------------------------------- 1-D fields

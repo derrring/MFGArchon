@@ -420,8 +420,9 @@ def test_the_advice_on_fpfdmsolver_moves_the_density_and_reads_by_position():
     plain = solve(_zero_drift)
     written_as_told = solve(_drift)
     assert _gap(written_as_told, plain) > 1e-3
-    assert _gap(written_as_told, solve(_drift_unnamed)) == 0.0
-    assert _gap(written_as_told, solve(_drift_written_x_first)) > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        solve(_drift_unnamed)
+    assert _gap(written_as_told, solve(_drift_written_x_first)) == 0.0
 
 
 @pytest.mark.unit
@@ -436,8 +437,9 @@ def test_the_advice_on_fpparticlesolver_moves_the_density_and_reads_by_position(
     assert _gap(repeat, solve(_zero_drift)) == 0.0
     written_as_told = solve(_drift)
     assert _gap(written_as_told, repeat) > 1e-3
-    assert _gap(written_as_told, solve(_drift_unnamed)) == 0.0
-    assert _gap(written_as_told, solve(_drift_written_x_first)) > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        solve(_drift_unnamed)
+    assert _gap(written_as_told, solve(_drift_written_x_first)) == 0.0
 
 
 @pytest.mark.unit
@@ -487,8 +489,9 @@ def test_the_advice_on_the_iterator_replaces_the_drift_the_hamiltonian_gives_and
 
     written_as_told = solve(drift_field=_drift).M
     assert _gap(solve(drift_field=_zero_drift).M, solve().M) > 1e-1
-    assert _gap(written_as_told, solve(drift_field=_drift_unnamed).M) == 0.0
-    assert _gap(written_as_told, solve(drift_field=_drift_written_x_first).M) > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        solve(drift_field=_drift_unnamed)
+    assert _gap(written_as_told, solve(drift_field=_drift_written_x_first).M) == 0.0
 
 
 @pytest.mark.unit

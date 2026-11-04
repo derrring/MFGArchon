@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -191,7 +193,7 @@ def outward_normal_from_sdf(
         ...     return np.linalg.norm(x, axis=-1) - 1.0
         >>> normals = outward_normal_from_sdf(circle_sdf, boundary_points)
     """
-    grad = function_gradient(sdf, points, eps=eps, adaptive_eps=adaptive_eps)
+    grad = function_gradient(lambda z: read_region(sdf, z, role="sdf"), points, eps=eps, adaptive_eps=adaptive_eps)
 
     # Normalize
     if grad.ndim == 1:

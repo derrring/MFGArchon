@@ -194,7 +194,7 @@ PAIR = ManufacturedPair(
 def _diag_hessian(d00, d11):
     """A ``(N, 2, 2)`` Hessian with zero cross term -- correct for u*, which is a separable SUM."""
     hess = np.zeros((len(np.atleast_1d(d00)), 2, 2))
-    hess[:, 0, 0], hess[:, 1, 1] = d00, d11
+    hess[..., 0, 0], hess[..., 1, 1] = d00, d11
     return hess
 
 
@@ -203,9 +203,9 @@ def _hess_m(t, x):
     isotropic sigma multiplies by exactly zero. `check_pair` is what audits it; see the test below."""
     hess = np.zeros((len(x), 2, 2))
     common = _a2(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2
-    hess[:, 0, 0] = -4 * C**2 * common
-    hess[:, 1, 1] = -16 * C**2 * common
-    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2
+    hess[..., 0, 0] = -4 * C**2 * common
+    hess[..., 1, 1] = -16 * C**2 * common
+    hess[..., 0, 1] = hess[..., 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2
     return hess
 
 

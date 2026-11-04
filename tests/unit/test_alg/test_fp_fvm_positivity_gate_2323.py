@@ -61,8 +61,8 @@ def _problem(dimension: int, n: int, periodic: bool = False) -> MFGProblem:
 @pytest.mark.parametrize(
     ("dimension", "n", "periodic", "reconstruction", "field"),
     [
-        (2, 17, False, "upwind", ("potential", lambda x, y: np.sin(2 * np.pi * x) + np.sin(2 * np.pi * y))),
-        (2, 17, False, "muscl", ("potential", lambda x, y: x + y)),
+        (2, 17, False, "upwind", ("potential", lambda x: np.sin(2 * np.pi * x) + np.sin(2 * np.pi * x[1]))),
+        (2, 17, False, "muscl", ("potential", lambda x: x + x[1])),
         (1, 41, False, "upwind", ("potential", lambda x: x)),
         (1, 41, False, "upwind", ("potential", lambda x: 2 * (x - 0.5) ** 2)),
         (1, 41, True, "upwind", ("potential", lambda x: -np.abs(np.sin(np.pi * x)))),

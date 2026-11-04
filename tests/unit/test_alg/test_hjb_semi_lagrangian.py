@@ -1491,7 +1491,7 @@ class TestSLValueUpdateND:
         # Independent analytic LQ form: H = |p|^2/(2λ) - V(x) - f(m) (#2375 ruling 3), so
         # H(p) - 2*H(0) = |p|^2/(2λ) + (V + f), the running cost L(α*) paid over the step.
         h_control = np.sum(p**2, axis=1) / (2.0 * lam)
-        h_state = V(t=t, x=pts) + 0.7 * m
+        h_state = V(t=t, x=tuple(pts.T)) + 0.7 * m
         expected = u_foot + dt * (h_control + h_state)
         old_scheme = u_foot - dt * (h_control - h_state)  # pre-#575/#1413: u_foot - dt*H(p)
 

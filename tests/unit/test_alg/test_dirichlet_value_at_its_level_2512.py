@@ -116,7 +116,7 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
     # The wall dofs, asserted on their own (#2512 comment 6042778010, correction 4: the bar for a wall that
     # carries data).
     box = np.array([[0.0, 1.0]] if d == 1 else [[0.0, 1.0], [0.0, LY]])
-    on_wall = np.any(np.isclose(X, box[:, 0]) | np.isclose(X, box[:, 1]), axis=1)
+    on_wall = np.any(np.isclose(X, box[:, 0]) | np.isclose(X, box[:, 1]), axis=-1)
     assert on_wall.sum() == (2 if d == 1 else 4 * n)
     assert np.abs(np.asarray(result)[:, on_wall] - exact[:, on_wall]).max() < 1e-12
 
@@ -162,7 +162,7 @@ def test_meshless_nitsche_reads_its_data_at_each_level(newton):
         bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=dirichlet_bc(dimension=1, value=g)
     )
     problem = _problem(grid, nt=nt)
-    xs = np.linspace(0.0, 1.0, nx)[:, None]
+    xs = np.linspace(0.0, 1.0, nx)[..., None]
     solver = MeshlessGalerkinHJBSolver(problem, xs, delta=0.35)
     times.clear()
     U = np.asarray(
@@ -174,6 +174,6 @@ def test_meshless_nitsche_reads_its_data_at_each_level(newton):
         )
     )
     levels = np.linspace(0.0, T, nt + 1)[:nt]
-    walls = U[:nt][:, [0, -1]] - (A0 + rate * levels[:, None] + np.array([0.0, 0.7]))
+    walls = U[:nt][:, [0, -1]] - (A0 + rate * levels[..., None] + np.array([0.0, 0.7]))
     assert np.abs(walls).max() < 0.05, walls
     assert sorted(set(times)) == [round(t, 12) for t in levels]

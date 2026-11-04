@@ -41,14 +41,14 @@ def _bump(dimension: int):
     """Centred Gaussian, written per dimension because the IC signature is resolved by arity."""
     if dimension == 1:
         return lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2)
-    return lambda x, y: np.exp(-10 * ((np.asarray(x[0]) - 0.5) ** 2 + (np.asarray(y) - 0.5) ** 2))
+    return lambda x: np.exp(-10 * ((np.asarray(x[0]) - 0.5) ** 2 + (np.asarray(x[1]) - 0.5) ** 2))
 
 
 def _ripple(dimension: int):
     """Terminal condition with interior local maxima along every axis, where the two presets separate."""
     if dimension == 1:
         return lambda x: np.cos(4 * np.pi * np.asarray(x[0]))
-    return lambda x, y: np.cos(4 * np.pi * np.asarray(x[0])) * np.cos(4 * np.pi * np.asarray(y))
+    return lambda x: np.cos(4 * np.pi * np.asarray(x[0])) * np.cos(4 * np.pi * np.asarray(x[1]))
 
 
 def _problem(n: int = _N, shape: tuple[int, ...] | None = None) -> MFGProblem:

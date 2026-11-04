@@ -308,14 +308,14 @@ def _periodic_errors(d: int, n: int):
         Nt=NT,
     )
     axes = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * d, indexing="ij")
-    points = np.stack([a.ravel() for a in axes], axis=1)
+    points = np.stack([a.ravel() for a in axes], axis=-1)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         solver = HJBGFDMSolver(problem, collocation_points=points, delta=2.5 / (n - 1))
         assert len(solver.boundary_indices) == 0, "a periodic axis has no boundary point (#1841)"
         U = solver.solve_hjb_system(M_density=np.tile(m_star(points), (NT + 1, 1)), U_terminal=_periodic_phi(points)[0])
     error = np.asarray(U)[0] - (_periodic_phi(points)[0] + C_TIME * T_END)
-    seam = np.any(np.isclose(points, 0.0) | np.isclose(points, 1.0), axis=1)
+    seam = np.any(np.isclose(points, 0.0) | np.isclose(points, 1.0), axis=-1)
     return float(np.sqrt(np.mean(error**2))), {"seam": float(np.abs(error[seam]).max())}
 
 

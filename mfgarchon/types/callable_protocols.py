@@ -365,17 +365,17 @@ def _sample_count(dimension: int) -> int:
     return 4 if dimension == 3 else 3
 
 
-def _entry_at(result: NDArray, batch_shape: tuple[int, ...], index: tuple[int, ...], described: str, guidance: str) -> NDArray:
-    """A read's value at ``index``, by the form it returned: a scalar holds at every point, a result of the batch's shape or
-    with it leading holds its entry there, and a point's own form, shorter than that, holds as it is. Anything else has no
-    entry to compare, and is refused by name."""
+def _entry_at(result: NDArray, batch_shape: tuple[int, ...], own: tuple[int, ...], index: tuple[int, ...]) -> NDArray | None:
+    """A read's value at ``index``, by the form it returned: a scalar holds at every point, a result with the batch's shape
+    leading holds its entry there, and a result of one point's own shape ``own`` holds as it is. Anything else has no entry
+    to compare, which is None."""
     if result.ndim == 0 or result.size == 1:
         return result.reshape(-1)
     if result.shape[: len(batch_shape)] == batch_shape:
         return np.ravel(result[index])
-    if result.ndim == 1:
-        return result
-    raise ValueError(f"{described}: a return of shape {result.shape} has no entry for a batch of shape {batch_shape}. {guidance}")
+    if result.shape == own:
+        return np.ravel(result)
+    return None
 
 
 def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: Slots, name: str, guidance: str) -> None:
@@ -405,6 +405,8 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         together = np.asarray(read(**batch), dtype=float)
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
+    if together.ndim == len(shape) + 1 and together.shape == (d, *shape):
+        together = np.moveaxis(together, 0, -1)  # per coordinate, the coordinate axis first, as FP-FDM's drift returns it
     if together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape:
         raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
     rows_together, rows_alone = [], []
@@ -419,8 +421,12 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
             alone = np.asarray(read(**point), dtype=float)
         except _UNREADABLE as e:
             raise ValueError(f"{described}, one point at a time, raised {type(e).__name__}: {e}. {guidance}") from e
-        rows_alone.append(_entry_at(alone, shape, index, described, guidance))
-        rows_together.append(_entry_at(together, shape, index, described, guidance))
+        own = together.shape[len(shape) :]
+        entry = _entry_at(alone, shape, own, index)
+        if entry is None:
+            raise ValueError(f"{described}: one point's read returned shape {alone.shape}, which has no entry to compare with a batch's {together.shape}. {guidance}")
+        rows_alone.append(entry)
+        rows_together.append(np.ravel(together) if together.size == 1 else np.ravel(together[index]))
     width = max(row.size for row in (*rows_together, *rows_alone))
     _refuse_unless_equal(
         np.vstack([np.broadcast_to(row, (width,)) for row in rows_together]),

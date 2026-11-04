@@ -1257,13 +1257,9 @@ class TestFPFDMSolverCallableDrift:
         Nx, Ny = domain.Nx_points
 
         # Callable drift returning vector field
-        def vector_drift(t, coords, m):
-            x, y = coords
-            # Return vector drift: shape (2, Nx, Ny)
-            drift = np.zeros((2, len(x), len(y)))
-            drift[0] = 0.3 * np.ones((len(x), len(y)))  # x-drift
-            drift[1] = 0.0 * np.ones((len(x), len(y)))  # no y-drift (synthetic U limitation)
-            return drift
+        def vector_drift(t, x, m):
+            # Return vector drift: shape (2, Nx, Ny). No y-drift (synthetic U limitation)
+            return np.stack([np.full(np.shape(x[0]), 0.3), np.zeros(np.shape(x[0]))])
 
         # Initial condition (Gaussian)
         x_coords, y_coords = domain.coordinates
