@@ -7,4 +7,4 @@
   - A refusal, a warning and the advice in either say what was run, and state no universal.
   - A review rebuilds the claims that gate the merge; a number no gating claim rests on moves to the issue comment or is deleted.
   - Issues under the filing rule, comments, labels, fold lines, pushes, opening a PR, and a merge whose last review is MERGE-OK with the gate green and that is not a partial fix need no per-item approval.
-  - Corrected against the tree: the server does enforce `main`'s ruleset; the top-level and package directories; `create_standard_solver` raises rather than being absent; `deprecated_on`; the label dimensions; the tracked output directories; the pointer to a document that does not exist.
+  - Corrected against the tree: the server does enforce `main`'s ruleset; the top-level and package directories; `create_standard_solver` is a stub that raises in `factory/solver_factory.py`; `deprecated_on`; the label dimensions; the tracked output directories; the pointer to a document that does not exist.

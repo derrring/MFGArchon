@@ -72,9 +72,9 @@ result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)    # Safe Mode: pick t
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)         # Expert Mode: bring your own pair
 result = problem.solve(max_iterations=200, tolerance=1e-8)   # explicit params, not magic "mode=" strings
 ```
-There is no factory to reach for. `create_standard_solver` / `create_fast_solver` /
-`create_research_solver` / `create_basic_solver` / `create_accurate_solver` raise on call;
-`create_solver` is deprecated in favour of the same three modes (#580).
+There is no factory to reach for. `create_fast_solver` / `create_research_solver` /
+`create_basic_solver` / `create_accurate_solver` raise on call, and so does `create_standard_solver`
+in `factory/solver_factory.py`, which `mfgarchon.factory` does not export; `create_solver` is deprecated in favour of the same three modes (#580).
 
 No interface is fixed for v1.0 yet, so user-facing text does not call any constructor form "the v1.0 API" (user ruling, 2026-10-12). `MFGProblem(model=Model(...), domain=..., conditions=Conditions(...))` is "the model/domain/conditions form", and `MFGProblem(geometry=, components=, ...)` is "the components= form".
 
@@ -108,9 +108,9 @@ caller's density. Not clips in this sense include:
   weight, a kernel's compact support. A position clamped onto a wall while a boundary condition is
   applied is not this case: that clamp chooses the condition (see #2485, class 10).
 - **A clamp bounded by a refusal**: `clip_nonnegative_or_raise` zeroes a negative density only while
-  that adds at most its `threshold` of the mass, and raises beyond it. A clamp bounded by a refusal is
-  admitted when its threshold sits at round-off. A threshold set to a scheme's own tolerance is not
-  admitted until ruled, and the open case is on its issue.
+  that adds at most its `threshold` of the mass, and raises beyond it. The default threshold,
+  `MAX_CLIP_MASS_FABRICATION`, is admitted (ruled 2026-10-04). A threshold set to a scheme's own tolerance is
+  not admitted until ruled, and the open case is on #2485.
 
 #2485 classifies the `np.clip` calls against this and lists the other shapes it keeps; the
 `np.maximum(·, 0)` clamps are not yet classified.
@@ -152,7 +152,8 @@ unauditable; adding to it casually is how it got there.
    A cost quoted over the excluded tests takes numerator and denominator from the same set. A run over
    part of the set gives no per-test figure, and does not license widening the marker filter.
 
-   So `kill_count: 2` means two defenders *in that selection*. Re-running the sweep is not the price of
+   So `kill_count: 2` means two defenders *in that selection*, and the marker filter is not a knob
+   that could be widened. Re-running the sweep is not the price of
    admission, so re-measure only when adding a mutation. It leaves mutations in the tree when killed
    (#1849, #2229), and it is **expensive**. Derive its current cost, which is a property of the file
    beside it:
@@ -228,7 +229,7 @@ be an honest way to **close** a fix, admitted as such and saying what it would n
 reason to **add** a test. Writing one anyway is the moment to file the "no oracle yet" issue instead.
 
 **"Which convention does it defend" is a question, not a lookup.** The Joplin `[Principle]
-Conventions Index` and `scripts/discrimination_baseline.json`'s `MUTATIONS` are nearly disjoint (#2227),
+Conventions Index` and the mutations in `scripts/discrimination_baseline.json` are nearly disjoint (#2227),
 and neither is the list. A test defending something on neither is admissible under class 1 or 2 on its
 own merits. The index is a private Joplin note that a reader outside this machine cannot open, so state
 the convention in the test rather than cite the index.
@@ -240,7 +241,7 @@ never by matching a keyword.
 
 Cross-project testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
-- **Unit tests (`tests/unit`, `tests/integration`)** — stable public APIs (`problem.solve()`, factories), core infra (config/problem/result/backend), numerical correctness that must not regress. They run in the local gate on every push, and on GitHub only in the smoke subset, nightly and release tiers.
+- **Unit tests (`tests/unit`, `tests/integration`)** — public APIs (`problem.solve()`), core infra (config/problem/result/backend), numerical correctness that must not regress. They run in the local gate on every push, and on GitHub in the smoke subset, `python-compat.yml`, `discrimination.yml`, nightly and release.
 - **Inline smoke tests (`if __name__ == "__main__"`)** — rapidly-changing algorithm implementations; visual verification; low-maintenance; delete naturally on refactor. `python mfgarchon/alg/numerical/hjb_solvers/my_solver.py`.
 - **Examples (`examples/`)** — complete user workflows, not quick algorithm testing.
 
@@ -360,13 +361,13 @@ the relevant disagreement, not merely on validity; every defect above sat on a c
 A rule here states what to do and why. An incident, a measurement or a figure that supports it stays in the issue or pull request that holds it; a passage here that holds one is rewritten to its rule.
 
 ### Deprecation policy ⚠️ CRITICAL
-Deprecated code MUST immediately redirect to the new standard: (1) old API calls new internally (zero behavior difference); (2) **mandatory equivalence test** (old == new); (3) update ALL call sites (direct, factory, defaults, examples, tests); (4) timeline 3 minor versions OR 6 months before removal, **whichever comes FIRST** (user ruling, #2366). Ref: the last in-repo version of the policy, `cc21745c^:docs/development/DEPRECATION_LIFECYCLE_POLICY.md` — historical, and a git ref rather than a path because the document left this repository in `cc21745c` and the bare filename here named nothing after `68691252` truncated it. **These four clauses are not the only statement of the removal rule in-tree, and they are not its owner.** The owner is `_removable_by_policy` in `mfgarchon/utils/deprecation.py` — it implements the timeline, and `check_removal_readiness` gates on further conditions clause (4) does not name. Every other statement restates it and must agree with it: `docs/user/LEGACY_PARAMETERS.md` for users, and `scripts/audit_deprecated_symbols.py`'s module docstring for the audit. Do not take that list as complete — it is a statement about the tree, which moves; `git grep "3 minor versions"` enumerates the live population, and #2366 reconciled the ones standing when it landed. A deprecation with no `deprecated_on` is judged by versions alone.
+Deprecated code MUST immediately redirect to the new standard: (1) old API calls new internally (zero behavior difference); (2) **mandatory equivalence test** (old == new); (3) update ALL call sites (direct, factory, defaults, examples, tests); (4) timeline 3 minor versions OR 6 months before removal, **whichever comes FIRST** (user ruling, #2366). Ref: the last in-repo version of the policy, `cc21745c^:docs/development/DEPRECATION_LIFECYCLE_POLICY.md` — historical, and a git ref rather than a path because the document left this repository in `cc21745c`. **These four clauses are not the only statement of the removal rule in-tree, and they are not its owner.** The owner is `_removable_by_policy` in `mfgarchon/utils/deprecation.py` — it implements the timeline, and `check_removal_readiness` gates on further conditions clause (4) does not name. Every other statement restates it and must agree with it: `docs/user/LEGACY_PARAMETERS.md` for users, and `scripts/audit_deprecated_symbols.py`'s module docstring for the audit. Do not take that list as complete — it is a statement about the tree, which moves; `git grep "3 minor versions"` enumerates the live population, and #2366 reconciled the ones standing when it landed. A deprecation with no `deprecated_on` is judged by versions alone.
+
+The input contract is `docs/user/CONVENTIONS.md`. Code that reads a user's input accepts no form the contract does not name. A defect in reading a form is fixed by refusing it there, and widening the contract is the user's ruling, written there before the code.
 
 This repository is pre-1.0: fix a cross-cutting defect at the highest owning abstraction and remove
 the redundant path instead of preserving a local fork. Breaking changes accumulate as `changelog.d/` fragments (#1521) and ship in the current `v0.MINOR.x` patch line unless the
 maintainer explicitly chooses a minor release; do not add compatibility shims for unreleased code.
-
-The input contract is `docs/user/CONVENTIONS.md`. Code that reads a user's input accepts no form the contract does not name. A defect in reading a form is fixed by refusing it there, and widening the contract is the user's ruling, written there before the code.
 
 ### Local patches are the anti-pattern ⚠️ (user ruling, 2026-10-12; #2626)
 
@@ -387,7 +388,7 @@ Urgency is not an admission: it changes the order of work, not its level. Nor is
 
 The class line is checked when the plan is approved, and again at review (§ *Review before merge*).
 
-How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan. A raise: *Before filing an issue*.
+How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan, unless *Before filing an issue* ledgers it as low priority. A raise: *Before filing an issue*.
 
 A census is written once per theme, at plan, by script, and re-run at the head. A review tries one case on an axis it held constant. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
 
@@ -433,11 +434,11 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 
 ### GitHub issue/PR management ⚠️ MANDATORY
 
-**What needs no per-item approval.** Filing an issue under the filing rule, a comment, a label, a fold line, a push and opening a PR need no per-item approval. A merge needs none when its last review is MERGE-OK, its gate is green and it is not a partial fix. Everything else stays with the user: a merge with a Blocker outstanding or under an admission, a fourth review, a change to `AGENTS.md`, anything sent to an external contributor, and any ruling.
+**What needs no per-item approval.** Filing an issue under the filing rule, a comment, a label, a fold line, a push and opening a PR need no per-item approval. A merge needs none when its last review is MERGE-OK, its gate is green and it is not a partial fix. Everything else stays with the user: a merge with a Blocker outstanding or under an admission, a fourth review, a change to `AGENTS.md`, anything sent to an external contributor, and any ruling other than a plan approver's on its plan's scope and structure.
 
 **A quantified claim in an issue — above all in its title — must be anchored or it expires**; see § *Closing out a fix*, which owns the rule.
 
-**Every issue carries all 4 label dimensions**: `priority:` (high/medium/low), `area:` (algorithms/config/core/documentation/geometry/performance/testing/visualization), `size:` (small=hrs–1d / medium=1–3d / large=1+wk), `type:` (bug/enhancement/chore/refactor/infrastructure/research/type-checking/question). Multiple `area:` allowed; one `priority:`/`size:` each. Family prefixes: `family:` (a defect family), `blocks:` (what an issue stands in front of). Workflow-state prefixes: `status:` (blocked/in-review/needs-testing), `resolution:` (merged/superseded/wontfix/duplicate/invalid). Bare (GitHub conventions): `good first issue`, `help wanted`, `automated`, `chore`, `documentation`.
+**Every issue carries all 4 label dimensions**: `priority:` (high/medium/low), `area:` (algorithms/config/core/documentation/geometry/performance/testing/visualization), `size:` (small=hrs–1d / medium=1–3d / large=1+wk), `type:` (bug/enhancement/chore/refactor/infrastructure/research/type-checking/question). Multiple `area:` allowed; one `priority:`/`size:` each. Family prefixes: `family:` (a defect family), `blocks:` (what an issue stands in front of). Workflow-state prefixes: `status:` (blocked/in-review/needs-testing), `resolution:` (merged/superseded/wontfix/duplicate/invalid). Bare, and no others (GitHub conventions): `good first issue`, `help wanted`, `automated`, `chore`, `documentation`.
 
 ```bash
 gh issue edit N --add-label "priority: medium,area: algorithms,size: small,type: enhancement"
@@ -480,11 +481,11 @@ for this repo is:
 | when behaviour could have changed | the blast radius **by path**, not by `-k` name match |
 | at the boundary | **`git push`** — the hook runs the gate, once |
 
-Between fix rounds, push, so the hook runs the gate, and run what the fix's reach touches and the mutants for the pins the round adds. The second stack and a repeated fuzz run once, when a review returns MERGE-OK; a failure there is a Blocker. Logic a correction adds still gets its own fuzz before the next review.
-
 The one case for running it by hand: you need to *read* its diagnostics (discrimination fraction,
 capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
 `--no-verify` only if the working tree has not moved since.
+
+Between fix rounds, push, so the hook runs the gate, and run what the fix's reach touches and the mutants for the pins the round adds. The second stack (main's `.venv`, beside `mfg_env`) and a repeated fuzz run once, when a review returns MERGE-OK; a failure there that does not reproduce at the base sha is a Blocker, and one that does goes through *Before filing an issue*. Logic a correction adds still gets its own fuzz before the next review.
 
 ⚠️ **From a `git worktree` the gate names the tree it measured, and refuses if it is the wrong
 one.** `gate package : <path>` sits beside `gate interpreter`, in the head and in the pasted tail,
@@ -580,6 +581,6 @@ Rich-only backend (v0.16.15+; external tqdm removed — legacy alias kept). Use 
 ---
 
 ## 📜 Solo Maintainer's Protocol
-1. Propose in issue → 2. implement in a feature-branch PR → 3. **independent adversarial review** (fresh reviewer, not just self-review — mandatory, see *Branches & PRs*) → 4. **verify issue completion** → 5. merge under § *Review before merge* with the gate green.
+1. Propose in issue → 2. implement in a feature-branch PR → 3. **independent adversarial review** (fresh reviewer, not just self-review — mandatory, see *Branches & PRs*) → 4. **verify issue completion** → 5. merge under § *Review before merge* with the gate green and all checks passing.
 
 **Issue-completion verification** ⚠️ (before closing an issue / opening a PR): read the *original* issue (not commit messages); check every acceptance criterion; answer every discussion point; confirm all subtasks; document deviations (update the issue before closing). Anti-pattern: closing on commit messages without re-reading the requirements.
