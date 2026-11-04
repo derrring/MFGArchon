@@ -1340,8 +1340,7 @@ def _leave_out_cells_with_no_navigable_point(
         ),
         remedy=(
             "Set the density to zero at the nodes outside the navigable set: density * "
-            "read_region(navigable, nodes, role="navigable").reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
-            'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
+            'navigable(tuple(np.meshgrid(*coordinates, indexing="ij"))).'
         ),
     )
 
