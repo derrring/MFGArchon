@@ -258,7 +258,7 @@ class FixedPointIterator(BaseCouplingIterator):
             shape,
         )
 
-    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
         self,
         config: MFGSolverConfig | None = None,
@@ -545,7 +545,9 @@ class FixedPointIterator(BaseCouplingIterator):
                 # #1717 found six more coupling loops with this same shape and no check at all, so the
                 # decisions it encodes -- publish the diverged iterate, restore the terminal row, copy
                 # before restoring -- now have one owner instead of being restated seven times.
-                diverged = diverged_value_function(U_new, U_terminal, site="FixedPointIterator", iteration=iiter)
+                diverged = diverged_value_function(
+                    U_new, U_terminal, site="FixedPointIterator", density=M_old, iteration=iiter
+                )
                 if diverged is not None:
                     self.U = diverged
                     convergence_reason = "diverged_nan"
@@ -604,13 +606,13 @@ class FixedPointIterator(BaseCouplingIterator):
                 )
 
                 if self.use_anderson and self.anderson_accelerator is not None:
-                    # Anderson acceleration on U only (M uses standard damping for positivity)
+                    # Anderson acceleration on U only (M uses standard damping)
                     x_current_U = U_old.flatten()
                     f_current_U = U_new.flatten()
                     x_next_U = self.anderson_accelerator.update(x_current_U, f_current_U, method="type1")
                     self.U = x_next_U.reshape(U_old.shape)
 
-                    # Standard damping for M (guarantees non-negativity and mass conservation)
+                    # Standard damping for M, a convex combination, which keeps a mass the two densities share
                     self.M = effective_theta_M * M_new + (1 - effective_theta_M) * M_old
                 else:
                     # Standard damping for both - Issue #719: separate factors + schedules
@@ -625,16 +627,6 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Preserve boundary conditions
                 self.M = preserve_initial_condition(self.M, M_initial)
                 self.U = preserve_terminal_condition(self.U, U_terminal)
-
-                # Layer 2: Record MeasureField snapshot (#956)
-                # Use terminal density M[-1] as the measure representative —
-                # it varies most across Picard iterates (M[0] is fixed by IC).
-                if measure_field is not None:
-                    from mfgarchon.core.measure import ParticleMeasure
-
-                    grid_1d = self.problem.geometry.get_spatial_grid().ravel()
-                    mu_k = ParticleMeasure.from_density(self.M[-1], grid_1d)
-                    measure_field.add_snapshot(mu_k, self.U.copy())
 
                 # Issue #1489 (S5): a FINITE but blown-up density (e.g. the pre-overflow divergence,
                 # total mass ~5.9e4 before it becomes inf) passes the isfinite check below and would be
@@ -655,27 +647,35 @@ class FixedPointIterator(BaseCouplingIterator):
                     self.iterations_run = iiter + 1
                     break
 
-                # Issue #688: Early termination on NaN/Inf (runtime safety)
-                # Issue #1078: identify HJB vs FP source for triage
+                # Issue #688: Early termination on NaN/Inf (runtime safety). It says which array is non-finite and
+                # what the sweep was handed, and guesses no cause (#2845).
                 if not np.all(np.isfinite(self.U)) or not np.all(np.isfinite(self.M)):
                     hjb_bad = not np.all(np.isfinite(U_new))
                     fp_bad = not np.all(np.isfinite(M_new))
-                    if hjb_bad and not fp_bad:
-                        source = "HJB (Newton divergence)"
-                    elif fp_bad and not hjb_bad:
-                        source = "FP (density blow-up)"
-                    elif hjb_bad and fp_bad:
-                        source = "both HJB and FP"
-                    else:
-                        source = "post-damping (likely Anderson acceleration)"
+                    bad = [
+                        name for name, is_bad in (("the value function", hjb_bad), ("the density", fp_bad)) if is_bad
+                    ]
                     convergence_reason = "diverged_nan"
                     logger.warning(
-                        "NaN/Inf detected in iteration %d (source: %s). Terminating early.",
+                        "NaN/Inf in %s in iteration %d, reported by FixedPointIterator: the density the sweep was handed has "
+                        "a minimum of %.3e. Terminating early.",
+                        " and ".join(bad) or "the damped iterate",
                         iiter + 1,
-                        source,
+                        float(np.nanmin(M_old)),
                     )
                     self.iterations_run = iiter + 1
                     break
+
+                # Layer 2: Record MeasureField snapshot (#956), after the guards above, which end a
+                # sweep that has no measure to record.
+                # Use terminal density M[-1] as the measure representative —
+                # it varies most across Picard iterates (M[0] is fixed by IC).
+                if measure_field is not None:
+                    from mfgarchon.core.measure import ParticleMeasure
+
+                    grid_1d = self.problem.geometry.get_spatial_grid().ravel()
+                    mu_k = ParticleMeasure.from_density(self.M[-1], grid_1d)
+                    measure_field.add_snapshot(mu_k, self.U.copy())
 
                 # Calculate convergence metrics
                 from mfgarchon.utils.convergence import sweep_change
@@ -827,7 +827,9 @@ class FixedPointIterator(BaseCouplingIterator):
             self.U,
             self.M,
             check_finite=True,
-            check_density_positive=True,
+            # A solver that keeps a negative reports the same thing itself, and this check's advice, to make the density
+            # non-negative, is the user's to take or not (#2845).
+            check_density_positive=not getattr(self.fp_solver, "reports_negative_density", False),
         )
         if not output_validation.is_valid:
             metadata["output_validation"] = {

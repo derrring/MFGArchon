@@ -130,7 +130,7 @@ class MultiPopulationIterator:
         """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
         return self.relaxation
 
-    @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers))
+    @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers), fp_solvers_of=lambda self: list(self.fp_solvers))
     def solve(
         self,
         max_iterations: int = 50,
@@ -282,7 +282,11 @@ class MultiPopulationIterator:
                 # `U[k]` is written in place, so there is no last-finite iterate to fall back on --
                 # which is why the diverged one is published rather than a restored predecessor.
                 diverged = diverged_value_function(
-                    U[k], U_terminal_k, site=f"MultiPopulationIterator[population {k}]", iteration=iteration
+                    U[k],
+                    U_terminal_k,
+                    site=f"MultiPopulationIterator[population {k}]",
+                    density=m_all,
+                    iteration=iteration,
                 )
                 if diverged is not None:
                     U[k] = diverged

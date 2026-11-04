@@ -657,7 +657,7 @@ class BlockIterator(BaseCouplingIterator):
 
         return U_new, M_new
 
-    @verdict_reads_inner_failures(lambda self: [self.hjb_solver])
+    @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
         self,
         max_iterations: int = 100,
@@ -759,7 +759,7 @@ class BlockIterator(BaseCouplingIterator):
             # already declined to run FP on it, so `M_new` is the previous density -- which would
             # otherwise read as zero change and satisfy the convergence test below.
             diverged = diverged_value_function(
-                U_new, self._U_terminal, site=f"BlockIterator[{method_name}]", iteration=iiter
+                U_new, self._U_terminal, site=f"BlockIterator[{method_name}]", density=M_old, iteration=iiter
             )
             if diverged is not None:
                 self.U = diverged

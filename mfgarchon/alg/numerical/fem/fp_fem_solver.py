@@ -50,6 +50,11 @@ class FPFEMSolver(WeakFormFPSolver):
     """
 
     _scheme_family = SchemeFamily.FEM
+    _negative_density_note = (
+        "FP-FEM's Galerkin step can go negative at a high cell Peclet number |v|h/(2D), and on rough data or a coarse mesh "
+        "at a lower one; a negative source, load, boundary value or initial density can do it too. What has cleared one: "
+        "a finer mesh, given diffusion; P1 on a simplex mesh; P1 on skfem's MeshTri.init_tensor or MeshTet.init_tensor."
+    )
 
     #: What `fem/bc_adapter.py:apply_bc_to_fem_system` actually branches on: DIRICHLET condenses,
     #: NEUMANN/NO_FLUX/REFLECTING are the natural BC, ROBIN augments the operator, FLUX is a load

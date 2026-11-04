@@ -2426,10 +2426,9 @@ def flux_bc(
 
     Pass it to the FP solver as its own ``boundary_conditions``. It is FP-side only, so a problem or geometry
     carrying it is refused, since that BC is shared with the HJB (user ruling 2026-10-09, B-2). ``FPFDMSolver``
-    (its implicit step) and ``FPFEMSolver`` honour it; every other solver refuses it. A step is refused by name rather
-    than clipped past the gate where the clip would fabricate mass the flux decides (B-3,
-    `refuse_what_a_flux_takes_negative`); any other step whose own clip is past the gate is the scheme's, the flux
-    included (FP-FEM clips it).
+    (its implicit step) and ``FPFEMSolver`` honour it; every other solver refuses it. A step is refused by name where the
+    flux takes the density negative past the gate (B-3, `refuse_what_a_flux_takes_negative`); any other step whose own
+    negatives are past the gate is the scheme's, the flux included (FP-FEM keeps them and reports them).
 
     Args:
         value: The outward flux q (constant, or a callable q(t, x) named by its parameters: (t, x), (x) or (t)),
@@ -2505,8 +2504,7 @@ def robin_bc(
     reflecting condition as a Robin segment on a conservative assembly is unbounded, not merely
     leaky. (Magnitudes are not quotable: over mesh 50-400, T 0.05-0.4, Nt 50-800 and IC width
     0.05-0.3 the growth spans well over ninety orders of magnitude and flips sign at coarse
-    ``Nt``, where the positivity clip dominates -- ``weak_form_fp_solver.py:225-230`` reports its
-    cumulative injection at solve end.)
+    ``Nt``.)
 
     Measured wall, ``sigma=0.3``, ``v_n=+3.2``, ``D=0.045`` (so ``v_n/D = 71.111``), ``FPFDMSolver``
     / ``divergence_upwind`` on [0,1], Gaussian initial density of width 0.1 at 0.5, T=0.2, Nt=200,

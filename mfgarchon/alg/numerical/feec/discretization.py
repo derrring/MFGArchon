@@ -7,7 +7,7 @@ Motivation
 ----------
 The primal nodal Galerkin scheme (:class:`WeakFormFPSolver` / meshless-Galerkin) conserves mass
 GLOBALLY (partition of unity ``sum_i phi_i = 1`` makes the operator's column sums vanish) but not
-LOCALLY, and its advection is not an M-matrix — the positivity clip injects mass in the coupled regime.
+LOCALLY, and its advection is not an M-matrix, so its step can go negative in the coupled regime.
 A **mixed FEEC** formulation represents the transport flux ``F = v m`` in a Raviart-Thomas ``H(div)``
 space and the density ``m`` in an ``L2`` (``P0``) space, so the discrete divergence is exact
 elementwise::
@@ -27,7 +27,7 @@ PROVIDED (assembles, tested) — the structure-preserving building blocks:
 NOT provided (research — fail loud, never silent):
   * the coupled saddle-point HJB-FP solve (a block/Uzawa/Schur system, not the scalar ``M/dt + D K + C``);
   * positivity / limiting — an ``RT/L2`` density is piecewise-constant and still NOT sign-preserving under
-    advection, so the mass-injecting clip is NOT removed by FEEC (the binding constraint; needs
+    advection, so a negative step is NOT removed by FEEC (the binding constraint; needs
     DG+limiters / FV-upwind / streamline diffusion);
   * the nonlinear-Hamiltonian coupling (value in ``H1`` -> flux velocity in ``H(div)`` welded through ``H``);
   * a symplectic time integrator (the current base is implicit Euler).

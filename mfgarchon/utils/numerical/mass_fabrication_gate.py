@@ -108,7 +108,7 @@ something the caller supplied.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -124,6 +124,7 @@ __all__ = [
     "clip_nonnegative_or_raise",
     "leave_out_or_raise",
     "mass_fabricated_by_clip",
+    "negative_density_report",
     "refuse_what_a_flux_takes_negative",
 ]
 
@@ -161,6 +162,40 @@ def mass_fabricated_by_clip(
     if positive_mass <= 0:
         return float("inf")
     return negative_mass / positive_mass
+
+
+def negative_density_report(
+    density: NDArray[np.floating],
+    *,
+    weights: NDArray[np.floating] | None = None,
+) -> dict[str, Any]:
+    """The negative part of ``density``, one row per time level, for a solver that keeps it (#2845).
+
+    ``fraction`` is `mass_fabricated_by_clip` of each level, the negative part against that level's positive part. Nothing
+    is added to the mass, so ``cumulative``, the sum of those fractions, is a size and not an injection. ``minimum`` is
+    beside it because on weights that go negative, such as P2 on tetrahedra, a fraction is not a mass, so ``largest`` is
+    by magnitude. A NaN does not hide what else a level holds: each reads the rest, and a level that is all NaN has a
+    ``minimum`` of NaN and a ``fraction`` of 0, so a report can hold no negative while the density holds NaN.
+    """
+    levels = np.atleast_2d(np.asarray(density, dtype=float))
+    fraction = [mass_fabricated_by_clip(level, weights=weights) for level in levels]
+    minimum = [
+        float(np.min(level[~np.isnan(level)])) if not np.isnan(level).all() else float("nan") for level in levels
+    ]
+    magnitude = np.abs(np.array(fraction))
+    largest_level = 0 if np.isnan(magnitude).all() else int(np.nanargmax(magnitude))
+    lowest_level = 0 if np.isnan(minimum).all() else int(np.nanargmin(minimum))
+    return {
+        "fraction": fraction,
+        "minimum": minimum,
+        "cumulative": float(np.nansum(fraction)),
+        "largest": float(magnitude[largest_level]),
+        "largest_level": largest_level,
+        "lowest": minimum[lowest_level],
+        "lowest_level": lowest_level,
+        "levels_negative": sum(1 for value in minimum if value < 0.0),
+        "levels": len(minimum),
+    }
 
 
 def clip_nonnegative_or_raise(
@@ -211,9 +246,9 @@ def refuse_what_a_flux_takes_negative(
     weights: NDArray[np.floating] | None = None,
     threshold: float = MAX_CLIP_MASS_FABRICATION,
 ) -> NDArray[np.floating]:
-    """A step with a prescribed flux, ``m0 + m_q``, or its refusal where clipping it would fabricate, past this gate, mass
-    the flux decides: B-3 of #2581 (user rulings 2026-10-09 and 2026-10-30), as the approver ruled it on #2581's plan
-    (Q3) and on #2840. Never clipped past the gate, on every clause.
+    """A step with a prescribed flux, ``m0 + m_q``, or its refusal where the flux takes the density negative, past this
+    gate, by mass it decides: B-3 of #2581 (user rulings 2026-10-09 and 2026-10-30), as the approver ruled it on #2581's
+    plan (Q3) and on #2840. It refuses whether or not the caller clips.
 
     The step is linear in its right-hand side, so ``m0`` is the step without the flux and ``m_q`` the flux's own part.
     With ``F`` the mass of the negatives the flux alone makes (at the nodes ``m0`` leaves non-negative), ``D`` the depth
@@ -221,7 +256,7 @@ def refuse_what_a_flux_takes_negative(
     flux fills), ``s0`` and ``s_step`` this gate's fraction of ``m0`` and of ``m0 + m_q``, the step is refused when
 
     1. ``F / pos(m0 + m_q) > threshold``, whatever the rest of the step does: the flux alone takes those nodes
-       negative; round-off within the gate is clipped, as any clip's is; or
+       negative; round-off within the gate goes on to the caller; or
     2. ``s0 <= threshold`` and either (a) ``s0 + D / pos(m0 + m_q) > threshold``: the flux deepens the step's own
        negatives; or (b) ``s_step > threshold``: the step with the flux fails the gate itself, as a flux that drains the
        positive mass makes it, F, D and the step's own negatives counted together.
@@ -231,12 +266,12 @@ def refuse_what_a_flux_takes_negative(
     ``pos(m0)`` enters only through ``s0``, which decides whether (2) applies. ``F`` is not added to (2a); ``s_step``
     counts it with the step's other negatives. So neither depends on how little mass the step without the flux holds:
     an inflow's round-off negatives in a nearly empty domain are measured against the mass the inflow brings.
-    Otherwise a step whose own clip is past the threshold is the scheme's: the caller's clip decides the step with the
-    flux as it decides any step.
-    ``weights`` are those of that clip, so that ``s0 <= threshold`` is its verdict on the step without the flux.
+    Otherwise a step whose own negatives are past the threshold is the scheme's, and the caller decides the step with
+    the flux as it decides any step: FP-FDM's gate refuses it, and a weak-form FP solver keeps it and reports it.
+    ``weights`` are the caller's measure of mass, so that ``s0 <= threshold`` holds on it.
     ``remedy`` follows a refusal; ``remedy_past_gate`` follows clause (1)'s when the step without the flux is itself
-    past the gate, where the caller's clip, not the flux, decides what a change of this step's q does. The state the
-    step starts from holds what the flux did on the earlier steps. The step is not clipped.
+    past the gate, where the caller, not the flux, decides what a change of this step's q does. The state the step
+    starts from holds what the flux did on the earlier steps. This function does not change the step.
     """
     step = m0 + m_q
     step_positive = _part_mass(step, step > 0, weights)
@@ -248,35 +283,35 @@ def refuse_what_a_flux_takes_negative(
         worst = int(np.argmin(np.where(taken, step, np.inf)))
         if own > threshold:
             tail = (
-                f" The step without the flux would itself fabricate {own:.3e}, past the threshold {threshold:.0e}: the "
-                f"scheme's own step from this state fails there before this step's flux is added. {remedy_past_gate}"
+                f" The step without the flux is itself negative by {own:.3e} of the step's mass, past the threshold "
+                f"{threshold:.0e}: the scheme's own step from this state does that before this step's flux is added. "
+                f"{remedy_past_gate}"
             )
         else:
             tail = f" {remedy}"
         raise ValueError(
             f"{context}: the prescribed flux's part of the step would take the density negative at {int(taken.sum())} "
             f"{unit}(s) in the step to t={time}, the most at {locate(worst)} (m = {step[worst]:.3e}), where the step "
-            f"without it is non-negative ({m0[worst]:.3e} there). Clipping that would fabricate {alone:.3e} of the "
-            f"mass, past the threshold {threshold:.0e}, which the flux alone decides, so the step is refused (#2581, "
-            f"user rulings 2026-10-09 and 2026-10-30, B-3).{tail}"
+            f"without it is non-negative ({m0[worst]:.3e} there). It takes the density negative by {alone:.3e} of the "
+            f"step's mass, past the threshold {threshold:.0e}, which the flux alone decides, so the step is refused "
+            f"(#2581, user rulings 2026-10-09 and 2026-10-30, B-3).{tail}"
         )
     if own <= threshold:
         deepened = _part_mass(np.maximum(-m_q, 0.0), m0 < 0, weights)
         added = 0.0 if deepened == 0 else (deepened / step_positive if step_positive > 0 else float("inf"))
         if own + added > threshold:
             raise ValueError(
-                f"{context}: in the step to t={time}, clipping the step without the prescribed flux would fabricate "
-                f"{own:.3e} of the mass, within the threshold {threshold:.0e}, and the flux's part deepens its "
-                f"negatives by {added:.3e} more, past it. The flux decides the clip, so the step is refused rather "
-                f"than clipped (#2581, user rulings 2026-10-09 and 2026-10-30, B-3). {remedy}"
+                f"{context}: in the step to t={time}, the step without the prescribed flux is negative by {own:.3e} of "
+                f"the mass, within the threshold {threshold:.0e}, and the flux's part takes the density negative by "
+                f"{added:.3e} more, past it. The flux decides, so the step is refused (#2581, user rulings 2026-10-09 "
+                f"and 2026-10-30, B-3). {remedy}"
             )
         clipped = mass_fabricated_by_clip(step, weights=weights)
         if clipped > threshold:
             raise ValueError(
-                f"{context}: in the step to t={time}, clipping the step without the prescribed flux would fabricate "
-                f"{own:.3e} of the mass, within the threshold {threshold:.0e}, and clipping the step with it would "
-                f"fabricate {clipped:.3e}, past it. The flux decides the clip, so the step is refused rather than "
-                f"clipped (#2581, user rulings 2026-10-09 and 2026-10-30, B-3). {remedy}"
+                f"{context}: in the step to t={time}, the step without the prescribed flux is negative by {own:.3e} of "
+                f"the mass, within the threshold {threshold:.0e}, and the step with it by {clipped:.3e}, past it. The "
+                f"flux decides, so the step is refused (#2581, user rulings 2026-10-09 and 2026-10-30, B-3). {remedy}"
             )
     return step
 

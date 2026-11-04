@@ -441,7 +441,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         factor = np.exp(-q_k * t_grid)
         return N_k * factor.reshape((-1,) + (1,) * (N_k.ndim - 1))
 
-    @verdict_reads_inner_failures(lambda self: list(self._hjb))
+    @verdict_reads_inner_failures(lambda self: list(self._hjb), fp_solvers_of=lambda self: list(self._fp))
     def solve(self) -> RegimeSwitchingResult:
         """Run Picard iteration over K coupled regime systems.
 
@@ -536,7 +536,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # below reads the whole `Us_new` list, so one regime's NaN would reach every other
                 # regime's mass-transfer source before the FP solver failed and blamed its own CFL.
                 diverged = diverged_value_function(
-                    U_k, terminal_k, site=f"RegimeSwitchingIterator[regime {k}]", iteration=iteration
+                    U_k, terminal_k, site=f"RegimeSwitchingIterator[regime {k}]", density=M_k, iteration=iteration
                 )
                 if diverged is not None:
                     Us_new[k] = diverged

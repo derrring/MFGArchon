@@ -198,7 +198,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._N = N
         self._last_result: GraphMFGResult | None = None
 
-    @verdict_reads_inner_failures(lambda self: list(self._hjb))
+    @verdict_reads_inner_failures(lambda self: list(self._hjb), fp_solvers_of=lambda self: list(self._fp))
     def solve(self) -> GraphMFGResult:
         """Run Picard iteration over N-node graph.
 
@@ -255,7 +255,12 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # before anything noticed, and the FP solver would then report a CFL condition for
                 # what is an HJB failure.
                 diverged = diverged_value_function(
-                    U_k, terminal_k, site=f"GraphMFGSolver[node {k}]", iteration=iteration
+                    U_k,
+                    terminal_k,
+                    site=f"GraphMFGSolver[node {k}]",
+                    # `compute_hjb_source` is handed every node's density, whichever of them a coupling reads (#2845).
+                    density=np.concatenate([np.ravel(m) for m in Ms_expanded]),
+                    iteration=iteration,
                 )
                 if diverged is not None:
                     Us_new[k] = diverged

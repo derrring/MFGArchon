@@ -19,7 +19,7 @@ Issue #1131 Phase 2.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.sparse.linalg import spsolve
@@ -29,7 +29,11 @@ from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.numerical.mass_fabrication_gate import refuse_what_a_flux_takes_negative
+from mfgarchon.utils.numerical.mass_fabrication_gate import (
+    MAX_CLIP_MASS_FABRICATION,
+    negative_density_report,
+    refuse_what_a_flux_takes_negative,
+)
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -57,6 +61,11 @@ class WeakFormFPSolver(BaseFPSolver):
     # Issue #1043: this family takes the value function U and recovers α = -coupling·∇U on its
     # own quadrature/MLS basis (a genuine feature: avoids differentiating U on a coarse FP grid).
     _drift_convention = DriftConvention.VALUE_FUNCTION
+    reports_negative_density = True
+
+    #: What the warning says about a negative on this solver: what has cleared one, and on what. Each subclass states
+    #: its own runs (#2845).
+    _negative_density_note = ""
 
     def __init__(
         self,
@@ -77,6 +86,7 @@ class WeakFormFPSolver(BaseFPSolver):
         self._M = discretization.mass()
         # The time derivative's mass, lumped for P1 FEM (#2845); the source, H and the mass a solve measures keep M.
         self._M_time = time_mass(discretization, self._M)
+        self._mass_weights = np.asarray(self._M.sum(axis=1)).ravel()
         # Single source of truth for BCs (matches WeakFormHJBSolver); plain
         # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
@@ -92,9 +102,10 @@ class WeakFormFPSolver(BaseFPSolver):
                 f"{type(self).__name__} builds no prescribed-flux load, so a FLUX boundary would be solved as a no-flux "
                 "wall (#2581). FPFEMSolver honours FLUX."
             )
-        # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
-        # path is stateless per call, so the latch lives on the solver to warn once per solve).
-        self._adjoint_clip_warned = False
+        # The step keeps a negative value, and this says how large it is (#2845): "warn" reports each solve, and a coupler
+        # sets "record" while it runs, then reports the density it returns.
+        self.on_negative_density = "warn"
+        self.last_negative_density: dict[str, Any] | None = None
 
     @property
     def n_dof(self) -> int:
@@ -208,6 +219,7 @@ class WeakFormFPSolver(BaseFPSolver):
         not take the base's ``progress_callback``, which it would never call. A keyword this signature does
         not name raises (#2419).
         """
+        self.last_negative_density = None
         # Issue #1043: drift_field is the deprecated name for the U (potential) input here.
         if drift_field is not None:
             if potential_field is not None:
@@ -259,12 +271,6 @@ class WeakFormFPSolver(BaseFPSolver):
             A_base = A_base + A_robin
         pure_neumann = self._is_pure_neumann()
 
-        clip_warned = False
-        clip_injected_total = 0.0
-        clip_injected_max = 0.0
-        clip_max_step = -1
-        m0_mass = float((self._M @ M[0]).sum())
-        clip_weights = np.asarray(self._M.sum(axis=1)).ravel()  # what the clip below measures mass with
         for n in range(Nt):
             rhs = (self._M_time / dt) @ M[n]
             if source_term is not None:
@@ -317,9 +323,8 @@ class WeakFormFPSolver(BaseFPSolver):
                 if flux_load is not None:
                     m_flux[interior] = spsolve(A_bc, flux_load[interior])
             if m_flux is not None:
-                # B-3's owner, with the weights of the clip below; otherwise a step whose own clip is past the threshold
-                # is left to that clip, which clips it with the flux's share, as any step, warning only above 1e-6 of
-                # the mass (#2581).
+                # B-3's owner; otherwise a step whose own negatives are past the threshold is kept, with the flux's
+                # share, as any step, and reported (#2581, #2845).
                 M[n + 1] = refuse_what_a_flux_takes_negative(
                     M[n + 1],
                     m_flux,
@@ -327,58 +332,44 @@ class WeakFormFPSolver(BaseFPSolver):
                     time=(n + 1) * dt,
                     unit="DOF",
                     locate=lambda i: f"DOF {i}",
-                    weights=clip_weights,
+                    weights=self._mass_weights,
                     remedy=(
                         "The Galerkin step is not monotone, so the flux's part of it can be negative away from the "
                         "wall, an inflow's included."
                     ),
                     remedy_past_gate=(
-                        "A q on this step with which the flux takes no DOF negative past the threshold hands the step "
-                        "to FP-FEM's clip, which clips it as any step, warning only above 1e-6 of the mass."
+                        "A q on this step with which the flux takes no DOF negative past the threshold leaves the step "
+                        "as FP-FEM's own, whose negative values are kept and reported as any step's."
                     ),
                 )
 
-            # Positivity clip. The Galerkin/MLS advection is not an M-matrix, so the
-            # solve can produce density undershoots; the clip deletes them, which INJECTS
-            # mass and violates conservation. Surface it once per solve rather than failing
-            # silently (kernel fail-fast). Streamline diffusion suppresses the undershoots
-            # at the source (meshless ``streamline_diffusion_scale > 0``, Issue #1145).
-            # Issue #1489 (S3): measure EVERY step (the former `if not clip_warned` guard skipped the
-            # measurement after the first exceedance, so the cumulative injection was under-reported).
-            injected = -float((self._M @ np.minimum(M[n + 1], 0.0)).sum())
-            clip_injected_total += injected
-            if injected > clip_injected_max:
-                clip_injected_max = injected
-                clip_max_step = n
-            if not clip_warned:
-                total = float((self._M @ np.maximum(M[n + 1], 0.0)).sum())
-                if injected > 1e-6 * max(total, 1e-300):
-                    logger.warning(
-                        "FP positivity clip injected mass %.2e (%.1f%% of total) at step %d: the "
-                        "Galerkin advection is not monotone; consider stabilization.",
-                        injected,
-                        100.0 * injected / max(total, 1e-300),
-                        n,
-                    )
-                    clip_warned = True
-            M[n + 1] = np.maximum(M[n + 1], 0.0)
-
-        # Issue #1489 (S3): report the CUMULATIVE clip injection at solve end — the true magnitude of
-        # the conservation violation, which the one-shot first-exceedance warning under-reports (it
-        # fires at the smallest, first step). Threshold relative to the initial mass.
-        if clip_injected_total > 1e-6 * max(m0_mass, 1e-300):
-            logger.warning(
-                "FP positivity clip injected a CUMULATIVE %.2e mass over %d steps (per-step max %.2e "
-                "at step %d, %.1f%% of the initial mass): the Galerkin advection is not an M-matrix; "
-                "enable streamline diffusion (streamline_diffusion_scale > 0) to suppress the "
-                "undershoots (Issue #1145 / #1489).",
-                clip_injected_total,
-                Nt,
-                clip_injected_max,
-                clip_max_step,
-                100.0 * clip_injected_total / max(m0_mass, 1e-300),
-            )
+        self._report_negative_density(M)
         return M
+
+    def negative_density_of(self, M: NDArray) -> dict[str, Any]:
+        """The negative part of ``M``, one row per time level, on this solver's mass (#2845)."""
+        return negative_density_report(np.asarray(M, dtype=float).reshape(-1, self._n_dof), weights=self._mass_weights)
+
+    def warn_negative_density(self, report: dict[str, Any]) -> None:
+        """One logged warning for ``report``, past the gate's threshold of a level's positive mass (#2845)."""
+        if report["largest"] > MAX_CLIP_MASS_FABRICATION:
+            logger.warning(
+                "%s: %d of %d time levels hold a negative value, down to %.3e at level %d, at most %.3e of a level's "
+                "positive mass (sum over levels %.3e). The values are kept: nothing is added to the mass. %s",
+                type(self).__name__,
+                report["levels_negative"],
+                report["levels"],
+                report["lowest"],
+                report["lowest_level"],
+                report["largest"],
+                report["cumulative"],
+                self._negative_density_note,
+            )
+
+    def _report_negative_density(self, M: NDArray) -> None:
+        self.last_negative_density = self.negative_density_of(M)
+        if self.on_negative_density == "warn":
+            self.warn_negative_density(self.last_negative_density)
 
     @retired_sigma_keyword
     def solve_fp_step_adjoint_mode(
@@ -430,19 +421,5 @@ class WeakFormFPSolver(BaseFPSolver):
         if rhs_robin is not None:
             rhs = rhs + rhs_robin
         M_next = spsolve(A_system, rhs)
-        # Issue #1489 (S3): the adjoint FP step clips negative density (INJECTING mass, like the forward
-        # path) but was FULLY SILENT — an adjoint-coupled solve could drift in mass with no diagnostic.
-        # Surface it once per solve (solver-level latch, since this step is stateless per call).
-        if not self._adjoint_clip_warned:
-            injected = -float((self._M @ np.minimum(M_next, 0.0)).sum())
-            total = float((self._M @ np.maximum(M_next, 0.0)).sum())
-            if injected > 1e-6 * max(total, 1e-300):
-                logger.warning(
-                    "Adjoint FP positivity clip injected mass %.2e (%.1f%% of total): the transposed "
-                    "advection is not monotone, so mass conservation is violated in the adjoint solve "
-                    "(Issue #1489).",
-                    injected,
-                    100.0 * injected / max(total, 1e-300),
-                )
-                self._adjoint_clip_warned = True
-        return np.maximum(M_next, 0.0).reshape(M_current.shape)
+        self._report_negative_density(M_next)
+        return M_next.reshape(M_current.shape)
