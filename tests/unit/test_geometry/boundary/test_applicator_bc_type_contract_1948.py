@@ -1130,13 +1130,12 @@ def _gate_cases():
             "a real number no float holds",
         )
     )
-    accepts.append(
+    refuses.append(
         (
             "NodeBC[value=inf]",
-            lambda: np.array_equal(
-                GraphApplicator(5).add_node_bc(NodeBC(nodes=[1], value=math.inf)).apply(np.zeros(5)),
-                [0, math.inf, 0, 0, 0],
-            ),
+            lambda: NodeBC(nodes=[1], value=math.inf),
+            NotImplementedError,
+            "non-finite value inf",
         )
     )
     refuses.append(

@@ -302,7 +302,7 @@ def _describe_bc_value(value: Any) -> object | None:
         return None if not value.any() else "<array>"
     try:
         return None if float(value) == 0.0 else float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return f"<unrecognised {type(value).__name__}>"
 
 

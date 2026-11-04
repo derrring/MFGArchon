@@ -1090,7 +1090,13 @@ def _read_constant(
         raise NotImplementedError(
             f"{kind} has a value of type {type(value).__name__}, which {where} cannot read: {advice} (#2593)."
         )
-    constant = float(value)
+    try:
+        constant = float(value)
+    except OverflowError:
+        # Not its digits: a large enough int raises on being printed.
+        raise NotImplementedError(
+            f"{kind} has a value of type {type(value).__name__} no float holds, which {where} cannot read: {advice} (#2861)."
+        ) from None
     if not np.isfinite(constant):
         raise NotImplementedError(
             f"{kind} has a non-finite value {constant}; {where} would impose it and return a non-finite solution "
