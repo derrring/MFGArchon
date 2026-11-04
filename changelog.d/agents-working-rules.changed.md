@@ -1,0 +1,9 @@
+- **AGENTS.md: working rules, and the rules that had gone stale** (user approval, 2026-11-04), in § *Development workflow*, *Review before merge*, *GitHub issue/PR management*, *Pre-commit / pre-merge checks*, *Admission*.
+  - A rule states what to do and why; its incident, measurement or figure stays in the issue or pull request that holds it, and the passages that held one are rewritten to their rule.
+  - The input contract is `docs/user/CONVENTIONS.md`: code that reads a user's input accepts no form the contract does not name.
+  - The class line gains a census that does not use the predicate, named by the plan's approver.
+  - Between fix rounds, push, so the hook runs the gate; the second stack and a repeated fuzz run once, at a MERGE-OK.
+  - A refusal, a warning and the advice in either say what was run, and state no universal.
+  - A review rebuilds the claims that gate the merge; a number no gating claim rests on moves to the issue comment or is deleted.
+  - Issues under the filing rule, comments, labels, fold lines, pushes, opening a PR, and a merge whose last review is MERGE-OK with the gate green and that is not a partial fix need no per-item approval.
+  - Corrected against the tree: the server does enforce `main`'s ruleset; the top-level and package directories; `create_standard_solver` raises rather than being absent; `deprecated_on`; the label dimensions; the tracked output directories; the pointer to a document that does not exist.
