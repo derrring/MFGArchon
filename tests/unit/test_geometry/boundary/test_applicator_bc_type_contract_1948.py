@@ -496,7 +496,9 @@ def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
     )
 
 
-@pytest.mark.parametrize("value", [2.5, lambda t, node: 0.0], ids=["non_zero", "callable"])
+@pytest.mark.parametrize(
+    "value", [2.5, lambda t, node: 0.0, math.nan, math.inf], ids=["non_zero", "callable", "nan", "inf"]
+)
 def test_a_non_zero_graph_neumann_flux_is_refused(value):
     """Graph NEUMANN is zero flux; `apply` leaves both fields unchanged for it. A flux it would drop is
     refused when the `NodeBC` is built (maintainer ruling 2026-10-04). A callable cannot be checked for
@@ -1130,13 +1132,12 @@ def _gate_cases():
             "a real number no float holds",
         )
     )
-    accepts.append(
+    refuses.append(
         (
             "NodeBC[value=inf]",
-            lambda: np.array_equal(
-                GraphApplicator(5).add_node_bc(NodeBC(nodes=[1], value=math.inf)).apply(np.zeros(5)),
-                [0, math.inf, 0, 0, 0],
-            ),
+            lambda: NodeBC(nodes=[1], value=math.inf),
+            NotImplementedError,
+            "non-finite value inf",
         )
     )
     refuses.append(

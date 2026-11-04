@@ -94,7 +94,8 @@ _NODES = "a list, tuple or range of nodes, or a 1-D integer numpy array (an ndar
 _FLOATS = (np.float16, np.float32, np.float64)
 _RULE = "a callable that takes the graph's node count and returns such nodes"
 #: Each class of graph BC input and the forms it is taken in. Every acceptor reads its input through the reader of its
-#: class below and coerces nothing on its own; any other form is refused by name, in these words.
+#: class below and coerces nothing on its own; any other form is refused by name, in these words, and a NaN or an
+#: infinity, which has a value's form, by `_read_graph_constant`.
 ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
     {
         "node": "an int (a numbers.Integral that is not a bool) from 0 to the graph's last node",
@@ -105,8 +106,8 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
             "create_maze_applicator detects its exits for exit_nodes=None while auto_detect_exits is True"
         ),
         "value": (
-            "a real number a float holds (a numbers.Real that is not a bool, which float() converts, to a finite float "
-            "if it is finite), or a function of (t, node), time first, whose parameters are named after them: bound once "
+            "a finite real number a float holds (a numbers.Real that is not a bool, which float() converts to a finite "
+            "float), or a function of (t, node), time first, whose parameters are named after them: bound once "
             "and called by name, and refused otherwise; one that reads t is read only where a time is given, and not "
             "into a 2-D (Nt, N) field"
         ),
@@ -116,7 +117,7 @@ ACCEPTED_FORMS: MappingProxyType[str, str] = MappingProxyType(
         ),
         "values": (
             "a value, or a list, tuple or 1-D real numpy array (an ndarray, not a subclass, of an integer dtype or of "
-            "float16, float32 or float64) of real numbers a float holds, one per node"
+            "float16, float32 or float64) of finite real numbers a float holds, one per node"
         ),
         "conditions": "a list or tuple",
         "threshold": "a finite real number (a numbers.Real that is not a bool), compared as given",
@@ -148,10 +149,11 @@ def _plain_array(item: object) -> TypeGuard[np.ndarray]:
 
 
 def _is_value(item: object) -> bool:
-    """A real number a float holds: a value is written into a float field, so ``float()`` must succeed and keep it. It
-    raises for an int beyond float range or a Real that defines no conversion, and saturates to inf for some Reals
-    beyond it (sympy's, mpmath's, gmpy2's mpfr), so a finite number that becomes inf, or a number that becomes NaN, is
-    refused too (#2292 reviews 4 and 5)."""
+    """The form of a value: a real number a float holds. A value is written into a float field, so ``float()`` must
+    succeed and keep it. It raises for an int beyond float range or a Real that defines no conversion, and saturates to
+    inf for some Reals beyond it (sympy's, mpmath's, gmpy2's mpfr), so a finite number that becomes inf, or a number that
+    becomes NaN, is refused too (#2292 reviews 4 and 5). A NaN or an infinity has this form: `_read_graph_constant`
+    refuses it, as it reads every constant (#2861)."""
     if not _is_real(item):
         return False
     try:
@@ -184,6 +186,12 @@ def _conditions(items: object, where: str, of: str) -> tuple:
     raise TypeError(f"{where} is {_shown(items)}; it takes {ACCEPTED_FORMS['conditions']} of {of} (#2292).")
 
 
+def _read_graph_constant(value: object, kind: str) -> float:
+    """A constant in the form `_is_value` tests, read by `types._read_constant`, as a grid boundary value's constant and
+    what a graph callable returns are, so one value reads the same whichever way it arrives (#2861, #2512 row B2)."""
+    return _read_constant(value, kind=kind, where="the graph applicator", advice="pass a finite real number")
+
+
 class _Constant:
     """A constant node value, read where it is built (#2292). It reads no slot, so a reader's time checks pass it, and
     `_graph_value_at` returns it as built (#2296)."""
@@ -213,7 +221,7 @@ def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
     if not _is_value(value):
         shown = f"{_shown(value)}, a real number no float holds" if _is_real(value) else _shown(value)
         raise TypeError(f"{where} is {shown}; it takes {ACCEPTED_FORMS['value']} (#2292).")
-    return _Constant(float(cast("float", value)))
+    return _Constant(_read_graph_constant(value, where))
 
 
 def _rule_reader(rule: object, where: str) -> BoundCallable:
@@ -232,8 +240,8 @@ def _graph_value_at(
 ) -> float:
     """The one place a graph node's value or CUSTOM rule is read (#2296). One that reads ``t`` is refused by name when
     no time is given: a default of 0 read it at t = 0 in silence. What a callable returns is read as a grid boundary
-    value's return is, by `types._read_constant`, the one reader of both (#2512 row B2); a constant was read when it
-    was built (#2292)."""
+    value's return is, by `types._read_constant`, the one reader of both (#2512 row B2); a constant was read by it when
+    it was built (#2861)."""
     if isinstance(read, _Constant):
         return read.constant
     if t is None and "t" in read.passes:
@@ -264,9 +272,9 @@ def _node_values(values: object, count: int, where: str) -> tuple | None:
     if callable(values) or _is_value(values):
         return None
     if isinstance(values, (list, tuple)) and all(_is_value(v) for v in values):
-        per_node = tuple(values)
+        per_node = tuple(_read_graph_constant(v, f"{where}: values") for v in values)
     elif _plain_array(values) and values.ndim == 1 and (values.dtype.kind in "iu" or values.dtype.type in _FLOATS):
-        per_node = tuple(values.tolist())
+        per_node = tuple(_read_graph_constant(v, f"{where}: values") for v in values.tolist())
     else:
         shown = f"{_shown(values)}, a real number no float holds" if _is_real(values) else _shown(values)
         raise TypeError(
@@ -338,16 +346,19 @@ class NodeBC:
                     f"NodeBC {self.name!r}: rule= is a CUSTOM condition's; a {self.bc_type.name} condition takes value "
                     "(#2296)."
                 )
+            # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
+            # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
+            # dropped without a word, so it is refused (#1948), a NaN or an infinity included: that
+            # is what is wrong with one here, before the reader below refuses it as a value it would impose.
+            if self.bc_type == GraphBCType.NEUMANN and (
+                callable(self.value) or (_is_value(self.value) and self.value != 0)
+            ):
+                raise NotImplementedError(
+                    f"NodeBC {self.name!r}: GraphBCType.NEUMANN is zero flux, and a non-zero flux "
+                    f"(value={self.value!r}) is not implemented on graphs. It would be dropped rather than "
+                    "imposed. Use value=0.0 (the default), or a SOURCE node to inject mass (#1948)."
+                )
             object.__setattr__(self, "_read", _value_reader(self.value, f"NodeBC {self.name!r}: value"))
-        # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
-        # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
-        # dropped without a word, so it is refused (#1948).
-        if self.bc_type == GraphBCType.NEUMANN and (callable(self.value) or self.value != 0):
-            raise NotImplementedError(
-                f"NodeBC {self.name!r}: GraphBCType.NEUMANN is zero flux, and a non-zero flux "
-                f"(value={self.value!r}) is not implemented on graphs. It would be dropped rather than "
-                "imposed. Use value=0.0 (the default), or a SOURCE node to inject mass (#1948)."
-            )
 
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
