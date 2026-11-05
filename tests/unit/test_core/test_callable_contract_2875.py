@@ -545,6 +545,10 @@ def test_a_geometrys_own_signed_distance_keeps_its_array_on_a_subclass_a_user_wr
     points = np.array([[0.5, 0.0], [0.0, 0.5], [0.3, 0.4]])
     normals = _ADiscAUserWrote().get_boundary_normal(points)
     np.testing.assert_allclose(normals, points / 0.5, rtol=0, atol=1e-6)
+    from mfgarchon.geometry.collocation import ImplicitDomainCollocation
+
+    from_collocation = ImplicitDomainCollocation(_ADiscAUserWrote())._compute_normals(points)
+    np.testing.assert_allclose(from_collocation, points / 0.5, rtol=0, atol=1e-6)
 
 
 def test_the_meshless_domain_masks_by_the_tuple_and_keeps_the_librarys_own_predicates():
