@@ -36,16 +36,16 @@ class QuadraticHamiltonian2D(MFGProblem):
         self.grid_resolution = N
 
     def hamiltonian(self, t, x, p, m):
-        return 0.5 * np.sum(p**2) + 0.5 * np.sum(x**2)
+        return 0.5 * np.sum(p**2) + 0.5 * sum(xi**2 for xi in x)
 
     def terminal_cost(self, x):
-        return 0.5 * np.sum(x**2)
+        return 0.5 * sum(xi**2 for xi in x)
 
     def initial_density(self, x):
-        return np.exp(-5 * np.sum(x**2))
+        return np.exp(-5 * sum(xi**2 for xi in x))
 
     def running_cost(self, t, x, m):
-        return 0.5 * np.sum(x**2)
+        return 0.5 * sum(xi**2 for xi in x)
 
     def setup_components(self):
         pass

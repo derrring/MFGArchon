@@ -72,8 +72,6 @@ m0 /= np.sum(m0) * dx * dy  # Normalize
 # Terminal cost: quadratic distance to center
 def terminal_cost_2d(x):
     """Terminal cost for 2D problem."""
-    if np.stack(np.stack(x, axis=-1), axis=-1).ndim == 1:
-        return (x[0] - 0.5) ** 2 + (x[1] - 0.3) ** 2
     return (x[0] - 0.5) ** 2 + (x[1] - 0.3) ** 2
 
 

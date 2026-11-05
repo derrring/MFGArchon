@@ -166,7 +166,7 @@ def demonstrate_hamiltonian_methods():
     )
 
     # Test point
-    x = np.array([3.0])  # Position
+    x = (3.0,)  # Position, a coordinate tuple
     m = 0.5  # Density
     p = np.array([1.0])  # Momentum
     t = 0.0  # Time
