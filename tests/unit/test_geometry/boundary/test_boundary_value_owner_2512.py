@@ -16,7 +16,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.types import segment_value
-from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, SOLVER_SOURCE_SLOTS, bind_user_callable
+
 
 def _segment(value, boundary="x_max") -> BCSegment:
     return BCSegment(name="d", bc_type=BCType.DIRICHLET, value=value, boundary=boundary)

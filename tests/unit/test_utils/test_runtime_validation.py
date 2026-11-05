@@ -52,7 +52,7 @@ def _divergence_probe_problem():
                 coupling_dm=lambda m: -2 * m,
             ),
             m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
-            u_terminal=lambda x: x[0]**2,
+            u_terminal=lambda x: x[0] ** 2,
         ),
         Nt=10,
     )
@@ -189,7 +189,7 @@ def test_fixed_point_nan_early_termination():
     components = MFGComponents(
         hamiltonian=H,
         m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
-        u_terminal=lambda x: x[0]**2,
+        u_terminal=lambda x: x[0] ** 2,
     )
     problem = MFGProblem(geometry=geom, components=components, Nt=10)
 

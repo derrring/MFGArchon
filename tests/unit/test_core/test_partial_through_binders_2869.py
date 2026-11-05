@@ -26,8 +26,8 @@ from mfgarchon.geometry.boundary.types import bind_boundary_value
 from mfgarchon.operators.interaction import PotentialCost
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.pde_coefficients import CoefficientField
-from mfgarchon.utils.validation.protocol import ValidationError
 from mfgarchon.utils.validation.functions import _call_h, validate_hamiltonian, validate_hamiltonian_derivative
+from mfgarchon.utils.validation.protocol import ValidationError
 
 _TABLES = {name: slots for name, slots in vars(cp).items() if isinstance(slots, cp.Slots)}
 _NAMES = sorted({slot for slots in _TABLES.values() for slot in slots.order})
@@ -275,7 +275,7 @@ _POTENTIAL = functools.partial(lambda t, x: 8.0 * t * (np.asarray(x[0], dtype=fl
 )
 def test_a_solve_refuses_a_keyword_frozen_slot_rather_than_solve_the_unfrozen_function(arguments):
     """Each returned converged at 2ace3724, equal to the unfrozen function, with no error."""
-    with pytest.raises(TypeError, match="freezes t by keyword: called by name|starred parameter"):
+    with pytest.raises(TypeError, match=r"freezes t by keyword: called by name|starred parameter"):
         _solve(**arguments)
 
 

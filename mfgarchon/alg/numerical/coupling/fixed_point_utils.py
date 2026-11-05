@@ -835,7 +835,9 @@ def compute_fp_velocity_field(
                 m_points = stacked.reshape(n_points)
             else:
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
-            alpha_n = np.asarray(H_class.optimal_control(x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt))
+            alpha_n = np.asarray(
+                H_class.optimal_control(x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt)
+            )
             if alpha_n.shape != (n_points, ndim):
                 raise ValueError(
                     f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "

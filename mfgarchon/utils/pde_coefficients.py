@@ -661,9 +661,9 @@ class CoefficientField:
     >>> field = CoefficientField(sigma_tm, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
-    Callable diffusion (legacy positional style with mode):
+    Callable diffusion of time alone:
     >>> sigma_t = lambda t: 0.1 + 0.05 * t
-    >>> field = CoefficientField(sigma_t, 0.0, "volatility", mode="time")
+    >>> field = CoefficientField(sigma_t, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Porous medium diffusion:

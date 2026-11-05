@@ -589,7 +589,10 @@ class FPFVMSolver(BaseFPSolver):
                 # is first order in SPACE (measured 1.026 / 1.004 / 0.978) and the spatial floor
                 # dominates before the temporal order is visible. Changing it would be a behaviour
                 # change with no evidence behind it.
-                s_vals = np.asarray(evaluate_solver_source(source_term, t=k * dt, x=source_grid, dimension=self.problem.dimension), dtype=float).ravel()
+                s_vals = np.asarray(
+                    evaluate_solver_source(source_term, t=k * dt, x=source_grid, dimension=self.problem.dimension),
+                    dtype=float,
+                ).ravel()
                 if s_vals.size != m.size:
                     raise ValueError(
                         f"source_term returned {s_vals.size} values for {m.size} cells. It is "

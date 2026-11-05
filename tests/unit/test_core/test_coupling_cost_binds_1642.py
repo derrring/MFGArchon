@@ -387,7 +387,11 @@ def test_a_users_coupling_cost_sums_with_the_librarys():
 
     problem = _plumbing_problem("neither", n=11)
     x = _x(problem)
-    for cost in (PotentialCost(lambda x: _V(x[0])) + Mine(), Mine() + PotentialCost(lambda x: _V(x[0])), sum([PotentialCost(lambda x: _V(x[0])), Mine()])):
+    for cost in (
+        PotentialCost(lambda x: _V(x[0])) + Mine(),
+        Mine() + PotentialCost(lambda x: _V(x[0])),
+        sum([PotentialCost(lambda x: _V(x[0])), Mine()]),
+    ):
         np.testing.assert_allclose(
             cost.bind(problem).flat_derivative(np.ones(x.size)), _V(x) + 2.0 * x, rtol=0, atol=1e-14, err_msg=repr(cost)
         )
@@ -399,7 +403,9 @@ def test_a_users_coupling_cost_sums_with_the_librarys():
 
     with pytest.raises(TypeError, match=r"Broken\.bind\(problem\) returned SimpleNamespace.*lacks .*flat_derivative"):
         MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(lambda x: _V(x[0])) + Broken()),
+            model=Model(
+                hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(lambda x: _V(x[0])) + Broken()
+            ),
             domain=_grid(11),
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
             Nt=2,
@@ -718,7 +724,7 @@ def test_a_terminal_coupling_solves_the_linear_quadratic_game():
         model=Model(
             hamiltonian=_hamiltonian(),
             volatility=0.4,
-            terminal_coupling=PotentialCost(lambda x: 0.5 * k * (1 - c) * x[0]**2)
+            terminal_coupling=PotentialCost(lambda x: 0.5 * k * (1 - c) * x[0] ** 2)
             + InteractionCost(_Quadratic(k * c / 2)),
         ),
         domain=_grid(61, (-3.0, 3.0)),

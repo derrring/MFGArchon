@@ -173,12 +173,8 @@ _TRUE_HAMILTONIAN = SeparableHamiltonian(
 PAIR = ManufacturedPair(
     u=lambda t, x: u_star(t, x[0], x[1]),
     u_t=lambda t, x: _a1p(t) * (np.cos(C * x[0]) + BETA * np.cos(C * x[1])),
-    grad_u=lambda t, x: np.stack(
-        [-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1
-    ),
-    hess_u=lambda t, x: _diag_hessian(
-        -_a1(t) * C**2 * np.cos(C * x[0]), -BETA * _a1(t) * C**2 * np.cos(C * x[1])
-    ),
+    grad_u=lambda t, x: np.stack([-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1),
+    hess_u=lambda t, x: _diag_hessian(-_a1(t) * C**2 * np.cos(C * x[0]), -BETA * _a1(t) * C**2 * np.cos(C * x[1])),
     m=lambda t, x: m_star(t, x[0], x[1]),
     m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
     grad_m=lambda t, x: np.stack(

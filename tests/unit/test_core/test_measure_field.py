@@ -241,7 +241,7 @@ class TestFunctionalMeasureField:
         """Provided gradient function should be used."""
 
         def v(t, x, mu):
-            return x[0]**2
+            return x[0] ** 2
 
         def grad_v(t, x, mu):
             return 2 * x[0]

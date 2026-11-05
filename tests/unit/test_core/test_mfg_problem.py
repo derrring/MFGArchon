@@ -64,7 +64,7 @@ def default_components():
     return MFGComponents(
         hamiltonian=default_hamiltonian(),
         m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian at center
-        u_terminal=lambda x: x[0]**2,  # Quadratic terminal cost
+        u_terminal=lambda x: x[0] ** 2,  # Quadratic terminal cost
     )
 
 
@@ -307,7 +307,7 @@ def test_mfg_problem_with_custom_initial_density_2d():
     components = MFGComponents(
         hamiltonian=default_hamiltonian(),
         m_initial=gaussian_2d,
-        u_terminal=lambda x: 0.5 * sum(xi ** 2 for xi in x),
+        u_terminal=lambda x: 0.5 * sum(xi**2 for xi in x),
     )
     problem = MFGProblem(geometry=geometry, components=components)
 
@@ -1023,7 +1023,9 @@ def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
 
     with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes.*volatility_kind='tensor'"):
         build().diffusion(0.0, tuple(np.zeros((2, 4))), None)
-    np.testing.assert_allclose(build(volatility_kind="tensor").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S @ S.T)
+    np.testing.assert_allclose(
+        build(volatility_kind="tensor").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S @ S.T
+    )
     np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S**2)
     # A (N,) output from N points is per point, declared or not.
     per_point = create_test_problem(

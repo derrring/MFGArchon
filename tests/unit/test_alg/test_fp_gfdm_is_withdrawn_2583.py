@@ -37,9 +37,7 @@ def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float)) -
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
         ),
         domain=domain,
-        conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=u_terminal, T=0.5
-        ),
+        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=u_terminal, T=0.5),
         Nt=10,
     )
 

@@ -245,7 +245,7 @@ def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost
             built = _problem("F")
             solved = built.with_conditions(
                 Conditions(
-                    u_terminal=lambda x: sum(xi ** 2 for xi in x),
+                    u_terminal=lambda x: sum(xi**2 for xi in x),
                     m_initial=lambda x: np.exp(-10 * sum((xi - 0.6) ** 2 for xi in x)),
                     T=0.5,
                 )

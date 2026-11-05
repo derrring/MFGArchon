@@ -107,4 +107,3 @@ def test_remembering_a_binding_keeps_no_solve_s_arrays_alive():
         del source
     gc.collect()
     assert [ref() is None for ref in alive] == [True] * 5
-

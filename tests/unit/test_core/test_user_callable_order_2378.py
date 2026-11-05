@@ -146,9 +146,7 @@ def test_a_network_hamiltonian_in_the_new_order_receives_each_slot():
     from mfgarchon.types.callable_protocols import NETWORK_HAMILTONIAN_SLOTS
 
     values = {"t": 0.5, "node": 2, "neighbors": [1, 3], "p": "P", "m": "M"}
-    for new_order in (
-        lambda t, node, neighbors, p, m: (t, node, neighbors, p, m),
-    ):
+    for new_order in (lambda t, node, neighbors, p, m: (t, node, neighbors, p, m),):
         bound = bind_user_callable(new_order, NETWORK_HAMILTONIAN_SLOTS, role="hamiltonian_func")
         assert bound(**values) == (0.5, 2, [1, 3], "P", "M")
 
@@ -156,7 +154,9 @@ def test_a_network_hamiltonian_in_the_new_order_receives_each_slot():
 def test_node_callables_take_time_first():
     from mfgarchon.types.callable_protocols import NODE_INTERACTION_SLOTS, NODE_POTENTIAL_SLOTS
 
-    assert bind_user_callable(lambda t, node: (t, node), NODE_POTENTIAL_SLOTS, role="node_potential_func")(t=0.5, node=3) == (
+    assert bind_user_callable(lambda t, node: (t, node), NODE_POTENTIAL_SLOTS, role="node_potential_func")(
+        t=0.5, node=3
+    ) == (
         0.5,
         3,
     )

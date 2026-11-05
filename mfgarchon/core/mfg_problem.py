@@ -1369,7 +1369,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         volatility, kind = self._volatility, self._volatility_kind
         if callable(volatility):
-
             bound = self._volatility_binding
 
             def diffusion(t, x, m):

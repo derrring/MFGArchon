@@ -759,7 +759,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # Evaluate source term at current timestep (if provided)
             if source_term is not None:
                 x_grid = self.problem.geometry.get_spatial_grid()  # (N, d)
-                source_at_n = evaluate_solver_source(source_term, t=t_current, x=x_grid, dimension=self.problem.dimension).reshape(self.shape)
+                source_at_n = evaluate_solver_source(
+                    source_term, t=t_current, x=x_grid, dimension=self.problem.dimension
+                ).reshape(self.shape)
             else:
                 source_at_n = None
 

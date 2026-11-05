@@ -85,7 +85,10 @@ def _bc(fixture):
     return BoundaryConditions(
         segments=[
             BCSegment(
-                name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=lambda t, x: _u_star(t, np.stack(x, axis=-1))
+                name="exit",
+                bc_type=BCType.DIRICHLET,
+                boundary="x_max",
+                value=lambda t, x: _u_star(t, np.stack(x, axis=-1)),
             ),
             BCSegment(name="walls", bc_type=BCType.NO_FLUX),
         ],

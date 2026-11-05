@@ -75,7 +75,7 @@ def _read(hamiltonian, slope, n, nt, **solver_options):
             bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=no_flux_bc(dimension=d)
         ),
         conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: sum(s * xi for s, xi in zip(slope, x)), T=_T
+            m_initial=lambda x: 1.0, u_terminal=lambda x: sum(s * xi for s, xi in zip(slope, x, strict=True)), T=_T
         ),
         Nt=nt,
     )
@@ -159,9 +159,7 @@ def _problem(hamiltonian, slope=1.5, n=21, nt=5):
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=0.05),
         domain=grid,
-        conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: slope * x[0], T=_T
-        ),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: slope * x[0], T=_T),
         Nt=nt,
     )
 
@@ -254,9 +252,7 @@ def test_the_update_refines_with_a_potential_and_a_coupling_that_vary(path):
         problem = MFGProblem(
             model=Model(hamiltonian=hamiltonian, volatility=0.05),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
-            conditions=Conditions(
-                m_initial=lambda x: 1.0, u_terminal=lambda x: 0.8 * x[0], T=_T
-            ),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.8 * x[0], T=_T),
             Nt=nt,
         )
         solver = HJBSemiLagrangianSolver(problem, **_PATHS[path][0])
@@ -281,9 +277,7 @@ def test_the_update_agrees_with_fdm_where_p_varies_in_x(cost, path):
     problem = MFGProblem(
         model=Model(hamiltonian=_separable(_COSTS[cost][0]), volatility=0.05),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
-        conditions=Conditions(
-            m_initial=lambda x: 1.0, u_terminal=lambda x: _curved(x[0]), T=_T
-        ),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: _curved(x[0]), T=_T),
         Nt=nt,
     )
     x = np.linspace(0.0, 1.0, n)

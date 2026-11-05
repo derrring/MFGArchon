@@ -357,8 +357,6 @@ def validate_boundary_conditions(
     return result
 
 
-
-
 # --- Internal helpers (geometry-agnostic, Issue #682) ---
 
 

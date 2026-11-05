@@ -99,7 +99,9 @@ class ImplicitHeatSolver:
         self.bc = bc
         self.theta = theta
         self.forcing = forcing
-        self._forcing = bind_user_callable(forcing, SOLVER_SOURCE_SLOTS, role="forcing") if forcing is not None else None
+        self._forcing = (
+            bind_user_callable(forcing, SOLVER_SOURCE_SLOTS, role="forcing") if forcing is not None else None
+        )
 
         # Validate theta
         if not 0.0 <= theta <= 1.0:

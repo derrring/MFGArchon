@@ -311,9 +311,7 @@ def test_the_weak_form_newton_refuses_an_exhausted_budget_and_records_it_when_as
     mesh.generate_mesh()
     mesh.boundary_conditions = dirichlet_bc(value=0.7, dimension=1)
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
-    cond = Conditions(
-        m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5
-    )
+    cond = Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         fem = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=cond, Nt=8), order=1)

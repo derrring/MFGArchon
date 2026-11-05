@@ -68,7 +68,9 @@ def _meshless_pair(n=21, sd_scale=1.0):
         control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 0.0 * m + 1.0
     )
     comp = MFGComponents(
-        hamiltonian=H, m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2), u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2
+        hamiltonian=H,
+        m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2),
+        u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
     )
     problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3, coupling_coefficient=0.5)
     cloud = _np.linspace(0.0, 1.0, n)[:, None]
@@ -214,7 +216,9 @@ def test_recipe_coupled_matches_fdm_on_wellposed_problem(use_newton, sd_scale):
             coupling=None,
         )
         comp = MFGComponents(
-            hamiltonian=H, m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2), u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2
+            hamiltonian=H,
+            m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2),
+            u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
         )
         return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3, coupling_coefficient=0.5)
 

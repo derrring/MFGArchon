@@ -99,9 +99,7 @@ def test_the_source_actually_moves_the_answer(name, cls):
 
     base = np.asarray(solver.solve_fp_system(m0.copy(), potential_field=None))
     forced = np.asarray(
-        solver.solve_fp_system(
-            m0.copy(), potential_field=None, source_term=lambda t, x: np.full(np.shape(x[0]), 2.0)
-        )
+        solver.solve_fp_system(m0.copy(), potential_field=None, source_term=lambda t, x: np.full(np.shape(x[0]), 2.0))
     )
     delta = float(np.abs(forced[-1] - base[-1]).max())
     assert delta == pytest.approx(2.0 * _T, rel=0.25), (

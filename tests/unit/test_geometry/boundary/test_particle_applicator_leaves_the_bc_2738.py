@@ -177,8 +177,7 @@ def test_a_door_marked_off_the_domain_lets_no_particle_out(on_the_domain):
     marking.mark_region(
         "door",
         predicate=lambda x: (
-            ((x[0] > 1.05) & (x[1] > 0.3) & (x[1] < 0.7))
-            | (on_the_domain & (x[0] > 0.95) & (x[1] > 0.9))
+            ((x[0] > 1.05) & (x[1] > 0.3) & (x[1] < 0.7)) | (on_the_domain & (x[0] > 0.95) & (x[1] > 0.9))
         ),
     )
     with warnings.catch_warnings():

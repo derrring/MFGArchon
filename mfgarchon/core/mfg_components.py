@@ -696,7 +696,9 @@ class ConditionsMixin:
                 stacklevel=2,
             )
             return
-        self.u_terminal.flat[:] = np.broadcast_to(values.ravel() if values.size > 1 else values, (self.u_terminal.size,))
+        self.u_terminal.flat[:] = np.broadcast_to(
+            values.ravel() if values.size > 1 else values, (self.u_terminal.size,)
+        )
 
     def get_boundary_conditions(self) -> BoundaryConditions | Any:
         """The BC this problem's solvers share: the one owner of which channel supplies it (#2530, row B9).

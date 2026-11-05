@@ -78,7 +78,9 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
         )
     else:  # custom full H (dispatch through hamiltonian_func)
         comps = NetworkMFGComponents(
-            hamiltonian_func=lambda t, node, neighbors, p, m: sum((p[j] - p[node]) ** 2 for j in neighbors) + 0.7 * m[node]
+            hamiltonian_func=lambda t, node, neighbors, p, m: (
+                sum((p[j] - p[node]) ** 2 for j in neighbors) + 0.7 * m[node]
+            )
         )
     prob = NetworkMFGProblem(geometry=net, T=1.0, Nt=5, components=comps)
     H = _build_H(prob)

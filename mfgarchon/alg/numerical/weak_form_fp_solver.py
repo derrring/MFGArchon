@@ -278,8 +278,12 @@ class WeakFormFPSolver(BaseFPSolver):
                 # match FPFDMSolver, on the solver's own (N, d) dof coordinates (#2020).
                 s_vals = np.asarray(
                     evaluate_solver_source(
-                        source_term, t=(n + 1) * dt, x=self._disc.dof_coordinates, dimension=self._disc.dof_coordinates.shape[1]
-                    ), dtype=float
+                        source_term,
+                        t=(n + 1) * dt,
+                        x=self._disc.dof_coordinates,
+                        dimension=self._disc.dof_coordinates.shape[1],
+                    ),
+                    dtype=float,
                 ).ravel()
                 if s_vals.shape != (N,):
                     raise ValueError(

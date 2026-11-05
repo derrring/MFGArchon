@@ -47,7 +47,7 @@ def _free_diffusion_problem(T: float, Nt: int):
         Nt=Nt,
         volatility=0.1,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-sum(xi ** 2 for xi in x)),
+            m_initial=lambda x: np.exp(-sum(xi**2 for xi in x)),
             u_terminal=lambda x: 0.0,
             hamiltonian=_hamiltonian(),
         ),

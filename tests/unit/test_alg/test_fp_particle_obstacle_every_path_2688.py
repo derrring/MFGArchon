@@ -261,7 +261,9 @@ def test_what_the_placement_cannot_do_is_refused(case):
         obstacle = Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
         wide = DifferenceDomain(Hyperrectangle(np.array([[-0.5, 1.5], [-0.5, 1.5]])), obstacle)
         problem, _ = _problem(2, no_flux_bc(dimension=2))
-        drift = {"drift_field": lambda t, x, m: np.stack([np.full(np.shape(x[0]), 8.0), np.zeros(np.shape(x[0]))], axis=-1)}
+        drift = {
+            "drift_field": lambda t, x, m: np.stack([np.full(np.shape(x[0]), 8.0), np.zeros(np.shape(x[0]))], axis=-1)
+        }
         drift.update(drift_needs_density=False, show_progress=False)
         solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=wide, seed=0)
         with pytest.raises(ValueError, match=r"is not the grid's box"):

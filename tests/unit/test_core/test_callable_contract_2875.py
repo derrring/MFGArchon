@@ -23,6 +23,7 @@ from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
     DualHamiltonian,
     HamiltonianBase,
+    LagrangianBase,
     QuadraticControlCost,
     SeparableHamiltonian,
     refuse_a_hamiltonian_whose_reads_disagree,
@@ -771,6 +772,20 @@ def test_the_check_reads_a_hamiltonians_dp_as_well_as_its_value():
         refuse_a_hamiltonian_whose_reads_disagree(_DpAcrossTheBatch(), np.linspace(0.0, 1.0, 11))
 
 
+def test_a_lagrangians_proximal_hands_its_stand_in_x_as_a_tuple():
+    """With no ``x`` given, the search still calls the Lagrangian, and that call reads the contract's form."""
+    seen = []
+
+    class _Recording(LagrangianBase):
+        def __call__(self, t, x, alpha, m):
+            seen.append(type(x))
+            return 0.5 * float(np.sum(np.asarray(alpha) ** 2))
+
+    _Recording().proximal(0.5, np.array([0.4]))
+    assert seen
+    assert set(seen) == {tuple}
+
+
 @pytest.mark.parametrize("dimension", [1, 2, 3])
 def test_a_problem_refuses_a_point_only_hamiltonian_whichever_path_would_read_it(dimension):
     """#2481: HJB-FDM in d >= 2, the GFDM batch path and the semi-Lagrangian solver never read a check. It is one check now,
@@ -784,7 +799,9 @@ def test_a_problem_refuses_a_point_only_hamiltonian_whichever_path_would_read_it
     [
         lambda problem: HJBFDMSolver(problem),
         lambda problem: HJBSemiLagrangianSolver(problem),
-        lambda problem: HJBGFDMSolver(problem, collocation_points=problem.geometry.get_spatial_grid(), delta=0.6),
+        lambda problem: HJBGFDMSolver(
+            problem, collocation_points=problem.geometry.get_spatial_grid(), delta=0.6, monotonicity_scheme="none"
+        ),
     ],
     ids=["HJB-FDM", "HJB-SL", "HJB-GFDM"],
 )

@@ -616,9 +616,8 @@ class NetworkMFGProblem(MFGProblem):
     def get_initial_density(self) -> np.ndarray:
         """Initial density distribution on network nodes."""
         if self.components.initial_node_density_func is not None:  # type: ignore[attr-defined]
-            density = bind_user_callable(
-                self.components.initial_node_density_func, NODE_VALUE_SLOTS, role="initial_node_density_func"
-            )  # type: ignore[attr-defined]
+            given = self.components.initial_node_density_func  # type: ignore[attr-defined]
+            density = bind_user_callable(given, NODE_VALUE_SLOTS, role="initial_node_density_func")
             return np.array([density(t=0.0, node=i) for i in range(self.num_nodes)])
 
         # Default: uniform distribution
@@ -628,9 +627,8 @@ class NetworkMFGProblem(MFGProblem):
     def get_terminal_value(self) -> np.ndarray:
         """Terminal value function on network nodes."""
         if self.components.terminal_node_value_func is not None:  # type: ignore[attr-defined]
-            value = bind_user_callable(
-                self.components.terminal_node_value_func, NODE_VALUE_SLOTS, role="terminal_node_value_func"
-            )  # type: ignore[attr-defined]
+            given = self.components.terminal_node_value_func  # type: ignore[attr-defined]
+            value = bind_user_callable(given, NODE_VALUE_SLOTS, role="terminal_node_value_func")
             return np.array([value(t=self.T, node=i) for i in range(self.num_nodes)])
 
         # Default: zero terminal values

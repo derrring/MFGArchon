@@ -249,7 +249,9 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
         )
     probes = _drift_probes(dim)
     alpha = np.asarray(
-        hamiltonian.optimal_control(x=coordinate_tuple(np.zeros_like(probes), dim), m=np.ones(len(probes)), p=probes, t=0.0),
+        hamiltonian.optimal_control(
+            x=coordinate_tuple(np.zeros_like(probes), dim), m=np.ones(len(probes)), p=probes, t=0.0
+        ),
         dtype=float,
     )
     if alpha.shape != probes.shape:
@@ -331,7 +333,10 @@ def fp_source(
         grad_u = _gradient(pair.at("grad_u", t, pts), n, dim, "grad_u")
         m = _scalar(pair.at("m", t, pts), n, "m")
         alpha = _gradient(
-            np.asarray(hamiltonian.optimal_control(x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float), n, dim, "optimal_control"
+            np.asarray(hamiltonian.optimal_control(x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float),
+            n,
+            dim,
+            "optimal_control",
         )
         hess_u = _hessian(pair.at("hess_u", t, pts), n, dim, "hess_u")
         grad_m = _gradient(pair.at("grad_m", t, pts), n, dim, "grad_m")
@@ -397,7 +402,9 @@ def pair_derivative_errors(pair: ManufacturedPair, t: float, x: NDArray) -> dict
         base = _scalar(pair.at(name, t, pts), n, name)
 
         forward, backward = pair.at(name, t + h1, pts), pair.at(name, t - h1, pts)
-        errors[f"{name}_t"] = _relative(_scalar(pair.at(f"{name}_t", t, pts), n, f"{name}_t"), (forward - backward) / (2.0 * h1))
+        errors[f"{name}_t"] = _relative(
+            _scalar(pair.at(f"{name}_t", t, pts), n, f"{name}_t"), (forward - backward) / (2.0 * h1)
+        )
 
         gradient = _gradient(pair.at(f"grad_{name}", t, pts), n, dim, f"grad_{name}")
         numeric_gradient = np.empty((n, dim))

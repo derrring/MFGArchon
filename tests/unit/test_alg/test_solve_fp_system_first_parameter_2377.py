@@ -115,7 +115,9 @@ def _weak_form():
         domain=mesh,
         # (N-1)/N integrates to 1 on the mesh's uniform-cell measure (N nodes, cells of 1/(N-1)).
         conditions=Conditions(
-            m_initial=lambda x: np.full_like(np.asarray(x[0], dtype=float), (_N - 1) / _N), u_terminal=lambda x: 0.0, T=0.2
+            m_initial=lambda x: np.full_like(np.asarray(x[0], dtype=float), (_N - 1) / _N),
+            u_terminal=lambda x: 0.0,
+            T=0.2,
         ),
         Nt=5,
     )

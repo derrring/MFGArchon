@@ -134,7 +134,9 @@ class TestNetworkMassIsMeasuredOnTheNodes:
                 volatility=0.3,
             ),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)),
-            conditions=Conditions(u_terminal=lambda x: np.squeeze(0.0 * np.asarray(x[0])), m_initial=lambda x: 1.0, T=0.1),
+            conditions=Conditions(
+                u_terminal=lambda x: np.squeeze(0.0 * np.asarray(x[0])), m_initial=lambda x: 1.0, T=0.1
+            ),
             Nt=4,
         )
         assert problem.initial_mass_measure == "grid"

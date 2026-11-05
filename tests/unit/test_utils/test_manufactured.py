@@ -94,9 +94,7 @@ def pair():
     return ManufacturedPair(
         u=_u,
         u_t=lambda t, x: _a1p(t) * (np.cos(C * x[0]) + BETA * np.cos(C * x[1])),
-        grad_u=lambda t, x: np.stack(
-            [-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1
-        ),
+        grad_u=lambda t, x: np.stack([-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1),
         hess_u=_hess_u,
         m=_m,
         m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,

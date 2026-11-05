@@ -98,7 +98,7 @@ _LOOPS = [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator, 
 _POSITIVE_CONTROL = FixedPointIterator
 
 
-def _CountingSource(value: float = _MAGNITUDE):  # noqa: N802
+def _CountingSource(value: float = _MAGNITUDE):
     """The problem-level ``(t, x, v, m)`` callback, constant ``value``, counting its own calls in ``.calls``."""
 
     def source(t, x, v, m):

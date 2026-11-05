@@ -30,6 +30,9 @@ from mfgarchon.geometry.boundary.types import BCType, _declares_time
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from numpy.typing import NDArray
     from scipy import sparse
 
@@ -60,7 +63,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         degree: int = 2,
         n_gauss: int = 4,
         backend: str = "numpy",
-        domain: object | None = None,
+        domain: Callable[..., Any] | None = None,
         nitsche_penalty: float = 20.0,
         use_newton: bool = False,
         streamline_diffusion_scale: float = 0.0,

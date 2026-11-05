@@ -287,7 +287,9 @@ class StochasticMFGProblem(MFGProblem):
                 # No terminal cost defined - use zero
                 return 0.0
 
-        bound = bound_attribute(self, "conditional_terminal_cost", CONDITIONAL_TERMINAL_SLOTS, role="conditional_terminal_cost")
+        bound = bound_attribute(
+            self, "conditional_terminal_cost", CONDITIONAL_TERMINAL_SLOTS, role="conditional_terminal_cost"
+        )
         return bound(x=x, theta=theta_T)
 
     def create_conditional_problem(self, noise_path: np.ndarray) -> MFGProblem:

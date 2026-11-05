@@ -2021,7 +2021,9 @@ def solve_hjb_system_backward(
         # Evaluate source term at current timestep (if provided)
         if source_term is not None:
             x_grid = problem.geometry.get_spatial_grid()  # (Nx, d) ndarray
-            source_at_n = evaluate_solver_source(source_term, t=current_time, x=x_grid, dimension=problem.dimension).ravel()
+            source_at_n = evaluate_solver_source(
+                source_term, t=current_time, x=x_grid, dimension=problem.dimension
+            ).ravel()
         else:
             source_at_n = None
 

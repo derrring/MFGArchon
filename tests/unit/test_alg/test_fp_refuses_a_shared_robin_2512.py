@@ -39,9 +39,7 @@ def _problem(domain) -> MFGProblem:
     return MFGProblem(
         model=_model(),
         domain=domain,
-        conditions=Conditions(
-            m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T
-        ),
+        conditions=Conditions(m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T),
         Nt=NT,
     )
 

@@ -198,9 +198,7 @@ def outward_normal_from_sdf(
     )
 
 
-def geometry_outward_normal(
-    signed_distance: Callable[[NDArray], NDArray], points: NDArray, eps: float = 1e-6
-) -> NDArray:
+def geometry_outward_normal(signed_distance: Callable[..., NDArray], points: NDArray, eps: float = 1e-6) -> NDArray:
     """The outward normal from a geometry's own ``signed_distance`` method, which takes points as an array by the
     ``ImplicitGeometry`` contract, on a subclass a user wrote as well as on the library's."""
     return _unit_normal(function_gradient(signed_distance, points, eps=eps))

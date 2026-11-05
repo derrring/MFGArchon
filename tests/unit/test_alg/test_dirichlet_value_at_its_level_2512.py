@@ -78,7 +78,7 @@ def _mesh(d, n):
 
 def _exact(c, d):
     b = B[d]
-    return lambda t, x: A0 + c * t + sum(bi * xi for bi, xi in zip(b, x))
+    return lambda t, x: A0 + c * t + sum(bi * xi for bi, xi in zip(b, x, strict=True))
 
 
 @pytest.mark.parametrize("d", [1, 2])

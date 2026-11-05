@@ -129,7 +129,7 @@ def _mesh_problem():
     return MFGProblem(geometry=mesh, T=0.2, Nt=5, volatility=0.3, components=_components(), coupling_coefficient=0.0)
 
 
-def _Source():  # noqa: N802
+def _Source():
     """A source that records whether it was ever called. A constant 5.0 is deliberate: it is large against every field in
     this fixture, so a solver that reaches it cannot produce a zero delta."""
 

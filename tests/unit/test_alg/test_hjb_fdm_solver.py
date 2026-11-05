@@ -1092,7 +1092,9 @@ class TestBoundaryGradientBCAware1384:
         With the Jacobian also BC-aware the solve stays finite and bounded."""
         from mfgarchon.geometry.boundary import dirichlet_bc as _db
 
-        U = self._solve(_db(0.0, dimension=1), Nx=42, sigma=0.05, Nt=3, T=2.0, terminal=lambda x: np.sin(3 * np.pi * x[0]))
+        U = self._solve(
+            _db(0.0, dimension=1), Nx=42, sigma=0.05, Nt=3, T=2.0, terminal=lambda x: np.sin(3 * np.pi * x[0])
+        )
         assert np.all(np.isfinite(U)), "Dirichlet steep-terminal solve produced NaN/Inf"
         assert np.max(np.abs(U)) < 10.0, "Dirichlet solve blew up (Newton J/residual boundary mismatch)"
 

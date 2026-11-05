@@ -28,6 +28,9 @@ from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import (
 from mfgarchon.types.callable_protocols import read_region
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from numpy.typing import NDArray
 
 
@@ -179,7 +182,7 @@ def discretization_from_cloud(
     degree: int = 2,
     n_gauss: int = 4,
     backend: str = "numpy",
-    domain: object | None = None,
+    domain: Callable[..., Any] | None = None,
 ) -> MeshlessGalerkinDiscretization:
     """Build a discretization from a point cloud with interior tensor-Gauss quadrature.
 

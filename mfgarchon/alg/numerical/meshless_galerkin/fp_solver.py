@@ -33,15 +33,18 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import sparse
 
-from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_what_nitsche_cannot_place
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_problem import MFGProblem
@@ -73,7 +76,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         degree: int = 2,
         n_gauss: int = 4,
         backend: str = "numpy",
-        domain: object | None = None,
+        domain: Callable[..., Any] | None = None,
         nitsche_penalty: float = 20.0,
         streamline_diffusion_scale: float = 0.0,
         boundary_conditions: BoundaryConditions | None = None,

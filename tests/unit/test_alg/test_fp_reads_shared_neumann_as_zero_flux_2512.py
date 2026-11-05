@@ -49,9 +49,7 @@ def _grid_problem(bc: BoundaryConditions, dim: int) -> MFGProblem:
     return MFGProblem(
         model=_model(),
         domain=grid,
-        conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T
-        ),
+        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=T),
         Nt=NT,
     )
 

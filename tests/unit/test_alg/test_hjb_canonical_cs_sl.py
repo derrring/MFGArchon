@@ -337,7 +337,7 @@ class TestCanonicalCSControlCostLambda:
         components = MFGComponents(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
             m_initial=lambda x: 1.0,
-            u_terminal=lambda x: 0.5 * x[0]**2,
+            u_terminal=lambda x: 0.5 * x[0] ** 2,
         )
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=Nt, diffusion=0.0, components=components)
         solver = HJBSemiLagrangianSolver(problem, interpolation_method="linear", diffusion_method="canonical_cs")

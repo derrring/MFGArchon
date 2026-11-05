@@ -332,9 +332,7 @@ def test_a_pair_on_the_solved_points_or_undeclared_on_an_implicit_domain_is_admi
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the rebuild's density mass is not this pin's subject
         rebuild = box.with_conditions(
-            Conditions(
-                u_terminal=lambda x: 0.0, m_initial=lambda x: np.exp(-10 * (x[0] - 0.6) ** 2), T=0.3
-            )
+            Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: np.exp(-10 * (x[0] - 0.6) ** 2), T=0.3)
         )
     rebuild.components.boundary_conditions = no_flux_bc(dimension=1)
     assert rebuild.geometry is box.geometry

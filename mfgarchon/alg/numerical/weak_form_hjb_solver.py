@@ -460,7 +460,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
             if source_term is None:
                 return np.zeros(N)
             s_vals = np.asarray(
-                evaluate_solver_source(source_term, t=t, x=self._disc.dof_coordinates, dimension=self._disc.dof_coordinates.shape[1]), dtype=float
+                evaluate_solver_source(
+                    source_term, t=t, x=self._disc.dof_coordinates, dimension=self._disc.dof_coordinates.shape[1]
+                ),
+                dtype=float,
             ).ravel()
             if s_vals.shape != (N,):
                 raise ValueError(

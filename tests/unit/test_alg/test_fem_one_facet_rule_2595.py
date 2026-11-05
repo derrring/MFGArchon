@@ -77,9 +77,7 @@ def _solve(route: str, domain, bc: BoundaryConditions):
     # Unit mass on the domain's own measure: Mesh1D's uniform-cell measure gives a constant c the mass c (n+1)/n.
     c = 16 / 17 if isinstance(geometry, Mesh1D) else 1.0
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
-    conditions = Conditions(
-        m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5
-    )
+    conditions = Conditions(m_initial=lambda x: c + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5)
     problem = MFGProblem(model=model, domain=geometry, conditions=conditions, Nt=NT)
     if route == "hjb-shared":
         solver = HJBFEMSolver(problem)

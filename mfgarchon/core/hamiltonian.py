@@ -1268,7 +1268,7 @@ class HamiltonianBase(MFGOperatorBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1296,7 +1296,7 @@ class HamiltonianBase(MFGOperatorBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1355,7 +1355,7 @@ class HamiltonianBase(MFGOperatorBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1409,7 +1409,7 @@ class HamiltonianBase(MFGOperatorBase):
     def dx(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1449,7 +1449,7 @@ class HamiltonianBase(MFGOperatorBase):
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1481,7 +1481,7 @@ class HamiltonianBase(MFGOperatorBase):
     def jacobian_fd(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
         dx: float,
@@ -1570,7 +1570,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     def _finite_diff_dp(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -1596,7 +1596,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     def _finite_diff_dm(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -1612,7 +1612,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     def _finite_diff_dx(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -1751,7 +1751,7 @@ class LagrangianBase(MFGOperatorBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1808,7 +1808,7 @@ class LagrangianBase(MFGOperatorBase):
     def conjugate_argmax(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1867,7 +1867,7 @@ class LagrangianBase(MFGOperatorBase):
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1895,7 +1895,7 @@ class LagrangianBase(MFGOperatorBase):
     def evaluate_hamiltonian(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1931,7 +1931,7 @@ class LagrangianBase(MFGOperatorBase):
         z: np.ndarray,
         *,
         t: float = 0.0,
-        x: NDArray | None = None,
+        x: tuple[Any, ...] | None = None,
         m: float | NDArray | None = None,
     ) -> np.ndarray:
         """Proximal of L: prox_{tau*L}(z) = argmin_alpha { L(alpha) + |alpha-z|^2/(2*tau) }.
@@ -1953,7 +1953,7 @@ class LagrangianBase(MFGOperatorBase):
 
         # Dummy x, m if not provided
         if x is None:
-            x = np.zeros(max(d, 1))
+            x = tuple(np.zeros(max(d, 1)))
         if m is None:
             m = 0.0
 
@@ -2144,7 +2144,7 @@ class DualHamiltonian(HamiltonianBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2205,7 +2205,7 @@ class DualHamiltonian(HamiltonianBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2223,7 +2223,7 @@ class DualHamiltonian(HamiltonianBase):
 
     def _find_optimal_alpha(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -2316,7 +2316,7 @@ class DualLagrangian(LagrangianBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2371,7 +2371,7 @@ class DualLagrangian(LagrangianBase):
     def d_alpha(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2386,7 +2386,7 @@ class DualLagrangian(LagrangianBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> float:
@@ -2401,7 +2401,7 @@ class DualLagrangian(LagrangianBase):
 
     def _find_optimal_p(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
         t: float,
@@ -2534,7 +2534,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2574,7 +2574,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2589,7 +2589,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2625,7 +2625,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def dx(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2656,7 +2656,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2749,7 +2749,7 @@ class CongestionHamiltonian(HamiltonianBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2797,7 +2797,7 @@ class CongestionHamiltonian(HamiltonianBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2827,7 +2827,7 @@ class CongestionHamiltonian(HamiltonianBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2882,7 +2882,7 @@ class CongestionHamiltonian(HamiltonianBase):
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:

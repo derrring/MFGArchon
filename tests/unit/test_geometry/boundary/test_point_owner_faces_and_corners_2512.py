@@ -217,9 +217,7 @@ def test_a_cover_the_owner_cannot_decide_is_refused_at_a_corner_too():
         default_bc=BCType.NO_FLUX,
         segments=[
             BCSegment(name="strip", bc_type=BCType.NEUMANN, value=0.5, boundary="x_max", region={"y": (0.5, 1.0)}),
-            BCSegment(
-                name="blob", bc_type=BCType.NO_FLUX, sdf_region=lambda x: x[0] - 2.0
-            ),
+            BCSegment(name="blob", bc_type=BCType.NO_FLUX, sdf_region=lambda x: x[0] - 2.0),
         ],
     )
     geometry = Hyperrectangle(UNIT_SQUARE)
