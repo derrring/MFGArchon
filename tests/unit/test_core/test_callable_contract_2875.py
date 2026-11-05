@@ -424,23 +424,17 @@ def test_a_library_closure_is_handed_x_as_it_is_and_read_once():
     assert calls == [(7, 1)]
 
 
-def test_a_closure_in_a_library_module_run_as_a_script_is_the_librarys():
-    """``python -m`` runs a library module as ``__main__``, so its closures' module is ``__main__``, and the particle
-    solver's ``navigable`` closure was refused as a user's in its own ``__main__`` block. The file its code is in says it is
-    the library's; a script's own closure, outside the package, is still a user's."""
-    import os
+def test_a_closure_the_library_marks_is_the_librarys_in_a_module_run_as_a_script():
+    """``python -m`` runs a library module as ``__main__``, so the particle solver's ``navigable`` closure, whose module was
+    then ``__main__``, was refused as a user's in its own ``__main__`` block. The library marks the closure it calls itself;
+    a body written in that block, as a user writes one, is still a user's and is handed the tuple."""
 
-    import mfgarchon
+    def made_in_main(body):
+        body.__module__ = "__main__"
+        return body
 
-    def closure_in(path):
-        made = eval(compile("lambda points: points", path, "eval"))
-        made.__module__ = "__main__"
-        return made
-
-    assert cp._defined_by_the_library(
-        closure_in(os.path.join(os.path.dirname(mfgarchon.__file__), "run_as_a_script.py"))
-    )
-    assert not cp._defined_by_the_library(closure_in(os.path.join(os.sep, "elsewhere", "script.py")))
+    assert cp._defined_by_the_library(cp._held_by_the_library(made_in_main(lambda points: points)))
+    assert not cp._defined_by_the_library(made_in_main(lambda x: x[0]))
 
 
 def test_a_users_source_is_read_as_a_tuple_and_refused_at_its_own_door():
