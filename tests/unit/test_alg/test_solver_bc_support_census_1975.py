@@ -95,7 +95,7 @@ _ALIASES = {"FPNetworkSolver": ["NetworkFPSolver"], "NetworkHJBSolver": ["HJBNet
 #: ~~"Apply BC segments"~~ [CORRECTED 2026-08-17] -- true of one of the three. `HJBHowardSolver`
 #: reads `seg.bc_type` and branches on DIRICHLET (hjb_howard.py:363). `BoundaryHandler` probes
 #: `segments` for truthiness only, to classify "mixed" (boundary_handler.py:324). `ImplicitHeatSolver`
-#: forwards `bc` to `get_laplacian_operator` (implicit_heat.py:99) and otherwise mentions a segment
+#: forwards `bc` to `get_laplacian_operator` (implicit_heat.py:111) and otherwise mentions a segment
 #: only inside a `__repr__` f-string (:293). The roster is right; the verb was not.
 _NOT_REACHED = {
     "HJBHowardSolver": "mfgarchon.alg.numerical.hjb_solvers.hjb_howard",
