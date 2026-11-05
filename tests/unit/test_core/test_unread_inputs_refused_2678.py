@@ -67,10 +67,14 @@ def _grid():
     return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
 
 
+def _weighted(m, weight):
+    return weight * m
+
+
 def _hamiltonian(weight=1.0):
     return SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=functools.partial(np.multiply, weight),
+        coupling=functools.partial(_weighted, weight=weight),
         coupling_dm=lambda m: weight * np.ones_like(m),
     )
 

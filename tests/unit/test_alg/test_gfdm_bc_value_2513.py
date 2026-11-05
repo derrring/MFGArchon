@@ -189,7 +189,7 @@ def test_a_dict_bc_solves_as_the_boundary_conditions_it_spells(kind: str, form: 
     policy's equivalence test, the two solve identically. A Neumann dict's "values" was read only as an index dict,
     so a number or a callable was solved as 0 (#2520): at bddb45d9 the Neumann rows equal neumann_bc(value=0)'s."""
     make = neumann_bc if kind == "neumann" else dirichlet_bc
-    values = G if form == "number" else (lambda point: G)
+    values = G if form == "number" else (lambda x: G)
     with pytest.warns(
         DeprecationWarning,
         match=r"A dict for parameter 'boundary_conditions' in 'HJBGFDMSolver.__init__' is deprecated since v0\.22\.0\. "

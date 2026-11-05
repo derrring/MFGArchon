@@ -100,7 +100,7 @@ def _problem_2d(nx, ny, sigma, kind=None):
                 coupling_dm=lambda m: 1.0,
             ),
             m_initial=lambda x: np.exp(-sum((xi - 0.5) ** 2 for xi in x)),
-            u_terminal=lambda x: 0.5 * sum(xi ** 2 for xi in x),
+            u_terminal=lambda x: 0.5 * sum(xi**2 for xi in x),
         ),
         T=0.1,
         Nt=2,
@@ -179,11 +179,11 @@ def test_nonconstant_array_field_is_not_collapsed_to_its_mean():
 def test_nonconstant_callable_field_is_not_collapsed_to_the_domain_center():
     """Same defect via the callable branch, which evaluated once at the domain center."""
 
-    def sigma_of_x(pt):
-        return _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * np.asarray(pt).reshape(-1)[0]
+    def sigma_of_x(x):
+        return _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * x[0]
 
     u_callable = _solve(sigma_of_x)
-    u_center = _solve(float(sigma_of_x(np.array([0.5]))))
+    u_center = _solve(float(sigma_of_x((0.5,))))
 
     assert not np.array_equal(u_callable, u_center), (
         "the callable volatility was evaluated once at the domain center rather than per node"
@@ -295,11 +295,10 @@ def test_callable_field_is_evaluated_once_per_collocation_node():
     """A time-invariant spatial callable is normalized once, not inside every Newton probe."""
     calls = 0
 
-    def sigma_of_x(point):
+    def sigma_of_x(x):
         nonlocal calls
         calls += 1
-        x = float(np.asarray(point).reshape(-1)[0])
-        return _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * x
+        return _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * x[0]
 
     _solve(sigma_of_x)
 
@@ -344,9 +343,8 @@ def test_hybrid_grid_field_is_mapped_to_collocation_points():
     collocation = np.linspace(0.0, 1.0, 17) ** 1.2
     field_on_grid = _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * grid
 
-    def sigma_of_x(point):
-        x = float(np.asarray(point).reshape(-1)[0])
-        return _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * x
+    def sigma_of_x(x):
+        return _SIGMA_LO + (_SIGMA_HI - _SIGMA_LO) * x[0]
 
     problem = _problem()
     M_grid = np.tile(np.exp(-10 * (grid - 0.5) ** 2), (problem.Nt + 1, 1))

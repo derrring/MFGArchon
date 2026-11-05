@@ -651,7 +651,7 @@ def _gate_cases():
         "set_absorbing_nodes": lambda n: applicator().set_absorbing_nodes(n),
         "set_source_nodes": lambda n: applicator().set_source_nodes(n),
         "set_custom_bc": lambda n: applicator().set_custom_bc(n, lambda t, node, field: 0.0),
-        "callable nodes": lambda n: applicator().add_node_bc(NodeBC(nodes=lambda num, n=n: n)),
+        "callable nodes": lambda n: applicator().add_node_bc(NodeBC(nodes=lambda num_nodes, n=n: n)),
         "apply_direct": lambda n: applicator().apply_direct(np.ones(5), n, 1.0),
         "create_graph_applicator": lambda n: create_graph_applicator(5, boundary_nodes=n),
     }
@@ -1152,7 +1152,9 @@ def _gate_cases():
         (
             "create_graph_applicator[boundary_nodes=a callable]",
             lambda: np.array_equal(
-                create_graph_applicator(5, boundary_nodes=lambda n: [n - 1], boundary_value=2.5).apply(np.zeros(5)),
+                create_graph_applicator(5, boundary_nodes=lambda num_nodes: [num_nodes - 1], boundary_value=2.5).apply(
+                    np.zeros(5)
+                ),
                 [0, 0, 0, 0, 2.5],
             ),
         )
@@ -1293,7 +1295,7 @@ def _one_refusal_per_acceptor():
     rows = {
         "NodeBC.nodes": (lambda: NodeBC(nodes={1}), "condition_nodes"),
         "NodeBC.nodes, a callable's return": (
-            lambda: GraphApplicator(5).add_node_bc(NodeBC(nodes=lambda n: {1})),
+            lambda: GraphApplicator(5).add_node_bc(NodeBC(nodes=lambda num_nodes: {1})),
             "nodes",
         ),
         "set_dirichlet_nodes.nodes": (lambda: GraphApplicator(5).set_dirichlet_nodes(iter([1])), "condition_nodes"),

@@ -5,7 +5,6 @@ report is rebuilt from the array the result returns; and the guard's line names 
 """
 
 import logging
-import math
 import warnings
 
 import pytest
@@ -648,13 +647,19 @@ def test_a_raise_keeps_its_exception_restores_the_policy_and_reports_no_earlier_
     assert fp.on_negative_density == "warn"
 
 
+def _log_of_a_density(m):
+    if np.any(np.asarray(m) <= 0.0):
+        raise ValueError("math domain error")
+    return np.log(m)
+
+
 def test_a_body_that_raises_on_a_negative_keeps_its_exception_and_the_last_solve_is_reported(mfg_caplog):
-    """``math.log`` meets a negative on a later sweep: its own ``ValueError``, and one warning from the last FP solve."""
+    """A log meets a negative on a later sweep: its own ``ValueError``, and one warning from the last FP solve."""
     with (
         mfg_caplog.at_level(logging.WARNING, logger=_LOGGER),
         pytest.raises(ValueError, match=r"^math domain error$") as raised,
     ):
-        _coupled(2, coupling=lambda m: math.log(m), coupling_dm=lambda m: 1 / m).solve(verbose=False)
+        _coupled(2, coupling=_log_of_a_density, coupling_dm=lambda m: 1 / m).solve(verbose=False)
     assert raised.value.__cause__ is None
     assert len([m for m in mfg_caplog.messages if "time levels hold a negative value" in m]) == 1
 

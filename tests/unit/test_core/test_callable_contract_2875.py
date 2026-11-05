@@ -20,6 +20,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver
 from mfgarchon.alg.numerical.pde_solvers.implicit_heat import ImplicitHeatSolver
 from mfgarchon.core.hamiltonian import (
+    CongestionHamiltonian,
     DualHamiltonian,
     HamiltonianBase,
     QuadraticControlCost,
@@ -420,6 +421,73 @@ def test_a_door_reads_a_coordinate_tuple_and_refuses_what_cannot(door, reads, mi
         door(misreads)
 
 
+@pytest.mark.parametrize(
+    ("build", "term"),
+    [
+        (
+            lambda **kw: SeparableHamiltonian(
+                QuadraticControlCost(control_cost=1.0), coupling=kw["f"], coupling_dm=kw["df"]
+            ),
+            "coupling",
+        ),
+        (
+            lambda **kw: CongestionHamiltonian(
+                QuadraticControlCost(control_cost=1.0), kw["f"], kw["df"], coupling=lambda m: 0.0 * m
+            ),
+            "congestion_factor",
+        ),
+    ],
+    ids=["separable", "congestion"],
+)
+def test_a_density_term_is_read_by_name_on_a_batch(build, term):
+    """No read per point: a body that cannot read a batch raises, and a constant holds for every point."""
+    x = (np.linspace(0.0, 1.0, 3),)
+    p = np.ones((3, 1))
+    m = np.array([1.0, 2.0, 4.0])
+    good = build(f=lambda m: 1.0 + m, df=lambda m: 1.0)
+    assert np.all(np.isfinite(good(x=x, m=m, p=p, t=0.0)))
+    assert np.all(np.isfinite(good.dm(x=x, m=m, p=p, t=0.0)))
+    with pytest.raises(TypeError, match=rf"{term} .*names no slot"):
+        build(f=lambda rho: 1.0 + rho, df=lambda m: 1.0)
+    with pytest.raises(TypeError, match=r"only 0-dimensional|only length-1"):
+        build(f=lambda m: float(m), df=lambda m: 1.0)(x=x, m=m, p=p, t=0.0)
+
+
+def test_a_coupling_returns_a_value_per_point_and_a_constant_holds_for_all():
+    H = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=lambda m: m**2, coupling_dm=lambda m: 3.0)
+    x = (np.linspace(0.0, 1.0, 3),)
+    p, m = np.zeros((3, 1)), np.array([1.0, 2.0, 3.0])
+    np.testing.assert_array_equal(H(x=x, m=m, p=p, t=0.0), -(m**2))
+    np.testing.assert_array_equal(H.dm(x=x, m=m, p=p, t=0.0), [-3.0, -3.0, -3.0])
+    assert H(x=(0.5,), m=2.0, p=np.zeros(1), t=0.0) == pytest.approx(-4.0)
+    named = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=lambda scale=2.0, m=None: scale * m)
+    np.testing.assert_array_equal(named(x=x, m=m, p=p, t=0.0), -2.0 * m)
+    assert named(x=(0.5,), m=2.0, p=np.zeros(1), t=0.0) == pytest.approx(-4.0)
+
+
+@pytest.mark.parametrize("population", [0, 1])
+def test_a_stacked_density_still_reads_the_first_populations_entries(population):
+    """Not a contract: what #2335 will change, pinned so that this PR moves no value on a multi-population solve. A body
+    that reads the stack itself, by its own defaults, is left to."""
+    x = (np.linspace(0.0, 1.0, 4),)
+    p = np.zeros((4, 1))
+    first, second = np.array([1.0, 2.0, 3.0, 4.0]), np.array([10.0, 20.0, 30.0, 40.0])
+    stacked = np.concatenate([first, second])
+    cost = QuadraticControlCost(control_cost=1.0)
+    H = SeparableHamiltonian(cost, coupling=lambda m: m, population_index=population)
+    np.testing.assert_array_equal(H(x=x, m=stacked, p=p, t=0.0), -first)
+    own = SeparableHamiltonian(cost, coupling=lambda m, k=population: m[4 * k : 4 * k + 4], population_index=population)
+    np.testing.assert_array_equal(own(x=x, m=stacked, p=p, t=0.0), -(second if population else first))
+
+
+def test_a_node_rule_is_read_by_name():
+    from mfgarchon.geometry.boundary.applicator_graph import NodeBC
+
+    assert NodeBC(nodes=lambda num_nodes: [num_nodes - 1]).get_nodes(5) == [4]
+    with pytest.raises(TypeError, match=r"nodes .*names no slot"):
+        NodeBC(nodes=lambda count: [count - 1]).get_nodes(5)
+
+
 def test_an_implicit_domain_reads_a_region_as_a_grid_does():
     """`mark_region` is one method: a body written for a grid means the same on an implicit domain."""
     from mfgarchon.geometry.implicit import Hypersphere
@@ -497,7 +565,7 @@ def test_a_network_condition_is_read_by_node():
     network = GridNetwork(width=2, height=2)
     network.create_network()
     components = NetworkMFGComponents(
-        initial_node_density_func=lambda node: node + 1.0, terminal_node_value_func=lambda t, node: t * node
+        initial_node_density_func=lambda t, node: t + node + 1.0, terminal_node_value_func=lambda t, node: t * node
     )
     problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=4, components=components)
     np.testing.assert_allclose(problem.get_initial_density(), [1.0, 2.0, 3.0, 4.0], rtol=0, atol=0)

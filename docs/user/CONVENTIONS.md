@@ -470,12 +470,16 @@ control $\alpha$ occupies the $Du$ slot, being its conjugate variable.
 | `source_term_hjb`, `source_term_fp` | `(t, x, v, m)` |
 | a solver's `source_term` | `(t, x)` |
 | `potential` | `(t, x)` |
-| `coupling` | `(m)` |
+| `coupling`, `coupling_dm`, `congestion_factor`, `congestion_factor_dm` | `(m)` |
+| a graph coupling's `coupling_hjb`, `coupling_fp` | `(i, j, v_j, m_j, t)` |
 | `ControlCostBase.optimal_control` / `.lagrangian` | `(p)` / `(alpha)` |
 | volatility, diffusion, drift and PDE coefficient callables | `(t, x, m)` |
 | a measure field's `field_fn` / `gradient_fn` | `(t, x, mu)` |
 | a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)` |
-| a region: `sdf_region`, `domain_sdf`, `obstacle_sdf`, a `predicate`; `state_penalty` | `(x)` |
+| a region: `sdf_region`, `domain_sdf`, `obstacle_sdf`, a `predicate`, meshless Galerkin's `domain`; `state_penalty`; `Mesh1D`'s `refinement_function` | `(x)` |
+| a network condition: `initial_node_density_func`, `terminal_node_value_func` | `(t, node)` |
+| a graph condition's `NodeBC.nodes` | `(num_nodes)` |
+| a variational `state_constraints` / `velocity_constraints` entry | `(t, x)` / `(t, x, v)` |
 | Howard's `alpha_star` / `running_cost` | `(t_idx, x, p, m)` / `(t_idx)` |
 
 The order is chosen so the derivative family can grow: $D^2u$ is already a first-class object one

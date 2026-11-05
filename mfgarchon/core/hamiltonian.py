@@ -71,6 +71,7 @@ import numpy as np
 # Issue #700: Import HamiltonianJacobians for jacobian_fd() method
 from mfgarchon.types import HamiltonianJacobians
 from mfgarchon.types.callable_protocols import (
+    DENSITY_SLOTS,
     HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
     BoundCallable,
@@ -806,6 +807,27 @@ def _bound_potential(owner: Any) -> BoundCallable:
     return bound_attribute(owner, "_potential", POTENTIAL_SLOTS, role="potential")
 
 
+def _read_of_the_density(owner: Any, name: str, m: Any, count: int | None = None) -> Any:
+    """``owner.<name>``, a function of the density alone, read by name at ``m`` (#2875): a float at one point, and on a
+    batch of ``count`` points one value per point, a constant holding for all of them. Nothing falls back to reading a
+    batch one point at a time: a body that cannot read a batch raises, and the problem's check refuses it when it takes
+    the Hamiltonian."""
+    read = bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
+    if count is None:
+        return float(read(m=m))
+    values = np.asarray(read(m=np.asarray(m)), dtype=float).ravel()
+    if values.size != count and values.size == np.size(m):
+        values = values[:count]  # a stacked density, read entry by entry: the first population's, for every one (#2335)
+    return np.broadcast_to(values, (count,))
+
+
+def _bind_density_terms(owner: Any, *names: str) -> None:
+    """Refuse a name-unbound density term where it is handed over, as ``_bound_potential`` does for the potential."""
+    for name in names:
+        if getattr(owner, name) is not None:
+            bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
+
+
 class MFGOperatorBase(ABC):
     """
     Abstract base class for MFG operators (Hamiltonian and Lagrangian).
@@ -1170,7 +1192,9 @@ class HamiltonianBase(MFGOperatorBase):
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
         """
-        return np.asarray(self(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(
+            self(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float
+        )
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
@@ -1180,7 +1204,9 @@ class HamiltonianBase(MFGOperatorBase):
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
-        return np.asarray(self.dp(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(
+            self.dp(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float
+        )
 
     def dH_dm(self, state: HEvalState) -> NDArray:
         """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
@@ -1188,7 +1214,9 @@ class HamiltonianBase(MFGOperatorBase):
         Separate from the residual/Jacobian primitives — the FP source term, not the
         HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
         """
-        return np.asarray(self.dm(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(
+            self.dm(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float
+        )
 
     def evaluate(self, state: HEvalState) -> HamiltonianValues:
         """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
@@ -1319,7 +1347,9 @@ class HamiltonianBase(MFGOperatorBase):
             except (TypeError, ValueError):
                 # __call__ doesn't support batch m — fall back to per-point loop
                 m_arr = np.asarray(m)
-                return np.stack([self._finite_diff_dp(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(N)])
+                return np.stack(
+                    [self._finite_diff_dp(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(N)]
+                )
         return self._finite_diff_dp(x, m, p, t)
 
     def dm(
@@ -1369,7 +1399,10 @@ class HamiltonianBase(MFGOperatorBase):
                 return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError):
                 return np.array(
-                    [self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                    [
+                        self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t)
+                        for i in range(p_arr.shape[0])
+                    ]
                 )
         return self._finite_diff_dm(x, m, p, t)
 
@@ -2009,6 +2042,7 @@ class SeparableLagrangian(LagrangianBase):
         self._coupling = coupling
         if potential is not None:
             _bound_potential(self)
+        _bind_density_terms(self, "_coupling")
 
     def __call__(self, t, x, alpha, m):
         """L = L_control(alpha) + V(t, x) + f(m): V and f are costs (#2375 ruling 3).
@@ -2021,7 +2055,7 @@ class SeparableLagrangian(LagrangianBase):
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
-        f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
+        f_m = _read_of_the_density(self, "_coupling", m) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
     def optimal_control(self, t, x, p, m):
@@ -2035,7 +2069,7 @@ class SeparableLagrangian(LagrangianBase):
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
         V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
-        f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
+        f_m = _read_of_the_density(self, "_coupling", m) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
     def proximal(self, tau, z, *, t=0.0, x=None, m=None):
@@ -2495,6 +2529,7 @@ class SeparableHamiltonian(HamiltonianBase):
         self._coupling_dm = coupling_dm
         if potential is not None:
             _bound_potential(self)
+        _bind_density_terms(self, "_coupling", "_coupling_dm")
 
     def __call__(
         self,
@@ -2528,15 +2563,9 @@ class SeparableHamiltonian(HamiltonianBase):
         # Coupling term
         if self._coupling is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    f_m = np.asarray(self._coupling(m_arr), dtype=float).ravel()
-                    if f_m.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    f_m = np.array([float(self._coupling(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                f_m = _read_of_the_density(self, "_coupling", m, p_arr.shape[0])
             else:
-                f_m = float(self._coupling(m))
+                f_m = _read_of_the_density(self, "_coupling", m)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2576,15 +2605,9 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._coupling_dm is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    result = np.asarray(self._coupling_dm(m_arr), dtype=float).ravel()
-                    if result.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    result = np.array([float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0])
                 return -result
-            return -float(self._coupling_dm(m))
+            return -_read_of_the_density(self, "_coupling_dm", m)
 
         if self._coupling is None:
             if is_batch:
@@ -2624,7 +2647,9 @@ class SeparableHamiltonian(HamiltonianBase):
             x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
             x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
             grad[i] = _central_difference(
-                np.asarray(_bound_potential(self)(x=x_plus, t=t)).item(), np.asarray(_bound_potential(self)(x=x_minus, t=t)).item(), eps
+                np.asarray(_bound_potential(self)(x=x_plus, t=t)).item(),
+                np.asarray(_bound_potential(self)(x=x_minus, t=t)).item(),
+                eps,
             )
         return -grad
 
@@ -2713,11 +2738,13 @@ class CongestionHamiltonian(HamiltonianBase):
         self.control_cost = control_cost
         self._congestion_factor = congestion_factor
         self._congestion_factor_dm = congestion_factor_dm
+        _bind_density_terms(self, "_congestion_factor", "_congestion_factor_dm")
         self._potential = potential
         self._coupling = coupling
         self._coupling_dm = coupling_dm
         if potential is not None:
             _bound_potential(self)
+        _bind_density_terms(self, "_coupling", "_coupling_dm")
 
     def __call__(
         self,
@@ -2743,15 +2770,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            m_arr = np.asarray(m)
-            try:
-                c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                if c_m.shape[0] != p_arr.shape[0]:
-                    raise ValueError
-            except (TypeError, ValueError):
-                c_m = np.array([float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+            c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
         else:
-            c_m = float(self._congestion_factor(m))
+            c_m = _read_of_the_density(self, "_congestion_factor", m)
 
         H_kinetic = H_kinetic / c_m
 
@@ -2765,15 +2786,9 @@ class CongestionHamiltonian(HamiltonianBase):
         # Coupling term f(m)
         if self._coupling is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    f_m = np.asarray(self._coupling(m_arr), dtype=float).ravel()
-                    if f_m.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    f_m = np.array([float(self._coupling(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                f_m = _read_of_the_density(self, "_coupling", m, p_arr.shape[0])
             else:
-                f_m = float(self._coupling(m))
+                f_m = _read_of_the_density(self, "_coupling", m)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2799,15 +2814,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            m_arr = np.asarray(m)
-            try:
-                c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                if c_m.shape[0] != p_arr.shape[0]:
-                    raise ValueError
-            except (TypeError, ValueError):
-                c_m = np.array([float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+            c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
         else:
-            c_m = float(self._congestion_factor(m))
+            c_m = _read_of_the_density(self, "_congestion_factor", m)
 
         # Delegate to control_cost.dp(), then divide by c(m) (Issue #898)
         base_dp = self.control_cost.dp(p_arr)
@@ -2839,39 +2848,21 @@ class CongestionHamiltonian(HamiltonianBase):
                 H_kin = float(H_kin.sum())
 
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                    c_dm = np.asarray(self._congestion_factor_dm(m_arr), dtype=float).ravel()
-                    if c_m.shape[0] != p_arr.shape[0] or c_dm.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    c_m = np.array(
-                        [float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                    )
-                    c_dm = np.array(
-                        [float(self._congestion_factor_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                    )
+                c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, p_arr.shape[0])
 
                 kinetic_dm = -c_dm * H_kin / c_m**2
             else:
-                c_m = float(self._congestion_factor(m))
-                c_dm = float(self._congestion_factor_dm(m))
+                c_m = _read_of_the_density(self, "_congestion_factor", m)
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m)
                 kinetic_dm = -c_dm * H_kin / c_m**2
 
             # Coupling contribution f'(m)
             if self._coupling_dm is not None:
                 if is_batch:
-                    try:
-                        coupling_dm_val = np.asarray(self._coupling_dm(m_arr), dtype=float).ravel()
-                        if coupling_dm_val.shape[0] != p_arr.shape[0]:
-                            raise ValueError
-                    except (TypeError, ValueError):
-                        coupling_dm_val = np.array(
-                            [float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                        )
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0])
                 else:
-                    coupling_dm_val = float(self._coupling_dm(m))
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m)
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -3064,7 +3055,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
     )
     for name, evaluate in (("evaluate_H", hamiltonian.evaluate_H), ("evaluate_dp", hamiltonian.evaluate_dp)):
         refuse_batch_disagreement(
-            lambda **state: evaluate(HEvalState(**state)),
+            lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
             {"x": x, "p": p, "m": m, "t": t},
             [{"x": x[i : i + 1], "p": p[i : i + 1], "m": m[i : i + 1], "t": t} for i in range(k)],
             name=f"{type(hamiltonian).__name__}.{name}",

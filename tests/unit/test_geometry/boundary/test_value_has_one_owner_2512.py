@@ -269,8 +269,6 @@ def test_a_planted_coefficient_reader_is_found(package_copy, planted):
 # unseen: a negated test whose ``else`` calls (``if not callable(g): ... else: g(x)``), an early return before the
 # call, and ``callable(g) and g(x)``. No census decoder uses these shapes (review 1 of #2603).
 CALLABLE_CALLS_ALLOWED = {
-    # Not a value: a graph condition's node rule, which returns its nodes (#2292 reads them).
-    ("mfgarchon/geometry/boundary/applicator_graph.py", "get_nodes"): "non-boundary: a node rule",
     # Not a boundary value: a callable probe of an accessor, a getter or an operator.
     ("mfgarchon/alg/numerical/adjoint/verification.py", "verify_duality"): "non-boundary: L_hjb, L_fp_adjoint",
     ("mfgarchon/alg/numerical/coupling/fixed_point_utils.py", "read_inner_solve_failures"): "non-boundary: a method",

@@ -54,6 +54,7 @@ class Slots:
 # `DualLagrangian` and the validators' reading of a family's method call a callable by name with no binding, and read
 # `refuse_overridden` (#2869).
 POTENTIAL_SLOTS = Slots(("t", "x"))
+DENSITY_SLOTS = Slots(("m",))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
 BOUNDARY_VALUE_SLOTS = Slots(("t", "x"))
@@ -74,6 +75,7 @@ NODE_LAGRANGIAN_SLOTS = Slots(("t", "node", "velocity", "m"))
 # A graph node's boundary value, and a CUSTOM node's rule, which also reads the field it is applied to (#2296).
 NODE_VALUE_SLOTS = Slots(("t", "node"))
 NODE_RULE_SLOTS = Slots(("t", "node", "field"))
+NODE_SELECTOR_SLOTS = Slots(("num_nodes",))
 SOLVER_SOURCE_SLOTS = Slots(("t", "x"))
 VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), per_point=("v", "m"))
 STATE_CONSTRAINT_SLOTS = Slots(("t", "x"))

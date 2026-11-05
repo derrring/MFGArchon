@@ -41,7 +41,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 from mfgarchon.geometry.boundary.types import _read_constant
-from mfgarchon.types.callable_protocols import NODE_RULE_SLOTS, NODE_VALUE_SLOTS, BoundCallable, bind_user_callable
+from mfgarchon.types.callable_protocols import (
+    NODE_RULE_SLOTS,
+    NODE_SELECTOR_SLOTS,
+    NODE_VALUE_SLOTS,
+    BoundCallable,
+    bind_user_callable,
+)
 
 # Import base class for inheritance
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
@@ -358,7 +364,8 @@ class NodeBC:
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
         if callable(self.nodes):
-            return list(_nodes(self.nodes(num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})"))
+            select = bind_user_callable(self.nodes, NODE_SELECTOR_SLOTS, role=f"NodeBC {self.name!r}: nodes")
+            return list(_nodes(select(num_nodes=num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})"))
         return list(self.nodes)
 
     @property
