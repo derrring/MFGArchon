@@ -438,9 +438,8 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
     if together.ndim == len(shape) + 1 and together.shape == (d, *shape):
-        together = np.moveaxis(
-            together, 0, -1
-        )  # per coordinate, the coordinate axis first, as FP-FDM's drift returns it
+        # Per coordinate, the coordinate axis first, as FP-FDM's drift returns it.
+        together = np.moveaxis(together, 0, -1)
     fixed = together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape
     rows_together, rows_alone = [], []
     for flat in spread_samples(count, samples):
