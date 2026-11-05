@@ -74,6 +74,7 @@ CONDITIONAL_TERMINAL_SLOTS = Slots(("x", "theta"))
 # Howard's policy update reads the time index, not a time: its own slot (user ruling, 2026-11-04).
 ALPHA_STAR_SLOTS = Slots(("t_idx", "x", "p", "m"), per_point=("p", "m"))
 HOWARD_RUNNING_COST_SLOTS = Slots(("t_idx",))
+CONTROL_LAGRANGIAN_SLOTS = Slots(("alpha",), per_point=("alpha",))
 # A graph's node plays x; its adjacency stays with it (user ruling 2026-09-25).
 NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"))
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))

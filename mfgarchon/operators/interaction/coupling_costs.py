@@ -143,31 +143,11 @@ class PotentialCost(_SummableCost):
         return bind_on_measure(self, GridPointMeasure(problem))
 
     def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
-        from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, bind_user_callable, coordinate_tuple
-
-        def copies(points: np.ndarray) -> np.ndarray:
-            # Every x V is handed holds its own float64 copy, so a V that writes into its x moves neither the measure's
-            # points nor a caller's (#1642)
-            points = np.asarray(points).astype(np.float64)
-            return points.reshape(points.shape[0], -1)
-
         nodes = np.asarray(measure.points)
         nodes = nodes.reshape(nodes.shape[0], -1)
-        d = nodes.shape[1]
-        bound = bind_user_callable(self.V, POTENTIAL_SLOTS, role="PotentialCost's V")
-        if "t" in bound.passes:
-            raise TypeError(
-                "PotentialCost(V): V takes t, and this F[m] = integral V m is autonomous -- binding V once would read it "
-                "at t = 0 for the whole horizon. A time-dependent potential goes in the Hamiltonian, as "
-                "SeparableHamiltonian(potential=...)."
-            )
-
-        def at(points: np.ndarray) -> np.ndarray:
-            points = copies(points)
-            values = np.asarray(bound(x=coordinate_tuple(points, d)), dtype=float)
-            return np.array(np.broadcast_to(values.ravel() if values.size > 1 else values, (points.shape[0],)))
-
-        energy = PotentialEnergy(at(nodes), np.asarray(measure.weights, dtype=float).ravel(), V=at)
+        energy = PotentialEnergy.sampled_from(
+            self.V, nodes, np.asarray(measure.weights, dtype=float).ravel(), owner="PotentialCost"
+        )
         return cast("EnergyFunctional", energy)
 
     def __repr__(self) -> str:

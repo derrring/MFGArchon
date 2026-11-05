@@ -18,6 +18,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.alg.numerical.pde_solvers.implicit_heat import ImplicitHeatSolver
 from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
@@ -28,11 +29,15 @@ from mfgarchon.core.hamiltonian import (
     SeparableHamiltonian,
     refuse_a_hamiltonian_whose_reads_disagree,
 )
+from mfgarchon.core.measure import ParticleMeasure
+from mfgarchon.core.measure_field import FunctionalMeasureField
+from mfgarchon.factory import lq_mfg_initial_density, lq_mfg_terminal_cost
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.nitsche_1d import Nitsche1DPoissonSolver
 from mfgarchon.geometry.implicit import ImplicitDomain
 from mfgarchon.geometry.level_set.core import LevelSetEvolver
+from mfgarchon.operators.interaction import PotentialCost, PotentialEnergy
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.pde_coefficients import CoefficientField, resolve_diffusion_source
 
@@ -919,20 +924,104 @@ def test_the_advice_conditions_give_on_an_array_runs_as_written(door):
     _on_five_by_three(**{door: body})
 
 
-@pytest.mark.parametrize("dimension", [1, 2])
-def test_the_constant_the_refusal_says_to_compute_runs_in_any_dimension(dimension):
+@pytest.mark.parametrize(("dimension", "nodes"), [(1, 21), (2, 21), (3, 11)])
+def test_the_constant_the_refusal_says_to_compute_runs_on_a_tensor_grid(dimension, nodes):
     with pytest.raises(TypeError) as refused:
         Conditions(m_initial=np.ones(3))
     message = str(refused.value)
     statement = re.search(r"`(c = [^`]+)`", message).group(1)
     f = eval(re.search(r"m_initial=(lambda x: [^ ]+)", message).group(1).rstrip("."), {"np": np})
-    domain = _grid(dimension, 21)
+    domain = _grid(dimension, nodes)
     scope = {"domain": domain, "f": f}
     exec(statement, scope)
     # the closed form, one Gaussian per the first coordinate, against a fine quadrature on the same box
     fine = np.linspace(0.0, 1.0, 20001)
     exact = float(np.trapezoid(np.exp(-5 * (fine - 0.5) ** 2), fine))
     assert scope["c"] == pytest.approx(exact, rel=1e-2)
+
+
+# ------------------------------------------------------------------------------------ doors a wider census found
+
+
+def test_a_potential_energy_reads_v_by_name_with_x_a_tuple():
+    """At n = d an array's first axis passes for a coordinate, so ``x[1]`` read the second point with no error."""
+    points = np.array([[0.1, 0.2], [0.3, 0.4]])
+
+    def read(V):
+        return PotentialEnergy(np.zeros(2), 1.0, V=V).flat_derivative_at(np.ones(2), points)
+
+    np.testing.assert_allclose(read(lambda x: x[1]), [0.2, 0.4], rtol=0, atol=1e-14)
+    np.testing.assert_allclose(read(lambda x: 2.0), [2.0, 2.0], rtol=0, atol=1e-14)
+    with pytest.raises((TypeError, ValueError)):
+        read(lambda x: x[:, 1])
+    with pytest.raises(TypeError, match="names no slot"):
+        PotentialEnergy(np.zeros(2), 1.0, V=lambda y: y[0])
+    with pytest.raises(TypeError, match="V takes t"):
+        PotentialEnergy(np.zeros(2), 1.0, V=lambda t, x: x[0])
+
+
+def test_a_potential_cost_binds_its_v_once_and_evaluates_it_elsewhere():
+    calls = []
+
+    def V(x):
+        calls.append(np.shape(x[0]))
+        return x[0] + 2.0 * x[1]
+
+    problem = _problem(dimension=2, n=5)
+    energy = PotentialCost(V).bind(problem)
+    points = np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
+    np.testing.assert_allclose(energy.flat_derivative_at(np.ones(25) / 25, points), [0.5, 1.1, 1.7], rtol=0, atol=1e-14)
+    assert len([shape for shape in calls if shape == ()]) == 3  # one comparison, of three samples
+
+
+def _howard_solve(control_lagrangian):
+    points = np.linspace(0.0, 1.0, 21).reshape(-1, 1)
+    problem = _problem(n=21, u_terminal=lambda x: (x[0] - 0.5) ** 2)
+    howard = HJBHowardSolver(
+        problem,
+        stencil_provider=HJBGFDMSolver(problem, collocation_points=points),
+        alpha_star=lambda t_idx, x, p, m: -p,
+        control_lagrangian=control_lagrangian,
+    )
+    return np.asarray(howard.solve_hjb_system(M_density=None, U_terminal=(points.ravel() - 0.5) ** 2))
+
+
+def test_a_control_lagrangian_is_read_by_the_name_it_declares():
+    named_second = _howard_solve(lambda alpha, c=3.0: np.sum(c * alpha * alpha, axis=1) / 2)
+    named_first = _howard_solve(lambda c=3.0, alpha=0.0: np.sum(c * alpha * alpha, axis=1) / 2)
+    np.testing.assert_array_equal(named_first, named_second)
+    assert np.abs(named_second - _howard_solve(lambda alpha, c=1.0: np.sum(c * alpha * alpha, axis=1) / 2)).max() > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        _howard_solve(lambda a: np.sum(a * a, axis=1) / 2)
+
+
+def test_the_conditions_the_library_writes_read_a_coordinate_tuple():
+    u_terminal, m_initial = lq_mfg_terminal_cost(Lx=2.0), lq_mfg_initial_density()
+    at = np.linspace(0.0, 1.0, 5)
+    np.testing.assert_allclose(
+        u_terminal((at,)), 5 * (np.cos(at * np.pi) + 0.4 * np.sin(at * 2 * np.pi)), rtol=0, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        m_initial((at,)), 2 * np.exp(-200 * (at - 0.2) ** 2) + np.exp(-200 * (at - 0.8) ** 2), rtol=0, atol=1e-14
+    )
+    assert _problem(u_terminal=u_terminal, m_initial=m_initial, n=21).get_u_terminal().size == 21
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_the_documented_measure_field_body_reads_a_coordinate_tuple(dimension):
+    measure = ParticleMeasure(np.random.default_rng(0).uniform(0.2, 0.8, (40, dimension)), np.full(40, 1 / 40))
+    at = np.linspace(0.3, 0.7, 5).reshape(-1, 1) * np.ones((5, dimension))
+
+    def v_fn(t, x, mu):
+        m = mu.to_density(np.stack(x, axis=-1).reshape(-1, len(x)))
+        return -np.log(np.maximum(m, 1e-15))
+
+    np.testing.assert_allclose(
+        FunctionalMeasureField(v_fn).evaluate(0.1, at, measure),
+        -np.log(np.maximum(measure.to_density(at), 1e-15)),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_a_constant_noise_matrix_reaches_the_door_that_judges_it():

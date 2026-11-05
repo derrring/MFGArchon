@@ -470,9 +470,11 @@ control $\alpha$ occupies the $Du$ slot, being its conjugate variable.
 | `source_term_hjb`, `source_term_fp` | `(t, x, v, m)` |
 | a solver's `source_term` | `(t, x)` |
 | `potential` | `(t, x)` |
+| `PotentialCost`'s and `PotentialEnergy`'s `V` | `(x)` |
 | `coupling`, `coupling_dm`, `congestion_factor`, `congestion_factor_dm` | `(m)` |
 | a graph coupling's `coupling_hjb`, `coupling_fp` | `(t, i, j, v_j, m_j)` |
 | `ControlCostBase.optimal_control` / `.lagrangian` | `(p)` / `(alpha)` |
+| `HJBHowardSolver`'s `control_lagrangian` | `(alpha)` |
 | volatility, diffusion, drift and PDE coefficient callables | `(t, x, m)` |
 | a measure field's `field_fn` / `gradient_fn` | `(t, x, mu)` |
 | a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)` |

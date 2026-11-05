@@ -66,6 +66,7 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
 )
 from mfgarchon.types.callable_protocols import (
     ALPHA_STAR_SLOTS,
+    CONTROL_LAGRANGIAN_SLOTS,
     HOWARD_RUNNING_COST_SLOTS,
     bind_user_callable,
     coordinate_tuple,
@@ -94,9 +95,9 @@ For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(t_idx, x, p, m) = -p/c`.
 
 RunningCostFn = Callable[[int], np.ndarray]
 # Control-cost Lagrangian L(alpha) over the collocation cloud (Issue #1071): the
-# policy-evaluation running cost. Single source = control_cost.lagrangian; the
-# default unit-quadratic (1/2)|alpha|^2 is used when this is None.
-ControlLagrangianFn = Callable[[np.ndarray], np.ndarray]
+# policy-evaluation running cost, read by the name it declares, `alpha`. Single source =
+# control_cost.lagrangian; the default unit-quadratic (1/2)|alpha|^2 is used when this is None.
+ControlLagrangianFn = Callable[..., np.ndarray]
 """Time-indexed running cost L(x, alpha*, m, t) at the optimal policy.
 
 `running_cost(t_idx) -> array of shape (n,)` returning the running cost
@@ -497,7 +498,16 @@ class HJBHowardSolver:
             if running_cost is not None
             else None
         )
-        self.control_lagrangian = control_cost.lagrangian if control_cost is not None else control_lagrangian
+
+        def lagrangian_of_the_cost(alpha: np.ndarray) -> np.ndarray:
+            return control_cost.lagrangian(alpha)
+
+        lagrangian = lagrangian_of_the_cost if control_cost is not None else control_lagrangian
+        self._control_lagrangian = (
+            bind_user_callable(lagrangian, CONTROL_LAGRANGIAN_SLOTS, role="control_lagrangian")
+            if lagrangian is not None
+            else None
+        )
         self.control_cost = control_cost
         self.discretisation = discretisation
         self.max_iter = checked_inner_budget(max_iter, "max_iter", "HJBHowardSolver")
@@ -702,8 +712,8 @@ class HJBHowardSolver:
             # L(alpha) = lambda/2 |alpha|^2 for the quadratic cost, so this is byte-identical
             # to the prior hardcoded (1/2)|alpha|^2 at lambda=1 and correct for lambda != 1.
             # Falls back to the unit-quadratic form when no Lagrangian is supplied.
-            if self.control_lagrangian is not None:
-                L_alpha = self.control_lagrangian(alpha)
+            if self._control_lagrangian is not None:
+                L_alpha = self._control_lagrangian(alpha=alpha)
             else:
                 L_alpha = 0.5 * np.sum(alpha * alpha, axis=1)
             b = u_next / dt + L_alpha

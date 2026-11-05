@@ -304,7 +304,7 @@ class BaseFPSolver(BaseNumericalSolver):
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         # MMS verification support
-        source_term: Callable[[float, np.ndarray], np.ndarray] | None = None,
+        source_term: Callable[..., np.ndarray] | None = None,
         volatility_kind: str | None = None,
     ) -> np.ndarray:
         """

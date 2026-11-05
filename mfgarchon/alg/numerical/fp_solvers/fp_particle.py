@@ -2690,8 +2690,8 @@ class FPParticleSolver(BaseFPSolver):
         # Validate callable
         if not isinstance(drift_callable, DriftCallable):
             raise TypeError(
-                "drift_field callable does not match DriftCallable protocol. "
-                "Expected signature: (t: float, x: ndarray, m: ndarray) -> ndarray"
+                "drift_field callable does not match DriftCallable protocol. A drift is a function read by "
+                "the names it declares, of t, x and m, with x a coordinate tuple."
             )
 
         # Get parameters

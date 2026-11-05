@@ -53,9 +53,9 @@ class Nitsche1DPoissonSolver:
 
     Example:
         >>> solver = Nitsche1DPoissonSolver(n_elements=100, L=1.0, penalty=10.0)
-        >>> u = solver.solve(f=lambda x: np.ones_like(x), g_L=0.0, g_R=0.0)
+        >>> u = solver.solve(f=lambda x: np.ones_like(x[0]), g_L=0.0, g_R=0.0)
         >>> # Compare to strong BC imposition
-        >>> u_strong = solver.solve_strong_bc(f=lambda x: np.ones_like(x), g_L=0.0, g_R=0.0)
+        >>> u_strong = solver.solve_strong_bc(f=lambda x: np.ones_like(x[0]), g_L=0.0, g_R=0.0)
     """
 
     def __init__(self, n_elements: int, L: float = 1.0, penalty: float = 10.0):

@@ -1056,8 +1056,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # same sign as k = -u_t. This solver marches backward from the later endpoint, so the clock
         # starts at (n + 1) * dt and decreases by each sub-step -- matching WENO exactly, so one
         # manufactured source runs against both time-stepping solvers.
-        # x comes from the geometry, not a locally built linspace: base_hjb documents the contract
-        # as source_term(t, x) with x of shape (N, d), and building the points here would make one
+        # x comes from the geometry, not a locally built linspace: evaluate_solver_source takes the
+        # points as (N, d) and hands a body a coordinate tuple, and building the points here would make one
         # manufactured source unrunnable across solvers, defeating a shared MMS channel.
         source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
 
@@ -2728,7 +2728,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             raise ValueError(
                 f"HJBSemiLagrangianSolver: source_term returned {values.size} values at t={t:.6g} "
                 f"for a grid of {expected} points {tuple(grid_shape)}. The contract is "
-                f"source_term(t, x) -> (N,) with x of shape (N, d) from geometry.get_spatial_grid()."
+                f"source_term(t, x) -> (N,) with x a coordinate tuple of geometry.get_spatial_grid()'s points."
             )
         return values.reshape(grid_shape)
 

@@ -1279,8 +1279,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,) for d-dimensional problem
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x, shape (d,)
         m : float | NDArray
@@ -1315,8 +1315,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,)
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x, shape (d,)
         m : float | NDArray
@@ -1376,8 +1376,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,) or (N, d)
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x, shape (d,) or (N, d)
         m : float | NDArray
@@ -1426,8 +1426,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,) or (N, d) for batch
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum at x, shape (d,) or (N, d) for batch
         m : float | NDArray
@@ -1463,8 +1463,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x
         m : float | NDArray
@@ -1501,8 +1501,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x (current gradient estimate)
         m : float | NDArray

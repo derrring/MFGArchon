@@ -3101,7 +3101,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 reads it (#1055).
             show_progress: Whether to display progress bar for timesteps
             source_term: MMS forcing ``r_u`` of ``-u_t - (sigma^2/2) lap u + H = r_u``, with the
-                package-wide contract ``source_term(t, x) -> array``, ``x`` of shape ``(N, d)``
+                package-wide contract ``source_term(t, x) -> array``, ``x`` a coordinate tuple
                 (:mod:`base_hjb`). This is the ONLY additive channel a caller can reach. The
                 alpha-independent part of the Lagrangian -- the potential ``V(t, x)`` and the
                 coupling ``f(m)`` -- belongs to the Hamiltonian and arrives through it, so a
@@ -3774,7 +3774,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1071: the control-cost Lagrangian L(alpha) for the policy-evaluation RHS comes
         # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The
         # gate above guarantees a QuadraticControlCost, so L(alpha) = lambda/2 |alpha|^2.
-        control_lagrangian = control_cost.lagrangian if control_cost is not None else None
+        control_lagrangian = (lambda alpha: control_cost.lagrangian(alpha)) if control_cost is not None else None
         assembly_sigma = self._sigma_for_assembly()
         # positive_qp_fan (#1689): its policy and its Lagrangian are both the control cost's.
         guarded = self.monotonicity_scheme == "positive_qp_fan"

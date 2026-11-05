@@ -96,8 +96,8 @@ def lq_mfg_terminal_cost(Lx: float = 1.0):
     """
     import numpy as np
 
-    def u_terminal(x: float) -> float:
-        return 5 * (np.cos(x * 2 * np.pi / Lx) + 0.4 * np.sin(x * 4 * np.pi / Lx))
+    def u_terminal(x: tuple) -> float:
+        return 5 * (np.cos(x[0] * 2 * np.pi / Lx) + 0.4 * np.sin(x[0] * 4 * np.pi / Lx))
 
     return u_terminal
 
@@ -126,7 +126,7 @@ def lq_mfg_initial_density():
     """
     import numpy as np
 
-    def m_initial(x: float) -> float:
-        return 2 * np.exp(-200 * (x - 0.2) ** 2) + np.exp(-200 * (x - 0.8) ** 2)
+    def m_initial(x: tuple) -> float:
+        return 2 * np.exp(-200 * (x[0] - 0.2) ** 2) + np.exp(-200 * (x[0] - 0.8) ** 2)
 
     return m_initial

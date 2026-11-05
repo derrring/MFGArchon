@@ -357,7 +357,7 @@ class FunctionalMeasureField:
     -------
     >>> # Analytical: v(t, x, mu) = -log(mu.to_density(x))
     >>> def v_fn(t, x, mu):
-    ...     m = mu.to_density(x)
+    ...     m = mu.to_density(np.stack(x, axis=-1).reshape(-1, len(x)))  # to_density takes an array of points
     ...     return -np.log(np.maximum(m, 1e-15))
     >>> field = FunctionalMeasureField(v_fn)
     """

@@ -689,8 +689,8 @@ class BaseHJBSolver(BaseNumericalSolver):
             volatility_kind: "field" (one σ per point) or "tensor" (a (d, k) noise matrix)
                              for an array override (#2378 part 2a, #2375 ruling 6).
             source_term: Optional source/sink term S(t, x) in the HJB equation.
-                         Callable signature: source_term(t: float, x: ndarray) -> ndarray
-                         where x has shape (N, d) and return has shape (N,) or matching grid.
+                         Read by the names it declares, of t and x, with x a coordinate tuple; it
+                         returns one value per point, of shape (N,) or the grid's, or a constant.
                          Subtracted from H in the residual: F(u) = (u-u_next)/dt + H - S = 0.
                          Default: None (classical MFG, no source term).
 

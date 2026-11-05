@@ -161,6 +161,29 @@ def _as_points(x: NDArray, owner: str) -> NDArray:
     return pts
 
 
+def potential_reader(V: Callable[..., Any], *, owner: str) -> Callable[[NDArray], NDArray]:
+    """The one reader of an autonomous potential: ``V`` by the names it declares, with ``x`` a coordinate tuple (#2875), at
+    points of shape ``(n, d)``, returning shape ``(n,)``, a constant holding at every point. Every ``x`` it is handed holds
+    its own float64 copy, so a ``V`` that writes into its ``x`` moves neither the points nor a caller's (#1642)."""
+    from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, bind_user_callable, coordinate_tuple
+
+    bound = bind_user_callable(V, POTENTIAL_SLOTS, role=f"{owner}'s V")
+    if "t" in bound.passes:
+        raise TypeError(
+            f"{owner}(V): V takes t, and this F[m] = integral V m is autonomous -- binding V once would read it "
+            "at t = 0 for the whole horizon. A time-dependent potential goes in the Hamiltonian, as "
+            "SeparableHamiltonian(potential=...)."
+        )
+
+    def read(points: NDArray) -> NDArray:
+        points = np.asarray(points).astype(np.float64)
+        points = points.reshape(points.shape[0], -1)
+        values = np.asarray(bound(x=coordinate_tuple(points, points.shape[1])), dtype=float)
+        return np.array(np.broadcast_to(values.ravel() if values.size > 1 else values, (points.shape[0],)))
+
+    return read
+
+
 def validate_weights(weights: NDArray, owner: str) -> NDArray:
     """Return ``weights`` as a validated, read-only 1-D float array.
 
@@ -388,14 +411,13 @@ class PotentialEnergy:
         scalar cell volume, broadcast to ``(N,)``). Required -- a default would
         silently substitute a mesh-independent number for a mesh-dependent one.
     V : Callable | None
-        V itself, at points: ``V(x)`` with ``x`` of shape ``(n, d)`` returns
-        shape ``(n,)``. What :meth:`flat_derivative_at` evaluates, and only it;
-        ``PotentialCost.bind`` passes it.
+        V itself, read by the names it declares, as `potential_reader` says. What
+        :meth:`flat_derivative_at` evaluates, and only it.
     """
 
-    def __init__(self, potential: NDArray, weights: NDArray | float, *, V: Callable[[NDArray], NDArray] | None = None):
+    def __init__(self, potential: NDArray, weights: NDArray | float, *, V: Callable[..., Any] | None = None):
         self._V = np.asarray(potential, dtype=float).ravel()
-        self._V_at = V
+        self._V_at = None if V is None else potential_reader(V, owner="PotentialEnergy")
         w = np.asarray(weights, dtype=float)
         if w.ndim == 0:
             w = np.full(self._V.shape, float(w))
@@ -404,6 +426,17 @@ class PotentialEnergy:
             raise ValueError(
                 f"PotentialEnergy: weights shape {self._w.shape} does not match potential shape {self._V.shape}"
             )
+
+    @classmethod
+    def sampled_from(
+        cls, V: Callable[..., Any], nodes: NDArray, weights: NDArray | float, *, owner: str
+    ) -> PotentialEnergy:
+        """``V`` at ``nodes``, which it keeps to evaluate elsewhere: one binding, so its batch and point reads are compared
+        once. ``owner`` is who took ``V``, for its refusals."""
+        read = potential_reader(V, owner=owner)
+        energy = cls(read(nodes), weights)
+        energy._V_at = read
+        return energy
 
     @property
     def weights(self) -> NDArray:
@@ -429,14 +462,7 @@ class PotentialEnergy:
                 "PotentialEnergy.flat_derivative_at: this energy holds V sampled at its nodes, not V, so it evaluates "
                 "only at them. Bind PotentialCost(V) to the problem, or pass V= (#1642)."
             )
-        pts = _as_points(x, "PotentialEnergy")
-        values = np.asarray(self._V_at(pts), dtype=float)
-        if values.shape != (pts.shape[0],):
-            raise ValueError(
-                f"PotentialEnergy.flat_derivative_at: V at {pts.shape[0]} points returned shape {values.shape}, not "
-                f"({pts.shape[0]},)"
-            )
-        return values
+        return self._V_at(_as_points(x, "PotentialEnergy"))
 
     def second_variation(self, m: NDArray, *, t: float = 0.0) -> NDArray:
         """``delta^2 F / delta m^2 = 0``, shape ``(N, N)``. Identically zero (F is linear)."""

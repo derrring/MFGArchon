@@ -547,8 +547,8 @@ class FPFVMSolver(BaseFPSolver):
 
         # (N, d) POINTS, not a (d, *shape) meshgrid. This solver was the only caller passing
         # `geometry.meshgrid()`, while FPFDMSolver and the whole HJB side pass
-        # `get_spatial_grid()` -- the convention `BaseHJBSolver.solve_hjb_system` documents
-        # ("x has shape (N, d)"). One callback therefore could not serve both: a source written
+        # `get_spatial_grid()` -- what `evaluate_solver_source` takes. One callback therefore could not
+        # serve both: a source written
         # against the documented convention returned an (N,) array here and hit
         # `ValueError: operands could not be broadcast together with shapes (21,21) (882,)`,
         # where 882 = 2 x 441 is the two coordinate planes flattened together (#2019).

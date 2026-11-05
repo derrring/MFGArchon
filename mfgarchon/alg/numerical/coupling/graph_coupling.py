@@ -39,9 +39,10 @@ class GraphCouplingOperator(Protocol):
     Given the current state of all N nodes (value functions and densities),
     produces source_term callables for each node's HJB and FP equations.
 
-    The source terms have signature (t: float, x: NDArray) -> NDArray,
-    compatible with BaseHJBSolver.solve_hjb_system(source_term=...) and
-    BaseFPSolver.solve_fp_system(source_term=...).
+    The source terms are (t, x) -> NDArray, for BaseHJBSolver.solve_hjb_system(source_term=...) and
+    BaseFPSolver.solve_fp_system(source_term=...). A closure the library's couplings return takes x
+    as the solver's array of points; one a subclass returns is a function you wrote, and reads x as
+    a coordinate tuple (`evaluate_solver_source`).
 
     Implementations:
         AdjacencyCoupling: sum_j A_{ij} g(v_j, m_j)

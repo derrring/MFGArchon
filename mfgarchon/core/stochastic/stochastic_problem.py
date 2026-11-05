@@ -235,7 +235,7 @@ class StochasticMFGProblem(MFGProblem):
     def H_conditional(
         self,
         t: float,
-        x: float | np.ndarray,
+        x: tuple[Any, ...],
         p: float | np.ndarray,
         m: float | np.ndarray,
         theta: float | np.ndarray,
@@ -246,7 +246,7 @@ class StochasticMFGProblem(MFGProblem):
 
         Args:
             t: Current time
-            x: Spatial position
+            x: Position, a coordinate tuple
             p: Momentum (∇u)
             m: Density value
             theta: Current noise value θ_t
@@ -266,12 +266,12 @@ class StochasticMFGProblem(MFGProblem):
         )
         return bound(x=x, p=p, m=m, theta=theta, t=t)
 
-    def g_conditional(self, x: float | np.ndarray, theta_T: float | np.ndarray) -> float | np.ndarray:
+    def g_conditional(self, x: tuple[Any, ...], theta_T: float | np.ndarray) -> float | np.ndarray:
         """
         Evaluate conditional terminal cost g(x, θ_T).
 
         Args:
-            x: Spatial position
+            x: Position, a coordinate tuple
             theta_T: Terminal noise value
 
         Returns:

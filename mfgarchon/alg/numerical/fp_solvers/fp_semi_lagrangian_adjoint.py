@@ -412,8 +412,8 @@ class FPSLSolver(BaseFPSolver):
             if values.size != M[0].size:
                 raise ValueError(
                     f"FPSLSolver: source_term returned {values.size} values at t={t:.6g}, expected "
-                    f"{M[0].size}. The package convention is source_term(t, x) -> (N,) with x of "
-                    f"shape (N, d) from geometry.get_spatial_grid()."
+                    f"{M[0].size}. The package convention is source_term(t, x) -> (N,) with x a "
+                    f"coordinate tuple of geometry.get_spatial_grid()'s points."
                 )
             return values
 

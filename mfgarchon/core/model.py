@@ -192,9 +192,9 @@ class Conditions:
     so it is refused. That gap is real and wants a constructor that ADMITS it is grid-bound,
     not a relaxation of this rule.
 
-    Callable signature: called once per grid point -- 1-D: ``f(x)`` with ``x`` a float; n-D:
-    ``f(x)`` with ``x`` an array of shape ``(d,)`` -- returning one number. A time-first ``f(t, x)``
-    is read at ``T`` (``u_terminal``) or ``0`` (``m_initial``); ``f(x, t)`` is refused
+    Callable signature: read by the names it declares, on the grid's points at once, with ``x`` a
+    coordinate tuple and one number per point returned. A body that also names ``t`` is read at ``T``
+    (``u_terminal``) or ``0`` (``m_initial``), wherever it writes it
     (docs/user/CONVENTIONS.md § Callable signatures).
 
     Args:
@@ -216,8 +216,8 @@ class Conditions:
                 "Use a function: m_initial=lambda x: np.exp(-5*(x[0]-0.5)**2). "
                 "The library validates and reports its mass but does not rescale it (#1887); a "
                 "mass of 1 is your modelling decision, not a requirement. If you do want one, "
-                "compute the constant yourself against the grid you will solve on, "
-                "`c = float(domain.integrate(f(domain.meshgrid(indexing='ij'))))` in any dimension, then "
+                "compute the constant yourself against the grid you will solve on: on a TensorProductGrid, "
+                "`c = float(domain.integrate(f(domain.meshgrid(indexing='ij'))))`, run at d = 1, 2, 3, then "
                 "divide your closed form by `c`. "
                 "If your density has no closed form (a KDE, a histogram, a previous solve), there "
                 "is no way to pass it to Conditions yet: `lambda x: array` is refused, since it holds "
