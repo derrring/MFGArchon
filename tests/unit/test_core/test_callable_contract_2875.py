@@ -484,6 +484,7 @@ def test_a_node_rule_is_read_by_name():
     from mfgarchon.geometry.boundary.applicator_graph import NodeBC
 
     assert NodeBC(nodes=lambda num_nodes: [num_nodes - 1]).get_nodes(5) == [4]
+    assert NodeBC(nodes=lambda offset=2, num_nodes=None: [num_nodes - offset]).get_nodes(5) == [3]
     with pytest.raises(TypeError, match=r"nodes .*names no slot"):
         NodeBC(nodes=lambda count: [count - 1]).get_nodes(5)
 
