@@ -556,6 +556,15 @@ def test_a_blocked_solvers_constraints_and_conditions_are_read_by_name():
     with pytest.raises(TypeError, match=r"names no slot"):
         solver._evaluate_all_constraints(density)
 
+    components.m_initial = lambda x: 1.0 + x[0]
+    guess = _unbuilt(
+        PrimalDualMFGSolver,
+        problem=SimpleNamespace(components=components, geometry=SimpleNamespace(get_bounds=lambda: ([0.0], [1.0]))),
+        Nx_points=5,
+        **shared,
+    ).create_initial_guess("uniform")
+    np.testing.assert_allclose(guess[0], (1.0 + grid) / 1.5, rtol=0, atol=1e-14)  # normalised
+
     problem = SimpleNamespace(
         geometry=SimpleNamespace(get_bounds=lambda: ([0.0], [1.0])),
         initial_density=lambda x: 1.0 + x[0],
