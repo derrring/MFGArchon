@@ -2501,7 +2501,7 @@ class SeparableHamiltonian(HamiltonianBase):
     ...     coupling=lambda m: m**2,
     ...     coupling_dm=lambda m: 2*m,  # Analytic df/dm
     ... )
-    >>> H(x=np.array([0.5]), m=0.3, p=np.array([1.0]), t=0.0)
+    >>> H(x=(0.5,), m=0.3, p=np.array([1.0]), t=0.0)
 
     With potential field:
 
