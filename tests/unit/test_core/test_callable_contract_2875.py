@@ -902,6 +902,7 @@ def test_a_constant_source_handed_to_a_solver_reads_at_every_point(dimension):
     np.testing.assert_array_equal(constant, per_point)
 
 
+@pytest.mark.filterwarnings("ignore:initial density mass")  # the advice's Gaussian is not of mass 1, which is reported
 @pytest.mark.parametrize("door", ["m_initial", "u_terminal"])
 def test_the_advice_conditions_give_on_an_array_runs_as_written(door):
     """Advice is a claim: the function the refusal writes out is accepted, and reads the point it names."""
