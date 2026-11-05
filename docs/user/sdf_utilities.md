@@ -279,8 +279,8 @@ obstacles = obstacles_sdf(tuple(np.moveaxis(points, -1, 0)))
 
 # Gradient for obstacle avoidance
 def obstacle_hamiltonian(x, p):
-    dist = obstacles.reshape(x.shape[:-1])
-    grad = sdf_gradient(x, obstacles_sdf)
+    dist = obstacles_sdf(x)
+    grad = sdf_gradient(np.stack(x, axis=-1), obstacles_sdf)
     # Add penalty near obstacles
     penalty = np.exp(-10 * dist)
     return 0.5 * np.sum(p**2, axis=-1) + 100 * penalty

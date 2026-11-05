@@ -25,7 +25,7 @@ from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, bind_user_callable, coordinate_tuple
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, VOLATILITY_SLOTS, bind_user_callable, coordinate_tuple
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.utils.mfg_logging import get_logger
@@ -2720,7 +2720,7 @@ class FPParticleSolver(BaseFPSolver):
         volatility_is_callable = callable(volatility)
         drift_bound = bind_user_callable(drift_callable, COEFFICIENT_SLOTS, role="drift_field")
         volatility_bound = (
-            bind_user_callable(volatility, COEFFICIENT_SLOTS, role="volatility") if volatility_is_callable else None
+            bind_user_callable(volatility, VOLATILITY_SLOTS, role="volatility") if volatility_is_callable else None
         )
         volatility_is_array = isinstance(volatility, np.ndarray)
         if volatility_kind == "tensor" and volatility_is_callable:

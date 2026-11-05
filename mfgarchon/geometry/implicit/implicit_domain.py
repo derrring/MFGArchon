@@ -1313,7 +1313,7 @@ class ImplicitDomain(
 
         Example:
             >>> circle.mark_region("inlet", predicate=lambda x: x[0] < 0.3)
-            >>> circle.mark_region("outlet", predicate=lambda x: x[:, 0] > 0.7)
+            >>> circle.mark_region("outlet", predicate=lambda x: x[0] > 0.7)
             >>> circle.get_region_names()
             ['inlet', 'outlet']
         """

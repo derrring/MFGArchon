@@ -71,7 +71,7 @@ from mfgarchon.geometry.boundary.applicator_base import (
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_every_face, repeated_endpoint_mirror
 from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, bind_user_callable, evaluate_solver_source
+from mfgarchon.types.callable_protocols import VOLATILITY_SLOTS, bind_user_callable, evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.numerical.mass_fabrication_gate import MAX_CLIP_MASS_FABRICATION, refuse_what_a_flux_takes_negative
 from mfgarchon.utils.pde_coefficients import (
@@ -1556,7 +1556,7 @@ def solve_timestep_tensor_explicit(
         t = timestep_idx * dt
         Sigma = np.zeros((*shape, ndim, ndim))
         axes = _grid_axes(grid)
-        bound = bind_user_callable(tensor_field, COEFFICIENT_SLOTS, role="volatility")
+        bound = bind_user_callable(tensor_field, VOLATILITY_SLOTS, role="volatility")
         for idx in np.ndindex(shape):
             x_coords = tuple(axes[d][idx[d]] for d in range(ndim))
             m_at_point = M_current[idx]

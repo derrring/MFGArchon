@@ -20,7 +20,7 @@ Example:
     >>> from mfgarchon.geometry import ImplicitDomain
     >>>
     >>> # Create implicit domain (e.g., circle SDF)
-    >>> sdf = lambda x: np.linalg.norm(x - center, axis=-1) - radius
+    >>> sdf = lambda x: np.hypot(x[0] - center[0], x[1] - center[1]) - radius
     >>> domain = ImplicitDomain(sdf_func=sdf, bounds=[(0, 1), (0, 1)])
     >>>
     >>> # Create applicator

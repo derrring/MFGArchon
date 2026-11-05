@@ -76,7 +76,7 @@ class SupportsManifold(Protocol):
 
         Example:
             >>> # Circle embedded in ℝ²
-            >>> circle = ImplicitDomain(sdf=lambda x: np.linalg.norm(x) - 1.0)
+            >>> circle = ImplicitDomain(sdf=lambda x: np.linalg.norm(x, axis=0) - 1.0)
             >>> assert circle.manifold_dimension == 1  # 1D manifold
             >>> assert circle.dimension == 2  # 2D ambient space
 
@@ -115,7 +115,7 @@ class SupportsManifold(Protocol):
             >>> assert np.allclose(g, np.eye(2))  # Identity metric
             >>>
             >>> # Sphere with radius R
-            >>> sphere = ImplicitDomain(sdf=lambda x: np.linalg.norm(x) - R)
+            >>> sphere = ImplicitDomain(sdf=lambda x: np.linalg.norm(x, axis=0) - R)
             >>> g = sphere.get_metric_tensor(np.array([R, 0, 0]))
             >>> # g is induced metric from embedding
 
@@ -147,7 +147,7 @@ class SupportsManifold(Protocol):
 
         Example:
             >>> # Circle in ℝ²
-            >>> circle = ImplicitDomain(sdf=lambda x: np.linalg.norm(x) - 1.0)
+            >>> circle = ImplicitDomain(sdf=lambda x: np.linalg.norm(x, axis=0) - 1.0)
             >>> point = np.array([1.0, 0.0])  # On circle
             >>> basis = circle.get_tangent_space_basis(point)
             >>> assert basis.shape == (1, 2)  # 1D tangent space in ℝ²
@@ -264,7 +264,7 @@ class SupportsLipschitz(Protocol):
             >>> assert np.isclose(L, 0)  # Piecewise constant (axis-aligned)
             >>>
             >>> # Circle (smooth boundary)
-            >>> circle = ImplicitDomain(sdf=lambda x: np.linalg.norm(x) - 1.0)
+            >>> circle = ImplicitDomain(sdf=lambda x: np.linalg.norm(x, axis=0) - 1.0)
             >>> L = circle.get_lipschitz_constant()
             >>> assert np.isfinite(L)  # Smooth => Lipschitz
 

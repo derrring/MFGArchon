@@ -187,9 +187,9 @@ class Conditions:
     is no longer orthogonal to Domain.
 
     A density with no closed form -- a KDE, a measured histogram, a previous
-    solve's output -- currently has no expression on `Conditions`. `lambda _x: snapshot` does
-    NOT work: the signature validator evaluates it and refuses the array it gets
-    back. That gap is real and wants a constructor that ADMITS it is grid-bound,
+    solve's output -- currently has no expression on `Conditions`. `lambda x: snapshot` does
+    NOT work: its read of one point returns the whole array, which holds no entry per point,
+    so it is refused. That gap is real and wants a constructor that ADMITS it is grid-bound,
     not a relaxation of this rule.
 
     Callable signature: called once per grid point -- 1-D: ``f(x)`` with ``x`` a float; n-D:
@@ -213,22 +213,20 @@ class Conditions:
                 f"m_initial must be callable, got {type(self.m_initial).__name__}. "
                 "Conditions holds m_0(x) on the continuum; an array is already a projection onto "
                 "one grid, and holding one here would make Conditions grid-bound. "
-                "Use a function: m_initial=lambda x: np.exp(-5*(x-0.5)**2). "
+                "Use a function: m_initial=lambda x: np.exp(-5*(x[0]-0.5)**2). "
                 "The library validates and reports its mass but does not rescale it (#1887); a "
                 "mass of 1 is your modelling decision, not a requirement. If you do want one, "
-                "compute the constant yourself against the grid you will solve on -- in 1-D "
-                "`x = domain.coordinates[0]; c = float(domain.integrate(f(x)))`, then divide your "
-                "closed form by `c`. `coordinates` is a tuple of per-axis vectors, so that "
-                "one-liner is 1-D only: in n-D build the field on `domain.meshgrid(indexing='ij')` "
-                "first, or `integrate` refuses the shape. "
+                "compute the constant yourself against the grid you will solve on, "
+                "`c = float(domain.integrate(f(domain.meshgrid(indexing='ij'))))` in any dimension, then "
+                "divide your closed form by `c`. "
                 "If your density has no closed form (a KDE, a histogram, a previous solve), there "
-                "is no way to pass it to Conditions yet; `lambda _x: array` is rejected by the signature "
-                "check, not accepted."
+                "is no way to pass it to Conditions yet: `lambda x: array` is refused, since it holds "
+                "no entry per point."
             )
         if self.u_terminal is not None and not callable(self.u_terminal):
             raise TypeError(
                 f"u_terminal must be callable, got {type(self.u_terminal).__name__}. "
-                "Use a function: u_terminal=lambda x: (x-0.5)**2"
+                "Use a function: u_terminal=lambda x: (x[0]-0.5)**2"
             )
         if self.T <= 0:
             raise ValueError(f"T must be positive, got {self.T}")

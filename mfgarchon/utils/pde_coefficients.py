@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, REGION_SLOTS, bind_user_callable, coordinate_tuple
+from mfgarchon.types.callable_protocols import (
+    COEFFICIENT_SLOTS,
+    REGION_SLOTS,
+    VOLATILITY_SLOTS,
+    bind_user_callable,
+    coordinate_tuple,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -690,7 +696,7 @@ class CoefficientField:
         self._is_scalar = isinstance(field, (int, float))
         self._is_array = isinstance(field, np.ndarray)
         self._is_callable = callable(field)
-        self._bound = bind_user_callable(field, COEFFICIENT_SLOTS, role=field_name) if self._is_callable else None
+        self._bound = bind_user_callable(field, VOLATILITY_SLOTS, role=field_name) if self._is_callable else None
 
     def evaluate_at(
         self,

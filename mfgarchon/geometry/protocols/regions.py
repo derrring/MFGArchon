@@ -219,7 +219,7 @@ class SupportsBoundaryDistance(Protocol):
 
         Example:
             >>> # Circle of radius R at origin
-            >>> domain = ImplicitDomain(sdf=lambda x: np.linalg.norm(x) - R)
+            >>> domain = ImplicitDomain(sdf=lambda x: np.linalg.norm(x, axis=0) - R)
             >>> points = np.array([[0, 0], [R, 0], [2*R, 0]])  # Center, boundary, outside
             >>> phi = domain.get_signed_distance(points)
             >>> assert phi[0] < 0  # Inside
@@ -279,13 +279,13 @@ class SupportsRegionMarking(Protocol):
             >>> # Box region
             >>> geometry.mark_region(
             ...     "inlet",
-            ...     predicate=lambda x: np.all((x >= [0, 0]) & (x <= [0.1, 1.0]), axis=-1)
+            ...     predicate=lambda x: (x[0] >= 0.0) & (x[0] <= 0.1) & (x[1] >= 0.0) & (x[1] <= 1.0)
             ... )
             >>>
             >>> # Circular obstacle
             >>> geometry.mark_region(
             ...     "obstacle",
-            ...     predicate=lambda x: np.linalg.norm(x - center) < radius
+            ...     predicate=lambda x: np.hypot(x[0] - center[0], x[1] - center[1]) < radius
             ... )
             >>>
             >>> # Boundary region

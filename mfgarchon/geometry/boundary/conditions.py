@@ -128,7 +128,7 @@ class BoundaryConditions:
         >>> exit_seg = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0,
         ...                      normal_direction=np.array([0, 1]), priority=1)
         >>> bc = mixed_bc([exit_seg], dimension=2,
-        ...               domain_sdf=lambda x: np.linalg.norm(x) - 5.0)
+        ...               domain_sdf=lambda x: np.linalg.norm(x, axis=0) - 5.0)
     """
 
     dimension: int | None = None
@@ -2975,7 +2975,7 @@ def mixed_bc_from_regions(
         >>>
         >>> # Setup geometry with marked regions
         >>> geometry = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[50, 50], boundary_conditions=no_flux_bc(dimension=2))
-        >>> geometry.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
+        >>> geometry.mark_region("inlet", predicate=lambda x: x[0] < 0.1)
         >>> geometry.mark_region("outlet", boundary="x_max")
         >>>
         >>> # Define BCs via dictionary (no manual region_name assignment)

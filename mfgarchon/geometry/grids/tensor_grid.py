@@ -1966,7 +1966,7 @@ class TensorProductGrid(
             KeyError: If region name not found
 
         Example:
-            >>> grid.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
+            >>> grid.mark_region("inlet", predicate=lambda x: x[0] < 0.1)
             >>> inlet_mask = grid.get_region_mask("inlet")
             >>> u_flat = np.zeros(grid.total_points())
             >>> u_flat[inlet_mask] = 1.0  # Set value in inlet region

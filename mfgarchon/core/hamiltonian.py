@@ -1145,10 +1145,10 @@ class HamiltonianBase(MFGOperatorBase):
 
     >>> H = SeparableHamiltonian(
     ...     control_cost=QuadraticControlCost(control_cost=2.0),
-    ...     potential=lambda t, x: np.sin(x),
+    ...     potential=lambda t, x: np.sin(x[0]),
     ...     coupling=lambda m: m**2
     ... )
-    >>> x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
+    >>> x, m, p, t = (0.5,), 0.3, np.array([1.0]), 0.0
     >>> H(t, x, p, m)  # Evaluate Hamiltonian
     >>> H.dp(t, x, p, m)  # Get ∂H/∂p (auto-computed)
     >>> H.dm(t, x, p, m)  # Get ∂H/∂m (auto-computed)

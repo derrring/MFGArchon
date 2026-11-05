@@ -17,11 +17,11 @@ from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
 from mfgarchon.types.callable_protocols import (
-    COEFFICIENT_SLOTS,
     HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
     REGION_SLOTS,
     SOURCE_TERM_SLOTS,
+    VOLATILITY_SLOTS,
     Slots,
     bind_user_callable,
     bound_attribute,
@@ -561,7 +561,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             from mfgarchon.utils.pde_coefficients import volatility_from_diffusion
 
             if callable(diffusion):
-                _D_callable = bind_user_callable(diffusion, COEFFICIENT_SLOTS, role="diffusion")
+                _D_callable = bind_user_callable(diffusion, VOLATILITY_SLOTS, role="diffusion")
 
                 def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
                     D = _D(t=t, x=x, m=m)
@@ -595,7 +595,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # before passing the drift. mfgarchon does NOT add this correction.
         self._volatility = vola_value
         self._volatility_binding = (
-            bind_user_callable(vola_value, COEFFICIENT_SLOTS, role="volatility") if callable(vola_value) else None
+            bind_user_callable(vola_value, VOLATILITY_SLOTS, role="volatility") if callable(vola_value) else None
         )
         self._volatility_kind = volatility_kind
 
@@ -2171,7 +2171,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Check 2: Non-zero mass (must have some mass to normalize)
         # #1887: VALIDATE, DO NOT NORMALISE. This block used to rescale whatever `m_initial`
         # returned so that a discrete integral came out 1, silently. A user who writes
-        # `m_initial=lambda x: np.exp(-10*(x-0.5)**2)` hands in a function whose integral is about
+        # `m_initial=lambda x: np.exp(-10*(x[0]-0.5)**2)` hands in a function whose integral is about
         # 0.56 and got back something else with nothing said -- the same shape as silent clipping,
         # which this repository has already decided against. Normalising is the caller's job; the
         # library's job is to say what it received.

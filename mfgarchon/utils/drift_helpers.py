@@ -216,17 +216,16 @@ def prescribed_drift(drift_func: Callable) -> Callable:
 
     Examples:
         >>> # Constant wind
-        >>> wind = lambda t, x, m: np.array([1.0, 0.5])
+        >>> wind = lambda t, x, m: np.stack([np.full_like(x[0], 1.0), np.full_like(x[0], 0.5)])
         >>> drift = prescribed_drift(wind)
 
         >>> # Time-varying wind
-        >>> wind = lambda t, x, m: np.array([np.sin(2*np.pi*t), 0.0])
+        >>> wind = lambda t, x, m: np.stack([np.full_like(x[0], np.sin(2*np.pi*t)), np.zeros_like(x[0])])
         >>> drift = prescribed_drift(wind)
 
         >>> # Spatially-varying field
         >>> def gravity(t, x, m):
-        ...     x_arr, y_arr = x
-        ...     return np.array([0.0, -9.8 * np.ones_like(x_arr)])
+        ...     return np.stack([np.zeros_like(x[0]), np.full_like(x[0], -9.8)])
         >>> drift = prescribed_drift(gravity)
     """
     bind_user_callable(drift_func, COEFFICIENT_SLOTS, role="drift_func")  # refused here, with no solve started
@@ -302,7 +301,7 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
         >>>
         >>> # MFG control + constant wind
         >>> control = optimal_control_drift(U_hjb, problem)
-        >>> wind = prescribed_drift(lambda t, x, m: np.array([1.0, 0.0]))
+        >>> wind = prescribed_drift(lambda t, x, m: np.stack([np.ones_like(x[0]), np.zeros_like(x[0])]))
         >>> total_drift = composite_drift([control, wind])
         >>> M = fp_solver.solve_fp_system(m0, drift_field=total_drift)
 

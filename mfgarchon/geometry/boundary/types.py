@@ -540,13 +540,13 @@ class BCSegment:
         ...     name="corner",
         ...     bc_type=BCType.NEUMANN,
         ...     value=0.0,
-        ...     sdf_region=lambda x: np.linalg.norm(x - np.array([1, 1])) - 0.2,
+        ...     sdf_region=lambda x: np.hypot(x[0] - 1, x[1] - 1) - 0.2,
         ...     priority=2,
         ... )
 
         Marked region (Issue #596 Phase 2.5):
         >>> # First mark region on geometry
-        >>> geometry.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
+        >>> geometry.mark_region("inlet", predicate=lambda x: x[0] < 0.1)
         >>> # Then reference it in BC segment
         >>> inlet_bc = BCSegment(
         ...     name="inlet_bc",
@@ -941,8 +941,9 @@ def boundary_value(
 
     **A callable** is ``g(t, x)``, time first (#2378 phase 5, #2375 ruling 8; user ruling for boundary values). It
     is bound by its parameter names when the segment is built (`BCSegment.value_binding`) and called by keyword with
-    what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. ``x`` is one point, a 1-D array of shape
-    ``(d,)``, ``d = 1`` included. A reader with no time passes ``t=None``, and one with no point ``x=None``. A
+    what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. A reader passes ``x`` as one point, a 1-D array of
+    shape ``(d,)``, ``d = 1`` included, and the callable reads it as a tuple of scalars. A reader with no time passes
+    ``t=None``, and one with no point ``x=None``. A
     callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,
     the reader and the face. A reader that takes a time but was given none names its parameter in ``time_keyword``,
     and the refusal says to pass it; a reader with no time to take advises a value that needs none. It returns one

@@ -79,7 +79,7 @@ def terminal_cost(x):
     Returns:
         Terminal cost
     """
-    return 0.5 * (x - X_REF) ** 2
+    return 0.5 * (x[0] - X_REF) ** 2
 
 
 def create_market_volatility_problem():

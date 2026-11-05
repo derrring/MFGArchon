@@ -471,7 +471,7 @@ control $\alpha$ occupies the $Du$ slot, being its conjugate variable.
 | a solver's `source_term` | `(t, x)` |
 | `potential` | `(t, x)` |
 | `coupling`, `coupling_dm`, `congestion_factor`, `congestion_factor_dm` | `(m)` |
-| a graph coupling's `coupling_hjb`, `coupling_fp` | `(i, j, v_j, m_j, t)` |
+| a graph coupling's `coupling_hjb`, `coupling_fp` | `(t, i, j, v_j, m_j)` |
 | `ControlCostBase.optimal_control` / `.lagrangian` | `(p)` / `(alpha)` |
 | volatility, diffusion, drift and PDE coefficient callables | `(t, x, m)` |
 | a measure field's `field_fn` / `gradient_fn` | `(t, x, mu)` |
@@ -526,8 +526,11 @@ coordinate, of one point or of every point. The library may hand either, so a bo
 | | `np.asarray(x)[:, 0]`, `float(x[0])`, `np.linalg.norm(x)`, `np.sum(x)`, `x[0][0]`, `np.max(x[0])`: refused by the check below |
 
 A door that holds the points states their dimension, so `(N,)` is $N$ points on a line and never one point in $N$
-dimensions. A grid door hands its grid's shape, `(Nx, Ny)`, and a point door `(N,)`. The library's own regions, such as a
-geometry's `signed_distance`, are not user inputs and take their points as an array of shape `(d,)` or `(N, d)`.
+dimensions. A grid door hands its grid's shape, `(Nx, Ny)`, and a point door `(N,)`.
+
+**One body you write is not handed a tuple.** A geometry's `signed_distance` is a method of the geometry and not a callable
+it was handed, and it takes its points as an array of shape `(d,)` or `(N, d)`. So a subclass you write of `ImplicitGeometry`
+reads an array there, as the library's own regions do.
 
 ### What the slots beside `x` hold
 
@@ -553,10 +556,18 @@ raise is refused and names both reads.
 - **The samples.** They are spread across the batch at the golden ratio's multiples and are not its ends and middle, where
   a term such as $\sin 2\pi x$ is the same on a uniform grid. A batch of fewer than two points, or of exactly $d$, is
   cycled up to a count that is neither, since a coordinate axis passes for a batch of $d$.
-- **The forms a return may take.** A scalar holds at every point; a result with the batch's shape leading holds its entry
-  there; a result of one point's own shape holds as it is; a per-coordinate result may put its axis first or last. A body
-  returning one fixed array at every point is a constant, and the door that reads it judges its shape: a $(d, d)$ array
-  from a volatility is read under `volatility_kind`. Any other shape is refused by name.
+- **The forms a return may take.** At every door a scalar holds at every point, and an array holds one entry per point: the
+  batch's shape leading, each entry of one point's own shape, and a per-coordinate result may put its axis first or last.
+  Two more are stated door by door in `Slots`, and are not inferred from the return:
+  - At a door with a field, a body may read the field whole, so a point read that returns an array of the batch's shape
+    holds its entry there. So `lambda t, x: S` with `S` of the grid's shape reads at `source_term_hjb`.
+  - A volatility or a diffusion may return one fixed array, if every point's read returns that array too, and it is read
+    under `volatility_kind`.
+
+  Anything else has no entry per point and is refused by name, before it reaches a read by size that would take a
+  transposed array in C order. So a body holding an array is refused at a condition, a potential, a solver's `source_term`,
+  a region, a measure field, `PotentialCost` and an exact solution's field, and a constant vector is refused at a drift. A
+  door may still refuse a scalar by name, as `mark_region` does: a predicate is one boolean per point.
 - **A Hamiltonian is compared on wide synthetic $p$ and $m$**, $p$ from $-1.3$ to $2.1$, never on a solve's first values,
   where a problem takes it, on `evaluate_H` and `evaluate_dp`. `DualHamiltonian` and `NetworkHamiltonian` read one point
   at a time on every path, and are not compared.

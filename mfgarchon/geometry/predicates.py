@@ -103,7 +103,7 @@ def sdf_region(
 
     Example:
         >>> # Ellipse SDF
-        >>> sdf_fn = lambda x: (x[:,0]/2)**2 + (x[:,1]/1)**2 - 1
+        >>> sdf_fn = lambda x: (x[0]/2)**2 + (x[1]/1)**2 - 1
         >>> grid.mark_region("ellipse", predicate=sdf_region(sdf_fn))
     """
 

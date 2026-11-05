@@ -8,7 +8,7 @@ either way must read both the same, or it is refused where it is first read on a
 from __future__ import annotations
 
 import pickle
-from types import SimpleNamespace
+import re
 
 import pytest
 
@@ -197,14 +197,12 @@ def test_a_body_that_writes_into_its_coordinates_changes_neither_read():
         (lambda x: 2.0 * x[0], (A,)),
         (lambda x: np.stack([x[0], x[1]], axis=-1), (A, B)),
         (lambda x: np.stack([x[0], x[1]], axis=0), (A, B)),
-        (lambda x: np.array([[0.3, 0.1], [0.1, 0.2]]), (A, B)),
     ],
     ids=[
         "a scalar",
         "one entry per point",
         "per coordinate, the axis last",
         "per coordinate, the axis first",
-        "one array",
     ],
 )
 def test_each_form_a_return_takes_is_compared_and_accepted(body, x):
@@ -233,7 +231,7 @@ def test_a_return_with_no_entry_to_compare_is_refused_by_name(body):
 
 def test_a_fixed_array_with_the_wrong_values_at_a_point_is_refused():
     with pytest.raises(ValueError, match="reads differently"):
-        _read(lambda x: np.array([1.0, 2.0, 3.0]) * (1.0 if np.ndim(x[0]) else x[0]))
+        _read(lambda x: np.array([1.0, 2.0, 3.0]) * (1.0 if np.ndim(x[0]) else x[0]), slots=cp.VOLATILITY_SLOTS)
 
 
 # ---------------------------------------------------------------------------------------- what the slots beside x hold
@@ -645,50 +643,6 @@ def test_the_gradient_of_an_sdf_reads_it_as_a_tuple():
         sdf_gradient(points, lambda x: np.linalg.norm(x, axis=1) - 1.0)
 
 
-def _unbuilt(solver_class, **held):
-    """These solvers refuse construction until #1342. What they read stays a door, so each row sets what its read uses."""
-    solver = solver_class.__new__(solver_class)
-    vars(solver).update(held)
-    return solver
-
-
-def test_a_blocked_solvers_constraints_and_conditions_are_read_by_name():
-    from mfgarchon.alg.optimization.optimal_transport.sinkhorn_solver import SinkhornMFGSolver
-    from mfgarchon.alg.optimization.optimal_transport.wasserstein_solver import WassersteinMFGSolver
-    from mfgarchon.alg.optimization.variational_solvers.primal_dual_solver import PrimalDualMFGSolver
-
-    grid = np.linspace(0.0, 1.0, 5)
-    shared = {"x_grid": grid, "t_grid": np.array([0.0, 0.5]), "Nt": 2}
-    components = SimpleNamespace(state_constraints=[lambda x, t: x[0] + t - 1.0], velocity_constraints=None)
-    solver = _unbuilt(PrimalDualMFGSolver, problem=SimpleNamespace(components=components), **shared)
-    density = np.ones((2, 5))
-    assert solver._evaluate_all_constraints(density)["state_constraints"] == pytest.approx(0.5)
-    components.state_constraints, components.velocity_constraints = [lambda position: 0.0], None
-    with pytest.raises(TypeError, match=r"names no slot"):
-        solver._evaluate_all_constraints(density)
-
-    components.m_initial = lambda x: 1.0 + x[0]
-    guess = _unbuilt(
-        PrimalDualMFGSolver,
-        problem=SimpleNamespace(components=components, geometry=SimpleNamespace(get_bounds=lambda: ([0.0], [1.0]))),
-        Nx_points=5,
-        **shared,
-    ).create_initial_guess("uniform")
-    np.testing.assert_allclose(guess[0], 1.0 + grid, rtol=0, atol=1e-14)
-
-    problem = SimpleNamespace(
-        geometry=SimpleNamespace(get_bounds=lambda: ([0.0], [1.0])),
-        initial_density=lambda x: 1.0 + x[0],
-        running_cost=lambda m, x, t: m * x[0] + t,
-    )
-    held = {"problem": problem, "spatial_grid": grid, "time_grid": np.array([0.0, 1.0]), "dx": 0.25, "dt": 1.0}
-    for solver_class in (SinkhornMFGSolver, WassersteinMFGSolver):
-        densities = _unbuilt(solver_class, **held)._initialize_densities()
-        np.testing.assert_allclose(densities[0], (1.0 + grid) / 1.5, rtol=0, atol=1e-14)  # normalised
-    wasserstein = _unbuilt(WassersteinMFGSolver, ground_cost=np.zeros((5, 5)), **held)
-    assert wasserstein._compute_total_cost(np.ones((1, 5)), []) == pytest.approx(0.25 * grid.sum())
-
-
 def test_a_variational_terminal_cost_reads_a_coordinate_tuple():
     from mfgarchon.alg.optimization.variational_problem import VariationalMFGComponents, VariationalMFGProblem
 
@@ -824,6 +778,155 @@ def test_a_hamiltonian_that_never_reads_a_batch_is_not_read_on_one():
 
 
 # ----------------------------------------------------------------------------------- constants and fixed returns at doors
+
+
+_HELD = np.linspace(0.1, 0.9, 15)
+
+
+def _five_by_three():
+    return TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[5, 3], boundary_conditions=no_flux_bc(dimension=2))
+
+
+def _on_five_by_three(**doors):
+    conditions = {
+        "u_terminal": doors.pop("u_terminal", lambda x: 0.0),
+        "m_initial": doors.pop("m_initial", lambda x: 1.0),
+    }
+    return MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=0.3),
+        domain=_five_by_three(),
+        conditions=Conditions(**conditions, T=0.2),
+        Nt=2,
+        **doors,
+    )
+
+
+@pytest.mark.parametrize("door", ["u_terminal", "m_initial"])
+@pytest.mark.parametrize("shape", [(5, 3), (3, 5), (15,), (5, 1), (2,)])
+def test_a_condition_holding_an_array_is_refused_whatever_its_shape(door, shape):
+    """A condition is taken by its size, so a transposed array would be read in C order with no error, and `Conditions`
+    holds a function of the continuum, not a projection onto one grid."""
+    held = np.resize(_HELD, shape)
+    with pytest.raises(ValueError, match="no entry per point"):
+        _on_five_by_three(**{door: lambda x: held})
+
+
+@pytest.mark.parametrize("door", ["source_term_hjb", "source_term_fp"])
+@pytest.mark.parametrize("shape", [(3, 5), (15,), (5, 1), (2,)])
+def test_a_problem_source_returning_no_entry_per_point_is_refused(door, shape):
+    held = np.resize(_HELD, shape)
+    with pytest.raises(ValueError, match="no entry per point"):
+        _on_five_by_three(**{door: lambda t, x: held}).solve(max_iterations=1, tolerance=1e-3, verbose=False)
+
+
+@pytest.mark.parametrize("door", ["source_term_hjb", "source_term_fp"])
+def test_a_field_door_reads_the_entries_of_a_return_with_the_grids_shape(door):
+    """Why such a return is read at all: a body may read the field whole, as ``lambda m: m`` does. It must read the same
+    as a body that computes each point, on a grid whose axes cannot be swapped unseen."""
+    x, y = np.meshgrid(np.linspace(0.0, 1.0, 5), np.linspace(0.0, 1.0, 3), indexing="ij")
+    held = x + 2.0 * y
+
+    def solve(body):
+        return _on_five_by_three(**{door: body}).solve(max_iterations=1, tolerance=1e-3, verbose=False)
+
+    read = solve(lambda t, x: held)
+    written = solve(lambda t, x: x[0] + 2.0 * x[1])
+    np.testing.assert_allclose(read.U, written.U, rtol=0, atol=1e-13)
+    np.testing.assert_allclose(read.M, written.M, rtol=0, atol=1e-13)
+    assert np.ptp(read.U[0] if door == "source_term_hjb" else read.M[-1]) > 1e-3  # the source reached the solve
+
+
+_NO_FIELD = [cp.CONDITION_SLOTS, cp.POTENTIAL_SLOTS, cp.REGION_SLOTS, cp.SOLVER_SOURCE_SLOTS, cp.EXACT_SOLUTION_SLOTS]
+
+
+@pytest.mark.parametrize("slots", _NO_FIELD, ids=lambda slots: "+".join(slots.order))
+def test_a_door_with_no_field_reads_no_entry_from_a_batch_shaped_return(slots):
+    x = (np.linspace(0.0, 1.0, 7),)
+    held = np.linspace(0.1, 0.9, 7)
+    with pytest.raises(ValueError, match="no entry per point"):
+        cp.bind_user_callable(lambda x: held, slots, role="r")(x=x, t=0.0)
+
+
+@pytest.mark.parametrize(
+    "slots",
+    [*_NO_FIELD, cp.COEFFICIENT_SLOTS, cp.SOURCE_TERM_SLOTS, cp.MEASURE_FIELD_SLOTS, cp.BOUNDARY_VALUE_SLOTS],
+    ids=lambda slots: "+".join(slots.order) + (" with a field" if slots.fields else ""),
+)
+def test_a_door_that_does_not_say_so_reads_no_fixed_array(slots):
+    x = (np.linspace(0.0, 1.0, 7), np.linspace(1.0, 2.0, 7))
+    held = np.array([[0.3, 0.1], [0.1, 0.2]])
+    with pytest.raises(ValueError, match=r"a return of shape \(2, 2\) has no entry per point"):
+        cp.bind_user_callable(lambda x: held, slots, role="r")(x=x, t=0.0)
+
+
+def test_a_constant_vector_drift_is_refused_by_the_check():
+    x = (np.linspace(0.0, 1.0, 7), np.linspace(1.0, 2.0, 7))
+    with pytest.raises(ValueError, match=r"a return of shape \(2,\) has no entry per point"):
+        cp.bind_user_callable(lambda t, x, m: np.array([0.1, 0.2]), cp.COEFFICIENT_SLOTS, role="drift_field")(
+            x=x, t=0.0, m=np.ones(7)
+        )
+
+
+def test_only_the_noise_matrix_door_says_it_reads_a_fixed_array():
+    stated = {name for name, value in vars(cp).items() if isinstance(value, cp.Slots) and value.fixed_return}
+    assert stated == {"VOLATILITY_SLOTS"}
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+@pytest.mark.parametrize("door", ["source_term_hjb", "source_term_fp"])
+def test_a_constant_source_reads_as_the_same_value_at_every_point(door, dimension):
+    """``lambda t, x: 0.5`` raised a bare AttributeError from the HJB's read of the composed source, at d = 1 and d = 2."""
+
+    def solve(body):
+        return _problem(dimension=dimension, n=5, **{door: body}).solve(max_iterations=1, tolerance=1e-3, verbose=False)
+
+    constant = solve(lambda t, x: 0.5)
+    per_point = solve(lambda t, x: 0.5 + 0.0 * x[0])
+    np.testing.assert_array_equal(constant.U, per_point.U)
+    np.testing.assert_array_equal(constant.M, per_point.M)
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_a_constant_source_handed_to_a_solver_reads_at_every_point(dimension):
+    problem = _problem(dimension=dimension, n=5)
+    points = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
+    value = cp.evaluate_solver_source(lambda t, x: 0.5, t=0.0, x=points, dimension=dimension)
+    np.testing.assert_array_equal(value, np.full(points.shape[0], 0.5))
+    shape = problem.geometry.get_grid_shape()
+    density = np.ones((5, *shape)) / points.shape[0]
+    terminal, previous = np.zeros(shape), np.zeros((5, *shape))
+    constant = HJBFDMSolver(problem).solve_hjb_system(density, terminal, previous, source_term=lambda t, x: 0.5)
+    per_point = HJBFDMSolver(problem).solve_hjb_system(
+        density, terminal, previous, source_term=lambda t, x: 0.5 + 0.0 * x[0]
+    )
+    np.testing.assert_array_equal(constant, per_point)
+
+
+@pytest.mark.parametrize("door", ["m_initial", "u_terminal"])
+def test_the_advice_conditions_give_on_an_array_runs_as_written(door):
+    """Advice is a claim: the function the refusal writes out is accepted, and reads the point it names."""
+    with pytest.raises(TypeError) as refused:
+        Conditions(**{door: np.ones(3)})
+    written = re.search(rf"{door}=(lambda x: [^ ]+)", str(refused.value)).group(1).rstrip(".")
+    body = eval(written, {"np": np})
+    assert float(body((0.5,))) == pytest.approx(1.0 if door == "m_initial" else 0.0)
+    _on_five_by_three(**{door: body})
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_the_constant_the_refusal_says_to_compute_runs_in_any_dimension(dimension):
+    with pytest.raises(TypeError) as refused:
+        Conditions(m_initial=np.ones(3))
+    message = str(refused.value)
+    statement = re.search(r"`(c = [^`]+)`", message).group(1)
+    f = eval(re.search(r"m_initial=(lambda x: [^ ]+)", message).group(1).rstrip("."), {"np": np})
+    domain = _grid(dimension, 21)
+    scope = {"domain": domain, "f": f}
+    exec(statement, scope)
+    # the closed form, one Gaussian per the first coordinate, against a fine quadrature on the same box
+    fine = np.linspace(0.0, 1.0, 20001)
+    exact = float(np.trapezoid(np.exp(-5 * (fine - 0.5) ** 2), fine))
+    assert scope["c"] == pytest.approx(exact, rel=1e-2)
 
 
 def test_a_constant_noise_matrix_reaches_the_door_that_judges_it():

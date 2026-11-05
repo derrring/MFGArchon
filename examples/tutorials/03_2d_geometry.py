@@ -74,7 +74,7 @@ if __name__ == "__main__":
         return (x[0] - TARGET[0]) ** 2 + (x[1] - TARGET[1]) ** 2
 
     def initial_density(x):
-        """4 Gaussian blobs at corners. x shape: (2,) for a single 2D point."""
+        """4 Gaussian blobs at corners. x is a coordinate tuple."""
         m = 0.0
         for cx, cy in corners:
             m += np.exp(-5 * ((x[0] - cx) ** 2 + (x[1] - cy) ** 2))

@@ -141,7 +141,7 @@ constraint = ObstacleConstraint(lower_bound=0.0, upper_bound=m_max)
 # Solve MFG with capacity constraint
 problem = MFGProblem(
     geometry=grid,
-    terminal_cost=lambda x: x,  # Distance to exit
+    terminal_cost=lambda x: x[0],  # Distance to exit
     running_cost=lambda x, m: m,  # Congestion cost
 )
 

@@ -41,12 +41,17 @@ class Slots:
     over the points ``x`` holds, such as the density: a body may read one whole, ``np.max(m)``, so a point read gets it
     whole too. ``per_point`` hold one value per point, in step with ``x``: a point read gets that point's. Any other slot
     is one value for the whole call, such as ``t`` or a measure.
+
+    What a body may return is stated too. An array with an entry per point, or a constant, at every door. ``fixed_return``
+    says this door also reads one array that holds for every point, such as a noise matrix. And a point read returning an
+    array with the batch's shape holds its entry there only at a door with ``fields``, since a body reads a field whole.
     """
 
     order: tuple[str, ...]
     required: tuple[str, ...] = ()
     fields: tuple[str, ...] = ()
     per_point: tuple[str, ...] = ()
+    fixed_return: bool = False
 
 
 # What each user callable the library invokes may read: time, then space, then the u-derivative family, then the
@@ -61,6 +66,8 @@ BOUNDARY_VALUE_SLOTS = Slots(("t", "x"))
 SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), fields=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
 COEFFICIENT_SLOTS = Slots(("t", "x", "m"), fields=("m",))
+# A volatility or a diffusion may return one noise matrix for every point, read under `volatility_kind`.
+VOLATILITY_SLOTS = Slots(("t", "x", "m"), fields=("m",), fixed_return=True)
 HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), required=("p",), per_point=("p", "m"))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), per_point=("p", "m"))
 CONDITIONAL_TERMINAL_SLOTS = Slots(("x", "theta"))
@@ -80,7 +87,7 @@ SOLVER_SOURCE_SLOTS = Slots(("t", "x"))
 VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), per_point=("v", "m"))
 STATE_CONSTRAINT_SLOTS = Slots(("t", "x"))
 VELOCITY_CONSTRAINT_SLOTS = Slots(("t", "x", "v"))
-GRAPH_COUPLING_SLOTS = Slots(("i", "j", "v_j", "m_j", "t"))
+GRAPH_COUPLING_SLOTS = Slots(("t", "i", "j", "v_j", "m_j"))
 # A region's signed distance or predicate, and an exact solution's fields, read what they name.
 REGION_SLOTS = Slots(("x",))
 EXACT_SOLUTION_SLOTS = Slots(("t", "x"))
@@ -299,13 +306,17 @@ def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any, d
 
     A closure the library composed is called with the solver's own ``x``, since it is not a user input: what it wraps reads
     its own door, and it is not checked, so the fresh one a coupler builds per Picard iteration adds no calls. Anything else
-    reads ``x`` as a coordinate tuple.
+    reads ``x`` as a coordinate tuple. A constant holds at every point, so every solver gets one value per point.
     """
     if _defined_by_the_library(source_term):
-        return source_term(t, x)
-    bound, plan = _remembered(source_term, SOLVER_SOURCE_SLOTS, "source_term")
-    result = bound(t=t, x=coordinate_tuple(x, dimension))
-    plan.checked = bound.checked
+        result = source_term(t, x)
+    else:
+        bound, plan = _remembered(source_term, SOLVER_SOURCE_SLOTS, "source_term")
+        result = bound(t=t, x=coordinate_tuple(x, dimension))
+        plan.checked = bound.checked
+    if np.size(result) == 1:
+        entries = coordinate_tuple(x, dimension)
+        return np.full(np.broadcast_shapes(*(np.shape(entry) for entry in entries)), float(np.ravel(result)[0]))
     return result
 
 
@@ -390,14 +401,14 @@ def spread_samples(count: int, samples: int) -> NDArray:
 
 
 def _entry_at(
-    result: NDArray, batch_shape: tuple[int, ...], own: tuple[int, ...], index: tuple[int, ...]
+    result: NDArray, batch_shape: tuple[int, ...], own: tuple[int, ...], index: tuple[int, ...], slots: Slots
 ) -> NDArray | None:
     """A read's value at ``index``, by the form it returned: a scalar holds at every point, a result with the batch's shape
-    leading holds its entry there, and a result of one point's own shape ``own`` holds as it is. Anything else has no entry
-    to compare, which is None."""
+    leading holds its entry there at a door with a field, and a result of one point's own shape ``own`` holds as it is.
+    Anything else has no entry to compare, which is None."""
     if result.ndim == 0 or result.size == 1:
         return result.reshape(-1)
-    if result.shape[: len(batch_shape)] == batch_shape:
+    if slots.fields and result.shape[: len(batch_shape)] == batch_shape:
         return np.ravel(result[index])
     if result.shape == own:
         return np.ravel(result)
@@ -411,9 +422,9 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     gets it: so a body may read a field whole. A batch too small to compare, of fewer than two points or of exactly ``d``,
     is cycled to a count that is neither, ``x`` and the slots stated to run with it together.
 
-    A return that does not lead with the batch's shape is one fixed array only if every point's read returns that array
-    too: a constant noise matrix does, and a body that read a coordinate axis as points does not. The door that reads it
-    judges its shape, since only that door knows what a constant means there.
+    A return that does not lead with the batch's shape is refused, unless ``slots`` states that this door reads one, and
+    then every point's read must return that array too: a constant noise matrix does, and a body that read a coordinate
+    axis as points does not.
     """
     entries = [np.asarray(entry, dtype=float) for entry in np.broadcast_arrays(*values["x"])]
     shape = entries[0].shape
@@ -441,6 +452,8 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         # Per coordinate, the coordinate axis first, as FP-FDM's drift returns it.
         together = np.moveaxis(together, 0, -1)
     fixed = together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape
+    if fixed and not slots.fixed_return:
+        raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
     rows_together, rows_alone = [], []
     for flat in spread_samples(count, samples):
         index = tuple(int(i) for i in np.unravel_index(int(flat), shape))
@@ -458,10 +471,11 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         if fixed and alone.shape != together.shape:
             raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
         own = together.shape if fixed else together.shape[len(shape) :]
-        entry = np.ravel(alone) if fixed else _entry_at(alone, shape, own, index)
+        entry = np.ravel(alone) if fixed else _entry_at(alone, shape, own, index, slots)
         if entry is None:
             raise ValueError(
-                f"{described}: one point's read returned shape {alone.shape}, which has no entry to compare with a batch's {together.shape}. {guidance}"
+                f"{described}: one point's read returned shape {alone.shape}, which has no entry per point to compare "
+                f"with a batch's {together.shape}. {guidance}"
             )
         rows_alone.append(entry)
         rows_together.append(np.ravel(together) if fixed or together.size == 1 else np.ravel(together[index]))
@@ -563,7 +577,7 @@ class DriftFieldCallable(Protocol):
     Examples:
         >>> # Constant wind
         >>> def wind_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
-        ...     return np.array([1.0, 0.5])
+        ...     return np.stack([np.full_like(x[0], 1.0), np.full_like(x[0], 0.5)])
 
         >>> # State-dependent drift
         >>> def density_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
@@ -615,9 +629,9 @@ class DiffusionFieldCallable(Protocol):
         >>> def density_diffusion(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         ...     return 0.1 * (1 + m)  # Higher diffusion in dense regions
 
-        >>> # Anisotropic diffusion (diagonal)
+        >>> # Anisotropic diffusion: one noise matrix for every point, read under volatility_kind="tensor"
         >>> def anisotropic_diffusion(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
-        ...     return np.array([0.1, 0.05])  # Different diffusion in x and y
+        ...     return np.diag([0.1, 0.05])  # Different diffusion in x and y
     """
 
     def __call__(
@@ -735,23 +749,23 @@ class PotentialCallable(Protocol):
 
     Args:
         t: Time (float)
-        x: Spatial position (float for 1D, ndarray for nD)
+        x: Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
 
     Returns:
         Potential value V(t, x)
 
     Examples:
         >>> # Time-independent potential
-        >>> def quadratic_potential(x: float) -> float:
-        ...     return 0.5 * x**2
+        >>> def quadratic_potential(x):
+        ...     return 0.5 * sum(xi**2 for xi in x)
 
         >>> # Time-dependent potential
-        >>> def moving_well(t: float, x: float) -> float:
+        >>> def moving_well(t, x):
         ...     center = np.sin(t)
-        ...     return 0.5 * (x - center)**2
+        ...     return 0.5 * (x[0] - center)**2
     """
 
-    def __call__(self, t: float, x: float | NDArray[np.floating]) -> float:
+    def __call__(self, t: float, x: tuple[Any, ...]) -> float:
         """Evaluate potential at (t, x)."""
         ...
 
@@ -765,22 +779,22 @@ class InitialDensityCallable(Protocol):
         m₀(x) -> density
 
     Args:
-        x: Spatial position (float for 1D, ndarray for nD)
+        x: Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
 
     Returns:
         Initial density m₀(x) ≥ 0
 
     Examples:
         >>> # Gaussian density
-        >>> def gaussian_initial(x: float) -> float:
-        ...     return np.exp(-100 * (x - 0.5)**2)
+        >>> def gaussian_initial(x):
+        ...     return np.exp(-100 * (x[0] - 0.5)**2)
 
         >>> # Multi-modal density
-        >>> def bimodal_initial(x: float) -> float:
-        ...     return np.exp(-200 * (x - 0.2)**2) + np.exp(-200 * (x - 0.8)**2)
+        >>> def bimodal_initial(x):
+        ...     return np.exp(-200 * (x[0] - 0.2)**2) + np.exp(-200 * (x[0] - 0.8)**2)
     """
 
-    def __call__(self, x: float | NDArray[np.floating]) -> float:
+    def __call__(self, x: tuple[Any, ...]) -> float:
         """Evaluate initial density at x."""
         ...
 
@@ -797,22 +811,22 @@ class FinalValueCallable(Protocol):
         u_T(x) -> value
 
     Args:
-        x: Spatial position (float for 1D, ndarray for nD)
+        x: Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
 
     Returns:
         Terminal value u_T(x)
 
     Examples:
         >>> # Quadratic terminal cost
-        >>> def quadratic_terminal(x: float) -> float:
-        ...     return 0.5 * (x - 0.5)**2
+        >>> def quadratic_terminal(x):
+        ...     return 0.5 * (x[0] - 0.5)**2
 
         >>> # Indicator terminal cost
-        >>> def indicator_terminal(x: float) -> float:
-        ...     return 0 if 0.4 <= x <= 0.6 else 1000
+        >>> def indicator_terminal(x):
+        ...     return np.where((x[0] >= 0.4) & (x[0] <= 0.6), 0.0, 1000.0)
     """
 
-    def __call__(self, x: float | NDArray[np.floating]) -> float:
+    def __call__(self, x: tuple[Any, ...]) -> float:
         """Evaluate terminal value at x."""
         ...
 

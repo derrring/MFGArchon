@@ -426,10 +426,10 @@ Replace non-periodic functions with their periodic counterparts:
 import numpy as np
 
 # WRONG: Quadratic potential on periodic domain
-V_quad = lambda x: C * (x - L/2)**2  # Gradient discontinuity at boundary!
+V_quad = lambda x: C * (x[0] - L/2)**2  # Gradient discontinuity at boundary!
 
 # CORRECT: Cosine potential (periodic, smooth)
-V_periodic = lambda x: C/2 * (1 + np.cos(2 * np.pi * x / L))
+V_periodic = lambda x: C/2 * (1 + np.cos(2 * np.pi * x[0] / L))
 # V_min = 0 at center, V_max = C at boundaries
 # Gradient is continuous: dV/dx = 0 at both x=0 and x=L
 ```
