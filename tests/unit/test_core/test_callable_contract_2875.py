@@ -563,7 +563,7 @@ def test_a_blocked_solvers_constraints_and_conditions_are_read_by_name():
         Nx_points=5,
         **shared,
     ).create_initial_guess("uniform")
-    np.testing.assert_allclose(guess[0], (1.0 + grid) / 1.5, rtol=0, atol=1e-14)  # normalised
+    np.testing.assert_allclose(guess[0], 1.0 + grid, rtol=0, atol=1e-14)
 
     problem = SimpleNamespace(
         geometry=SimpleNamespace(get_bounds=lambda: ([0.0], [1.0])),
