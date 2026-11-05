@@ -227,7 +227,7 @@ def visualize_results(results_list):
     fig.suptitle("State-Dependent Diffusion in MFG", fontsize=16, fontweight="bold")
 
     for row_idx, (result, domain, title) in enumerate(results_list):
-        x = domain.coordinates
+        x = domain.coordinates[0]
 
         # Plot 1: Final density distribution
         ax = axes[row_idx, 0]
