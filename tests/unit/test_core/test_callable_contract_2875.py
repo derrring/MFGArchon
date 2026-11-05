@@ -30,6 +30,7 @@ from mfgarchon.core.hamiltonian import (
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.nitsche_1d import Nitsche1DPoissonSolver
+from mfgarchon.geometry.implicit import ImplicitDomain
 from mfgarchon.geometry.level_set.core import LevelSetEvolver
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.pde_coefficients import CoefficientField, resolve_diffusion_source
@@ -283,6 +284,24 @@ def test_a_batch_too_small_to_compare_is_cycled_so_none_is_returned_unchecked(x,
     np.testing.assert_allclose(_read(lambda x: sum(x), x=x), sum(x), rtol=0, atol=1e-14)
 
 
+def test_a_coordinate_axis_cannot_pass_as_a_batch_of_exactly_d_points():
+    """On this symmetric batch a body reading across the coordinate axis returns what a right one does, entry by entry,
+    so only a count other than d can tell them apart."""
+    x = (np.array([0.2, 0.7]), np.array([0.7, 0.4]))
+    np.testing.assert_allclose(np.linalg.norm(x, axis=-1), np.hypot(*x), rtol=0, atol=1e-14)
+    with pytest.raises(ValueError, match=r"a return of shape \(2,\) has no entry per point"):
+        _read(lambda x: np.linalg.norm(x, axis=-1), x=x)
+    np.testing.assert_allclose(_read(lambda x: np.linalg.norm(x, axis=0), x=x), np.hypot(*x), rtol=0, atol=1e-14)
+
+
+@pytest.mark.parametrize(
+    ("points", "dimension"), [(np.zeros((3, 2)), 3), (np.array(1.0), 2)], ids=["(3, 2) in 3-D", "0-D"]
+)
+def test_points_with_no_coordinate_axis_are_refused(points, dimension):
+    with pytest.raises(ValueError, match=r"hold no coordinate axis of length"):
+        cp.coordinate_tuple(points, dimension)
+
+
 def test_a_door_that_hands_one_point_has_nothing_to_compare_and_the_first_batch_is_still_checked():
     bound = cp.bind_user_callable(lambda x: np.sum(x), cp.REGION_SLOTS, role="r")
     assert bound(x=(0.3, 0.6)) == pytest.approx(0.9)
@@ -510,6 +529,24 @@ def test_an_implicit_domain_reads_a_region_as_a_grid_does():
     assert disk.get_region_mask("a geometry's own", points).tolist() == [True, False, False]
 
 
+class _ADiscAUserWrote(ImplicitDomain):
+    """Its method is the `ImplicitGeometry` contract: points as an array, though its module is not the library's."""
+
+    dimension = 2
+
+    def signed_distance(self, x):
+        return np.linalg.norm(np.atleast_2d(np.asarray(x, dtype=float)), axis=1) - 0.5
+
+    def get_bounding_box(self):
+        return np.array([[-0.5, 0.5], [-0.5, 0.5]])
+
+
+def test_a_geometrys_own_signed_distance_keeps_its_array_on_a_subclass_a_user_wrote():
+    points = np.array([[0.5, 0.0], [0.0, 0.5], [0.3, 0.4]])
+    normals = _ADiscAUserWrote().get_boundary_normal(points)
+    np.testing.assert_allclose(normals, points / 0.5, rtol=0, atol=1e-6)
+
+
 def test_the_meshless_domain_masks_by_the_tuple_and_keeps_the_librarys_own_predicates():
     from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
     from mfgarchon.geometry.predicates import sdf_region
@@ -655,6 +692,8 @@ def test_a_variational_terminal_cost_reads_a_coordinate_tuple():
     )
     problem = VariationalMFGProblem(xmin=0.0, xmax=1.0, Nx=10, T=0.2, Nt=4, components=components)
     np.testing.assert_allclose(problem.evaluate_terminal_cost(np.array([0.25, 0.5])), [0.5, 1.0], rtol=0, atol=1e-14)
+    problem.use_jax = False  # the route with no JAX, where the door is the method's own
+    np.testing.assert_allclose(problem.evaluate_terminal_cost(np.array([0.25, 0.5])), [0.5, 1.0], rtol=0, atol=1e-14)
     with pytest.raises((TypeError, ValueError)):
         VariationalMFGProblem(
             xmin=0.0,
@@ -713,6 +752,19 @@ class _PointOnly(_RowWise):
         along_the_first_axis = np.zeros_like(np.asarray(p, dtype=float))
         along_the_first_axis[..., 0] = np.asarray(p, dtype=float)[..., 0]
         return along_the_first_axis
+
+
+class _DpAcrossTheBatch(_RowWise):
+    """Its value reads row by row, and its dp subtracts the batch's mean: alone, a point is its own mean."""
+
+    def dp(self, t, x, p, m):
+        p = np.asarray(p, dtype=float)
+        return p - p.mean(axis=0, keepdims=True)
+
+
+def test_the_check_reads_a_hamiltonians_dp_as_well_as_its_value():
+    with pytest.raises(ValueError, match=r"_DpAcrossTheBatch.evaluate_dp, at"):
+        refuse_a_hamiltonian_whose_reads_disagree(_DpAcrossTheBatch(), np.linspace(0.0, 1.0, 11))
 
 
 @pytest.mark.parametrize("dimension", [1, 2, 3])

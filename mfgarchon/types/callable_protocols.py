@@ -415,7 +415,7 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     too: a constant noise matrix does, and a body that read a coordinate axis as points does not. The door that reads it
     judges its shape, since only that door knows what a constant means there.
     """
-    entries = [np.array(entry, dtype=float) for entry in np.broadcast_arrays(*values["x"])]  # a body may write into x
+    entries = [np.asarray(entry, dtype=float) for entry in np.broadcast_arrays(*values["x"])]
     shape = entries[0].shape
     d = len(entries)
     samples = _sample_count(d)
@@ -433,6 +433,7 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         count = samples
     described = f"{name}, on a batch of {count} points"
     try:
+        # A copy, since a body may write into x.
         together = np.asarray(read(**{**batch, "x": tuple(entry.copy() for entry in entries)}), dtype=float)
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e

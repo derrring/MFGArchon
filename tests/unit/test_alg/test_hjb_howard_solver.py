@@ -517,6 +517,15 @@ def test_2d_smoke_with_running_cost_callable():
         running_cost=lambda t_idx: rc_const * np.ones(n),
     ).solve_hjb_system(M_density=None, U_terminal=U_T)
 
+    # Read by the name of its slot, wherever that sits among its parameters (#2875).
+    by_name = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda t_idx, x, p, m: -p,
+        running_cost=lambda scale=rc_const, t_idx=None: scale * np.ones(n),
+    ).solve_hjb_system(M_density=None, U_terminal=U_T)
+    np.testing.assert_array_equal(by_name, with_rc)
+
     # Adding a positive running cost shifts U(t<T, x) upward.
     interior_idx = np.array([i for i in range(n) if np.linalg.norm(pts[i] - x_c) < 0.7])
     if len(interior_idx) > 0:
