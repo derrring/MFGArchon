@@ -64,7 +64,12 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     checked_inner_budget,
     report_inner_solve_failure,
 )
-from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable, coordinate_tuple
+from mfgarchon.types.callable_protocols import (
+    ALPHA_STAR_SLOTS,
+    HOWARD_RUNNING_COST_SLOTS,
+    bind_user_callable,
+    coordinate_tuple,
+)
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -487,6 +492,11 @@ class HJBHowardSolver:
             bind_user_callable(alpha_star, ALPHA_STAR_SLOTS, role="alpha_star") if alpha_star is not None else None
         )
         self.running_cost = running_cost
+        self._running_cost = (
+            bind_user_callable(running_cost, HOWARD_RUNNING_COST_SLOTS, role="running_cost")
+            if running_cost is not None
+            else None
+        )
         self.control_lagrangian = control_cost.lagrangian if control_cost is not None else control_lagrangian
         self.control_cost = control_cost
         self.discretisation = discretisation
@@ -665,7 +675,7 @@ class HJBHowardSolver:
                 p[:, d] = static["D_grad_central"][d] @ u_next
             alpha = self._alpha_star(t_idx=t_idx, x=coordinate_tuple(pts, dimension), p=p, m=m_n)
 
-        rc_t = self.running_cost(t_idx) if self.running_cost is not None else None
+        rc_t = self._running_cost(t_idx=t_idx) if self._running_cost is not None else None
         u_new = u_next.copy()
 
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant

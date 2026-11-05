@@ -44,13 +44,13 @@ model = Model(hamiltonian=H, volatility=0.2)
 
 # 2. The data: terminal value, initial density and horizon
 conditions = Conditions(
-    u_terminal=lambda x: np.zeros_like(x),
+    u_terminal=lambda x: np.zeros_like(x[0]),
     # Integrates to 0.702328 on this grid, not 1. The library measures the mass, names the
     # measure, and warns -- but does not rescale your density (#1887): whether the initial
     # mass should be 1 is your modelling decision. To make it one, divide by
     # `domain.integrate(...)`, and note that this changes the problem -- the coupling f(m)
     # is then evaluated at 1.4238x these values.
-    m_initial=lambda x: np.exp(-5 * (x - 0.5) ** 2),
+    m_initial=lambda x: np.exp(-5 * (x[0] - 0.5) ** 2),
     T=1.0,
 )
 
@@ -93,10 +93,10 @@ domain_2d = TensorProductGrid(
     boundary_conditions=no_flux_bc(dimension=2),
 )
 
-# In 2D a point x is an array of shape (2,), and each condition returns one number per point
+# In 2D x holds two coordinates, and each condition returns one number per point
 conditions_2d = Conditions(
     u_terminal=lambda x: 0.0,
-    m_initial=lambda x: np.exp(-5 * np.sum((np.asarray(x) - 0.5) ** 2)),
+    m_initial=lambda x: np.exp(-5 * sum((xi - 0.5) ** 2 for xi in x)),
     T=1.0,
 )
 

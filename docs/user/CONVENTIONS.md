@@ -24,7 +24,7 @@ A maximisation problem is negated before it reaches the library:
 ```python
 # maximise E[ reward(X_t) ]  is stated to MFGArchon as
 def reward(x):
-    return -float(np.sum((np.asarray(x) - 0.5) ** 2))  # what the agents would maximise
+    return -sum((xi - 0.5) ** 2 for xi in x)  # what the agents would maximise
 
 
 H = SeparableHamiltonian(
@@ -314,9 +314,9 @@ Who builds one:
   the NumPy backend, and in $d \ge 2$ on any backend. Its 1-D residual and Jacobian call `problem.H()`
   per point, with the legacy dict `{(0,): u, (1,): p}`, only on another backend or with
   `analytic_jacobian=False` (#1884). A Hamiltonian evaluated in batch must give, at every node, what it
-  gives at that node alone; `0.5*p[0]**2` does not, since in batch `p[0]` is node 0's momentum. The 1-D
-  default checks this once per solver (`require_batch_safe_hamiltonian`) and refuses such a Hamiltonian;
-  the $d \ge 2$ batch path does not check yet (#2481). Write it row-wise, as in `0.5*np.sum(p**2, axis=-1)`.
+  gives at that node alone; `0.5*p[0]**2` does not, since in batch `p[0]` is node 0's momentum. A problem
+  checks this when it takes the Hamiltonian (§ *Callable signatures*) and refuses such a Hamiltonian. Write it row-wise,
+  as in `0.5*np.sum(p**2, axis=-1)`.
 - **HJB semi-Lagrangian** passes arrays and does not use them. No FP solver uses them.
 
 ---
@@ -461,68 +461,121 @@ control $\alpha$ occupies the $Du$ slot, being its conjugate variable.
 |---|---|
 | `HamiltonianBase.__call__`, `.dp`, `.dm`, `.dx`, `.optimal_control` | `(t, x, p, m)` |
 | `LagrangianBase.__call__` (and `.dm` where a subclass defines it) | `(t, x, alpha, m)` |
-| `source_term_hjb` | `(t, x, v, m)` |
+| `u_terminal`, `m_initial` | `(t, x)` |
+| `source_term_hjb`, `source_term_fp` | `(t, x, v, m)` |
+| a solver's `source_term` | `(t, x)` |
 | `potential` | `(t, x)` |
 | `coupling` | `(m)` |
 | `ControlCostBase.optimal_control` / `.lagrangian` | `(p)` / `(alpha)` |
-| volatility callable and PDE coefficient callables | `(t, x, m)` |
+| volatility, diffusion, drift and PDE coefficient callables | `(t, x, m)` |
 | a measure field's `field_fn` / `gradient_fn` | `(t, x, mu)` |
-| a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)`, called by name |
+| a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)` |
+| a region: `sdf_region`, `domain_sdf`, `obstacle_sdf`, a `predicate`; `state_penalty` | `(x)` |
+| Howard's `alpha_star` / `running_cost` | `(t_idx, x, p, m)` / `(t_idx)` |
 
 The order is chosen so the derivative family can grow: $D^2u$ is already a first-class object one
 layer down (§ *Derivatives*), and a signature with $m$ between $x$ and $p$ leaves nowhere to put it.
 Time-first also agrees with § *Arrays, grids and time* and with `scipy.integrate.solve_ivp`'s
 `(t, y)`.
 
-- **On the operator family, `t` has no default** and is always passed.
-- **A time-independent callable may omit `t`.** The library still supplies it, binding the callable
-  by name.
-- **A boundary value names its parameters after the slots**: `(t, x)`, `(x)`, or `(t)` (or `time`); any other
-  parameter needs a default, and keeps it. It is called by name, never positionally, so it is refused if `x` comes
-  before `t`, or if a parameter without a default is named otherwise. It is a function you write, a `def` or a
-  `lambda` (or a `functools.partial` of one); any other callable is refused, with the advice to wrap it, such as
-  `lambda t: s(t)` for an interpolant `s`. Called by name, it is passed only the slots it names: a `*args` or
-  `**kwargs` parameter, which nothing reaches, is refused, and so is a partial that freezes a slot by keyword, which
-  the slot passed by name would override; write a function of the slots it reads instead, passing the frozen value by keyword, such as `lambda x: g(x=x, t=0.25)`. This is stricter than a potential or a raw Hamiltonian, which may be a
-  class instance: the readers of a boundary value differ in what they can pass, and boundary data are often time
-  series, whose interpolants name their argument `x`, so a callable whose names were not written for the slots
-  would be read at the wrong argument.
-  `BCSegment.value` is bound, and refused, when the segment is built; `BoundaryConditions.default_value`, a
-  meshfree `bc_value`, and a `value` reassigned later are bound when first read. `x` is one boundary point of shape
-  `(d,)`. A reader with no point, such as the FDM ghost layer, refuses one that declares `x`, even with a default;
-  one with no time refuses one that declares `t` (#2512, row B2).
-- **Currying the measure needs a keyword**: `partial(H, m=mu)`, for your own calls. A partial handed to a callable parameter is refused where the library passes that slot by name, since the slot passed would override the frozen value (#2869; one held where a method goes is not seen, #2871): as a raw Hamiltonian callable, write `lambda t, x, p: H(t=t, x=x, p=p, m=mu)`. One that freezes by position freezes the first parameter, whichever it is.
+### A callable is read by the names it declares
+
+**On the operator family, `t` has no default** and is always passed, and methods keep the order above. A callable you
+hand the library is read by name instead: each parameter named for a slot is given that slot, by keyword, and a slot it
+does not name is not passed. So order does not decide what a parameter reads, and a time-independent callable omits
+`t`.
+
+- **A parameter with a default that names no slot keeps its default.** One without a default is refused.
+- **It is a function you write**, a `def` or a `lambda`, or a `functools.partial` of one. Any other callable is refused,
+  with the advice to wrap it, such as `lambda t: s(t)` for an interpolant `s`: another callable's parameter names were
+  not written for the slots, and an interpolant over time data names its argument `x`.
+- **`*args`, `**kwargs` and positional-only parameters are refused.** Nothing reaches a starred parameter, since it is
+  passed only the slots it names.
+- **A partial that freezes a slot by keyword is refused**, since the slot passed by name would override it. A partial
+  that freezes a named parameter by position keeps it. One refused for its other parameters is told to write a function
+  passing the frozen value by keyword, such as `lambda x: g(x=x, t=0.25)`, because renaming the parameters of
+  `partial(g, 0.25)` moves the 0.25 to another parameter.
+- **Currying the measure needs a keyword**: `partial(H, m=mu)`, for your own calls.
+
+**A reader with less to pass refuses more.** A boundary value is read where it is, so a reader with no point, such as
+the FDM ghost layer, refuses one that declares `x`, even with a default, and one with no time refuses one that declares
+`t` (#2512, row B2). `BCSegment.value` is bound, and refused, when the segment is built; `BoundaryConditions.default_value`,
+a meshfree `bc_value`, and a `value` reassigned later are bound when first read.
+
+**`u_terminal` and `m_initial` are functions of space.** `lambda x: ...` is read on the grid; `lambda t, x: ...` is read
+at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`.
+
+### `x` is a coordinate tuple
+
+`x` holds one entry per coordinate, and each entry is a scalar or an array, all of one shape: `x[0]` is the first
+coordinate, of one point or of every point. The library may hand either, so a body reads both the same way:
+
+| reads a batch and a point the same | what it does on a tuple |
+|---|---|
+| `x[0]`, `a, b = x`, `np.hypot(*x)`, `sum(xi**2 for xi in x)`, `np.linalg.norm(x, axis=0)`, a constant | |
+| | `x**2`, `x - 0.5`, `x[:, 0]`, `x[..., 0]`: raises |
+| | `np.asarray(x)[:, 0]`, `float(x[0])`, `np.linalg.norm(x)`, `np.sum(x)`, `x[0][0]`, `np.max(x[0])`: refused by the check below |
+
+A door that holds the points states their dimension, so `(N,)` is $N$ points on a line and never one point in $N$
+dimensions. A grid door hands its grid's shape, `(Nx, Ny)`, and a point door `(N,)`. The library's own regions, such as a
+geometry's `signed_distance`, are not user inputs and take their points as an array of shape `(d,)` or `(N, d)`.
+
+### What the slots beside `x` hold
+
+Each door states it, in `callable_protocols.py`'s `Slots`, and the check below reads the statement.
+
+| slot | at | holds | a point read gets |
+|---|---|---|---|
+| `m`, `v` | `source_term_hjb`, `source_term_fp`; `m` at a volatility, diffusion, drift or coefficient | a field over the points `x` holds | the field whole, so `np.max(m)` may read it |
+| `p`, `m` | a raw Hamiltonian, a conditional Hamiltonian, `alpha_star` | one value per point, in step with `x` | that point's |
+| `v`, `m` | a variational Lagrangian | one value per point, in step with `x` | that point's |
+| `t`, `t_idx`, `mu`, `theta` | wherever they appear | one value for the call | that value |
+
+### A body must read a batch and a point the same
+
+The library chooses when to loop and when to vectorize, so a body that reads differently comes back as a result and not
+as an error. So a callable's batch read is compared with its read of a few of those points, once, and a difference or a
+raise is refused and names both reads.
+
+- **Where.** A door with samples when it accepts the callable compares there: `MFGProblem` for what the problem holds and
+  reads on its grid. Any other door compares at its first batch, before it returns the result: a solver's `source_term`,
+  a drift at a particle's first step, a measure field, a manufactured pair. A door that only ever hands one point has no
+  batch to compare, and the first batch it is ever handed is compared then.
+- **The samples.** They are spread across the batch at the golden ratio's multiples and are not its ends and middle, where
+  a term such as $\sin 2\pi x$ is the same on a uniform grid. A batch of fewer than two points, or of exactly $d$, is
+  cycled up to a count that is neither, since a coordinate axis passes for a batch of $d$.
+- **The forms a return may take.** A scalar holds at every point; a result with the batch's shape leading holds its entry
+  there; a result of one point's own shape holds as it is; a per-coordinate result may put its axis first or last. A body
+  returning one fixed array at every point is a constant, and the door that reads it judges its shape: a $(d, d)$ array
+  from a volatility is read under `volatility_kind`. Any other shape is refused by name.
+- **A Hamiltonian is compared on wide synthetic $p$ and $m$**, $p$ from $-1.3$ to $2.1$, never on a solve's first values,
+  where a problem takes it, on `evaluate_H` and `evaluate_dp`. `DualHamiltonian` and `NetworkHamiltonian` read one point
+  at a time on every path, and are not compared.
+- **A closure the library wrote is not compared.** The user's callable it wraps has its own door.
+
+**What this does not catch.**
+
+- A first batch can be narrow. A particle drift's first batch is the initial cloud, so a body that reads its largest
+  coordinate past a dead zone reads the same both ways while the cloud is inside it, is accepted, and is not compared
+  again.
+- At a field door `m[0]` reads node 0 at every point, and the comparison cannot tell it from `np.max(m)`, since a point
+  read gets the field whole. A body written to `x` as a field, such as `np.gradient(m, x[0])`, is refused, since `x` is a
+  point on a point read.
+- The comparison reads a few samples, and it says the reads agreed there.
+
+### The library refuses the old order on a class
+
+A class is not read by name when it is called by its own methods, so a Hamiltonian or Lagrangian subclass, or an
+`MFGProblem` subclass's `hamiltonian` / `running_cost`, is refused when the class is created if its methods are out of
+order.
 
 *Not yet met (#2429): the per-point adapter `problem.H` / `problem.dH_dm` is not time-first and
 defaults its time to 0, and some per-point solver paths call it without one.
 `LagrangianBase.proximal(tau, z, *, t=0.0, x=None, m=None)` puts its step arguments first and defaults
 its time to 0, and several private helpers put `t` last: the finite-difference ones and
 `DualHamiltonian._find_optimal_alpha` take `(x, m, p, t)`, `DualLagrangian._find_optimal_p` takes
-`(x, alpha, m, t)`, and `NetworkHamiltonian._default_hamiltonian` takes `(node, m, p, t)`.*
-
-**`u_terminal` and `m_initial` are space-only or time-first.** `lambda x: ...` is read at each point;
-`lambda t, x: ...` is read at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`. *Not yet met
-(#2429): `StochasticMFGProblem`'s conditional problems call `u_terminal(x)` directly, so a time-first
-one is refused there.*
-
-### The library refuses the old order rather than misreading it
-
-A callable written `lambda x, t: ...` would still *run* under this order and return wrong numbers,
-because both arguments are numeric. Three mechanisms stop it:
-
-- **When a callable is accepted**, its parameter names are read and an out-of-order signature is
-  refused, with a message naming the expected order. This covers the potential, `source_term_hjb` /
-  `source_term_fp`, measure fields, Hamiltonian and feedback callables, network callables, the
-  variational Lagrangian, and `u_terminal` and `m_initial`. A solver's own `source_term` is checked at
-  its first evaluation.
-- **When a class is created**, a Hamiltonian or Lagrangian subclass, or an `MFGProblem` subclass's
-  `hamiltonian` / `running_cost`, is refused if its methods are out of order.
-- **Invocation by keyword.** A callable bound by name is called by keyword, so a correctly named one is
-  safe. A nameless callable, a solver `source_term` and a variational Lagrangian are called
-  positionally in slot order, except a `u_terminal` or `m_initial`: one that names nothing is read
-  only if `x` alone works, or, in 2-D and 3-D, as expanded coordinates if it is a bare `*args`.
-
-*Not yet met (#2429): volatility, drift and coupling callables are never bound or inspected.*
+`(x, alpha, m, t)`, and `NetworkHamiltonian._default_hamiltonian` takes `(node, m, p, t)`. `p` and a vector return are
+next, in #2875's stage 3: `p` is `(N, d)` or `(d,)`, with the coordinate axis last.*
 
 ---
 

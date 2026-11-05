@@ -65,6 +65,7 @@ CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), per_point=(
 CONDITIONAL_TERMINAL_SLOTS = Slots(("x", "theta"))
 # Howard's policy update reads the time index, not a time: its own slot (user ruling, 2026-11-04).
 ALPHA_STAR_SLOTS = Slots(("t_idx", "x", "p", "m"), per_point=("p", "m"))
+HOWARD_RUNNING_COST_SLOTS = Slots(("t_idx",))
 # A graph's node plays x; its adjacency stays with it (user ruling 2026-09-25).
 NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"))
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
@@ -540,7 +541,7 @@ class DriftFieldCallable(Protocol):
 
     Args:
         t: Current time (float)
-        x: Spatial position (ndarray of shape (d,) or (N, d))
+        x: Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         m: Density field (ndarray)
 
     Returns:
@@ -548,22 +549,22 @@ class DriftFieldCallable(Protocol):
 
     Examples:
         >>> # Constant wind
-        >>> def wind_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+        >>> def wind_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         ...     return np.array([1.0, 0.5])
 
         >>> # State-dependent drift
-        >>> def density_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+        >>> def density_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         ...     return -grad(m) / (m + 1e-10)  # Diffusion approximation
 
         >>> # Optimal control drift (MFG)
-        >>> def control_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+        >>> def control_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         ...     return -grad_U / sigma_sq
     """
 
     def __call__(
         self,
         t: float,
-        x: NDArray[np.floating],
+        x: tuple[Any, ...],
         m: NDArray[np.floating],
     ) -> NDArray[np.floating]:
         """Evaluate drift field at (t, x, m)."""
@@ -583,7 +584,7 @@ class DiffusionFieldCallable(Protocol):
 
     Args:
         t: Current time (float)
-        x: Spatial position (ndarray of shape (d,) or (N, d))
+        x: Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         m: Density field (ndarray)
 
     Returns:
@@ -594,22 +595,22 @@ class DiffusionFieldCallable(Protocol):
 
     Examples:
         >>> # Spatially varying diffusion
-        >>> def varying_diffusion(t: float, x: np.ndarray, m: np.ndarray) -> float:
-        ...     return 0.1 + 0.05 * np.linalg.norm(x)
+        >>> def varying_diffusion(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
+        ...     return 0.1 + 0.05 * np.linalg.norm(x, axis=0)
 
         >>> # Density-dependent diffusion
-        >>> def density_diffusion(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+        >>> def density_diffusion(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         ...     return 0.1 * (1 + m)  # Higher diffusion in dense regions
 
         >>> # Anisotropic diffusion (diagonal)
-        >>> def anisotropic_diffusion(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+        >>> def anisotropic_diffusion(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         ...     return np.array([0.1, 0.05])  # Different diffusion in x and y
     """
 
     def __call__(
         self,
         t: float,
-        x: NDArray[np.floating],
+        x: tuple[Any, ...],
         m: NDArray[np.floating],
     ) -> float | NDArray[np.floating]:
         """Evaluate diffusion field at (t, x, m)."""

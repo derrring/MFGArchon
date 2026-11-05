@@ -210,13 +210,13 @@ import numpy as np
 
 # Initial density (Gaussian)
 def initial_density(x):
-    return np.exp(-x**2 / 0.5) / np.sqrt(np.pi * 0.5)
+    return np.exp(-x[0] ** 2 / 0.5) / np.sqrt(np.pi * 0.5)
 
 # Terminal cost (may depend on noise)
 def terminal_cost(x, theta):
     """g(x, θ_T) - terminal cost at final time."""
-    base_cost = 0.5 * x**2
-    noise_adjustment = 0.1 * theta * x
+    base_cost = 0.5 * x[0] ** 2
+    noise_adjustment = 0.1 * theta * x[0]
     return base_cost + noise_adjustment
 
 # Set in problem

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, BoundCallable, bound_attribute
+from mfgarchon.types.callable_protocols import REGION_SLOTS, VARIATIONAL_LAGRANGIAN_SLOTS, BoundCallable, bound_attribute
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
@@ -248,6 +248,10 @@ class VariationalMFGProblem:
         """``components.<name>``, one of the Lagrangian callables, bound to ``(t, x, v, m)`` (#2375 ruling 8)."""
         return bound_attribute(self.components, name, VARIATIONAL_LAGRANGIAN_SLOTS, role=name)
 
+    def _bound_terminal_cost(self) -> BoundCallable:
+        """``components.terminal_cost_func``, bound to ``(x)`` (#2875)."""
+        return bound_attribute(self.components, "terminal_cost_func", REGION_SLOTS, role="terminal_cost_func")
+
     def _setup_jax_functions(self):
         """Setup JAX-accelerated functions for performance."""
         if not self.use_jax:
@@ -267,12 +271,13 @@ class VariationalMFGProblem:
             self._jax_lagrangian = jax_lagrangian
 
         if self.components.terminal_cost_func is not None:
+            terminal = self._bound_terminal_cost()  # resolved before tracing
+            terminal.check_on({"x": (self.x,)})
+            terminal.checked = True
 
             @jit
             def jax_terminal_cost(x):
-                # Safe to call since we checked for None above
-                assert self.components.terminal_cost_func is not None
-                return self.components.terminal_cost_func(x)
+                return terminal(x=(x,))
 
             self._jax_terminal_cost = jax_terminal_cost
 
@@ -315,7 +320,7 @@ class VariationalMFGProblem:
         if self.use_jax and hasattr(self, "_jax_terminal_cost"):
             return self._jax_terminal_cost(x)
         elif self.components.terminal_cost_func:
-            return self.components.terminal_cost_func(x)
+            return self._bound_terminal_cost()(x=(x,))
         else:
             return 0.0  # Default: no terminal cost
 
@@ -546,7 +551,7 @@ class VariationalMFGProblem:
             hamiltonian_func=_hamiltonian_adapter,
             hamiltonian_dm_func=_hamiltonian_dm_adapter,
             m_initial=self.components.m_initial,
-            u_terminal=lambda x: -self.evaluate_terminal_cost(x),  # Value = -cost
+            u_terminal=lambda x: -self.evaluate_terminal_cost(x[0]),  # Value = -cost
             description=f"Hamiltonian formulation of {self.components.description}",
         )
 
