@@ -26,6 +26,7 @@ from mfgarchon.geometry.boundary.types import bind_boundary_value
 from mfgarchon.operators.interaction import PotentialCost
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.pde_coefficients import CoefficientField
+from mfgarchon.utils.validation.protocol import ValidationError
 from mfgarchon.utils.validation.functions import _call_h, validate_hamiltonian, validate_hamiltonian_derivative
 
 _TABLES = {name: slots for name, slots in vars(cp).items() if isinstance(slots, cp.Slots)}
@@ -151,7 +152,7 @@ _ONE_ARG_SURFACES = {
 def test_every_refusal_a_positional_partial_reaches_advises_keeping_what_it_froze(read, partial):
     """None of them may advise the rewrite that moves the frozen value, in its outer message or a chained one. Each once
     said to reorder or to name the function's parameters."""
-    with pytest.raises((TypeError, ValueError)) as refused:
+    with pytest.raises((TypeError, ValidationError)) as refused:
         read(partial)
     messages = []
     error = refused.value

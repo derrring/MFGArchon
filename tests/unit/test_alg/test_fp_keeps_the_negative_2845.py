@@ -189,8 +189,8 @@ def _coupled(refine, sigma=0.3, coupling=None, coupling_dm=None, **model):
             ),
             domain=mesh,
             conditions=Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=8,
@@ -253,7 +253,7 @@ def _with_an_input(kind, sign, n=32, D=0.01, dt=1e-2, nt=50):
     )
     x = _points(solver).reshape(-1)
     m0 = np.exp(-((x - 0.5) ** 2) / (2 * 0.05**2)) + (sign * 1e-3 if kind == "initial density" else 0.0)
-    source = (lambda t, x: np.full(np.shape(x)[0], sign * 1e-3)) if kind == "source" else None
+    source = (lambda t, x: np.full(np.shape(x[0]), sign * 1e-3)) if kind == "source" else None
     solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((nt + 1, len(x))), source_term=source)
     return solver.last_negative_density["largest"]
 
@@ -333,8 +333,8 @@ def _on_meshless(coupling, coupling_dm):
             ),
             domain=grid,
             conditions=Conditions(
-                u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
-                m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                u_terminal=lambda x: (x[0] - 0.7) ** 2,
+                m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
                 T=0.5,
             ),
             Nt=10,
@@ -487,8 +487,8 @@ def test_the_sweep_guard_names_the_array_and_the_density_the_sweep_read(mfg_capl
             source_term_fp=lambda t, x, v, m: 0.0 * np.log(m),
             domain=mesh,
             conditions=Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=8,
@@ -568,8 +568,8 @@ def _tracked_meshless(sigma):
             ),
             domain=grid,
             conditions=Conditions(
-                u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
-                m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                u_terminal=lambda x: (x[0] - 0.7) ** 2,
+                m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
                 T=0.5,
             ),
             Nt=10,
@@ -685,7 +685,7 @@ def test_the_validators_density_check_is_off_only_where_the_solver_reports_it(bu
                 domain=grid,
                 conditions=Conditions(
                     u_terminal=lambda x: 0.0,
-                    m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                    m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
                     T=0.5,
                 ),
                 Nt=10,
