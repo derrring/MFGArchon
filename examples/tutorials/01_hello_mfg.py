@@ -10,7 +10,7 @@ What you'll learn:
 
 Mathematical Problem:
     A Linear-Quadratic Mean Field Game on [0,1] with:
-    - Hamiltonian: H(p, m) = (1/2)|p|^2 + coupling * m
+    - Hamiltonian: H(p, m) = (1/2)|p|^2 - coupling * m
     - Initial density: Gaussian centered at 0.5
     - Terminal cost: u_T(x) = (x - 0.5)^2
 """
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     sigma = 0.1  # SDE volatility (controls agent randomness)
     coupling = 0.5  # Congestion cost strength
 
-    # Hamiltonian: H(p, m) = (1/2)|p|^2 + coupling * m
+    # Hamiltonian: H(p, m) = (1/2)|p|^2 - coupling * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: coupling * m,
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     print("Model created:")
-    print(f"  Hamiltonian: H(p, m) = |p|^2/2 + {coupling}*m")
+    print(f"  Hamiltonian: H(p, m) = |p|^2/2 - {coupling}*m")
     print(f"  Sigma (volatility): {sigma}")
     print()
 

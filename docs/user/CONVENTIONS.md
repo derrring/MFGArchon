@@ -217,6 +217,11 @@ library. `legendre_transform` on a Hamiltonian or a Lagrangian means this formul
 `LagrangianBase.conjugate_argmax` returns $\partial H/\partial p$ — the **negated** maximiser — and
 `optimal_control` returns the maximiser $\alpha^*$ itself.
 
+Minimisation alone does not fix this form. $H = H_{\text{control}} - V - f$ takes minimisation, the sup above and
+cost-signed $V$ and $f$ (§ 2) together. The same minimisation written as $\inf_\alpha\{p\cdot\alpha + L\}$ gives
+$V + f - H_{\text{control}}$, and reading $V$ and $f$ as rewards, as mechanics reads $L = T - V$, gives
+$H_{\text{control}} + V + f$.
+
 The plain convex conjugate $L^{*}(p) = \sup_\alpha\{p\cdot\alpha - L(\alpha)\}$ is a different
 function: $H(p) = L^{*}(-p)$. The two agree exactly when $L$ is even in $\alpha$ — every quadratic,
 $\ell^1$ and symmetric bounded-control cost here — and disagree as soon as $L$ carries an odd term

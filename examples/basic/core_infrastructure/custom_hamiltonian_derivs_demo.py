@@ -10,7 +10,7 @@ Mathematical Formulation:
     State: x in [0, L]
 
     Custom Hamiltonian:
-        H(t, x, p, m) = (1/2 lambda)|p|^2 + |x - x_target| + gamma * m
+        H(t, x, p, m) = (1/2 lambda)|p|^2 - |x - x_target| - gamma * m
 
     where:
     - (1/2 lambda)|p|^2 is the control cost (quadratic)
@@ -105,7 +105,7 @@ def create_custom_problem(
         return congestion_cost
 
     # Create class-based Hamiltonian: H = H_control(p) - V(t, x) - f(m) (#2375 ruling 3)
-    # H(t, x, p, m) = (1/2 lambda)|p|^2 + |x - target| + gamma * m
+    # H(t, x, p, m) = (1/2 lambda)|p|^2 - |x - target| - gamma * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=control_cost),
         potential=potential,

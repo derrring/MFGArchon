@@ -17,7 +17,7 @@ Problem Setup:
         - Physical interpretation: Exit expands when crowded
 
     Coupling:
-        HJB: ∂u/∂t + (σ²/2)|∇u|² = 1 + m
+        HJB: -∂u/∂t + (1/2)|∇u|² - (σ²/2)Δu = congestion_weight * m
         FP:  ∂m/∂t - σ²Δm - ∇·(m∇u) = 0
         LS:  ∂φ/∂t + V(m)|∇φ| = 0
 
