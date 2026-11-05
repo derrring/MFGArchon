@@ -345,7 +345,7 @@ if __name__ == "__main__":
         return np.array([1.0, 0.5])
 
     drift_wind = prescribed_drift(wind_2param)
-    alpha_wind = drift_wind(0.0, None, None)
+    alpha_wind = drift_wind(0.0, None)
     assert np.allclose(alpha_wind, [1.0, 0.5])
     print("  prescribed_drift() with (t, x) works")
 
@@ -376,7 +376,7 @@ if __name__ == "__main__":
         return np.array([0.0, 1.0])
 
     drift_combined = composite_drift([drift1, drift2])
-    alpha_combined = drift_combined(0.0, None, None)
+    alpha_combined = drift_combined(0.0, (np.zeros(2),), None)
     assert np.allclose(alpha_combined, [1.0, 1.0])
     print("  composite_drift() works")
 

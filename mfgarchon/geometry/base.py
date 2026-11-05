@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.types.callable_protocols import read_region
-
 from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
@@ -1978,7 +1977,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
     def mark_region(
         self,
         name: str,
-        predicate: Callable[[NDArray], NDArray] | None = None,
+        predicate: Callable[..., NDArray] | None = None,
         mask: NDArray | None = None,
         boundary: str | None = None,
     ) -> None:
@@ -1989,7 +1988,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
 
         Args:
             name: Unique name for the region
-            predicate: Function taking node positions (N, d) -> bool mask (N,).
+            predicate: Function of ``x``, a coordinate tuple, to a bool per node.
                        Only works for spatially-embedded graphs.
             mask: Boolean mask of shape (num_nodes,) directly
             boundary: Not applicable for graphs (raises ValueError)

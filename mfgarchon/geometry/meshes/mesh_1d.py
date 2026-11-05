@@ -13,6 +13,7 @@ import numpy as np
 
 from mfgarchon.geometry.base import UnstructuredMesh
 from mfgarchon.geometry.meshes.mesh_data import MeshData
+from mfgarchon.types.callable_protocols import REGION_SLOTS, bind_user_callable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,7 +27,7 @@ class Mesh1D(UnstructuredMesh):
         bounds: tuple[float, float] = (0.0, 1.0),
         num_elements: int = 10,
         mesh_spacing: str = "uniform",
-        refinement_function: Callable[[float], float] | None = None,
+        refinement_function: Callable[..., float] | None = None,
         regions: list[dict] | None = None,
     ):
         """
@@ -36,7 +37,7 @@ class Mesh1D(UnstructuredMesh):
             bounds: (xmin, xmax) domain boundaries
             num_elements: Number of line elements
             mesh_spacing: "uniform", "geometric", or "adaptive"
-            refinement_function: Optional function h(x) controlling local mesh size
+            refinement_function: Optional function h(x), with x a coordinate tuple, controlling local mesh size
             regions: List of region specifications [{"start": x1, "end": x2, "tag": 1}, ...]
         """
         super().__init__(dimension=1)
@@ -128,12 +129,14 @@ class Mesh1D(UnstructuredMesh):
         """Generate adaptively refined mesh using refinement function."""
         if self.refinement_function is None:
             # Default: refine near boundaries
-            def default_refinement(x: float) -> float:
+            def default_refinement(x: tuple[float]) -> float:
                 """Refinement function: smaller h near boundaries."""
-                dist_to_boundary = min(abs(x - self.xmin), abs(x - self.xmax))
+                dist_to_boundary = min(abs(x[0] - self.xmin), abs(x[0] - self.xmax))
                 return 0.1 + 0.9 * (dist_to_boundary / (self.length / 2.0))
 
             self.refinement_function = default_refinement
+
+        refinement = bind_user_callable(self.refinement_function, REGION_SLOTS, role="refinement_function")
 
         # Start with uniform mesh
         vertices = [self.xmin]
@@ -141,7 +144,7 @@ class Mesh1D(UnstructuredMesh):
 
         while x < self.xmax:
             # Determine local mesh size
-            h = self.refinement_function(x) * (self.length / self.num_elements)
+            h = refinement(x=(x,)) * (self.length / self.num_elements)
             x_new = min(x + h, self.xmax)
             vertices.append(x_new)
             x = x_new

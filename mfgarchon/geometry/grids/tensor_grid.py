@@ -24,8 +24,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import read_region
-
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
 from mfgarchon.geometry.boundary.periodic import periodic_distance, wrap_positions
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
@@ -45,6 +43,7 @@ from mfgarchon.geometry.protocols import (
     SupportsPeriodic,
     SupportsRegionMarking,
 )
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d, quadrature_weights_nd
 
@@ -1805,7 +1804,7 @@ class TensorProductGrid(
     def mark_region(
         self,
         name: str,
-        predicate: Callable[[NDArray], NDArray[np.bool_]] | None = None,
+        predicate: Callable[..., NDArray[np.bool_]] | None = None,
         mask: NDArray[np.bool_] | None = None,
         boundary: str | None = None,
     ) -> None:
@@ -1816,7 +1815,7 @@ class TensorProductGrid(
 
         Args:
             name: Unique name for this region (e.g., "inlet", "obstacle", "safe_zone")
-            predicate: Function taking points (N, dimension) → bool mask (N,)
+            predicate: Function of ``x``, a coordinate tuple, to a bool per point
                        True where point is in region
             mask: Boolean mask directly specifying region (total_points,)
             boundary: Standard boundary name (e.g., "x_min", "x_max") for rectangular domains

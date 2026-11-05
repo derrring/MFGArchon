@@ -269,10 +269,6 @@ def test_a_planted_coefficient_reader_is_found(package_copy, planted):
 # unseen: a negated test whose ``else`` calls (``if not callable(g): ... else: g(x)``), an early return before the
 # call, and ``callable(g) and g(x)``. No census decoder uses these shapes (review 1 of #2603).
 CALLABLE_CALLS_ALLOWED = {
-    # Not a decode: #2597's translator wraps a deprecated dict's callable as g(x), and the owner calls the wrapper.
-    ("mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py", "_boundary_conditions_from_dict"): (
-        "wraps for the owner: #2597's dict translator"
-    ),
     # Not a value: a graph condition's node rule, which returns its nodes (#2292 reads them).
     ("mfgarchon/geometry/boundary/applicator_graph.py", "get_nodes"): "non-boundary: a node rule",
     # Not a boundary value: a callable probe of an accessor, a getter or an operator.
@@ -281,7 +277,6 @@ CALLABLE_CALLS_ALLOWED = {
     ("mfgarchon/alg/numerical/coupling/multi_population_iterator.py", "__init__"): "non-boundary: a population getter",
     ("mfgarchon/core/mfg_problem.py", "spatial_measure"): "non-boundary: get_spacing",
     ("mfgarchon/geometry/boundary/invariants.py", "mass_drift"): "non-boundary: integrate",
-    ("mfgarchon/utils/pde_coefficients.py", "resolve_diffusion_source"): "non-boundary: a source",
     ("mfgarchon/visualization/convergence_plots.py", "plot_from_monitor"): "non-boundary: get_plot_data",
     ("mfgarchon/workflow/common.py", "serialize_value"): "non-boundary: to_dict",
 }

@@ -32,9 +32,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import read_region
-
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
+from mfgarchon.types.callable_protocols import read_region
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -89,7 +88,7 @@ def compute_normal_from_bounds(
 
 def compute_normal_from_sdf(
     point: NDArray[np.floating],
-    sdf_func: Callable[[NDArray], NDArray],
+    sdf_func: Callable[..., NDArray],
     eps: float = 1e-6,
 ) -> NDArray[np.floating]:
     """
@@ -100,7 +99,7 @@ def compute_normal_from_sdf(
 
     Args:
         point: Boundary point coordinates, shape (d,)
-        sdf_func: Signed distance function, takes (N, d) returns (N,)
+        sdf_func: Signed distance function reading ``x``, a coordinate tuple
         eps: Finite difference step size
 
     Returns:

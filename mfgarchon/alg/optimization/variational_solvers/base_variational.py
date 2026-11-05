@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
+from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
@@ -257,7 +258,8 @@ class BaseVariationalSolver(BaseOptimizationSolver):
             # Uniform density maintained over time
             for i in range(n_time_points):
                 if self.problem.components.m_initial:
-                    density_guess[i, :] = [self.problem.components.m_initial(x) for x in self.x_grid]
+                    m_initial = bind_user_callable(self.problem.components.m_initial, CONDITION_SLOTS, role="m_initial")
+                    density_guess[i, :] = [m_initial(t=0.0, x=(x,)) for x in self.x_grid]
                 else:
                     density_guess[i, :] = 1.0 / (xmax - xmin)
 

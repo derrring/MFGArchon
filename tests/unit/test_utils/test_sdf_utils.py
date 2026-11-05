@@ -292,8 +292,8 @@ class TestSDFGradient:
         # Points on x-axis
         points = np.array([[0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]])
 
-        def sdf_func(p):
-            return sdf_sphere(p, center=[0, 0], radius=1.0)
+        def sdf_func(x):
+            return sdf_sphere(np.stack(x, axis=-1), center=[0, 0], radius=1.0)
 
         grad = sdf_gradient(points, sdf_func, epsilon=1e-5)
 
@@ -306,8 +306,8 @@ class TestSDFGradient:
         """Test box gradient."""
         points = np.array([[0.5, 0.5]])  # Center of unit box
 
-        def sdf_func(p):
-            return sdf_box(p, bounds=[[0, 1], [0, 1]])
+        def sdf_func(x):
+            return sdf_box(np.stack(x, axis=-1), bounds=[[0, 1], [0, 1]])
 
         grad = sdf_gradient(points, sdf_func, epsilon=1e-5)
 
@@ -329,8 +329,8 @@ class TestSDFGradient:
         """Test gradient for single point."""
         point = np.array([0.5, 0])
 
-        def sdf_func(p):
-            return sdf_sphere(p, center=[0, 0], radius=1.0)
+        def sdf_func(x):
+            return sdf_sphere(np.stack(x, axis=-1), center=[0, 0], radius=1.0)
 
         grad = sdf_gradient(point, sdf_func)
 

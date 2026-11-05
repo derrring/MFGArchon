@@ -249,8 +249,8 @@ from mfgarchon.utils import sdf_gradient
 # Gradient points outward from sphere center
 points = np.array([[0.5, 0], [0, 0.5]])
 
-def sphere_sdf(p):
-    return sdf_sphere(p, center=[0, 0], radius=1.0)
+def sphere_sdf(x):
+    return sdf_sphere(np.stack(x, axis=-1), center=[0, 0], radius=1.0)
 
 grad = sdf_gradient(points, sphere_sdf)
 # grad ≈ [[0.5, 0], [0, 0.5]] (normalized radial direction)
@@ -271,14 +271,16 @@ from mfgarchon.utils import sdf_sphere, sdf_box, sdf_union, sdf_gradient
 
 # Define obstacles
 points = grid_points  # Your spatial grid
-obstacle1 = sdf_sphere(points, center=[0.3, 0.5], radius=0.1)
-obstacle2 = sdf_box(points, bounds=[[0.6, 0.8], [0.4, 0.6]])
-obstacles = sdf_union(obstacle1, obstacle2)
+def obstacles_sdf(x):
+    at = np.stack(x, axis=-1)
+    return sdf_union(sdf_sphere(at, center=[0.3, 0.5], radius=0.1), sdf_box(at, bounds=[[0.6, 0.8], [0.4, 0.6]]))
+
+obstacles = obstacles_sdf(tuple(np.moveaxis(points, -1, 0)))
 
 # Gradient for obstacle avoidance
 def obstacle_hamiltonian(x, p):
     dist = obstacles.reshape(x.shape[:-1])
-    grad = sdf_gradient(x, lambda pts: obstacles)
+    grad = sdf_gradient(x, obstacles_sdf)
     # Add penalty near obstacles
     penalty = np.exp(-10 * dist)
     return 0.5 * np.sum(p**2, axis=-1) + 100 * penalty
@@ -391,7 +393,7 @@ sdf_smooth_intersection(
 ```python
 sdf_gradient(
     points: ndarray,
-    sdf_func: callable,  # Function: points -> distances
+    sdf_func: callable,  # Function of x, a coordinate tuple: x -> distances
     epsilon: float = 1e-5,  # Finite difference step
 ) -> ndarray  # shape: same as points
 ```

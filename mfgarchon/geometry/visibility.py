@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 def segments_clear(
     p1: NDArray[np.float64],
     p2: NDArray[np.float64],
-    obstacle_sdf: Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    obstacle_sdf: Callable[..., NDArray[np.float64]],
     n_samples: int = 10,
     margin: float = 0.0,
 ) -> NDArray[np.bool_]:
@@ -62,7 +62,7 @@ def segments_clear(
         p1: Start points, shape (N, d) or (d,) for a single point.
         p2: End points, shape (N, d) or (M, d). If p1 is (d,) and p2 is (M, d),
             broadcasts p1 to all segments (1-to-many check).
-        obstacle_sdf: Callable that maps (K, d) points to (K,) SDF values.
+        obstacle_sdf: Callable reading ``x``, a coordinate tuple, to SDF values.
             Negative values = inside obstacle.
         n_samples: Number of interior samples along each segment (excluding
             endpoints, which are assumed to be valid collocation points).
@@ -114,7 +114,7 @@ def segments_clear(
 def filter_visible_neighbors(
     center: NDArray[np.float64],
     candidates: NDArray[np.float64],
-    obstacle_sdf: Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    obstacle_sdf: Callable[..., NDArray[np.float64]],
     n_samples: int = 10,
     margin: float = 0.0,
 ) -> NDArray[np.bool_]:
@@ -157,10 +157,11 @@ if __name__ == "__main__":
     pillar_bot = Hypersphere(center=[6.0, 3.5], radius=1.3)
 
     # Union SDF: min of individual SDFs (inside either = blocked)
-    def pillars_sdf(x: NDArray[np.float64]) -> NDArray[np.float64]:
+    def pillars_sdf(x: tuple[NDArray[np.float64], ...]) -> NDArray[np.float64]:
+        points = np.stack(x, axis=-1)
         return np.minimum(
-            pillar_top.signed_distance(x),
-            pillar_bot.signed_distance(x),
+            pillar_top.signed_distance(points),
+            pillar_bot.signed_distance(points),
         )
 
     # Test 1: Line through the channel (should be clear)

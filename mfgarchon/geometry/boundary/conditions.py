@@ -35,9 +35,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import read_region
-
 from mfgarchon.geometry.protocols import SupportsRegionMarking
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.deprecation import deprecated
 
 from .tolerances import BOUNDARY_REL_TOL, BOUNDARY_TOL, SDF_BOUNDARY_TOL
@@ -143,7 +142,7 @@ class BoundaryConditions:
     domain_bounds: np.ndarray | None = None
 
     # General domain specification (SDF-based, supports Lipschitz boundaries)
-    domain_sdf: Callable[[np.ndarray], float] | None = None
+    domain_sdf: Callable[..., float] | None = None
 
     # Corner handling (important for Lipschitz domains with re-entrant corners)
     corner_strategy: Literal["priority", "average", "mollify"] = "priority"
@@ -2571,7 +2570,7 @@ def mixed_bc(
     segments: list[BCSegment],
     dimension: int | None = None,
     domain_bounds: np.ndarray | None = None,
-    domain_sdf: Callable[[np.ndarray], float] | None = None,
+    domain_sdf: Callable[..., float] | None = None,
     default_bc: BCType = BCType.NEUMANN,
     default_value: float = 0.0,
     corner_strategy: Literal["priority", "average", "mollify"] = "priority",

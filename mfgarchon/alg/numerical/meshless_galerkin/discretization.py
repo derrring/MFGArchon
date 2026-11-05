@@ -25,6 +25,7 @@ from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import (
     monomial_exponents,
     shape_functions_and_grads,
 )
+from mfgarchon.types.callable_protocols import read_region
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -186,7 +187,7 @@ def discretization_from_cloud(
     quasi-uniform cloud). ``delta`` is the MLS support radius; ``backend`` selects
     the numpy (default) or jax derivative engine.
 
-    ``domain`` is an optional point predicate ``(N, d) -> bool`` (``True`` = inside
+    ``domain`` is an optional point predicate reading ``x``, a coordinate tuple (``True`` = inside
     Omega), composable with ``mfgarchon.geometry.predicates`` (``sphere_region``,
     ``sdf_region``, ...). When given, the background tensor-Gauss is **masked to
     Omega**, so the Galerkin operators integrate over a non-rectangular (Lipschitz)
@@ -211,7 +212,7 @@ def discretization_from_cloud(
     bounds = [(float(nodes[:, k].min()), float(nodes[:, k].max())) for k in range(d)]
     pts, wts = tensor_gauss(bounds, n_cells=n_per - 1, n_gauss=n_gauss)
     if domain is not None:
-        mask = np.asarray(domain(pts), dtype=bool)
+        mask = np.asarray(read_region(domain, pts, role="domain"), dtype=bool)
         if not mask.any():
             raise ValueError("domain predicate excluded every quadrature point; check the cloud and domain.")
         pts, wts = pts[mask], wts[mask]

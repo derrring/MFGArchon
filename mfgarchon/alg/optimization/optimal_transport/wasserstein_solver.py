@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, REGION_SLOTS, bind_user_callable
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -281,8 +282,9 @@ class WassersteinMFGSolver(BaseOptimizationSolver):
         initial_density = getattr(self.problem, "initial_density", None)
         if initial_density is not None:
             # Use problem-specific initial density
+            initial_density = bind_user_callable(initial_density, REGION_SLOTS, role="initial_density")
             for i, x in enumerate(self.spatial_grid):
-                densities[0, i] = initial_density(x)
+                densities[0, i] = initial_density(x=(x,))
         else:
             # Default: Gaussian initial density
             center = (xmin + xmax) / 2
@@ -347,10 +349,11 @@ class WassersteinMFGSolver(BaseOptimizationSolver):
         # Problem API: use getattr instead of hasattr (Issue #543 fix)
         running_cost = getattr(self.problem, "running_cost", None)
         if running_cost is not None:
+            running_cost = bind_user_callable(running_cost, COEFFICIENT_SLOTS, role="running_cost")
             for t, density in enumerate(densities):
                 time = self.time_grid[t] if t < len(self.time_grid) else self.time_grid[-1]
                 for i, x in enumerate(self.spatial_grid):
-                    total_cost += running_cost(time, x, density[i]) * self.dx * self.dt
+                    total_cost += running_cost(t=time, x=(x,), m=density[i]) * self.dx * self.dt
 
         return total_cost
 

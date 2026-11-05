@@ -2614,7 +2614,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             pass
 
         try:
-            return self.problem.hamiltonian(t=t_value, x=coordinate_tuple(np.atleast_1d(x), self.problem.dimension), p=np.atleast_1d(p), m=m)
+            return self.problem.hamiltonian(
+                t=t_value, x=coordinate_tuple(np.atleast_1d(x), self.problem.dimension), p=np.atleast_1d(p), m=m
+            )
         except (AttributeError, TypeError) as e:
             logger.debug(f"Legacy Hamiltonian signature failed: {e}")
 
@@ -2718,7 +2720,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         oracle is the one failure that cannot be afforded: the study keeps converging and measures
         a different equation.
         """
-        values = np.asarray(evaluate_solver_source(source_term, t=t, x=points, dimension=self.problem.dimension), dtype=float).ravel()
+        values = np.asarray(
+            evaluate_solver_source(source_term, t=t, x=points, dimension=self.problem.dimension), dtype=float
+        ).ravel()
         expected = int(np.prod(grid_shape))
         if values.size != expected:
             raise ValueError(
@@ -3314,7 +3318,7 @@ if __name__ == "__main__":
     components_g = MFGComponents(
         hamiltonian=_ZeroH(),
         m_initial=lambda x: 1.0,
-        u_terminal=lambda x: float(np.exp(-(x[0] ** 2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T)),
+        u_terminal=lambda x: np.exp(-(x[0] ** 2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T),
     )
     problem_g = MFGProblem(
         geometry=grid_g,

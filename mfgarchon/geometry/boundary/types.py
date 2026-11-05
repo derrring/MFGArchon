@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 )
 def _compute_sdf_gradient(
     point: np.ndarray,
-    sdf_func: Callable[[np.ndarray], float],
+    sdf_func: Callable[..., float],
     epsilon: float = 1e-5,
 ) -> np.ndarray:
     """
@@ -71,7 +71,9 @@ def _compute_sdf_gradient(
         raise ValueError(f"SDF gradient: Point contains non-finite values: {point}")
 
     # Use canonical implementation with adaptive epsilon
-    grad = function_gradient(lambda z: read_region(sdf_func, z, role="domain_sdf"), point, eps=epsilon, adaptive_eps=True)
+    grad = function_gradient(
+        lambda z: read_region(sdf_func, z, role="domain_sdf"), point, eps=epsilon, adaptive_eps=True
+    )
 
     # Warn if gradient is suspiciously small (preserve original behavior)
     grad_norm = np.linalg.norm(grad)
@@ -461,7 +463,9 @@ def sdf_region_holds(segment: BCSegment, points: np.ndarray, tolerance: float) -
     """For each point (a row of ``points``), is it inside ``segment.sdf_region``, to ``tolerance``? The point family's
     one reading of ``sdf_region``, as `region_holds` is of ``region``."""
     points = np.atleast_2d(np.asarray(points, dtype=float))
-    return np.array([read_region(segment.sdf_region, point, role="sdf_region") <= tolerance for point in points], dtype=bool)
+    return np.array(
+        [read_region(segment.sdf_region, point, role="sdf_region") <= tolerance for point in points], dtype=bool
+    )
 
 
 def refuse_a_non_continuum_bc_type(bc_type: object, where: str, field_name: str) -> None:
@@ -573,7 +577,7 @@ class BCSegment:
     region: dict[str | int, tuple[float, float]] | None = None
 
     # SDF-based matching (general domains)
-    sdf_region: Callable[[np.ndarray], float] | None = None
+    sdf_region: Callable[..., float] | None = None
     normal_direction: np.ndarray | None = None
     normal_tolerance: float = 0.7  # cos(~45 deg)
 
@@ -686,7 +690,7 @@ class BCSegment:
         domain_bounds: np.ndarray | None,
         tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
-        domain_sdf: Callable[[np.ndarray], float] | None = None,
+        domain_sdf: Callable[..., float] | None = None,
         geometry: SupportsRegionMarking | None = None,
         normal_at: np.ndarray | None = None,
     ) -> bool:

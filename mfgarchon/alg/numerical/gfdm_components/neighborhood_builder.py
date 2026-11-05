@@ -168,7 +168,7 @@ class NeighborhoodBuilder:
         gfdm_operator: Any,
         use_local_coordinate_rotation: bool,
         boundary_handler: BoundaryHandler | None = None,
-        obstacle_sdf: Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
+        obstacle_sdf: Callable[..., NDArray[np.float64]] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
     ):

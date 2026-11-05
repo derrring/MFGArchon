@@ -76,6 +76,9 @@ NODE_VALUE_SLOTS = Slots(("t", "node"))
 NODE_RULE_SLOTS = Slots(("t", "node", "field"))
 SOLVER_SOURCE_SLOTS = Slots(("t", "x"))
 VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), per_point=("v", "m"))
+STATE_CONSTRAINT_SLOTS = Slots(("t", "x"))
+VELOCITY_CONSTRAINT_SLOTS = Slots(("t", "x", "v"))
+GRAPH_COUPLING_SLOTS = Slots(("i", "j", "v_j", "m_j", "t"))
 # A region's signed distance or predicate, and an exact solution's fields, read what they name.
 REGION_SLOTS = Slots(("x",))
 EXACT_SOLUTION_SLOTS = Slots(("t", "x"))
@@ -384,7 +387,9 @@ def spread_samples(count: int, samples: int) -> NDArray:
     return np.floor(np.mod((np.arange(samples) + 1) * 0.6180339887498949, 1.0) * count).astype(int)
 
 
-def _entry_at(result: NDArray, batch_shape: tuple[int, ...], own: tuple[int, ...], index: tuple[int, ...]) -> NDArray | None:
+def _entry_at(
+    result: NDArray, batch_shape: tuple[int, ...], own: tuple[int, ...], index: tuple[int, ...]
+) -> NDArray | None:
     """A read's value at ``index``, by the form it returned: a scalar holds at every point, a result with the batch's shape
     leading holds its entry there, and a result of one point's own shape ``own`` holds as it is. Anything else has no entry
     to compare, which is None."""
@@ -419,7 +424,9 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         entries = [np.ravel(entry)[cycled] for entry in entries]
         for slot in (*slots.fields, *slots.per_point):
             if np.ndim(batch.get(slot)) > 0:
-                batch[slot] = np.asarray(batch[slot])[cycled] if slot in slots.per_point else np.ravel(batch[slot])[cycled]
+                batch[slot] = (
+                    np.asarray(batch[slot])[cycled] if slot in slots.per_point else np.ravel(batch[slot])[cycled]
+                )
         shape = entries[0].shape
         count = samples
     described = f"{name}, on a batch of {count} points"
@@ -428,7 +435,9 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
     if together.ndim == len(shape) + 1 and together.shape == (d, *shape):
-        together = np.moveaxis(together, 0, -1)  # per coordinate, the coordinate axis first, as FP-FDM's drift returns it
+        together = np.moveaxis(
+            together, 0, -1
+        )  # per coordinate, the coordinate axis first, as FP-FDM's drift returns it
     fixed = together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape
     rows_together, rows_alone = [], []
     for flat in spread_samples(count, samples):
@@ -449,7 +458,9 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         own = together.shape if fixed else together.shape[len(shape) :]
         entry = np.ravel(alone) if fixed else _entry_at(alone, shape, own, index)
         if entry is None:
-            raise ValueError(f"{described}: one point's read returned shape {alone.shape}, which has no entry to compare with a batch's {together.shape}. {guidance}")
+            raise ValueError(
+                f"{described}: one point's read returned shape {alone.shape}, which has no entry to compare with a batch's {together.shape}. {guidance}"
+            )
         rows_alone.append(entry)
         rows_together.append(np.ravel(together) if fixed or together.size == 1 else np.ravel(together[index]))
     width = max(row.size for row in (*rows_together, *rows_alone))

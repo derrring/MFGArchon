@@ -606,7 +606,7 @@ class PrecomputedJointSocpStencils:
         lambda_C: float = 1.0e4,
         max_stencil_enlargements: int = 0,
         enlargement_step: int = 2,
-        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+        obstacle_sdf: Callable[..., np.ndarray] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
     ):

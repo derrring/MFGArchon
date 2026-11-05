@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import GRAPH_COUPLING_SLOTS, bind_user_callable
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -110,10 +112,10 @@ class AdjacencyCoupling:
         Adjacency matrix A, shape (N, N). A_{ij} > 0 if node j affects node i.
         Can be weighted (interaction strength) or binary.
     coupling_hjb : Callable[[int, int, NDArray, NDArray, float], NDArray] | None
-        Custom HJB coupling function: (i, j, v_j_at_t, m_j_at_t, t) -> contribution.
+        Custom HJB coupling function, read by the names it declares of i, j, v_j, m_j and t.
         Default: alpha * (v_i_at_t - v_j_at_t) (value difference).
     coupling_fp : Callable[[int, int, NDArray, NDArray, float], NDArray] | None
-        Custom FP coupling function: (i, j, v_j_at_t, m_j_at_t, t) -> contribution.
+        Custom FP coupling function, read by the same names.
         Default: beta * (m_j_at_t - m_i_at_t) (mass transfer).
     alpha : float
         Default HJB coupling strength (default 0.1).
@@ -142,8 +144,14 @@ class AdjacencyCoupling:
         self._N = N
         self._alpha = alpha
         self._beta = beta
-        self._coupling_hjb = coupling_hjb
-        self._coupling_fp = coupling_fp
+        self._coupling_hjb = (
+            None
+            if coupling_hjb is None
+            else bind_user_callable(coupling_hjb, GRAPH_COUPLING_SLOTS, role="coupling_hjb")
+        )
+        self._coupling_fp = (
+            None if coupling_fp is None else bind_user_callable(coupling_fp, GRAPH_COUPLING_SLOTS, role="coupling_fp")
+        )
 
     @property
     def n_nodes(self) -> int:
@@ -171,7 +179,7 @@ class AdjacencyCoupling:
                 v_j = _get_time_slice(values[j], t_eval, dt)
                 m_j = _get_time_slice(densities[j], t_eval, dt)
                 if custom is not None:
-                    s += A_row[j] * custom(i, j, v_j, m_j, t_eval)
+                    s += A_row[j] * custom(i=i, j=j, v_j=v_j, m_j=m_j, t=t_eval)
                 else:
                     # Default: value difference (migration incentive)
                     n = min(len(v_i), len(v_j), Nx)
@@ -202,7 +210,7 @@ class AdjacencyCoupling:
                 m_i = _get_time_slice(densities[i], t_eval, dt)
                 m_j = _get_time_slice(densities[j], t_eval, dt)
                 if custom is not None:
-                    s += A_row[j] * custom(i, j, v_j, m_j, t_eval)
+                    s += A_row[j] * custom(i=i, j=j, v_j=v_j, m_j=m_j, t=t_eval)
                 else:
                     # Default: mass transfer (inflow from j, outflow to j)
                     n = min(len(m_i), len(m_j), Nx)

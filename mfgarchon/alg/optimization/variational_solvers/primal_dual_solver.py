@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import STATE_CONSTRAINT_SLOTS, VELOCITY_CONSTRAINT_SLOTS, bind_user_callable
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
 
@@ -433,11 +434,12 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
         state_constraints = getattr(self.problem.components, "state_constraints", None)
         if state_constraints:
             max_state_violation = 0.0
-            for constraint_func in state_constraints:
+            for constraint in state_constraints:
+                constraint_func = bind_user_callable(constraint, STATE_CONSTRAINT_SLOTS, role="state_constraint")
                 for i in range(self.Nt):
                     for x in self.x_grid:
                         t = self.t_grid[i]
-                        violation = max(0.0, constraint_func(t, x))
+                        violation = max(0.0, constraint_func(t=t, x=(x,)))
                         max_state_violation = max(max_state_violation, violation)
             constraints["state_constraints"] = max_state_violation
 
@@ -445,12 +447,13 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
         velocity_constraints = getattr(self.problem.components, "velocity_constraints", None)
         if velocity_constraints and velocity is not None:
             max_velocity_violation = 0.0
-            for constraint_func in velocity_constraints:
+            for constraint in velocity_constraints:
+                constraint_func = bind_user_callable(constraint, VELOCITY_CONSTRAINT_SLOTS, role="velocity_constraint")
                 for i in range(self.Nt):
                     for j, x in enumerate(self.x_grid):
                         t = self.t_grid[i]
                         v = velocity[i, j]
-                        violation = max(0.0, constraint_func(t, x, v))
+                        violation = max(0.0, constraint_func(t=t, x=(x,), v=v))
                         max_velocity_violation = max(max_velocity_violation, violation)
             constraints["velocity_constraints"] = max_velocity_violation
         else:

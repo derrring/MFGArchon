@@ -23,9 +23,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.spatial import Voronoi
 
 from mfgarchon.types.callable_protocols import read_region
-from scipy.spatial import Voronoi
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,7 +63,7 @@ def _clip_halfplane(poly: NDArray, n: NDArray, c: float, eps: float = 1e-12) -> 
     return np.array(out) if out else np.empty((0, 2))
 
 
-def _clip_sdf(poly: NDArray, sdf: Callable[[NDArray], NDArray], eps: float = 1e-12) -> NDArray:
+def _clip_sdf(poly: NDArray, sdf: Callable[..., NDArray], eps: float = 1e-12) -> NDArray:
     """Clip ``poly`` to ``{sdf <= 0}`` (boundary arc approximated by chords between crossings)."""
     s = np.asarray(read_region(sdf, poly, role="sdf"), dtype=np.float64).ravel()
     out = []
@@ -123,7 +123,7 @@ def _cell_edges(poly: NDArray):
 def clipped_voronoi_cells(
     nodes: NDArray,
     bounds: list[tuple[float, float]],
-    sdf: Callable[[NDArray], NDArray] | None = None,
+    sdf: Callable[..., NDArray] | None = None,
 ) -> list[CellGeometry]:
     """Per-node clipped Voronoi cells for SCNI (2D).
 
@@ -135,7 +135,7 @@ def clipped_voronoi_cells(
     Args:
         nodes: ``(N, 2)`` cloud points (must lie within ``bounds``).
         bounds: ``[(a0, b0), (a1, b1)]`` the rectangular domain / bounding box.
-        sdf: optional domain SDF ``(M, 2) -> (M,)``, ``<= 0`` inside ``Omega``.
+        sdf: optional domain SDF reading ``x``, a coordinate tuple, ``<= 0`` inside ``Omega``.
 
     Returns:
         ``list[CellGeometry]`` aligned with ``nodes``.
@@ -204,9 +204,9 @@ if __name__ == "__main__":
     assert abs(total - 1.0) < 1e-9, "cells must tile the bounding box"
 
     # disk sdf
-    C, R = np.array([0.5, 0.5]), 0.4
-    in_disk = lambda P: np.linalg.norm(np.atleast_2d(P) - C, axis=1) - R  # noqa: E731
-    dnodes = nodes[in_disk(nodes) <= 0]
+    R = 0.4
+    in_disk = lambda x: np.hypot(x[0] - 0.5, x[1] - 0.5) - R  # noqa: E731
+    dnodes = nodes[in_disk(tuple(nodes.T)) <= 0]
     dcells = clipped_voronoi_cells(dnodes, [(0.1, 0.9), (0.1, 0.9)], sdf=in_disk)
     darea = sum(c.area for c in dcells)
     print(f"disk:      N={len(dcells)} sum(V_a)={darea:.6f} (pi R^2 = {np.pi * R**2:.6f})")

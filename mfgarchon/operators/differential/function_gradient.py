@@ -166,7 +166,7 @@ def _eval_func(
 
 
 def outward_normal_from_sdf(
-    sdf: Callable[[NDArray], NDArray | float],
+    sdf: Callable[..., NDArray | float],
     points: NDArray,
     eps: float = 1e-6,
     adaptive_eps: bool = False,
@@ -198,7 +198,9 @@ def outward_normal_from_sdf(
     )
 
 
-def geometry_outward_normal(signed_distance: Callable[[NDArray], NDArray], points: NDArray, eps: float = 1e-6) -> NDArray:
+def geometry_outward_normal(
+    signed_distance: Callable[[NDArray], NDArray], points: NDArray, eps: float = 1e-6
+) -> NDArray:
     """The outward normal from a geometry's own ``signed_distance`` method, which takes points as an array by the
     ``ImplicitGeometry`` contract, on a subclass a user wrote as well as on the library's."""
     return _unit_normal(function_gradient(signed_distance, points, eps=eps))
@@ -219,7 +221,7 @@ def _unit_normal(grad: NDArray) -> NDArray:
 def sdf_gradient_with_analytical_fallback(
     geometry: HasAnalyticalGradient | object,
     points: NDArray,
-    sdf_func: Callable[[NDArray], NDArray] | None = None,
+    sdf_func: Callable[..., NDArray] | None = None,
     eps: float = 1e-6,
 ) -> NDArray:
     """
@@ -333,7 +335,11 @@ if __name__ == "__main__":
     # Test 3: Outward normal
     print("\n[Test 3: Outward Normal from SDF]")
 
-    normals = outward_normal_from_sdf(sphere_sdf, points)
+    def radial_sdf(x: tuple[NDArray, ...]) -> NDArray:
+        """The same phi = |x| - 1, as an sdf reads it: x a coordinate tuple."""
+        return np.sqrt(sum(xi**2 for xi in x)) - 1.0
+
+    normals = outward_normal_from_sdf(radial_sdf, points)
     print(f"  Normals shape: {normals.shape}")
 
     # Check unit length
@@ -345,18 +351,11 @@ if __name__ == "__main__":
     # Test 4: 2D circle
     print("\n[Test 4: 2D Circle SDF]")
 
-    def circle_sdf(x: NDArray) -> float | NDArray:
-        """SDF for unit circle in 2D"""
-        x = np.asarray(x)
-        if x.ndim == 1:
-            return float(np.linalg.norm(x) - 1.0)
-        return np.linalg.norm(x, axis=1) - 1.0
-
     # Points on the circle
     theta = np.linspace(0, 2 * np.pi, 8, endpoint=False)
     circle_points = np.stack([np.cos(theta), np.sin(theta)], axis=1)
 
-    normals_2d = outward_normal_from_sdf(circle_sdf, circle_points)
+    normals_2d = outward_normal_from_sdf(radial_sdf, circle_points)
 
     # Normals should equal the points (for unit circle)
     error_2d = np.max(np.abs(normals_2d - circle_points))

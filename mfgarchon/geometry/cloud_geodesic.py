@@ -51,7 +51,7 @@ logger = get_logger(__name__)
 def compute_geodesic_distance(
     points: np.ndarray,
     sources_idx: np.ndarray | int,
-    obstacles_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+    obstacles_sdf: Callable[..., np.ndarray] | None = None,
     k_neighbors: int = 25,
     n_segment_samples: int = 8,
     max_edge_length: float | None = None,
@@ -72,7 +72,7 @@ def compute_geodesic_distance(
         Index or indices of points with `d_geodesic = 0`. The output
         is `min_{s ∈ sources_idx} d(., s)`.
     obstacles_sdf : callable or None
-        `obstacles_sdf(P) -> SDF` for `P` shape `(M, d)`. Following the
+        `obstacles_sdf(x) -> SDF` for `x` a coordinate tuple. Following the
         mfgarchon SDF convention, `SDF <= 0` means **inside obstacle**.
         Edges whose mid-segment samples cross into an obstacle (any
         sample with `SDF <= 0`) are excluded from the graph. When None,

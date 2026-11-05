@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, bind_user_callable, coordinate_tuple
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, REGION_SLOTS, bind_user_callable, coordinate_tuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -602,7 +602,7 @@ def resolve_diffusion_source(
             x = pts[index]
         else:
             x = pts.mean(axis=0)
-        return float(source(x))
+        return float(bind_user_callable(source, REGION_SLOTS, role="volatility")(x=tuple(np.atleast_1d(x))))
     arr = np.asarray(source)
     if arr.ndim >= 1:
         if index is not None and index < len(arr):
@@ -1227,7 +1227,9 @@ class _DriftDispatcher:
         dimension: int = 1,
     ):
         self.field = drift_field
-        self._bound = bind_user_callable(self.field, COEFFICIENT_SLOTS, role="drift_field") if callable(self.field) else None
+        self._bound = (
+            bind_user_callable(self.field, COEFFICIENT_SLOTS, role="drift_field") if callable(self.field) else None
+        )
         self.Nt = Nt
         self.spatial_shape = spatial_shape
         self.dimension = dimension

@@ -26,10 +26,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-
-from mfgarchon.types.callable_protocols import read_region
 from numpy.typing import NDArray
 
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -1147,7 +1146,7 @@ def sample_from_density(
     num_samples: int,
     jitter: bool = True,
     seed: int | None = None,
-    navigable: Callable[[NDArray], NDArray | bool] | None = None,
+    navigable: Callable[..., NDArray | bool] | None = None,
 ) -> NDArray:
     """
     Sample particle positions from a density field on a regular grid.
@@ -1297,7 +1296,7 @@ _MAX_REDRAW_ROUNDS = 1000
 
 
 def _leave_out_cells_with_no_navigable_point(
-    probs: NDArray, coordinates: list[NDArray], navigable: Callable[[NDArray], NDArray | bool]
+    probs: NDArray, coordinates: list[NDArray], navigable: Callable[..., NDArray | bool]
 ) -> NDArray:
     """The cell probabilities with the cells that hold no navigable point left out, or a refusal (#2688, #2706).
 
@@ -1322,7 +1321,9 @@ def _leave_out_cells_with_no_navigable_point(
     offsets = np.stack(np.meshgrid(*([ticks] * dimension), indexing="ij"), axis=-1).reshape(-1, dimension) * spacings
     centres = nodes[suspect]
     probes = (centres[:, None, :] + offsets[None, :, :]).reshape(-1, dimension)
-    blocked_here = ~np.asarray(read_region(navigable, probes, role="navigable"), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
+    blocked_here = ~np.asarray(read_region(navigable, probes, role="navigable"), dtype=bool).reshape(
+        len(centres), len(offsets)
+    ).any(axis=1)
     if not blocked_here.any():
         return probs
     blocked = np.zeros(probs.shape, dtype=bool)
@@ -1348,7 +1349,7 @@ def _leave_out_cells_with_no_navigable_point(
 def _redraw_until_navigable(
     particles: NDArray,
     redraw: Callable[[NDArray], NDArray],
-    navigable: Callable[[NDArray], NDArray | bool],
+    navigable: Callable[..., NDArray | bool],
     within: str,
 ) -> None:
     """Redraw, in place, the particles where ``navigable`` is False, until none is (#2688)."""

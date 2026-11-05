@@ -257,7 +257,7 @@ class SupportsRegionMarking(Protocol):
     def mark_region(
         self,
         name: str,
-        predicate: Callable[[NDArray], NDArray[np.bool_]] | None = None,
+        predicate: Callable[..., NDArray[np.bool_]] | None = None,
         mask: NDArray[np.bool_] | None = None,
         boundary: str | None = None,
     ) -> None:
@@ -266,7 +266,7 @@ class SupportsRegionMarking(Protocol):
 
         Args:
             name: Unique name for this region (e.g., "inlet", "obstacle", "safe_zone")
-            predicate: Function taking points (N, dimension) → bool mask (N,)
+            predicate: Function of ``x``, a coordinate tuple, to a bool per point
                        True where point is in region
             mask: Boolean mask directly specifying region (num_grid_points,)
             boundary: Standard boundary name (e.g., "x_min", "x_max") for rectangular domains

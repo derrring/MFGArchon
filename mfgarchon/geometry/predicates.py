@@ -87,7 +87,7 @@ def sphere_region(
 
 
 def sdf_region(
-    sdf: Callable[[NDArray], NDArray[np.floating]],
+    sdf: Callable[..., NDArray[np.floating]],
 ) -> Callable[[NDArray], NDArray[np.bool_]]:
     """
     Create predicate from a signed distance function.
@@ -95,7 +95,7 @@ def sdf_region(
     Selects points x where sdf(x) <= 0 (interior + boundary of SDF domain).
 
     Args:
-        sdf: Signed distance function, (N, d) -> (N,) float array.
+        sdf: Signed distance function reading ``x``, a coordinate tuple.
              Negative = interior, zero = boundary, positive = exterior.
 
     Returns:

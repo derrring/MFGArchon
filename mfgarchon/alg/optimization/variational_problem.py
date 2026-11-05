@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import REGION_SLOTS, VARIATIONAL_LAGRANGIAN_SLOTS, BoundCallable, bound_attribute
+from mfgarchon.types.callable_protocols import (
+    REGION_SLOTS,
+    VARIATIONAL_LAGRANGIAN_SLOTS,
+    BoundCallable,
+    bound_attribute,
+)
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
@@ -680,12 +685,12 @@ def create_obstacle_variational_mfg(
         VariationalMFGProblem with obstacle constraints
     """
 
-    def obstacle_lagrangian(t: float, x: float, v: float, m: float) -> float:
+    def obstacle_lagrangian(t: float, x: tuple[float], v: float, m: float) -> float:
         kinetic = 0.5 * v**2
         congestion = 0.5 * m
 
         # Obstacle penalty
-        obstacle_distance = abs(x - obstacle_center)
+        obstacle_distance = abs(x[0] - obstacle_center)
         if obstacle_distance < obstacle_radius:
             obstacle_cost = obstacle_penalty * (obstacle_radius - obstacle_distance) ** 2
         else:
@@ -694,9 +699,9 @@ def create_obstacle_variational_mfg(
         return kinetic + congestion + obstacle_cost
 
     # State constraint: avoid obstacle
-    def obstacle_constraint(t: float, x: float) -> float:
+    def obstacle_constraint(t: float, x: tuple[float]) -> float:
         """Constraint: distance from obstacle center >= obstacle_radius"""
-        return abs(x - obstacle_center) - obstacle_radius
+        return abs(x[0] - obstacle_center) - obstacle_radius
 
     components = VariationalMFGComponents(
         lagrangian_func=obstacle_lagrangian,

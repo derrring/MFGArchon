@@ -545,7 +545,7 @@ class SDFParticleBCHandler:
 
     def __init__(
         self,
-        sdf: Callable[[NDArray], NDArray],
+        sdf: Callable[..., NDArray],
         dimension: int,
         max_bisection_iterations: int = 20,
         bisection_tolerance: float = 1e-8,
@@ -567,7 +567,6 @@ class SDFParticleBCHandler:
         self.max_bisection_iterations = max_bisection_iterations
         self.bisection_tolerance = bisection_tolerance
         self.epsilon = epsilon
-
 
     def _signed_distance(self, points: NDArray) -> NDArray:
         return read_region(self.sdf, points, role="sdf")

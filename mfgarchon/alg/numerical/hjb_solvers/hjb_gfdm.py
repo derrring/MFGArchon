@@ -360,7 +360,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Collocation geometry for periodic domains (Issue #711)
         collocation_geometry: object | None = None,
         # Obstacle-aware visibility filtering for stencil neighbors
-        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+        obstacle_sdf: Callable[..., np.ndarray] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
         # DMP runtime guard (Issue #1074): warn when the solved drift exceeds the
@@ -2535,13 +2535,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         if kind in ("no_flux", "periodic"):
             HJBGFDMSolver._refuse_unread({"values": values})
             return factories[kind](dimension=dimension)
-        if values is None:
-            g: Any = 0.0
-        elif callable(values):
-            g = lambda x: values(x)  # noqa: E731 -- the old call, by the point alone
-        else:
-            g = values
-        return factories[kind](value=g, dimension=dimension)
+        return factories[kind](value=0.0 if values is None else values, dimension=dimension)
 
     def _classified_boundary_points(self):
         """``(i, bc_enum, segment, normal)`` for every boundary point, by `_classify_boundary_point`, in the order of
@@ -3187,7 +3181,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # - D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
-                s_n = np.asarray(evaluate_solver_source(source_term, t=n * _dt, x=_x, dimension=self.problem.dimension), dtype=float)
+                s_n = np.asarray(
+                    evaluate_solver_source(source_term, t=n * _dt, x=_x, dimension=self.problem.dimension), dtype=float
+                )
                 # Shape-check rather than reshape. A 2D source handed back in the wrong point
                 # order has the right SIZE and silently yields a different value function --
                 # measured, an F-ordered (nx, ny) array is accepted and changes Linf from
