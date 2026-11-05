@@ -95,7 +95,7 @@ def test_remembering_a_binding_keeps_no_solve_s_arrays_alive():
         captured = np.full(1000, float(k))
 
         def source(t, x):
-            return captured[: np.shape(x[0])[0]] * 0.0 + t
+            return captured[0] * 0.0 + t + 0.0 * x[0]
 
         return source, weakref.ref(captured)
 

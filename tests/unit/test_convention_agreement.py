@@ -247,9 +247,8 @@ class TestOutwardNormalSourceAgreement:
     def _difference_bc():
         from mfgarchon.geometry.boundary.conditions import BCSegment, BCType, BoundaryConditions
 
-        def obstacle_sdf(p):
-            p = np.asarray(p, dtype=float)
-            return 0.2 - np.linalg.norm(p - np.array([0.5, 0.5]))
+        def obstacle_sdf(x):
+            return 0.2 - np.sqrt((x[0] - 0.5) ** 2 + (x[1] - 0.5) ** 2)
 
         bc = BoundaryConditions(segments=[BCSegment(name="w", bc_type=BCType.NO_FLUX, boundary="x_min")], dimension=2)
         bc.domain_bounds = np.array([[0.0, 1.0], [0.0, 1.0]])

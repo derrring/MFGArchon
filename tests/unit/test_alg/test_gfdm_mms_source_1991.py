@@ -218,7 +218,7 @@ def test_the_source_reaches_gfdm_in_2d():
             M_density=m,
             U_terminal=u_T,
             U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
-            source_term=lambda t, x: -sign * src(t, np.asarray(x[0]).reshape(-1, 2)),
+            source_term=lambda t, x: -sign * src(t, np.stack(x, axis=-1).reshape(-1, 2)),
         )
         return float(np.abs(np.asarray(U)[0].reshape(-1) - u_ex(0.0, pts)).max())
 

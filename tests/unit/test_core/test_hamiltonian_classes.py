@@ -407,14 +407,14 @@ class TestBatchPolymorphism:
     def test_separable_dp_batch(self, separable_2d, batch_data_2d):
         """Batch dp returns shape (N, d)."""
         x, m, p = batch_data_2d
-        result = separable_2d.dp(x=x, m=m, p=p, t=0.0)
+        result = separable_2d.dp(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (5, 2)
 
     def test_separable_dm_batch(self, separable_2d, batch_data_2d):
         """Batch dm returns shape (N,)."""
         x, m, p = batch_data_2d
-        result = separable_2d.dm(x=x, m=m, p=p, t=0.0)
+        result = separable_2d.dm(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (5,)
 
@@ -424,14 +424,14 @@ class TestBatchPolymorphism:
         N = x.shape[0]
 
         # Batch
-        H_batch = separable_2d(x=x, m=m, p=p, t=0.0)
-        dp_batch = separable_2d.dp(x=x, m=m, p=p, t=0.0)
-        dm_batch = separable_2d.dm(x=x, m=m, p=p, t=0.0)
+        H_batch = separable_2d(x=tuple(x.T), m=m, p=p, t=0.0)
+        dp_batch = separable_2d.dp(x=tuple(x.T), m=m, p=p, t=0.0)
+        dm_batch = separable_2d.dm(x=tuple(x.T), m=m, p=p, t=0.0)
 
         # Pointwise
-        H_pw = np.array([separable_2d(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
-        dp_pw = np.stack([separable_2d.dp(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
-        dm_pw = np.array([separable_2d.dm(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        H_pw = np.array([separable_2d(x=tuple(x[i]), m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dp_pw = np.stack([separable_2d.dp(x=tuple(x[i]), m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dm_pw = np.array([separable_2d.dm(x=tuple(x[i]), m=m[i], p=p[i], t=0.0) for i in range(N)])
 
         np.testing.assert_allclose(H_batch, H_pw, rtol=1e-12)
         np.testing.assert_allclose(dp_batch, dp_pw, rtol=1e-12)
@@ -457,7 +457,7 @@ class TestBatchPolymorphism:
         assert result.shape == (N, d)
 
         # Verify against pointwise
-        dp_pw = np.stack([H.dp(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dp_pw = np.stack([H.dp(x=tuple(x[i]), m=m[i], p=p[i], t=0.0) for i in range(N)])
         np.testing.assert_allclose(result, dp_pw, rtol=1e-10)
 
     def test_base_dm_batch_fallback(self):
@@ -475,12 +475,12 @@ class TestBatchPolymorphism:
         m = rng.uniform(0.1, 2.0, size=N)
         p = rng.standard_normal((N, d))
 
-        result = H.dm(x=x, m=m, p=p, t=0.0)
+        result = H.dm(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (N,)
 
         # Verify against pointwise
-        dm_pw = np.array([H.dm(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dm_pw = np.array([H.dm(x=tuple(x[i]), m=m[i], p=p[i], t=0.0) for i in range(N)])
         np.testing.assert_allclose(result, dm_pw, rtol=1e-10)
 
     def test_single_point_unchanged(self):
@@ -494,14 +494,14 @@ class TestBatchPolymorphism:
         m = 0.3
         p = np.array([1.0, -0.5])
 
-        H_val = H(x=x, m=m, p=p, t=0.0)
+        H_val = H(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(H_val, float)
 
-        dp_val = H.dp(x=x, m=m, p=p, t=0.0)
+        dp_val = H.dp(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(dp_val, np.ndarray)
         assert dp_val.shape == (2,)
 
-        dm_val = H.dm(x=x, m=m, p=p, t=0.0)
+        dm_val = H.dm(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(dm_val, float)
 
     def test_dm_no_coupling_batch(self):
@@ -512,7 +512,7 @@ class TestBatchPolymorphism:
         m = np.ones(N)
         p = np.ones((N, d))
 
-        result = H.dm(x=x, m=m, p=p, t=0.0)
+        result = H.dm(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (N,)
         np.testing.assert_array_equal(result, np.zeros(N))
@@ -526,12 +526,12 @@ class TestBatchPolymorphism:
         m = rng.uniform(0.1, 2.0, size=N)
         p = rng.standard_normal((N, d))
 
-        H_batch = H(x=x, m=m, p=p, t=0.0)
+        H_batch = H(x=tuple(x.T), m=m, p=p, t=0.0)
         assert isinstance(H_batch, np.ndarray)
         assert H_batch.shape == (N,)
 
         # Verify pointwise
-        H_pw = np.array([H(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        H_pw = np.array([H(x=tuple(x[i]), m=m[i], p=p[i], t=0.0) for i in range(N)])
         np.testing.assert_allclose(H_batch, H_pw, rtol=1e-12)
 
 

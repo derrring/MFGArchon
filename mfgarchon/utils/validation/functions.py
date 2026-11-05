@@ -52,9 +52,10 @@ _SMOOTHNESS_RTOL = 1e-3
 
 def _raw_callable_advice(fn: Any) -> str:
     """What a raw callable `_call_h` could not call is told, which keeps what a partial froze."""
-    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, keeping_what_it_froze
 
-    return f"Name each parameter of {getattr(fn, '__qualname__', fn)!r} after what it reads, from {', '.join(HAMILTONIAN_SLOTS.order)}."
+    named = f"Name each parameter of {getattr(fn, '__qualname__', fn)!r} after what it reads, from {', '.join(HAMILTONIAN_SLOTS.order)}"
+    return f"{keeping_what_it_froze(fn, named)}."
 
 
 def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:

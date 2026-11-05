@@ -114,6 +114,14 @@ def _partial_levels(fn: Any) -> Iterator[functools.partial]:
         fn = fn.func
 
 
+def keeping_what_it_froze(fn: Any, advice: str) -> str:
+    """``advice``, unless ``fn`` is a partial that froze by position. Told to name its parameters, ``partial(lambda a, b:
+    100*b + a, 9.0)`` becomes ``partial(lambda t, x: 100*t + x, 9.0)``, accepted with the 9.0 moved from x to t (#2869)."""
+    if any(level.args for level in _partial_levels(fn)):
+        return f"Write {_WRITE_A_FUNCTION}, passing the frozen value by keyword"
+    return advice
+
+
 def frozen_by_keyword(fn: Any, names: Collection[str]) -> dict[str, Any]:
     """Those of ``names`` that a ``functools.partial`` in ``fn`` froze by keyword, with the value each call would see."""
     frozen: dict[str, Any] = {}
@@ -188,21 +196,24 @@ def bind_user_callable(fn: Callable[..., Any], slots: Slots, *, role: str) -> Bo
             f"{_WRITE_A_FUNCTION} (#2875)."
         )
     if any(p.kind in (kinds.VAR_POSITIONAL, kinds.VAR_KEYWORD) for p in declared):
+        advice = keeping_what_it_froze(fn, f"Name each one it reads from ({', '.join(slots.order)})")
         raise TypeError(
             f"{role} {name!r} takes ({takes}): called by name, it is passed only the slots it names, so nothing reaches a "
-            f"starred parameter. Name each one it reads from ({', '.join(slots.order)}) (#2875)."
+            f"starred parameter. {advice} (#2875)."
         )
     unnamed = [p.name for p in declared if p.default is kinds.empty and p.name not in slots.order]
     if unnamed:
         raise TypeError(
             f"{role} {name!r} takes ({takes}): {', '.join(unnamed)} has no default and names no slot of "
-            f"({', '.join(slots.order)}). Name each parameter after what it reads (#2875)."
+            f"({', '.join(slots.order)}). {keeping_what_it_froze(fn, 'Name each parameter after what it reads')} (#2875)."
         )
     named = tuple(p.name for p in declared if p.name in slots.order)
     missing = [slot for slot in slots.required if slot not in named]
     if missing or not named:
         needs = ", ".join(missing) if missing else f"one of {', '.join(slots.order)}"
-        raise TypeError(f"{role} {name!r} takes ({takes}), which does not name {needs} (#2875).")
+        raise TypeError(
+            f"{role} {name!r} takes ({takes}), which does not name {needs}. {keeping_what_it_froze(fn, 'Name it')} (#2875)."
+        )
     refuse_overridden(fn, named, role=role)
     return BoundCallable(fn, named, role, _defined_by_the_library(fn), slots)
 
@@ -365,6 +376,13 @@ def _sample_count(dimension: int) -> int:
     return 4 if dimension == 3 else 3
 
 
+def spread_samples(count: int, samples: int) -> NDArray:
+    """Which of ``count`` points to compare. Not the ends and the middle: on a uniform grid a term such as sin(2 pi x) is
+    the same at all three, so a body that misread x would read the same both ways. The golden ratio's multiples fall on
+    no such symmetry."""
+    return np.floor(np.mod((np.arange(samples) + 1) * 0.6180339887498949, 1.0) * count).astype(int)
+
+
 def _entry_at(result: NDArray, batch_shape: tuple[int, ...], own: tuple[int, ...], index: tuple[int, ...]) -> NDArray | None:
     """A read's value at ``index``, by the form it returned: a scalar holds at every point, a result with the batch's shape
     leading holds its entry there, and a result of one point's own shape ``own`` holds as it is. Anything else has no entry
@@ -384,8 +402,12 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     A point read gets one point's ``x`` and each ``per_point`` slot's value there, and every other slot as the batch read
     gets it: so a body may read a field whole. A batch too small to compare, of fewer than two points or of exactly ``d``,
     is cycled to a count that is neither, ``x`` and the slots stated to run with it together.
+
+    A return that does not lead with the batch's shape is one fixed array only if every point's read returns that array
+    too: a constant noise matrix does, and a body that read a coordinate axis as points does not. The door that reads it
+    judges its shape, since only that door knows what a constant means there.
     """
-    entries = np.broadcast_arrays(*values["x"])
+    entries = [np.array(entry, dtype=float) for entry in np.broadcast_arrays(*values["x"])]  # a body may write into x
     shape = entries[0].shape
     d = len(entries)
     samples = _sample_count(d)
@@ -399,18 +421,16 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
                 batch[slot] = np.asarray(batch[slot])[cycled] if slot in slots.per_point else np.ravel(batch[slot])[cycled]
         shape = entries[0].shape
         count = samples
-    batch["x"] = tuple(entries)
     described = f"{name}, on a batch of {count} points"
     try:
-        together = np.asarray(read(**batch), dtype=float)
+        together = np.asarray(read(**{**batch, "x": tuple(entry.copy() for entry in entries)}), dtype=float)
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
     if together.ndim == len(shape) + 1 and together.shape == (d, *shape):
         together = np.moveaxis(together, 0, -1)  # per coordinate, the coordinate axis first, as FP-FDM's drift returns it
-    if together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape:
-        raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
+    fixed = together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape
     rows_together, rows_alone = [], []
-    for flat in np.linspace(0, count - 1, samples).round().astype(int):
+    for flat in spread_samples(count, samples):
         index = tuple(int(i) for i in np.unravel_index(int(flat), shape))
         point = dict(batch)
         point["x"] = tuple(entry[index] for entry in entries)
@@ -421,12 +441,16 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
             alone = np.asarray(read(**point), dtype=float)
         except _UNREADABLE as e:
             raise ValueError(f"{described}, one point at a time, raised {type(e).__name__}: {e}. {guidance}") from e
-        own = together.shape[len(shape) :]
-        entry = _entry_at(alone, shape, own, index)
+        if alone.ndim == len(shape) + 1 and alone.shape == (d, *shape):
+            alone = np.moveaxis(alone, 0, -1)  # as a batch read may return it
+        if fixed and alone.shape != together.shape:
+            raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
+        own = together.shape if fixed else together.shape[len(shape) :]
+        entry = np.ravel(alone) if fixed else _entry_at(alone, shape, own, index)
         if entry is None:
             raise ValueError(f"{described}: one point's read returned shape {alone.shape}, which has no entry to compare with a batch's {together.shape}. {guidance}")
         rows_alone.append(entry)
-        rows_together.append(np.ravel(together) if together.size == 1 else np.ravel(together[index]))
+        rows_together.append(np.ravel(together) if fixed or together.size == 1 else np.ravel(together[index]))
     width = max(row.size for row in (*rows_together, *rows_alone))
     _refuse_unless_equal(
         np.vstack([np.broadcast_to(row, (width,)) for row in rows_together]),

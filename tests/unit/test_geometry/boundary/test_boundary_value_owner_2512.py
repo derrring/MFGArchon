@@ -393,7 +393,7 @@ def test_a_callable_that_is_not_a_function_you_write_is_refused_when_the_segment
     data would be read as g(x), time data at the position. b10b9e65 called FDM's value as ``value(time)`` and read it."""
     with pytest.raises(
         TypeError,
-        match=r"not a plain def or lambda: a boundary value is a function whose parameter names declare what it reads",
+        match=r"not a plain def or lambda: a boundary value is read by the parameter names it declares",
     ):
         _segment(make())
 
@@ -416,7 +416,7 @@ def test_a_positional_only_function_is_refused_and_its_advised_wrap_reads():
     import math
 
     with pytest.raises(
-        TypeError, match=r"takes \(t, /\), with positional-only parameters.*wrap it in a function named for the slots"
+        TypeError, match=r"takes \(t\), with positional-only parameters.*Wrap it in a function named for the slots"
     ):
         _segment(eval("lambda t, /: t"))
     assert _fdm_ghost_wall(_fdm_bc(lambda t: math.sin(t))) == pytest.approx(math.sin(0.5), abs=1e-12)

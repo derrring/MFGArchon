@@ -1832,7 +1832,7 @@ class TensorProductGrid(
             >>> # Mark inlet region using predicate
             >>> grid.mark_region(
             ...     "inlet",
-            ...     predicate=lambda x: (x[:, 0] < 0.1) & (x[:, 1] > 0.4) & (x[:, 1] < 0.6)
+            ...     predicate=lambda x: (x[0] < 0.1) & (x[1] > 0.4) & (x[1] < 0.6)
             ... )
             >>>
             >>> # Mark obstacle using direct mask

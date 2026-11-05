@@ -281,10 +281,9 @@ def _dual(fn):
 
     def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
-        xa = np.asarray(x, dtype=float)
         ma = np.asarray(m, dtype=float)
         batch = pa.ndim > 1
-        x1 = xa[..., 0] if xa.ndim > 1 else xa.ravel()
+        x1 = np.asarray(x[0], dtype=float)
         psq = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
         out = fn(x1, ma, psq, pa)
         return out if batch else float(np.asarray(out).ravel()[0])
@@ -403,7 +402,7 @@ _REFUSE = [
         lambda: _make(
             "H",
             lambda x, m, q, p: (
-                0.5 * np.asarray(p)[..., 0] ** 2 + 2.0 * np.asarray(p)[..., 1] ** 2
+                0.5 * np.asarray(p)[..., 0] ** 2 + 2.0 * np.asarray(p)[..., -1] ** 2
                 if np.asarray(p).ndim > 1
                 else 0.5 * q
             ),
@@ -655,7 +654,7 @@ def test_a_wired_alpha_free_part_is_NOT_refused():
         _make(
             "Wired",
             lambda x, m, q, p: 0.5 * q + 1.0 * x,
-            extra={"_potential": (lambda xx, t=0.0: 1.0 * np.asarray(xx).ravel()[0])},
+            extra={"_potential": (lambda t, x: 1.0 * x[0])},
         ),
         "howard",
         **BARE_STENCILS,

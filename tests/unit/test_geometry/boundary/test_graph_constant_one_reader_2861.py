@@ -97,7 +97,7 @@ def test_a_number_no_float_holds_is_refused_by_name_on_each_path(too_large):
     with pytest.raises(NotImplementedError, match=r"of type int no float holds"):
         boundary_value(lambda t, x: too_large, t=0.0, x=np.zeros(1), **where)
     with pytest.raises(NotImplementedError, match=r"of type int no float holds"):
-        GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, x: too_large).apply(np.zeros(4), t=0.0)
+        GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: too_large).apply(np.zeros(4), t=0.0)
     with pytest.raises(TypeError, match=r"a real number no float holds"):
         _at_a_node(too_large)
 

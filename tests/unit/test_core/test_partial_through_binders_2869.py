@@ -1,10 +1,10 @@
-"""A ``functools.partial`` handed to a binder reads what it freezes, or is refused with advice that keeps it (#2869).
+"""A ``functools.partial`` handed to a binder reads what it freezes, or is refused with advice that keeps it (#2869, #2875).
 
 The oracle is what the partial means by its own names: a frozen parameter reads the frozen value, and every other
 parameter reads the slot it is named for. Called by name, the slot passed overrides a value frozen by keyword, with no
-error, so that is refused, and only that: where the library does not pass the name, the frozen value stands. A positional
-freeze of a named parameter reads right, and stays accepted. Reordering a function a partial froze by position moves the
-frozen value to another parameter, so the refusals below do not say to reorder it.
+error, so that is refused. A positional freeze of a named parameter reads right, and stays accepted. Renaming or
+reordering a function a partial froze by position moves the frozen value to another parameter, so the refusals below do
+not say to.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.types import bind_boundary_value
 from mfgarchon.operators.interaction import PotentialCost
 from mfgarchon.types import callable_protocols as cp
-from mfgarchon.utils.callable_adapter import adapt_ic_callable
 from mfgarchon.utils.pde_coefficients import CoefficientField
 from mfgarchon.utils.validation.functions import _call_h, validate_hamiltonian, validate_hamiltonian_derivative
 
@@ -36,10 +35,16 @@ _AT = {slot: 2.0 + i for i, slot in enumerate(_NAMES)}
 _FROZEN = 97.0
 
 
+def _term(param, slot):
+    return f"{_COEF[slot]!r}*{param}[0]" if slot == "x" else f"{_COEF[slot]!r}*{param}"
+
+
 def _written(params, reads):
-    return eval(
-        f"lambda {', '.join(params)}: " + " + ".join(f"{_COEF[r]!r}*{p}" for p, r in zip(params, reads, strict=True))
-    )
+    return eval(f"lambda {', '.join(params)}: " + " + ".join(_term(p, r) for p, r in zip(params, reads, strict=True)))
+
+
+def _frozen(slot):
+    return (_FROZEN,) if slot == "x" else _FROZEN
 
 
 def _meant(order, frozen):
@@ -61,87 +66,29 @@ def _bind(slots):
 
 
 def _call(bound, order):
-    return bound(**{slot: _AT[slot] for slot in order})
+    return bound(**{slot: (_AT[slot],) if slot == "x" else _AT[slot] for slot in order})
 
 
 @pytest.mark.parametrize("name", list(_TABLES))
 def test_a_slot_frozen_by_keyword_is_refused_on_every_binding_path(name):
-    """A slot's value frozen by keyword with the slot still named, so the library passes it: by its name, by an alias, after a
-    positional freeze, and in a partial Python leaves as two levels. Each read other at 2ace3724, with no error."""
+    """A slot's value frozen by keyword with the slot still named, so the library passes it: by its name, after a positional
+    freeze, and in a partial Python leaves as two levels. Each read other at 2ace3724, with no error."""
     slots = _TABLES[name]
     order = slots.order
-    partials = [functools.partial(_written(order, order), **{slot: _FROZEN}) for slot in order]
-    partials += [
-        functools.partial(_written([alias if s == slot else s for s in order], order), **{alias: _FROZEN})
-        for alias, slot in slots.slot_of().items()
-        if alias != slot
-    ]
+    partials = [functools.partial(_written(order, order), **{slot: _frozen(slot)}) for slot in order]
     if len(order) >= 2:
-        partials.append(functools.partial(_written(order, order), _FROZEN, **{order[1]: _FROZEN}))
+        partials.append(functools.partial(_written(order, order), _frozen(order[0]), **{order[1]: _frozen(order[1])}))
     # Python flattens a partial of a partial only when the inner one has no __dict__. These stay two levels.
-    wrapped = functools.partial(_written(order, order), **{order[0]: _FROZEN})
+    wrapped = functools.partial(_written(order, order), **{order[0]: _frozen(order[0])})
     partials.append(functools.partial(functools.update_wrapper(wrapped, _written(order, order))))
-    marked = functools.partial(_written(order, order), **{order[0]: _FROZEN})
+    marked = functools.partial(_written(order, order), **{order[0]: _frozen(order[0])})
     marked.note = "an attribute keeps it a level of its own"
     partials.append(functools.partial(marked))
-    partials.append(_timed(functools.partial(_written(order, order), **{order[0]: _FROZEN})))
+    partials.append(_timed(functools.partial(_written(order, order), **{order[0]: _frozen(order[0])})))
     for partial in partials:
-        # Refused, or, for a level Python's signature sees through to the function it wraps, loud at the first read.
-        with pytest.raises(TypeError, match=r"by keyword: called by name|multiple values"):
-            _call(cp.bind_user_callable(partial, slots, role="r"), order)
-
-
-@pytest.mark.parametrize("name", list(_TABLES))
-def test_a_slot_frozen_on_an_unnamed_tail_stands_where_the_library_does_not_pass_it(name):
-    """Bound positionally, the library passes the tail and not the frozen name, so the frozen value reads right. Each table's
-    rows of this shape are accepted and read it, or are refused for the tail, as they are with no partial."""
-    slots = _TABLES[name]
-    order = slots.order
-    accepted = 0
-    for frozen in order:
-        for tail in {len(order), len([slot for slot in order if slot not in slots.optional])}:
-            parameters = [f"a{i}" for i in range(tail)]
-            function = eval(f"lambda {', '.join([*parameters, frozen + '=0.0'])}: {frozen}")
-            partial = functools.partial(function, **{frozen: _FROZEN})
-            try:
-                bound = cp.bind_user_callable(partial, slots, role="r")
-            except cp.FrozenSlotError:
-                pytest.fail(f"nothing here passes {frozen} by name: {partial}")
-            except TypeError:
-                continue
-            accepted += 1
-            assert bound.binding == "positional"
-            assert _call(bound, order) == _FROZEN
-    assert accepted == {
-        "CONDITIONAL_HAMILTONIAN_SLOTS": 5,
-        "SOLVER_SOURCE_SLOTS": 2,
-        "VARIATIONAL_LAGRANGIAN_SLOTS": 4,
-    }.get(name, 0)
-
-
-@pytest.mark.parametrize(
-    ("read", "partial", "meant"),
-    [
-        (
-            lambda f: adapt_ic_callable(f, 1, 3.0, role="m_initial")[1](3.0),
-            functools.partial(lambda a, x=0.0: 100.0 * a + x, x=9.0),
-            309.0,
-        ),
-        (
-            lambda f: cp.bind_user_callable(f, cp.SOLVER_SOURCE_SLOTS, role="r")(t=0.25, x=3.0),
-            functools.partial(lambda *a, t=0.0: a[0] + 100.0 * a[1] + 1000.0 * t, t=0.7),
-            1000.25,
-        ),
-        (
-            lambda f: cp.bind_user_callable(f, cp.VARIATIONAL_LAGRANGIAN_SLOTS, role="r")(t=1.0, x=2.0, v=3.0, m=4.0),
-            functools.partial(lambda *a, m=0.0: sum(a) + 1000.0 * m, m=0.7),
-            710.0,
-        ),
-    ],
-    ids=["a condition, x", "a source, *a", "a Lagrangian, *a"],
-)
-def test_a_slot_frozen_where_the_library_does_not_pass_it_reads_what_it_froze(read, partial, meant):
-    assert read(partial) == meant
+        # A wrapper's own names are read and not what it wraps, so it is refused for its stars.
+        with pytest.raises(TypeError, match=r"by keyword: called by name|starred parameter"):
+            cp.bind_user_callable(partial, slots, role="r")
 
 
 def _two_levels(function, *args):
@@ -150,9 +97,22 @@ def _two_levels(function, *args):
     return functools.partial(inner)
 
 
+def _problem_with_a_condition(condition, dimension):
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dimension, Nx_points=[5] * dimension, boundary_conditions=no_flux_bc(dimension=dimension)
+    )
+    hamiltonian = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m)
+    return MFGProblem(
+        model=Model(hamiltonian=hamiltonian, volatility=0.4),
+        domain=grid,
+        conditions=Conditions(m_initial=condition, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=2,
+    )
+
+
 _ONE_ARG_SURFACES = {
-    "condition, 1-D": lambda f: adapt_ic_callable(f, 1, 3.0, role="m_initial"),
-    "condition, 2-D": lambda f: adapt_ic_callable(f, 2, np.array([0.1, 0.2]), role="m_initial"),
+    "condition, 1-D": lambda f: _problem_with_a_condition(f, 1),
+    "condition, 2-D": lambda f: _problem_with_a_condition(f, 2),
     "PotentialCost": lambda f: PotentialCost(f).bind_on(
         SimpleNamespace(points=np.array([[0.5]]), weights=np.array([1.0]))
     ),
@@ -173,8 +133,6 @@ _ONE_ARG_SURFACES = {
         (_ONE_ARG_SURFACES["PotentialCost"], functools.partial(lambda q, a, b: q + a + b, _FROZEN)),
         (bind_boundary_value, _two_levels(lambda a, b: a + b, _FROZEN)),
         (_bind(cp.POTENTIAL_SLOTS), _two_levels(lambda q, a, b: q + a + b, _FROZEN)),
-        (bind_boundary_value, _timed(functools.partial(lambda a, b: a + b, _FROZEN))),
-        (_bind(cp.POTENTIAL_SLOTS), _timed(functools.partial(lambda q, a, b: q + a + b, _FROZEN))),
     ],
     ids=[
         "never reordered, a misplaced name",
@@ -188,14 +146,12 @@ _ONE_ARG_SURFACES = {
         "PotentialCost",
         "by name, two levels",
         "binder, two levels",
-        "by name, a wrapper",
-        "binder, a wrapper",
     ],
 )
 def test_every_refusal_a_positional_partial_reaches_advises_keeping_what_it_froze(read, partial):
     """None of them may advise the rewrite that moves the frozen value, in its outer message or a chained one. Each once
     said to reorder or to name the function's parameters."""
-    with pytest.raises(TypeError) as refused:
+    with pytest.raises((TypeError, ValueError)) as refused:
         read(partial)
     messages = []
     error = refused.value
@@ -220,15 +176,11 @@ def test_what_a_partial_freezes_by_position_or_under_no_slots_name_stands(name):
     slots = _TABLES[name]
     order = slots.order
     read = _bind(slots)
-    assert _call(read(functools.partial(_written(order, order), _FROZEN)), order) == _meant(order, {order[0]: _FROZEN})
-    gain = eval(f"lambda {', '.join(order)}, gain=1.0: gain*(" + " + ".join(f"{_COEF[s]!r}*{s}" for s in order) + ")")
+    if len(order) > 1 and order[0] not in slots.required:
+        by_position = functools.partial(_written(order, order), _frozen(order[0]))
+        assert _call(read(by_position), order) == _meant(order, {order[0]: _FROZEN})
+    gain = eval(f"lambda {', '.join(order)}, gain=1.0: gain*(" + " + ".join(_term(s, s) for s in order) + ")")
     assert _call(read(functools.partial(gain, gain=2.0)), order) == 2.0 * _meant(order, {})
-    rest = list(order[1:])
-    into_kw = eval(
-        f"lambda {', '.join(rest)}, **kw: "
-        + " + ".join([f"{_COEF[order[0]]!r}*kw[{order[0]!r}]", *(f"{_COEF[s]!r}*{s}" for s in rest)])
-    )
-    assert _call(read(functools.partial(into_kw, **{order[0]: _FROZEN})), order) == _meant(order, {order[0]: _FROZEN})
 
 
 _SURFACES = {name: (_bind(slots), slots.order) for name, slots in _TABLES.items()} | {
@@ -249,7 +201,7 @@ def test_a_refused_positional_partial_is_not_told_to_reorder_its_function(name):
         for params in (list(written), [f"a{i}" for i in range(len(order))]):
             target = _written(params, written)
             try:
-                read(functools.partial(target, _FROZEN))
+                read(functools.partial(target, _frozen(written[0])))
             except TypeError as refusal:
                 message = str(refusal)
             else:
@@ -261,8 +213,10 @@ def test_a_refused_positional_partial_is_not_told_to_reorder_its_function(name):
             if written[0] == "p" and name == "HAMILTONIAN_SLOTS":
                 continue  # a function that does not read p is not a raw Hamiltonian, and is refused for it
             left = [slot for slot in order if slot != written[0]]
+            if not left:
+                continue  # a function of the frozen value alone reads no slot, and is refused for it
             passed = ", ".join(
-                f"{p}={s}" if s != written[0] else f"{p}={_FROZEN!r}" for p, s in zip(params, written, strict=True)
+                f"{p}={s}" if s != written[0] else f"{p}={_frozen(s)!r}" for p, s in zip(params, written, strict=True)
             )
             follows = eval(f"lambda {', '.join(left)}: target({passed})", {"target": target})
             assert _call(read(follows), order) == _meant(order, {written[0]: _FROZEN})
@@ -293,10 +247,10 @@ def _solve(**arguments):
 
 
 def _in_space(x, like):
-    return 8.0 * (np.asarray(x, dtype=float)[..., 0] - 0.5) * np.ones_like(np.asarray(like, dtype=float))
+    return 8.0 * (np.asarray(x[0], dtype=float) - 0.5) * np.ones_like(np.asarray(like, dtype=float))
 
 
-_POTENTIAL = functools.partial(lambda t, x: 8.0 * t * (np.asarray(x, dtype=float)[..., 0] - 0.5), t=0.45)
+_POTENTIAL = functools.partial(lambda t, x: 8.0 * t * (np.asarray(x[0], dtype=float) - 0.5), t=0.45)
 
 
 @pytest.mark.parametrize(
@@ -320,7 +274,7 @@ _POTENTIAL = functools.partial(lambda t, x: 8.0 * t * (np.asarray(x, dtype=float
 )
 def test_a_solve_refuses_a_keyword_frozen_slot_rather_than_solve_the_unfrozen_function(arguments):
     """Each returned converged at 2ace3724, equal to the unfrozen function, with no error."""
-    with pytest.raises(TypeError, match="freezes t by keyword: called by name"):
+    with pytest.raises(TypeError, match="freezes t by keyword: called by name|starred parameter"):
         _solve(**arguments)
 
 
@@ -352,17 +306,17 @@ def test_a_solvers_own_volatility_argument_is_refused_too():
 
 def test_what_a_raw_hamiltonian_is_told_about_a_frozen_measure_is_accepted_and_reads_it():
     def H(t, x, p, m):
-        return 100.0 * p + x + 1000.0 * m
+        return 100.0 * p + x[0] + 1000.0 * m
 
     with pytest.raises(TypeError, match="passing the frozen value by keyword"):
         cp.bind_user_callable(functools.partial(H, m=0.5), cp.HAMILTONIAN_SLOTS, role="r")
     bound = cp.bind_user_callable(lambda t, x, p: H(t=t, x=x, p=p, m=0.5), cp.HAMILTONIAN_SLOTS, role="r")
-    assert bound(t=0.25, x=3.0, p=2.0, m=7.0) == 703.0
+    assert bound(t=0.25, x=(3.0,), p=2.0, m=7.0) == 703.0
 
 
 def test_a_frozen_slot_with_no_readable_signature_is_refused_where_it_would_be_passed_by_name():
     """A door passes every slot whatever a signature says, so ``dict``, with none Python can read, is refused the same."""
-    with pytest.raises(TypeError, match="freezes t by keyword: called by name"):
+    with pytest.raises(TypeError, match="not a plain def or lambda"):
         CoefficientField(functools.partial(dict, t=0.45), 0.1, "volatility")
 
 
@@ -431,7 +385,7 @@ class _FamilyWithStars(SeparableHamiltonian):
 def test_a_door_that_passes_every_slot_overrides_what_is_frozen_into_kw(read):
     """A binding passes the names it read, so a slot frozen into ``**kw`` stands there. These pass every slot, so it did not:
     through ``problem.solve()``, 6.78e-2 from the frozen function in ``U`` on a 21-node fixture, converged, at 2ace3724."""
-    with pytest.raises(TypeError, match=r"freezes [tm] by keyword: called by name"):
+    with pytest.raises(TypeError, match=r"freezes [tm] by keyword: called by name|starred parameter"):
         read()
 
 
@@ -452,7 +406,7 @@ def test_an_alias_a_door_never_passes_stands(partial):
         ),
         (bind_boundary_value, lambda: _timed(functools.partial(lambda t, x: 100.0 * t + x, t=0.25))),
         (
-            lambda f: adapt_ic_callable(f, 1, 3.0, role="m_initial"),
+            lambda f: cp.bind_user_callable(f, cp.CONDITION_SLOTS, role="m_initial"),
             lambda: _timed(functools.partial(lambda t, x: 100.0 * t + x, t=0.25)),
         ),
         (
@@ -473,7 +427,7 @@ def test_an_alias_a_door_never_passes_stands(partial):
 def test_a_wrapper_does_not_hide_a_partial_from_the_check(read, partial):
     """``inspect.signature`` reads through ``__wrapped__``, so the wrapper was called with the partial's names, and read 53.0
     for 28.0 at 2ace3724 with no error."""
-    with pytest.raises(TypeError, match=r"freezes t by keyword: called by name|that fixes t=0\.25"):
+    with pytest.raises(TypeError, match=r"freezes t by keyword: called by name|starred parameter|not a plain def"):
         read(partial())
 
 

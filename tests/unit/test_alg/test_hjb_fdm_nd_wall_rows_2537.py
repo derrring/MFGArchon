@@ -301,9 +301,8 @@ def _exact(t, x, y):
 
 
 def _source(t, x):
-    x = np.asarray(x, dtype=float)
-    _, ux, uy, lap = _exact(t, x[:, 0], x[:, 1])
-    return 0.5 * np.cos(np.pi * x[:, 0]) + 0.5 * (ux**2 + uy**2) - _D * lap
+    _, ux, uy, lap = _exact(t, x[0], x[1])
+    return 0.5 * np.cos(np.pi * x[0]) + 0.5 * (ux**2 + uy**2) - _D * lap
 
 
 def _wall_slope_miss(n: int) -> float:

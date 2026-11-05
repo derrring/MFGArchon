@@ -45,15 +45,15 @@ class _QuadraticPlusTilt(HamiltonianBase):
         self.tilt, self.tilt_dp, self.tilt_dm = tilt, tilt_dp, tilt_dm
 
     def __call__(self, t, x, p, m):
-        p = np.atleast_1d(p)
-        return 0.5 * np.sum(p**2) + self.tilt(np.atleast_1d(x[0]), m, p)
+        p = np.asarray(p, dtype=float)
+        return 0.5 * np.sum(p**2, axis=-1) + self.tilt(x, m, p)
 
     def dp(self, t, x, p, m):
-        p = np.atleast_1d(p)
-        return p + np.asarray(self.tilt_dp(np.atleast_1d(x[0]), m, p))
+        p = np.asarray(p, dtype=float)
+        return p + np.stack(np.broadcast_arrays(*self.tilt_dp(x, m, p)), axis=-1)
 
     def dm(self, t, x, p, m):
-        return self.tilt_dm(np.atleast_1d(x[0]), m, np.atleast_1d(p))
+        return self.tilt_dm(x, m, np.asarray(p, dtype=float))
 
 
 def _problem(hamiltonian, dimension: int):
@@ -99,24 +99,24 @@ def test_a_hamiltonian_outside_the_godunov_condition_is_refused(label, make, vio
 @pytest.mark.parametrize(
     ("label", "tilt", "tilt_dp", "tilt_dm"),
     [
-        ("only_along_axis_1", lambda x, m, p: 0.7 * p[1], lambda x, m, p: [0.0, 0.7], lambda x, m, p: 0.0),
+        ("only_along_axis_1", lambda x, m, p: 0.7 * p[..., 1], lambda x, m, p: [0.0, 0.7], lambda x, m, p: 0.0),
         (
             "only_off_the_axis",
-            lambda x, m, p: 0.7 * p[0] * p[1] ** 2,
-            lambda x, m, p: [0.7 * p[1] ** 2, 1.4 * p[0] * p[1]],
+            lambda x, m, p: 0.7 * p[..., 0] * p[..., 1] ** 2,
+            lambda x, m, p: [0.7 * p[..., 1] ** 2, 1.4 * p[..., 0] * p[..., 1]],
             lambda x, m, p: 0.0,
         ),
         (
             "only_away_from_the_first_grid_point",
-            lambda x, m, p: 0.7 * x[0] * p[0],
+            lambda x, m, p: 0.7 * x[0] * p[..., 0],
             lambda x, m, p: [0.7 * x[0], 0.0],
             lambda x, m, p: 0.0,
         ),
         (
             "only_at_the_second_density",
-            lambda x, m, p: 0.7 * (m - 0.5) * p[0],
+            lambda x, m, p: 0.7 * (m - 0.5) * p[..., 0],
             lambda x, m, p: [0.7 * (m - 0.5), 0.0],
-            lambda x, m, p: 0.7 * p[0],
+            lambda x, m, p: 0.7 * p[..., 0],
         ),
     ],
 )

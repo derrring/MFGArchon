@@ -124,7 +124,7 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
         m_initial=lambda x: M_CONST,
-        u_terminal=lambda x: u_star(T, np.asarray(x[0]).reshape(1, 2))[0],
+        u_terminal=lambda x: u_star(T, x),
         hamiltonian=HAMILTONIAN,
     )
     volatility = {"volatility": sigma, "volatility_kind": "tensor"} if sigma_kind == "tensor" else {"volatility": sigma}
@@ -134,11 +134,11 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
     solver = HJBSemiLagrangianSolver(problem)
     U = solver.solve_hjb_system(
         M_density=np.full((nt + 1, *shape), M_CONST),
-        U_terminal=u_star(T, points).reshape(shape),
-        U_coupling_prev=np.stack([u_star(k * T / nt, points).reshape(shape) for k in range(nt + 1)]),
+        U_terminal=u_star(T, tuple(points.T)).reshape(shape),
+        U_coupling_prev=np.stack([u_star(k * T / nt, tuple(points.T)).reshape(shape) for k in range(nt + 1)]),
         source_term=hjb_source(PAIR, HAMILTONIAN, sigma, volatility_kind=sigma_kind),
     )
-    error = np.asarray(U)[0] - u_star(0.0, points).reshape(shape)
+    error = np.asarray(U)[0] - u_star(0.0, tuple(points.T)).reshape(shape)
     return float(np.sqrt((error**2).sum()) * (L / (nx - 1)))
 
 

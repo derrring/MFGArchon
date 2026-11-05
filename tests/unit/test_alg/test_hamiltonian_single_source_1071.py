@@ -274,13 +274,12 @@ class _NonLQFDHamiltonian(HamiltonianBase):
 
     def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
-        x = np.asarray(x, dtype=float)
         m = np.asarray(m, dtype=float)
         if p.ndim == 2:
             kin = np.sum(np.abs(p) ** 3, axis=1) / 3.0
-            pot = np.sin(2 * np.pi * x[:, 0])
+            pot = np.sin(2 * np.pi * x[0])
             return kin + pot + m**2
-        return float(np.sum(np.abs(p) ** 3) / 3.0 + np.sin(2 * np.pi * np.atleast_1d(x)[0]) + float(np.mean(m)) ** 2)
+        return float(np.sum(np.abs(p) ** 3) / 3.0 + np.sin(2 * np.pi * x[0]) + float(np.mean(m)) ** 2)
 
 
 class _CountingHamiltonian(_NonLQFDHamiltonian):

@@ -188,14 +188,23 @@ def outward_normal_from_sdf(
         Unit outward normal vectors, same shape as points
 
     Example:
-        >>> # Circle SDF
+        >>> # Circle SDF: x is a coordinate tuple
         >>> def circle_sdf(x):
-        ...     return np.linalg.norm(x, axis=-1) - 1.0
+        ...     return np.sqrt(x[0] ** 2 + x[1] ** 2) - 1.0
         >>> normals = outward_normal_from_sdf(circle_sdf, boundary_points)
     """
-    grad = function_gradient(lambda z: read_region(sdf, z, role="sdf"), points, eps=eps, adaptive_eps=adaptive_eps)
+    return _unit_normal(
+        function_gradient(lambda z: read_region(sdf, z, role="sdf"), points, eps=eps, adaptive_eps=adaptive_eps)
+    )
 
-    # Normalize
+
+def geometry_outward_normal(signed_distance: Callable[[NDArray], NDArray], points: NDArray, eps: float = 1e-6) -> NDArray:
+    """The outward normal from a geometry's own ``signed_distance`` method, which takes points as an array by the
+    ``ImplicitGeometry`` contract, on a subclass a user wrote as well as on the library's."""
+    return _unit_normal(function_gradient(signed_distance, points, eps=eps))
+
+
+def _unit_normal(grad: NDArray) -> NDArray:
     if grad.ndim == 1:
         norm = np.linalg.norm(grad)
         if norm < 1e-12:
@@ -222,7 +231,8 @@ def sdf_gradient_with_analytical_fallback(
     Args:
         geometry: Geometry object, may have signed_distance_gradient method
         points: Evaluation points, shape (n, d)
-        sdf_func: SDF function for numerical fallback (if None, uses geometry.signed_distance)
+        sdf_func: SDF function for numerical fallback, reading x as a coordinate tuple
+            (if None, uses geometry.signed_distance, which takes points as an array)
         eps: Finite difference step size for fallback
 
     Returns:
@@ -242,7 +252,9 @@ def sdf_gradient_with_analytical_fallback(
             pass
 
     # Fallback to numerical
-    if sdf_func is None:
+    if sdf_func is not None:
+        return function_gradient(lambda z: read_region(sdf_func, z, role="sdf_func"), points, eps=eps)
+    else:
         # Get SDF function from geometry via explicit interface (Issue #794)
         # ImplicitGeometry ABC guarantees signed_distance(); getattr for legacy alias
         from mfgarchon.geometry.base import ImplicitGeometry

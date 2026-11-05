@@ -611,7 +611,7 @@ def test_an_outflow_that_drains_the_wall_is_refused_on_upwind():
 
 
 def _bump(x: np.ndarray) -> np.ndarray:
-    return np.exp(-((x[0] - 0.5) ** 2) / 0.02) + 1e-3
+    return np.exp(-((x - 0.5) ** 2) / 0.02) + 1e-3
 
 
 def test_centered_fdm_is_refused_where_the_first_negative_is_off_the_flux_face():

@@ -14,8 +14,8 @@ import numpy as np
 from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, GraphBCConfig, GraphBCType, NodeBC
 
 
-def _g(t, x):
-    return t + 10.0 * x[0]
+def _g(t, node):
+    return t + 10.0 * node
 
 
 def test_a_node_value_is_read_at_its_time_through_a_network_solve():
@@ -63,7 +63,7 @@ class _NoSignature:
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (lambda: NodeBC(nodes=[0], value=lambda a, b: 0.0), r"cannot be matched to \(t, node\)"),
+        (lambda: NodeBC(nodes=[0], value=lambda a, b: 0.0), r"names no slot of \(t, node\)"),
         (lambda: NodeBC(nodes=[0], value=_NoSignature()), "not a plain def or lambda"),
         (lambda: NodeBC(nodes=[0], bc_type=GraphBCType.CUSTOM, value=1.0), "takes its rule as rule="),
         (lambda: NodeBC(nodes=[0], rule=lambda t, node, field: 0.0), "rule= is a CUSTOM condition's"),
@@ -98,7 +98,7 @@ def test_a_value_that_reads_t_needs_a_time_and_a_row_of_its_own():
         ),
         # main wrote None as NaN; a return is read by the grid's one reader, `types._read_constant`
         (
-            lambda: GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, x: None).apply(np.zeros(4), t=0.5),
+            lambda: GraphApplicator(4).set_dirichlet_nodes([2], value=lambda t, node: None).apply(np.zeros(4), t=0.5),
             NotImplementedError,
             "does the function lack a `return`",
         ),

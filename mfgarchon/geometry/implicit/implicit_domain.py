@@ -342,7 +342,7 @@ class ImplicitDomain(
             - For points not exactly on the boundary, this gives the normal
               to the closest boundary point
             - Uses central finite differences for gradient: O(eps²) accuracy
-            - Implementation delegates to outward_normal_from_sdf() for
+            - Implementation delegates to geometry_outward_normal() for
               consistency (Issue #662 consolidation)
 
         Example:
@@ -352,11 +352,9 @@ class ImplicitDomain(
             True
         """
         # Use canonical implementation from operators/differential (Issue #662)
-        from mfgarchon.operators.differential.function_gradient import (
-            outward_normal_from_sdf,
-        )
+        from mfgarchon.operators.differential.function_gradient import geometry_outward_normal
 
-        return outward_normal_from_sdf(self.signed_distance, x, eps=eps)
+        return geometry_outward_normal(self.signed_distance, x, eps=eps)
 
     def project_to_boundary(
         self,

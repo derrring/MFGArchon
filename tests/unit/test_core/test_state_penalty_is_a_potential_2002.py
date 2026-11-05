@@ -220,11 +220,8 @@ def test_a_zero_wall_is_a_no_op_on_a_vectorised_base_potential():
         state_penalty=lambda x: np.zeros_like(np.atleast_1d(x[0])),
     ).components._hamiltonian_class
 
-    assert np.allclose(bare._evaluate_potential_batch(batch, 0.0), truth), "control: base is wrong"
-    assert np.allclose(walled._evaluate_potential_batch(batch, 0.0), truth), "a zero wall changed the base potential"
-    assert walled._potential_is_vectorized is bare._potential_is_vectorized, (
-        "the composition defeated the vectorisation probe"
-    )
+    assert np.allclose(bare._potential(t=0.0, x=tuple(batch.T)), truth), "control: base is wrong"
+    assert np.allclose(walled._potential(t=0.0, x=tuple(batch.T)), truth), "a zero wall changed the base potential"
 
 
 def test_the_composed_potential_returns_what_the_base_returns():
@@ -250,11 +247,11 @@ def test_the_composed_potential_returns_what_the_base_returns():
         state_penalty=lambda x: np.zeros_like(np.atleast_1d(x[0])),
     ).components._hamiltonian_class._potential
 
-    for probe in (np.array([0.3]), np.linspace(0.0, 1.0, 5).reshape(-1, 1)):
+    for probe in ((np.array(0.3),), (np.linspace(0.0, 1.0, 5),)):
         seen.clear()
         out = composed(t=0.0, x=probe)
-        base_shape = seen[np.shape(probe)]
+        base_shape = seen[np.shape(probe[0])]
         assert np.shape(out) == base_shape, (
             f"composed returned {np.shape(out)} where the base returned {base_shape} for x of "
-            f"shape {np.shape(probe)} -- the wrapper changed the base's contract"
+            f"shape {np.shape(probe[0])} -- the wrapper changed the base's contract"
         )

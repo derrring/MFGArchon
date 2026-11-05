@@ -803,7 +803,7 @@ def test_a_particle_solver_handed_an_sdf_placed_bc_reads_it_on_its_grid():
 def test_an_sdf_returning_a_one_element_array_is_read_as_its_value_by_the_face_owner_too():
     """`matches_point` reads an sdf's one-element array as its value; the face owner's grid mask stacked them and
     failed to broadcast (#2634, found re-checking #2490's sdf row)."""
-    disc = _seg("D", _EXIT, sdf_region=lambda x: np.sqrt(sum((np.atleast_2d(xi) - np.array([1.0, 0.5])) ** 2 for xi in x)) - 0.2)
+    disc = _seg("D", _EXIT, sdf_region=lambda x: np.atleast_1d(np.sqrt((x[0] - 1.0) ** 2 + (x[1] - 0.5) ** 2) - 0.2))
     grid = _grid(BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[disc]))
     with pytest.raises(ValueError, match="'D' covers part of the x_max face"):
         grid.get_boundary_conditions().segment_for_face("x_max")

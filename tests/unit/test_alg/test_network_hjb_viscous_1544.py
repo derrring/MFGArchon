@@ -47,8 +47,8 @@ def _h_control(u):
     return np.array([0.5 * sum(A[i, j] * max(u[i] - u[j], 0.0) ** 2 for j in range(N) if A[i, j]) for i in range(N)])
 
 
-def _forcing(t, i):
-    return float((-(2 * t * np.cos(X) + 1.0) + D * L @ _u_star(t) + _h_control(_u_star(t)))[i])
+def _forcing(t, node):
+    return float((-(2 * t * np.cos(X) + 1.0) + D * L @ _u_star(t) + _h_control(_u_star(t)))[node])
 
 
 def _error_at_t0(solver_class, nt, **kwargs):

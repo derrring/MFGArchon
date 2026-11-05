@@ -198,14 +198,14 @@ class CoupledSinusoid1D(ManufacturedSolution):
     def _build_sources(self):
         k, lam = self.k, self.lam
         pair = ManufacturedPair(
-            u=lambda t, x: self.u_star(t, x[..., 0]),
-            u_t=lambda t, x: -self.b * np.exp(-t) * np.sin(k * x[..., 0]),
-            grad_u=lambda t, x: (self.b * k * np.exp(-t) * np.cos(k * x[..., 0]))[:, None],
-            hess_u=lambda t, x: (-self.b * k**2 * np.exp(-t) * np.sin(k * x[..., 0]))[:, None, None],
-            m=lambda t, x: self.m_star(t, x[..., 0]),
-            m_t=lambda t, x: -self.a * np.exp(-t) * np.cos(k * x[..., 0]),
-            grad_m=lambda t, x: (-self.a * k * np.exp(-t) * np.sin(k * x[..., 0]))[:, None],
-            hess_m=lambda t, x: (-self.a * k**2 * np.exp(-t) * np.cos(k * x[..., 0]))[:, None, None],
+            u=lambda t, x: self.u_star(t, x[0]),
+            u_t=lambda t, x: -self.b * np.exp(-t) * np.sin(k * x[0]),
+            grad_u=lambda t, x: (self.b * k * np.exp(-t) * np.cos(k * x[0]))[..., None],
+            hess_u=lambda t, x: (-self.b * k**2 * np.exp(-t) * np.sin(k * x[0]))[..., None, None],
+            m=lambda t, x: self.m_star(t, x[0]),
+            m_t=lambda t, x: -self.a * np.exp(-t) * np.cos(k * x[0]),
+            grad_m=lambda t, x: (-self.a * k * np.exp(-t) * np.sin(k * x[0]))[..., None],
+            hess_m=lambda t, x: (-self.a * k**2 * np.exp(-t) * np.cos(k * x[0]))[..., None, None],
             name="coupled_sinusoid_1d",
         )
         # Deliberately a SEPARATE object from the one `_build_problem` puts on the problem, and it
@@ -238,8 +238,8 @@ def _build_problem(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float) -> MFGPro
     bc = periodic_bc(dimension=1)
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
     components = MFGComponents(
-        m_initial=lambda x: mfg.m_star(0.0, x),
-        u_terminal=lambda x: mfg.u_star(T, x),
+        m_initial=lambda x: mfg.m_star(0.0, x[0]),
+        u_terminal=lambda x: mfg.u_star(T, x[0]),
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=mfg.lam),
             coupling=lambda m: mfg.c_f * m,
@@ -255,8 +255,8 @@ def _build_problem(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float) -> MFGPro
         # default (0.5) would be equally inert and more confusing.
         coupling_coefficient=mfg.c,
         components=components,
-        source_term_hjb=mfg.hjb_source,
-        source_term_fp=mfg.fp_source,
+        source_term_hjb=lambda t, x: mfg.hjb_source(t=t, x=x[0], v=None, m=None),
+        source_term_fp=lambda t, x: mfg.fp_source(t=t, x=x[0], v=None, m=None),
     )
 
 

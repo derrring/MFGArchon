@@ -74,14 +74,15 @@ def test_the_documented_point_array_convention_works_in_2d(name, cls):
 
     def source(t, x):
         a = np.asarray(x[0], dtype=float)
-        seen["shape"] = a.shape
-        # The documented convention: (N, d) in, one value per point out.
-        return np.full(a.shape[0], 1.0)
+        if a.ndim:  # the batch's; the library may also read a point
+            seen["shape"] = (len(x), a.shape)
+        # The documented convention: x a coordinate tuple, one value per point out.
+        return np.full(a.shape, 1.0)
 
     m0 = np.ones(n * n) / (n * n)
     out = np.asarray(solver.solve_fp_system(m0.reshape(n, n), potential_field=None, source_term=source))
-    assert seen.get("shape") == (n * n, 2), (
-        f"{name} called the source with shape {seen.get('shape')}, not the documented (N, d). "
+    assert seen.get("shape") == (2, (n * n,)), (
+        f"{name} called the source with coordinates {seen.get('shape')}, not two entries of (N,). "
         f"A (d, *shape) meshgrid is the #2019 fork."
     )
     assert np.all(np.isfinite(out))

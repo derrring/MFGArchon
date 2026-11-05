@@ -498,16 +498,16 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
             Nt=4,
         )
 
-    with pytest.raises(TypeError, match=r"V takes \(t, x\).*SeparableHamiltonian\(potential=\.\.\.\).*x\[\.\.\., 0\]"):
+    with pytest.raises(TypeError, match=r"V takes t.*SeparableHamiltonian\(potential=\.\.\.\)"):
         timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda t, x: x[0] * (1 + t)))
-    with pytest.raises(TypeError, match=r"V takes the point x alone.*SeparableHamiltonian\(potential=\.\.\.\)"):
+    with pytest.raises(TypeError, match=r"V takes t.*SeparableHamiltonian\(potential=\.\.\.\)"):
         timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x, t: x[0] * (1 + t)))
     sweeps = MFGSolverConfig(picard=PicardConfig(max_iterations=3, tolerance=1e-6, verbose=False))
     moving, frozen = (
         np.asarray(timed(hamiltonian=_hamiltonian(potential=V)).solve(config=sweeps).U)
         for V in (
-            lambda t, x: 5.0 * np.asarray(x)[..., 0] * (1 + 10 * t),
-            lambda t, x: 5.0 * np.asarray(x)[..., 0],
+            lambda t, x: 5.0 * x[0] * (1 + 10 * t),
+            lambda t, x: 5.0 * x[0],
         )
     )
     assert np.max(np.abs(moving - frozen)) > 0.1, "the Hamiltonian's potential(t, x) is not read at each time"
@@ -642,7 +642,7 @@ def test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy(d):
         interaction = amplitude * np.prod(
             [_box_gaussian(pts[:, k], *bounds[k], centre[k], width[k], length) for k in range(d)], axis=0
         )
-        return interaction + np.array([V(float(p[0])) if d == 1 else V(p) for p in pts])
+        return interaction + np.array([V(tuple(p)) for p in pts])
 
     at_x = _coupling_part(problem.coupling_energy, nodes, m.reshape(shape), points, 0.0)
     gap = np.max(np.abs(at_x - exact(points)))
@@ -825,7 +825,7 @@ def _run_loop(name, calls, diverge_at=None):
         solver = NewtonMFGSolver(
             problem, _recording(HJBFDMSolver(problem), calls, diverge_at), FPFDMSolver(problem), picard_warmup=1
         )
-        M_w = np.tile(_unit_mass(lambda x: np.exp(-40 * (x - 0.7) ** 2), 11)(_x(problem)), (problem.Nt + 1, 1))
+        M_w = np.tile(_unit_mass(lambda x: np.exp(-40 * (x - 0.7) ** 2), 11)((_x(problem),)), (problem.Nt + 1, 1))
         solver.set_warm_start_data((np.zeros_like(M_w), M_w))
         U, _, info = solver.solve(max_iterations=1, tolerance=1e30, verbose=False)
         reason = "diverged_nan" if diverge_at is not None else "Converged during Picard warm-up"

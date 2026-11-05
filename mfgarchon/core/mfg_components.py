@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
-from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable, coordinate_tuple
+from mfgarchon.types.callable_protocols import (
+    CONDITION_SLOTS,
+    bind_user_callable,
+    coordinate_tuple,
+    keeping_what_it_froze,
+)
 
 # Issue #670: npart, ppart imports removed - no default Hamiltonian
 from mfgarchon.utils.mfg_logging import get_logger
@@ -626,9 +631,10 @@ class ConditionsMixin:
         (#2431, #2875), or None with no grid to read it on. The grid is its first batch, so its reads are compared here."""
         bound = bind_user_callable(condition, CONDITION_SLOTS, role=role)
         if "x" not in bound.passes:
+            advice = keeping_what_it_froze(condition, "Name its space parameter x")
             raise TypeError(
                 f"{role} {getattr(condition, '__qualname__', condition)!r} takes time and no space. It is a function of "
-                f"space: name its space parameter x."
+                f"space: {advice}."
             )
         num_intervals = self._get_num_intervals()
         if self.dimension == 1 and num_intervals is not None:

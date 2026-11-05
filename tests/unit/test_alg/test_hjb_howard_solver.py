@@ -724,7 +724,7 @@ class _SeparableMockProblem(_MockProblem):
     def H(self, i, m_at_x, derivs=None, x_position=None, t=0.0):
         p = np.atleast_1d(np.asarray(derivs.grad, dtype=float))
         x = np.atleast_1d(np.asarray(x_position, dtype=float))
-        return float(self.hamiltonian_class(x=x, m=m_at_x, p=p, t=t))
+        return float(self.hamiltonian_class(x=tuple(x), m=m_at_x, p=p, t=t))
 
 
 def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4, Nt=12):
@@ -757,8 +757,7 @@ def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4
 
 def _v_quadratic(t, x):
     """Bowl V(x) = 2(x-0.5)^2, a cost lowest at x = 0.5 (time-independent: Newton's per-point H call passes no t)."""
-    x = np.asarray(x, dtype=float)
-    return 2.0 * (x[..., 0] - 0.5) ** 2
+    return 2.0 * (x[0] - 0.5) ** 2
 
 
 @pytest.mark.parametrize(

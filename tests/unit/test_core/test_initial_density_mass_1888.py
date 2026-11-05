@@ -46,8 +46,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 def _gaussian(dimension: int):
     def m0(x):
-        arr = np.asarray(x[0])
-        r2 = np.sum((arr - 0.5) ** 2, axis=-1) if dimension > 1 else (arr - 0.5) ** 2
+        r2 = sum((np.asarray(xi) - 0.5) ** 2 for xi in x)
         return np.exp(-30 * r2)
 
     return m0
@@ -119,8 +118,7 @@ class TestTheReportedMass:
         n = 11
         problem = _problem(dimension, n)
         axis = np.linspace(0.0, 1.0, n)
-        grid = np.stack(np.meshgrid(*([axis] * dimension), indexing="ij"), axis=-1) if dimension > 1 else axis
-        expected = _gaussian(dimension)(grid)
+        expected = _gaussian(dimension)(tuple(np.meshgrid(*([axis] * dimension), indexing="ij")))
         assert np.allclose(np.asarray(problem.m_initial), expected, rtol=0, atol=0)
         assert problem.initial_mass != pytest.approx(1.0, rel=1e-6), (
             "this fixture's Gaussian does not integrate to 1; if it now does, the rescale is back"
@@ -257,7 +255,7 @@ class TestTheThreeTiers:
         n = 11
         axis = np.linspace(0.0, 1.0, n)
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
-        raw = _gaussian(1)(axis)
+        raw = _gaussian(1)((axis,))
         normalised = raw / grid.integrate(raw)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

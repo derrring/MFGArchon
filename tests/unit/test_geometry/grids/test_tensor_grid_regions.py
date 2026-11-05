@@ -360,7 +360,7 @@ class TestRegionMarkingUseCases:
         radius = 0.2
 
         def is_in_obstacle(x):
-            distances = np.linalg.norm(x[0] - center, axis=1)
+            distances = np.sqrt((x[0] - center[0]) ** 2 + (x[1] - center[1]) ** 2)
             return distances < radius
 
         grid.mark_region("obstacle", predicate=is_in_obstacle)

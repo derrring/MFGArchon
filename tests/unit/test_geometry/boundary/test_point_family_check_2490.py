@@ -319,7 +319,7 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
         _gfdm(behind, no_x_max, delta=0.45)
     assert _reading(_gfdm([behind[0], _seg("S", D, 1.0, boundary="x_max", priority=2)], no_x_max, delta=0.45), "S") == 2
 
-    disk = lambda x: np.sqrt(sum((np.asarray(xi, dtype=float) - [0.0, 1.0]) ** 2 for xi in x)) - 0.08  # noqa: E731
+    disk = lambda x: np.sqrt(x[0] ** 2 + (x[1] - 1.0) ** 2) - 0.08  # noqa: E731
     unread = BoundaryConditions(
         segments=[_seg("wall", NF, priority=1), _seg("S", D, 1.0, sdf_region=disk)],
         dimension=2,

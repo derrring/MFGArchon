@@ -124,7 +124,7 @@ def test_gfdm_judges_a_corner_by_the_row_it_writes():
 
 
 def _box_sdf(x):
-    return np.max(np.abs(np.asarray(x[0], dtype=float) - 0.5)) - 0.5
+    return np.maximum(np.abs(x[0] - 0.5), np.abs(x[1] - 0.5)) - 0.5
 
 
 def _obstacle_sdf(x):

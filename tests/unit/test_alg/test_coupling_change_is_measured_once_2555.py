@@ -76,7 +76,7 @@ def _problem(data: str = "moving") -> MFGProblem:
             u_terminal=well
             if data in ("moving", "heavy")
             else (lambda x: (1.0 if data == "static_m" else 0.0) + 0.0 * np.asarray(x[0])),
-            m_initial={"heavy": lambda x: 10.0 * bump(x[0])}.get(data, bump if data in ("moving", "static_u") else flat),
+            m_initial={"heavy": lambda x: 10.0 * bump(x)}.get(data, bump if data in ("moving", "static_u") else flat),
         ),
     )
 

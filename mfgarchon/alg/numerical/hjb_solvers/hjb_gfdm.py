@@ -36,7 +36,7 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
@@ -3566,17 +3566,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             # 0.0". That was the BUILTIN max's behaviour; with np.maximum the value becomes nan,
             # and the acceptance is identical either way -- which is the whole point above.)
             _af = _ke = _scale = 0.0
+            _x_probe = coordinate_tuple(_pts, self.dimension)
             try:
                 for _n in _slices:
                     _m_n = np.asarray(M_collocation[_n], dtype=float).ravel()
                     _t_n = float(_n) * _dt_probe
                     _h0 = np.asarray(
-                        H_class(x=_pts, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n), dtype=float
+                        H_class(x=_x_probe, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n), dtype=float
                     )
                     _af = np.maximum(_af, np.abs(_h0).max())
                     for _d in _dirs:
                         _P = np.tile(np.asarray(_d, dtype=float), (self.n_points, 1))
-                        _h = np.asarray(H_class(x=_pts, m=_m_n, p=_P, t=_t_n), dtype=float)
+                        _h = np.asarray(H_class(x=_x_probe, m=_m_n, p=_P, t=_t_n), dtype=float)
                         _scale = np.maximum(_scale, np.abs(_h).max())
                         _ke = np.maximum(_ke, np.abs((_h - _h0) - _kinetic_ref(_d)).max())
             except (TypeError, ValueError, AttributeError, IndexError) as _exc:

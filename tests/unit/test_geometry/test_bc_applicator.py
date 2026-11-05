@@ -205,7 +205,7 @@ class TestSDFParticleBCHandler:
         X_result, _ = handler.apply_bc(X_old, X_new)
 
         # Should be reflected back inside
-        assert handler.sdf(X_result)[0] <= 0, "Reflected particle should be inside"
+        assert np.linalg.norm(X_result[0]) <= 1.0, "Reflected particle should be inside"
 
     def test_velocity_reflection(self):
         """Test that velocity is reflected at boundary."""
@@ -277,7 +277,7 @@ class TestSDFParticleBCHandler:
         X_result, _ = handler.apply_bc(X_old, X_new)
 
         # All should end up inside
-        sdf_result = handler.sdf(X_result)
+        sdf_result = np.linalg.norm(X_result, axis=-1) - 1.0
         assert np.all(sdf_result <= 0), "All particles should be inside after BC"
 
         # Non-crossing particles should be unchanged

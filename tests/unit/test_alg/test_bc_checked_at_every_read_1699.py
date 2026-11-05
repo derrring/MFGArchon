@@ -55,7 +55,7 @@ def _solver(cls, dim):
 
 def _solve(solver, dim):
     nodes = np.stack(np.meshgrid(*[np.linspace(0.0, 1.0, N[dim])] * dim, indexing="ij"), axis=-1)
-    u_terminal = _terminal(dim)(nodes[..., 0] if dim == 1 else nodes)
+    u_terminal = _terminal(dim)(tuple(np.moveaxis(nodes, -1, 0)))
     u = np.broadcast_to(u_terminal, (NT + 1, *u_terminal.shape)).copy()
     m = np.ones_like(u) if dim > 1 else 1.0 + 0.5 * np.broadcast_to(nodes[..., 0], u.shape)
     if isinstance(solver, FPSLSolver):

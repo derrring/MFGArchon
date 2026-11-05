@@ -240,7 +240,7 @@ _PLACEMENTS = {
         {"region": {0: (1.0, 2.0)}}, {"normal_direction": [1.0]}],
     2: [{}, {"boundary": "x_min"}, {"boundary": "left"}, {"boundary": "y_max"}, {"boundary": "all"},
         {"region": {"x": (0.0, 1.0)}}, {"region": {"y": (0.3, 0.7)}}, {"boundary": "x_max", "region": {"y": (0.0, 0.5)}},
-        {"normal_direction": [0.0, 1.0]}, {"sdf_region": lambda p: float(np.linalg.norm(p) - 0.9)},
+        {"normal_direction": [0.0, 1.0]}, {"sdf_region": lambda x: np.sqrt(sum(xi**2 for xi in x)) - 0.9},
         {"normal_direction": [1.0, 1.0], "normal_tolerance": 0.5}],
     3: [{}, {"boundary": "z_min"}, {"boundary": "front"}, {"boundary": "back"}, {"region": {"z": (0.0, 1.5)}},
         {"normal_direction": [0.0, 0.0, 1.0]}, {"normal_direction": [1.0, 1.0, 1.0], "normal_tolerance": 0.5}],

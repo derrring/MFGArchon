@@ -1137,7 +1137,7 @@ class TestFPFDMSolverCallableDrift:
         # Density-dependent drift: move away from high density regions
         def crowd_avoidance_drift(t, x, m):
             # Gradient-like drift pushing toward low density
-            grad_m = np.gradient(m, x[1] - x[0] if len(np.stack(np.stack(x, axis=-1), axis=-1)) > 1 else 1.0)
+            grad_m = np.gradient(m, (bounds[1][0] - bounds[0][0]) / (Nx_points - 1))
             return -0.5 * grad_m
 
         # Initial condition
@@ -1317,7 +1317,7 @@ class TestVaryingSigmaExplicitDriftPerPoint:
 
         comps = MFGComponents(m_initial=m_init, u_terminal=lambda x: np.asarray(x[0]) * 0.0, hamiltonian=H)
         prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, volatility=0.1, components=comps)
-        m0 = m_init(x)
+        m0 = m_init((x,))
         # Normalised on the control volumes (#2145), which is what the scheme conserves; the
         # rectangle would make `mass == 1` a statement about a different functional.
         m0 /= float(quadrature_weights_1d(x) @ m0)

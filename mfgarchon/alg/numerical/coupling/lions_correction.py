@@ -291,7 +291,8 @@ def create_lions_source(
             Source term values, shape (Nx,)
         """
         if w_scalar is not None:
-            m_flat = _spatial_density(m, int(np.shape(x)[0]), from_x=True)
+            rows = np.size(np.broadcast_arrays(*x)[0]) if isinstance(x, tuple) else int(np.shape(x)[0])
+            m_flat = _spatial_density(m, rows, from_x=True)
         else:
             m_flat = _spatial_density(m, w_array.size)
         Nx = len(m_flat)

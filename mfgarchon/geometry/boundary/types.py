@@ -53,7 +53,7 @@ def _compute_sdf_gradient(
 
     Args:
         point: Point at which to evaluate gradient (1D array)
-        sdf_func: SDF function
+        sdf_func: SDF function, reading x as a coordinate tuple
         epsilon: Finite difference step size
 
     Returns:
@@ -71,7 +71,7 @@ def _compute_sdf_gradient(
         raise ValueError(f"SDF gradient: Point contains non-finite values: {point}")
 
     # Use canonical implementation with adaptive epsilon
-    grad = function_gradient(sdf_func, point, eps=epsilon, adaptive_eps=True)
+    grad = function_gradient(lambda z: read_region(sdf_func, z, role="domain_sdf"), point, eps=epsilon, adaptive_eps=True)
 
     # Warn if gradient is suspiciously small (preserve original behavior)
     grad_norm = np.linalg.norm(grad)

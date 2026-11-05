@@ -175,8 +175,9 @@ def test_a_v_that_writes_into_its_point_moves_no_point_off_the_nodes():
     rather than with its own message."""
 
     def V(x):
-        x += 0.3
-        return float(x[0])
+        coordinate = x[0]
+        coordinate += 0.3
+        return coordinate
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[9, 9], boundary_conditions=no_flux_bc(dimension=2))
     K = GaussianKernel(amplitude=1.0, length_scale=0.2)

@@ -279,13 +279,8 @@ CALLABLE_CALLS_ALLOWED = {
     ("mfgarchon/alg/numerical/adjoint/verification.py", "verify_duality"): "non-boundary: L_hjb, L_fp_adjoint",
     ("mfgarchon/alg/numerical/coupling/fixed_point_utils.py", "read_inner_solve_failures"): "non-boundary: a method",
     ("mfgarchon/alg/numerical/coupling/multi_population_iterator.py", "__init__"): "non-boundary: a population getter",
-    ("mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py", "solve_timestep_tensor_explicit"): (
-        "non-boundary: a tensor field"
-    ),
-    ("mfgarchon/core/mfg_problem.py", "diffusion"): "non-boundary: volatility",
     ("mfgarchon/core/mfg_problem.py", "spatial_measure"): "non-boundary: get_spacing",
     ("mfgarchon/geometry/boundary/invariants.py", "mass_drift"): "non-boundary: integrate",
-    ("mfgarchon/geometry/level_set/core.py", "evolve_step"): "non-boundary: a velocity",
     ("mfgarchon/utils/pde_coefficients.py", "resolve_diffusion_source"): "non-boundary: a source",
     ("mfgarchon/visualization/convergence_plots.py", "plot_from_monitor"): "non-boundary: get_plot_data",
     ("mfgarchon/workflow/common.py", "serialize_value"): "non-boundary: to_dict",

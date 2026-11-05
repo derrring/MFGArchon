@@ -79,6 +79,7 @@ from mfgarchon.types.callable_protocols import (
     point_at,
     refuse_batch_disagreement,
     refuse_overridden,
+    spread_samples,
 )
 
 if TYPE_CHECKING:
@@ -3054,8 +3055,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
     points = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
     d = points.shape[1]
     k = 4 if d == 3 else 3
-    index = np.linspace(0, points.shape[0] - 1, k).round().astype(int)
-    x = points[index]
+    x = points[spread_samples(points.shape[0], k)]
     p = np.linspace(-1.3, 2.1, k)[:, None] * (1.0 + 0.25 * np.arange(d))
     m = np.linspace(0.5, 1.7, k)
     guidance = (

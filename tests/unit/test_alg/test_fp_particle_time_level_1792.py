@@ -109,11 +109,10 @@ def _problem(nx: int, dim: int) -> MFGProblem:
         Nt=NT,
         volatility=SIGMA,
         components=MFGComponents(
-            # *coords: the nD path calls these with one argument per axis.
-            m_initial=lambda *c: np.exp(
-                -200.0 * ((np.asarray(c[0]) - MASS_START) ** 2 + sum(np.asarray(a) ** 2 for a in c[1:]))
+            m_initial=lambda x: np.exp(
+                -200.0 * ((np.asarray(x[0]) - MASS_START) ** 2 + sum(np.asarray(a) ** 2 for a in x[1:]))
             ),
-            u_terminal=lambda *c: np.zeros_like(np.asarray(c[0])),
+            u_terminal=lambda x: np.zeros_like(np.asarray(x[0])),
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m,

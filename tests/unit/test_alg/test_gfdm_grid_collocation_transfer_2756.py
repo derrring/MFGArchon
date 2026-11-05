@@ -39,7 +39,7 @@ _NT, _T = 10, 0.5
 
 
 def _potential(t, x):
-    x = np.asarray(x, dtype=float)[..., 0]
+    x = np.asarray(x[0], dtype=float)
     return 0.8 * np.sin(2 * np.pi * x) + 0.5 * x
 
 

@@ -26,7 +26,7 @@ def test_sdf_vanishing_gradient_normal_fails_loud():
     it must raise, as #1047 ruled."""
     from mfgarchon.geometry.boundary import SDFParticleBCHandler
 
-    handler = SDFParticleBCHandler(lambda pts: -0.5 * np.ones(np.asarray(pts).shape[0]), dimension=2)
+    handler = SDFParticleBCHandler(lambda x: -0.5 * np.ones(np.shape(x[0])), dimension=2)
     with pytest.raises(RuntimeError, match="vanishing SDF gradient"):
         handler._compute_normal(np.array([0.3, 0.4]))
 

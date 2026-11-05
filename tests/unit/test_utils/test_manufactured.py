@@ -134,7 +134,7 @@ class TestAgreesWithTheHandAssembly:
         du_dt = _a1p(t) * (np.cos(C * x1) + BETA * np.cos(C * x2))
         grad_sq = (_a1(t) * C) ** 2 * (np.sin(C * x1) ** 2 + BETA**2 * np.sin(C * x2) ** 2)
         lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
-        return -du_dt + 0.5 * grad_sq - ZETA * _m(t, x) - 0.5 * SIGMA**2 * lap_u
+        return -du_dt + 0.5 * grad_sq - ZETA * _m(t, (x1, x2)) - 0.5 * SIGMA**2 * lap_u
 
     def _hand_fp(self, t, x):
         x1, x2 = x[:, 0], x[:, 1]
@@ -145,7 +145,7 @@ class TestAgreesWithTheHandAssembly:
         gu2 = -BETA * _a1(t) * C * np.sin(C * x2)
         lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
         lap_m = -20 * C**2 * _a2(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2) / L**2
-        return dm_dt - (gm1 * gu1 + gm2 * gu2 + _m(t, x) * lap_u) - 0.5 * SIGMA**2 * lap_m
+        return dm_dt - (gm1 * gu1 + gm2 * gu2 + _m(t, (x1, x2)) * lap_u) - 0.5 * SIGMA**2 * lap_m
 
     def test_hjb_source_reproduces_it(self, pair, points):
         got = hjb_source(pair, _hamiltonian(), SIGMA)(1.3, points)
@@ -183,14 +183,15 @@ class TestConventionsComeFromTheirOwners:
         """Independent assembly: take the drift from the owner, expand the divergence by hand."""
         t = 1.3
         hamiltonian = _hamiltonian(lam=lam)
-        m, grad_u, grad_m = pair.m(t, points), pair.grad_u(t, points), pair.grad_m(t, points)
+        x = tuple(points.T)
+        m, grad_u, grad_m = pair.m(t, x), pair.grad_u(t, x), pair.grad_m(t, x)
         alpha = np.asarray(hamiltonian.optimal_control(x=points, m=m, p=grad_u, t=t), dtype=float)
         coefficient = float(alpha.flat[0] / grad_u.flat[0])
         expected = (
-            pair.m_t(t, points)
+            pair.m_t(t, x)
             + (grad_m * alpha).sum(axis=-1)
-            + m * coefficient * np.einsum("nii->n", pair.hess_u(t, points))
-            - 0.5 * SIGMA**2 * np.einsum("nii->n", pair.hess_m(t, points))
+            + m * coefficient * np.einsum("nii->n", pair.hess_u(t, x))
+            - 0.5 * SIGMA**2 * np.einsum("nii->n", pair.hess_m(t, x))
         )
         np.testing.assert_allclose(fp_source(pair, hamiltonian, SIGMA)(t, points), expected, rtol=0, atol=1e-18)
 
@@ -253,7 +254,7 @@ class TestRefusals:
 
     def test_a_field_of_the_wrong_shape_is_refused(self, pair, points):
         """An ``(N, 1)`` where an ``(N,)`` is expected broadcasts to ``(N, N)`` with no error."""
-        wrong = dataclasses.replace(pair, m_t=lambda t, x: np.stack([pair.m_t(t, x[0])], axis=-1))
+        wrong = dataclasses.replace(pair, m_t=lambda t, x: np.stack([pair.m_t(t, x)], axis=-1))
         with pytest.raises(ValueError, match=r"m_t must return shape \(200,\)"):
             fp_source(wrong, _hamiltonian(), SIGMA)(1.3, points)
 
@@ -265,7 +266,7 @@ class TestRefusals:
 class TestCheckPair:
     @staticmethod
     def _cross_flipped(pair):
-        return dataclasses.replace(pair, hess_m=lambda t, x: _hess_m(t, x[0]) * np.array([[1, -1], [-1, 1]]))
+        return dataclasses.replace(pair, hess_m=lambda t, x: _hess_m(t, x) * np.array([[1, -1], [-1, 1]]))
 
     def test_an_isotropic_source_cannot_see_a_wrong_cross_derivative(self, pair, points):
         """The measurement that justifies check_pair existing: ``tr(D . Hess)`` with a diagonal D

@@ -38,8 +38,7 @@ from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata  # noqa: 
 
 
 def _V(x):
-    x = np.asarray(x, dtype=float)
-    return 0.8 * np.sin(2 * np.pi * x[..., 0]) + 0.5 * x[..., 1]
+    return 0.8 * np.sin(2 * np.pi * x[0]) + 0.5 * x[1]
 
 
 def _mesh(refine=2, stretch=(1.0, 1.0), bc=None, d=2):
@@ -70,14 +69,14 @@ def _mesh(refine=2, stretch=(1.0, 1.0), bc=None, d=2):
 def _problem(where=None, cost=None, nt=8, **mesh):
     """V as the Hamiltonian's potential (``"H"``), as ``PotentialCost(V)`` (``"F"``), or ``cost``."""
     if where == "F":
-        cost = PotentialCost(lambda x: _V(x[0]))
+        cost = PotentialCost(_V)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on the mesh is not these pins' subject
         return MFGProblem(
             model=Model(
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0),
-                    potential=(lambda t, x: _V(x[0])) if where == "H" else None,
+                    potential=(lambda t, x: _V(x)) if where == "H" else None,
                 ),
                 volatility=0.3,
                 coupling_cost=cost,
@@ -525,7 +524,7 @@ def _VT(x):
 def _g_problem(where=None, g=None, nt=8, **mesh):
     """``_VT`` added to ``u_terminal`` (``"u"``), ``PotentialCost(_VT)`` as G (``"G"``), or ``g`` as G."""
     if where == "G":
-        g = PotentialCost(lambda x: _VT(x[0]))
+        g = PotentialCost(_VT)
 
     def terminal(x):
         return sum((xi - 0.7) ** 2 for xi in x)
@@ -540,7 +539,7 @@ def _g_problem(where=None, g=None, nt=8, **mesh):
             ),
             domain=_mesh(**mesh),
             conditions=Conditions(
-                u_terminal=(lambda x: terminal(x[0]) + float(_VT(x[0]))) if where == "u" else terminal,
+                u_terminal=(lambda x: terminal(x) + _VT(x)) if where == "u" else terminal,
                 m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),

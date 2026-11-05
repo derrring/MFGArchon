@@ -570,16 +570,9 @@ class TestCustomComponentExceptionPropagation:
             problem_type="custom",
         )
 
-        problem = MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
-
-        # Exception should propagate, not be silently caught
+        # A problem reads the Hamiltonian when it takes it (#2875), so the exception is raised there, not caught
         with pytest.raises(ValueError, match="Intentional error"):
-            problem.H(
-                x_idx=5,
-                m_at_x=1.0,
-                derivs={(1,): 0.5},
-                t_idx=0,
-            )
+            MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
 
     def test_custom_hamiltonian_dm_exception_propagates(self):
         """Test that exceptions in custom dH/dm propagate to caller."""

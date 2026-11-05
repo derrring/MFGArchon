@@ -191,7 +191,7 @@ def test_a_state_penalty_scale_with_no_state_penalty_is_refused(form):
 
 @pytest.mark.unit
 def test_a_state_penalty_scale_beside_a_state_penalty_stays_and_moves_the_solve():
-    wall = {"state_penalty": lambda x: 2.0 * _x(x[0])}
+    wall = {"state_penalty": lambda x: 2.0 * np.asarray(x[0], dtype=float)}
     one = _model_form(**wall).solve(verbose=False)
     three = _model_form(**wall, state_penalty_scale=3.0).solve(verbose=False)
     assert _gap(one.U, three.U) > 1e-2
