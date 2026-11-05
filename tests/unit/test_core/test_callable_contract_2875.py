@@ -229,6 +229,11 @@ def test_a_return_with_no_entry_to_compare_is_refused_by_name(body):
         _read(body)
 
 
+def test_a_door_that_reads_a_fixed_array_refuses_one_that_changes_shape_at_a_point():
+    with pytest.raises(ValueError, match=r"a return of shape \(7,\) has no entry per point"):
+        _read(lambda x: np.zeros(3) if np.ndim(x[0]) == 0 else np.zeros(7), slots=cp.VOLATILITY_SLOTS)
+
+
 def test_a_fixed_array_with_the_wrong_values_at_a_point_is_refused():
     with pytest.raises(ValueError, match="reads differently"):
         _read(lambda x: np.array([1.0, 2.0, 3.0]) * (1.0 if np.ndim(x[0]) else x[0]), slots=cp.VOLATILITY_SLOTS)

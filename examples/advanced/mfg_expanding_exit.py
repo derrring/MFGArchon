@@ -149,12 +149,13 @@ def create_mfg_problem(phi_current: np.ndarray) -> MFGProblem:
     model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     # Conditions: problem data (initial/terminal + time horizon)
-    # Wrap arrays in callables for Conditions API
+    # Conditions holds functions of space, so each array reads as its interpolant, which is the array at the nodes
+    nodes = grid.coordinates[0]
     m0_snapshot = m0.copy()
     u_final_snapshot = u_final.copy()
     conditions = Conditions(
-        m_initial=lambda x: m0_snapshot,
-        u_terminal=lambda x: u_final_snapshot,
+        m_initial=lambda x: np.interp(x[0], nodes, m0_snapshot),
+        u_terminal=lambda x: np.interp(x[0], nodes, u_final_snapshot),
         T=T_final,
     )
 
