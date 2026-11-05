@@ -220,7 +220,8 @@ def test_a_refused_positional_partial_is_not_told_to_reorder_its_function(name):
                 f"{p}={s}" if s != written[0] else f"{p}={_frozen(s)!r}" for p, s in zip(params, written, strict=True)
             )
             follows = eval(f"lambda {', '.join(left)}: target({passed})", {"target": target})
-            assert _call(read(follows), order) == _meant(order, {written[0]: _FROZEN})
+            # A sum of terms 1e-1 to 1e17 in the written order: a misread moves it by orders of magnitude, rounding by a ulp.
+            assert _call(read(follows), order) == pytest.approx(_meant(order, {written[0]: _FROZEN}), rel=1e-14)
     assert refused, "no row reached a refusal"
 
 

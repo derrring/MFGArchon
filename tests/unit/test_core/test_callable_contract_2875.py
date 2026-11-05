@@ -979,13 +979,14 @@ def _howard_solve(control_lagrangian):
     problem = _problem(n=21, u_terminal=lambda x: (x[0] - 0.5) ** 2)
     howard = HJBHowardSolver(
         problem,
-        stencil_provider=HJBGFDMSolver(problem, collocation_points=points),
+        stencil_provider=HJBGFDMSolver(problem, collocation_points=points, monotonicity_scheme="none"),
         alpha_star=lambda t_idx, x, p, m: -p,
         control_lagrangian=control_lagrangian,
     )
     return np.asarray(howard.solve_hjb_system(M_density=None, U_terminal=(points.ravel() - 0.5) ** 2))
 
 
+@pytest.mark.filterwarnings("ignore:HJBHowardSolver. running on non-SOCP")  # this row is the Lagrangian's read
 def test_a_control_lagrangian_is_read_by_the_name_it_declares():
     named_second = _howard_solve(lambda alpha, c=3.0: np.sum(c * alpha * alpha, axis=1) / 2)
     named_first = _howard_solve(lambda c=3.0, alpha=0.0: np.sum(c * alpha * alpha, axis=1) / 2)
@@ -995,6 +996,7 @@ def test_a_control_lagrangian_is_read_by_the_name_it_declares():
         _howard_solve(lambda a: np.sum(a * a, axis=1) / 2)
 
 
+@pytest.mark.filterwarnings("ignore:initial density mass")  # the library's bimodal density is not of mass 1
 def test_the_conditions_the_library_writes_read_a_coordinate_tuple():
     u_terminal, m_initial = lq_mfg_terminal_cost(Lx=2.0), lq_mfg_initial_density()
     at = np.linspace(0.0, 1.0, 5)
