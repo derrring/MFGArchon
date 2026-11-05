@@ -169,9 +169,9 @@ def potential_reader(V: Callable[..., Any], *, owner: str) -> Callable[[NDArray]
     from mfgarchon.types.callable_protocols import Slots, _remembered, coordinate_tuple
 
     try:
-        declared = inspect.signature(V).parameters
+        declared = set(inspect.signature(V).parameters)
     except (TypeError, ValueError):
-        declared = {}
+        declared = set()
     if "t" in declared:
         raise TypeError(
             f"{owner}(V): V takes t, and this F[m] = integral V m is autonomous -- binding V once would read it "
