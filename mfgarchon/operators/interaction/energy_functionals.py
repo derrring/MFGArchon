@@ -59,6 +59,7 @@ Issue #1642: contract freeze (D-1..D-5) and the ``energy()`` quadrature repair.
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
@@ -165,15 +166,19 @@ def potential_reader(V: Callable[..., Any], *, owner: str) -> Callable[[NDArray]
     """The one reader of an autonomous potential: ``V`` by the names it declares, with ``x`` a coordinate tuple (#2875), at
     points of shape ``(n, d)``, returning shape ``(n,)``, a constant holding at every point. Every ``x`` it is handed holds
     its own float64 copy, so a ``V`` that writes into its ``x`` moves neither the points nor a caller's (#1642)."""
-    from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, bind_user_callable, coordinate_tuple
+    from mfgarchon.types.callable_protocols import Slots, _remembered, coordinate_tuple
 
-    bound = bind_user_callable(V, POTENTIAL_SLOTS, role=f"{owner}'s V")
-    if "t" in bound.passes:
+    try:
+        declared = inspect.signature(V).parameters
+    except (TypeError, ValueError):
+        declared = {}
+    if "t" in declared:
         raise TypeError(
             f"{owner}(V): V takes t, and this F[m] = integral V m is autonomous -- binding V once would read it "
             "at t = 0 for the whole horizon. A time-dependent potential goes in the Hamiltonian, as "
             "SeparableHamiltonian(potential=...)."
         )
+    bound = _remembered(V, Slots(("x",)), f"{owner}'s V")
 
     def read(points: NDArray) -> NDArray:
         points = np.asarray(points).astype(np.float64)

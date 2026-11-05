@@ -475,6 +475,10 @@ control $\alpha$ occupies the $Du$ slot, being its conjugate variable.
 | a graph coupling's `coupling_hjb`, `coupling_fp` | `(t, i, j, v_j, m_j)` |
 | `ControlCostBase.optimal_control` / `.lagrangian` | `(p)` / `(alpha)` |
 | `HJBHowardSolver`'s `control_lagrangian` | `(alpha)` |
+| a conditional Hamiltonian / a conditional terminal cost | `(t, x, p, m, theta)` / `(x, theta)` |
+| a level set's `velocity`, a sampler's `navigable`, Nitsche's `f` / `u_exact` | `(x)` |
+| `ImplicitHeatSolver`'s `forcing` | `(t, x)` |
+| a variational `lagrangian_func` / `terminal_cost_func` | `(t, x, v, m)` / `(x)` |
 | volatility, diffusion, drift and PDE coefficient callables | `(t, x, m)` |
 | a measure field's `field_fn` / `gradient_fn` | `(t, x, mu)` |
 | a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)` |
@@ -527,8 +531,16 @@ coordinate, of one point or of every point. The library may hand either, so a bo
 | | `x**2`, `x - 0.5`, `x[:, 0]`, `x[..., 0]`: raises |
 | | `np.asarray(x)[:, 0]`, `float(x[0])`, `np.linalg.norm(x)`, `np.sum(x)`, `x[0][0]`, `np.max(x[0])`: refused by the check below |
 
-A door that holds the points states their dimension, so `(N,)` is $N$ points on a line and never one point in $N$
-dimensions. A grid door hands its grid's shape, `(Nx, Ny)`, and a point door `(N,)`.
+A door that holds the points states their dimension. It hands them as it holds them: a problem's conditions and
+potential in one row, `(N,)`, and a solver's drift, volatility and sources at the grid's shape, `(Nx, Ny)`. A door that
+reads one point hands a tuple of scalars, at $d = 1$ too.
+
+A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
+predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since
+it does not say whether it is $N$ points on a line or one point in $N$ dimensions: pass `points.reshape(-1, 1)` for
+points on a line. Before #2875 such a predicate handed `(N,)` to a body written to it, which at $d = 1$ read it as $N$
+points on a line; that read is gone. `sdf_gradient` and an implicit domain's `get_region_mask` read `(N,)` as one point
+in $N$ dimensions, as they did before.
 
 **One body you write is not handed a tuple.** A geometry's `signed_distance` is a method of the geometry and not a callable
 it was handed, and it takes its points as an array of shape `(d,)` or `(N, d)`. So a subclass you write of `ImplicitGeometry`
@@ -548,19 +560,28 @@ Each door states it, in `callable_protocols.py`'s `Slots`, and the check below r
 ### A body must read a batch and a point the same
 
 The library chooses when to loop and when to vectorize, so a body that reads differently comes back as a result and not
-as an error. So a callable's batch read is compared with its read of a few of those points, once, and a difference or a
-raise is refused and names both reads.
+as an error. So a callable's batch read is compared with its read of a few of those points, and a difference, or a raise
+of `TypeError`, `ValueError`, `IndexError`, `ArithmeticError`, `AttributeError` or `KeyError`, is refused and names both
+reads; any other raise reaches you as it is. Two functions make the comparison: `_compare_reads` for a callable at its
+door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `evaluate_dp`.
 
-- **Where.** A door with samples when it accepts the callable compares there: `MFGProblem` for what the problem holds and
-  reads on its grid. Any other door compares at its first batch, before it returns the result: a solver's `source_term`,
-  a drift at a particle's first step, a measure field, a manufactured pair. A door that only ever hands one point has no
-  batch to compare, and the first batch it is ever handed is compared then.
+- **Where.** A door with samples when it accepts the callable compares there: `MFGProblem` for its conditions, its
+  potential, its `state_penalty` and its Hamiltonian, on its grid. Any other door compares at its first batch, before it
+  returns the result: a volatility or a source at a solver's first step, a solver's `source_term`, a drift at a
+  particle's first step, a measure field, a manufactured pair. A door that hands one point, or an empty batch, has
+  nothing to compare, and the next batch is compared.
+- **Once per body.** What a comparison found is kept with the body, for each door kind it is bound at (its `Slots`),
+  while the body lives, so every door and every solve that binds it there shares it. A comparison that agrees on two or
+  more distinct points marks the body compared, and it is read with no comparison after that. A refused body is refused
+  at every later read, with the first refusal. One point, a batch of one point compared with itself, an empty batch or a
+  read with no `x` leaves the body as it was.
 - **The samples.** They are spread across the batch at the golden ratio's multiples and are not its ends and middle, where
   a term such as $\sin 2\pi x$ is the same on a uniform grid. A batch of fewer than two points, or of exactly $d$, is
   cycled up to a count that is neither, since a coordinate axis passes for a batch of $d$.
-- **The forms a return may take.** At every door a scalar holds at every point, and an array holds one entry per point: the
-  batch's shape leading, each entry of one point's own shape, and a per-coordinate result may put its axis first or last.
-  Two more are stated door by door in `Slots`, and are not inferred from the return:
+- **The forms a return may take.** At every door a scalar holds at every point, and an array holds one entry per point:
+  the batch's shape leading, each entry of one point's own shape. The comparison also reads a per-coordinate result with
+  its axis first or last, but each door reads one: FP-FDM's drift the axis first, the particle solver's the axis last
+  (#2875's stage 3 settles one). Two more are stated door by door in `Slots`, and are not inferred from the return:
   - At a door with a field, a body may read the field whole, so a point read that returns an array of the batch's shape
     holds its entry there. So `lambda t, x: S` with `S` of the grid's shape reads at `source_term_hjb`.
   - A volatility or a diffusion may return one fixed array, if every point's read returns that array too, and it is read
@@ -568,8 +589,7 @@ raise is refused and names both reads.
 
   Anything else has no entry per point and is refused by name, before it reaches a read by size that would take a
   transposed array in C order. So a body holding an array is refused at a condition, a potential, a solver's `source_term`,
-  a region, a measure field, `PotentialCost` and an exact solution's field, and a constant vector is refused at a drift. A
-  door may still refuse a scalar by name, as `mark_region` does: a predicate is one boolean per point.
+  a region, a measure field, `PotentialCost` and an exact solution's field, and a constant vector is refused at a drift.
 - **A Hamiltonian is compared on wide synthetic $p$ and $m$**, $p$ from $-1.3$ to $2.1$, never on a solve's first values,
   where a problem takes it, on `evaluate_H` and `evaluate_dp`. `DualHamiltonian` and `NetworkHamiltonian` read one point
   at a time on every path, and are not compared.
@@ -579,11 +599,15 @@ raise is refused and names both reads.
 
 - A first batch can be narrow. A particle drift's first batch is the initial cloud, so a body that reads its largest
   coordinate past a dead zone reads the same both ways while the cloud is inside it, is accepted, and is not compared
-  again.
+  again, in that solve or a later one.
 - At a field door `m[0]` reads node 0 at every point, and the comparison cannot tell it from `np.max(m)`, since a point
   read gets the field whole. A body written to `x` as a field, such as `np.gradient(m, x[0])`, is refused, since `x` is a
   point on a point read.
 - The comparison reads a few samples, and it says the reads agreed there.
+- A body handed no `x` is not compared: a coupling, a congestion factor and their derivatives, Howard's running cost and
+  control Lagrangian, and a network's node terms.
+- A closure the library wrote is not compared, and the test is the module that defined it, so a body that sets its own
+  `__module__` to the library's, or wraps a library function with `functools.wraps`, passes as one.
 
 ### The library refuses the old order on a class
 

@@ -342,10 +342,11 @@ def _particle_solver(segments, **bc_kw):
     return FPParticleSolver(_problem(grid), num_particles=10, seed=0, boundary_conditions=bc)
 
 
-_UNIT_BOX_SDF = lambda x: float(  # noqa: E731
-    np.linalg.norm(np.maximum(np.abs(np.asarray(x, float) - 0.5) - 0.5, 0.0))
-    + min(float(np.max(np.abs(np.asarray(x, float) - 0.5) - 0.5)), 0.0)
-)
+def _UNIT_BOX_SDF(x):
+    q = np.abs(np.stack(np.broadcast_arrays(*x), axis=-1) - 0.5) - 0.5
+    return np.linalg.norm(np.maximum(q, 0.0), axis=-1) + np.minimum(np.max(q, axis=-1), 0.0)
+
+
 _DIAGONAL = {"normal_direction": np.array([1.0, 1.0]) / np.sqrt(2.0), "normal_tolerance": 0.9}
 
 

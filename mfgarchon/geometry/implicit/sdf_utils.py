@@ -438,6 +438,11 @@ def sdf_gradient(
     N, d = points.shape
     grad = np.zeros((N, d), dtype=np.float64)
 
+    def read(rows: NDArray) -> NDArray:
+        if single_point:
+            return read_region(sdf_func, rows[0], role="sdf_func", one_point=True)
+        return read_region(sdf_func, rows, role="sdf_func")
+
     for i in range(d):
         # Finite difference along axis i
         points_plus = points.copy()
@@ -445,9 +450,7 @@ def sdf_gradient(
         points_plus[:, i] += epsilon
         points_minus[:, i] -= epsilon
 
-        grad[:, i] = (
-            read_region(sdf_func, points_plus, role="sdf_func") - read_region(sdf_func, points_minus, role="sdf_func")
-        ) / (2 * epsilon)
+        grad[:, i] = (read(points_plus) - read(points_minus)) / (2 * epsilon)
 
     if single_point:
         grad = grad.ravel()

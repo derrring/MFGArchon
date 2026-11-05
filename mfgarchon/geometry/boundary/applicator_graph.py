@@ -46,7 +46,7 @@ from mfgarchon.types.callable_protocols import (
     NODE_SELECTOR_SLOTS,
     NODE_VALUE_SLOTS,
     BoundCallable,
-    bind_user_callable,
+    _remembered,
 )
 
 # Import base class for inheritance
@@ -216,7 +216,7 @@ def _value_reader(value: object, where: str) -> BoundCallable | _Constant:
     have swapped."""
     if callable(value):
         try:
-            return bind_user_callable(value, NODE_VALUE_SLOTS, role="graph node value")
+            return _remembered(value, NODE_VALUE_SLOTS, "graph node value")
         except TypeError as refused:
             raise TypeError(f"{where}: {refused}") from refused
     if not _is_value(value):
@@ -231,7 +231,7 @@ def _rule_reader(rule: object, where: str) -> BoundCallable:
     if not callable(rule):
         raise TypeError(f"{where} is {_shown(rule)}; it takes {ACCEPTED_FORMS['rule']} (#2296).")
     try:
-        return bind_user_callable(rule, NODE_RULE_SLOTS, role="graph CUSTOM rule")
+        return _remembered(rule, NODE_RULE_SLOTS, "graph CUSTOM rule")
     except TypeError as refused:
         raise TypeError(f"{where}: {refused}") from refused
 
@@ -364,7 +364,7 @@ class NodeBC:
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
         if callable(self.nodes):
-            select = bind_user_callable(self.nodes, NODE_SELECTOR_SLOTS, role=f"NodeBC {self.name!r}: nodes")
+            select = _remembered(self.nodes, NODE_SELECTOR_SLOTS, f"NodeBC {self.name!r}: nodes")
             return list(_nodes(select(num_nodes=num_nodes), f"NodeBC {self.name!r}: nodes({num_nodes})"))
         return list(self.nodes)
 

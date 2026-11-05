@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
     # Define Conditions (callables for resolution-independence)
     def terminal_cost(x):
-        """Distance to target. x shape: (2,) for a single 2D point."""
+        """Distance to target. x is a coordinate tuple."""
         return (x[0] - TARGET[0]) ** 2 + (x[1] - TARGET[1]) ** 2
 
     def initial_density(x):

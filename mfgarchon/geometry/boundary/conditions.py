@@ -1788,7 +1788,7 @@ class BoundaryConditions:
 
         # Method 2: SDF domain (normal-based detection)
         if self.domain_sdf is not None:
-            phi = read_region(self.domain_sdf, point, role="domain_sdf")
+            phi = read_region(self.domain_sdf, point, role="domain_sdf", one_point=True)
             if abs(phi) > tolerance:
                 return None
 
@@ -1887,7 +1887,7 @@ class BoundaryConditions:
 
         # SDF domain: check if |phi| < tolerance
         if self.domain_sdf is not None:
-            phi = read_region(self.domain_sdf, point, role="domain_sdf")
+            phi = read_region(self.domain_sdf, point, role="domain_sdf", one_point=True)
             return abs(phi) < tolerance
 
         return False
@@ -2757,7 +2757,10 @@ def _placement_mask_on_grid(segment: BCSegment, geometry: Any) -> np.ndarray | N
             inside &= (points[:, axis] >= low - SDF_BOUNDARY_TOL) & (points[:, axis] <= high + SDF_BOUNDARY_TOL)
     if segment.sdf_region is not None:
         # One value per point, as `BCSegment.matches_point` reads it: a one-element array counts as its value.
-        values = [np.asarray(read_region(segment.sdf_region, x, role="sdf_region"), dtype=float) for x in points]
+        values = [
+            np.asarray(read_region(segment.sdf_region, x, role="sdf_region", one_point=True), dtype=float)
+            for x in points
+        ]
         if any(value.size != 1 for value in values):
             shapes = sorted({value.shape for value in values if value.size != 1})
             raise ValueError(

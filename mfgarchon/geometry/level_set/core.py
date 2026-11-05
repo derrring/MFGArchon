@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.types.callable_protocols import REGION_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
@@ -666,7 +666,7 @@ class LevelSetEvolver:
             velocity: Normal velocity field V
                 - float: Constant velocity (e.g., V = 1.0)
                 - NDArray: Spatially-varying velocity, shape matching phi
-                - Callable: Function V(X) returning velocity at mesh points X
+                - Callable: a function of ``x``, a coordinate tuple at the mesh's points, read by name
             dt: Time step size (will be subdivided if CFL > cfl_max)
 
         Returns:
@@ -690,7 +690,8 @@ class LevelSetEvolver:
                 X = np.array(self.geometry.meshgrid())
             else:
                 raise ValueError("Geometry must support meshgrid() for callable velocity")
-            V_array = bind_user_callable(velocity, REGION_SLOTS, role="velocity")(x=tuple(X))
+            # One door for a function of space, which compares its reads once and holds a constant at every point
+            V_array = np.asarray(read_region(velocity, np.moveaxis(X, 0, -1), role="velocity"), dtype=float)
         elif isinstance(velocity, (int, float)):
             V_array = np.full_like(phi, float(velocity))
         else:

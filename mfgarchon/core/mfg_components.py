@@ -21,9 +21,10 @@ import numpy as np
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
-    bind_user_callable,
+    _remembered,
     coordinate_tuple,
     keeping_what_it_froze,
+    point_tuple,
 )
 
 # Issue #670: npart, ppart imports removed - no default Hamiltonian
@@ -379,8 +380,8 @@ class HamiltonianMixin:
         if current_time is None:
             current_time = 0.0
 
-        # Convert x_position to numpy array
-        x = coordinate_tuple(np.atleast_1d(x_position if x_position is not None else 0.0), self.dimension)
+        # One point, as a tuple of scalars
+        x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian directly: H(t, x, p, m)
         return float(H_class(x=x, m=m_at_x, p=p, t=current_time))
@@ -473,8 +474,8 @@ class HamiltonianMixin:
         if current_time is None:
             current_time = 0.0
 
-        # Convert x_position to numpy array
-        x = coordinate_tuple(np.atleast_1d(x_position if x_position is not None else 0.0), self.dimension)
+        # One point, as a tuple of scalars
+        x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian.dm() directly: dm(t, x, p, m)
         return float(H_class.dm(x=x, m=m_at_x, p=p, t=current_time))
@@ -537,8 +538,8 @@ class HamiltonianMixin:
         if current_time is None:
             current_time = 0.0
 
-        # Convert x_position to numpy array
-        x = coordinate_tuple(np.atleast_1d(x_position if x_position is not None else 0.0), self.dimension)
+        # One point, as a tuple of scalars
+        x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian.dp() directly: dp(t, x, p, m)
         return H_class.dp(x=x, m=m_at_x, p=p, t=current_time)
@@ -629,7 +630,7 @@ class ConditionsMixin:
     def _condition_on_grid(self, condition: Any, time_value: float, role: str) -> NDArray | None:
         """``condition`` on the problem's grid, read by the names it declares at ``time_value`` if it declares time
         (#2431, #2875), or None with no grid to read it on. The grid is its first batch, so its reads are compared here."""
-        bound = bind_user_callable(condition, CONDITION_SLOTS, role=role)
+        bound = _remembered(condition, CONDITION_SLOTS, role)
         if "x" not in bound.passes:
             advice = keeping_what_it_froze(condition, "Name its space parameter x")
             raise TypeError(

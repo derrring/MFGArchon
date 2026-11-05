@@ -20,7 +20,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
-from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_user_callable, read_region
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, read_region
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -72,7 +72,10 @@ def _compute_sdf_gradient(
 
     # Use canonical implementation with adaptive epsilon
     grad = function_gradient(
-        lambda z: read_region(sdf_func, z, role="domain_sdf"), point, eps=epsilon, adaptive_eps=True
+        lambda rows: read_region(sdf_func, rows[0], role="domain_sdf", one_point=True),
+        point,
+        eps=epsilon,
+        adaptive_eps=True,
     )
 
     # Warn if gradient is suspiciously small (preserve original behavior)
@@ -464,7 +467,8 @@ def sdf_region_holds(segment: BCSegment, points: np.ndarray, tolerance: float) -
     one reading of ``sdf_region``, as `region_holds` is of ``region``."""
     points = np.atleast_2d(np.asarray(points, dtype=float))
     return np.array(
-        [read_region(segment.sdf_region, point, role="sdf_region") <= tolerance for point in points], dtype=bool
+        [read_region(segment.sdf_region, point, role="sdf_region", one_point=True) <= tolerance for point in points],
+        dtype=bool,
     )
 
 
@@ -883,7 +887,7 @@ def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
 
 def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
     """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise (#2512 row B2)."""
-    return bind_user_callable(fn, BOUNDARY_VALUE_SLOTS, role="boundary value")
+    return _remembered(fn, BOUNDARY_VALUE_SLOTS, "boundary value")
 
 
 def _with_default(fn: Callable[..., Any], *names: str) -> str:
@@ -941,7 +945,7 @@ def boundary_value(
 
     **A callable** is ``g(t, x)``, time first (#2378 phase 5, #2375 ruling 8; user ruling for boundary values). It
     is bound by its parameter names when the segment is built (`BCSegment.value_binding`) and called by keyword with
-    what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. A reader passes ``x`` as one point, a 1-D array of
+    what it declares: ``(t, x)``, ``(x)`` or ``(t)``. A reader passes ``x`` as one point, a 1-D array of
     shape ``(d,)``, ``d = 1`` included, and the callable reads it as a tuple of scalars. A reader with no time passes
     ``t=None``, and one with no point ``x=None``. A
     callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,

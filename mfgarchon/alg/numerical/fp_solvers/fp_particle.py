@@ -25,7 +25,12 @@ from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, VOLATILITY_SLOTS, bind_user_callable, coordinate_tuple
+from mfgarchon.types.callable_protocols import (
+    COEFFICIENT_SLOTS,
+    VOLATILITY_SLOTS,
+    _remembered,
+    coordinate_tuple,
+)
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.utils.mfg_logging import get_logger
@@ -1051,7 +1056,9 @@ class FPParticleSolver(BaseFPSolver):
             seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
             # t = 0 of #2688: a jitter that lands outside the particles' domain, the box included, is redrawn within
             # its cell (#2733: the contact loop starts every step inside it).
-            navigable=self._particle_domain().contains,
+            # The domain's own method, which takes points as an array by the geometry's contract, on a subclass the user
+            # wrote too: a closure the library wrote, and not a callable the user handed (#2875).
+            navigable=lambda points, domain=self._particle_domain(): domain.contains(points),
         )
 
     def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:
@@ -1935,9 +1942,7 @@ class FPParticleSolver(BaseFPSolver):
                 # Pure diffusion with spatially varying coefficient
                 # Use callable drift path with zero drift
                 def zero_drift(t, x, m):
-                    if isinstance(x, np.ndarray) and x.ndim > 1:
-                        return np.zeros_like(x)
-                    return np.zeros_like(np.atleast_1d(x))
+                    return 0.0  # a constant holds at every particle
 
                 return self._solve_fp_system_callable_drift(
                     M_initial=M_initial,
@@ -2718,10 +2723,8 @@ class FPParticleSolver(BaseFPSolver):
             volatility, volatility_kind, problem=self.problem, consumer="FPParticleSolver.solve_fp_system"
         )
         volatility_is_callable = callable(volatility)
-        drift_bound = bind_user_callable(drift_callable, COEFFICIENT_SLOTS, role="drift_field")
-        volatility_bound = (
-            bind_user_callable(volatility, VOLATILITY_SLOTS, role="volatility") if volatility_is_callable else None
-        )
+        drift_bound = _remembered(drift_callable, COEFFICIENT_SLOTS, "drift_field")  # one state across solves
+        volatility_bound = _remembered(volatility, VOLATILITY_SLOTS, "volatility") if volatility_is_callable else None
         volatility_is_array = isinstance(volatility, np.ndarray)
         if volatility_kind == "tensor" and volatility_is_callable:
             raise NotImplementedError(

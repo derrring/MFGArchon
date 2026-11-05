@@ -26,7 +26,7 @@ from mfgarchon.operators.stencils.finite_difference import (
     upwind_momentum,
     upwind_momentum_derivatives,
 )
-from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
+from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
@@ -148,8 +148,8 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(
                         p_pos[axis] = magnitude
                         p_neg = p_pos.copy()
                         p_neg[axis] = -magnitude
-                        h_pos = float(np.asarray(H(x=coordinate_tuple(x, dimension), m=m, p=p_pos, t=0.0)).ravel()[0])
-                        h_neg = float(np.asarray(H(x=coordinate_tuple(x, dimension), m=m, p=p_neg, t=0.0)).ravel()[0])
+                        h_pos = float(np.asarray(H(x=point_tuple(x), m=m, p=p_pos, t=0.0)).ravel()[0])
+                        h_neg = float(np.asarray(H(x=point_tuple(x), m=m, p=p_neg, t=0.0)).ravel()[0])
                         if h_zero is None:
                             h_zero = h_pos
                         spread = abs(h_pos - h_zero) + abs(h_neg - h_zero)

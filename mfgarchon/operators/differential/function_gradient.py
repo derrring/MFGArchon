@@ -194,8 +194,16 @@ def outward_normal_from_sdf(
         >>> normals = outward_normal_from_sdf(circle_sdf, boundary_points)
     """
     return _unit_normal(
-        function_gradient(lambda z: read_region(sdf, z, role="sdf"), points, eps=eps, adaptive_eps=adaptive_eps)
+        function_gradient(_region_at_rows(sdf, points, "sdf"), points, eps=eps, adaptive_eps=adaptive_eps)
     )
+
+
+def _region_at_rows(sdf: Callable[..., NDArray | float], points: NDArray, role: str) -> Callable[[NDArray], NDArray]:
+    """``sdf`` as `function_gradient` evaluates it, on the ``(n, d)`` rows it builds: at one point where ``points`` is
+    one, of shape ``(d,)``, so a body is handed a point as a tuple of scalars (#2875)."""
+    if np.ndim(points) == 1:
+        return lambda rows: read_region(sdf, rows[0], role=role, one_point=True)
+    return lambda rows: read_region(sdf, rows, role=role)
 
 
 def geometry_outward_normal(signed_distance: Callable[..., NDArray], points: NDArray, eps: float = 1e-6) -> NDArray:
@@ -253,7 +261,7 @@ def sdf_gradient_with_analytical_fallback(
 
     # Fallback to numerical
     if sdf_func is not None:
-        return function_gradient(lambda z: read_region(sdf_func, z, role="sdf_func"), points, eps=eps)
+        return function_gradient(_region_at_rows(sdf_func, points, "sdf_func"), points, eps=eps)
     else:
         # Get SDF function from geometry via explicit interface (Issue #794)
         # ImplicitGeometry ABC guarantees signed_distance(); getattr for legacy alias

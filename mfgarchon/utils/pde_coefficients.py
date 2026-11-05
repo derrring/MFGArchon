@@ -16,8 +16,10 @@ from mfgarchon.types.callable_protocols import (
     COEFFICIENT_SLOTS,
     REGION_SLOTS,
     VOLATILITY_SLOTS,
+    _remembered,
     bind_user_callable,
     coordinate_tuple,
+    point_tuple,
 )
 
 if TYPE_CHECKING:
@@ -608,7 +610,7 @@ def resolve_diffusion_source(
             x = pts[index]
         else:
             x = pts.mean(axis=0)
-        return float(bind_user_callable(source, REGION_SLOTS, role="volatility")(x=tuple(np.atleast_1d(x))))
+        return float(_remembered(source, REGION_SLOTS, "volatility")(x=point_tuple(x)))
     arr = np.asarray(source)
     if arr.ndim >= 1:
         if index is not None and index < len(arr):
@@ -696,7 +698,8 @@ class CoefficientField:
         self._is_scalar = isinstance(field, (int, float))
         self._is_array = isinstance(field, np.ndarray)
         self._is_callable = callable(field)
-        self._bound = bind_user_callable(field, VOLATILITY_SLOTS, role=field_name) if self._is_callable else None
+        # One state per callable, so a field rebuilt each time step compares its body's reads once (#2875)
+        self._bound = _remembered(field, VOLATILITY_SLOTS, field_name) if self._is_callable else None
 
     def evaluate_at(
         self,

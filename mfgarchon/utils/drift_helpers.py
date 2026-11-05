@@ -65,7 +65,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, _remembered, bind_user_callable
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -310,7 +310,7 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
         Ensure all components return arrays with compatible shapes.
     """
 
-    bound = [bind_user_callable(drift, COEFFICIENT_SLOTS, role="drift") for drift in drift_list]
+    bound = [_remembered(drift, COEFFICIENT_SLOTS, "drift") for drift in drift_list]
 
     def _composite_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         """Sum of multiple drift contributions."""

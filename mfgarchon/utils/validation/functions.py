@@ -51,8 +51,19 @@ _SMOOTHNESS_RTOL = 1e-3
 
 
 def _raw_callable_advice(fn: Any) -> str:
-    """What a raw callable `_call_h` could not call is told, which keeps what a partial froze."""
+    """What a raw callable `_call_h` could not call is told, which keeps what a partial froze. A family object is called
+    by keyword, so its TypeError comes from a body it holds, and it is told that, not to rename its parameters."""
+    import functools
+
+    from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, keeping_what_it_froze
+
+    target = fn.func if isinstance(fn, functools.partial) else fn
+    if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
+        return (
+            "It is called by keyword, so the TypeError came from a body it holds, such as a coupling, read here at one "
+            "point, where the density is a number."
+        )
 
     named = f"Name each parameter of {getattr(fn, '__qualname__', fn)!r} after what it reads, from {', '.join(HAMILTONIAN_SLOTS.order)}"
     return f"{keeping_what_it_froze(fn, named)}."
@@ -68,14 +79,14 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     import functools
 
     from mfgarchon.core.hamiltonian import MFGOperatorBase
-    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable, refuse_overridden
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, _remembered, point_tuple, refuse_overridden
 
-    x = tuple(np.atleast_1d(x))
+    x = point_tuple(x)
     target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         refuse_overridden(fn, HAMILTONIAN_SLOTS.order, role="Hamiltonian callable")
         return fn(t=t, x=x, p=p, m=m)
-    return bind_user_callable(fn, HAMILTONIAN_SLOTS, role="Hamiltonian callable")(t=t, x=x, p=p, m=m)
+    return _remembered(fn, HAMILTONIAN_SLOTS, "Hamiltonian callable")(t=t, x=x, p=p, m=m)
 
 
 def _get_sample_inputs(

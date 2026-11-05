@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import STATE_CONSTRAINT_SLOTS, VELOCITY_CONSTRAINT_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import STATE_CONSTRAINT_SLOTS, VELOCITY_CONSTRAINT_SLOTS, _remembered
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
 
@@ -435,7 +435,7 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
         if state_constraints:
             max_state_violation = 0.0
             for constraint in state_constraints:
-                constraint_func = bind_user_callable(constraint, STATE_CONSTRAINT_SLOTS, role="state_constraint")
+                constraint_func = _remembered(constraint, STATE_CONSTRAINT_SLOTS, "state_constraint")
                 for i in range(self.Nt):
                     for x in self.x_grid:
                         t = self.t_grid[i]
@@ -448,7 +448,7 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
         if velocity_constraints and velocity is not None:
             max_velocity_violation = 0.0
             for constraint in velocity_constraints:
-                constraint_func = bind_user_callable(constraint, VELOCITY_CONSTRAINT_SLOTS, role="velocity_constraint")
+                constraint_func = _remembered(constraint, VELOCITY_CONSTRAINT_SLOTS, "velocity_constraint")
                 for i in range(self.Nt):
                     for j, x in enumerate(self.x_grid):
                         t = self.t_grid[i]

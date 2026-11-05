@@ -34,7 +34,7 @@ from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
-from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
+from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     check_adi_compatibility,
@@ -1215,9 +1215,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 vel_i = vel_all[i]
                 x_departure = self._trace_characteristic_backward(x_i, vel_i, dt)
                 u_departure = self._interpolate_value(U_next, x_departure)
-                U_star[i] = self._sl_value_update(
-                    u_departure, np.array([x_i]), M_next[i], np.array([grad_u[i]]), t_val, dt
-                )
+                U_star[i] = self._sl_value_update(u_departure, x_i, M_next[i], np.array([grad_u[i]]), t_val, dt)
             except NotImplementedError:
                 # An unsupported configuration is not a per-point numerical failure; let the
                 # declared type reach the caller instead of being retyped as RuntimeError.
@@ -2140,7 +2138,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         # Apply boundary handling
                         x_next = self._apply_boundary_to_point(x_next)
                         u_next = self._interpolate_value(U_next, x_next)
-                        L_val = float(L_class(x=coordinate_tuple(x_arr, 1), alpha=np.array([alpha]), m=m_i, t=t_value))
+                        L_val = float(L_class(x=point_tuple(x_arr), alpha=np.array([alpha]), m=m_i, t=t_value))
                         cost = dt * L_val + u_next
                         if cost < best_val:
                             best_val = cost
@@ -2151,7 +2149,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         x_next = _xi + alpha * dt
                         x_next = self._apply_boundary_to_point(x_next)
                         u_next = self._interpolate_value(U_next, x_next)
-                        L_val = float(L_class(x=coordinate_tuple(_xa, 1), alpha=np.array([alpha]), m=_mi, t=t_value))
+                        L_val = float(L_class(x=point_tuple(_xa), alpha=np.array([alpha]), m=_mi, t=t_value))
                         return dt * L_val + u_next
 
                     result = minimize_scalar(
@@ -2201,7 +2199,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     # which collapsed a no-flux foot onto the wall node (#1161) and did not wrap a periodic one.
                     x_next = fold_into_domain(_xc + alpha_vec * dt, np.asarray(_lo), np.asarray(_hi), axis_ops)
                     u_next = self._interpolate_value(U_next_shaped, x_next)
-                    L_val = float(L_class(x=coordinate_tuple(_xc, self.dimension), alpha=alpha_vec, m=_mc, t=t_value))
+                    L_val = float(L_class(x=point_tuple(_xc), alpha=alpha_vec, m=_mc, t=t_value))
                     return dt * L_val + u_next
 
                 alpha0 = np.zeros(self.dimension)
@@ -2614,9 +2612,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             pass
 
         try:
-            return self.problem.hamiltonian(
-                t=t_value, x=coordinate_tuple(np.atleast_1d(x), self.problem.dimension), p=np.atleast_1d(p), m=m
-            )
+            return self.problem.hamiltonian(t=t_value, x=point_tuple(x), p=np.atleast_1d(p), m=m)
         except (AttributeError, TypeError) as e:
             logger.debug(f"Legacy Hamiltonian signature failed: {e}")
 

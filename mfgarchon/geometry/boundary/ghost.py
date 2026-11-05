@@ -120,11 +120,8 @@ def compute_normal_from_sdf(
         shift = np.zeros(d)
         shift[dim] = eps
 
-        point_plus = (point + shift).reshape(1, -1)
-        point_minus = (point - shift).reshape(1, -1)
-
-        sdf_plus = np.ravel(read_region(sdf_func, point_plus, role="sdf"))[0]
-        sdf_minus = np.ravel(read_region(sdf_func, point_minus, role="sdf"))[0]
+        sdf_plus = np.ravel(read_region(sdf_func, point + shift, role="sdf", one_point=True))[0]
+        sdf_minus = np.ravel(read_region(sdf_func, point - shift, role="sdf", one_point=True))[0]
 
         grad[dim] = (sdf_plus - sdf_minus) / (2 * eps)
 

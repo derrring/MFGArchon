@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix, lil_matrix
 
-from mfgarchon.types.callable_protocols import REGION_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import REGION_SLOTS, _remembered
 from mfgarchon.utils.numpy_compat import trapezoid
 
 if TYPE_CHECKING:
@@ -262,7 +262,7 @@ class Nitsche1DPoissonSolver:
         f_vec = np.zeros(self.n_nodes)
 
         h = self.h
-        source = bind_user_callable(f, REGION_SLOTS, role="f")
+        source = _remembered(f, REGION_SLOTS, "f")
 
         for elem in range(self.n_elements):
             x_mid = self.nodes[elem] + h / 2
@@ -323,7 +323,7 @@ class Nitsche1DPoissonSolver:
         Returns:
             L2 error
         """
-        u_exact_nodes = bind_user_callable(u_exact, REGION_SLOTS, role="u_exact")(x=(self.nodes,))
+        u_exact_nodes = _remembered(u_exact, REGION_SLOTS, "u_exact")(x=(self.nodes,))
         error_squared = (u_numerical - u_exact_nodes) ** 2
 
         # Trapezoidal rule (NumPy 2.0+ compatible)

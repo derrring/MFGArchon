@@ -13,7 +13,7 @@ import numpy as np
 
 from mfgarchon.geometry.base import UnstructuredMesh
 from mfgarchon.geometry.meshes.mesh_data import MeshData
-from mfgarchon.types.callable_protocols import REGION_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import REGION_SLOTS, _remembered
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -136,7 +136,7 @@ class Mesh1D(UnstructuredMesh):
 
             self.refinement_function = default_refinement
 
-        refinement = bind_user_callable(self.refinement_function, REGION_SLOTS, role="refinement_function")
+        refinement = _remembered(self.refinement_function, REGION_SLOTS, "refinement_function")
 
         # Start with uniform mesh
         vertices = [self.xmin]

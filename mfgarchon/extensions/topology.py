@@ -37,7 +37,7 @@ from mfgarchon.types.callable_protocols import (
     NODE_POTENTIAL_SLOTS,
     NODE_VALUE_SLOTS,
     BoundCallable,
-    bind_user_callable,
+    _remembered,
     bound_attribute,
 )
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
@@ -617,7 +617,7 @@ class NetworkMFGProblem(MFGProblem):
         """Initial density distribution on network nodes."""
         if self.components.initial_node_density_func is not None:  # type: ignore[attr-defined]
             given = self.components.initial_node_density_func  # type: ignore[attr-defined]
-            density = bind_user_callable(given, NODE_VALUE_SLOTS, role="initial_node_density_func")
+            density = _remembered(given, NODE_VALUE_SLOTS, "initial_node_density_func")
             return np.array([density(t=0.0, node=i) for i in range(self.num_nodes)])
 
         # Default: uniform distribution
@@ -628,7 +628,7 @@ class NetworkMFGProblem(MFGProblem):
         """Terminal value function on network nodes."""
         if self.components.terminal_node_value_func is not None:  # type: ignore[attr-defined]
             given = self.components.terminal_node_value_func  # type: ignore[attr-defined]
-            value = bind_user_callable(given, NODE_VALUE_SLOTS, role="terminal_node_value_func")
+            value = _remembered(given, NODE_VALUE_SLOTS, "terminal_node_value_func")
             return np.array([value(t=self.T, node=i) for i in range(self.num_nodes)])
 
         # Default: zero terminal values

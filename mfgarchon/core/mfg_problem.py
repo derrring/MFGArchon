@@ -23,6 +23,7 @@ from mfgarchon.types.callable_protocols import (
     SOURCE_TERM_SLOTS,
     VOLATILITY_SLOTS,
     Slots,
+    _remembered,
     bind_user_callable,
     bound_attribute,
     refuse_methods_out_of_order,
@@ -1369,7 +1370,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         volatility, kind = self._volatility, self._volatility_kind
         if callable(volatility):
-            bound = self._volatility_binding
+            bound = bound_attribute(self, "_volatility", VOLATILITY_SLOTS, role="volatility")
 
             def diffusion(t, x, m):
                 value = bound(t=t, x=x, m=m)
@@ -1986,8 +1987,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         previous = getattr(hamiltonian, "_potential", None)
         if previous is not None:
-            previous = bind_user_callable(previous, POTENTIAL_SLOTS, role="potential")
-        penalty = bind_user_callable(self.state_penalty, REGION_SLOTS, role="state_penalty")
+            previous = _remembered(previous, POTENTIAL_SLOTS, "potential")
+        penalty = _remembered(self.state_penalty, REGION_SLOTS, "state_penalty")
         scale = self.state_penalty_scale
 
         def composed_potential(t: float, x: Any) -> Any:

@@ -187,7 +187,7 @@ class TimeDependentDomain:
             velocity: Normal velocity field V
                 - float: Constant velocity
                 - NDArray: Spatially-varying velocity
-                - Callable: Function V(X) returning velocity at mesh points
+                - Callable: a function of ``x``, a coordinate tuple at the mesh's points, read by name
             dt: Time step size
             reinitialize: Whether to reinitialize after evolution (default: False)
                 Set True every 5-10 steps to maintain SDF property

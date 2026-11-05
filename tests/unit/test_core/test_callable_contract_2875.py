@@ -17,7 +17,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.alg.numerical.pde_solvers.implicit_heat import ImplicitHeatSolver
 from mfgarchon.core.hamiltonian import (
@@ -192,6 +192,27 @@ def test_a_body_that_writes_into_its_coordinates_changes_neither_read():
     np.testing.assert_allclose(_read(writes, x=(handed,)), A + 0.3, rtol=0, atol=1e-14)
 
 
+def test_a_body_that_writes_into_its_field_sees_the_callers_field_once():
+    """The comparison reads a field door's body several times, and read it on the caller's own ``m``: ``m *= 2`` doubled the
+    density at each read, 32 for 2 after one call, and moved a solve (review 1). The comparison reads copies, so the
+    caller's field is written as often as the body is called on it, once."""
+
+    def doubles(t, x, m):
+        m *= 2.0
+        return x[0] + m
+
+    density = np.ones(5)
+    read = cp.bind_user_callable(doubles, cp.COEFFICIENT_SLOTS, role="drift")(t=0.0, x=(A,), m=density)
+    np.testing.assert_array_equal(density, np.full(5, 2.0))
+    np.testing.assert_allclose(read, A + 2.0, rtol=0, atol=1e-15)
+
+
+def test_a_body_that_reads_an_attribute_the_tuple_does_not_have_is_refused_by_name():
+    """``x.shape`` raised a bare AttributeError from the first batch, with no word of the tuple (review 1)."""
+    with pytest.raises(ValueError, match="raised AttributeError"):
+        _read(lambda x: np.zeros(x.shape[:1]))
+
+
 # ------------------------------------------------------------------------------------------- the forms a return takes
 
 
@@ -337,28 +358,36 @@ def test_the_check_runs_once():
 # --------------------------------------------------------------------------------- a first batch can be a narrow probe
 
 
-def test_a_first_batch_inside_a_dead_zone_cannot_see_the_misread_and_that_is_the_limit():
-    """The check reads what the door's first batch holds. A particle drift's first batch is the initial cloud: inside the
-    dead zone a body reading the cloud's largest coordinate reads the same both ways, and it is accepted. Outside it the
-    same body is refused, so the limit is the first batch and not the body. The Hamiltonian does not have this limit, since
-    it is read on wide synthetic p and m."""
-    dead_zone = lambda t, x, m: np.maximum(np.abs(np.max(x[0])) - 0.5, 0.0) * np.ones_like(x[0])  # noqa: E731
-    problem = _problem()
-    narrow = FPParticleSolver(problem, num_particles=40, seed=0)
-    narrow.solve_fp_system(
-        initial_particles=np.random.default_rng(0).uniform(0.1, 0.4, (40, 1)),
-        drift_field=dead_zone,
+def _dead_zone():
+    return lambda t, x, m: np.maximum(np.abs(np.max(x[0])) - 0.5, 0.0) * np.ones_like(x[0])
+
+
+def _particle_solve(drift, high):
+    FPParticleSolver(_problem(), num_particles=40, seed=0).solve_fp_system(
+        initial_particles=np.random.default_rng(0).uniform(0.1, high, (40, 1)),
+        drift_field=drift,
         drift_needs_density=False,
         show_progress=False,
     )
-    wide = FPParticleSolver(problem, num_particles=40, seed=0)
+
+
+def test_a_first_batch_inside_a_dead_zone_cannot_see_the_misread_and_that_is_the_limit():
+    """The check reads what the door's first batch holds. A particle drift's first batch is the initial cloud: inside the
+    dead zone a body reading the cloud's largest coordinate reads the same both ways, and it is accepted. Outside it the
+    same body, written again, is refused, so the limit is the first batch and not the body. The Hamiltonian does not have
+    this limit, since it is read on wide synthetic p and m."""
+    _particle_solve(_dead_zone(), high=0.4)
     with pytest.raises(ValueError, match="reads differently"):
-        wide.solve_fp_system(
-            initial_particles=np.random.default_rng(0).uniform(0.1, 0.95, (40, 1)),
-            drift_field=dead_zone,
-            drift_needs_density=False,
-            show_progress=False,
-        )
+        _particle_solve(_dead_zone(), high=0.95)
+
+
+def test_a_body_compared_in_one_solve_is_not_compared_in_the_next():
+    """What the comparison found is kept with the body, so the body accepted inside the dead zone is read with no
+    comparison in a second solve, whose first batch would refuse it: the limit holds past the first solve. A fresh binding
+    per solve would compare it again and refuse it."""
+    accepted = _dead_zone()
+    _particle_solve(accepted, high=0.4)
+    _particle_solve(accepted, high=0.95)
 
 
 # -------------------------------------------------------------------------------- bodies written to per-axis vectors
@@ -1075,3 +1104,385 @@ def test_a_hamiltonian_holding_a_user_potential_pickles_and_reads_the_same_after
     p, m = np.zeros((5, 1)), np.ones(5)
     before = hamiltonian(t=0.25, x=(A,), p=p, m=m)
     np.testing.assert_array_equal(pickle.loads(pickle.dumps(hamiltonian))(t=0.25, x=(A,), p=p, m=m), before)
+
+
+# ------------------------------------------------- what review 1 of #2896 measured, each pinned at the door it was measured
+
+
+def _misread(x):
+    """Reads across the batch: the largest first coordinate, at every point, and no points on no points."""
+    return np.max(x[0], initial=-np.inf) + 0.0 * x[0]
+
+
+_BATCH = np.linspace(0.1, 0.9, 6).reshape(-1, 1)
+_SAME = np.full((6, 1), 0.5)  # a batch every body reads the same both ways
+
+
+def _doors_that_keep_a_body():
+    """Doors that read one body many times, each as a function of the points, by the routes review 1 measured."""
+    from mfgarchon.utils.drift_helpers import composite_drift
+    from mfgarchon.utils.manufactured import ManufacturedPair
+
+    bound = cp.bind_user_callable(_misread, cp.REGION_SLOTS, role="r")
+    source = lambda t, x: _misread(x)  # noqa: E731
+    region = lambda x: _misread(x)  # noqa: E731
+    field = FunctionalMeasureField(lambda t, x, mu: _misread(x))
+    zero = lambda t, x: 0.0 * x[0]  # noqa: E731
+    pair = ManufacturedPair(
+        u=lambda t, x: _misread(x), u_t=zero, grad_u=zero, hess_u=zero, m=zero, m_t=zero, grad_m=zero, hess_m=zero
+    )
+    drift = composite_drift([lambda t, x, m: _misread(x)])
+    return {
+        "binder": lambda points: bound(x=(points[:, 0],)),
+        "solver source": lambda points: cp.evaluate_solver_source(source, t=0.0, x=points, dimension=1),
+        "region": lambda points: cp.read_region(region, points),
+        "measure field": lambda points: field.evaluate(0.0, points, None),
+        "manufactured pair": lambda points: pair.at("u", 0.1, points),
+        "composite drift": lambda points: drift(0.0, (points[:, 0],), np.ones(len(points))),
+    }
+
+
+@pytest.mark.parametrize("door", sorted(_doors_that_keep_a_body()))
+def test_a_refused_body_is_refused_again_with_the_first_refusal_at_every_later_read(door):
+    """Run again in a notebook cell, or in a sweep's try/except, a refused body was read on its second batch and solved a
+    different problem. The refusal is kept with the body, and raised at every later read, here on a batch it reads the same
+    both ways."""
+    read = _doors_that_keep_a_body()[door]
+    with pytest.raises(ValueError, match="reads differently") as first:
+        read(_BATCH)
+    with pytest.raises(ValueError) as again:
+        read(_SAME)
+    assert str(again.value) == str(first.value)
+
+
+@pytest.mark.parametrize("door", sorted(_doors_that_keep_a_body()))
+def test_a_batch_of_one_point_leaves_a_body_uncompared_and_the_next_batch_is_compared(door):
+    read = _doors_that_keep_a_body()[door]
+    read(_BATCH[:1])
+    with pytest.raises(ValueError, match="reads differently"):
+        read(_BATCH)
+
+
+@pytest.mark.parametrize("door", sorted(_doors_that_keep_a_body()))
+def test_an_empty_batch_reads_empty_and_the_next_batch_is_compared(door):
+    read = _doors_that_keep_a_body()[door]
+    assert np.size(read(np.zeros((0, 1)))) == 0
+    with pytest.raises(ValueError, match="reads differently"):
+        read(_BATCH)
+
+
+def test_a_region_predicate_reads_no_points_as_no_points():
+    from mfgarchon.geometry.predicates import sdf_region
+
+    assert sdf_region(lambda x: np.hypot(x[0], x[1]) - 0.5)(np.zeros((0, 2))).shape == (0,)
+
+
+@pytest.mark.parametrize(
+    "door",
+    [
+        lambda f, points: cp.evaluate_solver_source(f, t=0.0, x=points, dimension=1),
+        lambda f, points: cp.read_region(f, points),
+    ],
+    ids=["solver source", "region"],
+)
+def test_a_door_that_binds_at_every_read_compares_a_body_once(door):
+    calls = []
+
+    def counted(x):
+        calls.append(1)
+        return x[0]
+
+    door(counted, _BATCH)
+    first = len(calls)
+    assert first > 1, "the first batch is read together and at its samples"
+    door(counted, _BATCH)
+    door(counted, _BATCH)
+    assert len(calls) == first + 2
+
+
+def test_a_volatility_is_compared_once_in_a_solve(monkeypatch):
+    """A solver reads its volatility at every step, and compared it at every step: 950 body calls against 190 (review 1).
+    What the comparison found is kept with the body, so it is compared once."""
+    compared = []
+    original = cp._compare_reads
+
+    def counted(read, values, slots, name, guidance):
+        compared.append(name)
+        return original(read, values, slots, name, guidance)
+
+    monkeypatch.setattr(cp, "_compare_reads", counted)
+    volatility = lambda t, x, m: 0.2 + 0.1 * x[0]  # noqa: E731
+    problem = MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=volatility),
+        domain=_grid(),
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+        Nt=4,
+    )
+    problem.solve(max_iterations=2, tolerance=1e-3, verbose=False)
+    assert sum(name.startswith("volatility ") for name in compared) == 1, compared
+
+
+def test_a_problems_diffusion_reads_the_volatility_the_problem_holds():
+    """``diffusion`` read a binding made at construction, so a volatility replaced afterwards left it stale: 0.005 for
+    0.045 (review 1). It reads the volatility the problem holds when it is called."""
+    problem = MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=lambda t, x, m: 0.1 + 0.0 * x[0]),
+        domain=_grid(),
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+        Nt=4,
+    )
+    problem._volatility = lambda t, x, m: 0.3 + 0.0 * x[0]
+    diffusion = problem.diffusion(t=0.0, x=(np.linspace(0.0, 1.0, 3),), m=np.ones(3))
+    np.testing.assert_allclose(diffusion, np.full(3, 0.045), rtol=0, atol=1e-15)
+
+
+@pytest.mark.parametrize("dimension", [1, 2, 3])
+def test_pure_diffusion_of_particles_reads_a_constant_callable_volatility_as_the_constant(dimension):
+    """With no drift the particle solver's own zero drift is read on the tuple; it read it as an array and raised in every
+    dimension (review 1). A constant callable volatility then moves the particles as the same constant held in an array,
+    read on the same path. A scalar volatility takes another path, which returns one time level fewer."""
+    n = 5
+    shape = (n,) * dimension
+    density = np.ones(shape) / n**dimension
+    problem = _problem(dimension=dimension, n=n)
+
+    def solve(volatility):
+        return FPParticleSolver(problem, num_particles=200, seed=3).solve_fp_system(
+            density.copy(), drift_field=None, volatility=volatility, volatility_kind="field", show_progress=False
+        )
+
+    np.testing.assert_allclose(solve(lambda t, x, m: 0.1), solve(np.full(shape, 0.1)), rtol=0, atol=1e-12)
+
+
+def test_a_domain_subclass_that_overrides_contains_is_solved_on():
+    """The particle solver reads its domain's ``contains`` itself, so a subclass a user wrote is not a callable it was handed:
+    it was refused as a method, with advice to wrap what the user never passed (review 1)."""
+    from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
+
+    class Pierced(DifferenceDomain):
+        def contains(self, x, tol=0.0):
+            return super().contains(x, tol)
+
+    box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
+    hole = Hypersphere(center=[0.5, 0.5], radius=0.3)
+    density = np.zeros((21, 21))
+    density[1:3, 1:3] = 1.0
+    density /= density.sum()
+
+    def solve(domain):
+        return FPParticleSolver(
+            _problem(dimension=2, n=21), num_particles=200, seed=3, implicit_domain=domain
+        ).solve_fp_system(density.copy(), drift_field=lambda t, x, m: 0.0, show_progress=False)
+
+    np.testing.assert_array_equal(solve(Pierced(box, hole)), solve(DifferenceDomain(box, hole)))
+
+
+def test_a_stochastic_problems_own_terminal_cost_method_is_read_by_its_names():
+    """A subclass's ``terminal_cost`` is read before the components' ``u_terminal``, by the names it declares past ``self``;
+    a bound method was refused as not a plain function (review 1)."""
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.stochastic.stochastic_problem import StochasticMFGProblem
+
+    class Quadratic(StochasticMFGProblem):
+        def terminal_cost(self, x):
+            return 0.5 * x[0] ** 2
+
+    components = MFGComponents(hamiltonian=_hamiltonian(), u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0)
+    problem = Quadratic(geometry=_grid(), T=0.2, Nt=4, volatility=0.3, components=components)
+    np.testing.assert_allclose(problem.g_conditional(np.array([[0.2], [0.6]]), 0.0), [0.02, 0.18], rtol=0, atol=1e-15)
+
+
+# --------------------------------------------------------------------- one point, handed as a tuple of scalars at d = 1
+
+
+_A_POINT_AT_D1 = lambda x: float(x[0]) - 0.5  # noqa: E731  # float() reads one scalar, and raises on an array of one
+
+
+def _one_point_doors():
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+    from mfgarchon.geometry.boundary.ghost import compute_normal_from_sdf
+    from mfgarchon.geometry.boundary.types import sdf_region_holds
+    from mfgarchon.geometry.implicit.sdf_utils import sdf_gradient
+    from mfgarchon.operators.differential.function_gradient import outward_normal_from_sdf
+
+    point = np.array([0.5])
+    conditions = BoundaryConditions(
+        segments=[BCSegment(name="wall", bc_type=BCType.NEUMANN, value=0.0)], dimension=1, domain_sdf=_A_POINT_AT_D1
+    )
+    segment = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, sdf_region=_A_POINT_AT_D1)
+    return {
+        "is_on_boundary": (lambda: conditions.is_on_boundary(point), True),
+        "get_outward_normal": (lambda: conditions.get_outward_normal(point), [1.0]),
+        "sdf_region_holds": (lambda: sdf_region_holds(segment, np.array([[0.2], [0.8]]), 0.0), [True, False]),
+        "compute_normal_from_sdf": (lambda: compute_normal_from_sdf(point, _A_POINT_AT_D1), [1.0]),
+        "outward_normal_from_sdf": (lambda: outward_normal_from_sdf(_A_POINT_AT_D1, point), [1.0]),
+        "sdf_gradient": (lambda: sdf_gradient(point, _A_POINT_AT_D1), [1.0]),
+    }
+
+
+@pytest.mark.parametrize("door", sorted(_one_point_doors()))
+def test_a_door_that_reads_one_point_hands_a_tuple_of_scalars_at_d_1(door):
+    read, expected = _one_point_doors()[door]
+    np.testing.assert_allclose(np.asarray(read(), dtype=float), np.asarray(expected, dtype=float), rtol=0, atol=1e-6)
+
+
+class _RawH(HamiltonianBase):
+    def __call__(self, t, x, p, m):
+        return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m) + 0.5 * np.asarray(x[0])
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [lambda problem: HJBFDMSolver(problem, analytic_jacobian=False), HJBSemiLagrangianSolver, HJBWENOSolver],
+    ids=["FDM per point", "semi-Lagrangian", "WENO"],
+)
+def test_a_per_point_path_reads_a_raw_hamiltonian_as_its_separable_twin(solver):
+    """The per-point paths hand H one point; at d = 1 they handed x an array of one, and each raised (review 1)."""
+    twin = SeparableHamiltonian(
+        QuadraticControlCost(control_cost=1.0),
+        potential=lambda t, x: -0.5 * x[0],
+        coupling=lambda m: -0.3 * m,
+        coupling_dm=lambda m: -0.3 + 0.0 * m,
+    )
+    nodes = np.linspace(0.0, 1.0, 21)
+    u_terminal = np.cos(np.pi * nodes)
+    density = np.tile(1.0 + 0.5 * np.sin(np.pi * nodes), (6, 1))
+
+    def solve(hamiltonian):
+        problem = MFGProblem(
+            model=Model(hamiltonian=hamiltonian, volatility=0.3),
+            domain=_grid(n=21),
+            conditions=Conditions(u_terminal=lambda x: np.cos(np.pi * x[0]), m_initial=lambda x: 1.0, T=0.5),
+            Nt=5,
+        )
+        return np.asarray(solver(problem).solve_hjb_system(density, u_terminal, np.tile(u_terminal, (6, 1))))
+
+    np.testing.assert_allclose(solve(_RawH()), solve(twin), rtol=0, atol=1e-10)
+
+
+# -------------------------------------------------------------------------- a region reads one point or rows of points
+
+
+def test_a_region_refuses_a_1d_array_by_name_and_reads_a_column_as_points_on_a_line():
+    from mfgarchon.geometry.predicates import sdf_region
+
+    inside = sdf_region(lambda x: x[0] - 0.5)
+    np.testing.assert_array_equal(inside(np.linspace(0.0, 1.0, 5)[:, None]), [True, True, True, False, False])
+    with pytest.raises(ValueError, match=r"does not say whether it is N points on a line or one point in N dimensions"):
+        inside(np.linspace(0.0, 1.0, 5))
+
+
+def test_a_constant_level_set_velocity_moves_the_front_as_a_velocity_field_does():
+    evolver = LevelSetEvolver(_grid(n=41))
+    phi = np.linspace(0.0, 1.0, 41) - 0.3
+    np.testing.assert_array_equal(
+        evolver.evolve_step(phi, velocity=lambda x: 0.5, dt=0.01),
+        evolver.evolve_step(phi, velocity=lambda x: 0.5 + 0.0 * x[0], dt=0.01),
+    )
+
+
+# ------------------------------------------------------------------------------- a check at each door the mutants found
+
+
+def _measure_field_gradient(points):
+    field = FunctionalMeasureField(lambda t, x, mu: 0.0 * x[0], gradient_fn=lambda t, x, mu: _misread(x))
+    return field.spatial_gradient(0.0, points, None)
+
+
+def _hamiltonians_potential(points):
+    return _hamiltonian(potential=lambda x: _misread(x))(
+        t=0.0, x=(points[:, 0],), p=np.zeros((len(points), 1)), m=np.ones(len(points))
+    )
+
+
+def _implicit_heat_forcing(points):
+    grid = _grid(n=21)
+    heat = ImplicitHeatSolver(grid, alpha=0.1, bc=grid.boundary_conditions, forcing=lambda t, x: _misread(x))
+    return heat.solve_step(np.ones(21), dt=0.01)
+
+
+def _volatility_in_a_solve(points):
+    problem = MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=lambda t, x, m: 0.2 + 0.1 * _misread(x)),
+        domain=_grid(),
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+        Nt=4,
+    )
+    return problem.solve(max_iterations=2, tolerance=1e-3, verbose=False)
+
+
+def _state_penalty(points):
+    return _problem(state_penalty=lambda x: _misread(x))
+
+
+@pytest.mark.parametrize(
+    "door",
+    [_measure_field_gradient, _hamiltonians_potential, _implicit_heat_forcing, _volatility_in_a_solve, _state_penalty],
+    ids=[
+        "measure field gradient",
+        "a Hamiltonian's potential off a problem",
+        "ImplicitHeat forcing",
+        "volatility",
+        "state_penalty",
+    ],
+)
+def test_each_door_that_compares_at_its_first_batch_refuses_a_misread(door):
+    """Each of these doors' comparisons could be switched off with every test passing (review 1's survivors D03, D07, D11,
+    D12, D13); the measure field, the manufactured pair and the drift are pinned with the doors that keep a body."""
+    with pytest.raises(ValueError, match="reads differently") as refused:
+        door(_BATCH)
+    if door is _state_penalty:  # composed into the potential, it is refused by name, not as the Hamiltonian's
+        assert str(refused.value).count("state_penalty '") == 1, refused.value
+
+
+def test_a_difference_far_below_a_misread_is_still_refused():
+    """The comparison's tolerance is round-off: a relative difference of 1e-5 is refused (review 1's survivor K17)."""
+    with pytest.raises(ValueError, match="reads differently"):
+        _read(lambda x: x[0] * (1.0 + 1e-5 * (np.ndim(x[0]) > 0)), x=(np.linspace(1.0, 2.0, 7),))
+
+
+def test_a_solvers_coordinates_on_a_square_grid_are_its_axes_in_order():
+    """On a square grid a transposed ``x`` has the right shape and reads the other axis: FP-FDM's volatility read through
+    ``x`` must match the same field written as an array (review 1's survivor X05)."""
+    grid = _grid(dimension=2, n=9)
+    X, Y = grid.meshgrid()
+    density = np.exp(-20.0 * ((X - 0.3) ** 2 + (Y - 0.6) ** 2))
+    density /= density.sum()
+    problem = _problem(dimension=2, n=9)
+
+    def solve(volatility):
+        return FPFDMSolver(problem).solve_fp_system(
+            density, volatility=volatility, volatility_kind="field", show_progress=False
+        )
+
+    np.testing.assert_allclose(solve(lambda t, x, m: 0.05 + 0.6 * x[0]), solve(0.05 + 0.6 * X), rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_the_check_reads_a_hamiltonian_at_a_node_alone_as_the_per_point_paths_do(dimension):
+    """The per-point solve paths hand H one point: ``x`` a tuple of scalars, ``p`` of shape ``(d,)``, ``m`` a scalar,
+    measured on FDM per point, semi-Lagrangian and WENO at d = 1 and 2. The check read a node alone as a batch of one
+    instead, a form no solve uses."""
+    seen = []
+
+    class Recording(HamiltonianBase):
+        def __call__(self, t, x, p, m):
+            seen.append((tuple(np.shape(entry) for entry in x), np.shape(p), np.shape(m)))
+            return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m) + 0.5 * np.asarray(x[0])
+
+    refuse_a_hamiltonian_whose_reads_disagree(Recording(), _grid(dimension, n=5).get_spatial_grid())
+    alone = {read for read in seen if len(read[1]) < 2}
+    assert alone == {(((),) * dimension, (dimension,), ())}, seen
+    assert all(read[1][0] > 1 for read in seen if len(read[1]) == 2), seen
+
+
+def test_a_batch_of_exactly_d_points_is_cycled_with_its_field():
+    """A batch of exactly d points is cycled to more, since a coordinate axis passes for it; a field door's field is cycled
+    with x, or a right body is refused for the broadcast (review 1's survivor K21)."""
+    read = cp.bind_user_callable(lambda t, x, m: x[0] + m, cp.COEFFICIENT_SLOTS, role="drift")
+    np.testing.assert_allclose(
+        read(t=0.0, x=(np.array([0.1, 0.2]), np.array([0.3, 0.4])), m=np.array([0.5, 0.6])),
+        [0.6, 0.8],
+        rtol=0,
+        atol=1e-15,
+    )

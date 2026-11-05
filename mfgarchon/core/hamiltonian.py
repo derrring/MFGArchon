@@ -78,6 +78,7 @@ from mfgarchon.types.callable_protocols import (
     bound_attribute,
     coordinate_tuple,
     point_at,
+    point_tuple,
     refuse_batch_disagreement,
     refuse_overridden,
     spread_samples,
@@ -1042,6 +1043,14 @@ class HEvalState:
         return self.p
 
 
+def _state_x(state: HEvalState) -> tuple[Any, ...]:
+    """``state.x`` as a body reads it. Where ``p`` is one point's, of shape ``(d,)``, ``x`` is that one point, a tuple of
+    scalars at ``d = 1`` too; otherwise a coordinate tuple, with ``d`` the last axis of ``p`` (#2875)."""
+    if np.ndim(state.p) == 1 and np.ndim(state.x) <= 1:
+        return point_tuple(state.x)
+    return coordinate_tuple(state.x, np.shape(state.p)[-1])
+
+
 @dataclass(frozen=True)
 class HamiltonianValues:
     """Bundled Hamiltonian outputs for the convenience ``evaluate()`` pass (Issue #1071).
@@ -1192,9 +1201,7 @@ class HamiltonianBase(MFGOperatorBase):
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
         """
-        return np.asarray(
-            self(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float
-        )
+        return np.asarray(self(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
@@ -1204,9 +1211,7 @@ class HamiltonianBase(MFGOperatorBase):
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
-        return np.asarray(
-            self.dp(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float
-        )
+        return np.asarray(self.dp(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def dH_dm(self, state: HEvalState) -> NDArray:
         """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
@@ -1214,9 +1219,7 @@ class HamiltonianBase(MFGOperatorBase):
         Separate from the residual/Jacobian primitives — the FP source term, not the
         HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
         """
-        return np.asarray(
-            self.dm(x=coordinate_tuple(state.x, np.shape(state.p)[-1]), m=state.m, p=state.p, t=state.t), dtype=float
-        )
+        return np.asarray(self.dm(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate(self, state: HEvalState) -> HamiltonianValues:
         """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
@@ -3039,7 +3042,8 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
     per-point solve, with no inner failure).
 
     The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
-    passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479).
+    passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479). A node
+    alone is read as the per-point solve paths read one: ``x`` one point, ``p`` of shape ``(d,)``, ``m`` a scalar.
     """
     if not hamiltonian.reads_a_batch:
         return
@@ -3057,7 +3061,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
         refuse_batch_disagreement(
             lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
             {"x": x, "p": p, "m": m, "t": t},
-            [{"x": x[i : i + 1], "p": p[i : i + 1], "m": m[i : i + 1], "t": t} for i in range(k)],
+            [{"x": x[i], "p": p[i], "m": m[i], "t": t} for i in range(k)],
             name=f"{type(hamiltonian).__name__}.{name}",
             guidance=guidance,
         )

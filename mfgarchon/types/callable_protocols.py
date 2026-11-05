@@ -74,7 +74,7 @@ CONDITIONAL_TERMINAL_SLOTS = Slots(("x", "theta"))
 # Howard's policy update reads the time index, not a time: its own slot (user ruling, 2026-11-04).
 ALPHA_STAR_SLOTS = Slots(("t_idx", "x", "p", "m"), per_point=("p", "m"))
 HOWARD_RUNNING_COST_SLOTS = Slots(("t_idx",))
-CONTROL_LAGRANGIAN_SLOTS = Slots(("alpha",), per_point=("alpha",))
+CONTROL_LAGRANGIAN_SLOTS = Slots(("alpha",))
 # A graph's node plays x; its adjacency stays with it (user ruling 2026-09-25).
 NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"))
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
@@ -107,6 +107,13 @@ def coordinate_tuple(points: Any, dimension: int) -> tuple[Any, ...]:
     if array.ndim == 0 or array.shape[-1] != dimension:
         raise ValueError(f"points of shape {array.shape} hold no coordinate axis of length {dimension}")
     return tuple(np.moveaxis(array, -1, 0))
+
+
+def point_tuple(point: Any) -> tuple[Any, ...]:
+    """One point in the form a body reads it, a tuple of scalars: ``point`` is a scalar or of shape ``(d,)``, ``d = 1``
+    included, where `coordinate_tuple` would read ``(1,)`` as a batch of one point on a line. A door that holds one
+    point hands it so, and a body reading ``x[0]`` gets a number."""
+    return tuple(np.atleast_1d(np.asarray(point, dtype=float)))
 
 
 def point_at(x: tuple[Any, ...], index: int) -> tuple[Any, ...]:
@@ -272,11 +279,14 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
 
 
 @dataclass
-class SourcePlan:
-    """What `evaluate_solver_source` remembers of a callable: never the callable itself."""
+class CheckState:
+    """What is kept of a body's comparison, never the body itself: the slots it binds, whether its batch and point reads
+    have been compared, and the refusal if they were refused, which every later read raises again. Every `BoundCallable`
+    reads and writes one, so a door holds no flag of its own (#2875)."""
 
     passes: tuple[str, ...]
-    checked: bool
+    checked: bool = False
+    refusal: ValueError | None = None
 
 
 # How each source callable is bound -- the rule and the slots, never the callable itself -- keyed by
@@ -284,22 +294,22 @@ class SourcePlan:
 # the callable: the couplers build a fresh closure per Picard iteration that captures that
 # iteration's arrays, and holding it kept every one alive (#2406 review, round 2). Not by equality
 # either: two different callables that compare equal would share one plan (round 3).
-_SOURCE_PLANS: dict[tuple[int, Slots], tuple[weakref.ref, SourcePlan]] = {}
+_SOURCE_PLANS: dict[tuple[int, Slots], tuple[weakref.ref, CheckState]] = {}
 
 
-def _remembered(fn: Callable[..., Any], slots: Slots, role: str) -> tuple[BoundCallable, SourcePlan]:
-    """``fn`` bound to ``slots``, and what is remembered of it: how it binds, and whether its reads have been compared. Per
-    callable and not on a bound object, which held here would keep the callable alive, so a loop inspects the signature
-    once (#2406 review: +7.5% on a small FP solve) and compares once. Whatever `bind_user_callable` accepts, a function or a
-    partial of one, can be weakly referenced."""
+def _remembered(fn: Callable[..., Any], slots: Slots, role: str) -> BoundCallable:
+    """``fn`` bound to ``slots``, sharing the state kept under ``(id(fn), slots)`` while ``fn`` lives, so a door that binds
+    per read or per solve compares a body once, and refuses it on every read after a refusal. Per callable and not on a
+    bound object, which held here would keep the callable alive, so a loop inspects the signature once (#2406 review: +7.5%
+    on a small FP solve). Whatever `bind_user_callable` accepts, a function or a partial of one, can be weakly referenced."""
     key = (id(fn), slots)
     entry = _SOURCE_PLANS.get(key)
     if entry is None or entry[0]() is not fn:
         bound = bind_user_callable(fn, slots, role=role)
-        entry = (weakref.ref(fn, functools.partial(_forget_source, key)), SourcePlan(bound.passes, False))
+        entry = (weakref.ref(fn, functools.partial(_forget_source, key)), bound.state)
         _SOURCE_PLANS[key] = entry
-    plan = entry[1]
-    return BoundCallable(fn, plan.passes, role, plan.checked, slots), plan
+    state = entry[1]
+    return BoundCallable(fn, state.passes, role, slots=slots, state=state)
 
 
 def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any, dimension: int) -> Any:
@@ -312,25 +322,38 @@ def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any, d
     if _defined_by_the_library(source_term):
         result = source_term(t, x)
     else:
-        bound, plan = _remembered(source_term, SOLVER_SOURCE_SLOTS, "source_term")
-        result = bound(t=t, x=coordinate_tuple(x, dimension))
-        plan.checked = bound.checked
+        result = _remembered(source_term, SOLVER_SOURCE_SLOTS, "source_term")(t=t, x=coordinate_tuple(x, dimension))
     if np.size(result) == 1:
         entries = coordinate_tuple(x, dimension)
         return np.full(np.broadcast_shapes(*(np.shape(entry) for entry in entries)), float(np.ravel(result)[0]))
     return result
 
 
-def read_region(region: Callable[..., Any], points: Any, *, role: str = "region") -> Any:
-    """A region's signed distance or predicate at ``points`` of shape ``(d,)`` or ``(..., d)``: the one place a door reads
-    one (#2875). A function the user wrote reads ``x`` as a coordinate tuple. The library's own region classes are not user
-    callables, and take the points as they are."""
+def read_region(region: Callable[..., Any], points: Any, *, role: str = "region", one_point: bool = False) -> Any:
+    """A region's signed distance or predicate: the one place a door reads one (#2875). A function the user wrote reads
+    ``x`` as a coordinate tuple. The library's own region classes are not user callables, and take the points as they are.
+
+    ``points`` is one point of shape ``(d,)`` where the caller reads one and says so with ``one_point``, and otherwise
+    points of shape ``(..., d)``, the last axis the coordinates. A 1-D array is refused there by name: it does not say
+    whether it is N points on a line or one point in N dimensions."""
     if _defined_by_the_library(region):
         return region(points)
     points = np.asarray(points, dtype=float)
-    bound, plan = _remembered(region, REGION_SLOTS, role)
+    bound = _remembered(region, REGION_SLOTS, role)
+    if one_point:
+        if points.ndim > 1:
+            raise ValueError(f"read_region was told {role} is read at one point and handed shape {points.shape}")
+        return bound(x=point_tuple(points))
+    if points.ndim < 2:
+        raise ValueError(
+            f"{role} {getattr(region, '__qualname__', region)!r} is read at points of shape (N, d), one row per point, "
+            f"and was handed an array of shape {points.shape}, which does not say whether it is N points on a line or "
+            f"one point in N dimensions: pass points.reshape(-1, 1) for points on a line, or points.reshape(1, -1) "
+            f"for one point (#2875)."
+        )
     result = bound(x=coordinate_tuple(points, points.shape[-1]))
-    plan.checked = bound.checked
+    if np.size(result) == 1 and points.ndim > 1:  # a constant holds at every point
+        return np.full(points.shape[:-1], np.ravel(result)[0])
     return result
 
 
@@ -349,8 +372,9 @@ def _defined_by_the_library(fn: Any) -> bool:
 
 
 # What a body raises when it cannot read what it is handed: float() of an array (TypeError), the truth of an array or a
-# refused shape (ValueError), indexing past a point's components (IndexError). Anything else propagates as it is.
-_UNREADABLE = (TypeError, ValueError, IndexError, ArithmeticError)
+# refused shape (ValueError), indexing past a point's components (IndexError), an array's attribute asked of the tuple,
+# such as x.shape (AttributeError), or a key looked up in it (KeyError). Anything else propagates as it is.
+_UNREADABLE = (TypeError, ValueError, IndexError, ArithmeticError, AttributeError, KeyError)
 
 
 def _refuse_unless_equal(together: NDArray, alone: NDArray, described: str, guidance: str) -> None:
@@ -416,6 +440,17 @@ def _entry_at(
     return None
 
 
+def _copies(values: Mapping[str, Any], slots: Slots) -> dict[str, Any]:
+    """``values`` with each array a field or a per-point slot holds copied, so a body that writes into one is read on what
+    the door handed it each time."""
+    return {
+        slot: np.array(value, copy=True)
+        if slot in (*slots.fields, *slots.per_point) and isinstance(value, np.ndarray)
+        else value
+        for slot, value in values.items()
+    }
+
+
 def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: Slots, name: str, guidance: str) -> None:
     """Compare a body's read of the batch ``values`` holds with its read of a few of those points, spread across it (#2875).
 
@@ -445,8 +480,10 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         count = samples
     described = f"{name}, on a batch of {count} points"
     try:
-        # A copy, since a body may write into x.
-        together = np.asarray(read(**{**batch, "x": tuple(entry.copy() for entry in entries)}), dtype=float)
+        # Copies, since a body may write into x or into a field it is handed, and the door reads it once more.
+        together = np.asarray(
+            read(**{**_copies(batch, slots), "x": tuple(entry.copy() for entry in entries)}), dtype=float
+        )
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
     if together.ndim == len(shape) + 1 and together.shape == (d, *shape):
@@ -464,7 +501,7 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
             if np.ndim(batch.get(slot)) > 0:
                 point[slot] = np.asarray(batch[slot])[index]
         try:
-            alone = np.asarray(read(**point), dtype=float)
+            alone = np.asarray(read(**_copies(point, slots)), dtype=float)
         except _UNREADABLE as e:
             raise ValueError(f"{described}, one point at a time, raised {type(e).__name__}: {e}. {guidance}") from e
         if alone.ndim == len(shape) + 1 and alone.shape == (d, *shape):
@@ -493,7 +530,7 @@ class BoundCallable:
     """A user callable and the slots it reads, by name, and whether the library has yet compared its batch and point reads.
     A class, not a closure, so an object holding one still pickles."""
 
-    __slots__ = ("checked", "fn", "passes", "role", "slots")
+    __slots__ = ("fn", "passes", "role", "slots", "state")
 
     def __init__(
         self,
@@ -502,30 +539,56 @@ class BoundCallable:
         role: str = "callable",
         checked: bool = False,
         slots: Slots | None = None,
+        state: CheckState | None = None,
     ):
         self.fn = fn
         self.passes = passes
         self.role = role
-        self.checked = checked
         self.slots = Slots(passes) if slots is None else slots
+        self.state = CheckState(passes, checked) if state is None else state
+
+    @property
+    def checked(self) -> bool:
+        return self.state.checked
+
+    @checked.setter
+    def checked(self, value: bool) -> None:
+        self.state.checked = value
 
     def _read(self, **values: Any) -> Any:
         return self.fn(**{slot: values[slot] for slot in self.passes})
 
     def check_on(self, values: Mapping[str, Any]) -> None:
-        """Compare this body's batch and point reads on ``values``, once. A door with samples when it accepts the callable
-        calls this there; any other is checked at its first batch, in `__call__`, on what that batch holds. A door that
-        hands one point has no batch read to compare, and this waits for one that does."""
-        if self.checked or not np.broadcast_shapes(*(np.shape(entry) for entry in values["x"])):
+        """Compare this body's batch and point reads on ``values``, by its state. A door with samples when it accepts the
+        callable calls this there; any other is checked at its first batch, in `__call__`, on what that batch holds.
+
+        - Not yet compared: a point, an empty batch or no ``x`` is read with no comparison. A batch is compared on copies:
+          a difference, or one of `_UNREADABLE`'s raises, refuses it; agreement on two or more distinct points marks it
+          compared, and on one distinct point, compared with itself, leaves it as it was.
+        - Compared: read.
+        - Refused: the refusal is raised again, on every read.
+        """
+        state = self.state
+        if state.refusal is not None:
+            raise ValueError(str(state.refusal)) from state.refusal
+        if state.checked:
             return
-        self.checked = True
+        entries = np.broadcast_arrays(*(np.asarray(entry, dtype=float) for entry in values["x"]))
+        if not entries[0].shape or entries[0].size == 0:
+            return
+        distinct = np.unique(np.stack([np.ravel(entry) for entry in entries], axis=-1), axis=0).shape[0]
         guidance = (
             "x is a tuple with one entry per coordinate, each a scalar or an array, and the library may hand either: "
             "write the body to read both the same way, such as x[0] for a coordinate and sum(xi**2 for xi in x) for a "
             "squared norm (#2875)."
         )
         name = f"{self.role} {getattr(self.fn, '__qualname__', self.fn)!r}"
-        _compare_reads(self._read, values, self.slots, name, guidance)
+        try:
+            _compare_reads(self._read, values, self.slots, name, guidance)
+        except ValueError as refused:
+            state.refusal = refused
+            raise
+        state.checked = distinct > 1
 
     def __call__(self, **values: Any) -> Any:
         if "x" in values:
@@ -535,7 +598,7 @@ class BoundCallable:
                     f"{type(values['x']).__name__}, and x is a coordinate tuple: this is a defect in the door that "
                     f"called it (#2875)."
                 )
-            if not self.checked:
+            if not self.state.checked:
                 self.check_on(values)
         return self._read(**values)
 

@@ -532,9 +532,8 @@ class SDFParticleBCHandler:
     The SDF convention is: negative inside, zero on boundary, positive outside.
 
     Examples:
-        >>> from mfgarchon.utils.numerical import sdf_sphere
-        >>> def circle_sdf(points):
-        ...     return sdf_sphere(points, center=[0, 0], radius=1.0)
+        >>> def circle_sdf(x):  # x is a coordinate tuple
+        ...     return np.hypot(x[0], x[1]) - 1.0
         >>> handler = SDFParticleBCHandler(circle_sdf, dimension=2)
         >>>
         >>> # Particles that crossed boundary get reflected
@@ -555,7 +554,7 @@ class SDFParticleBCHandler:
         Initialize SDF-based particle BC handler.
 
         Args:
-            sdf: Signed distance function. sdf(points) -> distances where
+            sdf: Signed distance function, read by name with ``x`` a coordinate tuple: sdf(x) -> distances where
                 negative = inside, zero = boundary, positive = outside
             dimension: Spatial dimension
             max_bisection_iterations: Max iterations for boundary point bisection
@@ -568,8 +567,8 @@ class SDFParticleBCHandler:
         self.bisection_tolerance = bisection_tolerance
         self.epsilon = epsilon
 
-    def _signed_distance(self, points: NDArray) -> NDArray:
-        return read_region(self.sdf, points, role="sdf")
+    def _signed_distance(self, points: NDArray, *, one_point: bool = False) -> NDArray:
+        return read_region(self.sdf, points, role="sdf", one_point=one_point)
 
     def apply_bc(
         self,
@@ -628,7 +627,7 @@ class SDFParticleBCHandler:
 
             # If still outside after reflection, project to boundary
             # (handles grazing angles and numerical issues)
-            if self._signed_distance(X_new[i].reshape(1, -1))[0] > 0:
+            if np.ravel(self._signed_distance(X_new[i], one_point=True))[0] > 0:
                 X_new[i] = X_boundary
 
             # Reflect velocity if provided (elastic collision)
@@ -659,7 +658,7 @@ class SDFParticleBCHandler:
         for _ in range(self.max_bisection_iterations):
             t_mid = (a + b) / 2
             p_mid = p_inside + t_mid * direction
-            sdf_mid = self._signed_distance(p_mid.reshape(1, -1))[0]
+            sdf_mid = np.ravel(self._signed_distance(p_mid, one_point=True))[0]
 
             if abs(sdf_mid) < self.bisection_tolerance:
                 return p_mid
@@ -686,16 +685,15 @@ class SDFParticleBCHandler:
         Returns:
             Unit outward normal vector, shape (d,)
         """
-        point = point.reshape(1, -1)
+        point = np.asarray(point, dtype=float).reshape(-1)
         grad = np.zeros(self.dimension)
 
         for i in range(self.dimension):
-            p_plus = point.copy()
-            p_minus = point.copy()
-            p_plus[0, i] += self.epsilon
-            p_minus[0, i] -= self.epsilon
-
-            grad[i] = (self._signed_distance(p_plus)[0] - self._signed_distance(p_minus)[0]) / (2 * self.epsilon)
+            shift = np.zeros(self.dimension)
+            shift[i] = self.epsilon
+            plus = np.ravel(self._signed_distance(point + shift, one_point=True))[0]
+            minus = np.ravel(self._signed_distance(point - shift, one_point=True))[0]
+            grad[i] = (plus - minus) / (2 * self.epsilon)
 
         # Normalize
         norm = np.linalg.norm(grad)

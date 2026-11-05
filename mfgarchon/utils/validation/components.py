@@ -459,7 +459,7 @@ def _validate_callable_ic(
 
     Issues #682, #2875: Geometry-agnostic callable validation.
     """
-    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable
+    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, _remembered, point_tuple
 
     result = ValidationResult()
 
@@ -475,7 +475,7 @@ def _validate_callable_ic(
         return result
 
     try:
-        bound = bind_user_callable(func, CONDITION_SLOTS, role=name)
+        bound = _remembered(func, CONDITION_SLOTS, name)
     except TypeError as e:
         result.add_error(
             str(e),
@@ -488,7 +488,7 @@ def _validate_callable_ic(
 
     # Evaluate the callable at the sample point to check output quality
     try:
-        value = bound(t=time_value, x=tuple(np.atleast_1d(sample_point)))
+        value = bound(t=time_value, x=point_tuple(sample_point))
     except Exception as e:
         result.add_error(
             f"{name} callable raised exception at sample point {sample_point}: {e}",
@@ -581,14 +581,14 @@ def _evaluate_callable_on_grid(
 
     Issue #683: Mass normalization validation.
     """
-    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, bind_user_callable, coordinate_tuple
+    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, _remembered, coordinate_tuple
 
     try:
         points = geometry.get_collocation_points()
         if points.ndim == 1:
             points = points.reshape(-1, 1)
 
-        bound = bind_user_callable(func, CONDITION_SLOTS, role="condition")
+        bound = _remembered(func, CONDITION_SLOTS, "condition")
         values = np.asarray(bound(t=0.0, x=coordinate_tuple(points, points.shape[1])), dtype=float)
         return np.array(np.broadcast_to(values.ravel() if values.size > 1 else values, (points.shape[0],)))
     except Exception:

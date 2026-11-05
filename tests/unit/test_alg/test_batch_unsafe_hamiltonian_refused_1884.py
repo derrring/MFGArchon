@@ -16,8 +16,9 @@ Hamiltonian that is NaN or infinite at its validation points. NaN must match NaN
 NaN outside its domain passes; and one infinite value must not make the tolerance infinite, so a point-only
 H that is infinite at one probe node is still refused.
 
-Oracle: the row-wise twin of each refused form solves, so the refusal is about batch evaluation and not about the
-Hamiltonian. Deleting the check's call in `MFGProblem` makes the refusal not happen.
+Oracle: the row-wise twin of each refused form solves, and to the same values on the per-point path
+(`analytic_jacobian=False`), which hands H one point at a time, so the refusal is about batch evaluation and not about
+the Hamiltonian. Deleting the check's call in `MFGProblem` makes the refusal not happen.
 """
 
 from __future__ import annotations
@@ -112,7 +113,9 @@ def _solve(hamiltonian, **solver_kwargs):
 @pytest.mark.parametrize("case", sorted(_CASES))
 def test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path(case):
     point_only, row_wise = _CASES[case]
-    assert np.all(np.isfinite(_solve(_H(row_wise))))
+    reference = _solve(_H(row_wise))
+    assert np.all(np.isfinite(reference))
+    np.testing.assert_allclose(_solve(_H(row_wise), analytic_jacobian=False), reference, rtol=0, atol=1e-10)
 
     with pytest.raises(ValueError, match="evaluate_H, at 3 samples"):
         _solve(_H(point_only))

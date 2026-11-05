@@ -31,17 +31,24 @@ from mfgarchon.utils.validation.protocol import ValidationError
 
 _TABLES = {name: slots for name, slots in vars(cp).items() if isinstance(slots, cp.Slots)}
 _NAMES = sorted({slot for slots in _TABLES.values() for slot in slots.order})
-_COEF = {slot: 10.0**i for i, slot in enumerate(_NAMES)}
 _AT = {slot: 2.0 + i for i, slot in enumerate(_NAMES)}
 _FROZEN = 97.0
 
 
-def _term(param, slot):
-    return f"{_COEF[slot]!r}*{param}[0]" if slot == "x" else f"{_COEF[slot]!r}*{param}"
+def _coef(order, slot):
+    """Slot k of a door's order is the k-th base-100 digit. Every value read is an integer below 100, so a misread changes
+    a digit, and a door's at most five digits sum to an integer below 2**53, exact in floating point: compared by ==."""
+    return 100 ** list(order).index(slot)
 
 
-def _written(params, reads):
-    return eval(f"lambda {', '.join(params)}: " + " + ".join(_term(p, r) for p, r in zip(params, reads, strict=True)))
+def _term(param, slot, order):
+    return f"{_coef(order, slot)}*{param}[0]" if slot == "x" else f"{_coef(order, slot)}*{param}"
+
+
+def _written(params, reads, order):
+    return eval(
+        f"lambda {', '.join(params)}: " + " + ".join(_term(p, r, order) for p, r in zip(params, reads, strict=True))
+    )
 
 
 def _frozen(slot):
@@ -49,7 +56,7 @@ def _frozen(slot):
 
 
 def _meant(order, frozen):
-    return sum(_COEF[slot] * frozen.get(slot, _AT[slot]) for slot in order)
+    return sum(_coef(order, slot) * frozen.get(slot, _AT[slot]) for slot in order)
 
 
 def _timed(function):
@@ -76,16 +83,18 @@ def test_a_slot_frozen_by_keyword_is_refused_on_every_binding_path(name):
     freeze, and in a partial Python leaves as two levels. Each read other at 2ace3724, with no error."""
     slots = _TABLES[name]
     order = slots.order
-    partials = [functools.partial(_written(order, order), **{slot: _frozen(slot)}) for slot in order]
+    partials = [functools.partial(_written(order, order, order), **{slot: _frozen(slot)}) for slot in order]
     if len(order) >= 2:
-        partials.append(functools.partial(_written(order, order), _frozen(order[0]), **{order[1]: _frozen(order[1])}))
+        partials.append(
+            functools.partial(_written(order, order, order), _frozen(order[0]), **{order[1]: _frozen(order[1])})
+        )
     # Python flattens a partial of a partial only when the inner one has no __dict__. These stay two levels.
-    wrapped = functools.partial(_written(order, order), **{order[0]: _frozen(order[0])})
-    partials.append(functools.partial(functools.update_wrapper(wrapped, _written(order, order))))
-    marked = functools.partial(_written(order, order), **{order[0]: _frozen(order[0])})
+    wrapped = functools.partial(_written(order, order, order), **{order[0]: _frozen(order[0])})
+    partials.append(functools.partial(functools.update_wrapper(wrapped, _written(order, order, order))))
+    marked = functools.partial(_written(order, order, order), **{order[0]: _frozen(order[0])})
     marked.note = "an attribute keeps it a level of its own"
     partials.append(functools.partial(marked))
-    partials.append(_timed(functools.partial(_written(order, order), **{order[0]: _frozen(order[0])})))
+    partials.append(_timed(functools.partial(_written(order, order, order), **{order[0]: _frozen(order[0])})))
     for partial in partials:
         # A wrapper's own names are read and not what it wraps, so it is refused for its stars.
         with pytest.raises(TypeError, match=r"by keyword: called by name|starred parameter"):
@@ -178,9 +187,9 @@ def test_what_a_partial_freezes_by_position_or_under_no_slots_name_stands(name):
     order = slots.order
     read = _bind(slots)
     if len(order) > 1 and order[0] not in slots.required:
-        by_position = functools.partial(_written(order, order), _frozen(order[0]))
+        by_position = functools.partial(_written(order, order, order), _frozen(order[0]))
         assert _call(read(by_position), order) == _meant(order, {order[0]: _FROZEN})
-    gain = eval(f"lambda {', '.join(order)}, gain=1.0: gain*(" + " + ".join(_term(s, s) for s in order) + ")")
+    gain = eval(f"lambda {', '.join(order)}, gain=1.0: gain*(" + " + ".join(_term(s, s, order) for s in order) + ")")
     assert _call(read(functools.partial(gain, gain=2.0)), order) == 2.0 * _meant(order, {})
 
 
@@ -200,7 +209,7 @@ def test_a_refused_positional_partial_is_not_told_to_reorder_its_function(name):
     refused = 0
     for written in itertools.permutations(order):
         for params in (list(written), [f"a{i}" for i in range(len(order))]):
-            target = _written(params, written)
+            target = _written(params, written, order)
             try:
                 read(functools.partial(target, _frozen(written[0])))
             except TypeError as refusal:
@@ -220,8 +229,7 @@ def test_a_refused_positional_partial_is_not_told_to_reorder_its_function(name):
                 f"{p}={s}" if s != written[0] else f"{p}={_frozen(s)!r}" for p, s in zip(params, written, strict=True)
             )
             follows = eval(f"lambda {', '.join(left)}: target({passed})", {"target": target})
-            # A sum of terms up to 1e17 in the written order: a misread moves it by orders of magnitude, rounding by a ulp.
-            assert _call(read(follows), order) == pytest.approx(_meant(order, {written[0]: _FROZEN}), rel=1e-14)
+            assert _call(read(follows), order) == _meant(order, {written[0]: _FROZEN})
     assert refused, "no row reached a refusal"
 
 
@@ -449,3 +457,37 @@ def test_what_the_validators_tell_a_positional_partial_keeps_what_it_froze(valid
     assert any("passing the frozen value by keyword" in (issue.suggestion or "") for issue in result.issues), (
         result.issues
     )
+
+
+def _positional_only(t, x, /):
+    return 100.0 * t + x
+
+
+@pytest.mark.parametrize(
+    ("read", "refused"),
+    [
+        (bind_boundary_value, np.vectorize(lambda s: 100.0 * s)),
+        (bind_boundary_value, _positional_only),
+        (bind_boundary_value, functools.partial(lambda x, t: 100.0 * t + x, t=0.25)),
+        (lambda f: graph._value_reader(f, "r"), np.vectorize(lambda node, gain=2.0: gain * node)),
+        (lambda f: graph._rule_reader(f, "r"), np.vectorize(lambda t, node, field: 0.0)),
+    ],
+    ids=[
+        "grid, another callable",
+        "grid, positional-only",
+        "grid, a slot frozen by keyword",
+        "graph value",
+        "graph rule",
+    ],
+)
+def test_a_callable_that_cannot_be_bound_by_name_is_told_in_words_not_with_a_lambda(read, refused):
+    """Each lambda these refusals used to write read some callable wrong with no error: ``lambda t: f(t)`` a function of
+    space, ``lambda t, node: f(node, t)`` one with a defaulted parameter, which t landed in, and "Freeze it by position"
+    froze the first parameter, whichever it was (#2861)."""
+    with pytest.raises(TypeError) as excinfo:
+        read(refused)
+    message = str(excinfo.value)
+    assert "that passes each argument to the parameter that reads it" in message, message
+    assert "`lambda" not in message, message
+    assert "Freeze it by position" not in message, message
+    assert ("passing the frozen value by keyword" in message) == isinstance(refused, functools.partial), message

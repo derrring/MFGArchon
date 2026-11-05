@@ -393,19 +393,25 @@ def _time_varying_kinetic(amplitude):
     return type("TimeVaryingKinetic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
 
 
+def _anisotropic_dp(self, t, x, p, m):
+    pa = np.asarray(p, dtype=float)
+    gradient = np.zeros_like(pa)
+    gradient[..., 0] += pa[..., 0]
+    gradient[..., -1] += 4.0 * pa[..., -1]
+    return gradient
+
+
 _REFUSE = [
     ("congestion_c1_is_one", _congestion),
     ("relativistic_kinetic", _relativistic),
     ("quartic_kinetic", _quartic),
     (
         "anisotropic_kinetic",
+        # The same at a point as on a batch, with its own dH/dp: the problem refuses a Hamiltonian that is not (#2875).
         lambda: _make(
             "H",
-            lambda x, m, q, p: (
-                0.5 * np.asarray(p)[..., 0] ** 2 + 2.0 * np.asarray(p)[..., -1] ** 2
-                if np.asarray(p).ndim > 1
-                else 0.5 * q
-            ),
+            lambda x, m, q, p: 0.5 * np.asarray(p)[..., 0] ** 2 + 2.0 * np.asarray(p)[..., -1] ** 2,
+            dp=_anisotropic_dp,
         ),
     ),
 ]

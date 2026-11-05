@@ -1174,8 +1174,8 @@ def sample_from_density(
     seed : int or None, default=None
         Random seed for reproducibility.
     navigable : callable or None, default=None
-        ``navigable(points)``, for points of shape (n, d), is a boolean array saying where a particle may be --
-        ``ImplicitDomain.contains`` for a domain with obstacles. When given, every returned particle is navigable
+        ``navigable(x)``, read by name with ``x`` a coordinate tuple, is a boolean array saying where a particle may
+        be: ``lambda x: domain.contains(np.stack(x, axis=-1))`` for a domain with obstacles. When given, every returned particle is navigable
         (#2688):
 
         - A jitter that lands where ``navigable`` is False is redrawn within the same cell, so the cell's mass
@@ -1339,10 +1339,7 @@ def _leave_out_cells_with_no_navigable_point(
             "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
             "caller gave."
         ),
-        remedy=(
-            "Set the density to zero at the nodes outside the navigable set: density * "
-            'navigable(tuple(np.meshgrid(*coordinates, indexing="ij"))).'
-        ),
+        remedy=("Set the density to zero at the grid's nodes where navigable reads False, and pass it again."),
     )
 
 

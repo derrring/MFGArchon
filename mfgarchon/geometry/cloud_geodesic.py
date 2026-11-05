@@ -66,8 +66,8 @@ def compute_geodesic_distance(
     ----------
     points : np.ndarray, shape (N, d)
         Cloud point positions. Caller must guarantee all points are in
-        the navigable region (`obstacles_sdf(points) > 0` if obstacles
-        are provided); points inside obstacles are not filtered out.
+        the navigable region, where `obstacles_sdf` is positive if obstacles
+        are provided; points inside obstacles are not filtered out.
     sources_idx : np.ndarray or int
         Index or indices of points with `d_geodesic = 0`. The output
         is `min_{s ∈ sources_idx} d(., s)`.
