@@ -11,7 +11,7 @@ red under a simulated `Nx` removal. That file is one class; this one is a list.
 **Why this is an allowlist and not `--doctest-modules`.** Measured at 408415d4: 2439 examples across 182 modules,
 **1348 of them fail**, and **1153 of those failures are `NameError`** — examples written as narrative fragments that
 use names defined in a neighbouring docstring. `doctest`'s unit of isolation is the docstring, so those can never pass
-under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 23 modules
+under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 22 modules
 below are the ones whose examples already pass, all 172 of them.
 
 **So this covers 22 of 171 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
@@ -26,7 +26,7 @@ What it does NOT redden on, measured rather than assumed: the removal batches. A
 and #2331, the listed modules' examples touch two (`Nx` in `types.pde_coefficients`, `num_points` in
 `geometry.graph.maze_hybrid`), and under a simulated `Nx` removal this file stayed GREEN while
 `scripts/check_docstring_kwargs.py` produced 30 findings (review of #2351). The static checker is what protects the
-removal programme; this file's value is that 169 examples in 22 modules now break loudly on a repr, import or
+removal programme; this file's value is that 172 examples in 22 modules now break loudly on a repr, import or
 signature change, where before nothing ran them at all.
 
 Growing the list is deliberate: make a module's examples self-contained, confirm they pass, add it here.
