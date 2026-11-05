@@ -65,6 +65,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, bind_user_callable
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -208,12 +209,10 @@ def prescribed_drift(drift_func: Callable) -> Callable:
     or gravitational fields.
 
     Args:
-        drift_func: User function α(t, x) or α(t, x, m)
-            - For time-space dependent: α(t, x) -> np.ndarray
-            - For state-dependent: α(t, x, m) -> np.ndarray
+        drift_func: User function read by the names it declares, of t, x and m, with x a coordinate tuple
 
     Returns:
-        Callable with signature α(t, x, m) compatible with FP solvers
+        ``drift_func``, as an FP solver reads it
 
     Examples:
         >>> # Constant wind
@@ -230,23 +229,8 @@ def prescribed_drift(drift_func: Callable) -> Callable:
         ...     return np.array([0.0, -9.8 * np.ones_like(x_arr)])
         >>> drift = prescribed_drift(gravity)
     """
-    import inspect
-
-    # Check if drift_func takes (t, x) or (t, x, m)
-    sig = inspect.signature(drift_func)
-    n_params = len(sig.parameters)
-
-    if n_params == 2:
-        # drift_func(t, x) -> wrap to add m parameter
-        def _prescribed_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
-            return drift_func(t, x)
-
-        return _prescribed_drift
-    elif n_params == 3:
-        # drift_func(t, x, m) -> use directly
-        return drift_func
-    else:
-        raise ValueError(f"drift_func must take 2 or 3 parameters (t, x) or (t, x, m), got {n_params}")
+    bind_user_callable(drift_func, COEFFICIENT_SLOTS, role="drift_func")  # refused here, with no solve started
+    return drift_func
 
 
 def density_dependent_drift(drift_func: Callable) -> Callable:
@@ -327,11 +311,13 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
         Ensure all components return arrays with compatible shapes.
     """
 
-    def _composite_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+    bound = [bind_user_callable(drift, COEFFICIENT_SLOTS, role="drift") for drift in drift_list]
+
+    def _composite_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         """Sum of multiple drift contributions."""
         total = None
-        for drift_fn in drift_list:
-            contribution = drift_fn(t, x, m)
+        for drift_fn in bound:
+            contribution = drift_fn(t=t, x=x, m=m)
             if total is None:
                 total = contribution
             else:

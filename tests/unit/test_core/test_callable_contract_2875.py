@@ -427,6 +427,20 @@ def test_a_variational_terminal_cost_reads_a_coordinate_tuple():
         ).evaluate_terminal_cost(np.array([0.25, 0.5]))
 
 
+def test_the_drift_helpers_read_what_a_drift_names():
+    from mfgarchon.utils.drift_helpers import composite_drift, prescribed_drift
+
+    wind = prescribed_drift(lambda t, x: 2.0 * x[0])
+    pull = lambda x, m: -x[0] * m  # noqa: E731
+    total = composite_drift([wind, pull])
+    m = np.array([1.0, 0.5, 2.0, 0.25, 0.75])
+    np.testing.assert_allclose(total(0.0, (A,), m), 2.0 * A - A * m, rtol=0, atol=1e-14)
+    with pytest.raises(TypeError, match="names no slot"):
+        prescribed_drift(lambda t, position: position)
+    with pytest.raises(TypeError, match="names no slot"):
+        composite_drift([lambda t, position: position])
+
+
 def test_howards_running_cost_is_read_by_the_name_of_its_slot():
     bound = cp.bind_user_callable(lambda t_idx: 2.0 * t_idx, cp.HOWARD_RUNNING_COST_SLOTS, role="running_cost")
     assert bound(t_idx=3) == 6.0
