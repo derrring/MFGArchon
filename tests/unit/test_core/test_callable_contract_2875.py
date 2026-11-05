@@ -424,6 +424,25 @@ def test_a_library_closure_is_handed_x_as_it_is_and_read_once():
     assert calls == [(7, 1)]
 
 
+def test_a_closure_in_a_library_module_run_as_a_script_is_the_librarys():
+    """``python -m`` runs a library module as ``__main__``, so its closures' module is ``__main__``, and the particle
+    solver's ``navigable`` closure was refused as a user's in its own ``__main__`` block. The file its code is in says it is
+    the library's; a script's own closure, outside the package, is still a user's."""
+    import os
+
+    import mfgarchon
+
+    def closure_in(path):
+        made = eval(compile("lambda points: points", path, "eval"))
+        made.__module__ = "__main__"
+        return made
+
+    assert cp._defined_by_the_library(
+        closure_in(os.path.join(os.path.dirname(mfgarchon.__file__), "run_as_a_script.py"))
+    )
+    assert not cp._defined_by_the_library(closure_in(os.path.join(os.sep, "elsewhere", "script.py")))
+
+
 def test_a_users_source_is_read_as_a_tuple_and_refused_at_its_own_door():
     points = np.linspace(0.0, 1.0, 7).reshape(-1, 1)
     np.testing.assert_allclose(

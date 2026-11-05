@@ -606,8 +606,9 @@ door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `eval
 - The comparison reads a few samples, and it says the reads agreed there.
 - A body handed no `x` is not compared: a coupling, a congestion factor and their derivatives, Howard's running cost and
   control Lagrangian, and a network's node terms.
-- A closure the library wrote is not compared, and the test is the module that defined it, so a body that sets its own
-  `__module__` to the library's, or wraps a library function with `functools.wraps`, passes as one.
+- A closure the library wrote is not compared, and the test is the module that defined it (for a library module run as
+  a script, the file its code is in), so a body that sets its own `__module__` to the library's, or wraps a library
+  function with `functools.wraps`, passes as one.
 
 ### The library refuses the old order on a class
 

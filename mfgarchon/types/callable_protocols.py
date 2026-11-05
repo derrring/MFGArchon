@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import os
 import types
 import weakref
 from dataclasses import dataclass
@@ -363,12 +364,20 @@ def _forget_source(key: tuple[int, Slots], dead: weakref.ref) -> None:
         del _SOURCE_PLANS[key]
 
 
+_PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
+
+
 def _defined_by_the_library(fn: Any) -> bool:
     """Whether ``fn`` is a closure the library composed. It is not a user input: what it wraps has its own door, and the
-    couplers build one per Picard iteration (#2875)."""
+    couplers build one per Picard iteration (#2875). The test is the module that defined it, or, for a library module run
+    as a script (``python -m``), whose module is ``__main__``, the file its code is in."""
     while isinstance(fn, functools.partial):
         fn = fn.func
-    return (getattr(fn, "__module__", None) or "").partition(".")[0] == "mfgarchon"
+    module = getattr(fn, "__module__", None) or ""
+    if module.partition(".")[0] == "mfgarchon":
+        return True
+    code = getattr(fn, "__code__", None)
+    return module == "__main__" and code is not None and os.path.abspath(code.co_filename).startswith(_PACKAGE)
 
 
 # What a body raises when it cannot read what it is handed: float() of an array (TypeError), the truth of an array or a
