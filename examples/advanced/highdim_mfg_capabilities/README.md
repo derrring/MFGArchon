@@ -100,8 +100,8 @@ m(x,0) = m₀(x)                         in Ω
 ```
 
 ### **Supported Hamiltonians**
-- **Quadratic**: `H = ½|p|² + V(x) + γm|p|²`
-- **Anisotropic**: `H = ½p^T A(x) p + f(x,m,t)`
+- **Quadratic**: `H = ½|p|² - V(x) + γm|p|²`
+- **Anisotropic**: `H = ½p^T A(x) p - f(x,m,t)`
 - **Obstacle**: `H = max(½|p|² - c(x), ψ(x))`
 - **Custom**: User-defined through `MFGComponents`
 

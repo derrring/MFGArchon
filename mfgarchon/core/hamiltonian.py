@@ -2420,7 +2420,7 @@ class SeparableHamiltonian(HamiltonianBase):
 
     This is the most common form in MFG, where:
     - H_control(p): Control cost (from ControlCostBase)
-    - V(t, x): Potential energy / state cost (see sign-convention note below)
+    - V(t, x): State cost (see sign-convention note below)
     - f(m): Density coupling term
 
     The separability allows efficient computation and analytic derivatives.

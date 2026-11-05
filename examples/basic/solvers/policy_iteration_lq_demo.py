@@ -14,7 +14,7 @@ Theoretical Background:
 ======================
 
 For a control problem with Hamiltonian:
-    H(x, p, α, m) = 0.5 * |α|² + α·p + V(x, m)
+    H(x, p, m) = sup_α [-α·p - 0.5 * |α|²] - V(x, m)
 
 Where α is the control, policy iteration performs:
 
@@ -22,7 +22,7 @@ Where α is the control, policy iteration performs:
    ∂u/∂t + 0.5*α_k² + α_k·∂u/∂x + V(x,m) = 0
 
 2. Policy Improvement:
-   α_{k+1}(x,t) = argmax_α [α·∂u/∂x - 0.5*α²]
+   α_{k+1}(x,t) = argmax_α [-α·∂u/∂x - 0.5*α²]
                 = -∂u/∂x
 
 Convergence:
@@ -73,14 +73,14 @@ def demonstrate_policy_iteration_concept():
     print()
     print("Policy iteration (Howard's algorithm) for HJB equations:")
     print()
-    print("  Given: H(x, p, α, m) = 0.5*α² + α·p + V(x,m)")
+    print("  Given: H(x, p, m) = sup_α [-α·p - 0.5*α²] - V(x,m)")
     print()
     print("  Algorithm:")
     print("    1. Start with initial policy α₀(x,t)")
     print("    2. Policy Evaluation: Solve HJB with α_k fixed")
     print("         ∂u/∂t + 0.5*α_k² + α_k·∂u/∂x + V(x,m) = 0")
     print("    3. Policy Improvement:")
-    print("         α_{k+1} = argmax_α [α·∂u/∂x - 0.5*α²] = -∂u/∂x")
+    print("         α_{k+1} = argmax_α [-α·∂u/∂x - 0.5*α²] = -∂u/∂x")
     print("    4. Check convergence: ||α_{k+1} - α_k|| < tol")
     print("    5. If not converged, go to step 2")
     print()
@@ -104,7 +104,7 @@ def solve_lq_mfg_with_value_iteration():
     print("=" * 80)
 
     # Create 1D LQ-MFG problem.
-    # H(x, p, m) = (1/2)|p|^2 + 0.5*m  (quadratic control cost + congestion coupling).
+    # H(x, p, m) = (1/2)|p|^2 - 0.5*m  (quadratic control cost, cost-signed congestion coupling).
     # u_terminal/m_initial are required by MFGComponents (Issue #670: no silent defaults).
     lq_hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),

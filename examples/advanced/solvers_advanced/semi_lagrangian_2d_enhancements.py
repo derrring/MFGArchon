@@ -69,7 +69,7 @@ def create_2d_crowd_navigation_problem(
         boundary_conditions=no_flux_bc(dimension=2),
     )
 
-    # Model: H = (1/2)|p|^2 + kappa * m
+    # Model: H = (1/2)|p|^2 - kappa * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: coupling_strength * m,

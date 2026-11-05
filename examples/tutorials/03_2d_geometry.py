@@ -13,7 +13,7 @@ Mathematical Problem:
     2D crowd navigation with target attraction:
     - Domain: [0,10] x [0,10] (square room)
     - Target: Center at (5,5) - agents want to reach it
-    - Hamiltonian: H = (1/2)|p|^2 + lambda*m (LQ with congestion)
+    - Hamiltonian: H = (1/2)|p|^2 - lambda*m (LQ with congestion)
     - Initial: Agents start at corners
 """
 
