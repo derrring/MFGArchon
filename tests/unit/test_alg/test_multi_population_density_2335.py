@@ -477,3 +477,28 @@ def test_a_direct_call_passing_the_own_row_reads_as_the_one_population_body():
     np.testing.assert_array_equal(
         declaring(t=0.0, x=x, p=p, m=m, cross_density=m[np.newaxis]), plain(t=0.0, x=x, p=p, m=m)
     )
+
+
+@pytest.mark.parametrize("kind", ["separable", "congestion"])
+def test_dm_reads_a_term_that_declares_the_slot_at_the_own_density(kind):
+    """`dm` is read on single-population paths only, so it hands its terms the own row: a term written over every
+    population there reads as the same term written for one."""
+    cost = QuadraticControlCost(control_cost=1.0)
+    if kind == "separable":
+        declaring = SeparableHamiltonian(
+            cost,
+            coupling=lambda m, cross_density: 0.5 * np.asarray(cross_density).sum(axis=0) ** 2,
+            coupling_dm=lambda m, cross_density: np.asarray(cross_density).sum(axis=0),
+        )
+        plain = SeparableHamiltonian(cost, coupling=lambda m: 0.5 * m**2, coupling_dm=lambda m: m)
+    else:
+        declaring = CongestionHamiltonian(
+            cost,
+            congestion_factor=lambda m, cross_density: 1.0 + 0.5 * np.asarray(cross_density).sum(axis=0),
+            congestion_factor_dm=lambda m, cross_density: 0.5 + 0.0 * np.asarray(cross_density).sum(axis=0),
+        )
+        plain = CongestionHamiltonian(
+            cost, congestion_factor=lambda m: 1.0 + 0.5 * m, congestion_factor_dm=lambda m: 0.5 + 0.0 * m
+        )
+    x, p, m = (np.linspace(0.0, 1.0, 4),), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
+    np.testing.assert_array_equal(declaring.dm(t=0.0, x=x, p=p, m=m), plain.dm(t=0.0, x=x, p=p, m=m))
