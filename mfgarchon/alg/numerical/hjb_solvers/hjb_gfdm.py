@@ -30,6 +30,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     eval_dH_dp_batch,
     eval_H_batch,
 )
+from mfgarchon.core.hamiltonian import _family_call
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as_stored
@@ -3568,12 +3569,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                     _m_n = np.asarray(M_collocation[_n], dtype=float).ravel()
                     _t_n = float(_n) * _dt_probe
                     _h0 = np.asarray(
-                        H_class(x=_x_probe, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n), dtype=float
+                        _family_call(H_class, x=_x_probe, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n),
+                        dtype=float,
                     )
                     _af = np.maximum(_af, np.abs(_h0).max())
                     for _d in _dirs:
                         _P = np.tile(np.asarray(_d, dtype=float), (self.n_points, 1))
-                        _h = np.asarray(H_class(x=_x_probe, m=_m_n, p=_P, t=_t_n), dtype=float)
+                        _h = np.asarray(_family_call(H_class, x=_x_probe, m=_m_n, p=_P, t=_t_n), dtype=float)
                         _scale = np.maximum(_scale, np.abs(_h).max())
                         _ke = np.maximum(_ke, np.abs((_h - _h0) - _kinetic_ref(_d)).max())
             except (TypeError, ValueError, AttributeError, IndexError) as _exc:

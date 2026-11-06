@@ -292,18 +292,29 @@ In a multi-population solve (`MultiPopulationIterator`), `m` is the population's
 door that reads it: the grid's nodes at the HJB step, and the faces at the FP velocity, averaged there as a
 one-population solve averages its own density (#2335). A term or a Hamiltonian method that reads every population
 declares a parameter named `cross_density`. It holds one row per population, its own included, at the same points as
-`m`: row `j` is population `j`'s density, and `cross_density.sum(axis=0) - m` is the other populations' together.
-Where there is one population, in a single-population solve and in the problem's own check, `cross_density` is
-`m[np.newaxis]`, one row, so a body that reads the others reads them as possibly none, such as
-`cross_density[1 - k] if len(cross_density) > 1 else 0 * m`. `cross_density` is an array where `x` is a tuple because
-its rows always share one shape and its leading axis is always the number of populations, while `x`'s entries may be
-scalars and arrays mixed. A Hamiltonian's `dm` takes no `cross_density`: it is read on single-population paths only,
-where every population's density is the own row, and no multi-population door reads it (measured for #2335: no call
-to `dm` or `dH_dm` in a two- or three-population solve of a separable, an L1 or a congestion Hamiltonian). Until #2335
-the stack was handed as `m`. A body that still reads it from `m` gets its own
-population's values: one that reads its shape raises, and one that does not, such as `np.mean(m)` meant as every
-population's mean, reads its own population's with no error.
+`m`: row `j` is population `j`'s density, and `cross_density.sum(axis=0) - m` is the other populations' together. Each
+row carries the mass its population was handed: the library normalises no population and no total (#1887), so
+`cross_density.sum(axis=0)` is the densities summed as they were handed. Where there is one population, in a
+single-population solve and in the problem's own check, `cross_density` is `m[np.newaxis]`, one row, so a body that
+reads the others reads them as possibly none: for two populations, `cross_density[1 - k] if len(cross_density) > 1
+else 0 * m`. `cross_density` is an array where `x` is a tuple: its leading axis is always the number of populations
+and every row has `m`'s shape, so `cross_density[j]` reads the same at one point and on a batch, as `x[0]` does for a
+tuple whose entries are scalars at one point and arrays on a batch.
 
+The library calls a method that declares `cross_density` with it, and the populations of one solve share one grid: the
+iterator refuses populations whose node coordinates differ, since the rows are read at one population's points. A
+method of yours that declares `cross_density` is called with it by the library; one of yours that calls it without
+passing it on raises Python's `TypeError` naming `cross_density`, rather than reading the own density alone, unless
+you gave the parameter a default, which then stands.
+
+The library's own `dm` methods take no `cross_density`: `dm` is read on single-population paths only, and no
+multi-population door reads it (measured for #2335: no call to `dm` or `dH_dm` in a two- or three-population solve of
+a separable, an L1 or a congestion Hamiltonian).
+
+Until #2335 the stack was handed as `m`. A body that still reads it from `m` gets its own population's values: one
+that branches on `m`'s shape may raise, or may take its other branch with no error, as the coupling of
+`tests/integration/test_multi_population_cross_coupling.py`, guarded on `m.shape[-1] % K`, did before it declared
+`cross_density`: its cross term vanished.
 ---
 
 ## 4. Derivatives

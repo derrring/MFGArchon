@@ -131,7 +131,7 @@ def optimal_control_drift(
         For general Hamiltonians, use the inline pipeline instead::
 
             grad_U = np.gradient(U, dx, axis=-1)
-            alpha = H.optimal_control(t=t, x=x, p=grad_U, m=m)
+            alpha = _family_call(H.optimal_control, t=t, x=x, p=grad_U, m=m)
 
         The FixedPointIterator handles this automatically via
         ``fixed_point_utils.resolve_fp_drift_kwargs`` /

@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     gaussian_kde = None
     SCIPY_AVAILABLE = False
 
+from mfgarchon.core.hamiltonian import _family_call
 from mfgarchon.geometry.boundary.applicator_particle import CONTACT_EPS, ParticleApplicator
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces
@@ -2056,8 +2057,12 @@ class FPParticleSolver(BaseFPSolver):
 
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
-            return H.optimal_control(
-                x=coordinate_tuple(positions, self.problem.dimension), m=None, p=grad_at_particles, t=t
+            return _family_call(
+                H.optimal_control,
+                x=coordinate_tuple(positions, self.problem.dimension),
+                m=None,
+                p=grad_at_particles,
+                t=t,
             )
         return -coupling_coefficient * grad_at_particles
 

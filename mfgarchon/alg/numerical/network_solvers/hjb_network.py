@@ -29,6 +29,7 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
+from mfgarchon.core.hamiltonian import _family_call
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -462,7 +463,10 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                 "The legacy edge-cost policy evaluation assembled a singular row-sum-zero system "
                 "(returned NaN); a NetworkMFGProblem always wires a NetworkHamiltonian."
             )
-        return {i: np.atleast_1d(H.optimal_control(x=np.array([i]), m=m, p=u, t=t)) for i in range(self.num_nodes)}
+        return {
+            i: np.atleast_1d(_family_call(H.optimal_control, x=np.array([i]), m=m, p=u, t=t))
+            for i in range(self.num_nodes)
+        }
 
     def _initialize_policy(self, u: np.ndarray, m: np.ndarray, t: float) -> None:
         self.current_rates = self._rates_at(u, m, t)

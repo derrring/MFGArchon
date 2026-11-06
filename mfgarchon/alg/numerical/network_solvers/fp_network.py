@@ -31,6 +31,7 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+from mfgarchon.core.hamiltonian import _family_call
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
@@ -576,7 +577,7 @@ class FPNetworkSolver(BaseFPSolver):
                     "must come from the single-source NetworkHamiltonian.optimal_control (Issue #1474). "
                     "Ensure the NetworkMFGProblem wired its Hamiltonian."
                 )
-            alpha = H_class.optimal_control(x=np.array([i]), m=m, p=u, t=t)
+            alpha = _family_call(H_class.optimal_control, x=np.array([i]), m=m, p=u, t=t)
             rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 

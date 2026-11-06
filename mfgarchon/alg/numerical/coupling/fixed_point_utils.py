@@ -750,10 +750,10 @@ def compute_fp_velocity_field(
         H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
-            receives the own density as ``m``, and this as ``cross_density`` if it declares that slot: at integer
-            timestep ``n``, one row per population, in 1-D at the faces as ``m`` is, each row averaged by
+            receives the own density as ``m``. In 1-D it also receives this, if it declares ``cross_density``: at
+            integer timestep ``n``, one row per population, at the faces as ``m`` is, each row averaged by
             ``_density_at_faces`` (#2335). ``None`` => single-population. In nD only a stack with one value per node
-            (K = 1) is accepted (#2330).
+            (K = 1) is accepted, and it is read as ``m`` (#2330).
 
     Returns:
         Velocity $\\alpha^*$.
@@ -834,9 +834,9 @@ def compute_fp_velocity_field(
             if cross_density is not None:
                 stacked = np.asarray(cross_density[n])
                 if stacked.size != n_points:
-                    # A stack of another size is more than one population. HJBFDMSolver refuses a cross density in
-                    # nD, so no nD solve reaches here with one, and nothing hands it on as cross_density (#2335).
-                    # This also refuses a Hamiltonian that would ignore m, the price of not guessing (#2330 review).
+                    # A stack of another size is more than one population, which this door does not pair with an nD
+                    # batch, nor hand on as cross_density (#2335). This also refuses a Hamiltonian that would ignore m,
+                    # the price of not guessing (#2330 review).
                     raise NotImplementedError(
                         f"compute_fp_velocity_field: a cross density of {stacked.size} values for {n_points} nodes "
                         f"has no per-node form for an nD optimal_control batch; only one value per node is "
@@ -846,7 +846,9 @@ def compute_fp_velocity_field(
             else:
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
             alpha_n = np.asarray(
-                H_class.optimal_control(x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt)
+                _family_call(
+                    H_class.optimal_control, x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt
+                )
             )
             if alpha_n.shape != (n_points, ndim):
                 raise ValueError(

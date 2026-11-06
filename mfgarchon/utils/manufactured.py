@@ -78,7 +78,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian
+from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian, _family_call
 from mfgarchon.types.callable_protocols import (
     EXACT_SOLUTION_SLOTS,
     BoundCallable,
@@ -249,8 +249,12 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
         )
     probes = _drift_probes(dim)
     alpha = np.asarray(
-        hamiltonian.optimal_control(
-            x=coordinate_tuple(np.zeros_like(probes), dim), m=np.ones(len(probes)), p=probes, t=0.0
+        _family_call(
+            hamiltonian.optimal_control,
+            x=coordinate_tuple(np.zeros_like(probes), dim),
+            m=np.ones(len(probes)),
+            p=probes,
+            t=0.0,
         ),
         dtype=float,
     )
@@ -333,7 +337,9 @@ def fp_source(
         grad_u = _gradient(pair.at("grad_u", t, pts), n, dim, "grad_u")
         m = _scalar(pair.at("m", t, pts), n, "m")
         alpha = _gradient(
-            np.asarray(hamiltonian.optimal_control(x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float),
+            np.asarray(
+                _family_call(hamiltonian.optimal_control, x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float
+            ),
             n,
             dim,
             "optimal_control",

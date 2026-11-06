@@ -162,6 +162,20 @@ class MultiPopulationIterator:
                 "population alone, with its own MFGProblem.solve(), or give each population's terminal cost through "
                 "Conditions(u_terminal=...)."
             )
+        # cross_density hands every population's density at one population's points, row for row (#2335), so with more
+        # than one population they must be the same points: compared by coordinates, since one node count on [0, 1] and
+        # on [0, 2] is two grids.
+        if K > 1:
+            nodes = [np.asarray(self.multi_problem.get_population(k).geometry.get_spatial_grid()) for k in range(K)]
+            apart = [k for k in range(1, K) if nodes[k].shape != nodes[0].shape or not np.array_equal(nodes[k], nodes[0])]
+            if apart:
+                raise ValueError(
+                    f"MultiPopulationIterator: population(s) {apart} sit on a grid other than population 0's "
+                    f"({[nodes[k].shape for k in apart]} nodes against {nodes[0].shape}, compared by coordinates). Each "
+                    "population's density is read at the points of the door that reads it, and every population's is "
+                    "handed beside it as cross_density at those same points, so the populations of one solve share one "
+                    "grid (#2335)."
+                )
 
         # Initialize from each population's problem
         M = []

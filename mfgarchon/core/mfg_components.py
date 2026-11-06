@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
+from mfgarchon.core.hamiltonian import _family_call
 from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
     _remembered,
@@ -384,7 +385,7 @@ class HamiltonianMixin:
         x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian directly: H(t, x, p, m)
-        return float(H_class(x=x, m=m_at_x, p=p, t=current_time))
+        return float(_family_call(H_class, x=x, m=m_at_x, p=p, t=current_time))
 
     def dH_dm(
         self,
@@ -478,7 +479,7 @@ class HamiltonianMixin:
         x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian.dm() directly: dm(t, x, p, m)
-        return float(H_class.dm(x=x, m=m_at_x, p=p, t=current_time))
+        return float(_family_call(H_class.dm, x=x, m=m_at_x, p=p, t=current_time))
 
     def dH_dp(
         self,
@@ -542,7 +543,7 @@ class HamiltonianMixin:
         x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian.dp() directly: dp(t, x, p, m)
-        return H_class.dp(x=x, m=m_at_x, p=p, t=current_time)
+        return _family_call(H_class.dp, x=x, m=m_at_x, p=p, t=current_time)
 
     def get_hjb_hamiltonian_jacobian_contrib(
         self,
