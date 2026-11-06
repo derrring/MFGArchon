@@ -166,9 +166,9 @@ def _problem_with(hamiltonian, **kwargs):
 def test_the_composition_preserves_every_hamiltonian_field():
     """It COPIES; an earlier version rebuilt from five of six constructor parameters.
 
-    `population_index` is the one that was dropped, and it is live -- a multi-population problem
-    keyed to population k silently became population 0. Nothing caught it, because nothing here
-    used a non-default value.
+    `population_index` is the one that was dropped. A network Hamiltonian reads it; a grid one does not,
+    since a multi-population solve hands each population its own density (#2335). Nothing caught the drop,
+    because nothing here used a non-default value.
     """
     composed = _problem_with(_hamiltonian_with(population_index=2), state_penalty=_wall).components._hamiltonian_class
 

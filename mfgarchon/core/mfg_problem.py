@@ -1950,8 +1950,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         COPIES rather than rebuilds. An earlier version constructed a fresh
         ``SeparableHamiltonian`` from five of its six constructor parameters, which silently
-        dropped ``population_index`` (live: a multi-population problem keyed to population k
-        became population 0) and downgraded a ``QuadraticMFGHamiltonian`` to its base class.
+        dropped ``population_index`` and downgraded a ``QuadraticMFGHamiltonian`` to its base
+        class.
         ``copy.copy`` preserves the type and every attribute, and leaves the caller's own object
         unmutated.
 

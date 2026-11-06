@@ -286,6 +286,21 @@ the drift is computed. The weak-form family differentiates $u$ on its own FEM or
 replace that path with a coupling-layer velocity computed on another basis, which would break the
 paired HJB–FP operator relation.
 
+### Several populations
+
+In a multi-population solve (`MultiPopulationIterator`), `m` is the population's own density, at the points of the
+door that reads it: the grid's nodes at the HJB step, and the faces at the FP velocity, averaged there as a
+one-population solve averages its own density (#2335). A term or a Hamiltonian method that reads every population
+declares a parameter named `cross_density`. It holds one row per population, its own included, at the same points as
+`m`: row `j` is population `j`'s density, and `cross_density.sum(axis=0) - m` is the other populations' together.
+Where there is one population, in a single-population solve and in the problem's own check, `cross_density` is
+`m[np.newaxis]`, one row, so a body that reads the others reads them as possibly none, such as
+`cross_density[1 - k] if len(cross_density) > 1 else 0 * m`. `cross_density` is an array where `x` is a tuple because
+its rows always share one shape and its leading axis is always the number of populations, while `x`'s entries may be
+scalars and arrays mixed. Until #2335 the stack was handed as `m`. A body that still reads it from `m` gets its own
+population's values: one that reads its shape raises, and one that does not, such as `np.mean(m)` meant as every
+population's mean, reads its own population's with no error.
+
 ---
 
 ## 4. Derivatives
@@ -555,6 +570,7 @@ Each door states it, in `callable_protocols.py`'s `Slots`, and the check below r
 | `m`, `v` | `source_term_hjb`, `source_term_fp`; `m` at a volatility, diffusion, drift or coefficient | a field over the points `x` holds | the field whole, so `np.max(m)` may read it |
 | `p`, `m` | a raw Hamiltonian, a conditional Hamiltonian, `alpha_star` | one value per point, in step with `x` | that point's |
 | `v`, `m` | a variational Lagrangian | one value per point, in step with `x` | that point's |
+| `cross_density` | a density term or a Hamiltonian method that declares it (§ *Several populations*) | one row per population, each one value per point | that point's column |
 | `t`, `t_idx`, `mu`, `theta` | wherever they appear | one value for the call | that value |
 
 ### A body must read a batch and a point the same

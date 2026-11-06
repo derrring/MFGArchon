@@ -244,9 +244,10 @@ class MultiPopulationIterator:
                 )
 
                 # Issue #1071 (lock-faithful): pass the stacked cross-density trajectory ``m_all``
-                # directly. The HJB solver indexes it at each integer timestep and feeds it to the
-                # population's own Hamiltonian, which slices the other populations via
-                # ``population_index`` — no BoundHamiltonian wrapper and no round(t/dt). Only
+                # directly. The HJB solver indexes it at each integer timestep and hands it to the
+                # population's own Hamiltonian beside ``M[k]``, its own density, which is what ``m``
+                # holds there (#2335); a term reads the stack by declaring ``cross_density``. No
+                # BoundHamiltonian wrapper and no round(t/dt). Only
                 # HJBFDMSolver threads this today (Issue #1157); other backends would silently
                 # decouple (their solve reads the uncoupled ``problem.hamiltonian_class``), so fail
                 # loud for K>1. K==1 has no cross-coupling: a standalone solve is byte-identical,
@@ -308,8 +309,8 @@ class MultiPopulationIterator:
             # through resolve_fp_drift_kwargs (Issue #1043), identical to the single-population
             # FixedPointIterator — so a K=1 multi-population solve matches single-pop. Issue #1071
             # (lock-faithful): the population's OWN (unbound) Hamiltonian is passed as h_class plus
-            # the stacked cross-density trajectory m_all; the velocity (non-smooth H) sees the other
-            # populations' density via cross_density[n] (sliced by population_index) — no
+            # the stacked cross-density trajectory m_all; the velocity (non-smooth H) reads its own
+            # density as m and every population's as cross_density, at the faces (#2335) — no
             # BoundHamiltonian wrapper, no round(t/dt). Smooth-separable H takes the potential_field=U
             # path (cross-coupling enters via the HJB only). Network problems keep the U-as-drift
             # path (FPNetworkSolver extracts rates internally).

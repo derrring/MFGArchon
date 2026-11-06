@@ -37,18 +37,16 @@ _NX, _NT, _T, _SIG = 20, 8, 1.0, 0.15
 
 
 def _make_problem(k, cross, K):
-    """Population-k problem whose coupling f_k(m) = cross * (other population's density).
+    """Population-k problem whose coupling f_k = cross * (other population's density).
 
-    The coupling distinguishes the stacked cross-density (length K*grid) from a
-    single-population density and is scalar-safe (so MFGComponents validation passes).
+    `m` is the population's own density; the coupling reads the other's row of `cross_density`, which holds one row
+    per population, and is 0 where there is only its own row: a single-population check or solve (#2335).
     """
 
-    def coupling(m, pop_idx=k, cross=cross, K=K):
-        m = np.asarray(m, float)
-        if K >= 2 and m.ndim >= 1 and m.shape[-1] % K == 0 and m.shape[-1] >= 2 * K:
-            grid = m.shape[-1] // K
-            return cross * m.reshape(*m.shape[:-1], K, grid)[..., 1 - pop_idx, :]
-        return np.zeros_like(m)
+    def coupling(m, cross_density, pop_idx=k, cross=cross):
+        if len(cross_density) > 1:
+            return cross * cross_density[1 - pop_idx]
+        return np.zeros_like(np.asarray(m, float))
 
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
@@ -170,8 +168,8 @@ def test_nonfdm_backend_multipop_fails_loud():
 
 def test_fp_velocity_consumes_cross_density_1071():
     """Issue #1071: the FP drift velocity must consume the ``cross_density`` trajectory — at each
-    integer timestep ``optimal_control`` sees the stacked density (the other populations), not the
-    own-population density. The integration test's separable H has a momentum-only
+    integer timestep ``optimal_control`` sees every population's density at the faces as ``cross_density``, beside
+    its own as ``m`` (#2335). The integration test's separable H has a momentum-only
     ``optimal_control`` (so it would not exercise this), hence a deliberately ``m``-dependent test
     Hamiltonian; the velocity with a cross-density must differ from the own-density velocity."""
     from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field
@@ -181,23 +179,18 @@ def test_fp_velocity_consumes_cross_density_1071():
     dt = T / Nt
 
     class _MDepH(HamiltonianBase):
-        """optimal_control reads the stacked density (the OTHER population) so the velocity
+        """optimal_control reads the OTHER population's row of cross_density, so the velocity
         genuinely depends on the cross-density (gives the flow test teeth)."""
 
-        def __init__(self, population_index, k_pops):
+        def __init__(self, population_index):
             self.population_index = population_index
-            self._K = k_pops
 
         def __call__(self, t, x, p, m):
             return 0.5 * np.asarray(p, float) ** 2
 
-        def optimal_control(self, t, x, p, m):
-            m = np.asarray(m, float)
+        def optimal_control(self, t, x, p, m, cross_density):
             p = np.asarray(p, float)
-            other = 0.0
-            if m.ndim >= 1 and m.shape[-1] % self._K == 0 and m.shape[-1] >= 2 * self._K:
-                grid = m.shape[-1] // self._K
-                other = float(m.reshape(*m.shape[:-1], self._K, grid)[..., 1 - self.population_index, :].mean())
+            other = float(np.mean(cross_density[1 - self.population_index])) if len(cross_density) > 1 else 0.0
             return p.ravel() + other
 
     class _Prob:
@@ -213,7 +206,7 @@ def test_fp_velocity_consumes_cross_density_1071():
     U = rng.rand(Nt + 1, Nx)
 
     for k in range(K):
-        h = _MDepH(k, K)
+        h = _MDepH(k)
         v_cross = compute_fp_velocity_field(prob, U, M[k], h, cross_density=m_all)
         v_own = compute_fp_velocity_field(prob, U, M[k], h)  # own face density (no cross)
         assert not np.array_equal(v_cross, v_own), (

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
+from mfgarchon.core.hamiltonian import _family_call, _population_rows
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
@@ -721,6 +722,12 @@ def diverged_value_function(
     return preserve_terminal_condition(published, U_terminal)
 
 
+def _density_at_faces(m: np.ndarray) -> np.ndarray:
+    """A 1-D density at the faces $x_{i+1/2}$, the mean of its two nodes, along the last axis: the points the 1-D
+    velocity reads it at, for the own density and for each block of a multi-population stack alike (#2335)."""
+    return 0.5 * (m[..., :-1] + m[..., 1:])
+
+
 def compute_fp_velocity_field(
     problem: object,
     U: np.ndarray,
@@ -743,11 +750,10 @@ def compute_fp_velocity_field(
         H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
-            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``, which the
-            Hamiltonian must slice itself by ``population_index``; no library grid Hamiltonian does, #2335)
-            instead of the own-population density — replacing the ``BoundHamiltonian`` wrapper's
-            ``m_all[round(t/dt)]`` (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
-            In nD only a stack with one value per node (K = 1) is accepted (#2330).
+            receives the own density as ``m``, and this as ``cross_density`` if it declares that slot: at integer
+            timestep ``n``, one row per population, in 1-D at the faces as ``m`` is, each row averaged by
+            ``_density_at_faces`` (#2335). ``None`` => single-population. In nD only a stack with one value per node
+            (K = 1) is accepted (#2330).
 
     Returns:
         Velocity $\\alpha^*$.
@@ -785,22 +791,26 @@ def compute_fp_velocity_field(
         # Face gradient: p_{i+1/2} = (U[i+1] - U[i]) / dx
         p_faces = np.diff(U, axis=-1) / dx  # (Nt, Nx-1)
 
-        # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2
-        m_faces = 0.5 * (M[:, :-1] + M[:, 1:])  # (Nt, Nx-1)
+        # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2, the own density's, in a multi-population solve too (#2335). The
+        # stacked cross-density trajectory a multi-population solve passes (#1071) goes beside it as cross_density, read
+        # at the faces too: each population's row averaged by the same function, so at K = 1 its one row is m.
+        m_faces = _density_at_faces(M)  # (Nt, Nx-1)
+        if cross_density is not None:
+            stacked = np.asarray(cross_density)
+            rows = np.stack([_population_rows(row, Nx, "compute_fp_velocity_field") for row in stacked])
+            cross_faces = _density_at_faces(rows)  # (Nt, K, Nx-1)
 
         alpha_faces = np.zeros((Nt, Nx - 1))
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
-            # Issue #1071: a multi-population solve passes the stacked cross-density trajectory;
-            # optimal_control then sees the other populations' density (sliced via population_index)
-            # at this integer timestep, replacing the BoundHamiltonian wrapper's m_all[round(t/dt)]
-            # (n*dt/dt == n, byte-identical). Single-population: the own face-centered density.
-            if cross_density is not None:
-                m_n = cross_density[n]
-            else:
-                m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
+            m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
+            cross_n = None if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
             p_n = p_faces[n].reshape(-1, 1)
-            alpha_faces[n] = H_class.optimal_control(x=coordinate_tuple(x_arr, 1), m=m_n, p=p_n, t=n * dt).ravel()
+            alpha_faces[n] = np.ravel(
+                _family_call(
+                    H_class.optimal_control, x=coordinate_tuple(x_arr, 1), m=m_n, p=p_n, t=n * dt, cross_density=cross_n
+                )
+            )
 
         return alpha_faces
     else:
@@ -824,9 +834,9 @@ def compute_fp_velocity_field(
             if cross_density is not None:
                 stacked = np.asarray(cross_density[n])
                 if stacked.size != n_points:
-                    # A stack of another size cannot be paired with the (N, d) batch node by node, and no grid
-                    # Hamiltonian in the library slices one by `population_index` (#2335). This also refuses a
-                    # Hamiltonian that would ignore m, which is the price of not guessing (#2330 review).
+                    # A stack of another size is more than one population. HJBFDMSolver refuses a cross density in
+                    # nD, so no nD solve reaches here with one, and nothing hands it on as cross_density (#2335).
+                    # This also refuses a Hamiltonian that would ignore m, the price of not guessing (#2330 review).
                     raise NotImplementedError(
                         f"compute_fp_velocity_field: a cross density of {stacked.size} values for {n_points} nodes "
                         f"has no per-node form for an nD optimal_control batch; only one value per node is "
