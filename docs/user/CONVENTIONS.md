@@ -570,10 +570,25 @@ door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `eval
   returns the result: a volatility or a source at a solver's first step, a solver's `source_term`, a drift at a
   particle's first step, a measure field, a manufactured pair. A door that hands one point, or an empty batch, has
   nothing to compare, and the next batch is compared.
-- **Once it agrees, for each binding.** A comparison that agrees, with two or more distinct points among the rows it
-  compares, marks the body compared, and it is read with no comparison after that. The mark is kept with the binding:
-  on the object that holds it, such as a problem, a Hamiltonian or a measure field, or, at a door that binds a body at
-  every read or every solve, with the body while it lives. So a body handed to a new holder is compared once more there.
+- **Once it agrees, and where the mark is kept.** A comparison that agrees, with two or more distinct points among the
+  rows it compares, marks the body compared, and it is read with no comparison after that. Where the mark is kept
+  depends on the door:
+  - **With the body, while it lives, for every door that binds it to the same `Slots`:** a problem's `u_terminal` and
+    `m_initial`; a solver's `source_term`; the volatility a solver reads through a
+    `CoefficientField` or FP-FDM's tensor path, the particle solver's drift and volatility, `resolve_diffusion_source`
+    and `composite_drift`; a region or signed distance, a boundary value, a graph's node value, rule and selector, and a
+    network's initial density and terminal value; `PotentialEnergy`'s `V`; Nitsche's `f` and `u_exact`, and a 1-D
+    mesh's refinement function; the optimal-transport initial density and running cost, and the variational initial
+    guess and constraints; a raw Hamiltonian at the validator. A body accepted at one of these is read with no
+    comparison at the next, a new problem's included.
+  - **On the object that holds the binding:** a Hamiltonian's potential and its density terms; a measure field; a
+    problem's `source_term_hjb` and `source_term_fp`, its `diffusion`, and its `state_penalty`, compared inside the
+    potential it is composed into; a stochastic problem's conditional
+    Hamiltonian and terminal cost; a variational problem's Lagrangian and terminal cost; a network's node terms; a
+    manufactured pair; `ImplicitHeatSolver`'s forcing; Howard's `alpha_star`, running cost and control Lagrangian; a
+    graph coupling; FP-FDM's callable drift, whose holder lasts one solve. A body handed to a new holder of these is
+    compared once more there.
+
   A refusal raises and is not kept. One point, a batch whose compared rows are one point, an empty batch, or a read with
   no `x` leaves the body as it was.
 - **The samples.** They are spread across the batch at the golden ratio's multiples and are not its ends and middle, where
@@ -600,8 +615,12 @@ door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `eval
 
 - A refusal is not remembered. A later read, by a new holder or the same one, compares again on its own samples, so a
   sweep that catches a refusal and rebuilds its problem can be accepted where the new samples agree. A potential that
-  reads a batch differently from a point left of 1.5 is refused on `[0, 1]`, and accepted on `[1.4, 3.0]`, where the
-  samples sit right of 1.5 and the first nodes left of it, and that solve reads it on the batch.
+  reads a batch differently from a point left of 1.5 is refused on 11 nodes of `[0, 1]`, and accepted on 11 nodes of
+  `[1.4, 3.0]`, where the samples sit right of 1.5 and the first node left of it, and that solve reads it on the batch.
+- A body accepted at a door that keeps the mark with the body is not compared again, at a new problem either. A
+  `u_terminal` that reads a batch 1 higher than a point wherever `x[0] < 0.15` is refused by a problem on 11 nodes of
+  `[0, 0.5]`, whose samples include 0.1. Accepted first by a problem on 11 nodes of `[0, 1]`, whose samples are 0.2,
+  0.6 and 0.9, it is then read by the `[0, 0.5]` problem with no comparison, 1 higher at its nodes below 0.15.
 
 - A first batch can be narrow. A particle drift's first batch is the initial cloud, so a body that reads its largest
   coordinate past a dead zone reads the same both ways while the cloud is inside it, is accepted, and is not compared

@@ -449,10 +449,9 @@ def _entry_at(
 
 
 def _copies(values: Mapping[str, Any]) -> dict[str, Any]:
-    """``values`` with every array copied, so a body that writes into one is read on what the door handed it each time."""
-    return {
-        slot: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for slot, value in values.items()
-    }
+    """``values`` with every array copied, as the type it was handed, so a body that writes into one is read on what the
+    door handed it each time, and one that reads a masked array's mask still finds it."""
+    return {slot: value.copy() if isinstance(value, np.ndarray) else value for slot, value in values.items()}
 
 
 def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: Slots, name: str, guidance: str) -> int:

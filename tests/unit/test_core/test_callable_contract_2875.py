@@ -1196,6 +1196,18 @@ def test_the_comparison_reads_copies_of_every_array_it_hands():
     np.testing.assert_array_equal(held, np.ones(3))
 
 
+def test_the_comparison_copies_an_array_as_the_type_it_was_handed():
+    """A masked ``mu`` read by its mask was refused: the copy for the comparison was a plain array, with no mask (review
+    3). The copy keeps the type it was handed."""
+    held = np.ma.masked_array([1.0, 2.0, 3.0], mask=[False, True, False])
+
+    def masked_count(t, x, mu):
+        return x[0] + np.sum(mu.mask)
+
+    read = FunctionalMeasureField(masked_count).evaluate(0.0, _BATCH, held)
+    np.testing.assert_allclose(np.ravel(read), _BATCH[:, 0] + 1.0, rtol=0, atol=1e-15)
+
+
 def test_a_mock_does_not_pass_for_a_closure_the_library_marked():
     from unittest.mock import MagicMock
 
