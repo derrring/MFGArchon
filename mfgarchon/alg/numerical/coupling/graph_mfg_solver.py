@@ -307,6 +307,7 @@ class GraphMFGSolver(BaseCouplingIterator):
                         Us_new[k],
                         Ms_expanded[k],
                         drift_convention=self._fp_drift_convention_k[k],
+                        fp_solver=self._fp[k],
                     )
                     fp_kwargs.update(drift_kwargs)
                     if use_positional_U:

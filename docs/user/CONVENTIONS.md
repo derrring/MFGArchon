@@ -241,18 +241,23 @@ and for $\ell(\alpha) = \tfrac{\lambda}{2}|\alpha|^{2}$ this is $H_{\text{contro
 ### One drift, one owner
 
 The Fokker–Planck drift has one owner, the Hamiltonian's control cost, and no solver keeps its own
-copy. Solvers that advect with $-c\,\nabla u$ read $c$ from `fp_drift_coefficient(problem)`; FVM, FEM
-and meshless-Galerkin take $\alpha^*$ from `H.optimal_control` on their own basis.
+copy. Solvers that advect with $-c\,\nabla u$ read $c$ from `fp_drift_coefficient(problem)`; FVM, FEM,
+meshless-Galerkin and, for a separable $H$, the particle solver take $\alpha^*$ from `H.optimal_control`
+on their own basis.
 
 `fp_drift_coefficient(problem)` resolves in this order:
 
-1. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
+1. A `SeparableHamiltonian` that serves an optimal control of its own → **raises**, stating what was
+   run (#2900). It serves its own unless the method it serves is `SeparableHamiltonian.optimal_control`
+   bound to it and, for a `QuadraticControlCost`, the cost serves that class's own
+   (`drift_is_the_control_costs`).
+2. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
    well-formed problem takes.**
-2. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
+3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
    not represent that optimal control.
-3. Any Hamiltonian that is not a `SeparableHamiltonian`, or none at all → the problem's
+4. Any Hamiltonian that is not a `SeparableHamiltonian`, or none at all → the problem's
    `coupling_coefficient`, a legacy scalar.
-4. Neither of the above → **raises**.
+5. Neither of the above → **raises**.
 
 `coupling_coefficient` is **not** an alternative spelling of the control cost and must never be set
 to stand in for one.
@@ -263,11 +268,32 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
 
 - **`potential_field` carries the value function $u$.** On the default path — a smooth separable
   $H$ — the coupling layer passes `potential_field=U` to every FP solver that has that parameter, and
-  the solver forms $\alpha^* = -D_pH$ itself. *Not yet met (#2429): `MultiPopulationIterator` passes
-  the value function to network populations as `drift_field=`, the deprecated alias.*
-- **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it only for a
-  non-smooth or non-separable $H$, and passes it only to a solver whose convention is `VELOCITY`
-  (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
+  the solver forms the drift itself. FP-FDM and the semi-Lagrangian solver form $-c\,\nabla u$, the
+  control cost's drift, and say so by `_forms_its_drift_from_u`. FVM, the particle solver and the
+  weak-form family read `optimal_control`. *Not yet met (#2429): `MultiPopulationIterator` passes the
+  value function to network populations as `drift_field=`, the deprecated alias.*
+- **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it from
+  `optimal_control` for a non-smooth or non-separable $H$, and passes it only to a solver whose
+  convention is `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
+- **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
+  is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
+  any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only where FP-FDM's
+  velocity route has been measured equal to its value-function route: one population on a 1-D grid
+  with `NO_FLUX` walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an
+  advection scheme that reads a velocity. Anywhere else, and on the semi-Lagrangian solver, the
+  coupling layer refuses it. FP-FDM's velocity route off that set is #2904.
+  A refusal states what was run and on what, and why it refuses; it names no other scheme.
+- **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
+  refusals state it:
+  - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$. It refuses
+    walls that are not one uniform condition, Dirichlet walls, a volatility that is not one constant,
+    and, on its value-function route, a control cost that is not quadratic (#1542).
+  - **The particle solver** reads it for a separable $H$, and hands it `m=None` (#2903). It refuses a
+    control cost that is not quadratic (#1542).
+  - **The weak-form family** (FEM, meshless Galerkin) reads it at $t = 0$ with `m=None` (#2903). The
+    meshless HJB with `streamline_diffusion_scale > 0` forms $-c\,\nabla u$ for its stabilisation,
+    and refuses such an $H$ there.
+  - **FP-FDM** reads it as a velocity inside the set above.
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or
