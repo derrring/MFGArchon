@@ -208,9 +208,8 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         Example:
             >>> # Different destinations for each population
             >>> def terminal_cost_k(self, x, k):
-            ...     x_arr = np.atleast_1d(x)
             ...     target = self.targets[k]  # Population k's destination
-            ...     return 0.5 * np.sum((x_arr - target)**2)
+            ...     return 0.5 * (x[0] - target)**2
         """
         ...
 
@@ -231,9 +230,8 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         Example:
             >>> # Different initial distributions
             >>> def initial_density_k(self, x, k):
-            ...     x_arr = np.atleast_1d(x)
             ...     center = self.initial_centers[k]
-            ...     return np.exp(-10 * np.sum((x_arr - center)**2))
+            ...     return np.exp(-10 * (x[0] - center)**2)
         """
         ...
 

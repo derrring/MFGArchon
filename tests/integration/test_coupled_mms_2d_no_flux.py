@@ -98,6 +98,8 @@ WHAT THIS STUDY CANNOT SEE
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 import numpy as np
@@ -169,20 +171,16 @@ _TRUE_HAMILTONIAN = SeparableHamiltonian(
 # `mfgarchon.utils.manufactured` (#2201) and is no longer written here: the sign conventions in this
 # file's header are what that module encodes, and stating them twice is how they drift apart.
 PAIR = ManufacturedPair(
-    u=lambda t, x: u_star(t, x[..., 0], x[..., 1]),
-    u_t=lambda t, x: _a1p(t) * (np.cos(C * x[..., 0]) + BETA * np.cos(C * x[..., 1])),
-    grad_u=lambda t, x: np.stack(
-        [-_a1(t) * C * np.sin(C * x[..., 0]), -BETA * _a1(t) * C * np.sin(C * x[..., 1])], axis=-1
-    ),
-    hess_u=lambda t, x: _diag_hessian(
-        -_a1(t) * C**2 * np.cos(C * x[..., 0]), -BETA * _a1(t) * C**2 * np.cos(C * x[..., 1])
-    ),
-    m=lambda t, x: m_star(t, x[..., 0], x[..., 1]),
-    m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+    u=lambda t, x: u_star(t, x[0], x[1]),
+    u_t=lambda t, x: _a1p(t) * (np.cos(C * x[0]) + BETA * np.cos(C * x[1])),
+    grad_u=lambda t, x: np.stack([-_a1(t) * C * np.sin(C * x[0]), -BETA * _a1(t) * C * np.sin(C * x[1])], axis=-1),
+    hess_u=lambda t, x: _diag_hessian(-_a1(t) * C**2 * np.cos(C * x[0]), -BETA * _a1(t) * C**2 * np.cos(C * x[1])),
+    m=lambda t, x: m_star(t, x[0], x[1]),
+    m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
     grad_m=lambda t, x: np.stack(
         [
-            -2 * C * _a2(t) * np.sin(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
-            -4 * C * _a2(t) * np.cos(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2,
+            -2 * C * _a2(t) * np.sin(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2,
+            -4 * C * _a2(t) * np.cos(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2,
         ],
         axis=-1,
     ),
@@ -193,19 +191,19 @@ PAIR = ManufacturedPair(
 
 def _diag_hessian(d00, d11):
     """A ``(N, 2, 2)`` Hessian with zero cross term -- correct for u*, which is a separable SUM."""
-    hess = np.zeros((len(np.atleast_1d(d00)), 2, 2))
-    hess[:, 0, 0], hess[:, 1, 1] = d00, d11
+    hess = np.zeros((*np.shape(d00), 2, 2))
+    hess[..., 0, 0], hess[..., 1, 1] = d00, d11
     return hess
 
 
 def _hess_m(t, x):
     """m* is a PRODUCT, so its cross derivative is non-zero -- the one this file supplies that an
     isotropic sigma multiplies by exactly zero. `check_pair` is what audits it; see the test below."""
-    hess = np.zeros((len(x), 2, 2))
-    common = _a2(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2
-    hess[:, 0, 0] = -4 * C**2 * common
-    hess[:, 1, 1] = -16 * C**2 * common
-    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2
+    hess = np.zeros((*np.shape(x[0]), 2, 2))
+    common = _a2(t) * np.cos(2 * C * x[0]) * np.cos(4 * C * x[1]) / L**2
+    hess[..., 0, 0] = -4 * C**2 * common
+    hess[..., 1, 1] = -16 * C**2 * common
+    hess[..., 0, 1] = hess[..., 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[0]) * np.sin(4 * C * x[1]) / L**2
     return hess
 
 
@@ -214,36 +212,15 @@ s_fp = fp_source(PAIR, _TRUE_HAMILTONIAN, SIGMA)
 
 
 def _points(x):
-    """Return the solver's point array as ``(N, 2)``. Raises rather than guessing.
-
-    A previous version split this into ``(x1, x2)`` and fell back to ``(a.ravel(), a.ravel())`` for
-    any other shape, which aliases x2 := x1 and evaluates BOTH manufactured sources on the
-    degenerate diagonal x1 == x2 -- a plausible, wrong source field, silently. In an oracle that is
-    the one failure that cannot be afforded: the test would keep passing while measuring the scheme
-    against the wrong exact solution. Instrumented over a full converged solve, that branch was
-    taken 0 times out of 64, so it bought nothing and risked everything. The repo's own rule is at
-    `utils/pde_coefficients.py:114` -- "the prior silent fallback masked a malformed problem".
-
-    Note this convention is not universal in the library: `FPFVMSolver` passes
-    `geometry.meshgrid()`, a (d, *shape) tuple, where FDM and the whole HJB side pass (N, d)
-    points (#2019). Raising here is what makes that difference visible instead of silently
-    diagonal.
-    """
-    a = np.asarray(x, dtype=float)
-    if a.ndim >= 2 and a.shape[-1] == 2:
-        return a.reshape(-1, 2)
-    raise TypeError(
-        f"_points expected an (N, 2) point array from the solver, got shape {a.shape}. "
-        "Aliasing x2 := x1 would evaluate the manufactured sources on the diagonal and the test "
-        "would pass while measuring the wrong exact solution (see #2019 for the FVM convention)."
-    )
+    """The solver's coordinates as the ``(N, 2)`` points the manufactured sources read."""
+    return np.stack([np.ravel(xi) for xi in x], axis=-1)
 
 
 def _build_problem(nx: int, nt: int):
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
-        m_initial=lambda x: float(m_star(0.0, np.asarray(x).ravel()[0], np.asarray(x).ravel()[1])),
-        u_terminal=lambda x: float(u_star(T, np.asarray(x).ravel()[0], np.asarray(x).ravel()[1])),
+        m_initial=lambda x: m_star(0.0, x[0], x[1]),
+        u_terminal=lambda x: u_star(T, x[0], x[1]),
         hamiltonian=SeparableHamiltonian(
             # LAMBDA, not a literal: the source's Hamiltonian is a separate OBJECT by design
             # (see _TRUE_HAMILTONIAN) but the two must agree on the VALUE, or the source
@@ -267,8 +244,8 @@ def _build_problem(nx: int, nt: int):
         # against a control where sigma=1.1 moves the same solve by 1.672e-02.
         coupling_coefficient=1.0,
         components=components,
-        source_term_hjb=lambda t, x, v, m: s_hjb(t, _points(x)),
-        source_term_fp=lambda t, x, v, m: s_fp(t, _points(x)),
+        source_term_hjb=lambda t, x: s_hjb(t, _points(x)).reshape(np.shape(x[0])),
+        source_term_fp=lambda t, x: s_fp(t, _points(x)).reshape(np.shape(x[0])),
     )
     return problem
 
@@ -460,9 +437,7 @@ def test_the_pair_audit_would_catch_a_wrong_cross_derivative():
     only check."""
     rng = np.random.default_rng(20260831)
     x = rng.uniform(0.0, L, size=(200, 2))
-    broken = ManufacturedPair(
-        **{**PAIR.__dict__, "hess_m": lambda t, xx: _hess_m(t, xx) * np.array([[1, -1], [-1, 1]])}
-    )
+    broken = dataclasses.replace(PAIR, hess_m=lambda t, x: _hess_m(t, x) * np.array([[1, -1], [-1, 1]]))
 
     assert np.max(np.abs(fp_source(broken, _TRUE_HAMILTONIAN, SIGMA)(0.37 * T, x) - s_fp(0.37 * T, x))) == 0.0
     with pytest.raises(ValueError, match="hess_m"):

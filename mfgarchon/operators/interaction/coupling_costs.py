@@ -132,7 +132,7 @@ class PotentialCost(_SummableCost):
 
     Args:
         V: The potential, cost-signed (positive repels), called once per node as ``m_initial`` is: ``V(x)`` with
-            ``x`` a float in 1-D and an array of shape ``(d,)`` in n-D, returning one number. A ``V(t, x)`` is refused:
+            ``x`` a coordinate tuple, returning one number per point. A ``V(t, x)`` is refused:
             this F is autonomous, and a time-dependent potential goes in the Hamiltonian, ``potential(t, x)``.
     """
 
@@ -143,45 +143,11 @@ class PotentialCost(_SummableCost):
         return bind_on_measure(self, GridPointMeasure(problem))
 
     def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
-        from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, rewrite_advice
-        from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
-
-        def copies(points: np.ndarray) -> np.ndarray:
-            # In n-D every point V is handed is its own float64 copy -- at binding, in the adapter's probes (one copy
-            # serves them all) and off the nodes; in 1-D V gets a float -- so a V that writes into its x moves neither
-            # the measure's points nor a caller's (#1642)
-            points = np.asarray(points).astype(np.float64)
-            return points.reshape(points.shape[0], -1)
-
         nodes = np.asarray(measure.points)
         nodes = nodes.reshape(nodes.shape[0], -1)
-        d = nodes.shape[1]
-        in_the_hamiltonian = (
-            "A time-dependent potential goes in the Hamiltonian, as SeparableHamiltonian(potential=...). "
-            f"{rewrite_advice(self.V, POTENTIAL_SLOTS)} "
-            "HJB-FDM and HJB-SL read it at each time; HJB-WENO reads a Hamiltonian at t = 0 (#2429), so with it the "
-            "potential is V(0, x) for the whole horizon. There x is a point or an array of points, of shape (d,) or "
-            "(N, d), so a V written for one point reads x[..., 0] in 1-D (#1642)."
+        energy = PotentialEnergy.sampled_from(
+            self.V, nodes, np.asarray(measure.weights, dtype=float).ravel(), owner="PotentialCost"
         )
-        try:
-            signature, V = adapt_ic_callable(
-                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else copies(nodes[:1])[0], role="V"
-            )
-        except TypeError as unread:
-            raise TypeError(
-                f"PotentialCost(V): V takes the point x alone -- a float in 1-D, an array of shape (d,) in n-D -- and "
-                f"the library could not read this V as V(x). {in_the_hamiltonian}"
-            ) from unread
-        if signature is CallableSignature.SPATIOTEMPORAL_TX:
-            raise TypeError(
-                "PotentialCost(V): V takes (t, x), and this F[m] = integral V m is autonomous -- binding V once would "
-                f"read it at t = 0 for the whole horizon. {in_the_hamiltonian}"
-            )
-
-        def at(points: np.ndarray) -> np.ndarray:
-            return np.array([V(float(x[0])) if d == 1 else V(x) for x in copies(points)], dtype=float)
-
-        energy = PotentialEnergy(at(nodes), np.asarray(measure.weights, dtype=float).ravel(), V=at)
         return cast("EnergyFunctional", energy)
 
     def __repr__(self) -> str:

@@ -949,9 +949,7 @@ class ImplicitDomainCollocation(BaseCollocationStrategy):
             Issue #662: Uses canonical implementation from operators/.
         """
         # Issue #662: Use canonical implementation
-        from mfgarchon.operators.differential.function_gradient import (
-            outward_normal_from_sdf,
-        )
+        from mfgarchon.operators.differential.function_gradient import geometry_outward_normal
 
         # Try analytical gradient first, then numerical
         try:
@@ -959,7 +957,7 @@ class ImplicitDomainCollocation(BaseCollocationStrategy):
             norms = np.linalg.norm(grad, axis=1, keepdims=True)
             return grad / np.maximum(norms, 1e-12)
         except AttributeError:
-            return outward_normal_from_sdf(self.geometry.signed_distance, points)
+            return geometry_outward_normal(self.geometry.signed_distance, points)
 
 
 def _optimize_mesh_ratio_interior(

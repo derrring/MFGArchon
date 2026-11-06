@@ -170,7 +170,7 @@ def _smoke_problem():
         Nt=10,
         T=1.0,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
@@ -211,7 +211,7 @@ def _smoke_problem_2d():
         T=_SMOKE_2D["T"],
         volatility=_SMOKE_2D["sigma"],
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+            m_initial=lambda x: np.exp(-30 * sum((xi - 0.5) ** 2 for xi in x)),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
@@ -239,8 +239,8 @@ def _lq_problem_1d():
         volatility=0.4,
         coupling_coefficient=coupling,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.4) ** 2) / (2 * 0.13**2)),
-            u_terminal=lambda x: 0.2 * (np.asarray(x) - 0.6) ** 2,
+            m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 0.4) ** 2) / (2 * 0.13**2)),
+            u_terminal=lambda x: 0.2 * (np.asarray(x[0]) - 0.6) ** 2,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0 / coupling),
                 coupling=_f,
@@ -806,7 +806,7 @@ def _regime_switching_cell():
                 T=1.0,
                 volatility=0.1,
                 components=MFGComponents(
-                    m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+                    m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(
                         control_cost=QuadraticControlCost(control_cost=1.0),

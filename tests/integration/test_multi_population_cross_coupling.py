@@ -57,8 +57,8 @@ def _make_problem(k, cross, K):
         population_index=k,
     )
     comps = MFGComponents(
-        m_initial=lambda xx, kk=k: np.exp(-((np.asarray(xx) - (0.3 + 0.4 * kk)) ** 2) / 0.02),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x, kk=k: np.exp(-((np.asarray(x[0]) - (0.3 + 0.4 * kk)) ** 2) / 0.02),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=H,
     )
     return MFGProblem(

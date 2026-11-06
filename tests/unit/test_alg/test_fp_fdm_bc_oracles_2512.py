@@ -266,8 +266,7 @@ def _solve(cell: _Cell, n: int) -> tuple[np.ndarray, np.ndarray]:
     u = np.broadcast_to(np.asarray(cell.u(axes, cell.d), dtype=float), shape)
 
     def source(t: float, x: np.ndarray) -> np.ndarray:
-        points = np.asarray(x, dtype=float).reshape(-1, cell.d)
-        return np.asarray(cell.source(t, list(points.T), cell.d), dtype=float).reshape(-1)
+        return np.asarray(cell.source(t, list(x), cell.d), dtype=float)
 
     m = FPFDMSolver(problem).solve_fp_system(
         cell.m(0.0, axes, cell.d),

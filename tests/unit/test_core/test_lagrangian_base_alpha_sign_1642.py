@@ -33,7 +33,7 @@ from mfgarchon.core.hamiltonian import (
     SeparableLagrangian,
 )
 
-X = np.array([0.5])
+X = (0.5,)
 M = 0.3
 T = 0.0
 # p=0 is the kink/stationary edge; +/- pairs catch a global sign flip that a

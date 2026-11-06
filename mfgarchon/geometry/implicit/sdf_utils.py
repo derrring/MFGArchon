@@ -44,6 +44,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -404,7 +406,7 @@ def sdf_gradient(
     points : ndarray
         Points to evaluate gradient, shape (d,) or (N, d)
     sdf_func : callable
-        SDF function: sdf_func(points) -> distances
+        SDF function reading ``x``, a coordinate tuple
     epsilon : float
         Finite difference step size
 
@@ -417,8 +419,8 @@ def sdf_gradient(
     --------
     Gradient of sphere SDF (points outward from center):
     >>> points = np.array([[0.5, 0], [0, 0.5]])
-    >>> def sdf(p):
-    ...     return sdf_sphere(p, center=[0, 0], radius=1.0)
+    >>> def sdf(x):
+    ...     return sdf_sphere(np.stack(x, axis=-1), center=[0, 0], radius=1.0)
     >>> grad = sdf_gradient(points, sdf)
     >>> # grad ≈ [[0.5, 0], [0, 0.5]] (normalized radial direction)
 
@@ -436,6 +438,11 @@ def sdf_gradient(
     N, d = points.shape
     grad = np.zeros((N, d), dtype=np.float64)
 
+    def read(rows: NDArray) -> NDArray:
+        if single_point:
+            return read_region(sdf_func, rows[0], role="sdf_func", one_point=True)
+        return read_region(sdf_func, rows, role="sdf_func")
+
     for i in range(d):
         # Finite difference along axis i
         points_plus = points.copy()
@@ -443,7 +450,7 @@ def sdf_gradient(
         points_plus[:, i] += epsilon
         points_minus[:, i] -= epsilon
 
-        grad[:, i] = (sdf_func(points_plus) - sdf_func(points_minus)) / (2 * epsilon)
+        grad[:, i] = (read(points_plus) - read(points_minus)) / (2 * epsilon)
 
     if single_point:
         grad = grad.ravel()
@@ -530,8 +537,8 @@ if __name__ == "__main__":
     print("✓ Smooth intersection works")
 
     # Test gradient computation
-    def sphere_sdf(p):
-        return sdf_sphere(p, center=[0, 0], radius=1.0)
+    def sphere_sdf(x):
+        return sdf_sphere(np.stack(x, axis=-1), center=[0, 0], radius=1.0)
 
     test_point = np.array([[0.5, 0]])
     grad = sdf_gradient(test_point, sphere_sdf)

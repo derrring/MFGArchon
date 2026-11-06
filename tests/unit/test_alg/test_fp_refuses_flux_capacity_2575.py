@@ -60,8 +60,8 @@ def _grid_problem(bc: BoundaryConditions) -> MFGProblem:
         model=_model(),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda x: scale * bump(x),
-            u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float),
+            m_initial=lambda x: scale * bump(x[0]),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float),
             T=0.5,
         ),
         Nt=10,

@@ -34,7 +34,7 @@ from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     check_adi_compatibility,
@@ -1056,8 +1056,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # same sign as k = -u_t. This solver marches backward from the later endpoint, so the clock
         # starts at (n + 1) * dt and decreases by each sub-step -- matching WENO exactly, so one
         # manufactured source runs against both time-stepping solvers.
-        # x comes from the geometry, not a locally built linspace: base_hjb documents the contract
-        # as source_term(t, x) with x of shape (N, d), and building the points here would make one
+        # x comes from the geometry, not a locally built linspace: evaluate_solver_source takes the
+        # points as (N, d) and hands a body a coordinate tuple, and building the points here would make one
         # manufactured source unrunnable across solvers, defeating a shared MMS channel.
         source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
 
@@ -1215,9 +1215,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 vel_i = vel_all[i]
                 x_departure = self._trace_characteristic_backward(x_i, vel_i, dt)
                 u_departure = self._interpolate_value(U_next, x_departure)
-                U_star[i] = self._sl_value_update(
-                    u_departure, np.array([x_i]), M_next[i], np.array([grad_u[i]]), t_val, dt
-                )
+                U_star[i] = self._sl_value_update(u_departure, x_i, M_next[i], np.array([grad_u[i]]), t_val, dt)
             except NotImplementedError:
                 # An unsupported configuration is not a per-point numerical failure; let the
                 # declared type reach the caller instead of being retyped as RuntimeError.
@@ -2140,7 +2138,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         # Apply boundary handling
                         x_next = self._apply_boundary_to_point(x_next)
                         u_next = self._interpolate_value(U_next, x_next)
-                        L_val = float(L_class(x=x_arr, alpha=np.array([alpha]), m=m_i, t=t_value))
+                        L_val = float(L_class(x=point_tuple(x_arr), alpha=np.array([alpha]), m=m_i, t=t_value))
                         cost = dt * L_val + u_next
                         if cost < best_val:
                             best_val = cost
@@ -2151,7 +2149,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         x_next = _xi + alpha * dt
                         x_next = self._apply_boundary_to_point(x_next)
                         u_next = self._interpolate_value(U_next, x_next)
-                        L_val = float(L_class(x=_xa, alpha=np.array([alpha]), m=_mi, t=t_value))
+                        L_val = float(L_class(x=point_tuple(_xa), alpha=np.array([alpha]), m=_mi, t=t_value))
                         return dt * L_val + u_next
 
                     result = minimize_scalar(
@@ -2201,7 +2199,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     # which collapsed a no-flux foot onto the wall node (#1161) and did not wrap a periodic one.
                     x_next = fold_into_domain(_xc + alpha_vec * dt, np.asarray(_lo), np.asarray(_hi), axis_ops)
                     u_next = self._interpolate_value(U_next_shaped, x_next)
-                    L_val = float(L_class(x=_xc, alpha=alpha_vec, m=_mc, t=t_value))
+                    L_val = float(L_class(x=point_tuple(_xc), alpha=alpha_vec, m=_mc, t=t_value))
                     return dt * L_val + u_next
 
                 alpha0 = np.zeros(self.dimension)
@@ -2614,7 +2612,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             pass
 
         try:
-            return self.problem.hamiltonian(t=t_value, x=np.atleast_1d(x), p=np.atleast_1d(p), m=m)
+            return self.problem.hamiltonian(t=t_value, x=point_tuple(x), p=np.atleast_1d(p), m=m)
         except (AttributeError, TypeError) as e:
             logger.debug(f"Legacy Hamiltonian signature failed: {e}")
 
@@ -2718,13 +2716,15 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         oracle is the one failure that cannot be afforded: the study keeps converging and measures
         a different equation.
         """
-        values = np.asarray(evaluate_solver_source(source_term, t=t, x=points), dtype=float).ravel()
+        values = np.asarray(
+            evaluate_solver_source(source_term, t=t, x=points, dimension=self.problem.dimension), dtype=float
+        ).ravel()
         expected = int(np.prod(grid_shape))
         if values.size != expected:
             raise ValueError(
                 f"HJBSemiLagrangianSolver: source_term returned {values.size} values at t={t:.6g} "
                 f"for a grid of {expected} points {tuple(grid_shape)}. The contract is "
-                f"source_term(t, x) -> (N,) with x of shape (N, d) from geometry.get_spatial_grid()."
+                f"source_term(t, x) -> (N,) with x a coordinate tuple of geometry.get_spatial_grid()'s points."
             )
         return values.reshape(grid_shape)
 
@@ -3314,7 +3314,7 @@ if __name__ == "__main__":
     components_g = MFGComponents(
         hamiltonian=_ZeroH(),
         m_initial=lambda x: 1.0,
-        u_terminal=lambda x: float(np.exp(-(x[0] ** 2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T)),
+        u_terminal=lambda x: np.exp(-(x[0] ** 2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T),
     )
     problem_g = MFGProblem(
         geometry=grid_g,

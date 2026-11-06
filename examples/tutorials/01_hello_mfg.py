@@ -82,14 +82,14 @@ if __name__ == "__main__":
     #     x    = domain.coordinates[0]
     #     m0   = np.exp(-50 * (x - 0.5) ** 2)
     #     mass = float(domain.integrate(m0))          # 0.250663 here
-    #     m_initial = lambda x: np.exp(-50 * (x - 0.5) ** 2) / mass
+    #     m_initial = lambda x: np.exp(-50 * (x[0] - 0.5) ** 2) / mass
     # `domain.integrate` is the grid's own measure. It is not `sum(m) * dx` -- the wall lies ON the
     # first and last node, so those two own half a cell each (Issue #2145). Note that this changes
     # the problem: the coupling f(m) is then evaluated at four times these values, and this tutorial
     # is left unnormalised so that its numbers stay comparable with the ones printed below.
     conditions = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,  # Agents want to be at x = 0.5
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),  # Start near center
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,  # Agents want to be at x = 0.5
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),  # Start near center
         T=1.0,  # Time horizon
     )
 
@@ -157,8 +157,8 @@ if __name__ == "__main__":
 
     # Swap the Conditions component (same model, same domain)
     cond2 = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
         T=2.0,
     )
     problem3 = problem.with_conditions(cond2)

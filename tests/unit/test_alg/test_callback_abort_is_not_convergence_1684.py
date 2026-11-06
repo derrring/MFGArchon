@@ -39,7 +39,7 @@ def _problem():
         Nt=10,
         volatility=0.3,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),

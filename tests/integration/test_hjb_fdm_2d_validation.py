@@ -36,13 +36,13 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         """Gaussian centered at origin for 2D."""
-        x_arr = np.asarray(x)
-        return np.exp(-5 * np.sum(x_arr**2))
+        x_arr = np.stack(x, axis=-1)
+        return np.exp(-5 * np.sum(x_arr**2, axis=-1))
 
     def u_final_2d(x):
         """Quadratic terminal cost for 2D."""
-        x_arr = np.asarray(x)
-        return 0.5 * np.sum(x_arr**2)
+        x_arr = np.stack(x, axis=-1)
+        return 0.5 * np.sum(x_arr**2, axis=-1)
 
     return MFGComponents(
         m_initial=m_initial_2d,
@@ -338,7 +338,7 @@ class TestHJBFDM2DPhysicalProperties:
 
         U_solution = solver.solve_hjb_system(M_test, U_terminal, U_guess)
 
-        center_values = U_solution[:, 6, 6]
+        center_values = U_solution[..., 6, 6]
         diffs = np.diff(center_values)
         # Measured: all 10 steps lie in [-3.008e-4, -3.003e-4], against -(f + D Lap U_T) * dt = -3.009e-4
         # with f = 1/169, D = 5e-5, Lap U_T = 2 and dt = 0.05.

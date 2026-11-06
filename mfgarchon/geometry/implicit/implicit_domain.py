@@ -21,6 +21,7 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from itertools import pairwise
 
 import numpy as np
@@ -37,6 +38,7 @@ from mfgarchon.geometry.protocols import (
     SupportsManifold,
 )
 from mfgarchon.geometry.traits import BoundaryDef, ConnectivityType, StructureType
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.mfg_logging import get_logger
 
 # Module logger
@@ -342,7 +344,7 @@ class ImplicitDomain(
             - For points not exactly on the boundary, this gives the normal
               to the closest boundary point
             - Uses central finite differences for gradient: O(eps²) accuracy
-            - Implementation delegates to outward_normal_from_sdf() for
+            - Implementation delegates to geometry_outward_normal() for
               consistency (Issue #662 consolidation)
 
         Example:
@@ -352,11 +354,9 @@ class ImplicitDomain(
             True
         """
         # Use canonical implementation from operators/differential (Issue #662)
-        from mfgarchon.operators.differential.function_gradient import (
-            outward_normal_from_sdf,
-        )
+        from mfgarchon.operators.differential.function_gradient import geometry_outward_normal
 
-        return outward_normal_from_sdf(self.signed_distance, x, eps=eps)
+        return geometry_outward_normal(self.signed_distance, x, eps=eps)
 
     def project_to_boundary(
         self,
@@ -1137,8 +1137,8 @@ class ImplicitDomain(
     def mark_region(
         self,
         name: str,
-        predicate: Callable[[NDArray], NDArray[np.bool_]] | None = None,
-        sdf_region: Callable[[NDArray], NDArray[np.floating]] | None = None,
+        predicate: Callable[..., NDArray[np.bool_]] | None = None,
+        sdf_region: Callable[..., NDArray[np.floating]] | None = None,
         **kwargs,
     ) -> None:
         """
@@ -1149,8 +1149,8 @@ class ImplicitDomain(
 
         Args:
             name: Unique name for this region (e.g., "inlet", "obstacle")
-            predicate: Function (N, d) → (N,) bool - True where point in region
-            sdf_region: Alternative SDF-based specification (φ < 0 means inside region)
+            predicate: Function of ``x``, a coordinate tuple, to a bool per point - True where point in region
+            sdf_region: Alternative SDF-based specification, reading ``x`` the same way (φ < 0 means inside region)
             **kwargs: Ignored (for compatibility with TensorProductGrid signature)
 
         Raises:
@@ -1163,13 +1163,13 @@ class ImplicitDomain(
             >>> # Mark top half using predicate
             >>> circle.mark_region(
             ...     "top_half",
-            ...     predicate=lambda x: x[:, 1] > 0.5
+            ...     predicate=lambda x: x[1] > 0.5
             ... )
             >>>
             >>> # Mark region using SDF
             >>> def sector_sdf(x):
-            ...     on_boundary = np.abs(np.linalg.norm(x - [0.5, 0.5], axis=-1) - 0.3) < 0.01
-            ...     in_sector = x[:, 1] > 0.65
+            ...     on_boundary = np.abs(np.hypot(x[0] - 0.5, x[1] - 0.5) - 0.3) < 0.01
+            ...     in_sector = x[1] > 0.65
             ...     return np.where(on_boundary & in_sector, -1.0, 1.0)
             >>> circle.mark_region("exit", sdf_region=sector_sdf)
 
@@ -1188,10 +1188,10 @@ class ImplicitDomain(
 
         # Store predicate (or convert SDF to predicate)
         if predicate is not None:
-            self._regions[name] = predicate
+            self._regions[name] = partial(read_region, predicate, role="predicate")
         elif sdf_region is not None:
             # Convert SDF to predicate: region is where SDF < 0
-            self._regions[name] = lambda x: sdf_region(x) < 0
+            self._regions[name] = lambda points: read_region(sdf_region, points, role="sdf_region") < 0
 
     def get_region_mask(
         self,
@@ -1216,7 +1216,7 @@ class ImplicitDomain(
 
         Example:
             >>> circle = Hypersphere(center=[0.5, 0.5], radius=0.3)
-            >>> circle.mark_region("top", predicate=lambda x: x[:, 1] > 0.5)
+            >>> circle.mark_region("top", predicate=lambda x: x[1] > 0.5)
             >>>
             >>> # Evaluate at specific points
             >>> pts = np.array([[0.5, 0.6], [0.5, 0.4]])
@@ -1259,8 +1259,8 @@ class ImplicitDomain(
             ValueError: If no region names provided
 
         Example:
-            >>> circle.mark_region("top", predicate=lambda x: x[:, 1] > 0.5)
-            >>> circle.mark_region("right", predicate=lambda x: x[:, 0] > 0.5)
+            >>> circle.mark_region("top", predicate=lambda x: x[1] > 0.5)
+            >>> circle.mark_region("right", predicate=lambda x: x[0] > 0.5)
             >>> combined = circle.intersect_regions("top", "right")
             >>> # combined(pts) returns True where BOTH top AND right
         """
@@ -1295,7 +1295,7 @@ class ImplicitDomain(
             KeyError: If region name not found
 
         Example:
-            >>> circle.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.3)
+            >>> circle.mark_region("inlet", predicate=lambda x: x[0] < 0.3)
             >>> inlet_pred = circle.get_region_predicate("inlet")
             >>> particles = np.array([[0.2, 0.5], [0.8, 0.5]])
             >>> in_inlet = inlet_pred(particles)  # [True, False]
@@ -1312,8 +1312,8 @@ class ImplicitDomain(
             List of region names
 
         Example:
-            >>> circle.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.3)
-            >>> circle.mark_region("outlet", predicate=lambda x: x[:, 0] > 0.7)
+            >>> circle.mark_region("inlet", predicate=lambda x: x[0] < 0.3)
+            >>> circle.mark_region("outlet", predicate=lambda x: x[0] > 0.7)
             >>> circle.get_region_names()
             ['inlet', 'outlet']
         """

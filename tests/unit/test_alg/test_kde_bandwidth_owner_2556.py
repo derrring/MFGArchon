@@ -457,7 +457,7 @@ def test_a_sample_on_a_line_is_deposited_on_the_nodes_by_every_kde_method(kde_me
         M = np.asarray(
             solver.solve_fp_system(
                 M_initial=None,
-                drift_field=lambda t, x, m: np.zeros_like(x),
+                drift_field=lambda t, x, m: np.zeros_like(x[0]),
                 initial_particles=particles,
                 show_progress=False,
             )
@@ -496,7 +496,7 @@ def test_a_sample_narrower_than_the_grid_is_deposited_where_its_kernel_was_read_
     M = np.asarray(
         solver.solve_fp_system(
             M_initial=None,
-            drift_field=lambda t, x, m: np.zeros_like(x),
+            drift_field=lambda t, x, m: np.zeros_like(x[0]),
             initial_particles=particles,
             show_progress=False,
         )
@@ -538,7 +538,7 @@ def test_the_solver_gates_a_grid_declared_uniform_at_its_spacing_whatever_its_ro
     M = np.asarray(
         solver.solve_fp_system(
             M_initial=None,
-            drift_field=lambda t, x, m: np.zeros_like(x),
+            drift_field=lambda t, x, m: np.zeros_like(x[0]),
             initial_particles=particles,
             drift_needs_density=False,
             show_progress=False,
@@ -566,7 +566,7 @@ def test_the_solver_reads_the_nodes_lattice_where_the_declared_spacing_is_not_po
     M = np.asarray(
         solver.solve_fp_system(
             M_initial=None,
-            drift_field=lambda t, x, m: np.zeros_like(x),
+            drift_field=lambda t, x, m: np.zeros_like(x[0]),
             initial_particles=particles,
             drift_needs_density=False,
             show_progress=False,
@@ -592,7 +592,7 @@ def _deposited_on(path):
     if path == "callable drift":
         M = solver.solve_fp_system(
             M_initial=spike,
-            drift_field=lambda t, x, m: np.zeros_like(x),
+            drift_field=lambda t, x, m: np.zeros_like(x[0]),
             initial_particles=np.full((200, 2), 0.5),
             drift_needs_density=False,
             show_progress=False,
@@ -616,7 +616,7 @@ def test_the_record_is_the_last_solves_and_the_result_carries_it():
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 
     solver = FPParticleSolver(_problem(11, 2, volatility=0.0), num_particles=300, seed=5, density_mode="hybrid")
-    drift = {"drift_field": lambda t, x, m: np.zeros_like(x), "show_progress": False, "M_initial": None}
+    drift = {"drift_field": lambda t, x, m: np.zeros_like(x[0]), "show_progress": False, "M_initial": None}
     result = solver.solve_fp_system(initial_particles=_narrow([0.53, 0.47]), **drift)
     assert result.deposited_levels == (1, 2, 3, 4, 5)
     result = solver.solve_fp_system(
@@ -666,7 +666,7 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
             bounds=[(0.0, width), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
         )
         model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.0)
-        conditions = Conditions(m_initial=lambda z, width=width: 1.0 / width, u_terminal=lambda x: 0.0, T=0.1)
+        conditions = Conditions(m_initial=lambda x, width=width: 1.0 / width, u_terminal=lambda x: 0.0, T=0.1)
         solver = FPParticleSolver(
             MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4),
             num_particles=600,
@@ -676,7 +676,7 @@ def test_a_thin_domain_is_a_rescaled_unit_one(kde_method):
         densities[width] = np.asarray(
             solver.solve_fp_system(
                 M_initial=None,
-                drift_field=lambda t, x, m: np.zeros_like(x),
+                drift_field=lambda t, x, m: np.zeros_like(x[0]),
                 initial_particles=unit * [width, 1.0],
                 show_progress=False,
             )
@@ -1216,7 +1216,7 @@ def _evacuation(seed):
     grid = TensorProductGrid([(0.0, 1.0), (0.0, 0.5)], Nx_points=[21, 11], boundary_conditions=bc)
 
     def m0(x):
-        return float(np.exp(-20 * np.sum((np.asarray(x, dtype=float) - 0.6) ** 2)))
+        return np.exp(-20 * sum((xi - 0.6) ** 2 for xi in x))
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="initial density mass")
@@ -1282,7 +1282,7 @@ def test_a_kernel_level_after_a_deposited_one_calibrates_the_factor(path):
     if path == "2-D callable drift":
         M = solver.solve_fp_system(
             M_initial=spike,
-            drift_field=lambda t, x, m: np.zeros_like(x),
+            drift_field=lambda t, x, m: np.zeros_like(x[0]),
             drift_needs_density=False,
             show_progress=False,
         )

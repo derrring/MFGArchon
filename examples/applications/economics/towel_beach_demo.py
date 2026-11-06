@@ -79,17 +79,16 @@ class TowelBeachHamiltonian(HamiltonianBase):
     def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float | np.ndarray) -> float | np.ndarray:
         """Evaluate Hamiltonian H(t, x, p, m) at one point or at N points at once.
 
-        Row-wise: x and p of shape (d,) or (N, d), m a scalar or of shape (N,). A solver may evaluate every
+        Row-wise: x a coordinate tuple, p of shape (d,) or (N, d), m a scalar or of shape (N,). A solver may evaluate every
         node in one call (HJBFDMSolver's 1-D default does), so nothing here may collapse an array to a float.
         """
-        x = np.asarray(x, dtype=float)
         p = np.asarray(p, dtype=float)
 
         # Kinetic energy (quadratic control cost)
         kinetic = 0.5 * np.sum(p**2, axis=-1)
 
         # Proximity cost to stall (negative = benefit)
-        proximity = -np.abs(x[..., 0] - self.stall_position)
+        proximity = -np.abs(x[0] - self.stall_position)
 
         # Congestion cost (log-barrier)
         m_reg = np.maximum(np.asarray(m, dtype=float), 1e-10)  # Regularization to avoid log(0)
@@ -135,7 +134,7 @@ def create_towel_beach_problem(
     # Initial distribution: Uniform with small perturbation
     def initial_density_func(x):
         """Slightly perturbed uniform distribution."""
-        return 1.0 + 0.1 * np.cos(2 * np.pi * x / beach_length)
+        return 1.0 + 0.1 * np.cos(2 * np.pi * x[0] / beach_length)
 
     # Terminal value: zero (standard for running cost problems)
     def terminal_value_func(x):

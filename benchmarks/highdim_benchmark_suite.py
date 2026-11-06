@@ -306,9 +306,9 @@ class HighDimMFGBenchmark:
                     except (KeyError, TypeError, ValueError, IndexError, FloatingPointError):
                         return 0.0
 
-                def initial_density_grid(x_position):
+                def initial_density_grid(x):
                     try:
-                        x_idx = int(x_position)
+                        x_idx = int(x[0])
                         if x_idx >= self.num_spatial_points:
                             return 1e-10
                         coords = self.mesh_data.vertices[x_idx]
@@ -318,9 +318,9 @@ class HighDimMFGBenchmark:
                     except (ValueError, IndexError, AttributeError):
                         return 1e-10
 
-                def terminal_cost_grid(x_position):
+                def terminal_cost_grid(x):
                     try:
-                        x_idx = int(x_position)
+                        x_idx = int(x[0])
                         if x_idx >= self.num_spatial_points:
                             return 0.0
                         coords = self.mesh_data.vertices[x_idx]
@@ -408,9 +408,9 @@ class HighDimMFGBenchmark:
                     except (KeyError, TypeError, ValueError, IndexError, FloatingPointError):
                         return 0.0
 
-                def initial_density_grid(x_position):
+                def initial_density_grid(x):
                     try:
-                        x_idx = int(x_position)
+                        x_idx = int(x[0])
                         if x_idx >= self.num_spatial_points:
                             return 1e-10
                         coords = self.mesh_data.vertices[x_idx]
@@ -420,9 +420,9 @@ class HighDimMFGBenchmark:
                     except (ValueError, IndexError, AttributeError):
                         return 1e-10
 
-                def terminal_cost_grid(x_position):
+                def terminal_cost_grid(x):
                     try:
-                        x_idx = int(x_position)
+                        x_idx = int(x[0])
                         if x_idx >= self.num_spatial_points:
                             return 0.0
                         coords = self.mesh_data.vertices[x_idx]

@@ -71,11 +71,17 @@ import numpy as np
 # Issue #700: Import HamiltonianJacobians for jacobian_fd() method
 from mfgarchon.types import HamiltonianJacobians
 from mfgarchon.types.callable_protocols import (
+    DENSITY_SLOTS,
     HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
     BoundCallable,
     bound_attribute,
+    coordinate_tuple,
+    point_at,
+    point_tuple,
+    refuse_batch_disagreement,
     refuse_overridden,
+    spread_samples,
 )
 
 if TYPE_CHECKING:
@@ -802,6 +808,27 @@ def _bound_potential(owner: Any) -> BoundCallable:
     return bound_attribute(owner, "_potential", POTENTIAL_SLOTS, role="potential")
 
 
+def _read_of_the_density(owner: Any, name: str, m: Any, count: int | None = None) -> Any:
+    """``owner.<name>``, a function of the density alone, read by name at ``m`` (#2875): a float at one point, and on a
+    batch of ``count`` points one value per point, a constant holding for all of them. Nothing falls back to reading a
+    batch one point at a time: a body that cannot read a batch raises, and the problem's check refuses it when it takes
+    the Hamiltonian."""
+    read = bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
+    if count is None:
+        return float(read(m=m))
+    values = np.asarray(read(m=np.asarray(m)), dtype=float).ravel()
+    if values.size != count and values.size == np.size(m):
+        values = values[:count]  # a stacked density, read entry by entry: the first population's, for every one (#2335)
+    return np.broadcast_to(values, (count,))
+
+
+def _bind_density_terms(owner: Any, *names: str) -> None:
+    """Refuse a name-unbound density term where it is handed over, as ``_bound_potential`` does for the potential."""
+    for name in names:
+        if getattr(owner, name) is not None:
+            bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
+
+
 class MFGOperatorBase(ABC):
     """
     Abstract base class for MFG operators (Hamiltonian and Lagrangian).
@@ -996,7 +1023,8 @@ class HEvalState:
     t : float
         Time. Required, first (#2375 ruling 8).
     x : NDArray
-        Position(s), shape ``(N, d)`` (or ``(d,)`` for a single point).
+        Position(s), shape ``(N, d)`` (or ``(d,)`` for a single point). The Hamiltonian reads them as a coordinate tuple,
+        with ``d`` the last axis of ``p`` (#2875).
     p : NDArray
         Momentum ``p = ∇u``, shape ``(N, d)``. Exposed as ``grad_u`` alias.
     m : float | NDArray
@@ -1013,6 +1041,14 @@ class HEvalState:
     def grad_u(self) -> NDArray:
         """Alias for ``p`` — the momentum is the value-function gradient ``∇u``."""
         return self.p
+
+
+def _state_x(state: HEvalState) -> tuple[Any, ...]:
+    """``state.x`` as a body reads it. Where ``p`` is one point's, of shape ``(d,)``, ``x`` is that one point, a tuple of
+    scalars at ``d = 1`` too; otherwise a coordinate tuple, with ``d`` the last axis of ``p`` (#2875)."""
+    if np.ndim(state.p) == 1 and np.ndim(state.x) <= 1:
+        return point_tuple(state.x)
+    return coordinate_tuple(state.x, np.shape(state.p)[-1])
 
 
 @dataclass(frozen=True)
@@ -1118,10 +1154,10 @@ class HamiltonianBase(MFGOperatorBase):
 
     >>> H = SeparableHamiltonian(
     ...     control_cost=QuadraticControlCost(control_cost=2.0),
-    ...     potential=lambda t, x: np.sin(x),
+    ...     potential=lambda t, x: np.sin(x[0]),
     ...     coupling=lambda m: m**2
     ... )
-    >>> x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
+    >>> x, m, p, t = (0.5,), 0.3, np.array([1.0]), 0.0
     >>> H(t, x, p, m)  # Evaluate Hamiltonian
     >>> H.dp(t, x, p, m)  # Get ∂H/∂p (auto-computed)
     >>> H.dm(t, x, p, m)  # Get ∂H/∂m (auto-computed)
@@ -1133,6 +1169,9 @@ class HamiltonianBase(MFGOperatorBase):
     DualHamiltonian : Hamiltonian from Lagrangian via Legendre transform
     DualLagrangian : Lagrangian from Hamiltonian via inverse Legendre
     """
+
+    # Whether a problem compares this Hamiltonian's batch and point reads (`refuse_a_hamiltonian_whose_reads_disagree`).
+    reads_a_batch = True
 
     @property
     def is_hamiltonian(self) -> bool:
@@ -1162,7 +1201,7 @@ class HamiltonianBase(MFGOperatorBase):
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
         """
-        return np.asarray(self(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(self(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
@@ -1172,7 +1211,7 @@ class HamiltonianBase(MFGOperatorBase):
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
-        return np.asarray(self.dp(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(self.dp(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def dH_dm(self, state: HEvalState) -> NDArray:
         """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
@@ -1180,7 +1219,7 @@ class HamiltonianBase(MFGOperatorBase):
         Separate from the residual/Jacobian primitives — the FP source term, not the
         HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
         """
-        return np.asarray(self.dm(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
+        return np.asarray(self.dm(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate(self, state: HEvalState) -> HamiltonianValues:
         """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
@@ -1232,7 +1271,7 @@ class HamiltonianBase(MFGOperatorBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1243,8 +1282,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,) for d-dimensional problem
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x, shape (d,)
         m : float | NDArray
@@ -1260,7 +1299,7 @@ class HamiltonianBase(MFGOperatorBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1279,8 +1318,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,)
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x, shape (d,)
         m : float | NDArray
@@ -1311,13 +1350,15 @@ class HamiltonianBase(MFGOperatorBase):
             except (TypeError, ValueError):
                 # __call__ doesn't support batch m — fall back to per-point loop
                 m_arr = np.asarray(m)
-                return np.stack([self._finite_diff_dp(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(N)])
+                return np.stack(
+                    [self._finite_diff_dp(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(N)]
+                )
         return self._finite_diff_dp(x, m, p, t)
 
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1338,8 +1379,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,) or (N, d)
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x, shape (d,) or (N, d)
         m : float | NDArray
@@ -1361,14 +1402,17 @@ class HamiltonianBase(MFGOperatorBase):
                 return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError):
                 return np.array(
-                    [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                    [
+                        self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t)
+                        for i in range(p_arr.shape[0])
+                    ]
                 )
         return self._finite_diff_dm(x, m, p, t)
 
     def dx(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1385,8 +1429,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position, shape (d,) or (N, d) for batch
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum at x, shape (d,) or (N, d) for batch
         m : float | NDArray
@@ -1397,19 +1441,18 @@ class HamiltonianBase(MFGOperatorBase):
         NDArray
             Gradient dH/dx, shape (d,) or (N, d)
         """
-        x_arr = np.asarray(x)
-        if x_arr.ndim == 2:
+        if np.ndim(x[0]) > 0:
             p_arr = np.asarray(p)
             m_arr = np.asarray(m)
             return np.stack(
-                [self._finite_diff_dx(x_arr[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(x_arr.shape[0])]
+                [self._finite_diff_dx(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(np.size(x[0]))]
             )
         return self._finite_diff_dx(x, m, p, t)
 
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1423,8 +1466,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x
         m : float | NDArray
@@ -1441,7 +1484,7 @@ class HamiltonianBase(MFGOperatorBase):
     def jacobian_fd(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
         dx: float,
@@ -1461,8 +1504,8 @@ class HamiltonianBase(MFGOperatorBase):
         ----------
         t : float
             Time
-        x : NDArray
-            Position
+        x : tuple
+            Position, a coordinate tuple: one entry per coordinate, each a scalar or an array
         p : NDArray
             Momentum ∇u at x (current gradient estimate)
         m : float | NDArray
@@ -1530,7 +1573,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     def _finite_diff_dp(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -1556,7 +1599,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     def _finite_diff_dm(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -1572,22 +1615,19 @@ class HamiltonianBase(MFGOperatorBase):
 
     def _finite_diff_dx(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
     ) -> NDArray:
         """Compute dH/dx using central finite differences."""
         eps = self.finite_diff_eps
-        x_flat = np.atleast_1d(x).astype(float)
-        d = len(x_flat)
+        d = len(x)
         grad = np.zeros(d)
 
         for i in range(d):
-            x_plus = x_flat.copy()
-            x_minus = x_flat.copy()
-            x_plus[i] += eps
-            x_minus[i] -= eps
+            x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
+            x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
 
             H_plus = self(x=x_plus, m=m, p=p, t=t)
             H_minus = self(x=x_minus, m=m, p=p, t=t)
@@ -1714,7 +1754,7 @@ class LagrangianBase(MFGOperatorBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1771,7 +1811,7 @@ class LagrangianBase(MFGOperatorBase):
     def conjugate_argmax(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1830,7 +1870,7 @@ class LagrangianBase(MFGOperatorBase):
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -1858,7 +1898,7 @@ class LagrangianBase(MFGOperatorBase):
     def evaluate_hamiltonian(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -1894,7 +1934,7 @@ class LagrangianBase(MFGOperatorBase):
         z: np.ndarray,
         *,
         t: float = 0.0,
-        x: NDArray | None = None,
+        x: tuple[Any, ...] | None = None,
         m: float | NDArray | None = None,
     ) -> np.ndarray:
         """Proximal of L: prox_{tau*L}(z) = argmin_alpha { L(alpha) + |alpha-z|^2/(2*tau) }.
@@ -1916,7 +1956,7 @@ class LagrangianBase(MFGOperatorBase):
 
         # Dummy x, m if not provided
         if x is None:
-            x = np.zeros(max(d, 1))
+            x = tuple(np.zeros(max(d, 1)))
         if m is None:
             m = 0.0
 
@@ -2005,6 +2045,7 @@ class SeparableLagrangian(LagrangianBase):
         self._coupling = coupling
         if potential is not None:
             _bound_potential(self)
+        _bind_density_terms(self, "_coupling")
 
     def __call__(self, t, x, alpha, m):
         """L = L_control(alpha) + V(t, x) + f(m): V and f are costs (#2375 ruling 3).
@@ -2016,8 +2057,8 @@ class SeparableLagrangian(LagrangianBase):
         its own evaluate_hamiltonian by exactly 2(V+f).
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
-        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
-        f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
+        V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
+        f_m = _read_of_the_density(self, "_coupling", m) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
     def optimal_control(self, t, x, p, m):
@@ -2030,8 +2071,8 @@ class SeparableLagrangian(LagrangianBase):
         H_ctrl = self.control_cost.evaluate(p_arr)
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
-        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
-        f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
+        V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
+        f_m = _read_of_the_density(self, "_coupling", m) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
     def proximal(self, tau, z, *, t=0.0, x=None, m=None):
@@ -2088,6 +2129,9 @@ class DualHamiltonian(HamiltonianBase):
     LagrangianBase.legendre_transform : Symmetric operation (L → H)
     """
 
+    # One optimization per point: it has no batch read to compare.
+    reads_a_batch = False
+
     def __init__(
         self,
         lagrangian: LagrangianBase,
@@ -2103,7 +2147,7 @@ class DualHamiltonian(HamiltonianBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2164,7 +2208,7 @@ class DualHamiltonian(HamiltonianBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2182,7 +2226,7 @@ class DualHamiltonian(HamiltonianBase):
 
     def _find_optimal_alpha(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         m: float | NDArray,
         p: NDArray,
         t: float,
@@ -2275,7 +2319,7 @@ class DualLagrangian(LagrangianBase):
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2330,7 +2374,7 @@ class DualLagrangian(LagrangianBase):
     def d_alpha(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2345,7 +2389,7 @@ class DualLagrangian(LagrangianBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
     ) -> float:
@@ -2360,7 +2404,7 @@ class DualLagrangian(LagrangianBase):
 
     def _find_optimal_p(
         self,
-        x: NDArray,
+        x: tuple[Any, ...],
         alpha: NDArray,
         m: float | NDArray,
         t: float,
@@ -2460,7 +2504,7 @@ class SeparableHamiltonian(HamiltonianBase):
     ...     coupling=lambda m: m**2,
     ...     coupling_dm=lambda m: 2*m,  # Analytic df/dm
     ... )
-    >>> H(x=np.array([0.5]), m=0.3, p=np.array([1.0]), t=0.0)
+    >>> H(x=(0.5,), m=0.3, p=np.array([1.0]), t=0.0)
 
     With potential field:
 
@@ -2488,41 +2532,12 @@ class SeparableHamiltonian(HamiltonianBase):
         self._coupling_dm = coupling_dm
         if potential is not None:
             _bound_potential(self)
-        # Issue #929: Cache vectorized-callable detection result
-        self._potential_is_vectorized: bool | None = None
-
-    def _evaluate_potential_batch(self, x_batch: NDArray, t: float) -> NDArray:
-        """Evaluate V(t, x) at N points with auto-detected vectorization.
-
-        Issue #929: First call probes whether the potential callable supports
-        batch input (N, d) -> (N,). If yes, uses fast path. If no, falls back
-        to per-point loop. Detection result is cached for subsequent calls.
-        """
-        N = x_batch.shape[0]
-        if N == 0:
-            return np.zeros(0)
-
-        if self._potential_is_vectorized is None:
-            # The probe has d + 1 rows, repeating points when N is smaller. A potential written per
-            # point that is elementwise in the coordinates it indexes, x[0]**2 + x[1]**2, reads them on a
-            # batch as rows and returns one value per coordinate: shape (d,). The probe must not have d
-            # rows, or that result passes as one value per point, as it did in 2-D with two (#2714).
-            d = x_batch.shape[1] if x_batch.ndim == 2 else 1
-            rows = np.arange(d + 1) % N
-            try:
-                probe = np.asarray(_bound_potential(self)(x=x_batch[rows], t=t), dtype=float)
-                self._potential_is_vectorized = probe.shape == (d + 1,)
-            except (TypeError, IndexError, ValueError):
-                self._potential_is_vectorized = False
-
-        if self._potential_is_vectorized:
-            return np.asarray(_bound_potential(self)(x=x_batch, t=t), dtype=float)
-        return np.array([float(_bound_potential(self)(x=x_batch[i], t=t)) for i in range(N)])
+        _bind_density_terms(self, "_coupling", "_coupling_dm")
 
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2543,25 +2558,17 @@ class SeparableHamiltonian(HamiltonianBase):
 
         # Potential term (Issue #929: auto-detect vectorized callable)
         if self._potential is not None:
-            if is_batch:
-                V = self._evaluate_potential_batch(x, t)
-            else:
-                V = float(_bound_potential(self)(x=x, t=t))
+            V = np.asarray(_bound_potential(self)(x=x, t=t), dtype=float)
+            V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
         # Coupling term
         if self._coupling is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    f_m = np.asarray(self._coupling(m_arr), dtype=float).ravel()
-                    if f_m.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    f_m = np.array([float(self._coupling(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                f_m = _read_of_the_density(self, "_coupling", m, p_arr.shape[0])
             else:
-                f_m = float(self._coupling(m))
+                f_m = _read_of_the_density(self, "_coupling", m)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2570,7 +2577,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2585,7 +2592,7 @@ class SeparableHamiltonian(HamiltonianBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2601,15 +2608,9 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._coupling_dm is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    result = np.asarray(self._coupling_dm(m_arr), dtype=float).ravel()
-                    if result.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    result = np.array([float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0])
                 return -result
-            return -float(self._coupling_dm(m))
+            return -_read_of_the_density(self, "_coupling_dm", m)
 
         if self._coupling is None:
             if is_batch:
@@ -2620,14 +2621,14 @@ class SeparableHamiltonian(HamiltonianBase):
         if is_batch:
             m_arr = np.asarray(m)
             return np.array(
-                [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                [self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
             )
         return self._finite_diff_dm(x, m, p, t)
 
     def dx(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2639,28 +2640,26 @@ class SeparableHamiltonian(HamiltonianBase):
         Uses FD on the potential callable. Returns zero if no potential.
         """
         if self._potential is None:
-            x_arr = np.atleast_1d(x)
-            return np.zeros(x_arr.shape[-1] if x_arr.ndim >= 2 else len(x_arr))
+            return np.zeros(len(x))
 
         # FD on V(t, x)
         eps = self.finite_diff_eps
-        x_flat = np.atleast_1d(x).astype(float)
-        d = len(x_flat)
+        d = len(x)
         grad = np.zeros(d)
         for i in range(d):
-            x_plus = x_flat.copy()
-            x_minus = x_flat.copy()
-            x_plus[i] += eps
-            x_minus[i] -= eps
+            x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
+            x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
             grad[i] = _central_difference(
-                float(_bound_potential(self)(x=x_plus, t=t)), float(_bound_potential(self)(x=x_minus, t=t)), eps
+                np.asarray(_bound_potential(self)(x=x_plus, t=t)).item(),
+                np.asarray(_bound_potential(self)(x=x_minus, t=t)).item(),
+                eps,
             )
         return -grad
 
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2742,16 +2741,18 @@ class CongestionHamiltonian(HamiltonianBase):
         self.control_cost = control_cost
         self._congestion_factor = congestion_factor
         self._congestion_factor_dm = congestion_factor_dm
+        _bind_density_terms(self, "_congestion_factor", "_congestion_factor_dm")
         self._potential = potential
         self._coupling = coupling
         self._coupling_dm = coupling_dm
         if potential is not None:
             _bound_potential(self)
+        _bind_density_terms(self, "_coupling", "_coupling_dm")
 
     def __call__(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2772,39 +2773,25 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            m_arr = np.asarray(m)
-            try:
-                c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                if c_m.shape[0] != p_arr.shape[0]:
-                    raise ValueError
-            except (TypeError, ValueError):
-                c_m = np.array([float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+            c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
         else:
-            c_m = float(self._congestion_factor(m))
+            c_m = _read_of_the_density(self, "_congestion_factor", m)
 
         H_kinetic = H_kinetic / c_m
 
         # Potential term V(t, x)
         if self._potential is not None:
-            if is_batch:
-                V = np.array([float(_bound_potential(self)(x=x[i], t=t)) for i in range(x.shape[0])])
-            else:
-                V = float(_bound_potential(self)(x=x, t=t))
+            V = np.asarray(_bound_potential(self)(x=x, t=t), dtype=float)
+            V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
         # Coupling term f(m)
         if self._coupling is not None:
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    f_m = np.asarray(self._coupling(m_arr), dtype=float).ravel()
-                    if f_m.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    f_m = np.array([float(self._coupling(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+                f_m = _read_of_the_density(self, "_coupling", m, p_arr.shape[0])
             else:
-                f_m = float(self._coupling(m))
+                f_m = _read_of_the_density(self, "_coupling", m)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2813,7 +2800,7 @@ class CongestionHamiltonian(HamiltonianBase):
     def dp(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -2830,15 +2817,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            m_arr = np.asarray(m)
-            try:
-                c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                if c_m.shape[0] != p_arr.shape[0]:
-                    raise ValueError
-            except (TypeError, ValueError):
-                c_m = np.array([float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
+            c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
         else:
-            c_m = float(self._congestion_factor(m))
+            c_m = _read_of_the_density(self, "_congestion_factor", m)
 
         # Delegate to control_cost.dp(), then divide by c(m) (Issue #898)
         base_dp = self.control_cost.dp(p_arr)
@@ -2849,7 +2830,7 @@ class CongestionHamiltonian(HamiltonianBase):
     def dm(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> float | NDArray:
@@ -2870,39 +2851,21 @@ class CongestionHamiltonian(HamiltonianBase):
                 H_kin = float(H_kin.sum())
 
             if is_batch:
-                m_arr = np.asarray(m)
-                try:
-                    c_m = np.asarray(self._congestion_factor(m_arr), dtype=float).ravel()
-                    c_dm = np.asarray(self._congestion_factor_dm(m_arr), dtype=float).ravel()
-                    if c_m.shape[0] != p_arr.shape[0] or c_dm.shape[0] != p_arr.shape[0]:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    c_m = np.array(
-                        [float(self._congestion_factor(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                    )
-                    c_dm = np.array(
-                        [float(self._congestion_factor_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                    )
+                c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, p_arr.shape[0])
 
                 kinetic_dm = -c_dm * H_kin / c_m**2
             else:
-                c_m = float(self._congestion_factor(m))
-                c_dm = float(self._congestion_factor_dm(m))
+                c_m = _read_of_the_density(self, "_congestion_factor", m)
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m)
                 kinetic_dm = -c_dm * H_kin / c_m**2
 
             # Coupling contribution f'(m)
             if self._coupling_dm is not None:
                 if is_batch:
-                    try:
-                        coupling_dm_val = np.asarray(self._coupling_dm(m_arr), dtype=float).ravel()
-                        if coupling_dm_val.shape[0] != p_arr.shape[0]:
-                            raise ValueError
-                    except (TypeError, ValueError):
-                        coupling_dm_val = np.array(
-                            [float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])]
-                        )
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0])
                 else:
-                    coupling_dm_val = float(self._coupling_dm(m))
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m)
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2915,14 +2878,14 @@ class CongestionHamiltonian(HamiltonianBase):
         if is_batch:
             m_arr = np.asarray(m)
             return np.array(
-                [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
+                [self._finite_diff_dm(point_at(x, i), float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
             )
         return self._finite_diff_dm(x, m, p, t)
 
     def optimal_control(
         self,
         t: float,
-        x: NDArray,
+        x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
@@ -3070,6 +3033,40 @@ def create_hamiltonian(
         )
 
 
+def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid: NDArray, t: float = 0.0) -> None:
+    """Refuse a Hamiltonian whose batch evaluation differs from evaluating each node alone (#1884, #2481, #2875).
+
+    A problem takes the Hamiltonian here, so its value and its ``dp`` are read on nodes of ``grid`` together and then one at
+    a time. A Hamiltonian written for one point gives a wrong solve on a batch path, and not always an error: ``0.5*p[0]**2``
+    reads node 0's momentum at every node, and Newton converges cleanly to that wrong equation (measured 0.962 off the
+    per-point solve, with no inner failure).
+
+    The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
+    passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479). A node
+    alone is read as the per-point solve paths read one: ``x`` one point, ``p`` of shape ``(d,)``, ``m`` a scalar.
+    """
+    if not hamiltonian.reads_a_batch:
+        return
+    points = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
+    d = points.shape[1]
+    k = 4 if d == 3 else 3
+    x = points[spread_samples(points.shape[0], k)]
+    p = np.linspace(-1.3, 2.1, k)[:, None] * (1.0 + 0.25 * np.arange(d))
+    m = np.linspace(0.5, 1.7, k)
+    guidance = (
+        "x is a tuple with one entry per coordinate, p has shape (N, d) and m shape (N,): write it to act row-wise on p, "
+        "such as 0.5*np.sum(p**2, axis=-1), and to read x[0] as the coordinate (#2875)."
+    )
+    for name, evaluate in (("evaluate_H", hamiltonian.evaluate_H), ("evaluate_dp", hamiltonian.evaluate_dp)):
+        refuse_batch_disagreement(
+            lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
+            {"x": x, "p": p, "m": m, "t": t},
+            [{"x": x[i], "p": p[i], "m": m[i], "t": t} for i in range(k)],
+            name=f"{type(hamiltonian).__name__}.{name}",
+            guidance=guidance,
+        )
+
+
 if __name__ == "__main__":
     """Quick smoke test for development."""
     print("Testing Hamiltonian abstractions...")
@@ -3113,7 +3110,7 @@ if __name__ == "__main__":
         coupling=lambda m: m**2,
         coupling_dm=lambda m: 2 * m,
     )
-    x = np.array([0.5])
+    x = (0.5,)
     m_val = 0.3
     p_val = np.array([1.0])
     t_val = 0.0

@@ -5,7 +5,6 @@ report is rebuilt from the array the result returns; and the guard's line names 
 """
 
 import logging
-import math
 import warnings
 
 import pytest
@@ -189,8 +188,8 @@ def _coupled(refine, sigma=0.3, coupling=None, coupling_dm=None, **model):
             ),
             domain=mesh,
             conditions=Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=8,
@@ -253,7 +252,7 @@ def _with_an_input(kind, sign, n=32, D=0.01, dt=1e-2, nt=50):
     )
     x = _points(solver).reshape(-1)
     m0 = np.exp(-((x - 0.5) ** 2) / (2 * 0.05**2)) + (sign * 1e-3 if kind == "initial density" else 0.0)
-    source = (lambda t, x: np.full(np.shape(x)[0], sign * 1e-3)) if kind == "source" else None
+    source = (lambda t, x: np.full(np.shape(x[0]), sign * 1e-3)) if kind == "source" else None
     solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((nt + 1, len(x))), source_term=source)
     return solver.last_negative_density["largest"]
 
@@ -333,8 +332,8 @@ def _on_meshless(coupling, coupling_dm):
             ),
             domain=grid,
             conditions=Conditions(
-                u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
-                m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                u_terminal=lambda x: (x[0] - 0.7) ** 2,
+                m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
                 T=0.5,
             ),
             Nt=10,
@@ -487,8 +486,8 @@ def test_the_sweep_guard_names_the_array_and_the_density_the_sweep_read(mfg_capl
             source_term_fp=lambda t, x, v, m: 0.0 * np.log(m),
             domain=mesh,
             conditions=Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=8,
@@ -568,8 +567,8 @@ def _tracked_meshless(sigma):
             ),
             domain=grid,
             conditions=Conditions(
-                u_terminal=lambda x: float((np.ravel(x)[0] - 0.7) ** 2),
-                m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                u_terminal=lambda x: (x[0] - 0.7) ** 2,
+                m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
                 T=0.5,
             ),
             Nt=10,
@@ -648,13 +647,19 @@ def test_a_raise_keeps_its_exception_restores_the_policy_and_reports_no_earlier_
     assert fp.on_negative_density == "warn"
 
 
+def _log_of_a_density(m):
+    if np.any(np.asarray(m) <= 0.0):
+        raise ValueError("math domain error")
+    return np.log(m)
+
+
 def test_a_body_that_raises_on_a_negative_keeps_its_exception_and_the_last_solve_is_reported(mfg_caplog):
-    """``math.log`` meets a negative on a later sweep: its own ``ValueError``, and one warning from the last FP solve."""
+    """A log meets a negative on a later sweep: its own ``ValueError``, and one warning from the last FP solve."""
     with (
         mfg_caplog.at_level(logging.WARNING, logger=_LOGGER),
         pytest.raises(ValueError, match=r"^math domain error$") as raised,
     ):
-        _coupled(2, coupling=lambda m: math.log(m), coupling_dm=lambda m: 1 / m).solve(verbose=False)
+        _coupled(2, coupling=_log_of_a_density, coupling_dm=lambda m: 1 / m).solve(verbose=False)
     assert raised.value.__cause__ is None
     assert len([m for m in mfg_caplog.messages if "time levels hold a negative value" in m]) == 1
 
@@ -685,7 +690,7 @@ def test_the_validators_density_check_is_off_only_where_the_solver_reports_it(bu
                 domain=grid,
                 conditions=Conditions(
                     u_terminal=lambda x: 0.0,
-                    m_initial=lambda x: float(np.exp(-10 * (np.ravel(x)[0] - 0.3) ** 2)),
+                    m_initial=lambda x: np.exp(-10 * (x[0] - 0.3) ** 2),
                     T=0.5,
                 ),
                 Nt=10,

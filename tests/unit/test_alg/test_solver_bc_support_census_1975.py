@@ -95,7 +95,7 @@ _ALIASES = {"FPNetworkSolver": ["NetworkFPSolver"], "NetworkHJBSolver": ["HJBNet
 #: ~~"Apply BC segments"~~ [CORRECTED 2026-08-17] -- true of one of the three. `HJBHowardSolver`
 #: reads `seg.bc_type` and branches on DIRICHLET (hjb_howard.py:363). `BoundaryHandler` probes
 #: `segments` for truthiness only, to classify "mixed" (boundary_handler.py:324). `ImplicitHeatSolver`
-#: forwards `bc` to `get_laplacian_operator` (implicit_heat.py:99) and otherwise mentions a segment
+#: forwards `bc` to `get_laplacian_operator` (implicit_heat.py:111) and otherwise mentions a segment
 #: only inside a `__repr__` f-string (:293). The roster is right; the verb was not.
 _NOT_REACHED = {
     "HJBHowardSolver": "mfgarchon.alg.numerical.hjb_solvers.hjb_howard",
@@ -429,8 +429,8 @@ def test_an_unsupported_bc_raises_at_construction():
             boundary_conditions=_mixed(BCType.ROBIN, alpha=1.0, beta=1.0, value=0.0),
         ),
         conditions=Conditions(
-            u_terminal=lambda x: (x - 0.5) ** 2,
-            m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+            u_terminal=lambda x: (x[0] - 0.5) ** 2,
+            m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
             T=0.2,
         ),
         Nt=5,

@@ -371,7 +371,7 @@ class TestVaryingTensorDiffusion:
 
         # Sigma(x) = [[1+x]]
         Sigma_field = np.zeros((80, 1, 1))
-        Sigma_field[:, 0, 0] = 1.0 + x
+        Sigma_field[..., 0, 0] = 1.0 + x
 
         bc = neumann_bc(dimension=1)
         D = DiffusionOperator(coefficient=Sigma_field, spacings=[dx], field_shape=(80,), bc=bc)

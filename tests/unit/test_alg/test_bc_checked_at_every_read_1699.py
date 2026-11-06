@@ -37,8 +37,8 @@ N = {1: 21, 2: 9}
 
 def _terminal(dim):
     if dim == 1:
-        return lambda x: (np.asarray(x, dtype=float) - 0.3) ** 2
-    return lambda x: (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2 + 0.5 * np.asarray(x, dtype=float)[..., 1]
+        return lambda x: (np.asarray(x[0], dtype=float) - 0.3) ** 2
+    return lambda x: (x[0] - 0.3) ** 2 + 0.5 * x[1]
 
 
 def _solver(cls, dim):
@@ -55,7 +55,7 @@ def _solver(cls, dim):
 
 def _solve(solver, dim):
     nodes = np.stack(np.meshgrid(*[np.linspace(0.0, 1.0, N[dim])] * dim, indexing="ij"), axis=-1)
-    u_terminal = _terminal(dim)(nodes[..., 0] if dim == 1 else nodes)
+    u_terminal = _terminal(dim)(tuple(np.moveaxis(nodes, -1, 0)))
     u = np.broadcast_to(u_terminal, (NT + 1, *u_terminal.shape)).copy()
     m = np.ones_like(u) if dim > 1 else 1.0 + 0.5 * np.broadcast_to(nodes[..., 0], u.shape)
     if isinstance(solver, FPSLSolver):

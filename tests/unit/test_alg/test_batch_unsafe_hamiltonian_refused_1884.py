@@ -1,10 +1,9 @@
-"""A Hamiltonian written for one point is refused on the 1-D batch path, not solved wrongly (#1884).
+"""A Hamiltonian written for one point is refused when a problem takes it, not solved wrongly (#1884, #2875).
 
-Since #1884 the 1-D HJB-FDM default evaluates the Hamiltonian on every node in one call. `0.5*p[0]**2` is a
-correct Hamiltonian at one point and a wrong one in batch, where `p[0]` is node 0's momentum: with no
-check, the solve converged cleanly to that wrong equation, 0.962 away from the per-point solve, with no
-inner failure. `require_batch_safe_hamiltonian` compares three nodes evaluated together with each evaluated
-alone, and refuses a difference.
+Solvers evaluate the Hamiltonian on every node in one call. `0.5*p[0]**2` is a correct Hamiltonian at one point and a
+wrong one in batch, where `p[0]` is node 0's momentum: with no check, the solve converged cleanly to that wrong
+equation, 0.962 away from the per-point solve, with no inner failure. `refuse_a_hamiltonian_whose_reads_disagree`
+compares three nodes evaluated together with each evaluated alone, and refuses a difference.
 
 One case per argument, because the probe has to vary each one: a point-only read of p, of x and of m.
 Collapsing the probe's x to one node or holding its m constant left the x and m cases solving wrongly with
@@ -17,16 +16,15 @@ Hamiltonian that is NaN or infinite at its validation points. NaN must match NaN
 NaN outside its domain passes; and one infinite value must not make the tolerance infinite, so a point-only
 H that is infinite at one probe node is still refused.
 
-Oracle: the same Hamiltonian on the per-point path (`analytic_jacobian=False`) must reproduce the solve of
-its row-wise twin on the default path, so the refusal is about batch evaluation and not about the
-Hamiltonian. Deleting the check's call in `HJBFDMSolver.solve_hjb_system` makes the refusal not happen.
+Oracle: the row-wise twin of each refused form solves, and to the same values on the per-point path
+(`analytic_jacobian=False`), which hands H one point at a time, so the refusal is about batch evaluation and not about
+the Hamiltonian. Deleting the check's call in `MFGProblem` makes the refusal not happen.
 """
 
 from __future__ import annotations
 
 import logging
 import warnings
-from types import SimpleNamespace
 
 import pytest
 
@@ -34,17 +32,17 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.alg.numerical.hjb_solvers.base_hjb import require_batch_safe_hamiltonian
-from mfgarchon.core.hamiltonian import HamiltonianBase
+from mfgarchon.core.hamiltonian import HamiltonianBase, refuse_a_hamiltonian_whose_reads_disagree
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.types.callable_protocols import spread_samples
 
 NX, NT = 41, 10
 X = np.linspace(0.0, 1.0, NX)
 
 
 def _row_wise(t, x, p, m):
-    return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m) + 0.5 * np.asarray(x)[..., 0]
+    return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m) + 0.5 * np.asarray(x[0])
 
 
 def _dead_zone_row_wise(t, x, p, m):
@@ -55,7 +53,7 @@ def _dead_zone_row_wise(t, x, p, m):
 # every node in batch.
 _CASES = {
     "p": (
-        lambda t, x, p, m: 0.5 * np.asarray(p)[0] ** 2 + 0.3 * np.asarray(m) + 0.5 * np.asarray(x)[..., 0],
+        lambda t, x, p, m: 0.5 * np.asarray(p)[0] ** 2 + 0.3 * np.asarray(m) + 0.5 * np.asarray(x[0]),
         _row_wise,
     ),
     "x": (
@@ -66,7 +64,7 @@ _CASES = {
     ),
     "m": (
         lambda t, x, p, m: (
-            0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * float(np.ravel(m)[0]) + 0.5 * np.asarray(x)[..., 0]
+            0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * float(np.ravel(m)[0]) + 0.5 * np.asarray(x[0])
         ),
         _row_wise,
     ),
@@ -100,7 +98,7 @@ def _solve(hamiltonian, **solver_kwargs):
                 domain=TensorProductGrid(
                     bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1)
                 ),
-                conditions=Conditions(u_terminal=lambda x: np.cos(np.pi * x), m_initial=lambda x: 1.0, T=0.5),
+                conditions=Conditions(u_terminal=lambda x: np.cos(np.pi * x[0]), m_initial=lambda x: 1.0, T=0.5),
                 Nt=NT,
             )
             u_terminal = np.cos(np.pi * X)
@@ -116,11 +114,11 @@ def _solve(hamiltonian, **solver_kwargs):
 def test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path(case):
     point_only, row_wise = _CASES[case]
     reference = _solve(_H(row_wise))
+    assert np.all(np.isfinite(reference))
+    np.testing.assert_allclose(_solve(_H(row_wise), analytic_jacobian=False), reference, rtol=0, atol=1e-10)
 
-    with pytest.raises(ValueError, match="differs from each node alone"):
+    with pytest.raises(ValueError, match="evaluate_H, at 3 samples"):
         _solve(_H(point_only))
-
-    np.testing.assert_allclose(_solve(_H(point_only), analytic_jacobian=False), reference, rtol=0, atol=1e-10)
 
 
 def test_nan_matches_nan_and_an_infinite_value_does_not_make_the_check_vacuous():
@@ -128,15 +126,15 @@ def test_nan_matches_nan_and_an_infinite_value_does_not_make_the_check_vacuous()
 
     def check(formula, dp=None):
         with np.errstate(invalid="ignore", divide="ignore"):
-            require_batch_safe_hamiltonian(SimpleNamespace(hamiltonian_class=_H(formula, dp), geometry=grid))
+            refuse_a_hamiltonian_whose_reads_disagree(_H(formula, dp), grid.get_spatial_grid())
 
     # Row-wise and NaN for |p| > 1, which two of the probe's three momenta are.
     check(lambda t, x, p, m: 1.0 - np.sqrt(1.0 - np.sum(np.asarray(p) ** 2, axis=-1)) + 0.3 * np.asarray(m))
 
-    # Point-only in p and infinite at the probe node x = 0, with a row-wise dH/dp, so that only the comparison of H
+    # Point-only in p and infinite at a probe node, with a row-wise dH/dp, so that only the comparison of H
     # itself can refuse it.
-    with pytest.raises(ValueError, match="evaluate_H on 3 nodes together differs"):
+    with pytest.raises(ValueError, match="evaluate_H, at 3 samples, reads differently"):
         check(
-            lambda t, x, p, m: 0.5 * np.asarray(p)[0] ** 2 + 1.0 / np.asarray(x)[..., 0],
+            lambda t, x, p, m: 0.5 * np.asarray(p)[0] ** 2 + 1.0 / (np.asarray(x[0]) - X[spread_samples(NX, 3)[0]]),
             dp=lambda t, x, p, m: np.asarray(p, dtype=float),
         )

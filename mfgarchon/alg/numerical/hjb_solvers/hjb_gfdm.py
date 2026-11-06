@@ -36,7 +36,7 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
@@ -360,7 +360,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Collocation geometry for periodic domains (Issue #711)
         collocation_geometry: object | None = None,
         # Obstacle-aware visibility filtering for stencil neighbors
-        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+        obstacle_sdf: Callable[..., np.ndarray] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
         # DMP runtime guard (Issue #1074): warn when the solved drift exceeds the
@@ -2535,13 +2535,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         if kind in ("no_flux", "periodic"):
             HJBGFDMSolver._refuse_unread({"values": values})
             return factories[kind](dimension=dimension)
-        if values is None:
-            g: Any = 0.0
-        elif callable(values):
-            g = lambda x: values(x)  # noqa: E731 -- the old call, by the point alone
-        else:
-            g = values
-        return factories[kind](value=g, dimension=dimension)
+        return factories[kind](value=0.0 if values is None else values, dimension=dimension)
 
     def _classified_boundary_points(self):
         """``(i, bc_enum, segment, normal)`` for every boundary point, by `_classify_boundary_point`, in the order of
@@ -3107,7 +3101,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 reads it (#1055).
             show_progress: Whether to display progress bar for timesteps
             source_term: MMS forcing ``r_u`` of ``-u_t - (sigma^2/2) lap u + H = r_u``, with the
-                package-wide contract ``source_term(t, x) -> array``, ``x`` of shape ``(N, d)``
+                package-wide contract ``source_term(t, x) -> array``, ``x`` a coordinate tuple
                 (:mod:`base_hjb`). This is the ONLY additive channel a caller can reach. The
                 alpha-independent part of the Lagrangian -- the potential ``V(t, x)`` and the
                 coupling ``f(m)`` -- belongs to the Hamiltonian and arrives through it, so a
@@ -3187,7 +3181,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # - D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
-                s_n = np.asarray(evaluate_solver_source(source_term, t=n * _dt, x=_x), dtype=float)
+                s_n = np.asarray(
+                    evaluate_solver_source(source_term, t=n * _dt, x=_x, dimension=self.problem.dimension), dtype=float
+                )
                 # Shape-check rather than reshape. A 2D source handed back in the wrong point
                 # order has the right SIZE and silently yields a different value function --
                 # measured, an F-ordered (nx, ny) array is accepted and changes Linf from
@@ -3566,17 +3562,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             # 0.0". That was the BUILTIN max's behaviour; with np.maximum the value becomes nan,
             # and the acceptance is identical either way -- which is the whole point above.)
             _af = _ke = _scale = 0.0
+            _x_probe = coordinate_tuple(_pts, self.dimension)
             try:
                 for _n in _slices:
                     _m_n = np.asarray(M_collocation[_n], dtype=float).ravel()
                     _t_n = float(_n) * _dt_probe
                     _h0 = np.asarray(
-                        H_class(x=_pts, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n), dtype=float
+                        H_class(x=_x_probe, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n), dtype=float
                     )
                     _af = np.maximum(_af, np.abs(_h0).max())
                     for _d in _dirs:
                         _P = np.tile(np.asarray(_d, dtype=float), (self.n_points, 1))
-                        _h = np.asarray(H_class(x=_pts, m=_m_n, p=_P, t=_t_n), dtype=float)
+                        _h = np.asarray(H_class(x=_x_probe, m=_m_n, p=_P, t=_t_n), dtype=float)
                         _scale = np.maximum(_scale, np.abs(_h).max())
                         _ke = np.maximum(_ke, np.abs((_h - _h0) - _kinetic_ref(_d)).max())
             except (TypeError, ValueError, AttributeError, IndexError) as _exc:
@@ -3777,7 +3774,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1071: the control-cost Lagrangian L(alpha) for the policy-evaluation RHS comes
         # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The
         # gate above guarantees a QuadraticControlCost, so L(alpha) = lambda/2 |alpha|^2.
-        control_lagrangian = control_cost.lagrangian if control_cost is not None else None
+        control_lagrangian = (lambda alpha: control_cost.lagrangian(alpha)) if control_cost is not None else None
         assembly_sigma = self._sigma_for_assembly()
         # positive_qp_fan (#1689): its policy and its Lagrangian are both the control cost's.
         guarded = self.monotonicity_scheme == "positive_qp_fan"

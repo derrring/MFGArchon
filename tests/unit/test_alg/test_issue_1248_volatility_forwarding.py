@@ -54,8 +54,8 @@ def _geometry() -> TensorProductGrid:
 def _components() -> MFGComponents:
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     return MFGComponents(
-        m_initial=lambda x: np.exp(-20.0 * (x - 0.5) ** 2),
-        u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-20.0 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
         hamiltonian=H,
     )
 

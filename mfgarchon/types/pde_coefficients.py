@@ -9,8 +9,8 @@ Usage:
     >>> from mfgarchon.types.pde_coefficients import DriftCallable, DiffusionCallable
     >>>
     >>> # Define state-dependent drift
-    >>> def my_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
-    ...     return -0.5 * x  # Linear drift
+    >>> def my_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
+    ...     return -0.5 * x[0]  # Linear drift, in 1-D
     >>>
     >>> # Type checking
     >>> assert isinstance(my_drift, DriftCallable)
@@ -18,7 +18,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,12 +38,9 @@ class DriftCallable(Protocol):
 
     Args:
         t: Current time (scalar in [0, T])
-        x: Spatial coordinate(s)
-           Shape conventions:
-           - 1D: (Nx,) - grid points
-           - 2D: (Nx, Ny, 2) - meshgrid with coordinates in last dimension
-           - 3D: (Nx, Ny, Nz, 3) - meshgrid with coordinates in last dimension
-           - Particles: (N_particles, d) - flattened format
+        x: A coordinate tuple: one entry per coordinate, each a scalar or an array of one shape
+           - On a grid: (*spatial_shape,)
+           - Particles: (N_particles,)
         m: Current density field
            Shape conventions:
            - FDM: (*spatial_shape,) - grid density
@@ -59,14 +56,11 @@ class DriftCallable(Protocol):
     Examples:
         >>> # 1D: Linear drift
         >>> def linear_drift(t, x, m):
-        ...     return -0.5 * x  # x: (Nx,), returns: (Nx,)
+        ...     return -0.5 * x[0]  # x[0]: (Nx,), returns: (Nx,)
 
         >>> # 2D: Rotation field
         >>> def rotation_drift(t, x, m):
-        ...     drift = np.zeros_like(x)  # (Nx, Ny, 2)
-        ...     drift[..., 0] = -x[..., 1]  # α_x = -y
-        ...     drift[..., 1] = x[..., 0]   # α_y = x
-        ...     return drift
+        ...     return np.stack([-x[1], x[0]], axis=-1)  # α_x = -y, α_y = x, of shape (Nx, Ny, 2)
 
         >>> # State-dependent: Crowd avoidance
         >>> def crowd_avoidance(t, x, m):
@@ -83,7 +77,7 @@ class DriftCallable(Protocol):
     def __call__(
         self,
         t: float,
-        x: NDArray[np.floating],
+        x: tuple[Any, ...],
         m: NDArray[np.floating],
     ) -> NDArray[np.floating]:
         """Evaluate drift at given state."""

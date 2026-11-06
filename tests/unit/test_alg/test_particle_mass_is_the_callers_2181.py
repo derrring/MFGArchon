@@ -74,7 +74,7 @@ def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem
             ),
             domain=grid,
             conditions=Conditions(
-                m_initial=lambda z, c=centre, k=scale: np.exp(-50.0 * (np.asarray(z) - c) ** 2) / k,
+                m_initial=lambda x, c=centre, k=scale: np.exp(-50.0 * (np.asarray(x[0]) - c) ** 2) / k,
                 u_terminal=lambda x: 0.0,
                 T=0.2,
             ),
@@ -161,7 +161,7 @@ def test_the_callable_drift_path_calibrates_on_a_KDE_slice_not_the_input():
     problem = _problem(grid, centre=0.5, share=0.3)
     M = FPParticleSolver(problem, num_particles=2000, seed=7).solve_fp_system(
         np.asarray(problem.m_initial, dtype=float),
-        drift_field=lambda t, x, m: np.zeros_like(np.atleast_1d(x)),
+        drift_field=lambda t, x, m: np.zeros_like(np.atleast_1d(x[0])),
     )
     masses = np.array([float(grid.integrate(M[t])) for t in range(M.shape[0])])
     assert masses[0] == pytest.approx(0.3, rel=1e-12)

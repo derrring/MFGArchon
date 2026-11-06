@@ -54,12 +54,14 @@ def _sphere_sdf(x):
     return np.linalg.norm(x, axis=1) - 1.0
 
 
+def _sphere_sdf_read(x):
+    """The unit sphere as a region reads it: x is a coordinate tuple."""
+    return np.sqrt(sum(xi**2 for xi in x)) - 1.0
+
+
 def _circle_sdf(x):
-    """SDF for unit circle in 2D."""
-    x = np.asarray(x)
-    if x.ndim == 1:
-        return float(np.linalg.norm(x) - 1.0)
-    return np.linalg.norm(x, axis=1) - 1.0
+    """SDF for unit circle in 2D, as a region reads it: x is a coordinate tuple."""
+    return np.sqrt(x[0] ** 2 + x[1] ** 2) - 1.0
 
 
 def _quadratic_2d(x):
@@ -553,7 +555,7 @@ class TestOutwardNormal:
     def test_single_point_unit_length(self):
         """Outward normal should be unit length."""
         point = np.array([2.0, 0.0, 0.0])
-        normal = outward_normal_from_sdf(_sphere_sdf, point)
+        normal = outward_normal_from_sdf(_sphere_sdf_read, point)
 
         assert abs(np.linalg.norm(normal) - 1.0) < 1e-10
 
@@ -569,7 +571,7 @@ class TestOutwardNormal:
             dtype=float,
         )
 
-        normals = outward_normal_from_sdf(_sphere_sdf, points)
+        normals = outward_normal_from_sdf(_sphere_sdf_read, points)
         norms = np.linalg.norm(normals, axis=1)
 
         np.testing.assert_allclose(norms, 1.0, atol=1e-10)
@@ -630,7 +632,7 @@ class TestSDFGradientFallback:
 
         class GeomWithSD:
             def signed_distance(self, x):
-                return _circle_sdf(x)
+                return np.linalg.norm(x, axis=-1) - 1.0
 
         geom = GeomWithSD()
         points = np.array([[2.0, 0.0]])

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 import numpy as np
 
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
+from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -799,7 +800,7 @@ def compute_fp_velocity_field(
             else:
                 m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
             p_n = p_faces[n].reshape(-1, 1)
-            alpha_faces[n] = H_class.optimal_control(x=x_arr, m=m_n, p=p_n, t=n * dt).ravel()
+            alpha_faces[n] = H_class.optimal_control(x=coordinate_tuple(x_arr, 1), m=m_n, p=p_n, t=n * dt).ravel()
 
         return alpha_faces
     else:
@@ -834,7 +835,9 @@ def compute_fp_velocity_field(
                 m_points = stacked.reshape(n_points)
             else:
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
-            alpha_n = np.asarray(H_class.optimal_control(x=x_points, m=m_points, p=p_points, t=n * dt))
+            alpha_n = np.asarray(
+                H_class.optimal_control(x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt)
+            )
             if alpha_n.shape != (n_points, ndim):
                 raise ValueError(
                     f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "

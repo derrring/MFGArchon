@@ -64,7 +64,13 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     checked_inner_budget,
     report_inner_solve_failure,
 )
-from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
+from mfgarchon.types.callable_protocols import (
+    ALPHA_STAR_SLOTS,
+    CONTROL_LAGRANGIAN_SLOTS,
+    HOWARD_RUNNING_COST_SLOTS,
+    bind_user_callable,
+    coordinate_tuple,
+)
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -84,14 +90,14 @@ Given collocation points `x` (shape (n, d)), gradient `p = ∇U` (shape (n, d)),
 density `m` (shape (n,)), and time index `t_idx`, returns the optimal control
 `alpha` (shape (n, d)) that achieves `min_α (α · p + L(t, x, α, m))`.
 
-For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(t, x, p, m) = -p/c`.
+For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(t_idx, x, p, m) = -p/c`.
 """
 
 RunningCostFn = Callable[[int], np.ndarray]
 # Control-cost Lagrangian L(alpha) over the collocation cloud (Issue #1071): the
-# policy-evaluation running cost. Single source = control_cost.lagrangian; the
-# default unit-quadratic (1/2)|alpha|^2 is used when this is None.
-ControlLagrangianFn = Callable[[np.ndarray], np.ndarray]
+# policy-evaluation running cost, read by the name it declares, `alpha`. Single source =
+# control_cost.lagrangian; the default unit-quadratic (1/2)|alpha|^2 is used when this is None.
+ControlLagrangianFn = Callable[..., np.ndarray]
 """Time-indexed running cost L(x, alpha*, m, t) at the optimal policy.
 
 `running_cost(t_idx) -> array of shape (n,)` returning the running cost
@@ -487,7 +493,21 @@ class HJBHowardSolver:
             bind_user_callable(alpha_star, ALPHA_STAR_SLOTS, role="alpha_star") if alpha_star is not None else None
         )
         self.running_cost = running_cost
-        self.control_lagrangian = control_cost.lagrangian if control_cost is not None else control_lagrangian
+        self._running_cost = (
+            bind_user_callable(running_cost, HOWARD_RUNNING_COST_SLOTS, role="running_cost")
+            if running_cost is not None
+            else None
+        )
+
+        def lagrangian_of_the_cost(alpha: np.ndarray) -> np.ndarray:
+            return control_cost.lagrangian(alpha)
+
+        lagrangian = lagrangian_of_the_cost if control_cost is not None else control_lagrangian
+        self._control_lagrangian = (
+            bind_user_callable(lagrangian, CONTROL_LAGRANGIAN_SLOTS, role="control_lagrangian")
+            if lagrangian is not None
+            else None
+        )
         self.control_cost = control_cost
         self.discretisation = discretisation
         self.max_iter = checked_inner_budget(max_iter, "max_iter", "HJBHowardSolver")
@@ -663,9 +683,9 @@ class HJBHowardSolver:
             p = np.zeros((n, dimension))
             for d in range(dimension):
                 p[:, d] = static["D_grad_central"][d] @ u_next
-            alpha = self._alpha_star(t=t_idx, x=pts, p=p, m=m_n)
+            alpha = self._alpha_star(t_idx=t_idx, x=coordinate_tuple(pts, dimension), p=p, m=m_n)
 
-        rc_t = self.running_cost(t_idx) if self.running_cost is not None else None
+        rc_t = self._running_cost(t_idx=t_idx) if self._running_cost is not None else None
         u_new = u_next.copy()
 
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
@@ -692,8 +712,8 @@ class HJBHowardSolver:
             # L(alpha) = lambda/2 |alpha|^2 for the quadratic cost, so this is byte-identical
             # to the prior hardcoded (1/2)|alpha|^2 at lambda=1 and correct for lambda != 1.
             # Falls back to the unit-quadratic form when no Lagrangian is supplied.
-            if self.control_lagrangian is not None:
-                L_alpha = self.control_lagrangian(alpha)
+            if self._control_lagrangian is not None:
+                L_alpha = self._control_lagrangian(alpha=alpha)
             else:
                 L_alpha = 0.5 * np.sum(alpha * alpha, axis=1)
             b = u_next / dt + L_alpha
@@ -782,7 +802,7 @@ class HJBHowardSolver:
                 p_new = np.zeros((n, dimension))
                 for d in range(dimension):
                     p_new[:, d] = static["D_grad_central"][d] @ u_new
-                alpha_new = self._alpha_star(t=t_idx, x=pts, p=p_new, m=m_n)
+                alpha_new = self._alpha_star(t_idx=t_idx, x=coordinate_tuple(pts, dimension), p=p_new, m=m_n)
 
             # Convergence on policy.
             denom = max(float(np.linalg.norm(alpha, ord=np.inf)), 1e-10)
@@ -831,7 +851,7 @@ class HJBHowardSolver:
         ----------
         M_density : np.ndarray | None
             Density field at every time step, shape `(Nt+1, n)`. It reaches the
-            solve only through ``alpha_star(t, x, p, m)``. When None, ``alpha_star``
+            solve only through ``alpha_star(t_idx, x, p, m)``. When None, ``alpha_star``
             receives ``m = 0``, which is no MFG coupling only for an ``alpha_star``
             that does not depend on ``m``. Under ``"guarded_fan"``, which has no
             ``alpha_star``, it is not read: a coupling reaches that solve through

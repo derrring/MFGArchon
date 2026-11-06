@@ -179,8 +179,7 @@ class MFGProblemProtocol(Protocol):
         Example:
             >>> # Quadratic terminal cost
             >>> def terminal_cost(self, x):
-            ...     x_arr = np.array(x) if hasattr(x, '__iter__') else np.array([x])
-            ...     return 0.5 * np.sum((x_arr - 0.5)**2)
+            ...     return 0.5 * sum((xi - 0.5)**2 for xi in x)
         """
         ...
 
@@ -197,8 +196,7 @@ class MFGProblemProtocol(Protocol):
         Example:
             >>> # Gaussian initial density
             >>> def initial_density(self, x):
-            ...     x_arr = np.array(x) if hasattr(x, '__iter__') else np.array([x])
-            ...     return np.exp(-10 * np.sum((x_arr - 0.5)**2))
+            ...     return np.exp(-10 * sum((xi - 0.5)**2 for xi in x))
         """
         ...
 

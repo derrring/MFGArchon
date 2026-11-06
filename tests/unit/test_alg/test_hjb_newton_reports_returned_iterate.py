@@ -46,7 +46,7 @@ def _stiff_problem():
         T=1.0,
         volatility=0.05,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),

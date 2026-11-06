@@ -46,7 +46,7 @@ def _error(nx: int, sigma: float) -> float:
         return np.cos(_K * x) * np.exp(-diffusion * _K**2 * (_T - t))
 
     def source(t, x):
-        return 0.5 * (_K * np.sin(_K * np.ravel(x)) * np.exp(-diffusion * _K**2 * (_T - t))) ** 2
+        return 0.5 * (_K * np.sin(_K * np.ravel(x[0])) * np.exp(-diffusion * _K**2 * (_T - t))) ** 2
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1))
     problem = MFGProblem(

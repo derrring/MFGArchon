@@ -42,7 +42,6 @@ from mfgarchon.utils.validation.arrays import (
 
 # Components validation (Issue #679, #681-#684)
 from mfgarchon.utils.validation.components import (
-    detect_callable_signature,
     validate_boundary_conditions,
     validate_components,
     validate_m_initial,
@@ -54,11 +53,9 @@ from mfgarchon.utils.validation.components import (
 # Custom function validation (Issue #686)
 from mfgarchon.utils.validation.functions import (
     validate_custom_functions,
-    validate_drift,
     validate_hamiltonian,
     validate_hamiltonian_consistency,
     validate_hamiltonian_derivative,
-    validate_running_cost,
 )
 from mfgarchon.utils.validation.protocol import (
     ValidationError,
@@ -90,14 +87,11 @@ __all__ = [
     "validate_u_final",  # Deprecated alias
     "validate_mass_normalization",
     "validate_boundary_conditions",
-    "detect_callable_signature",
     # Functions
     "validate_custom_functions",
     "validate_hamiltonian",
     "validate_hamiltonian_derivative",
     "validate_hamiltonian_consistency",
-    "validate_drift",
-    "validate_running_cost",
     # Arrays
     "validate_array_dtype",
     "validate_array_shape",

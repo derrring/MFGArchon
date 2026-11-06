@@ -50,7 +50,7 @@ class MeshlessSCNIDiscretization:
         rho: float,
         degree: int,
         bounds: list[tuple[float, float]],
-        sdf: Callable[[NDArray], NDArray] | None = None,
+        sdf: Callable[..., NDArray] | None = None,
         backend: str = "numpy",
         n_edge_gauss: int = 3,
     ) -> None:

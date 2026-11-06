@@ -47,7 +47,7 @@ def _components() -> MFGComponents:
     return MFGComponents(
         hamiltonian=H,
         u_terminal=lambda x: 0.0,
-        m_initial=lambda x: np.exp(-10.0 * (np.asarray(x) - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10.0 * (np.asarray(x[0]) - 0.5) ** 2),
     )
 
 
@@ -73,17 +73,17 @@ def _make_problem_with_nonlocal() -> MFGProblem:
 
 
 def _make_problem_with_source_hjb() -> MFGProblem:
-    return _make(source_term_hjb=lambda t, x, v, m: 0.5 * np.ones(len(x)))
+    return _make(source_term_hjb=lambda t, x, v, m: 0.5 * np.ones(np.shape(x[0])))
 
 
 def _make_problem_with_source_fp() -> MFGProblem:
-    return _make(source_term_fp=lambda t, x, v, m: 0.02 * np.ones(len(x)))
+    return _make(source_term_fp=lambda t, x, v, m: 0.02 * np.ones(np.shape(x[0])))
 
 
 def _make_problem_with_state_penalty() -> MFGProblem:
     # A soft wall, cost-signed: expensive on the right half. #2002 -- what `obstacle=` used to
     # take, minus the claim that it was a constraint.
-    return _make(state_penalty=lambda x: np.maximum(0.0, np.asarray(x) - 0.5))
+    return _make(state_penalty=lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5))
 
 
 def _make_solvers(problem: MFGProblem):

@@ -134,7 +134,7 @@ def test_evaluate_requires_physical_sigma_fail_fast():
 def _lq_problem(nx=21):
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),  # matched λ=1
     )
@@ -274,13 +274,12 @@ class _NonLQFDHamiltonian(HamiltonianBase):
 
     def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
-        x = np.asarray(x, dtype=float)
         m = np.asarray(m, dtype=float)
         if p.ndim == 2:
             kin = np.sum(np.abs(p) ** 3, axis=1) / 3.0
-            pot = np.sin(2 * np.pi * x[:, 0])
+            pot = np.sin(2 * np.pi * x[0])
             return kin + pot + m**2
-        return float(np.sum(np.abs(p) ** 3) / 3.0 + np.sin(2 * np.pi * np.atleast_1d(x)[0]) + float(np.mean(m)) ** 2)
+        return float(np.sum(np.abs(p) ** 3) / 3.0 + np.sin(2 * np.pi * x[0]) + float(np.mean(m)) ** 2)
 
 
 class _CountingHamiltonian(_NonLQFDHamiltonian):
@@ -309,7 +308,7 @@ def _nonlq_problem(nx=21):
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
     H = _CountingHamiltonian()
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=H,
     )

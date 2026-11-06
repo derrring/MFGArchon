@@ -4049,34 +4049,34 @@
     "tests/unit/test_geometry/test_sparse_operations.py::TestSparseSolver::test_direct_solver_1d": [
       "grid_spacing_uses_point_count"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx-[100, 50]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx-[100, 50]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx_points-[101, 51]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx_points-[101, 51]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[626-grid.refine(2).Nx-[20, 20]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[627-grid.refine(2).Nx-[20, 20]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[626-grid.refine(2).Nx_points-[21, 21]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[627-grid.refine(2).Nx_points-[21, 21]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1585-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1586-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1637-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1638-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1696-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1697-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1734-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1735-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1782-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1783-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1828-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1829-]": [
       "grid_interval_count_reads_as_points"
     ],
     "tests/unit/test_geometry/test_tensor_operators.py::TestBoundaryConditions::test_no_flux_bc": [
@@ -5223,7 +5223,7 @@
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "seconds": 245.3,
       "status": "ok",
-      "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
+      "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x[0], m_initial=lambda x: 1.0 + 0.0 * x[0], T=0.1), Nt=2))[0])) == 0.0"
     },
     "fv_upwind_donor_cell_swapped": {
       "kill_count": 9,
@@ -5432,16 +5432,16 @@
         "tests/unit/test_geometry/level_set/test_level_set_core.py::TestLevelSetFunction::test_normal_field_1d",
         "tests/unit/test_geometry/level_set/test_reinitialization.py::TestReinitializationEdgeCases::test_handles_sign_zero",
         "tests/unit/test_geometry/level_set/test_subcell_interface.py::TestSubcellInterface1D::test_accuracy_vs_argmin",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx-[100, 50]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx_points-[101, 51]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[626-grid.refine(2).Nx-[20, 20]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[626-grid.refine(2).Nx_points-[21, 21]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1585-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1637-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1696-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1734-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1782-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1828-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx-[100, 50]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx_points-[101, 51]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[627-grid.refine(2).Nx-[20, 20]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[627-grid.refine(2).Nx_points-[21, 21]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1586-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1638-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1697-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1735-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1783-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1829-]",
         "tests/unit/test_operators/test_interface_jump.py::TestInterfaceJumpOperator1D::test_1d_gradient_jump",
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
@@ -5663,7 +5663,7 @@
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "seconds": 234.8,
       "status": "ok",
-      "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
+      "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x[0], m_initial=lambda x: 1.0 + 0.0 * x[0], T=0.1), Nt=2))[0, 0]) < 1.0"
     },
     "mass_drift_reported_as_deviation_from_one": {
       "kill_count": 2,
@@ -5674,7 +5674,7 @@
       "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
       "seconds": 251.7,
       "status": "ok",
-      "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, volatility=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
+      "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, volatility=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (x[0] - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
     },
     "neumann_low_wall_flux_sign": {
       "kill_count": 40,

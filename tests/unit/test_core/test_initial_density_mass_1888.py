@@ -46,8 +46,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 def _gaussian(dimension: int):
     def m0(x):
-        arr = np.asarray(x)
-        r2 = np.sum((arr - 0.5) ** 2, axis=-1) if dimension > 1 else (arr - 0.5) ** 2
+        r2 = sum((np.asarray(xi) - 0.5) ** 2 for xi in x)
         return np.exp(-30 * r2)
 
     return m0
@@ -119,8 +118,7 @@ class TestTheReportedMass:
         n = 11
         problem = _problem(dimension, n)
         axis = np.linspace(0.0, 1.0, n)
-        grid = np.stack(np.meshgrid(*([axis] * dimension), indexing="ij"), axis=-1) if dimension > 1 else axis
-        expected = _gaussian(dimension)(grid)
+        expected = _gaussian(dimension)(tuple(np.meshgrid(*([axis] * dimension), indexing="ij")))
         assert np.allclose(np.asarray(problem.m_initial), expected, rtol=0, atol=0)
         assert problem.initial_mass != pytest.approx(1.0, rel=1e-6), (
             "this fixture's Gaussian does not integrate to 1; if it now does, the rescale is back"
@@ -202,7 +200,7 @@ class TestTheThreeTiers:
         the check that survived is the one upstream and not the one this branch nearly kept.
         """
         with pytest.raises(ValueError, match=r"m_initial contains negative values"):
-            _problem(1, 11, m0=lambda x: np.asarray(x) - 0.5)
+            _problem(1, 11, m0=lambda x: np.asarray(x[0]) - 0.5)
 
     def test_a_non_finite_density_raises_ValidationError_and_not_ValueError(self):
         """The exception TYPE is the discriminating half, and it is not the obvious one.
@@ -220,7 +218,7 @@ class TestTheThreeTiers:
     def test_tier_1_refuses_a_zero_mass_density(self):
         """The one case tier 1 actually owns, and the only one that reaches it."""
         with pytest.raises(ValueError, match=r"m_initial has total mass .* on the grid measure"):
-            _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x, dtype=float)))
+            _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x[0], dtype=float)))
 
     def test_tier_3_warns_off_one_and_says_how_to_silence_it(self):
         """The message must carry the number, the measure, and the remedy. A bare "mass is not 1"
@@ -257,7 +255,7 @@ class TestTheThreeTiers:
         n = 11
         axis = np.linspace(0.0, 1.0, n)
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
-        raw = _gaussian(1)(axis)
+        raw = _gaussian(1)((axis,))
         normalised = raw / grid.integrate(raw)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -267,7 +265,7 @@ class TestTheThreeTiers:
                 T=0.2,
                 volatility=0.4,
                 components=MFGComponents(
-                    m_initial=lambda x: np.interp(np.asarray(x), axis, normalised),
+                    m_initial=lambda x: np.interp(np.asarray(x[0]), axis, normalised),
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(
                         control_cost=QuadraticControlCost(control_cost=1.0),

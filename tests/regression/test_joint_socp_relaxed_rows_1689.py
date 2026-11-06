@@ -118,7 +118,7 @@ def test_a_row_its_neighbourhood_does_not_contain_is_refused(allow_relaxed):
     centre = points[node] + np.array([0.05, 0.0])
 
     def disc(x):
-        return np.linalg.norm(np.atleast_2d(np.asarray(x, dtype=float)) - centre, axis=1) - 0.03
+        return np.hypot(x[0] - centre[0], x[1] - centre[1]) - 0.03
 
     problem = MFGProblem(
         model=Model(

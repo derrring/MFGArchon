@@ -38,9 +38,13 @@ from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretizat
 from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_what_nitsche_cannot_place
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_problem import MFGProblem
@@ -72,7 +76,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         degree: int = 2,
         n_gauss: int = 4,
         backend: str = "numpy",
-        domain: object | None = None,
+        domain: Callable[..., Any] | None = None,
         nitsche_penalty: float = 20.0,
         streamline_diffusion_scale: float = 0.0,
         boundary_conditions: BoundaryConditions | None = None,
@@ -222,7 +226,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # control depends on p alone, so alpha* is exact for this family's supported (separable) Hamiltonians.
         # Feed the IDENTICAL grad_U the solver already recovered -- that is what preserves byte-identity.
         velocity = H.optimal_control(
-            x=self._disc.dof_coordinates, m=None, p=grad_U, t=0.0
+            x=coordinate_tuple(self._disc.dof_coordinates, self._disc.dof_coordinates.shape[1]), m=None, p=grad_U, t=0.0
         ).T  # (dim, N): alpha* = -grad(U)/lambda
         # FP weak form (Neumann, integrate by parts): the advection contributes
         # -C_b^T to the implicit operator (M/dt + D K - C_b^T), where

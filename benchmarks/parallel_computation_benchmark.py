@@ -72,7 +72,7 @@ def benchmark_common_noise_parallel():
     def create_test_problem():
         # Simple Hamiltonian (must be module-level for pickling)
         def h(x, p, m, theta):
-            return 0.5 * p**2 + 0.5 * x**2 + 0.1 * m
+            return 0.5 * p**2 + 0.5 * x[0] ** 2 + 0.1 * m
 
         noise_process = OrnsteinUhlenbeckProcess(kappa=2.0, mu=0.0, sigma=0.5)
         problem = StochasticMFGProblem(

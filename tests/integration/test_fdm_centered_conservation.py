@@ -26,7 +26,9 @@ def _problem(n=41, nt=40):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     comp = MFGComponents(
-        hamiltonian=H, m_initial=lambda x: np.exp(-40 * (x - 0.35) ** 2), u_terminal=lambda x: 0.5 * (x - 0.5) ** 2
+        hamiltonian=H,
+        m_initial=lambda x: np.exp(-40 * (x[0] - 0.35) ** 2),
+        u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
     )
     return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, volatility=0.3, coupling_coefficient=0.5)
 
@@ -129,8 +131,8 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
         coupling_dm=lambda m: np.asarray(m) * 0.0,
     )
     comps = MFGComponents(
-        m_initial=lambda x: np.exp(-((np.asarray(x) - 0.5) ** 2) / 0.01),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 0.5) ** 2) / 0.01),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=0.05, components=comps)

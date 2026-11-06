@@ -27,13 +27,22 @@ References:
 from __future__ import annotations
 
 import dataclasses
+import functools
+import inspect
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
 from mfgarchon.core.hamiltonian import HamiltonianBase
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
-from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS, Slots, bound_attribute
+from mfgarchon.types.callable_protocols import (
+    CONDITION_SLOTS,
+    CONDITIONAL_HAMILTONIAN_SLOTS,
+    CONDITIONAL_TERMINAL_SLOTS,
+    Slots,
+    bound_attribute,
+    coordinate_tuple,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -181,10 +190,12 @@ class StochasticMFGProblem(MFGProblem):
         #
         # `components.u_terminal` is where a terminal condition actually lives on this hierarchy,
         # and it is the same place `create_conditional_problem` already reads `m_initial` from.
-        self._terminal_cost_normalized = (
-            getattr(self, "terminal_cost", None)
-            or getattr(self, "g", None)
-            or (self.components.u_terminal if self.components is not None else None)
+        terminal = getattr(self, "terminal_cost", None) or getattr(self, "g", None)
+        if inspect.ismethod(terminal) and terminal.__self__ is self:
+            # The problem's own method, read by the names it declares past `self`, as its class's methods are (#2875)
+            terminal = functools.partial(terminal.__func__, self)
+        self._terminal_cost_normalized = terminal or (
+            self.components.u_terminal if self.components is not None else None
         )
 
         # Validate configuration
@@ -229,7 +240,7 @@ class StochasticMFGProblem(MFGProblem):
     def H_conditional(
         self,
         t: float,
-        x: float | np.ndarray,
+        x: tuple[Any, ...],
         p: float | np.ndarray,
         m: float | np.ndarray,
         theta: float | np.ndarray,
@@ -240,7 +251,7 @@ class StochasticMFGProblem(MFGProblem):
 
         Args:
             t: Current time
-            x: Spatial position
+            x: Position, a coordinate tuple
             p: Momentum (∇u)
             m: Density value
             theta: Current noise value θ_t
@@ -260,27 +271,32 @@ class StochasticMFGProblem(MFGProblem):
         )
         return bound(x=x, p=p, m=m, theta=theta, t=t)
 
-    def g_conditional(self, x: float | np.ndarray, theta_T: float | np.ndarray) -> float | np.ndarray:
+    def g_conditional(self, x: tuple[Any, ...], theta_T: float | np.ndarray) -> float | np.ndarray:
         """
         Evaluate conditional terminal cost g(x, θ_T).
 
         Args:
-            x: Spatial position
+            x: Position, a coordinate tuple
             theta_T: Terminal noise value
 
         Returns:
             Terminal cost value g(x, θ_T)
         """
+        x = coordinate_tuple(x, self.dimension)  # a point or a batch a caller passes as it holds it, or a tuple
         if self.conditional_terminal_cost is None:
             # Default: no dependence on terminal noise
             # Use normalized terminal cost attribute (set in __init__)
             if self._terminal_cost_normalized is not None:
-                return self._terminal_cost_normalized(x)
+                bound = bound_attribute(self, "_terminal_cost_normalized", CONDITION_SLOTS, role="u_terminal")
+                return bound(x=x, t=self.T)
             else:
                 # No terminal cost defined - use zero
                 return 0.0
 
-        return self.conditional_terminal_cost(x, theta_T)
+        bound = bound_attribute(
+            self, "conditional_terminal_cost", CONDITIONAL_TERMINAL_SLOTS, role="conditional_terminal_cost"
+        )
+        return bound(x=x, theta=theta_T)
 
     def create_conditional_problem(self, noise_path: np.ndarray) -> MFGProblem:
         """
@@ -373,15 +389,10 @@ class StochasticMFGProblem(MFGProblem):
                 #   dm                 (21,)  -- was 441 values, silently
                 #   dp                 (21,1) -- correct before and after
                 #
-                # It is NOT "refused loudly": both `dm` and `dp` wrap their batch attempt in
-                # `except (TypeError, ValueError)` (hamiltonian.py:1211 and :1262), so this error
-                # never reaches the caller -- it fires and is caught, every time.
-                # It is NOT a no-op either: before this check, nothing in `dm` RAISED. The (N,N)
-                # result simply flowed through `.ravel()` and the central difference and came back
-                # as N^2 values, so the except had nothing to catch and the FP-coupling primitive
-                # returned garbage of the wrong length. Making the batch attempt fail is what
-                # engages the per-point fallback that was there all along.
-                # So: a correctness fix for `dm`, invisible on `dp`, and no new user-visible error.
+                # Since #2875 the batch read has no per-point fallback behind it: the problem's check compares it with
+                # its point reads when the conditional problem takes this Hamiltonian, so a pointwise H that cannot read
+                # a batch is refused there, by name, before a solve, and this check is what a batch of the wrong size
+                # meets after it.
                 array = np.asarray(value)
                 if array.size == 1:
                     return array.item()

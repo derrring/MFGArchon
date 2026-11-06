@@ -383,7 +383,7 @@ class PositiveQPFan:
         points: np.ndarray,
         interior_indices: np.ndarray,
         parameters: GuardedFanParameters,
-        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+        obstacle_sdf: Callable[..., np.ndarray] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
         reflecting_faces: dict[tuple[float, ...], float] | None = None,

@@ -47,7 +47,7 @@ def _free_diffusion_problem(T: float, Nt: int):
         Nt=Nt,
         volatility=0.1,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-np.sum(np.asarray(x) ** 2)),
+            m_initial=lambda x: np.exp(-sum(xi**2 for xi in x)),
             u_terminal=lambda x: 0.0,
             hamiltonian=_hamiltonian(),
         ),
@@ -55,7 +55,7 @@ def _free_diffusion_problem(T: float, Nt: int):
 
 
 def _zero_drift(t, x, m):
-    return np.zeros_like(x)
+    return np.zeros_like(x[0])
 
 
 def _final_cloud_covariance(volatility, *, T=0.5, Nt=50, num_particles=20000, seed=11):

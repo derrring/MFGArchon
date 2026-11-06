@@ -31,8 +31,8 @@ def _default_components_2d():
     """Default MFGComponents for 2D testing (Issue #670: explicit specification required)."""
 
     def m_initial_2d(x):
-        x_arr = np.asarray(x)
-        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
+        x_arr = np.stack(x, axis=-1)
+        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     return MFGComponents(
         m_initial=m_initial_2d,
@@ -44,7 +44,7 @@ def _default_components_2d():
 def _default_components():
     """Default MFGComponents for 1D testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )

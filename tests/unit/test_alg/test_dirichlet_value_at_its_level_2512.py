@@ -61,7 +61,7 @@ def _problem(geometry, nt=NT):
 def _rate(problem, d):
     """c = H(b), read from the problem's Hamiltonian, so the exact solution follows its sign convention."""
     p = B[d][None, :]
-    return float(np.asarray(problem.hamiltonian_class(x=np.zeros((1, d)), m=np.ones(1), p=p, t=0.0)).ravel()[0])
+    return float(np.asarray(problem.hamiltonian_class(x=tuple(np.zeros((d, 1))), m=np.ones(1), p=p, t=0.0)).ravel()[0])
 
 
 def _mesh(d, n):
@@ -78,7 +78,7 @@ def _mesh(d, n):
 
 def _exact(c, d):
     b = B[d]
-    return lambda t, x: A0 + c * t + np.asarray(x, dtype=float) @ b
+    return lambda t, x: A0 + c * t + sum(bi * xi for bi, xi in zip(b, x, strict=True))
 
 
 @pytest.mark.parametrize("d", [1, 2])
@@ -89,7 +89,7 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
     geometry.boundary_conditions = dirichlet_bc(dimension=d, value=0.0)
     c = FP_RATE if arm == "fp" else _rate(_problem(geometry), d)
     u = _exact(c, d)
-    g = dirichlet_bc(dimension=d, value=lambda t, x: float(u(t, x)))
+    g = dirichlet_bc(dimension=d, value=u)
     if arm != "fp":
         geometry.boundary_conditions = g
     problem = _problem(geometry)
@@ -97,14 +97,14 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
     if arm == "fp":
         solver = FPFEMSolver(problem, order=1, boundary_conditions=g)
         X = solver._disc.dof_coordinates
-        exact = np.stack([u(t, X) for t in levels])
+        exact = np.stack([u(t, tuple(X.T)) for t in levels])
         result = solver.solve_fp_system(
-            exact[0], np.zeros((NT + 1, len(X))), source_term=lambda t, x: np.full(len(x), FP_RATE)
+            exact[0], np.zeros((NT + 1, len(X))), source_term=lambda t, x: np.full(np.shape(x[0]), FP_RATE)
         )
     else:
         solver = HJBFEMSolver(problem, order=1)
         X = solver._disc.dof_coordinates
-        exact = np.stack([u(t, X) for t in levels])
+        exact = np.stack([u(t, tuple(X.T)) for t in levels])
         result = solver.solve_hjb_system(
             M_density=np.ones((NT + 1, len(X))),
             U_terminal=exact[-1],
@@ -116,7 +116,7 @@ def test_fem_reads_a_dirichlet_value_at_its_level(arm, d):
     # The wall dofs, asserted on their own (#2512 comment 6042778010, correction 4: the bar for a wall that
     # carries data).
     box = np.array([[0.0, 1.0]] if d == 1 else [[0.0, 1.0], [0.0, LY]])
-    on_wall = np.any(np.isclose(X, box[:, 0]) | np.isclose(X, box[:, 1]), axis=1)
+    on_wall = np.any(np.isclose(X, box[:, 0]) | np.isclose(X, box[:, 1]), axis=-1)
     assert on_wall.sum() == (2 if d == 1 else 4 * n)
     assert np.abs(np.asarray(result)[:, on_wall] - exact[:, on_wall]).max() < 1e-12
 
@@ -134,10 +134,10 @@ def test_gfdm_reads_a_dirichlet_value_at_its_level(d, inner):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * d,
         Nx_points=[n] * d,
-        boundary_conditions=dirichlet_bc(dimension=d, value=lambda t, x: float(u(t, x))),
+        boundary_conditions=dirichlet_bc(dimension=d, value=u),
     )
     points = np.stack(np.meshgrid(*[np.linspace(0.0, 1.0, n)] * d, indexing="ij"), axis=-1).reshape(-1, d)
-    exact = np.stack([u(t, points) for t in np.linspace(0.0, T, NT + 1)])
+    exact = np.stack([u(t, tuple(points.T)) for t in np.linspace(0.0, T, NT + 1)])
     solver = HJBGFDMSolver(_problem(grid), collocation_points=points, delta=3.0 / (n - 1), **kwargs)
     result = solver.solve_hjb_system(
         M_density=np.ones((NT + 1, len(points))), U_terminal=exact[-1], U_coupling_prev=exact
@@ -162,7 +162,7 @@ def test_meshless_nitsche_reads_its_data_at_each_level(newton):
         bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=dirichlet_bc(dimension=1, value=g)
     )
     problem = _problem(grid, nt=nt)
-    xs = np.linspace(0.0, 1.0, nx)[:, None]
+    xs = np.linspace(0.0, 1.0, nx)[..., None]
     solver = MeshlessGalerkinHJBSolver(problem, xs, delta=0.35)
     times.clear()
     U = np.asarray(
@@ -174,6 +174,6 @@ def test_meshless_nitsche_reads_its_data_at_each_level(newton):
         )
     )
     levels = np.linspace(0.0, T, nt + 1)[:nt]
-    walls = U[:nt][:, [0, -1]] - (A0 + rate * levels[:, None] + np.array([0.0, 0.7]))
+    walls = U[:nt][:, [0, -1]] - (A0 + rate * levels[..., None] + np.array([0.0, 0.7]))
     assert np.abs(walls).max() < 0.05, walls
     assert sorted(set(times)) == [round(t, 12) for t in levels]

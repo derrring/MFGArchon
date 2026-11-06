@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -257,7 +259,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
                 - "dirichlet": Set field to bc_value at boundary
                 - "neumann": Set normal derivative to bc_value (requires additional ops)
                 - "penalty": Add penalty term pushing field toward bc_value
-            bc_value: Boundary value: a number, or a function ``g(x)`` of one point ``x`` of shape ``(d,)``, a def
+            bc_value: Boundary value: a number, or a function ``g(x)`` of one point ``x``, a tuple of scalars, a def
                 or a lambda. Its parameter must be named ``x``: it is bound by name (#2512 row B2), and this method
                 has no time to pass, so one that declares ``t`` is refused. Another callable, such as a SciPy
                 interpolant over space, is refused too; wrap it, ``lambda x: s(x[0])``.
@@ -530,9 +532,8 @@ class SDFParticleBCHandler:
     The SDF convention is: negative inside, zero on boundary, positive outside.
 
     Examples:
-        >>> from mfgarchon.utils.numerical import sdf_sphere
-        >>> def circle_sdf(points):
-        ...     return sdf_sphere(points, center=[0, 0], radius=1.0)
+        >>> def circle_sdf(x):  # x is a coordinate tuple
+        ...     return np.hypot(x[0], x[1]) - 1.0
         >>> handler = SDFParticleBCHandler(circle_sdf, dimension=2)
         >>>
         >>> # Particles that crossed boundary get reflected
@@ -543,7 +544,7 @@ class SDFParticleBCHandler:
 
     def __init__(
         self,
-        sdf: Callable[[NDArray], NDArray],
+        sdf: Callable[..., NDArray],
         dimension: int,
         max_bisection_iterations: int = 20,
         bisection_tolerance: float = 1e-8,
@@ -553,7 +554,7 @@ class SDFParticleBCHandler:
         Initialize SDF-based particle BC handler.
 
         Args:
-            sdf: Signed distance function. sdf(points) -> distances where
+            sdf: Signed distance function, read by name with ``x`` a coordinate tuple: sdf(x) -> distances where
                 negative = inside, zero = boundary, positive = outside
             dimension: Spatial dimension
             max_bisection_iterations: Max iterations for boundary point bisection
@@ -565,6 +566,9 @@ class SDFParticleBCHandler:
         self.max_bisection_iterations = max_bisection_iterations
         self.bisection_tolerance = bisection_tolerance
         self.epsilon = epsilon
+
+    def _signed_distance(self, points: NDArray, *, one_point: bool = False) -> NDArray:
+        return read_region(self.sdf, points, role="sdf", one_point=one_point)
 
     def apply_bc(
         self,
@@ -595,8 +599,8 @@ class SDFParticleBCHandler:
             velocities = np.atleast_2d(velocities).copy()
 
         # Evaluate SDF at old and new positions
-        sdf_old = self.sdf(X_old)
-        sdf_new = self.sdf(X_new)
+        sdf_old = self._signed_distance(X_old)
+        sdf_new = self._signed_distance(X_new)
 
         # Detect boundary crossings: was inside (< 0), now outside (> 0)
         crossed = (sdf_old < 0) & (sdf_new > 0)
@@ -623,7 +627,7 @@ class SDFParticleBCHandler:
 
             # If still outside after reflection, project to boundary
             # (handles grazing angles and numerical issues)
-            if self.sdf(X_new[i].reshape(1, -1))[0] > 0:
+            if np.ravel(self._signed_distance(X_new[i], one_point=True))[0] > 0:
                 X_new[i] = X_boundary
 
             # Reflect velocity if provided (elastic collision)
@@ -654,7 +658,7 @@ class SDFParticleBCHandler:
         for _ in range(self.max_bisection_iterations):
             t_mid = (a + b) / 2
             p_mid = p_inside + t_mid * direction
-            sdf_mid = self.sdf(p_mid.reshape(1, -1))[0]
+            sdf_mid = np.ravel(self._signed_distance(p_mid, one_point=True))[0]
 
             if abs(sdf_mid) < self.bisection_tolerance:
                 return p_mid
@@ -681,16 +685,15 @@ class SDFParticleBCHandler:
         Returns:
             Unit outward normal vector, shape (d,)
         """
-        point = point.reshape(1, -1)
+        point = np.asarray(point, dtype=float).reshape(-1)
         grad = np.zeros(self.dimension)
 
         for i in range(self.dimension):
-            p_plus = point.copy()
-            p_minus = point.copy()
-            p_plus[0, i] += self.epsilon
-            p_minus[0, i] -= self.epsilon
-
-            grad[i] = (self.sdf(p_plus)[0] - self.sdf(p_minus)[0]) / (2 * self.epsilon)
+            shift = np.zeros(self.dimension)
+            shift[i] = self.epsilon
+            plus = np.ravel(self._signed_distance(point + shift, one_point=True))[0]
+            minus = np.ravel(self._signed_distance(point - shift, one_point=True))[0]
+            grad[i] = (plus - minus) / (2 * self.epsilon)
 
         # Normalize
         norm = np.linalg.norm(grad)
@@ -720,7 +723,7 @@ class SDFParticleBCHandler:
         Returns:
             Boolean array, True if inside domain
         """
-        return self.sdf(np.atleast_2d(points)) < 0
+        return self._signed_distance(np.atleast_2d(points)) < 0
 
 
 class ParticleReflector:

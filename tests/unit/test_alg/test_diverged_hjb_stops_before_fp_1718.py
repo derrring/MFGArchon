@@ -71,7 +71,7 @@ def _make_problem(sigma=0.3):
         # "nothing ever wrote it", so the owner's terminal-restore invariant was unpinned at every
         # call site. Measured: with the old fixture, replacing `U_terminal` with `None` at all four
         # wired sites left the whole suite green.
-        u_terminal=lambda x: 1.0 + np.asarray(x, dtype=float) * 0.0 + 3.0,
+        u_terminal=lambda x: 1.0 + np.asarray(x[0], dtype=float) * 0.0 + 3.0,
         m_initial=lambda x: 1.0,
     )
     return MFGProblem(

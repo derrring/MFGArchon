@@ -31,7 +31,7 @@ def _make_problem() -> MFGProblem:
         boundary_conditions=no_flux_bc(dimension=1),
     )
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),

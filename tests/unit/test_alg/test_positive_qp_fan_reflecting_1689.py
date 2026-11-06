@@ -44,11 +44,11 @@ Z_M = float(i0(np.log(5.0) * NU / 4 / NU) ** 2)
 
 def _phi(x):
     q, dq, d2q = (lambda s: s**3 - 1.5 * s**2), (lambda s: 3 * s**2 - 3 * s), (lambda s: 6 * s - 3)
-    x = np.atleast_2d(np.asarray(x, dtype=float))
+    x = np.asarray(x, dtype=float)
     return (
-        A_PHI * (q(x[:, 0]) + q(x[:, 1])),
-        A_PHI * (d2q(x[:, 0]) + d2q(x[:, 1])),
-        A_PHI**2 * (dq(x[:, 0]) ** 2 + dq(x[:, 1]) ** 2),
+        A_PHI * (q(x[..., 0]) + q(x[..., 1])),
+        A_PHI * (d2q(x[..., 0]) + d2q(x[..., 1])),
+        A_PHI**2 * (dq(x[..., 0]) ** 2 + dq(x[..., 1]) ** 2),
     )
 
 
@@ -62,9 +62,9 @@ def _u_star(t, x):
 
 def _potential(t, x):
     """V = C - nu Lap phi + |grad phi|^2 / 2 - zeta m*: a point gives a number, a batch an array."""
-    _, lap, grad2 = _phi(x)
-    v = C_TIME - NU * lap + 0.5 * grad2 - ZETA * _m_star(x)
-    return float(v[0]) if np.ndim(x) == 1 else v
+    points = np.stack(x, axis=-1)
+    _, lap, grad2 = _phi(points)
+    return C_TIME - NU * lap + 0.5 * grad2 - ZETA * _m_star(points)
 
 
 def _sobol(n_int, seed=42):
@@ -85,7 +85,10 @@ def _bc(fixture):
     return BoundaryConditions(
         segments=[
             BCSegment(
-                name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=lambda t, x: float(_u_star(t, x)[0])
+                name="exit",
+                bc_type=BCType.DIRICHLET,
+                boundary="x_max",
+                value=lambda t, x: _u_star(t, np.stack(x, axis=-1)),
             ),
             BCSegment(name="walls", bc_type=BCType.NO_FLUX),
         ],
@@ -394,7 +397,7 @@ def test_the_reflecting_closure_refuses_what_it_cannot_close(row):
                 segments=[BCSegment(name="walls", bc_type=BCType.NO_FLUX)],
                 dimension=2,
                 domain_bounds=np.array([[0.0, 20.0], [0.0, 20.0]]),
-                domain_sdf=lambda x: float(np.max(np.abs(np.asarray(x) - 10.0)) - 10.0),
+                domain_sdf=lambda x: np.max(np.abs(np.asarray(x[0]) - 10.0)) - 10.0,
             ),
             r"a reflecting point on a boundary read from domain_sdf",
         ),

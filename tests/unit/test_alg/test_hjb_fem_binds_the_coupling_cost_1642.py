@@ -38,8 +38,7 @@ from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata  # noqa: 
 
 
 def _V(x):
-    x = np.asarray(x, dtype=float)
-    return 0.8 * np.sin(2 * np.pi * x[..., 0]) + 0.5 * x[..., 1]
+    return 0.8 * np.sin(2 * np.pi * x[0]) + 0.5 * x[1]
 
 
 def _mesh(refine=2, stretch=(1.0, 1.0), bc=None, d=2):
@@ -70,7 +69,7 @@ def _mesh(refine=2, stretch=(1.0, 1.0), bc=None, d=2):
 def _problem(where=None, cost=None, nt=8, **mesh):
     """V as the Hamiltonian's potential (``"H"``), as ``PotentialCost(V)`` (``"F"``), or ``cost``."""
     if where == "F":
-        cost = PotentialCost(lambda x: float(_V(x)))
+        cost = PotentialCost(_V)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on the mesh is not these pins' subject
         return MFGProblem(
@@ -84,8 +83,8 @@ def _problem(where=None, cost=None, nt=8, **mesh):
             ),
             domain=_mesh(**mesh),
             conditions=Conditions(
-                u_terminal=lambda x: float(np.sum((np.asarray(x) - 0.7) ** 2)),
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=lambda x: sum((xi - 0.7) ** 2 for xi in x),
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=nt,
@@ -171,8 +170,8 @@ def _grid_problem(model):
         model=model,
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
-            m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float) - 0.3) ** 2),
+            u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2,
+            m_initial=lambda x: np.exp(-40 * (np.asarray(x[0], dtype=float) - 0.3) ** 2),
             T=0.3,
         ),
         Nt=6,
@@ -209,7 +208,7 @@ def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost
     from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
     def V1(x):
-        return 0.8 * np.sin(2 * np.pi * np.asarray(x, dtype=float))
+        return 0.8 * np.sin(2 * np.pi * np.asarray(x[0], dtype=float))
 
     def V2(x):
         return -1.5 * np.cos(3 * np.pi * np.asarray(x, dtype=float))
@@ -246,8 +245,8 @@ def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost
             built = _problem("F")
             solved = built.with_conditions(
                 Conditions(
-                    u_terminal=lambda x: float(np.sum(np.asarray(x) ** 2)),
-                    m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.6) ** 2))),
+                    u_terminal=lambda x: sum(xi**2 for xi in x),
+                    m_initial=lambda x: np.exp(-10 * sum((xi - 0.6) ** 2 for xi in x)),
                     T=0.5,
                 )
             )
@@ -507,7 +506,7 @@ def test_a_reader_that_passes_no_binding_refuses_by_its_name(reader):
         def solve():
             # Composing node 0's source is where the graph solver refuses: before any evaluation, so a refusal deferred
             # to the source's first call would return a callable here.
-            return graph._compose_hjb_source(0, [M, M], [M, M], lambda t, x: np.zeros(len(x)))
+            return graph._compose_hjb_source(0, [M, M], [M, M], lambda t, x: np.zeros(np.shape(x[0])))
 
     with pytest.raises(NotImplementedError, match=rf"{refusal} Mesh2D"):
         solve()
@@ -525,10 +524,10 @@ def _VT(x):
 def _g_problem(where=None, g=None, nt=8, **mesh):
     """``_VT`` added to ``u_terminal`` (``"u"``), ``PotentialCost(_VT)`` as G (``"G"``), or ``g`` as G."""
     if where == "G":
-        g = PotentialCost(lambda x: float(_VT(x)))
+        g = PotentialCost(_VT)
 
     def terminal(x):
-        return float(np.sum((np.asarray(x) - 0.7) ** 2))
+        return sum((xi - 0.7) ** 2 for xi in x)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on the mesh is not these pins' subject
@@ -540,8 +539,8 @@ def _g_problem(where=None, g=None, nt=8, **mesh):
             ),
             domain=_mesh(**mesh),
             conditions=Conditions(
-                u_terminal=(lambda x: terminal(x) + float(_VT(x))) if where == "u" else terminal,
-                m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.3) ** 2))),
+                u_terminal=(lambda x: terminal(x) + _VT(x)) if where == "u" else terminal,
+                m_initial=lambda x: np.exp(-10 * sum((xi - 0.3) ** 2 for xi in x)),
                 T=0.5,
             ),
             Nt=nt,

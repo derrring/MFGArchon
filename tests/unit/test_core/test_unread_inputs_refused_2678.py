@@ -56,21 +56,25 @@ _MASS = float(trapezoid(_gaussian(_POINTS), _POINTS))
 
 
 def _m_initial(x):
-    return _gaussian(_x(x)) / _MASS
+    return _gaussian(x[0]) / _MASS
 
 
 def _u_terminal(x):
-    return 2.0 * (_x(x) - 0.7) ** 2
+    return 2.0 * (x[0] - 0.7) ** 2
 
 
 def _grid():
     return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
 
 
+def _weighted(m, weight):
+    return weight * m
+
+
 def _hamiltonian(weight=1.0):
     return SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=functools.partial(np.multiply, weight),
+        coupling=functools.partial(_weighted, weight=weight),
         coupling_dm=lambda m: weight * np.ones_like(m),
     )
 
@@ -97,11 +101,11 @@ _FORMS = {"model form": _model_form, "components form": _components_form}
 
 
 def _drift(t, x, m):
-    return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
+    return 0.2 * (0.5 - np.asarray(x[0])) * (1.0 + np.asarray(t))
 
 
 def _drift_written_x_first(x, t, m):
-    return 0.2 * (0.5 - np.asarray(x)) * (1.0 + np.asarray(t))
+    return 0.2 * (0.5 - np.asarray(x[0])) * (1.0 + np.asarray(t))
 
 
 def _drift_unnamed(a, b, c):
@@ -109,7 +113,7 @@ def _drift_unnamed(a, b, c):
 
 
 def _zero_drift(t, x, m):
-    return np.zeros_like(np.asarray(x, dtype=float))
+    return np.zeros_like(np.asarray(x[0], dtype=float))
 
 
 def _density():
@@ -191,7 +195,7 @@ def test_a_state_penalty_scale_with_no_state_penalty_is_refused(form):
 
 @pytest.mark.unit
 def test_a_state_penalty_scale_beside_a_state_penalty_stays_and_moves_the_solve():
-    wall = {"state_penalty": lambda x: 2.0 * _x(x)}
+    wall = {"state_penalty": lambda x: 2.0 * np.asarray(x[0], dtype=float)}
     one = _model_form(**wall).solve(verbose=False)
     three = _model_form(**wall, state_penalty_scale=3.0).solve(verbose=False)
     assert _gap(one.U, three.U) > 1e-2
@@ -294,13 +298,13 @@ def test_the_advice_on_obstacles_holds_a_density_out_of_the_region():
         problem = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.05),
             domain=grid,
-            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * _x(x), u_terminal=lambda x: 0.0 * _x(x), T=0.3),
+            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0 * x[0], T=0.3),
             Nt=15,
         )
         solver = FPParticleSolver(problem, num_particles=1000, seed=2688, **given)
         density = solver.solve_fp_system(
             M_initial=start,
-            drift_field=lambda t, x, m: 2.0 + 0.0 * np.asarray(x, dtype=float),
+            drift_field=lambda t, x, m: 2.0 + 0.0 * np.asarray(x[0], dtype=float),
             drift_needs_density=False,
             show_progress=False,
         )
@@ -420,8 +424,9 @@ def test_the_advice_on_fpfdmsolver_moves_the_density_and_reads_by_position():
     plain = solve(_zero_drift)
     written_as_told = solve(_drift)
     assert _gap(written_as_told, plain) > 1e-3
-    assert _gap(written_as_told, solve(_drift_unnamed)) == 0.0
-    assert _gap(written_as_told, solve(_drift_written_x_first)) > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        solve(_drift_unnamed)
+    assert _gap(written_as_told, solve(_drift_written_x_first)) == 0.0
 
 
 @pytest.mark.unit
@@ -436,8 +441,9 @@ def test_the_advice_on_fpparticlesolver_moves_the_density_and_reads_by_position(
     assert _gap(repeat, solve(_zero_drift)) == 0.0
     written_as_told = solve(_drift)
     assert _gap(written_as_told, repeat) > 1e-3
-    assert _gap(written_as_told, solve(_drift_unnamed)) == 0.0
-    assert _gap(written_as_told, solve(_drift_written_x_first)) > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        solve(_drift_unnamed)
+    assert _gap(written_as_told, solve(_drift_written_x_first)) == 0.0
 
 
 @pytest.mark.unit
@@ -487,8 +493,9 @@ def test_the_advice_on_the_iterator_replaces_the_drift_the_hamiltonian_gives_and
 
     written_as_told = solve(drift_field=_drift).M
     assert _gap(solve(drift_field=_zero_drift).M, solve().M) > 1e-1
-    assert _gap(written_as_told, solve(drift_field=_drift_unnamed).M) == 0.0
-    assert _gap(written_as_told, solve(drift_field=_drift_written_x_first).M) > 1e-3
+    with pytest.raises(TypeError, match="names no slot"):
+        solve(drift_field=_drift_unnamed)
+    assert _gap(written_as_told, solve(drift_field=_drift_written_x_first).M) == 0.0
 
 
 @pytest.mark.unit

@@ -30,7 +30,7 @@ def _default_hamiltonian():
 def _default_components_1d():
     """Provide default components for 1D test problems."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-((np.asarray(x) - 5.0) ** 2) / 2.0),
+        m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 5.0) ** 2) / 2.0),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )
@@ -40,7 +40,7 @@ def _default_components_2d():
     """Provide default components for 2D test problems."""
 
     def m_initial_2d(x):
-        x_arr = np.asarray(x)
+        x_arr = np.asarray(x[0])
         if x_arr.ndim == 1:
             return np.exp(-((x_arr[0] - 2.0) ** 2 + (x_arr[1] - 2.0) ** 2) / 2.0)
         return np.exp(-((x_arr[..., 0] - 2.0) ** 2 + (x_arr[..., 1] - 2.0) ** 2) / 2.0)

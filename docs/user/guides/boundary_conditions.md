@@ -166,7 +166,7 @@ Regions can be marked using boundaries, custom predicates or masks:
 geometry.mark_region("left_wall", boundary="x_min")
 
 # Method 2: Mark using predicate function
-geometry.mark_region("inlet_strip", predicate=lambda x: (x[:, 0] < 0.1) & (x[:, 1] > 0.5))
+geometry.mark_region("inlet_strip", predicate=lambda x: (x[0] < 0.1) & (x[1] > 0.5))
 
 # Method 3: Combine whole faces in one region, through the grid's union of marked regions
 geometry.mark_region("bottom", boundary="y_min")
@@ -328,7 +328,7 @@ bc = dirichlet_bc(dimension=2, value=inlet_profile)
 padded = pad_array_with_ghosts(field, bc, time=0.5, spacing=(dy, dx))
 ```
 
-For spatially-varying BCs, `x` is one boundary point, an array of shape `(d,)`:
+For spatially-varying BCs, `x` is one boundary point, a coordinate tuple:
 
 ```python
 # Function of time and position
@@ -426,10 +426,10 @@ Replace non-periodic functions with their periodic counterparts:
 import numpy as np
 
 # WRONG: Quadratic potential on periodic domain
-V_quad = lambda x: C * (x - L/2)**2  # Gradient discontinuity at boundary!
+V_quad = lambda x: C * (x[0] - L/2)**2  # Gradient discontinuity at boundary!
 
 # CORRECT: Cosine potential (periodic, smooth)
-V_periodic = lambda x: C/2 * (1 + np.cos(2 * np.pi * x / L))
+V_periodic = lambda x: C/2 * (1 + np.cos(2 * np.pi * x[0] / L))
 # V_min = 0 at center, V_max = C at boundaries
 # Gradient is continuous: dV/dx = 0 at both x=0 and x=L
 ```

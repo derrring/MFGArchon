@@ -53,8 +53,8 @@ def _problem(conditional_hamiltonian, u_terminal=None):
     )
     components = MFGComponents(
         hamiltonian=H,
-        u_terminal=u_terminal or (lambda x: np.zeros_like(np.asarray(x, dtype=float))),
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+        u_terminal=u_terminal or (lambda x: np.zeros_like(np.asarray(x[0], dtype=float))),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
     )
     return StochasticMFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),
@@ -137,12 +137,12 @@ def test_the_parent_terminal_condition_reaches_the_conditional_solve():
     x = np.linspace(0.0, 1.0, 5)
 
     def _with_terminal(u_terminal):
-        problem = _problem(lambda x_, p, m, theta: 0.5 * p**2 + theta * m, u_terminal=u_terminal)
+        problem = _problem(lambda p, m, theta: 0.5 * np.sum(p**2, axis=-1) + theta * m, u_terminal=u_terminal)
         conditional = problem.create_conditional_problem(np.linspace(0.0, 1.0, problem.Nt + 1))
-        return np.array([float(conditional.components.u_terminal(np.array([xi]))) for xi in x])
+        return np.array([float(conditional.components.u_terminal((xi,))) for xi in x])
 
-    quadratic = _with_terminal(lambda p: 0.5 * float(np.asarray(p).ravel()[0]) ** 2)
-    zero = _with_terminal(lambda p: 0.0)
+    quadratic = _with_terminal(lambda x: 0.5 * np.asarray(x[0], dtype=float) ** 2)
+    zero = _with_terminal(lambda x: 0.0)
 
     np.testing.assert_allclose(quadratic, 0.5 * x**2, rtol=0, atol=1e-12)
     # CONTROL: a genuinely zero terminal condition must still come through as zero, so the

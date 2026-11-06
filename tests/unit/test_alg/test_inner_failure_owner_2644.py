@@ -37,8 +37,8 @@ def _problem(n=41, nt=40, dimension=1):
         volatility=0.4,
     )
     cond = Conditions(
-        m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2),
-        u_terminal=lambda x: 2.0 * (np.asarray(x, dtype=float)[..., 0] - 0.7) ** 2,
+        m_initial=lambda x: np.exp(-40 * (x[0] - 0.3) ** 2),
+        u_terminal=lambda x: 2.0 * (x[0] - 0.7) ** 2,
         T=0.5,
     )
     with warnings.catch_warnings():
@@ -141,8 +141,8 @@ def _terminal_problem(terminal):
         volatility=0.4,
     )
     cond = Conditions(
-        m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float)[..., 0] - 0.3) ** 2),
-        u_terminal=lambda x: terminal(np.asarray(x, dtype=float)[..., 0]),
+        m_initial=lambda x: np.exp(-40 * (x[0] - 0.3) ** 2),
+        u_terminal=lambda x: terminal(x[0]),
         T=0.5,
     )
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
@@ -284,7 +284,7 @@ def test_network_policy_iteration_refuses_an_exhausted_budget_and_records_it_whe
 
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    comps = NetworkMFGComponents(node_potential_func=lambda t, i: 2.0 * i - 0.4 * i * i)
+    comps = NetworkMFGComponents(node_potential_func=lambda t, node: 2.0 * node - 0.4 * node * node)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         problem = NetworkMFGProblem(geometry=net, T=0.5, Nt=20, components=comps)
@@ -311,9 +311,7 @@ def test_the_weak_form_newton_refuses_an_exhausted_budget_and_records_it_when_as
     mesh.generate_mesh()
     mesh.boundary_conditions = dirichlet_bc(value=0.7, dimension=1)
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
-    cond = Conditions(
-        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=0.5
-    )
+    cond = Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         fem = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=cond, Nt=8), order=1)

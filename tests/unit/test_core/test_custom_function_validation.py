@@ -31,10 +31,8 @@ from mfgarchon.utils.validation import (
     ValidationError,
     ValidationSeverity,
     validate_custom_functions,
-    validate_drift,
     validate_hamiltonian,
     validate_hamiltonian_consistency,
-    validate_running_cost,
 )
 
 # ===========================================================================
@@ -471,59 +469,9 @@ def test_validate_custom_functions_propagates_consistency_invalidity():
 # ===========================================================================
 
 
-@pytest.mark.unit
-def test_valid_drift_passes():
-    """A drift with signature drift(x, m) should pass."""
-    geom = _geometry()
-
-    def my_drift(x, m):
-        return -x
-
-    result = validate_drift(my_drift, geom)
-    assert result.is_valid
-
-
-@pytest.mark.unit
-def test_drift_wrong_signature_raises():
-    """A drift with wrong arity should fail."""
-    geom = _geometry()
-
-    def bad_drift():
-        return 0.0
-
-    result = validate_drift(bad_drift, geom)
-    assert not result.is_valid
-    assert any("signature" in str(issue).lower() for issue in result.issues)
-
-
 # ===========================================================================
 # Running cost validation
 # ===========================================================================
-
-
-@pytest.mark.unit
-def test_valid_running_cost_passes():
-    """A running cost with signature f(x, m) should pass."""
-    geom = _geometry()
-
-    def my_cost(x, m):
-        return float(np.sum(x**2)) + m
-
-    result = validate_running_cost(my_cost, geom)
-    assert result.is_valid
-
-
-@pytest.mark.unit
-def test_running_cost_wrong_signature_raises():
-    """A running cost with wrong arity should fail."""
-    geom = _geometry()
-
-    def bad_cost():
-        return 0.0
-
-    result = validate_running_cost(bad_cost, geom)
-    assert not result.is_valid
-    assert any("signature" in str(issue).lower() for issue in result.issues)
 
 
 # ===========================================================================
@@ -535,8 +483,8 @@ def test_running_cost_wrong_signature_raises():
 def test_mfg_problem_valid_hamiltonian_accepted():
     """MFGProblem with valid Hamiltonian should construct without error."""
     problem = _problem(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-        u_terminal=lambda x: x**2,
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: x[0] ** 2,
     )
     assert problem is not None
 
@@ -555,8 +503,8 @@ def test_mfg_problem_nan_hamiltonian_rejected():
 
     with pytest.raises(ValidationError, match="NaN"):
         _problem(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: x**2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: x[0] ** 2,
             hamiltonian=NaNHamiltonian(),
         )
 
@@ -577,8 +525,8 @@ def test_mfg_problem_rejects_hamiltonian_with_wrong_dm():
 
     with pytest.raises(ValidationError, match="dH_dm"):
         _problem(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: x**2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: x[0] ** 2,
             hamiltonian=WrongDmHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m**2,
@@ -604,8 +552,8 @@ def test_mfg_problem_accepts_every_shipped_control_cost(control_cost):
     test for the gate as a whole.
     """
     problem = _problem(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-        u_terminal=lambda x: x**2,
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: x[0] ** 2,
         hamiltonian=SeparableHamiltonian(
             control_cost=control_cost,
             coupling=lambda m: m**2,

@@ -114,7 +114,7 @@ if __name__ == "__main__":
     # Terminal cost: distance to exit at x=1
     def terminal_cost(x):
         """Agents want to be close to exit (x=1) at final time."""
-        return (x - 1.0) ** 2
+        return (x[0] - 1.0) ** 2
 
     # Initial density: uniform on [0.1, 0.9].
     #
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     # calibrated against these values, and normalising would change the coupling strength it measures.
     def initial_density(x):
         """Uniform crowd distribution, avoiding boundaries."""
-        density = np.where((x >= 0.1) & (x <= 0.9), 1.0, 0.01)
+        density = np.where((x[0] >= 0.1) & (x[0] <= 0.9), 1.0, 0.01)
         return density
 
     # Create custom Hamiltonian

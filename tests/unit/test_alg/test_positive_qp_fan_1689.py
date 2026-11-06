@@ -65,7 +65,11 @@ def _cloud(n_interior, kind, seed=42):
 
 def _lq_problem(nt, control_cost=None, hamiltonian=None, cost=COST):
     bc = BoundaryConditions(
-        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(_u_star(t, x, cost)[0]))],
+        segments=[
+            BCSegment(
+                name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: _u_star(t, np.stack(x, axis=-1), cost)[0]
+            )
+        ],
         dimension=2,
         domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
     )
@@ -106,8 +110,8 @@ def _sector_hamiltonian(u, sectors, lam):
         return np.einsum("mi,mi->m", coords, du) + 0.5 * lam * np.einsum("mi,mij,mj->m", coords, gram, coords)
 
     both = np.linalg.solve(lam * gram, -du[:, :, None])[:, :, 0]
-    on0 = np.column_stack([np.maximum(0.0, -du[:, 0] / (lam * gram[:, 0, 0])), np.zeros(len(du))])
-    on1 = np.column_stack([np.zeros(len(du)), np.maximum(0.0, -du[:, 1] / (lam * gram[:, 1, 1]))])
+    on0 = np.column_stack([np.maximum(0.0, -du[:, 0] / (lam * gram[..., 0, 0])), np.zeros(len(du))])
+    on1 = np.column_stack([np.zeros(len(du)), np.maximum(0.0, -du[:, 1] / (lam * gram[..., 1, 1]))])
     best = np.minimum(np.minimum(value(on0), value(on1)), 0.0)
     best = np.where(np.all(both >= 0.0, axis=1), np.minimum(best, value(both)), best)
     hamiltonian = np.full(len(u), np.inf)
@@ -195,7 +199,9 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
 
     nt = 20
     bc = BoundaryConditions(
-        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(u_linear(t, x)[0]))],
+        segments=[
+            BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: u_linear(t, np.stack(x, axis=-1))[0])
+        ],
         dimension=2,
         domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
     )

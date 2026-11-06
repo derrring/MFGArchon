@@ -72,16 +72,14 @@ m0 /= np.sum(m0) * dx * dy  # Normalize
 # Terminal cost: quadratic distance to center
 def terminal_cost_2d(x):
     """Terminal cost for 2D problem."""
-    if x.ndim == 1:
-        return (x[0] - 0.5) ** 2 + (x[1] - 0.3) ** 2
-    return (x[:, 0] - 0.5) ** 2 + (x[:, 1] - 0.3) ** 2
+    return (x[0] - 0.5) ** 2 + (x[1] - 0.3) ** 2
 
 
 # Model holds game rules, Conditions holds IC/TC + time horizon
 model = Model(hamiltonian=hamiltonian, volatility=0.1)
 conditions = Conditions(
     u_terminal=terminal_cost_2d,
-    m_initial=lambda x: np.exp(-50 * ((x[:, 0] - x0) ** 2 + (x[:, 1] - y0) ** 2)),
+    m_initial=lambda x: np.exp(-50 * ((x[0] - x0) ** 2 + (x[1] - y0) ** 2)),
     T=0.1,  # Short time horizon
 )
 

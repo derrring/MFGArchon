@@ -189,7 +189,7 @@ def test_construction_refuses_a_provider_carrying_no_weight_source():
         HJBHowardSolver(
             problem,
             stencil_provider=_StubProvider(),
-            alpha_star=lambda t, x, p, m: -p,
+            alpha_star=lambda t_idx, x, p, m: -p,
         )
 
 
@@ -224,7 +224,7 @@ def test_howard_runs_without_socp_stencils_and_says_so():
     assert getattr(plain, "_joint_socp_stencils", None) is None, "fixture must have no SOCP stencils"
 
     with pytest.warns(UserWarning, match="non-SOCP"):
-        howard = HJBHowardSolver(problem, stencil_provider=plain, alpha_star=lambda t, x, p, m: -p, max_iter=15)
+        howard = HJBHowardSolver(problem, stencil_provider=plain, alpha_star=lambda t_idx, x, p, m: -p, max_iter=15)
 
     U = howard.solve_hjb_system(M_density=None, U_terminal=U_T)
     assert np.all(np.isfinite(U))
@@ -248,7 +248,7 @@ def test_construction_still_refuses_when_there_is_no_operator_at_all():
         _gfdm_operator = None
 
     with pytest.raises(RuntimeError, match="neither"):
-        HJBHowardSolver(problem, stencil_provider=_StubProvider(), alpha_star=lambda t, x, p, m: -p)
+        HJBHowardSolver(problem, stencil_provider=_StubProvider(), alpha_star=lambda t_idx, x, p, m: -p)
 
 
 def test_construction_rejects_unknown_discretisation():
@@ -259,7 +259,7 @@ def test_construction_rejects_unknown_discretisation():
         HJBHowardSolver(
             problem,
             stencil_provider=gfdm,
-            alpha_star=lambda t, x, p, m: -p,
+            alpha_star=lambda t_idx, x, p, m: -p,
             discretisation="not_a_real_scheme",  # type: ignore[arg-type]
         )
 
@@ -316,7 +316,7 @@ def test_1d_lq_closed_form_riccati():
     howard = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,  # H = |p|²/2 → α* = -p
+        alpha_star=lambda t_idx, x, p, m: -p,  # H = |p|²/2 → α* = -p
         discretisation="central",
         max_iter=30,
         tol=1e-6,
@@ -372,7 +372,7 @@ def test_howard_advances_where_newton_would_stall():
     howard = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         discretisation="central",
         volatility=0.0,
     )
@@ -419,7 +419,7 @@ def test_each_discretisation_completes(discretisation):
     howard = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         discretisation=discretisation,
         max_iter=15,
     )
@@ -458,7 +458,7 @@ def test_a_non_finite_policy_iterate_raises_instead_of_returning_the_previous_st
     howard = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         max_iter=15,
     )
 
@@ -505,7 +505,7 @@ def test_2d_smoke_with_running_cost_callable():
     base = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
     ).solve_hjb_system(M_density=None, U_terminal=U_T)
 
     n = len(pts)
@@ -513,9 +513,18 @@ def test_2d_smoke_with_running_cost_callable():
     with_rc = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         running_cost=lambda t_idx: rc_const * np.ones(n),
     ).solve_hjb_system(M_density=None, U_terminal=U_T)
+
+    # Read by the name of its slot, wherever that sits among its parameters (#2875).
+    by_name = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda t_idx, x, p, m: -p,
+        running_cost=lambda scale=rc_const, t_idx=None: scale * np.ones(n),
+    ).solve_hjb_system(M_density=None, U_terminal=U_T)
+    np.testing.assert_array_equal(by_name, with_rc)
 
     # Adding a positive running cost shifts U(t<T, x) upward.
     interior_idx = np.array([i for i in range(n) if np.linalg.norm(pts[i] - x_c) < 0.7])
@@ -724,7 +733,7 @@ class _SeparableMockProblem(_MockProblem):
     def H(self, i, m_at_x, derivs=None, x_position=None, t=0.0):
         p = np.atleast_1d(np.asarray(derivs.grad, dtype=float))
         x = np.atleast_1d(np.asarray(x_position, dtype=float))
-        return float(self.hamiltonian_class(x=x, m=m_at_x, p=p, t=t))
+        return float(self.hamiltonian_class(x=tuple(x), m=m_at_x, p=p, t=t))
 
 
 def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4, Nt=12):
@@ -757,8 +766,7 @@ def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4
 
 def _v_quadratic(t, x):
     """Bowl V(x) = 2(x-0.5)^2, a cost lowest at x = 0.5 (time-independent: Newton's per-point H call passes no t)."""
-    x = np.asarray(x, dtype=float)
-    return 2.0 * (x[..., 0] - 0.5) ** 2
+    return 2.0 * (x[0] - 0.5) ** 2
 
 
 @pytest.mark.parametrize(
@@ -1214,7 +1222,7 @@ def test_array_volatility_field_row_scales_howard_diffusion():
     U_array = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         discretisation="central",
         volatility=sigma_arr,
         volatility_kind="field",
@@ -1225,7 +1233,7 @@ def test_array_volatility_field_row_scales_howard_diffusion():
     U_mean = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         discretisation="central",
         volatility=sigma_mean,
         max_iter=5,
@@ -1254,7 +1262,7 @@ def test_stencil_less_interior_with_provider_bc_rows_raises():
     howard = HJBHowardSolver(
         problem,
         stencil_provider=gfdm,
-        alpha_star=lambda t, x, p, m: -p,
+        alpha_star=lambda t_idx, x, p, m: -p,
         discretisation="central",
         use_provider_bc_rows=True,
         max_iter=3,

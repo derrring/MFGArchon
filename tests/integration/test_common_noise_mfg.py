@@ -25,8 +25,8 @@ def _minimal_components():
     )
     return MFGComponents(
         hamiltonian=H,
-        u_terminal=lambda x: np.zeros_like(x),
-        m_initial=lambda x: np.ones_like(x),
+        u_terminal=lambda x: np.zeros_like(x[0]),
+        m_initial=lambda x: np.ones_like(x[0]),
     )
 
 

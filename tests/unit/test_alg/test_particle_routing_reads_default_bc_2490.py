@@ -52,7 +52,7 @@ def test_walls_that_default_bc_makes_absorbing_absorb(bc):
     start = np.random.default_rng(0).uniform(0.8, 0.95, (200, 1))
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: np.full(np.shape(x), 3.0),
+        drift_field=lambda t, x, m: np.full(np.shape(x[0]), 3.0),
         drift_needs_density=False,
         show_progress=False,
     )

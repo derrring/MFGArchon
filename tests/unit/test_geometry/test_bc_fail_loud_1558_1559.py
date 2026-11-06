@@ -26,7 +26,7 @@ def test_sdf_vanishing_gradient_normal_fails_loud():
     it must raise, as #1047 ruled."""
     from mfgarchon.geometry.boundary import SDFParticleBCHandler
 
-    handler = SDFParticleBCHandler(lambda pts: -0.5 * np.ones(np.asarray(pts).shape[0]), dimension=2)
+    handler = SDFParticleBCHandler(lambda x: -0.5 * np.ones(np.shape(x[0])), dimension=2)
     with pytest.raises(RuntimeError, match="vanishing SDF gradient"):
         handler._compute_normal(np.array([0.3, 0.4]))
 
@@ -57,8 +57,8 @@ def test_tensor_grid_unknown_bc_type_fails_loud():
 def _small_1d_problem(n=11):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     comps = MFGComponents(
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-        u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
+        u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float),
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
     )
     return MFGProblem(geometry=grid, T=0.1, Nt=2, volatility=0.3, components=comps)

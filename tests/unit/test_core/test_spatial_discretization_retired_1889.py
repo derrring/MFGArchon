@@ -27,7 +27,7 @@ HAMILTONIAN = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0
 
 
 def M0(x):
-    return np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1))
+    return np.exp(-30 * sum((xi - 0.5) ** 2 for xi in x))
 
 
 def _via_bounds():

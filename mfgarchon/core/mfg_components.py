@@ -19,6 +19,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
+from mfgarchon.types.callable_protocols import (
+    CONDITION_SLOTS,
+    _remembered,
+    coordinate_tuple,
+    keeping_what_it_froze,
+    point_tuple,
+)
 
 # Issue #670: npart, ppart imports removed - no default Hamiltonian
 from mfgarchon.utils.mfg_logging import get_logger
@@ -373,8 +380,8 @@ class HamiltonianMixin:
         if current_time is None:
             current_time = 0.0
 
-        # Convert x_position to numpy array
-        x = np.atleast_1d(x_position if x_position is not None else 0.0)
+        # One point, as a tuple of scalars
+        x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian directly: H(t, x, p, m)
         return float(H_class(x=x, m=m_at_x, p=p, t=current_time))
@@ -467,8 +474,8 @@ class HamiltonianMixin:
         if current_time is None:
             current_time = 0.0
 
-        # Convert x_position to numpy array
-        x = np.atleast_1d(x_position if x_position is not None else 0.0)
+        # One point, as a tuple of scalars
+        x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian.dm() directly: dm(t, x, p, m)
         return float(H_class.dm(x=x, m=m_at_x, p=p, t=current_time))
@@ -531,8 +538,8 @@ class HamiltonianMixin:
         if current_time is None:
             current_time = 0.0
 
-        # Convert x_position to numpy array
-        x = np.atleast_1d(x_position if x_position is not None else 0.0)
+        # One point, as a tuple of scalars
+        x = point_tuple(x_position if x_position is not None else np.zeros(self.dimension))
 
         # Call class-based Hamiltonian.dp() directly: dp(t, x, p, m)
         return H_class.dp(x=x, m=m_at_x, p=p, t=current_time)
@@ -620,12 +627,28 @@ class ConditionsMixin:
     # Must be initialized to None in MFGProblem.__init__; see mfg_problem.py.
     _temp_resolved_bc: Any | None  # BoundaryConditions | None at runtime
 
-    def _setup_custom_initial_density(self) -> None:
-        """Setup custom initial density function m_0(x).
+    def _condition_on_grid(self, condition: Any, time_value: float, role: str) -> NDArray | None:
+        """``condition`` on the problem's grid, read by the names it declares at ``time_value`` if it declares time
+        (#2431, #2875), or None with no grid to read it on. The grid is its first batch, so its reads are compared here."""
+        bound = _remembered(condition, CONDITION_SLOTS, role)
+        if "x" not in bound.passes:
+            advice = keeping_what_it_froze(condition, "Name its space parameter x")
+            raise TypeError(
+                f"{role} {getattr(condition, '__qualname__', condition)!r} takes time and no space. It is a function of "
+                f"space: {advice}."
+            )
+        num_intervals = self._get_num_intervals()
+        if self.dimension == 1 and num_intervals is not None:
+            grid = np.asarray(self._get_spatial_grid_internal())[: num_intervals + 1]
+        elif self.geometry is not None:
+            grid = np.asarray(self.geometry.get_spatial_grid())
+        else:
+            return None
+        ndim = grid.shape[1] if grid.ndim > 1 else 1
+        return np.asarray(bound(t=time_value, x=coordinate_tuple(grid, ndim)), dtype=float)
 
-        Issue #684: Uses adapt_ic_callable() to handle different user signatures
-        (scalar, array, spatiotemporal, expanded coordinates) transparently.
-        """
+    def _setup_custom_initial_density(self) -> None:
+        """Setup custom initial density function m_0(x)."""
         if self.components is None or self.components.m_initial is None:
             return
 
@@ -636,52 +659,9 @@ class ConditionsMixin:
             self.m_initial.flat[:] = m_initial.flat[: len(self.m_initial.flat)]
             return
 
-        # Callable path -- adapt to user's actual signature
-        from mfgarchon.utils.callable_adapter import adapt_ic_callable
-
-        num_intervals = self._get_num_intervals()
-        if self.dimension == 1 and num_intervals is not None:
-            spatial_grid = self._get_spatial_grid_internal()
-            sample_point: float | np.ndarray = float(spatial_grid[0, 0])
-
-            _sig, adapted_func = adapt_ic_callable(
-                m_initial,
-                dimension=self.dimension,
-                sample_point=sample_point,
-                time_value=0.0,
-                role="m_initial",
-            )
-
-            for i in range(num_intervals + 1):
-                x_i: float | np.ndarray = float(spatial_grid[i, 0])
-                # Issue #672: Remove silent clamping - validation happens in _initialize_functions()
-                self.m_initial[i] = adapted_func(x_i)
-        elif self.geometry is not None:
-            # Issue #777: nD path using geometry (mirrors _setup_custom_final_value)
-            spatial_grid = self.geometry.get_spatial_grid()
-            num_points = spatial_grid.shape[0]
-            ndim = spatial_grid.shape[1] if spatial_grid.ndim > 1 else 1
-
-            if ndim == 1:
-                sample_point = float(spatial_grid[0, 0])
-            else:
-                sample_point = spatial_grid[0]
-
-            _sig, adapted_func = adapt_ic_callable(
-                m_initial,
-                dimension=ndim,
-                sample_point=sample_point,
-                time_value=0.0,
-                role="m_initial",
-            )
-
-            for i in range(num_points):
-                if ndim == 1:
-                    x_i = float(spatial_grid[i, 0])
-                else:
-                    x_i = spatial_grid[i]
-                self.m_initial.flat[i] = adapted_func(x_i)
-        else:
+        # Issue #672: Remove silent clamping - validation happens in _initialize_functions()
+        values = self._condition_on_grid(m_initial, 0.0, "m_initial")
+        if values is None:
             import warnings
 
             warnings.warn(
@@ -690,14 +670,11 @@ class ConditionsMixin:
                 UserWarning,
                 stacklevel=2,
             )
+            return
+        self.m_initial.flat[:] = np.broadcast_to(values.ravel() if values.size > 1 else values, (self.m_initial.size,))
 
     def _setup_custom_final_value(self) -> None:
-        """Setup custom final value function u_T(x).
-
-        Issue #684: Uses adapt_ic_callable() to handle different user signatures
-        (scalar, array, spatiotemporal, expanded coordinates) transparently.
-        For spatiotemporal callables, time_value defaults to T (last time step).
-        """
+        """Setup custom final value function u_T(x), read at the terminal time if it declares time."""
         if self.components is None or self.components.u_terminal is None:
             return
 
@@ -708,51 +685,9 @@ class ConditionsMixin:
             self.u_terminal.flat[:] = u_terminal.flat[: len(self.u_terminal.flat)]
             return
 
-        # Callable path -- adapt to user's actual signature
-        from mfgarchon.utils.callable_adapter import adapt_ic_callable
-
-        # Terminal time for spatiotemporal wrappers
         terminal_time = float(self.tSpace[-1]) if len(self.tSpace) > 0 else 0.0
-
-        num_intervals = self._get_num_intervals()
-        if self.dimension == 1 and num_intervals is not None:
-            spatial_grid = self._get_spatial_grid_internal()
-            sample_point: float | np.ndarray = float(spatial_grid[0, 0])
-            _sig, adapted_func = adapt_ic_callable(
-                u_terminal,
-                dimension=self.dimension,
-                sample_point=sample_point,
-                time_value=terminal_time,
-                role="u_terminal",
-            )
-            for i in range(num_intervals + 1):
-                x_i: float | np.ndarray = float(spatial_grid[i, 0])
-                self.u_terminal[i] = adapted_func(x_i)
-        elif self.geometry is not None:
-            spatial_grid = self.geometry.get_spatial_grid()
-            num_points = spatial_grid.shape[0]
-            ndim = spatial_grid.shape[1] if spatial_grid.ndim > 1 else 1
-
-            if ndim == 1:
-                sample_point = float(spatial_grid[0, 0])
-            else:
-                sample_point = spatial_grid[0]
-
-            _sig, adapted_func = adapt_ic_callable(
-                u_terminal,
-                dimension=ndim,
-                sample_point=sample_point,
-                time_value=terminal_time,
-                role="u_terminal",
-            )
-
-            for i in range(num_points):
-                if ndim == 1:
-                    x_i = float(spatial_grid[i, 0])
-                else:
-                    x_i = spatial_grid[i]
-                self.u_terminal.flat[i] = adapted_func(x_i)
-        else:
+        values = self._condition_on_grid(u_terminal, terminal_time, "u_terminal")
+        if values is None:
             import warnings
 
             warnings.warn(
@@ -761,6 +696,10 @@ class ConditionsMixin:
                 UserWarning,
                 stacklevel=2,
             )
+            return
+        self.u_terminal.flat[:] = np.broadcast_to(
+            values.ravel() if values.size > 1 else values, (self.u_terminal.size,)
+        )
 
     def get_boundary_conditions(self) -> BoundaryConditions | Any:
         """The BC this problem's solvers share: the one owner of which channel supplies it (#2530, row B9).

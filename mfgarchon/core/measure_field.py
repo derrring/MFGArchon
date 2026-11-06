@@ -23,11 +23,11 @@ Mathematical reference:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import MEASURE_FIELD_SLOTS, BoundCallable, bound_attribute
+from mfgarchon.types.callable_protocols import MEASURE_FIELD_SLOTS, BoundCallable, bound_attribute, coordinate_tuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -333,6 +333,11 @@ class GridMeasureField:
         return f"GridMeasureField(Nx={self._nx}, d={self._dim}, Nt={self._nt}, snapshots={self.n_snapshots})"
 
 
+def _coordinates(x: NDArray) -> tuple[Any, ...]:
+    """Query points as a field callable reads them: ``(N,)`` or a float on a line, ``(N, d)`` otherwise (#2875)."""
+    return coordinate_tuple(x, np.shape(x)[-1] if np.ndim(x) == 2 else 1)
+
+
 class FunctionalMeasureField:
     """MeasureField defined by a callable v(t, x, mu).
 
@@ -352,7 +357,7 @@ class FunctionalMeasureField:
     -------
     >>> # Analytical: v(t, x, mu) = -log(mu.to_density(x))
     >>> def v_fn(t, x, mu):
-    ...     m = mu.to_density(x)
+    ...     m = mu.to_density(np.stack(x, axis=-1).reshape(-1, len(x)))  # to_density takes an array of points
     ...     return -np.log(np.maximum(m, 1e-15))
     >>> field = FunctionalMeasureField(v_fn)
     """
@@ -379,18 +384,18 @@ class FunctionalMeasureField:
 
     def evaluate(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
         """Evaluate v(t, x, mu)."""
-        return np.asarray(self._field()(x=x, mu=mu, t=t))
+        return np.asarray(self._field()(x=_coordinates(x), mu=mu, t=t))
 
     def spatial_gradient(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
         """Compute nabla_x v via provided function or finite differences."""
         if self._grad_fn is not None:
-            return np.asarray(self._gradient()(x=x, mu=mu, t=t))
+            return np.asarray(self._gradient()(x=_coordinates(x), mu=mu, t=t))
 
         # Central finite differences
         x = np.asarray(x, dtype=float)
         if x.ndim == 1:
-            v_plus = self._field()(x=x + self._dx, mu=mu, t=t)
-            v_minus = self._field()(x=x - self._dx, mu=mu, t=t)
+            v_plus = self._field()(x=_coordinates(x + self._dx), mu=mu, t=t)
+            v_minus = self._field()(x=_coordinates(x - self._dx), mu=mu, t=t)
             return (np.asarray(v_plus) - np.asarray(v_minus)) / (2 * self._dx)
 
         # nD: per-axis
@@ -400,8 +405,8 @@ class FunctionalMeasureField:
             x_minus = x.copy()
             x_plus[:, axis] += self._dx
             x_minus[:, axis] -= self._dx
-            v_plus = self._field()(x=x_plus, mu=mu, t=t)
-            v_minus = self._field()(x=x_minus, mu=mu, t=t)
+            v_plus = self._field()(x=_coordinates(x_plus), mu=mu, t=t)
+            v_minus = self._field()(x=_coordinates(x_minus), mu=mu, t=t)
             grads.append((np.asarray(v_plus) - np.asarray(v_minus)) / (2 * self._dx))
         return np.column_stack(grads)
 

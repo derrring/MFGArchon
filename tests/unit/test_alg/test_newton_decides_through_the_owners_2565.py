@@ -42,7 +42,7 @@ def _problem() -> MFGProblem:
         ),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
-            m_initial=lambda x: scale * bump(x), u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float), T=0.3
+            m_initial=lambda x: scale * bump(x[0]), u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float), T=0.3
         ),
         Nt=NT,
     )

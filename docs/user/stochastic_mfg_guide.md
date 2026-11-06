@@ -23,7 +23,7 @@ noise = OrnsteinUhlenbeckProcess(kappa=2.0, mu=0.0, sigma=0.2)
 
 # 2. Define how noise affects dynamics
 def hamiltonian(x, p, m, theta):
-    return 0.5 * p**2 + 0.5 * x**2 + 0.1 * theta * x
+    return 0.5 * p**2 + 0.5 * x[0]**2 + 0.1 * theta * x[0]
 
 # 3. Create stochastic problem
 problem = StochasticMFGProblem(
@@ -178,7 +178,7 @@ def hamiltonian(x, p, m, theta):
     Conditional Hamiltonian H(x, p, m, θ).
 
     Args:
-        x: State (float or array)
+        x: State, a coordinate tuple
         p: Co-state / momentum (same shape as x)
         m: Population density (same shape as x)
         theta: Common noise value (scalar)
@@ -190,7 +190,7 @@ def hamiltonian(x, p, m, theta):
     control_cost = 0.5 * (1.0 + 0.1 * theta) * p**2
 
     # State cost
-    state_cost = 0.5 * x**2
+    state_cost = 0.5 * x[0]**2
 
     # Congestion cost (mean field interaction)
     congestion = 0.2 * m
@@ -210,13 +210,13 @@ import numpy as np
 
 # Initial density (Gaussian)
 def initial_density(x):
-    return np.exp(-x**2 / 0.5) / np.sqrt(np.pi * 0.5)
+    return np.exp(-x[0] ** 2 / 0.5) / np.sqrt(np.pi * 0.5)
 
 # Terminal cost (may depend on noise)
 def terminal_cost(x, theta):
     """g(x, θ_T) - terminal cost at final time."""
-    base_cost = 0.5 * x**2
-    noise_adjustment = 0.1 * theta * x
+    base_cost = 0.5 * x[0] ** 2
+    noise_adjustment = 0.1 * theta * x[0]
     return base_cost + noise_adjustment
 
 # Set in problem
@@ -449,7 +449,7 @@ def trading_hamiltonian(x, p, m, theta):
     """Trading cost increases with volatility."""
     vol_factor = theta / 20.0  # Normalize around mean
     trading_cost = 0.5 * vol_factor * p**2
-    position_cost = 0.5 * x**2
+    position_cost = 0.5 * x[0]**2
     market_impact = 0.1 * m  # Congestion
     return trading_cost + position_cost + market_impact
 

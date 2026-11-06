@@ -37,8 +37,8 @@ def _components(dim=1):
     """The MultiPopulationMFGProblem inputs, which that class takes as components."""
     return MFGComponents(
         hamiltonian=_hamiltonian(),
-        m_initial=lambda x: np.exp(-10 * np.sum((np.atleast_1d(np.asarray(x)) - 0.5) ** 2, axis=-1)),
-        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]) if dim > 1 else 0.0 * np.asarray(x),
+        m_initial=lambda x: np.exp(-10 * sum((np.atleast_1d(xi) - 0.5) ** 2 for xi in x)),
+        u_terminal=lambda x: np.zeros(np.shape(x[0])) if dim > 1 else 0.0 * np.asarray(x[0]),
     )
 
 
@@ -47,14 +47,14 @@ def _v1_problem(bounds, nx_points, **volatility):
     dim = len(bounds)
     if dim == 1:
         conditions = Conditions(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
-            u_terminal=lambda x: 0.0 * np.asarray(x),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0]),
             T=0.2,
         )
     else:
         conditions = Conditions(
-            m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
-            u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+            m_initial=lambda x: np.exp(-10 * sum((xi - 0.5) ** 2 for xi in x)),
+            u_terminal=lambda x: np.zeros(np.shape(x[0])),
             T=0.2,
         )
     grid = TensorProductGrid(bounds=bounds, Nx_points=nx_points, boundary_conditions=no_flux_bc(dimension=dim))
@@ -403,7 +403,7 @@ def test_the_particle_callable_drift_path_reads_a_declared_field_on_a_d_by_d_gri
     solver = FPParticleSolver(problem, num_particles=2000, density_mode="hybrid", seed=3)
     solver.solve_fp_system(
         np.ones((2, 2)),
-        drift_field=lambda t, x, m: np.zeros_like(x),
+        drift_field=lambda t, x, m: np.zeros_like(x[0]),
         initial_particles=np.full((2000, 2), 0.5),
         **_route(problem, route),
     )
@@ -460,7 +460,7 @@ def test_the_particle_callable_drift_path_reads_a_declared_tensor_on_a_d_by_d_gr
     solver = FPParticleSolver(problem, num_particles=4000, density_mode="hybrid", seed=5)
     solver.solve_fp_system(
         np.ones((2, 2)),
-        drift_field=lambda t, x, m: np.zeros_like(x),
+        drift_field=lambda t, x, m: np.zeros_like(x[0]),
         initial_particles=np.full((4000, 2), 0.5),
         **_route(problem, route),
     )

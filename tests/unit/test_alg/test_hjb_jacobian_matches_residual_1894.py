@@ -34,7 +34,7 @@ def _problem(sigma: float, nx: int) -> MFGProblem:
         T=1.0,
         volatility=sigma,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
@@ -171,7 +171,7 @@ def test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian():
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: -(np.asarray(m) ** 2)
             ),
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
         ),
     )

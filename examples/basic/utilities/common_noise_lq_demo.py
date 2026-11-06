@@ -62,7 +62,7 @@ def conditional_hamiltonian(x, p, m, theta):
     """
     lambda_theta = LAMBDA_0 * (1.0 + BETA * abs(theta))  # Risk aversion increases with |θ|
     kinetic_term = p**2 / (2.0 * lambda_theta)
-    potential_term = 0.5 * (x - X_REF) ** 2
+    potential_term = 0.5 * (x[0] - X_REF) ** 2
     congestion_term = GAMMA * m
     return kinetic_term + potential_term + congestion_term
 
@@ -79,7 +79,7 @@ def terminal_cost(x):
     Returns:
         Terminal cost
     """
-    return 0.5 * (x - X_REF) ** 2
+    return 0.5 * (x[0] - X_REF) ** 2
 
 
 def create_market_volatility_problem():

@@ -810,7 +810,7 @@ Obstacle changes over time: $u(t, x) \geq \psi(t, x)$
 
 ```python
 # Create obstacle for each timestep
-psi_t = lambda t, x: -kappa * (x - 0.5)**2 * (1 - t/T)  # Obstacle relaxes over time
+psi_t = lambda t, x: -kappa * (x[0] - 0.5)**2 * (1 - t/T)  # Obstacle relaxes over time
 
 # In solver, update constraint at each timestep
 for n in range(Nt):

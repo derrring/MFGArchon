@@ -519,8 +519,8 @@ if __name__ == "__main__":
         boundary_conditions=no_flux_bc(dimension=1),
     )
     conditions = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
         T=1.0,
     )
     problem = MFGProblem(model=model, domain=domain, conditions=conditions, Nt=20)

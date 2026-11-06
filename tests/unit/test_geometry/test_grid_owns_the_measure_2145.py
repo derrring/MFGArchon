@@ -191,7 +191,7 @@ class TestWhatTheRefusalDoesToCallers:
                 T=0.1,
                 volatility=0.1,
                 components=MFGComponents(
-                    m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+                    m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
                 ),
@@ -227,7 +227,7 @@ class TestWhatTheRefusalDoesToCallers:
                 T=0.05,
                 volatility=0.3,
                 components=MFGComponents(
-                    m_initial=lambda x: np.exp(-30.0 * (np.asarray(x, dtype=float) - 0.5) ** 2),
+                    m_initial=lambda x: np.exp(-30.0 * (np.asarray(x[0], dtype=float) - 0.5) ** 2),
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
                 ),

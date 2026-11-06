@@ -31,8 +31,8 @@ def create_lq_model_and_conditions():
     )
     model = Model(hamiltonian=hamiltonian, volatility=0.1)
     conditions = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
         T=1.0,
     )
     return model, conditions

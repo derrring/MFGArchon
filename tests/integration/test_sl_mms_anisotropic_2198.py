@@ -78,7 +78,7 @@ def _ap(_t):
 
 
 def u_star(t, x):
-    return _a(t) * np.cos(C * x[..., 0]) * np.cos(C * x[..., 1])
+    return _a(t) * np.cos(C * x[0]) * np.cos(C * x[1])
 
 
 def _hess_u(t, x):
@@ -89,29 +89,29 @@ def _hess_u(t, x):
     that fixture exercise the HJB cross term. Measured on this test's own
     200-point sample at t = 0.3T: max|d2u/dx1dx2| = 1.33e+01 -- a sample maximum, not a bound.
     """
-    hess = np.zeros((len(x), 2, 2))
-    c1, c2 = np.cos(C * x[..., 0]), np.cos(C * x[..., 1])
-    s1, s2 = np.sin(C * x[..., 0]), np.sin(C * x[..., 1])
-    hess[:, 0, 0] = hess[:, 1, 1] = -_a(t) * C**2 * c1 * c2
-    hess[:, 0, 1] = hess[:, 1, 0] = _a(t) * C**2 * s1 * s2
+    hess = np.zeros((*np.shape(x[0]), 2, 2))
+    c1, c2 = np.cos(C * x[0]), np.cos(C * x[1])
+    s1, s2 = np.sin(C * x[0]), np.sin(C * x[1])
+    hess[..., 0, 0] = hess[..., 1, 1] = -_a(t) * C**2 * c1 * c2
+    hess[..., 0, 1] = hess[..., 1, 0] = _a(t) * C**2 * s1 * s2
     return hess
 
 
 PAIR = ManufacturedPair(
     u=u_star,
-    u_t=lambda t, x: _ap(t) * np.cos(C * x[..., 0]) * np.cos(C * x[..., 1]),
+    u_t=lambda t, x: _ap(t) * np.cos(C * x[0]) * np.cos(C * x[1]),
     grad_u=lambda t, x: np.stack(
         [
-            -_a(t) * C * np.sin(C * x[..., 0]) * np.cos(C * x[..., 1]),
-            -_a(t) * C * np.cos(C * x[..., 0]) * np.sin(C * x[..., 1]),
+            -_a(t) * C * np.sin(C * x[0]) * np.cos(C * x[1]),
+            -_a(t) * C * np.cos(C * x[0]) * np.sin(C * x[1]),
         ],
         axis=-1,
     ),
     hess_u=_hess_u,
-    m=lambda t, x: np.full(len(x), M_CONST),
-    m_t=lambda t, x: np.zeros(len(x)),
-    grad_m=lambda t, x: np.zeros((len(x), 2)),
-    hess_m=lambda t, x: np.zeros((len(x), 2, 2)),
+    m=lambda t, x: np.full(np.shape(x[0]), M_CONST),
+    m_t=lambda t, x: np.zeros(np.shape(x[0])),
+    grad_m=lambda t, x: np.zeros((*np.shape(x[0]), 2)),
+    hess_m=lambda t, x: np.zeros((*np.shape(x[0]), 2, 2)),
     name="sl_anisotropic_2d",
 )
 
@@ -124,7 +124,7 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
         m_initial=lambda x: M_CONST,
-        u_terminal=lambda x: float(u_star(T, np.asarray(x).reshape(1, 2))[0]),
+        u_terminal=lambda x: u_star(T, x),
         hamiltonian=HAMILTONIAN,
     )
     volatility = {"volatility": sigma, "volatility_kind": "tensor"} if sigma_kind == "tensor" else {"volatility": sigma}
@@ -134,11 +134,11 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
     solver = HJBSemiLagrangianSolver(problem)
     U = solver.solve_hjb_system(
         M_density=np.full((nt + 1, *shape), M_CONST),
-        U_terminal=u_star(T, points).reshape(shape),
-        U_coupling_prev=np.stack([u_star(k * T / nt, points).reshape(shape) for k in range(nt + 1)]),
+        U_terminal=u_star(T, tuple(points.T)).reshape(shape),
+        U_coupling_prev=np.stack([u_star(k * T / nt, tuple(points.T)).reshape(shape) for k in range(nt + 1)]),
         source_term=hjb_source(PAIR, HAMILTONIAN, sigma, volatility_kind=sigma_kind),
     )
-    error = np.asarray(U)[0] - u_star(0.0, points).reshape(shape)
+    error = np.asarray(U)[0] - u_star(0.0, tuple(points.T)).reshape(shape)
     return float(np.sqrt((error**2).sum()) * (L / (nx - 1)))
 
 
@@ -174,7 +174,7 @@ def test_the_three_other_sl_variants_refuse_the_source():
     for method in ("canonical_cs", "stochastic"):
         solver = HJBSemiLagrangianSolver(problem, diffusion_method=method)
         with pytest.raises(NotImplementedError, match="operator-splitting path only"):
-            solver.solve_hjb_system(**kwargs, source_term=lambda t, x: np.zeros(len(x)))
+            solver.solve_hjb_system(**kwargs, source_term=lambda t, x: np.zeros(np.shape(x[0])))
         # CONTROL: the same solver runs when no source is asked for, so the refusal is about the
         # source and not about the configuration being broken.
         solver.solve_hjb_system(**kwargs)
@@ -187,7 +187,7 @@ def test_the_three_other_sl_variants_refuse_the_source():
     with mock.patch.object(type(dpp_solver), "_use_dpp", property(lambda _self: True)):
         assert dpp_solver._use_dpp is True, "the patch did not take; the assertion below proves nothing"
         with pytest.raises(NotImplementedError, match="operator-splitting path only"):
-            dpp_solver.solve_hjb_system(**kwargs, source_term=lambda t, x: np.zeros(len(x)))
+            dpp_solver.solve_hjb_system(**kwargs, source_term=lambda t, x: np.zeros(np.shape(x[0])))
 
 
 @pytest.mark.integration

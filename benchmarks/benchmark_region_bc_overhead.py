@@ -58,7 +58,7 @@ def _build():
         dimension=2,
         segments=[BCSegment(name="all", bc_type=BCType.DIRICHLET, value=0.0, boundary=None)],
     )
-    geometry.mark_region("all_domain", predicate=lambda x: np.ones(x.shape[0], dtype=bool))
+    geometry.mark_region("all_domain", predicate=lambda x: np.ones(np.shape(x[0]), dtype=bool))
     bc_region = mixed_bc_from_regions(
         geometry,
         {"all_domain": BCSegment(name="all_bc", bc_type=BCType.DIRICHLET, value=0.0)},

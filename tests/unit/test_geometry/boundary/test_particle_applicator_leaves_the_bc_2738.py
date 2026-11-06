@@ -131,7 +131,7 @@ def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to(domain_sdf, r
         )
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[n] * 2, boundary_conditions=door())
-    grid.mark_region("door", predicate=lambda x: x[:, 0] > 0.99)
+    grid.mark_region("door", predicate=lambda x: x[0] > 0.99)
     problem = MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.2
@@ -177,8 +177,7 @@ def test_a_door_marked_off_the_domain_lets_no_particle_out(on_the_domain):
     marking.mark_region(
         "door",
         predicate=lambda x: (
-            ((x[:, 0] > 1.05) & (x[:, 1] > 0.3) & (x[:, 1] < 0.7))
-            | (on_the_domain & (x[:, 0] > 0.95) & (x[:, 1] > 0.9))
+            ((x[0] > 1.05) & (x[1] > 0.3) & (x[1] < 0.7)) | (on_the_domain & (x[0] > 0.95) & (x[1] > 0.9))
         ),
     )
     with warnings.catch_warnings():
@@ -205,7 +204,7 @@ def test_a_door_marked_off_the_domain_lets_no_particle_out(on_the_domain):
     )
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: np.tile([3.0, 0.0], (len(x), 1)),
+        drift_field=lambda t, x, m: np.tile([3.0, 0.0], (*np.shape(x[0]), 1)),
         drift_needs_density=False,
         show_progress=False,
     )

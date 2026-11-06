@@ -70,7 +70,7 @@ class SantaFeHamiltonian(HamiltonianBase):
 
     def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
         """Evaluate H(theta, m, p, t)."""
-        x_arr = np.atleast_1d(x)
+        x_arr = np.atleast_1d(x[0])
         p_arr = np.atleast_1d(p)
         theta = float(x_arr[0])
         p_val = float(p_arr[0])
@@ -161,7 +161,7 @@ def create_santa_fe_problem(
     # Initial distribution: Gaussian centered at θ=0 (no strong preference)
     def initial_density_func(x):
         """Gaussian initial distribution."""
-        return np.exp(-0.5 * (x / 1.0) ** 2)
+        return np.exp(-0.5 * (x[0] / 1.0) ** 2)
 
     # Terminal value: zero
     def terminal_value_func(x):

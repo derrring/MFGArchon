@@ -504,9 +504,9 @@ def test_compute_rhat_multiple_chains_diverged():
 
     # Create diverged chains with different means
     chains = np.zeros((num_samples, num_chains, dimension))
-    chains[:, 0, 0] = np.random.randn(num_samples) + 0.0
-    chains[:, 1, 0] = np.random.randn(num_samples) + 5.0
-    chains[:, 2, 0] = np.random.randn(num_samples) + 10.0
+    chains[..., 0, 0] = np.random.randn(num_samples) + 0.0
+    chains[..., 1, 0] = np.random.randn(num_samples) + 5.0
+    chains[..., 2, 0] = np.random.randn(num_samples) + 10.0
 
     rhat = compute_rhat(chains)
 

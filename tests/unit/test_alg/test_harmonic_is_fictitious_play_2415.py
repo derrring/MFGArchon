@@ -58,7 +58,7 @@ def _problem() -> MFGProblem:
     # The volatility is Model's default (0.1), not written out, so the fixture reads the same
     # before and after #2378 phase 4 renamed the keyword.
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
-    bump = lambda x: np.exp(-10 * (np.asarray(x, dtype=float) - 0.5) ** 2)  # noqa: E731
+    bump = lambda z: np.exp(-10 * (np.asarray(z, dtype=float) - 0.5) ** 2)  # noqa: E731
     mass = grid.integrate(bump(grid.get_spatial_grid()[:, 0]))
     return MFGProblem(
         model=Model(
@@ -69,7 +69,7 @@ def _problem() -> MFGProblem:
             )
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda x: bump(x) / mass, u_terminal=lambda x: 0.0, T=0.2),
+        conditions=Conditions(m_initial=lambda x: bump(x[0]) / mass, u_terminal=lambda x: 0.0, T=0.2),
         Nt=4,
     )
 

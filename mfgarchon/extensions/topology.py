@@ -35,7 +35,9 @@ from mfgarchon.types.callable_protocols import (
     NODE_INTERACTION_SLOTS,
     NODE_LAGRANGIAN_SLOTS,
     NODE_POTENTIAL_SLOTS,
+    NODE_VALUE_SLOTS,
     BoundCallable,
+    _remembered,
     bound_attribute,
 )
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
@@ -83,6 +85,9 @@ class NetworkHamiltonian(HamiltonianBase):
         f(t, node, m) -> float. Read on the FULL density, matching the live
         ``NetworkMFGProblem.density_coupling`` (Issue #1470 reconciliation).
     """
+
+    # A graph's node plays x, and it is read node by node.
+    reads_a_batch = False
 
     def __init__(
         self,
@@ -611,7 +616,9 @@ class NetworkMFGProblem(MFGProblem):
     def get_initial_density(self) -> np.ndarray:
         """Initial density distribution on network nodes."""
         if self.components.initial_node_density_func is not None:  # type: ignore[attr-defined]
-            return np.array([self.components.initial_node_density_func(i) for i in range(self.num_nodes)])  # type: ignore[attr-defined]
+            given = self.components.initial_node_density_func  # type: ignore[attr-defined]
+            density = _remembered(given, NODE_VALUE_SLOTS, "initial_node_density_func")
+            return np.array([density(t=0.0, node=i) for i in range(self.num_nodes)])
 
         # Default: uniform distribution
         initial_density = np.ones(self.num_nodes) / self.num_nodes
@@ -620,7 +627,9 @@ class NetworkMFGProblem(MFGProblem):
     def get_terminal_value(self) -> np.ndarray:
         """Terminal value function on network nodes."""
         if self.components.terminal_node_value_func is not None:  # type: ignore[attr-defined]
-            return np.array([self.components.terminal_node_value_func(i) for i in range(self.num_nodes)])  # type: ignore[attr-defined]
+            given = self.components.terminal_node_value_func  # type: ignore[attr-defined]
+            value = _remembered(given, NODE_VALUE_SLOTS, "terminal_node_value_func")
+            return np.array([value(t=self.T, node=i) for i in range(self.num_nodes)])
 
         # Default: zero terminal values
         return np.zeros(self.num_nodes)

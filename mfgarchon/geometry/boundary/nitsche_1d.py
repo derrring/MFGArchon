@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix, lil_matrix
 
+from mfgarchon.types.callable_protocols import REGION_SLOTS, _remembered
 from mfgarchon.utils.numpy_compat import trapezoid
 
 if TYPE_CHECKING:
@@ -52,9 +53,9 @@ class Nitsche1DPoissonSolver:
 
     Example:
         >>> solver = Nitsche1DPoissonSolver(n_elements=100, L=1.0, penalty=10.0)
-        >>> u = solver.solve(f=lambda x: np.ones_like(x), g_L=0.0, g_R=0.0)
+        >>> u = solver.solve(f=lambda x: np.ones_like(x[0]), g_L=0.0, g_R=0.0)
         >>> # Compare to strong BC imposition
-        >>> u_strong = solver.solve_strong_bc(f=lambda x: np.ones_like(x), g_L=0.0, g_R=0.0)
+        >>> u_strong = solver.solve_strong_bc(f=lambda x: np.ones_like(x[0]), g_L=0.0, g_R=0.0)
     """
 
     def __init__(self, n_elements: int, L: float = 1.0, penalty: float = 10.0):
@@ -253,7 +254,7 @@ class Nitsche1DPoissonSolver:
         Uses midpoint quadrature: ∫_elem f dx ≈ f(x_mid) * h
 
         Args:
-            f: Source function f(x)
+            f: Source function f(x), reading x as a coordinate tuple
 
         Returns:
             Load vector (n_nodes,)
@@ -261,10 +262,11 @@ class Nitsche1DPoissonSolver:
         f_vec = np.zeros(self.n_nodes)
 
         h = self.h
+        source = _remembered(f, REGION_SLOTS, "f")
 
         for elem in range(self.n_elements):
             x_mid = self.nodes[elem] + h / 2
-            f_mid = f(x_mid)
+            f_mid = source(x=(x_mid,))
 
             # Distribute to element nodes (linear shape functions)
             f_vec[elem] += f_mid * h / 2
@@ -283,7 +285,7 @@ class Nitsche1DPoissonSolver:
         Solve -u'' = f with Dirichlet BCs.
 
         Args:
-            f: Source function f(x)
+            f: Source function f(x), reading x as a coordinate tuple
             g_L: Left BC u(0) = g_L
             g_R: Right BC u(L) = g_R
             method: "nitsche" or "strong"
@@ -316,12 +318,12 @@ class Nitsche1DPoissonSolver:
 
         Args:
             u_numerical: Numerical solution
-            u_exact: Exact solution function
+            u_exact: Exact solution function, reading x as a coordinate tuple
 
         Returns:
             L2 error
         """
-        u_exact_nodes = u_exact(self.nodes)
+        u_exact_nodes = _remembered(u_exact, REGION_SLOTS, "u_exact")(x=(self.nodes,))
         error_squared = (u_numerical - u_exact_nodes) ** 2
 
         # Trapezoidal rule (NumPy 2.0+ compatible)
@@ -343,10 +345,10 @@ if __name__ == "__main__":
     print("Exact: u(x) = x(1-x)")
 
     def f(x):
-        return 2 * np.ones_like(x)
+        return 2 * np.ones_like(x[0])
 
     def u_exact(x):
-        return x * (1 - x)
+        return x[0] * (1 - x[0])
 
     n_values = [10, 20, 40, 80]
     errors_nitsche = []

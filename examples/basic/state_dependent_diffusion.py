@@ -37,8 +37,8 @@ def create_lq_model_and_conditions(coupling_strength: float = 1.0, sigma: float 
     )
     model = Model(hamiltonian=hamiltonian, volatility=sigma)
     conditions = Conditions(
-        u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x[0] - 0.5) ** 2),
         T=1.0,
     )
     return model, conditions
@@ -180,7 +180,7 @@ def scenario_spatially_varying():
     # Define spatially-dependent diffusion
     def spatial_diffusion(t, x, m):
         """Diffusion increases from left to right."""
-        return 0.05 + 0.1 * x
+        return 0.05 + 0.1 * x[0]
 
     # Create problem
     domain = TensorProductGrid(
@@ -227,7 +227,7 @@ def visualize_results(results_list):
     fig.suptitle("State-Dependent Diffusion in MFG", fontsize=16, fontweight="bold")
 
     for row_idx, (result, domain, title) in enumerate(results_list):
-        x = domain.coordinates
+        x = domain.coordinates[0]
 
         # Plot 1: Final density distribution
         ax = axes[row_idx, 0]

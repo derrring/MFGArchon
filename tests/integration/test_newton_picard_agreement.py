@@ -33,7 +33,7 @@ def _small_problem():
     """Tiny 1D LQ-ish MFG: small enough that the O(N) FD-Jacobian Newton runs in seconds."""
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[6])
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),

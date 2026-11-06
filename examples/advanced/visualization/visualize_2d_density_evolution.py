@@ -62,18 +62,11 @@ def create_simple_coupled_problem(
 
     def initial_density_func(x):
         """Gaussian initial density centered at (0.3, 0.3)."""
-        x = np.atleast_2d(x)
-        center = np.array([0.3, 0.3])
-        dist_sq = np.sum((x - center) ** 2, axis=1)
-        density = np.exp(-50 * dist_sq)
-        return density / (np.sum(density) + 1e-10)
+        return np.exp(-50 * ((x[0] - 0.3) ** 2 + (x[1] - 0.3) ** 2))
 
     def terminal_cost_func(x):
         """Quadratic terminal cost: distance to goal."""
-        x = np.atleast_2d(x)
-        goal = np.array(goal_position)
-        dist_sq = np.sum((x - goal) ** 2, axis=1)
-        return 0.5 * dist_sq
+        return 0.5 * ((x[0] - goal_position[0]) ** 2 + (x[1] - goal_position[1]) ** 2)
 
     conditions = Conditions(
         m_initial=initial_density_func,

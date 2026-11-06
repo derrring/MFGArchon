@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
@@ -1976,7 +1977,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
     def mark_region(
         self,
         name: str,
-        predicate: Callable[[NDArray], NDArray] | None = None,
+        predicate: Callable[..., NDArray] | None = None,
         mask: NDArray | None = None,
         boundary: str | None = None,
     ) -> None:
@@ -1987,7 +1988,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
 
         Args:
             name: Unique name for the region
-            predicate: Function taking node positions (N, d) -> bool mask (N,).
+            predicate: Function of ``x``, a coordinate tuple, to a bool per node.
                        Only works for spatially-embedded graphs.
             mask: Boolean mask of shape (num_nodes,) directly
             boundary: Not applicable for graphs (raises ValueError)
@@ -2012,7 +2013,7 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
             positions = self.get_node_positions()
             if positions is None:
                 raise ValueError("Cannot use predicate on abstract graphs without spatial embedding. Use mask instead.")
-            self._regions[name] = np.asarray(predicate(positions), dtype=np.bool_)
+            self._regions[name] = np.asarray(read_region(predicate, positions, role="predicate"), dtype=np.bool_)
         else:
             assert mask is not None
             self._regions[name] = np.asarray(mask, dtype=np.bool_)

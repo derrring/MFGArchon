@@ -8,12 +8,19 @@ eliminating code duplication across HJB, FP, and coupling solvers.
 from __future__ import annotations
 
 import warnings
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import refuse_overridden
+from mfgarchon.types.callable_protocols import (
+    COEFFICIENT_SLOTS,
+    REGION_SLOTS,
+    VOLATILITY_SLOTS,
+    _remembered,
+    bind_user_callable,
+    coordinate_tuple,
+    point_tuple,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -603,7 +610,7 @@ def resolve_diffusion_source(
             x = pts[index]
         else:
             x = pts.mean(axis=0)
-        return float(source(x))
+        return float(_remembered(source, REGION_SLOTS, "volatility")(x=point_tuple(x)))
     arr = np.asarray(source)
     if arr.ndim >= 1:
         if index is not None and index < len(arr):
@@ -612,39 +619,15 @@ def resolve_diffusion_source(
     return float(source)
 
 
-class CoefficientMode(Enum):
-    """
-    Specifies which variables a callable coefficient depends on.
-
-    Use this when your coefficient function doesn't depend on all (t, x, m) variables.
-
-    Examples
-    --------
-    Time-only volatility:
-    >>> sigma_t = lambda t: 0.1 + 0.05 * t
-    >>> field = CoefficientField(sigma_t, 0.1, "volatility", mode=CoefficientMode.TIME)
-
-    Space-only volatility:
-    >>> sigma_x = lambda x: 0.1 * np.exp(-np.linalg.norm(x)**2)
-    >>> field = CoefficientField(sigma_x, 0.1, "volatility", mode=CoefficientMode.SPACE)
-
-    Density-dependent (degenerate) volatility:
-    >>> sigma_m = lambda m: 0.1 * np.sqrt(m + 1e-6)
-    >>> field = CoefficientField(sigma_m, 0.1, "volatility", mode=CoefficientMode.DENSITY)
-    """
-
-    FULL = "full"  # σ(t, x, m) - all three variables
-    TIME = "time"  # σ(t) - time only
-    SPACE = "space"  # σ(x) - space only
-    DENSITY = "density"  # σ(m) - density only
-    TIME_SPACE = "time_space"  # σ(t, x) - time and space
-    TIME_DENSITY = "time_density"  # σ(t, m) - time and density
-    SPACE_DENSITY = "space_density"  # σ(x, m) - space and density
-
-
-# What `CoefficientField` passes a callable by name. It reads the partial it would override with the binders' check; it
-# does not yet bind through them (#2864).
-COEFFICIENT_CALL_NAMES = ("t", "x", "m")
+def points_of(grid: Any, dimension: int) -> tuple[Any, ...]:
+    """A solver's ``grid`` as the coordinate tuple a coefficient reads: per-axis node vectors, as a `CartesianGrid` declares
+    them, become one array per coordinate of the density's shape; points, of shape ``(..., d)``, one entry per coordinate
+    (#2875)."""
+    if isinstance(grid, (list, tuple)):
+        if len({np.shape(axis) for axis in grid}) == 1 and np.ndim(grid[0]) == len(grid):
+            return tuple(grid)  # already a meshgrid
+        return tuple(np.meshgrid(*grid, indexing="ij"))
+    return coordinate_tuple(grid, dimension)
 
 
 class CoefficientField:
@@ -669,9 +652,6 @@ class CoefficientField:
         Name of coefficient for error messages (e.g., "volatility", "drift_field")
     dimension : int
         Spatial dimension (1 for 1D, 2 for 2D, etc.)
-    mode : CoefficientMode | str | None, optional
-        Specifies which variables the callable depends on. Required for legacy positional
-        callables that don't use all (t, x, m) arguments. Not needed for keyword-only callables.
 
     Examples
     --------
@@ -689,9 +669,9 @@ class CoefficientField:
     >>> field = CoefficientField(sigma_tm, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
-    Callable diffusion (legacy positional style with mode):
+    Callable diffusion of time alone:
     >>> sigma_t = lambda t: 0.1 + 0.05 * t
-    >>> field = CoefficientField(sigma_t, 0.0, "volatility", mode="time")
+    >>> field = CoefficientField(sigma_t, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Porous medium diffusion:
@@ -707,20 +687,19 @@ class CoefficientField:
         default_value: float | np.ndarray,
         field_name: str = "coefficient",
         dimension: int = 1,
-        mode: CoefficientMode | str | None = None,
     ):
-        refuse_overridden(field, COEFFICIENT_CALL_NAMES, role=field_name)
         self.field = field
         self.default = default_value
         self.name = field_name
         self.dimension = dimension
-        self.mode = CoefficientMode(mode) if isinstance(mode, str) else mode
 
         # Cache type checks
         self._is_none = field is None
         self._is_scalar = isinstance(field, (int, float))
         self._is_array = isinstance(field, np.ndarray)
         self._is_callable = callable(field)
+        # One state per callable, so a field rebuilt each time step compares its body's reads once (#2875)
+        self._bound = _remembered(field, VOLATILITY_SLOTS, field_name) if self._is_callable else None
 
     def evaluate_at(
         self,
@@ -773,60 +752,10 @@ class CoefficientField:
         dt: float | None,
     ) -> float | np.ndarray:
         """
-        Evaluate callable coefficient with flexible signature support.
-
-        Tries keyword-only arguments first (modern style), then falls back to
-        mode-based positional arguments (legacy style).
+        Evaluate a callable coefficient by the names it declares (#2875).
         """
-        # Compute physical time
         t_current = timestep_idx * dt if dt is not None else timestep_idx
-
-        # Try keyword-only arguments first (modern, preferred style)
-        try:
-            result = self.field(t=t_current, x=grid, m=density)
-            return self._validate_callable_output(result, density.shape, timestep_idx)
-        except TypeError as e:
-            # Check if it's a keyword-only callable that needs partial arguments
-            error_msg = str(e)
-            if "unexpected keyword argument" in error_msg or "missing" in error_msg:
-                # Keyword-only callable - infer which arguments it needs
-                # Try different combinations
-                for args_dict in [
-                    {"t": t_current, "m": density},
-                    {"t": t_current, "x": grid},
-                    {"x": grid, "m": density},
-                    {"t": t_current},
-                    {"x": grid},
-                    {"m": density},
-                ]:
-                    try:
-                        result = self.field(**args_dict)
-                        return self._validate_callable_output(result, density.shape, timestep_idx)
-                    except TypeError:
-                        continue
-            # Not keyword-only, fall through to mode-based evaluation
-
-        # Mode-based evaluation (legacy positional arguments)
-        if self.mode is None:
-            # Default: assume full signature for backward compatibility
-            result = self.field(t_current, grid, density)
-        elif self.mode == CoefficientMode.FULL:
-            result = self.field(t_current, grid, density)
-        elif self.mode == CoefficientMode.TIME:
-            result = self.field(t_current)
-        elif self.mode == CoefficientMode.SPACE:
-            result = self.field(grid)
-        elif self.mode == CoefficientMode.DENSITY:
-            result = self.field(density)
-        elif self.mode == CoefficientMode.TIME_SPACE:
-            result = self.field(t_current, grid)
-        elif self.mode == CoefficientMode.TIME_DENSITY:
-            result = self.field(t_current, density)
-        elif self.mode == CoefficientMode.SPACE_DENSITY:
-            result = self.field(grid, density)
-        else:
-            raise ValueError(f"Unknown coefficient mode: {self.mode}")
-
+        result = self._bound(t=t_current, x=points_of(grid, self.dimension), m=density)
         return self._validate_callable_output(result, density.shape, timestep_idx)
 
     def _validate_callable_output(self, output: Any, expected_shape: tuple, timestep_idx: int) -> float | np.ndarray:
@@ -1307,6 +1236,9 @@ class _DriftDispatcher:
         dimension: int = 1,
     ):
         self.field = drift_field
+        self._bound = (
+            bind_user_callable(self.field, COEFFICIENT_SLOTS, role="drift_field") if callable(self.field) else None
+        )
         self.Nt = Nt
         self.spatial_shape = spatial_shape
         self.dimension = dimension
@@ -1406,7 +1338,7 @@ class _DriftDispatcher:
         t_current = timestep_idx * dt if dt is not None else float(timestep_idx)
 
         # Call the velocity function
-        result = self.field(t_current, grid, density)
+        result = self._bound(t=t_current, x=points_of(grid, self.dimension), m=density)
 
         # Validate output
         if isinstance(result, (int, float)):

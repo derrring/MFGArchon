@@ -65,6 +65,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, _remembered, bind_user_callable
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -208,45 +209,27 @@ def prescribed_drift(drift_func: Callable) -> Callable:
     or gravitational fields.
 
     Args:
-        drift_func: User function α(t, x) or α(t, x, m)
-            - For time-space dependent: α(t, x) -> np.ndarray
-            - For state-dependent: α(t, x, m) -> np.ndarray
+        drift_func: User function read by the names it declares, of t, x and m, with x a coordinate tuple
 
     Returns:
-        Callable with signature α(t, x, m) compatible with FP solvers
+        ``drift_func``, as an FP solver reads it
 
     Examples:
         >>> # Constant wind
-        >>> wind = lambda t, x, m: np.array([1.0, 0.5])
+        >>> wind = lambda t, x, m: np.stack([np.full_like(x[0], 1.0), np.full_like(x[0], 0.5)])
         >>> drift = prescribed_drift(wind)
 
         >>> # Time-varying wind
-        >>> wind = lambda t, x, m: np.array([np.sin(2*np.pi*t), 0.0])
+        >>> wind = lambda t, x, m: np.stack([np.full_like(x[0], np.sin(2*np.pi*t)), np.zeros_like(x[0])])
         >>> drift = prescribed_drift(wind)
 
         >>> # Spatially-varying field
         >>> def gravity(t, x, m):
-        ...     x_arr, y_arr = x
-        ...     return np.array([0.0, -9.8 * np.ones_like(x_arr)])
+        ...     return np.stack([np.zeros_like(x[0]), np.full_like(x[0], -9.8)])
         >>> drift = prescribed_drift(gravity)
     """
-    import inspect
-
-    # Check if drift_func takes (t, x) or (t, x, m)
-    sig = inspect.signature(drift_func)
-    n_params = len(sig.parameters)
-
-    if n_params == 2:
-        # drift_func(t, x) -> wrap to add m parameter
-        def _prescribed_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
-            return drift_func(t, x)
-
-        return _prescribed_drift
-    elif n_params == 3:
-        # drift_func(t, x, m) -> use directly
-        return drift_func
-    else:
-        raise ValueError(f"drift_func must take 2 or 3 parameters (t, x) or (t, x, m), got {n_params}")
+    bind_user_callable(drift_func, COEFFICIENT_SLOTS, role="drift_func")  # refused here, with no solve started
+    return drift_func
 
 
 def density_dependent_drift(drift_func: Callable) -> Callable:
@@ -318,7 +301,7 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
         >>>
         >>> # MFG control + constant wind
         >>> control = optimal_control_drift(U_hjb, problem)
-        >>> wind = prescribed_drift(lambda t, x, m: np.array([1.0, 0.0]))
+        >>> wind = prescribed_drift(lambda t, x, m: np.stack([np.ones_like(x[0]), np.zeros_like(x[0])]))
         >>> total_drift = composite_drift([control, wind])
         >>> M = fp_solver.solve_fp_system(m0, drift_field=total_drift)
 
@@ -327,11 +310,13 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
         Ensure all components return arrays with compatible shapes.
     """
 
-    def _composite_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
+    bound = [_remembered(drift, COEFFICIENT_SLOTS, "drift") for drift in drift_list]
+
+    def _composite_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         """Sum of multiple drift contributions."""
         total = None
-        for drift_fn in drift_list:
-            contribution = drift_fn(t, x, m)
+        for drift_fn in bound:
+            contribution = drift_fn(t=t, x=x, m=m)
             if total is None:
                 total = contribution
             else:
@@ -359,7 +344,7 @@ if __name__ == "__main__":
         return np.array([1.0, 0.5])
 
     drift_wind = prescribed_drift(wind_2param)
-    alpha_wind = drift_wind(0.0, None, None)
+    alpha_wind = drift_wind(0.0, None)
     assert np.allclose(alpha_wind, [1.0, 0.5])
     print("  prescribed_drift() with (t, x) works")
 
@@ -390,7 +375,7 @@ if __name__ == "__main__":
         return np.array([0.0, 1.0])
 
     drift_combined = composite_drift([drift1, drift2])
-    alpha_combined = drift_combined(0.0, None, None)
+    alpha_combined = drift_combined(0.0, (np.zeros(2),), None)
     assert np.allclose(alpha_combined, [1.0, 1.0])
     print("  composite_drift() works")
 

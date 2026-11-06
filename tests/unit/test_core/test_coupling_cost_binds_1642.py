@@ -50,7 +50,7 @@ def _unit_mass(density, n):
     """``density`` on [0, 1], scaled to mass 1 on the n-node grid's measure, the trapezoid."""
     xs = np.linspace(0.0, 1.0, n)
     mass = np.trapezoid(density(xs), xs)
-    return lambda x: density(np.asarray(x, dtype=float)) / mass
+    return lambda x: density(np.asarray(x[0], dtype=float)) / mass
 
 
 def _x(problem):
@@ -64,16 +64,16 @@ def _V(x):
 
 def _plumbing_problem(where, n=41, nt=20):
     """V as the Hamiltonian's potential (``"H"``), as ``PotentialCost(V)`` (``"F"``), or neither."""
-    potential = (lambda t, x: _V(np.asarray(x, dtype=float)[..., 0])) if where == "H" else None
+    potential = (lambda t, x: _V(x[0])) if where == "H" else None
     return MFGProblem(
         model=Model(
             hamiltonian=_hamiltonian(potential=potential),
             volatility=0.3,
-            coupling_cost=PotentialCost(_V) if where == "F" else None,
+            coupling_cost=PotentialCost(lambda x: _V(x[0])) if where == "F" else None,
         ),
         domain=_grid(n),
         conditions=Conditions(
-            u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
+            u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2,
             m_initial=_unit_mass(lambda x: np.exp(-30 * (x - 0.3) ** 2), n),
             T=0.5,
         ),
@@ -183,9 +183,9 @@ def test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game():
         model=Model(hamiltonian=_hamiltonian(), volatility=0.4, coupling_cost=InteractionCost(_Quadratic(c))),
         domain=_grid(121, (-3.0, 3.0)),
         conditions=Conditions(
-            u_terminal=lambda x: 0.5 * q * np.asarray(x, dtype=float) ** 2,
+            u_terminal=lambda x: 0.5 * q * np.asarray(x[0], dtype=float) ** 2,
             m_initial=lambda x: (
-                np.exp(-((np.asarray(x, dtype=float) - z0) ** 2) / (2 * s0**2)) / np.sqrt(2 * np.pi * s0**2)
+                np.exp(-((np.asarray(x[0], dtype=float) - z0) ** 2) / (2 * s0**2)) / np.sqrt(2 * np.pi * s0**2)
             ),
             T=T,
         ),
@@ -383,23 +383,29 @@ def test_a_users_coupling_cost_sums_with_the_librarys():
 
     class Mine:
         def bind(self, problem):
-            return PotentialCost(lambda x: 2.0 * x).bind(problem)
+            return PotentialCost(lambda x: 2.0 * x[0]).bind(problem)
 
     problem = _plumbing_problem("neither", n=11)
     x = _x(problem)
-    for cost in (PotentialCost(_V) + Mine(), Mine() + PotentialCost(_V), sum([PotentialCost(_V), Mine()])):
+    for cost in (
+        PotentialCost(lambda x: _V(x[0])) + Mine(),
+        Mine() + PotentialCost(lambda x: _V(x[0])),
+        sum([PotentialCost(lambda x: _V(x[0])), Mine()]),
+    ):
         np.testing.assert_allclose(
             cost.bind(problem).flat_derivative(np.ones(x.size)), _V(x) + 2.0 * x, rtol=0, atol=1e-14, err_msg=repr(cost)
         )
 
     class Broken:
         def bind(self, problem):
-            energy = PotentialCost(_V).bind(problem)
+            energy = PotentialCost(lambda x: _V(x[0])).bind(problem)
             return SimpleNamespace(weights=energy.weights, energy=energy.energy)
 
     with pytest.raises(TypeError, match=r"Broken\.bind\(problem\) returned SimpleNamespace.*lacks .*flat_derivative"):
         MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V) + Broken()),
+            model=Model(
+                hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(lambda x: _V(x[0])) + Broken()
+            ),
             domain=_grid(11),
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
             Nt=2,
@@ -498,23 +504,23 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
             Nt=4,
         )
 
-    with pytest.raises(TypeError, match=r"V takes \(t, x\).*SeparableHamiltonian\(potential=\.\.\.\).*x\[\.\.\., 0\]"):
-        timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda t, x: x * (1 + t)))
-    with pytest.raises(TypeError, match=r"V takes the point x alone.*SeparableHamiltonian\(potential=\.\.\.\)"):
-        timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x, t: x * (1 + t)))
+    with pytest.raises(TypeError, match=r"V takes t.*SeparableHamiltonian\(potential=\.\.\.\)"):
+        timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda t, x: x[0] * (1 + t)))
+    with pytest.raises(TypeError, match=r"V takes t.*SeparableHamiltonian\(potential=\.\.\.\)"):
+        timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x, t: x[0] * (1 + t)))
     sweeps = MFGSolverConfig(picard=PicardConfig(max_iterations=3, tolerance=1e-6, verbose=False))
     moving, frozen = (
         np.asarray(timed(hamiltonian=_hamiltonian(potential=V)).solve(config=sweeps).U)
         for V in (
-            lambda t, x: 5.0 * np.asarray(x)[..., 0] * (1 + 10 * t),
-            lambda t, x: 5.0 * np.asarray(x)[..., 0],
+            lambda t, x: 5.0 * x[0] * (1 + 10 * t),
+            lambda t, x: 5.0 * x[0],
         )
     )
     assert np.max(np.abs(moving - frozen)) > 0.1, "the Hamiltonian's potential(t, x) is not read at each time"
 
     with pytest.raises(TypeError, match=r"Model\(terminal_coupling=\.\.\.\) takes a coupling cost.*not function"):
         Model(hamiltonian=_hamiltonian(), terminal_coupling=lambda x, m: 0.0)
-    mutated = Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V))
+    mutated = Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(lambda x: _V(x[0])))
     mutated.terminal_coupling = lambda x, m: 0.0
     with pytest.raises(TypeError, match=r"Model\(terminal_coupling=\.\.\.\) takes a coupling cost.*not function"):
         MFGProblem(
@@ -544,7 +550,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     net = GridNetwork(width=5, height=1)
     net.create_network()
     network = NetworkMFGProblem(
-        geometry=net, T=0.2, Nt=4, components=NetworkMFGComponents(node_potential_func=lambda t, i: 0.3 * i)
+        geometry=net, T=0.2, Nt=4, components=NetworkMFGComponents(node_potential_func=lambda t, node: 0.3 * node)
     )
     n = network.num_nodes
     spread = np.ptp(NetworkHJBSolver(network)._source_terms(np.ones(n) / n, 0.0))
@@ -609,7 +615,7 @@ def test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy(d):
         bounds, shape, centre, width = [(-1.0, 1.0)], [161], [0.3], [0.2]
 
         def V(x):
-            return _V(x)
+            return _V(x[0])
 
         bound = 1e-6
     else:
@@ -642,7 +648,7 @@ def test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy(d):
         interaction = amplitude * np.prod(
             [_box_gaussian(pts[:, k], *bounds[k], centre[k], width[k], length) for k in range(d)], axis=0
         )
-        return interaction + np.array([V(float(p[0])) if d == 1 else V(p) for p in pts])
+        return interaction + np.array([V(tuple(p)) for p in pts])
 
     at_x = _coupling_part(problem.coupling_energy, nodes, m.reshape(shape), points, 0.0)
     gap = np.max(np.abs(at_x - exact(points)))
@@ -663,7 +669,7 @@ def test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere():
 
     class AtNodes:
         def bind(self, problem):
-            energy = PotentialCost(_V).bind(problem)
+            energy = PotentialCost(lambda x: _V(x[0])).bind(problem)
             return SimpleNamespace(
                 weights=energy.weights,
                 energy=energy.energy,
@@ -675,7 +681,7 @@ def test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere():
     M = np.ones((3, 21))
     for cost, parts, refusal in (
         (AtNodes(), 1, r"SimpleNamespace, has no flat_derivative_at.*21 points it was bound on.*HJB-FDM, HJB-SL"),
-        (PotentialCost(_V) + AtNodes(), 2, r"its part, SimpleNamespace, has no flat_derivative_at"),
+        (PotentialCost(lambda x: _V(x[0])) + AtNodes(), 2, r"its part, SimpleNamespace, has no flat_derivative_at"),
     ):
         problem = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=cost),
@@ -718,14 +724,14 @@ def test_a_terminal_coupling_solves_the_linear_quadratic_game():
         model=Model(
             hamiltonian=_hamiltonian(),
             volatility=0.4,
-            terminal_coupling=PotentialCost(lambda x: 0.5 * k * (1 - c) * x**2)
+            terminal_coupling=PotentialCost(lambda x: 0.5 * k * (1 - c) * x[0] ** 2)
             + InteractionCost(_Quadratic(k * c / 2)),
         ),
         domain=_grid(61, (-3.0, 3.0)),
         conditions=Conditions(
             u_terminal=lambda x: 0.0,
             m_initial=lambda x: (
-                np.exp(-((np.asarray(x, dtype=float) - z0) ** 2) / (2 * s0**2)) / np.sqrt(2 * np.pi * s0**2)
+                np.exp(-((np.asarray(x[0], dtype=float) - z0) ** 2) / (2 * s0**2)) / np.sqrt(2 * np.pi * s0**2)
             ),
             T=T,
         ),
@@ -755,7 +761,7 @@ def _terminal_coupled(n=21, nt=5, centre=0.3):
         model=Model(
             hamiltonian=_hamiltonian(),
             volatility=0.3,
-            terminal_coupling=InteractionCost(_Quadratic(1.0)) + PotentialCost(lambda x: 3.0 * x),
+            terminal_coupling=InteractionCost(_Quadratic(1.0)) + PotentialCost(lambda x: 3.0 * x[0]),
         ),
         domain=_grid(n),
         conditions=Conditions(
@@ -825,7 +831,7 @@ def _run_loop(name, calls, diverge_at=None):
         solver = NewtonMFGSolver(
             problem, _recording(HJBFDMSolver(problem), calls, diverge_at), FPFDMSolver(problem), picard_warmup=1
         )
-        M_w = np.tile(_unit_mass(lambda x: np.exp(-40 * (x - 0.7) ** 2), 11)(_x(problem)), (problem.Nt + 1, 1))
+        M_w = np.tile(_unit_mass(lambda x: np.exp(-40 * (x - 0.7) ** 2), 11)((_x(problem),)), (problem.Nt + 1, 1))
         solver.set_warm_start_data((np.zeros_like(M_w), M_w))
         U, _, info = solver.solve(max_iterations=1, tolerance=1e30, verbose=False)
         reason = "diverged_nan" if diverge_at is not None else "Converged during Picard warm-up"
@@ -935,7 +941,7 @@ def test_what_stage_two_does_not_bind_is_refused():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on these measures is not this pin's subject
         for domain in (Hyperrectangle(np.array([[0.0, 1.0]])), mesh):
-            g_cost = PotentialCost(lambda x: x)
+            g_cost = PotentialCost(lambda x: x[0])
             off_grid = MFGProblem(
                 model=Model(hamiltonian=_hamiltonian(), volatility=0.3, terminal_coupling=g_cost),
                 domain=domain,
@@ -949,7 +955,7 @@ def test_what_stage_two_does_not_bind_is_refused():
                 off_grid.terminal_value(np.ones(off_grid.get_u_terminal().size))
     for field, energy in (("coupling_cost", "coupling_energy"), ("terminal_coupling", "terminal_energy")):
         on_grid = MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x)}),
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x[0])}),
             domain=_grid(21),
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
             Nt=4,

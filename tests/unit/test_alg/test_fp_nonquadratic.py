@@ -30,7 +30,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+        m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )
@@ -358,8 +358,8 @@ class TestFixedPointIteratorDrift:
         geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
         components = MFGComponents(
             hamiltonian=hamiltonian,
-            m_initial=lambda x: np.exp(-((x - 0.5) ** 2) / 0.02),
-            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+            m_initial=lambda x: np.exp(-((x[0] - 0.5) ** 2) / 0.02),
+            u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
         )
         return MFGProblem(
             geometry=geom,

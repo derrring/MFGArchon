@@ -51,7 +51,7 @@ def _smoke_problem() -> MFGProblem:
             model=Model(hamiltonian=hamiltonian, volatility=0.0),
             domain=grid,
             conditions=Conditions(
-                m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, T=1.0
+                m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2), u_terminal=lambda x: 0.0, T=1.0
             ),
             Nt=10,
         )

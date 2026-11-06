@@ -46,7 +46,7 @@ def _problem(dim=1, nt=NT, horizon=T, points=None):
     # placed above the zero terminal datum.
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(lambda_=1.0),
-        potential=lambda t, x: 0.1 * np.cos(2 * np.pi * np.asarray(x, dtype=float)[..., 0]),
+        potential=lambda t, x: 0.1 * np.cos(2 * np.pi * x[0]),
     )
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * dim, Nx_points=points or [NX] * dim, boundary_conditions=no_flux_bc(dimension=dim)

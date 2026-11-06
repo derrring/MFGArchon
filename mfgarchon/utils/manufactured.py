@@ -73,12 +73,18 @@ SCOPE
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian
+from mfgarchon.types.callable_protocols import (
+    EXACT_SOLUTION_SLOTS,
+    BoundCallable,
+    bind_user_callable,
+    coordinate_tuple,
+)
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     retired_sigma_and_kind_keywords,
@@ -91,8 +97,8 @@ if TYPE_CHECKING:
     from mfgarchon.core.hamiltonian import HamiltonianBase
 
 # A field callable: (t, x) -> (N,) for scalars, (t, x) -> (N, d) for gradients, (t, x) -> (N, d, d)
-# for Hessians, with x of shape (N, d). The same convention `base_hjb.py` already uses for a source
-# term, so a pair's own derivatives and the assembled source speak one language.
+# for Hessians, with x a coordinate tuple, each of whose d entries has shape (N,): the form every user
+# callable reads x in (#2875). Read by the names it declares, like a source term.
 Field = Callable[[float, "NDArray"], "NDArray"]
 
 
@@ -100,8 +106,9 @@ Field = Callable[[float, "NDArray"], "NDArray"]
 class ManufacturedPair:
     """An exact ``(u*, m*)`` together with the analytic derivatives a source assembly needs.
 
-    Every field is a callable of ``(t, x)`` with ``x`` of shape ``(N, d)``. Gradients return
-    ``(N, d)``, Hessians ``(N, d, d)``, everything else ``(N,)``.
+    Every field is a callable read by the names it declares, of ``(t, x)``, with ``x`` a coordinate tuple. Gradients
+    return ``(N, d)``, Hessians ``(N, d, d)``, everything else ``(N,)``. A pair has no geometry, so a field's batch and
+    point reads are compared at its first batch (#2875).
 
     The derivatives are supplied rather than computed. Differentiating numerically would put the
     differentiation's own truncation error into a source that is supposed to be exact, and the
@@ -121,6 +128,19 @@ class ManufacturedPair:
     grad_m: Field
     hess_m: Field
     name: str = "unnamed"
+    _bound: dict[str, BoundCallable] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        names = ("u", "u_t", "grad_u", "hess_u", "m", "m_t", "grad_m", "hess_m")
+        bound = {
+            name: bind_user_callable(getattr(self, name), EXACT_SOLUTION_SLOTS, role=f"ManufacturedPair.{name}")
+            for name in names
+        }
+        object.__setattr__(self, "_bound", bound)
+
+    def at(self, name: str, t: float, points: NDArray) -> NDArray:
+        """The field ``name`` at ``t`` on ``points`` of shape ``(N, d)``."""
+        return self._bound[name](t=t, x=coordinate_tuple(points, points.shape[1]))
 
 
 # --------------------------------------------------------------------------------------------
@@ -133,7 +153,7 @@ class ManufacturedPair:
 
 def _points(x: NDArray) -> NDArray:
     """Validate the evaluation points and return them as a float ``(N, d)`` array."""
-    arr = np.asarray(x, dtype=float)
+    arr = np.stack(np.broadcast_arrays(*x), axis=-1) if isinstance(x, tuple) else np.asarray(x, dtype=float)
     if arr.ndim != 2:
         raise ValueError(
             f"manufactured sources take points of shape (N, d); got shape {arr.shape}. A flat (N,) "
@@ -229,7 +249,9 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
         )
     probes = _drift_probes(dim)
     alpha = np.asarray(
-        hamiltonian.optimal_control(x=np.zeros_like(probes), m=np.ones(len(probes)), p=probes, t=0.0),
+        hamiltonian.optimal_control(
+            x=coordinate_tuple(np.zeros_like(probes), dim), m=np.ones(len(probes)), p=probes, t=0.0
+        ),
         dtype=float,
     )
     if alpha.shape != probes.shape:
@@ -268,13 +290,13 @@ def hjb_source(
         pts = _points(x)
         n, dim = pts.shape
         diffusion_tensor = _diffusion_tensor(volatility, dim, volatility_kind)
-        p = _gradient(pair.grad_u(t, pts), n, dim, "grad_u")
-        m = _scalar(pair.m(t, pts), n, "m")
+        p = _gradient(pair.at("grad_u", t, pts), n, dim, "grad_u")
+        m = _scalar(pair.at("m", t, pts), n, "m")
         h = np.asarray(hamiltonian.evaluate_H(HEvalState(x=pts, p=p, m=m, t=t)), dtype=float).ravel()
         h = _scalar(h, n, "evaluate_H")
-        hess = _hessian(pair.hess_u(t, pts), n, dim, "hess_u")
+        hess = _hessian(pair.at("hess_u", t, pts), n, dim, "hess_u")
         diffusion = np.einsum("ij,nij->n", diffusion_tensor, hess)
-        u_t = _scalar(pair.u_t(t, pts), n, "u_t")
+        u_t = _scalar(pair.at("u_t", t, pts), n, "u_t")
         return -u_t + h - diffusion
 
     return source
@@ -308,18 +330,21 @@ def fp_source(
         n, dim = pts.shape
         diffusion_tensor = _diffusion_tensor(volatility, dim, volatility_kind)
         coefficient = _drift_coefficient(hamiltonian, dim)
-        grad_u = _gradient(pair.grad_u(t, pts), n, dim, "grad_u")
-        m = _scalar(pair.m(t, pts), n, "m")
+        grad_u = _gradient(pair.at("grad_u", t, pts), n, dim, "grad_u")
+        m = _scalar(pair.at("m", t, pts), n, "m")
         alpha = _gradient(
-            np.asarray(hamiltonian.optimal_control(x=pts, m=m, p=grad_u, t=t), dtype=float), n, dim, "optimal_control"
+            np.asarray(hamiltonian.optimal_control(x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float),
+            n,
+            dim,
+            "optimal_control",
         )
-        hess_u = _hessian(pair.hess_u(t, pts), n, dim, "hess_u")
-        grad_m = _gradient(pair.grad_m(t, pts), n, dim, "grad_m")
-        hess_m = _hessian(pair.hess_m(t, pts), n, dim, "hess_m")
+        hess_u = _hessian(pair.at("hess_u", t, pts), n, dim, "hess_u")
+        grad_m = _gradient(pair.at("grad_m", t, pts), n, dim, "grad_m")
+        hess_m = _hessian(pair.at("hess_m", t, pts), n, dim, "hess_m")
         div_alpha = coefficient * np.einsum("nii->n", hess_u)
         transport = (grad_m * alpha).sum(axis=-1) + m * div_alpha
         diffusion = np.einsum("ij,nij->n", diffusion_tensor, hess_m)
-        return _scalar(pair.m_t(t, pts), n, "m_t") + transport - diffusion
+        return _scalar(pair.at("m_t", t, pts), n, "m_t") + transport - diffusion
 
     return source
 
@@ -367,43 +392,41 @@ def pair_derivative_errors(pair: ManufacturedPair, t: float, x: NDArray) -> dict
     n, dim = pts.shape
     h1, h2 = _FIRST_STEP, _SECOND_STEP
 
-    def shifted(field: Field, axis: int, step: float) -> tuple[NDArray, NDArray]:
+    def shifted(name: str, axis: int, step: float) -> tuple[NDArray, NDArray]:
         offset = np.zeros(dim)
         offset[axis] = step
-        return field(t, pts + offset), field(t, pts - offset)
+        return pair.at(name, t, pts + offset), pair.at(name, t, pts - offset)
 
     errors: dict[str, float] = {}
-    for name, value, first, second in (
-        ("u", pair.u, pair.grad_u, pair.hess_u),
-        ("m", pair.m, pair.grad_m, pair.hess_m),
-    ):
-        base = _scalar(value(t, pts), n, name)
+    for name in ("u", "m"):
+        base = _scalar(pair.at(name, t, pts), n, name)
 
-        forward, backward = value(t + h1, pts), value(t - h1, pts)
-        time_field = pair.u_t if name == "u" else pair.m_t
-        errors[f"{name}_t"] = _relative(_scalar(time_field(t, pts), n, f"{name}_t"), (forward - backward) / (2.0 * h1))
+        forward, backward = pair.at(name, t + h1, pts), pair.at(name, t - h1, pts)
+        errors[f"{name}_t"] = _relative(
+            _scalar(pair.at(f"{name}_t", t, pts), n, f"{name}_t"), (forward - backward) / (2.0 * h1)
+        )
 
-        gradient = _gradient(first(t, pts), n, dim, f"grad_{name}")
+        gradient = _gradient(pair.at(f"grad_{name}", t, pts), n, dim, f"grad_{name}")
         numeric_gradient = np.empty((n, dim))
         for axis in range(dim):
-            plus, minus = shifted(value, axis, h1)
+            plus, minus = shifted(name, axis, h1)
             numeric_gradient[:, axis] = (plus - minus) / (2.0 * h1)
         errors[f"grad_{name}"] = _relative(gradient, numeric_gradient)
 
-        hessian = _hessian(second(t, pts), n, dim, f"hess_{name}")
+        hessian = _hessian(pair.at(f"hess_{name}", t, pts), n, dim, f"hess_{name}")
         numeric_hessian = np.empty((n, dim, dim))
         for axis in range(dim):
-            plus, minus = shifted(value, axis, h2)
+            plus, minus = shifted(name, axis, h2)
             numeric_hessian[:, axis, axis] = (plus - 2.0 * base + minus) / h2**2
             for other in range(axis + 1, dim):
                 offset_i, offset_j = np.zeros(dim), np.zeros(dim)
                 offset_i[axis] = h2
                 offset_j[other] = h2
                 mixed = (
-                    value(t, pts + offset_i + offset_j)
-                    - value(t, pts + offset_i - offset_j)
-                    - value(t, pts - offset_i + offset_j)
-                    + value(t, pts - offset_i - offset_j)
+                    pair.at(name, t, pts + offset_i + offset_j)
+                    - pair.at(name, t, pts + offset_i - offset_j)
+                    - pair.at(name, t, pts - offset_i + offset_j)
+                    + pair.at(name, t, pts - offset_i - offset_j)
                 ) / (4.0 * h2**2)
                 numeric_hessian[:, axis, other] = mixed
                 numeric_hessian[:, other, axis] = mixed

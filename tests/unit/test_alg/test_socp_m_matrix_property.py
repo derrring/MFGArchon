@@ -58,7 +58,7 @@ def _make_solver(sigma: float, n_x: int = 21):
         boundary_conditions=no_flux_bc(dimension=1),
     )
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
@@ -396,7 +396,7 @@ def _make_solver_check_dmp(sigma: float, check_dmp: bool, n_x: int = 21):
 
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),

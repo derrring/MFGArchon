@@ -159,7 +159,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -171,7 +172,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -190,7 +192,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -202,14 +205,15 @@ class TestSDFParticleBCHandler:
         X_result, _ = handler.apply_bc(X_old, X_new)
 
         # Should be reflected back inside
-        assert handler.sdf(X_result)[0] <= 0, "Reflected particle should be inside"
+        assert np.linalg.norm(X_result[0]) <= 1.0, "Reflected particle should be inside"
 
     def test_velocity_reflection(self):
         """Test that velocity is reflected at boundary."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -230,7 +234,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -247,7 +252,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_sphere
 
-        def circle_sdf(points):
+        def circle_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_sphere(points, center=[0, 0], radius=1.0)
 
         handler = SDFParticleBCHandler(circle_sdf, dimension=2)
@@ -271,7 +277,7 @@ class TestSDFParticleBCHandler:
         X_result, _ = handler.apply_bc(X_old, X_new)
 
         # All should end up inside
-        sdf_result = handler.sdf(X_result)
+        sdf_result = np.linalg.norm(X_result, axis=-1) - 1.0
         assert np.all(sdf_result <= 0), "All particles should be inside after BC"
 
         # Non-crossing particles should be unchanged
@@ -283,7 +289,8 @@ class TestSDFParticleBCHandler:
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
         from mfgarchon.utils.numerical import sdf_box
 
-        def box_sdf(points):
+        def box_sdf(x):
+            points = np.stack(x, axis=-1)
             return sdf_box(points, bounds=[[0, 1], [0, 1]])
 
         handler = SDFParticleBCHandler(box_sdf, dimension=2)

@@ -83,12 +83,12 @@ def create_crowd_motion_2d(
 
     # Conditions (callables, resolution-independent)
     def initial_density(x):
-        """Gaussian blob centered at start. x shape: (2,) for single 2D point."""
+        """Gaussian blob centered at start. x is a coordinate tuple."""
         dist_sq = (x[0] - start_arr[0]) ** 2 + (x[1] - start_arr[1]) ** 2
         return np.exp(-100 * dist_sq)
 
     def terminal_cost(x):
-        """Quadratic cost: distance to goal. x shape: (2,) for single 2D point."""
+        """Quadratic cost: distance to goal. x is a coordinate tuple."""
         dist_sq = (x[0] - goal_arr[0]) ** 2 + (x[1] - goal_arr[1]) ** 2
         return 5.0 * dist_sq
 

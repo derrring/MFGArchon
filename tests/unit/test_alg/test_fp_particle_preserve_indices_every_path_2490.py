@@ -37,7 +37,7 @@ _N, _NT, _T, _SEED = 400, 20, 1.0, 11
 
 
 def _m0(x):
-    return float(np.exp(-20 * np.sum((np.asarray(x, dtype=float) - 0.6) ** 2)))
+    return np.exp(-20 * sum((xi - 0.6) ** 2 for xi in x))
 
 
 def _bc(dimension, wall):
@@ -90,7 +90,7 @@ def _solve(path, wall, preserve, sigma=0.2):
         init = np.random.default_rng(_SEED).uniform([0.4, 0.1], [0.8, 0.4], (_N, 2))
         result = solver.solve_fp_system(
             initial_particles=init,
-            drift_field=lambda t, x, m: np.column_stack([np.full(len(x), 1.5), np.zeros(len(x))]),
+            drift_field=lambda t, x, m: np.stack([np.full(np.shape(x[0]), 1.5), np.zeros(np.shape(x[0]))], axis=-1),
             volatility=sigma,
             drift_needs_density=False,
             show_progress=False,

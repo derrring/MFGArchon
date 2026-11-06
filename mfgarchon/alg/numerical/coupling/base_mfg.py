@@ -490,9 +490,10 @@ def resolve_source_kwarg(
     ``M_next += dt * source_term``). Those are genuinely different and belong to the schemes.
 
     The convention, which is uniform by construction from here rather than by habit:
-    ``source_term(t: float, x: NDArray[(N, d)]) -> NDArray[(N,)]``, with ``x`` the solver's own
-    evaluation points -- ``geometry.get_spatial_grid()`` for grid solvers, the collocation points
-    for GFDM, which is where that scheme discretises.
+    ``source_term(t, x) -> NDArray[(N,)]``, with ``x`` the solver's own evaluation points --
+    ``geometry.get_spatial_grid()`` for grid solvers, the collocation points for GFDM, which is where
+    that scheme discretises. A function the user wrote reads them as a coordinate tuple, and a closure
+    the library composed as an array of shape ``(N, d)`` (`evaluate_solver_source`).
 
     Two outcomes, not the three ``resolve_volatility_kwarg`` has, and the reason is a default
     rather than the nature of the quantity. ``MFGProblem.solve`` forwarded ``problem.volatility``
@@ -545,7 +546,7 @@ def resolve_source_kwarg(
     raise NotImplementedError(
         f"{solver_name}.{method} does not accept 'source_term', but {composed}. Its signature is "
         f"({', '.join(sorted(params))}). Silently dropping it would solve a different problem (Issue #1424). "
-        f"{remedy} source_term(t, x) -> (N,) with x of shape (N, d) at the solver's own evaluation "
+        f"{remedy} source_term(t, x) -> (N,) with x a coordinate tuple of the solver's own evaluation "
         f"points{removal}. A solver taking "
         f"**kwargs does not count as accepting it: the parameter must be named. To find one that "
         f"does, ask any candidate the same question this check asks: "

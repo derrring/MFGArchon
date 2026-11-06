@@ -36,7 +36,6 @@ from .adjoint_validation import (
 
 # Core utility functions (non-plotting)
 from .aux_func import npart, ppart
-from .callable_adapter import CallableSignature, adapt_ic_callable
 from .convergence import (
     ConvergenceWrapper,
     DistributionComparator,
@@ -100,7 +99,6 @@ from .geometry import (
     create_rectangle_obstacle,
     create_sphere_obstacle,
 )
-from .hamiltonian_adapter import HamiltonianAdapter, adapt_hamiltonian, create_hamiltonian_adapter
 
 # =============================================================================
 # Logging utilities - DEPRECATED at this level (Issue #620 Phase 2)
@@ -145,7 +143,7 @@ from .numerical.sdf_utils import (
 )
 
 # PDE coefficient handling
-from .pde_coefficients import CoefficientField, CoefficientMode, check_adi_compatibility, get_spatial_grid
+from .pde_coefficients import CoefficientField, check_adi_compatibility, get_spatial_grid
 from .solver_result import ConvergenceResult, MFGSolverResult, SolverResult, create_solver_result
 from .sparse_operations import (
     SparseMatrixBuilder,
@@ -279,7 +277,6 @@ __all__ = [
     "validate_scheme_config",
     # PDE coefficient handling
     "CoefficientField",
-    "CoefficientMode",
     "check_adi_compatibility",
     "get_spatial_grid",
     # Drift field helpers for FP solvers
@@ -320,12 +317,7 @@ __all__ = [
     "ImplicitDomain",
     "Intersection",
     # Callable signature adapter (Issue #684)
-    "CallableSignature",
-    "adapt_ic_callable",
     # Hamiltonian signature adapter
-    "HamiltonianAdapter",
-    "adapt_hamiltonian",
-    "create_hamiltonian_adapter",
     # Logging
     "LoggedOperation",
     # Logging decorators

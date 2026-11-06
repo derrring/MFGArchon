@@ -69,7 +69,7 @@ def terminal_condition(x: float) -> float:
         Terminal cost at position x
     """
     Lx = x_max - x_min
-    return 5.0 * (np.cos(x * 2 * np.pi / Lx) + 0.4 * np.sin(x * 4 * np.pi / Lx))
+    return 5.0 * (np.cos(x[0] * 2 * np.pi / Lx) + 0.4 * np.sin(x[0] * 4 * np.pi / Lx))
 
 
 def initial_density_unnormalized(x: float) -> float:
@@ -107,7 +107,7 @@ def initial_density(x: float) -> float:
     Returns:
         Initial density at position x
     """
-    return initial_density_unnormalized(x)
+    return initial_density_unnormalized(x[0])
 
 
 def potential_field(x: float) -> float:
@@ -136,14 +136,13 @@ def hamiltonian_potential(t: float, x: np.ndarray) -> float:
     This wraps the potential_field function to match the expected signature.
 
     Args:
-        x: Position array (1D for this example)
+        x: Position, a coordinate tuple (one entry in this example)
         t: Time (unused for time-independent potential)
 
     Returns:
         Potential value at position x
     """
-    x_scalar = float(x[0]) if hasattr(x, "__len__") else float(x)
-    return potential_field(x_scalar)
+    return potential_field(x[0])
 
 
 # =============================================================================
@@ -179,7 +178,7 @@ geometry = TensorProductGrid(
 # To normalize explicitly on a grid:
 #   x_grid = np.linspace(x_min, x_max, Nx)
 #   dx = x_grid[1] - x_grid[0]
-#   m_raw = np.array([initial_density(x) for x in x_grid])
+#   m_raw = np.array([initial_density((x,)) for x in x_grid])
 #   m_normalized = m_raw / (np.sum(m_raw) * dx)  # Now ∫m dx = 1
 #
 # Class-based Hamiltonian: H = (1/2)|p|² - V(x) - coupling * m
@@ -236,7 +235,7 @@ def main():
 
     # Plot 1: Terminal condition
     ax1 = axes[0, 0]
-    u_final = np.array([terminal_condition(x) for x in x_grid])
+    u_final = np.array([terminal_condition((x,)) for x in x_grid])
     ax1.plot(x_grid, u_final, "b-", linewidth=2)
     ax1.set_xlabel("x")
     ax1.set_ylabel("u(T, x)")
@@ -246,7 +245,7 @@ def main():
 
     # Plot 2: Initial density
     ax2 = axes[0, 1]
-    m_init = np.array([initial_density(x) for x in x_grid])
+    m_init = np.array([initial_density((x,)) for x in x_grid])
     # Normalize for display
     dx = x_grid[1] - x_grid[0]
     m_init_normalized = m_init / (np.sum(m_init) * dx)

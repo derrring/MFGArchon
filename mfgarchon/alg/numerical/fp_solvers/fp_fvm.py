@@ -346,9 +346,7 @@ class FPFVMSolver(BaseFPSolver):
             p_d = np.diff(u_slice, axis=d) / dx
             nodes_d = axes[d]
             face_coord = 0.5 * (nodes_d[:-1] + nodes_d[1:])
-            coord_shape = [1] * ndim
-            coord_shape[d] = shape[d] - 1
-            x_faces = np.broadcast_to(face_coord.reshape(coord_shape), p_d.shape)
+            x_faces = tuple(np.meshgrid(*axes[:d], face_coord, *axes[d + 1 :], indexing="ij"))
             lo = [slice(None)] * ndim
             hi = [slice(None)] * ndim
             lo[d] = slice(0, shape[d] - 1)
@@ -361,7 +359,10 @@ class FPFVMSolver(BaseFPSolver):
                 p_wrap = wrap / dx
                 # Seam face between x[-1] and x[0]+L; position is unused by a separable H but kept
                 # face-consistent for a general (x-dependent) control cost.
-                x_wrap = np.broadcast_to(np.asarray(nodes_d[-1] + 0.5 * dx), p_wrap.shape)
+                x_wrap = tuple(
+                    np.squeeze(entry, axis=d)
+                    for entry in np.meshgrid(*axes[:d], [nodes_d[-1] + 0.5 * dx], *axes[d + 1 :], indexing="ij")
+                )
                 m_wrap = 0.5 * (np.take(m_slice, 0, axis=d) + np.take(m_slice, -1, axis=d))
                 alpha_w = np.asarray(H.optimal_control(x=x_wrap, m=m_wrap, p=p_wrap, t=t)).reshape(p_wrap.shape)
                 alpha_wrap.append(alpha_w)
@@ -546,8 +547,8 @@ class FPFVMSolver(BaseFPSolver):
 
         # (N, d) POINTS, not a (d, *shape) meshgrid. This solver was the only caller passing
         # `geometry.meshgrid()`, while FPFDMSolver and the whole HJB side pass
-        # `get_spatial_grid()` -- the convention `BaseHJBSolver.solve_hjb_system` documents
-        # ("x has shape (N, d)"). One callback therefore could not serve both: a source written
+        # `get_spatial_grid()` -- what `evaluate_solver_source` takes. One callback therefore could not
+        # serve both: a source written
         # against the documented convention returned an (N,) array here and hit
         # `ValueError: operands could not be broadcast together with shapes (21,21) (882,)`,
         # where 882 = 2 x 441 is the two coordinate planes flattened together (#2019).
@@ -588,7 +589,10 @@ class FPFVMSolver(BaseFPSolver):
                 # is first order in SPACE (measured 1.026 / 1.004 / 0.978) and the spatial floor
                 # dominates before the temporal order is visible. Changing it would be a behaviour
                 # change with no evidence behind it.
-                s_vals = np.asarray(evaluate_solver_source(source_term, t=k * dt, x=source_grid), dtype=float).ravel()
+                s_vals = np.asarray(
+                    evaluate_solver_source(source_term, t=k * dt, x=source_grid, dimension=self.problem.dimension),
+                    dtype=float,
+                ).ravel()
                 if s_vals.size != m.size:
                     raise ValueError(
                         f"source_term returned {s_vals.size} values for {m.size} cells. It is "

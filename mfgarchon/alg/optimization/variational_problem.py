@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, BoundCallable, bound_attribute
+from mfgarchon.types.callable_protocols import (
+    REGION_SLOTS,
+    VARIATIONAL_LAGRANGIAN_SLOTS,
+    BoundCallable,
+    bound_attribute,
+)
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
@@ -248,6 +253,10 @@ class VariationalMFGProblem:
         """``components.<name>``, one of the Lagrangian callables, bound to ``(t, x, v, m)`` (#2375 ruling 8)."""
         return bound_attribute(self.components, name, VARIATIONAL_LAGRANGIAN_SLOTS, role=name)
 
+    def _bound_terminal_cost(self) -> BoundCallable:
+        """``components.terminal_cost_func``, bound to ``(x)`` (#2875)."""
+        return bound_attribute(self.components, "terminal_cost_func", REGION_SLOTS, role="terminal_cost_func")
+
     def _setup_jax_functions(self):
         """Setup JAX-accelerated functions for performance."""
         if not self.use_jax:
@@ -256,20 +265,24 @@ class VariationalMFGProblem:
         # JAX-compiled versions of key functions
         if self.components.lagrangian_func is not None:
             lagrangian = self._bound("lagrangian_func")  # resolved before tracing
+            # A tracer cannot be compared, so its reads are compared here, on the grid.
+            lagrangian.check_on({"t": 0.0, "x": (self.x,), "v": np.zeros_like(self.x), "m": np.ones_like(self.x)})
+            lagrangian.checked = True
 
             @jit
             def jax_lagrangian(t, x, v, m):
-                return lagrangian(t=t, x=x, v=v, m=m)
+                return lagrangian(t=t, x=(x,), v=v, m=m)
 
             self._jax_lagrangian = jax_lagrangian
 
         if self.components.terminal_cost_func is not None:
+            terminal = self._bound_terminal_cost()  # resolved before tracing
+            terminal.check_on({"x": (self.x,)})
+            terminal.checked = True
 
             @jit
             def jax_terminal_cost(x):
-                # Safe to call since we checked for None above
-                assert self.components.terminal_cost_func is not None
-                return self.components.terminal_cost_func(x)
+                return terminal(x=(x,))
 
             self._jax_terminal_cost = jax_terminal_cost
 
@@ -295,7 +308,7 @@ class VariationalMFGProblem:
         if self.use_jax and hasattr(self, "_jax_lagrangian"):
             return self._jax_lagrangian(t, x, v, m)
         elif self.components.lagrangian_func:
-            return self._bound("lagrangian_func")(t=t, x=x, v=v, m=m)
+            return self._bound("lagrangian_func")(t=t, x=(x,), v=v, m=m)
         else:
             raise ValueError("No Lagrangian function defined")
 
@@ -312,7 +325,7 @@ class VariationalMFGProblem:
         if self.use_jax and hasattr(self, "_jax_terminal_cost"):
             return self._jax_terminal_cost(x)
         elif self.components.terminal_cost_func:
-            return self.components.terminal_cost_func(x)
+            return self._bound_terminal_cost()(x=(x,))
         else:
             return 0.0  # Default: no terminal cost
 
@@ -333,7 +346,7 @@ class VariationalMFGProblem:
 
         # ∂L/∂x (force term)
         if self.components.lagrangian_dx_func:
-            derivatives["dx"] = self._bound("lagrangian_dx_func")(t=t, x=x, v=v, m=m)
+            derivatives["dx"] = self._bound("lagrangian_dx_func")(t=t, x=(x,), v=v, m=m)
         else:
             # Numerical derivative
             eps = 1e-8
@@ -343,7 +356,7 @@ class VariationalMFGProblem:
 
         # ∂L/∂v (momentum)
         if self.components.lagrangian_dv_func:
-            derivatives["dv"] = self._bound("lagrangian_dv_func")(t=t, x=x, v=v, m=m)
+            derivatives["dv"] = self._bound("lagrangian_dv_func")(t=t, x=(x,), v=v, m=m)
         else:
             # Numerical derivative
             eps = 1e-8
@@ -353,7 +366,7 @@ class VariationalMFGProblem:
 
         # ∂L/∂m (population interaction)
         if self.components.lagrangian_dm_func:
-            derivatives["dm"] = self._bound("lagrangian_dm_func")(t=t, x=x, v=v, m=m)
+            derivatives["dm"] = self._bound("lagrangian_dm_func")(t=t, x=(x,), v=v, m=m)
         else:
             # Numerical derivative
             eps = 1e-8
@@ -410,7 +423,7 @@ class VariationalMFGProblem:
             """∂H/∂m from Lagrangian coupling"""
             if self.components.lagrangian_dm_func:
                 # For velocity-independent coupling, ∂H/∂m = ∂L/∂m
-                return self._bound("lagrangian_dm_func")(t=t, x=x, v=p, m=m)
+                return self._bound("lagrangian_dm_func")(t=t, x=(x,), v=p, m=m)
             else:
                 return 0.0
 
@@ -543,7 +556,7 @@ class VariationalMFGProblem:
             hamiltonian_func=_hamiltonian_adapter,
             hamiltonian_dm_func=_hamiltonian_dm_adapter,
             m_initial=self.components.m_initial,
-            u_terminal=lambda x: -self.evaluate_terminal_cost(x),  # Value = -cost
+            u_terminal=lambda x: -self.evaluate_terminal_cost(x[0]),  # Value = -cost
             description=f"Hamiltonian formulation of {self.components.description}",
         )
 
@@ -672,12 +685,12 @@ def create_obstacle_variational_mfg(
         VariationalMFGProblem with obstacle constraints
     """
 
-    def obstacle_lagrangian(t: float, x: float, v: float, m: float) -> float:
+    def obstacle_lagrangian(t: float, x: tuple[float], v: float, m: float) -> float:
         kinetic = 0.5 * v**2
         congestion = 0.5 * m
 
         # Obstacle penalty
-        obstacle_distance = abs(x - obstacle_center)
+        obstacle_distance = abs(x[0] - obstacle_center)
         if obstacle_distance < obstacle_radius:
             obstacle_cost = obstacle_penalty * (obstacle_radius - obstacle_distance) ** 2
         else:
@@ -686,9 +699,9 @@ def create_obstacle_variational_mfg(
         return kinetic + congestion + obstacle_cost
 
     # State constraint: avoid obstacle
-    def obstacle_constraint(t: float, x: float) -> float:
+    def obstacle_constraint(t: float, x: tuple[float]) -> float:
         """Constraint: distance from obstacle center >= obstacle_radius"""
-        return abs(x - obstacle_center) - obstacle_radius
+        return abs(x[0] - obstacle_center) - obstacle_radius
 
     components = VariationalMFGComponents(
         lagrangian_func=obstacle_lagrangian,

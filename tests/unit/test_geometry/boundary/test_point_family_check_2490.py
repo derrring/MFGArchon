@@ -50,7 +50,7 @@ def _particles_remaining(segments, route="own") -> int:
     solver = FPParticleSolver(_problem(grid), num_particles=200, seed=0, boundary_conditions=own)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -107,7 +107,7 @@ CASES = {
         _NOWHERE.format(_GFDM_POINTS),
     ),
     "an sdf_region off the box (S5)": (
-        [_seg("exit", D, sdf_region=lambda p: float(np.hypot(p[0] - 2.0, p[1] - 2.0) - 0.1))],
+        [_seg("exit", D, sdf_region=lambda x: np.hypot(x[0] - 2.0, x[1] - 2.0) - 0.1)],
         _NOWHERE.format(_PARTICLE_POINTS),
         _NOWHERE.format(_GFDM_POINTS),
     ),
@@ -190,7 +190,7 @@ def test_hjb_gfdms_admission_no_longer_depends_on_whether_its_cloud_samples_a_co
 
 
 def _sdf_disk_exit(radius):
-    return [_seg("exit", D, sdf_region=lambda p: float(np.hypot(p[0] - 1.0, p[1] - 0.5) - radius))]
+    return [_seg("exit", D, sdf_region=lambda x: np.hypot(x[0] - 1.0, x[1] - 0.5) - radius)]
 
 
 def test_an_sdf_exit_held_on_less_than_a_lattice_cell_is_refused_naming_the_lattice():
@@ -319,7 +319,7 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
         _gfdm(behind, no_x_max, delta=0.45)
     assert _reading(_gfdm([behind[0], _seg("S", D, 1.0, boundary="x_max", priority=2)], no_x_max, delta=0.45), "S") == 2
 
-    disk = lambda x: float(np.linalg.norm(np.asarray(x, dtype=float) - [0.0, 1.0]) - 0.08)  # noqa: E731
+    disk = lambda x: np.sqrt(x[0] ** 2 + (x[1] - 1.0) ** 2) - 0.08  # noqa: E731
     unread = BoundaryConditions(
         segments=[_seg("wall", NF, priority=1), _seg("S", D, 1.0, sdf_region=disk)],
         dimension=2,
@@ -342,10 +342,11 @@ def _particle_solver(segments, **bc_kw):
     return FPParticleSolver(_problem(grid), num_particles=10, seed=0, boundary_conditions=bc)
 
 
-_UNIT_BOX_SDF = lambda x: float(  # noqa: E731
-    np.linalg.norm(np.maximum(np.abs(np.asarray(x, float) - 0.5) - 0.5, 0.0))
-    + min(float(np.max(np.abs(np.asarray(x, float) - 0.5) - 0.5)), 0.0)
-)
+def _UNIT_BOX_SDF(x):
+    q = np.abs(np.stack(np.broadcast_arrays(*x), axis=-1) - 0.5) - 0.5
+    return np.linalg.norm(np.maximum(q, 0.0), axis=-1) + np.minimum(np.max(q, axis=-1), 0.0)
+
+
 _DIAGONAL = {"normal_direction": np.array([1.0, 1.0]) / np.sqrt(2.0), "normal_tolerance": 0.9}
 
 
@@ -463,7 +464,7 @@ def _particles_remaining_with(segments, **bc_kw):
     solver = FPParticleSolver(_problem(grid), num_particles=200, seed=0, boundary_conditions=bc)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform([0.8, 0.43], [0.95, 0.47], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array([3.0, 0.0]), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -537,7 +538,7 @@ def test_the_lattice_keeps_its_cell_budget_in_every_dimension(dimension):
     from mfgarchon.geometry.boundary.conditions import FACE_LATTICE_CELLS
 
     bc = BoundaryConditions(
-        segments=[_seg("exit", D, sdf_region=lambda p: float(np.linalg.norm(np.asarray(p) - 1.0) - 0.1))],
+        segments=[_seg("exit", D, sdf_region=lambda x: np.sqrt(sum((np.asarray(xi) - 1.0) ** 2 for xi in x)) - 0.1)],
         dimension=dimension,
         default_bc=NF,
     )

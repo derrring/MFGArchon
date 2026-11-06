@@ -97,7 +97,7 @@ def _default_components_2d(N):
     """
     return MFGComponents(
         m_initial=_gaussian_ic_2d(N),
-        u_terminal=lambda x: 0.5 * np.sum(np.asarray(x) ** 2),
+        u_terminal=lambda x: 0.5 * sum(xi**2 for xi in x),
         hamiltonian=_default_hamiltonian(),
     )
 

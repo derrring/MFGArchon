@@ -120,8 +120,7 @@ class Exact:
         return self.parts(t, X)[0]
 
     def source(self, t: float, x: np.ndarray) -> np.ndarray:
-        x = np.asarray(x, dtype=float).reshape(-1, len(self.terms[0][2]))
-        _, ut, grad, lap = self.parts(t, [x[:, i] for i in range(x.shape[1])])
+        _, ut, grad, lap = self.parts(t, list(x))
         return -ut + 0.5 * sum(g**2 for g in grad) - self.D * lap
 
 
@@ -444,7 +443,7 @@ def solve_level(cell: Cell, n: int, nt: int) -> Level:
         domain=grid,
         # Unit mass on the domain (area LY in 2-D); the HJB solve reads M_density below, never m_initial.
         conditions=Conditions(
-            m_initial=lambda x, c=(1.0 if cell.dim == 1 else 1.0 / LY): c + 0.0 * float(np.sum(x)),
+            m_initial=lambda x, c=(1.0 if cell.dim == 1 else 1.0 / LY): c + 0.0 * sum(xi for xi in x),
             u_terminal=lambda x: 0.0,
             T=cell.exact.T,
         ),
@@ -463,7 +462,7 @@ def solve_level(cell: Cell, n: int, nt: int) -> Level:
                 M_density=np.ones(shape),
                 U_terminal=u_T,
                 U_coupling_prev=np.broadcast_to(u_T, shape).copy(),
-                source_term=cell.exact.source,
+                source_term=lambda t, x: cell.exact.source(t, x),
             )
         )
     u0 = U[0]

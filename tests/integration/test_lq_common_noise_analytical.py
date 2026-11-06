@@ -68,18 +68,18 @@ class TestLQCommonNoiseAnalytical:
             Returns:
                 Hamiltonian value
             """
-            return 0.5 * p**2 + 0.5 * x**2 + alpha * theta * x
+            return 0.5 * p**2 + 0.5 * x[0] ** 2 + alpha * theta * x[0]
 
         # Create stochastic problem with model/domain/conditions components
         geometry = TensorProductGrid(bounds=[(-2.0, 2.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[42])
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            potential=lambda t, x: 0.5 * float(np.sum(x**2)),
+            potential=lambda t, x: 0.5 * sum(xi**2 for xi in x),
         )
         components = MFGComponents(
             hamiltonian=hamiltonian,
-            u_terminal=lambda x: 0.5 * x**2,
-            m_initial=lambda x: np.exp(-(x**2) / 0.5),
+            u_terminal=lambda x: 0.5 * x[0] ** 2,
+            m_initial=lambda x: np.exp(-(x[0] ** 2) / 0.5),
         )
         problem = StochasticMFGProblem(
             geometry=geometry,
@@ -188,17 +188,17 @@ class TestLQCommonNoiseAnalytical:
         noise_process = OrnsteinUhlenbeckProcess(kappa=1.0, mu=0.0, sigma=1e-6)
 
         def lq_hamiltonian(x, p, m, theta):
-            return 0.5 * p**2 + 0.5 * x**2  # No noise coupling
+            return 0.5 * p**2 + 0.5 * x[0] ** 2  # No noise coupling
 
         geometry = TensorProductGrid(bounds=[(-2.0, 2.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[42])
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            potential=lambda t, x: 0.5 * float(np.sum(x**2)),
+            potential=lambda t, x: 0.5 * sum(xi**2 for xi in x),
         )
         components = MFGComponents(
             hamiltonian=hamiltonian,
-            u_terminal=lambda x: 0.5 * x**2,
-            m_initial=lambda x: np.exp(-(x**2) / 0.5),
+            u_terminal=lambda x: 0.5 * x[0] ** 2,
+            m_initial=lambda x: np.exp(-(x[0] ** 2) / 0.5),
         )
         problem = StochasticMFGProblem(
             geometry=geometry,

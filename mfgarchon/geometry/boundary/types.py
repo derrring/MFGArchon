@@ -20,7 +20,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
-from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_by_name
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, read_region
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 )
 def _compute_sdf_gradient(
     point: np.ndarray,
-    sdf_func: Callable[[np.ndarray], float],
+    sdf_func: Callable[..., float],
     epsilon: float = 1e-5,
 ) -> np.ndarray:
     """
@@ -53,7 +53,7 @@ def _compute_sdf_gradient(
 
     Args:
         point: Point at which to evaluate gradient (1D array)
-        sdf_func: SDF function
+        sdf_func: SDF function, reading x as a coordinate tuple
         epsilon: Finite difference step size
 
     Returns:
@@ -71,7 +71,12 @@ def _compute_sdf_gradient(
         raise ValueError(f"SDF gradient: Point contains non-finite values: {point}")
 
     # Use canonical implementation with adaptive epsilon
-    grad = function_gradient(sdf_func, point, eps=epsilon, adaptive_eps=True)
+    grad = function_gradient(
+        lambda rows: read_region(sdf_func, rows[0], role="domain_sdf", one_point=True),
+        point,
+        eps=epsilon,
+        adaptive_eps=True,
+    )
 
     # Warn if gradient is suspiciously small (preserve original behavior)
     grad_norm = np.linalg.norm(grad)
@@ -461,7 +466,10 @@ def sdf_region_holds(segment: BCSegment, points: np.ndarray, tolerance: float) -
     """For each point (a row of ``points``), is it inside ``segment.sdf_region``, to ``tolerance``? The point family's
     one reading of ``sdf_region``, as `region_holds` is of ``region``."""
     points = np.atleast_2d(np.asarray(points, dtype=float))
-    return np.array([segment.sdf_region(point) <= tolerance for point in points], dtype=bool)
+    return np.array(
+        [read_region(segment.sdf_region, point, role="sdf_region", one_point=True) <= tolerance for point in points],
+        dtype=bool,
+    )
 
 
 def refuse_a_non_continuum_bc_type(bc_type: object, where: str, field_name: str) -> None:
@@ -536,13 +544,13 @@ class BCSegment:
         ...     name="corner",
         ...     bc_type=BCType.NEUMANN,
         ...     value=0.0,
-        ...     sdf_region=lambda x: np.linalg.norm(x - np.array([1, 1])) - 0.2,
+        ...     sdf_region=lambda x: np.hypot(x[0] - 1, x[1] - 1) - 0.2,
         ...     priority=2,
         ... )
 
         Marked region (Issue #596 Phase 2.5):
         >>> # First mark region on geometry
-        >>> geometry.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
+        >>> geometry.mark_region("inlet", predicate=lambda x: x[0] < 0.1)
         >>> # Then reference it in BC segment
         >>> inlet_bc = BCSegment(
         ...     name="inlet_bc",
@@ -573,7 +581,7 @@ class BCSegment:
     region: dict[str | int, tuple[float, float]] | None = None
 
     # SDF-based matching (general domains)
-    sdf_region: Callable[[np.ndarray], float] | None = None
+    sdf_region: Callable[..., float] | None = None
     normal_direction: np.ndarray | None = None
     normal_tolerance: float = 0.7  # cos(~45 deg)
 
@@ -686,7 +694,7 @@ class BCSegment:
         domain_bounds: np.ndarray | None,
         tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
-        domain_sdf: Callable[[np.ndarray], float] | None = None,
+        domain_sdf: Callable[..., float] | None = None,
         geometry: SupportsRegionMarking | None = None,
         normal_at: np.ndarray | None = None,
     ) -> bool:
@@ -878,14 +886,8 @@ def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
 
 
 def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
-    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise: the strict rule of
-    `callable_protocols.bind_by_name`, the one owner of it, which a graph node's value reads too (#2512 row B2)."""
-    return bind_by_name(
-        fn,
-        BOUNDARY_VALUE_SLOTS,
-        role="boundary value",
-        ruling="#2512 row B2",
-    )
+    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise (#2512 row B2)."""
+    return _remembered(fn, BOUNDARY_VALUE_SLOTS, "boundary value")
 
 
 def _with_default(fn: Callable[..., Any], *names: str) -> str:
@@ -943,8 +945,9 @@ def boundary_value(
 
     **A callable** is ``g(t, x)``, time first (#2378 phase 5, #2375 ruling 8; user ruling for boundary values). It
     is bound by its parameter names when the segment is built (`BCSegment.value_binding`) and called by keyword with
-    what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. ``x`` is one point, a 1-D array of shape
-    ``(d,)``, ``d = 1`` included. A reader with no time passes ``t=None``, and one with no point ``x=None``. A
+    what it declares: ``(t, x)``, ``(x)`` or ``(t)``. A reader passes ``x`` as one point, a 1-D array of
+    shape ``(d,)``, ``d = 1`` included, and the callable reads it as a tuple of scalars. A reader with no time passes
+    ``t=None``, and one with no point ``x=None``. A
     callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,
     the reader and the face. A reader that takes a time but was given none names its parameter in ``time_keyword``,
     and the refusal says to pass it; a reader with no time to take advises a value that needs none. It returns one
@@ -1001,8 +1004,10 @@ def boundary_value(
             )
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
+        # One point, so the body reads a tuple of scalars and there is no batch read to compare.
+        slots = {"t": t} if x is None else {"t": t, "x": tuple(np.asarray(x, dtype=float))}
         return _read_constant(
-            bound(t=t, x=x),
+            bound(**slots),
             kind=f"{kind} (what its callable returned)",
             where=where,
             returned=True,

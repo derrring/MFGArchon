@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -85,7 +87,7 @@ def sphere_region(
 
 
 def sdf_region(
-    sdf: Callable[[NDArray], NDArray[np.floating]],
+    sdf: Callable[..., NDArray[np.floating]],
 ) -> Callable[[NDArray], NDArray[np.bool_]]:
     """
     Create predicate from a signed distance function.
@@ -93,7 +95,7 @@ def sdf_region(
     Selects points x where sdf(x) <= 0 (interior + boundary of SDF domain).
 
     Args:
-        sdf: Signed distance function, (N, d) -> (N,) float array.
+        sdf: Signed distance function reading ``x``, a coordinate tuple.
              Negative = interior, zero = boundary, positive = exterior.
 
     Returns:
@@ -101,12 +103,12 @@ def sdf_region(
 
     Example:
         >>> # Ellipse SDF
-        >>> sdf_fn = lambda x: (x[:,0]/2)**2 + (x[:,1]/1)**2 - 1
+        >>> sdf_fn = lambda x: (x[0]/2)**2 + (x[1]/1)**2 - 1
         >>> grid.mark_region("ellipse", predicate=sdf_region(sdf_fn))
     """
 
     def predicate(points: NDArray) -> NDArray[np.bool_]:
-        return sdf(points) <= 0
+        return read_region(sdf, points, role="sdf") <= 0
 
     return predicate
 

@@ -519,7 +519,7 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
     )
 
     def m_initial(x):
-        return np.exp(-((x - 0.5) ** 2) / (2 * 0.12**2))
+        return np.exp(-((x[0] - 0.5) ** 2) / (2 * 0.12**2))
 
     components = MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=m_initial)
     problem = MFGProblem(

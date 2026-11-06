@@ -53,11 +53,16 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial import cKDTree
 
 from mfgarchon.utils.numerical.kernels import create_kernel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
 
 # =============================================================================
 # Numerical Tolerance Constants
@@ -371,7 +376,7 @@ class TaylorOperator(DifferentialOperator):
         neighborhood_mode: str = "hybrid",
         geometry: object | None = None,
         adaptive_params: tuple[np.ndarray, np.ndarray] | None = None,
-        obstacle_sdf: object | None = None,
+        obstacle_sdf: Callable[..., Any] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
     ):

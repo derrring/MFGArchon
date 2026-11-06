@@ -40,7 +40,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for 1D testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -51,8 +51,8 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         # x is [x, y] coordinate - compute Gaussian at center (0.5, 0.5)
-        x_arr = np.asarray(x)
-        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
+        x_arr = np.stack(x, axis=-1)
+        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     return MFGComponents(
         m_initial=m_initial_2d,
@@ -1111,7 +1111,7 @@ class TestFPFDMSolverCallableDrift:
 
         # Constant drift pushing right
         def constant_drift(t, x, m):
-            return 0.3 * np.ones_like(x)
+            return 0.3 * np.ones_like(x[0])
 
         # Initial condition (Gaussian)
         x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
@@ -1137,7 +1137,7 @@ class TestFPFDMSolverCallableDrift:
         # Density-dependent drift: move away from high density regions
         def crowd_avoidance_drift(t, x, m):
             # Gradient-like drift pushing toward low density
-            grad_m = np.gradient(m, x[1] - x[0] if len(x) > 1 else 1.0)
+            grad_m = np.gradient(m, (bounds[1][0] - bounds[0][0]) / (Nx_points - 1))
             return -0.5 * grad_m
 
         # Initial condition
@@ -1165,7 +1165,7 @@ class TestFPFDMSolverCallableDrift:
 
         # Drift that oscillates over time
         def oscillating_drift(t, x, m):
-            return 0.2 * np.sin(2 * np.pi * t) * np.ones_like(x)
+            return 0.2 * np.sin(2 * np.pi * t) * np.ones_like(x[0])
 
         # Initial condition
         x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
@@ -1257,13 +1257,9 @@ class TestFPFDMSolverCallableDrift:
         Nx, Ny = domain.Nx_points
 
         # Callable drift returning vector field
-        def vector_drift(t, coords, m):
-            x, y = coords
-            # Return vector drift: shape (2, Nx, Ny)
-            drift = np.zeros((2, len(x), len(y)))
-            drift[0] = 0.3 * np.ones((len(x), len(y)))  # x-drift
-            drift[1] = 0.0 * np.ones((len(x), len(y)))  # no y-drift (synthetic U limitation)
-            return drift
+        def vector_drift(t, x, m):
+            # Return vector drift: shape (2, Nx, Ny). No y-drift (synthetic U limitation)
+            return np.stack([np.full(np.shape(x[0]), 0.3), np.zeros(np.shape(x[0]))])
 
         # Initial condition (Gaussian)
         x_coords, y_coords = domain.coordinates
@@ -1317,11 +1313,11 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         dx = x[1] - x[0]
 
         def m_init(x):
-            return np.exp(-((np.asarray(x) - bump_center) ** 2) / 0.01)
+            return np.exp(-((np.asarray(x[0]) - bump_center) ** 2) / 0.01)
 
-        comps = MFGComponents(m_initial=m_init, u_terminal=lambda x: np.asarray(x) * 0.0, hamiltonian=H)
+        comps = MFGComponents(m_initial=m_init, u_terminal=lambda x: np.asarray(x[0]) * 0.0, hamiltonian=H)
         prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, volatility=0.1, components=comps)
-        m0 = m_init(x)
+        m0 = m_init((x,))
         # Normalised on the control volumes (#2145), which is what the scheme conserves; the
         # rectangle would make `mass == 1` a statement about a different functional.
         m0 /= float(quadrature_weights_1d(x) @ m0)

@@ -127,23 +127,20 @@ domain_sdf = Hypersphere(center=center, radius=radius)
 
 # Define exit as an SDF region (small sector on top)
 # SDF is negative inside the exit region
-def top_sector_sdf(x: np.ndarray) -> float:
+def top_sector_sdf(x: tuple) -> np.ndarray:
     """
     SDF for top sector of circle.
 
     Region: Points on circle boundary with y > center_y + 0.8*radius
     """
     # Check if on boundary (distance from center ≈ radius)
-    dist_from_center = np.linalg.norm(x - center)
-    on_boundary = abs(dist_from_center - radius) < 0.01
+    dist_from_center = np.hypot(x[0] - center[0], x[1] - center[1])
+    on_boundary = np.abs(dist_from_center - radius) < 0.01
 
     # Check if in top sector
     in_top = x[1] > (center[1] + 0.15 * radius)
 
-    if on_boundary and in_top:
-        return -1.0  # Inside exit region
-    else:
-        return 1.0  # Outside exit region
+    return np.where(on_boundary & in_top, -1.0, 1.0)  # -1 inside the exit region, 1 outside it
 
 
 bc_sdf = mixed_bc(

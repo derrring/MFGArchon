@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import read_region
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
@@ -49,7 +51,7 @@ logger = get_logger(__name__)
 def compute_geodesic_distance(
     points: np.ndarray,
     sources_idx: np.ndarray | int,
-    obstacles_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+    obstacles_sdf: Callable[..., np.ndarray] | None = None,
     k_neighbors: int = 25,
     n_segment_samples: int = 8,
     max_edge_length: float | None = None,
@@ -64,13 +66,13 @@ def compute_geodesic_distance(
     ----------
     points : np.ndarray, shape (N, d)
         Cloud point positions. Caller must guarantee all points are in
-        the navigable region (`obstacles_sdf(points) > 0` if obstacles
-        are provided); points inside obstacles are not filtered out.
+        the navigable region, where `obstacles_sdf` is positive if obstacles
+        are provided; points inside obstacles are not filtered out.
     sources_idx : np.ndarray or int
         Index or indices of points with `d_geodesic = 0`. The output
         is `min_{s ∈ sources_idx} d(., s)`.
     obstacles_sdf : callable or None
-        `obstacles_sdf(P) -> SDF` for `P` shape `(M, d)`. Following the
+        `obstacles_sdf(x) -> SDF` for `x` a coordinate tuple. Following the
         mfgarchon SDF convention, `SDF <= 0` means **inside obstacle**.
         Edges whose mid-segment samples cross into an obstacle (any
         sample with `SDF <= 0`) are excluded from the graph. When None,
@@ -153,7 +155,7 @@ def compute_geodesic_distance(
                 continue
             if obstacles_sdf is not None:
                 seg = pts[i][None, :] + s_lin[:, None] * (pts[j] - pts[i])[None, :]
-                sd = np.asarray(obstacles_sdf(seg))
+                sd = np.asarray(read_region(obstacles_sdf, seg, role="obstacles_sdf"))
                 if (sd <= 0.0).any():
                     n_filtered_obstacle += 1
                     continue

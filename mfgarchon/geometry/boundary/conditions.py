@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from mfgarchon.geometry.protocols import SupportsRegionMarking
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.deprecation import deprecated
 
 from .tolerances import BOUNDARY_REL_TOL, BOUNDARY_TOL, SDF_BOUNDARY_TOL
@@ -127,7 +128,7 @@ class BoundaryConditions:
         >>> exit_seg = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0,
         ...                      normal_direction=np.array([0, 1]), priority=1)
         >>> bc = mixed_bc([exit_seg], dimension=2,
-        ...               domain_sdf=lambda x: np.linalg.norm(x) - 5.0)
+        ...               domain_sdf=lambda x: np.linalg.norm(x, axis=0) - 5.0)
     """
 
     dimension: int | None = None
@@ -141,7 +142,7 @@ class BoundaryConditions:
     domain_bounds: np.ndarray | None = None
 
     # General domain specification (SDF-based, supports Lipschitz boundaries)
-    domain_sdf: Callable[[np.ndarray], float] | None = None
+    domain_sdf: Callable[..., float] | None = None
 
     # Corner handling (important for Lipschitz domains with re-entrant corners)
     corner_strategy: Literal["priority", "average", "mollify"] = "priority"
@@ -1787,7 +1788,7 @@ class BoundaryConditions:
 
         # Method 2: SDF domain (normal-based detection)
         if self.domain_sdf is not None:
-            phi = self.domain_sdf(point)
+            phi = read_region(self.domain_sdf, point, role="domain_sdf", one_point=True)
             if abs(phi) > tolerance:
                 return None
 
@@ -1886,7 +1887,7 @@ class BoundaryConditions:
 
         # SDF domain: check if |phi| < tolerance
         if self.domain_sdf is not None:
-            phi = self.domain_sdf(point)
+            phi = read_region(self.domain_sdf, point, role="domain_sdf", one_point=True)
             return abs(phi) < tolerance
 
         return False
@@ -2569,7 +2570,7 @@ def mixed_bc(
     segments: list[BCSegment],
     dimension: int | None = None,
     domain_bounds: np.ndarray | None = None,
-    domain_sdf: Callable[[np.ndarray], float] | None = None,
+    domain_sdf: Callable[..., float] | None = None,
     default_bc: BCType = BCType.NEUMANN,
     default_value: float = 0.0,
     corner_strategy: Literal["priority", "average", "mollify"] = "priority",
@@ -2756,7 +2757,10 @@ def _placement_mask_on_grid(segment: BCSegment, geometry: Any) -> np.ndarray | N
             inside &= (points[:, axis] >= low - SDF_BOUNDARY_TOL) & (points[:, axis] <= high + SDF_BOUNDARY_TOL)
     if segment.sdf_region is not None:
         # One value per point, as `BCSegment.matches_point` reads it: a one-element array counts as its value.
-        values = [np.asarray(segment.sdf_region(x), dtype=float) for x in points]
+        values = [
+            np.asarray(read_region(segment.sdf_region, x, role="sdf_region", one_point=True), dtype=float)
+            for x in points
+        ]
         if any(value.size != 1 for value in values):
             shapes = sorted({value.shape for value in values if value.size != 1})
             raise ValueError(
@@ -2974,7 +2978,7 @@ def mixed_bc_from_regions(
         >>>
         >>> # Setup geometry with marked regions
         >>> geometry = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[50, 50], boundary_conditions=no_flux_bc(dimension=2))
-        >>> geometry.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
+        >>> geometry.mark_region("inlet", predicate=lambda x: x[0] < 0.1)
         >>> geometry.mark_region("outlet", boundary="x_max")
         >>>
         >>> # Define BCs via dictionary (no manual region_name assignment)

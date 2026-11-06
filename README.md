@@ -49,13 +49,13 @@ domain = TensorProductGrid(
 
 # Conditions: initial density + terminal cost + time horizon
 conditions = Conditions(
-    u_terminal=lambda x: np.zeros_like(x),
+    u_terminal=lambda x: np.zeros_like(x[0]),
     # Integrates to 0.702328 on this grid, not 1. The library measures the mass, names the
     # measure, and warns -- but does not rescale your density (#1887): whether the initial
     # mass should be 1 is your modelling decision. To make it one, divide by
     # `domain.integrate(...)`, and note that this changes the problem -- the coupling f(m)
     # is then evaluated at 1.4238x these values.
-    m_initial=lambda x: np.exp(-5 * (x - 0.5) ** 2),
+    m_initial=lambda x: np.exp(-5 * (x[0] - 0.5) ** 2),
     T=1.0,
 )
 

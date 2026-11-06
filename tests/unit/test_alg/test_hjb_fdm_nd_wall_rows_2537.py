@@ -113,7 +113,7 @@ def _solver(bc, n: int = N, solver_type: str = "newton") -> tuple[HJBFDMSolver, 
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * float(np.sum(x)), u_terminal=lambda x: 0.0, T=T),
+        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * sum(xi for xi in x), u_terminal=lambda x: 0.0, T=T),
         Nt=NT,
     )
     X, Y = np.meshgrid(*grid.coordinates, indexing="ij")
@@ -301,9 +301,8 @@ def _exact(t, x, y):
 
 
 def _source(t, x):
-    x = np.asarray(x, dtype=float)
-    _, ux, uy, lap = _exact(t, x[:, 0], x[:, 1])
-    return 0.5 * np.cos(np.pi * x[:, 0]) + 0.5 * (ux**2 + uy**2) - _D * lap
+    _, ux, uy, lap = _exact(t, x[0], x[1])
+    return 0.5 * np.cos(np.pi * x[0]) + 0.5 * (ux**2 + uy**2) - _D * lap
 
 
 def _wall_slope_miss(n: int) -> float:

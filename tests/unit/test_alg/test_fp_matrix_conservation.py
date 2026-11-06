@@ -42,8 +42,8 @@ def _w(n: int, dx: float) -> np.ndarray:
     return quadrature_weights_1d(np.arange(n, dtype=float) * dx)
 
 
-def _cos_density(xx):
-    return 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(xx))
+def _cos_density(x):
+    return 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(x[0]))
 
 
 def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos_density):
@@ -62,12 +62,12 @@ def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos
     x = np.linspace(0.0, 1.0, n)
     comps = MFGComponents(
         m_initial=m_init,
-        u_terminal=lambda x: 0.0 * np.asarray(x),
+        u_terminal=lambda x: 0.0 * np.asarray(x[0]),
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
     solver = FPFDMSolver(prob)
-    m0 = np.asarray(m_init(x), dtype=float)
+    m0 = np.asarray(m_init((x,)), dtype=float)
     # drift_field as an (nt+1, n) array routes through the implicit per-point assembly
     M = solver.solve_fp_system(m0.copy(), drift_field=np.zeros((nt + 1, n)), volatility=sigma)
     return M, 1.0 / (n - 1)
@@ -141,7 +141,7 @@ class TestFPProductionConservation:
         # a sign error in an off-diagonal (i.e. a loss of the M-matrix property this test is
         # named for) produces a negative entry rather than a merely inaccurate one.
         M_peaked, _ = _zero_drift_density_evolution(
-            periodic_bc(dimension=1), m_init=lambda xx: np.exp(-500.0 * (np.asarray(xx) - 0.5) ** 2)
+            periodic_bc(dimension=1), m_init=lambda x: np.exp(-500.0 * (np.asarray(x[0]) - 0.5) ** 2)
         )
         assert M_peaked.min() > -1e-12, "production FP step produced a negative density from a peaked state"
 
@@ -363,8 +363,8 @@ class TestConservativeAdvection:
             coupling_dm=lambda m: 0.0 * np.asarray(m),
         )
         comps = MFGComponents(
-            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.18) ** 2) / 0.005),
-            u_terminal=lambda x: 0.0 * np.asarray(x),
+            m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 0.18) ** 2) / 0.005),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0]),
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=0.4, Nt=50, volatility=0.05, components=comps)
@@ -663,8 +663,8 @@ class TestStrictAdjointPerPointSigma:
             coupling_dm=lambda m: 0.0 * np.asarray(m),
         )
         comps = MFGComponents(
-            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.25) ** 2) / 0.01),
-            u_terminal=lambda x: 0.0 * np.asarray(x),
+            m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 0.25) ** 2) / 0.01),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0]),
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=0.3, Nt=30, volatility=0.1, components=comps)

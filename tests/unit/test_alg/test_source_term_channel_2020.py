@@ -107,8 +107,8 @@ _SWALLOWERS: set[str] = set()
 
 def _components():
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
             coupling=lambda m: np.asarray(m) * 0.0,
@@ -129,17 +129,16 @@ def _mesh_problem():
     return MFGProblem(geometry=mesh, T=0.2, Nt=5, volatility=0.3, components=_components(), coupling_coefficient=0.0)
 
 
-class _Source:
-    """A source that records whether it was ever called. A constant 5.0 is deliberate: it is large
-    against every field in this fixture, so a solver that reaches it cannot produce a zero delta."""
+def _Source():
+    """A source that records whether it was ever called. A constant 5.0 is deliberate: it is large against every field in
+    this fixture, so a solver that reaches it cannot produce a zero delta."""
 
-    def __init__(self):
-        self.calls = 0
+    def source(t, x):
+        source.calls += 1
+        return np.full(np.shape(x[0]), 5.0)
 
-    def __call__(self, _t, x):
-        self.calls += 1
-        a = np.asarray(x, dtype=float)
-        return np.full(a.shape[0] if a.ndim == 2 else a.size, 5.0)
+    source.calls = 0
+    return source
 
 
 def _hjb_fdm():
@@ -243,7 +242,7 @@ def _hjb_howard():
     p = _grid_problem()
     provider = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
     with pytest.warns(UserWarning, match="non-SOCP"):
-        s = HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t, x, p, m: -p)
+        s = HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t_idx, x, p, m: -p)
     return lambda f: s.solve_hjb_system(None, np.zeros(_N), **({"source_term": f} if f else {}))
 
 
@@ -555,7 +554,7 @@ def test_howard_refuses_a_volatility_field_its_constructor_owns():
 
     def howard(**kwargs):
         with pytest.warns(UserWarning, match="non-SOCP"):
-            return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t, x, p, m: -p, **kwargs)
+            return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t_idx, x, p, m: -p, **kwargs)
 
     # 0.0 as well as 3.0: a truthiness check (`if volatility:`) refuses 3.0 and ignores 0.0,
     # and 0.0 through the constructor is not a no-op -- it removes the diffusion.

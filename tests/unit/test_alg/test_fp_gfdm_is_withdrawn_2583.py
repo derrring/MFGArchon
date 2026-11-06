@@ -31,15 +31,13 @@ POINTS = np.linspace(0.0, 1.0, N).reshape(-1, 1)
 REFUSAL = r"FPGFDMSolver is withdrawn: FP-GFDM built no wall.*#2583.*#2584"
 
 
-def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float)) -> MFGProblem:
+def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float)) -> MFGProblem:
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
         ),
         domain=domain,
-        conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=u_terminal, T=0.5
-        ),
+        conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=u_terminal, T=0.5),
         Nt=10,
     )
 
@@ -93,7 +91,7 @@ def test_the_alternatives_the_refusal_names_hold_a_wall(route):
 
     The refusal says the second pair is not dual and that Expert Mode warns about it, so that warning is
     asserted too."""
-    problem = _problem(_grid(no_flux_bc(dimension=1)), u_terminal=lambda x: -2.0 * np.asarray(x, dtype=float))
+    problem = _problem(_grid(no_flux_bc(dimension=1)), u_terminal=lambda x: -2.0 * np.asarray(x[0], dtype=float))
     if route == "dual scheme":
         result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=20, verbose=False)
     else:

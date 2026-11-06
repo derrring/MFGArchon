@@ -126,7 +126,7 @@ def test_a_bc_with_its_own_sdf_is_not_overridden_by_the_geometrys_box():
 
     bc = BoundaryConditions(
         dimension=2,
-        domain_sdf=lambda x: np.linalg.norm(np.asarray(x, dtype=float) - 0.5, axis=-1) - 0.4,
+        domain_sdf=lambda x: np.sqrt(sum((np.asarray(xi, dtype=float) - 0.5) ** 2 for xi in x)) - 0.4,
         segments=[
             BCSegment(name="east", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_max", priority=1),
             BCSegment(name="rest", bc_type=BCType.NO_FLUX),
@@ -217,9 +217,7 @@ def test_a_cover_the_owner_cannot_decide_is_refused_at_a_corner_too():
         default_bc=BCType.NO_FLUX,
         segments=[
             BCSegment(name="strip", bc_type=BCType.NEUMANN, value=0.5, boundary="x_max", region={"y": (0.5, 1.0)}),
-            BCSegment(
-                name="blob", bc_type=BCType.NO_FLUX, sdf_region=lambda x: np.asarray(x, dtype=float)[..., 0] - 2.0
-            ),
+            BCSegment(name="blob", bc_type=BCType.NO_FLUX, sdf_region=lambda x: x[0] - 2.0),
         ],
     )
     geometry = Hyperrectangle(UNIT_SQUARE)
@@ -236,7 +234,7 @@ def test_domain_bounds_decide_the_faces_before_the_domain_sdf():
     bc = BoundaryConditions(
         dimension=2,
         domain_bounds=UNIT_SQUARE,
-        domain_sdf=lambda x: np.max(np.abs(np.asarray(x, dtype=float) - 0.5), axis=-1) - 0.5,
+        domain_sdf=lambda x: np.max(np.abs(np.asarray(x[0], dtype=float) - 0.5), axis=-1) - 0.5,
         segments=[
             BCSegment(name="east", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_max", priority=1),
             BCSegment(name="north", bc_type=BCType.DIRICHLET, value=2.0, boundary="y_max", priority=2),
@@ -280,7 +278,7 @@ def test_a_bc_with_only_an_sdf_reads_each_points_face_from_it():
     found none there and refused every point. One face per point, so no corner rule reaches an SDF BC (#2675)."""
 
     def box_sdf(x):
-        return float(np.max(np.abs(np.asarray(x, dtype=float) - 0.5)) - 0.5)
+        return np.max(np.abs(np.asarray(x[0], dtype=float) - 0.5)) - 0.5
 
     bc = BoundaryConditions(
         dimension=2,

@@ -38,7 +38,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )
@@ -484,8 +484,8 @@ class TestWenoTimeSubstepping:
             coupling_dm=lambda m: 1.0,
         )
         comps = MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
             hamiltonian=ham,
         )
         dom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
@@ -568,7 +568,7 @@ class TestWenoHJDerivativeCorrectness:
             coupling=lambda m: m,
             coupling_dm=lambda m: 1.0,
         )
-        comp = MFGComponents(m_initial=lambda x: np.ones_like(x), u_terminal=lambda x: 0.0, hamiltonian=H)
+        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[0]), u_terminal=lambda x: 0.0, hamiltonian=H)
         dom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
         prob = MFGProblem(geometry=dom, T=1.0, Nt=30, volatility=0.1, components=comp)
         return HJBWENOSolver(prob, weno_variant=variant)
@@ -669,7 +669,7 @@ class TestWeno2DSolve:
             coupling=lambda m: m,
             coupling_dm=lambda m: 1.0,
         )
-        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[..., 0]), u_terminal=lambda x: 0.0, hamiltonian=H)
+        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[0]), u_terminal=lambda x: 0.0, hamiltonian=H)
         dom = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=no_flux_bc(dimension=2)
         )
@@ -725,7 +725,7 @@ class TestWeno2DSolve:
             coupling=lambda m: m,
             coupling_dm=lambda m: 1.0,
         )
-        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[..., 0]), u_terminal=lambda x: 0.0, hamiltonian=H)
+        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[0]), u_terminal=lambda x: 0.0, hamiltonian=H)
         dom = TensorProductGrid(bounds=bounds, Nx_points=npts, boundary_conditions=no_flux_bc(dimension=2))
         return MFGProblem(geometry=dom, T=0.2, Nt=10, volatility=0.2, components=comp)
 

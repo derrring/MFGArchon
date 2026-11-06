@@ -32,7 +32,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -934,7 +934,7 @@ class TestStochasticCharacteristicSL:
         components = MFGComponents(
             hamiltonian=ZeroH(),
             m_initial=lambda x: 1.0,
-            u_terminal=lambda x: float(np.exp(-(x[0] ** 2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T)),
+            u_terminal=lambda x: np.exp(-(x[0] ** 2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T),
         )
         problem = MFGProblem(
             geometry=geometry,
@@ -1107,7 +1107,7 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
         )
 
         def m0(x):
-            return np.exp(-10.0 * ((x[..., 0] - 0.5) ** 2 + (x[..., 1] - 0.5) ** 2))
+            return np.exp(-10.0 * ((x[0] - 0.5) ** 2 + (x[1] - 0.5) ** 2))
 
         components = MFGComponents(
             hamiltonian=ZeroH(),
@@ -1365,8 +1365,8 @@ class TestSLHJBConsistency:
 
         geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
         comp = MFGComponents(
-            m_initial=lambda x: 0.5 + np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+            m_initial=lambda x: 0.5 + np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=lam),
                 potential=potential,
@@ -1423,7 +1423,7 @@ class TestSLHJBConsistency:
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
         def V(t, x):
-            return -0.5 * (np.asarray(x)[..., 0] - 0.5) ** 2
+            return -0.5 * (x[0] - 0.5) ** 2
 
         T, nx, Nt = 0.3, 101, 120
         problem, x, U_T, M, U_prev = self._build(lam, V, None, None, sigma=0.25, nx=nx, Nt=Nt, T=T)
@@ -1449,7 +1449,7 @@ class TestSLValueUpdateND:
     @staticmethod
     def _build_2d(lam):
         def V(t, x):
-            return 0.2 * (x[:, 0] ** 2 + x[:, 1] ** 2)
+            return 0.2 * (x[0] ** 2 + x[1] ** 2)
 
         geom = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)],
@@ -1491,7 +1491,7 @@ class TestSLValueUpdateND:
         # Independent analytic LQ form: H = |p|^2/(2λ) - V(x) - f(m) (#2375 ruling 3), so
         # H(p) - 2*H(0) = |p|^2/(2λ) + (V + f), the running cost L(α*) paid over the step.
         h_control = np.sum(p**2, axis=1) / (2.0 * lam)
-        h_state = V(t=t, x=pts) + 0.7 * m
+        h_state = V(t=t, x=tuple(pts.T)) + 0.7 * m
         expected = u_foot + dt * (h_control + h_state)
         old_scheme = u_foot - dt * (h_control - h_state)  # pre-#575/#1413: u_foot - dt*H(p)
 

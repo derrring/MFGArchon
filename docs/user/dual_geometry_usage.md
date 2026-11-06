@@ -111,8 +111,8 @@ problem = MFGProblem(
     fp_geometry=fp_grid,
     time_domain=(1.0, 100),
     volatility=0.5,
-    final_condition=lambda x, y: (x - 5)**2 + (y - 5)**2,  # Target center
-    m0=lambda x, y: np.exp(-((x-2)**2 + (y-2)**2))  # Initial density at corner
+    final_condition=lambda x: (x[0] - 5)**2 + (x[1] - 5)**2,  # Target center
+    m0=lambda x: np.exp(-((x[0]-2)**2 + (x[1]-2)**2))  # Initial density at corner
 )
 
 # Solve with automatic projection
@@ -208,7 +208,7 @@ problem = MFGProblem(
     fp_geometry=fp_network,
     time_domain=(1.0, 100),
     volatility=0.5,
-    final_condition=lambda x, y: -((x - 9)**2 + (y - 9)**2)  # Exit at (9,9)
+    final_condition=lambda x: -((x[0] - 9)**2 + (x[1] - 9)**2)  # Exit at (9,9)
 )
 
 # Projector handles grid ↔ network transformations automatically
@@ -551,12 +551,12 @@ hjb_grid = TensorProductGrid(dimension=2, bounds=[(0, 10), (0, 10)], Nx_points=[
 fp_grid = TensorProductGrid(dimension=2, bounds=[(0, 10), (0, 10)], Nx_points=[51, 51])
 
 # Terminal cost: distance to exit at (0, 5)
-def g(x, y):
-    return np.sqrt(x**2 + (y - 5)**2)
+def g(x):
+    return np.sqrt(x[0]**2 + (x[1] - 5)**2)
 
 # Initial density: uniform in building
-def m0(x, y):
-    return np.ones_like(x) / 100.0  # Normalized to integrate to 1
+def m0(x):
+    return np.ones_like(x[0]) / 100.0  # Normalized to integrate to 1
 
 # Running cost: prefer empty areas (congestion penalty)
 def f(x, y, m):

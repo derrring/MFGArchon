@@ -58,8 +58,8 @@ def _problem_1d(n: int, nt: int, m_initial) -> MFGProblem:
         model=Model(hamiltonian=_hamiltonian(), volatility=SIGMA),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda x: scale * m_initial(x),
-            u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float),
+            m_initial=lambda x: scale * m_initial(x[0]),
+            u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float),
             T=T,
         ),
         Nt=nt,

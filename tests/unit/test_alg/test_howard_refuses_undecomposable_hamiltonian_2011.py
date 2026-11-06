@@ -96,13 +96,13 @@ class LocalCoupling(HamiltonianBase):
         # Hamiltonian -- caught by the mutation check below, not by any assertion.
         pa = np.asarray(p, dtype=float)
         kinetic = 0.5 * np.sum(pa**2, axis=-1) if pa.ndim > 1 else 0.5 * pa**2
-        return kinetic + self.g * _first_coord(x) * np.asarray(m, dtype=float)
+        return kinetic + self.g * _first_coord(x[0]) * np.asarray(m, dtype=float)
 
     def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
     def dm(self, t, x, p, m):
-        return self.g * _first_coord(x) * np.ones_like(np.asarray(m, dtype=float))
+        return self.g * _first_coord(x[0]) * np.ones_like(np.asarray(m, dtype=float))
 
 
 def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
@@ -113,7 +113,7 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1))
 
     def _uT(x):
-        return float(np.cos(2.0 * np.pi * np.asarray(x).ravel()[0])) if terminal == "cos" else 0.0
+        return np.cos(2.0 * np.pi * x[0]) if terminal == "cos" else 0.0
 
     components = MFGComponents(hamiltonian=hamiltonian, m_initial=lambda x: 1.0, u_terminal=_uT)
     problem = MFGProblem(geometry=grid, components=components, T=T, Nt=NT, volatility=0.5)
@@ -281,10 +281,9 @@ def _dual(fn):
 
     def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
-        xa = np.asarray(x, dtype=float)
         ma = np.asarray(m, dtype=float)
         batch = pa.ndim > 1
-        x1 = xa[..., 0] if xa.ndim > 1 else xa.ravel()
+        x1 = np.asarray(x[0], dtype=float)
         psq = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
         out = fn(x1, ma, psq, pa)
         return out if batch else float(np.asarray(out).ravel()[0])
@@ -394,19 +393,25 @@ def _time_varying_kinetic(amplitude):
     return type("TimeVaryingKinetic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
 
 
+def _anisotropic_dp(self, t, x, p, m):
+    pa = np.asarray(p, dtype=float)
+    gradient = np.zeros_like(pa)
+    gradient[..., 0] += pa[..., 0]
+    gradient[..., -1] += 4.0 * pa[..., -1]
+    return gradient
+
+
 _REFUSE = [
     ("congestion_c1_is_one", _congestion),
     ("relativistic_kinetic", _relativistic),
     ("quartic_kinetic", _quartic),
     (
         "anisotropic_kinetic",
+        # The same at a point as on a batch, with its own dH/dp: the problem refuses a Hamiltonian that is not (#2875).
         lambda: _make(
             "H",
-            lambda x, m, q, p: (
-                0.5 * np.asarray(p)[..., 0] ** 2 + 2.0 * np.asarray(p)[..., 1] ** 2
-                if np.asarray(p).ndim > 1
-                else 0.5 * q
-            ),
+            lambda x, m, q, p: 0.5 * np.asarray(p)[..., 0] ** 2 + 2.0 * np.asarray(p)[..., -1] ** 2,
+            dp=_anisotropic_dp,
         ),
     ),
 ]
@@ -655,7 +660,7 @@ def test_a_wired_alpha_free_part_is_NOT_refused():
         _make(
             "Wired",
             lambda x, m, q, p: 0.5 * q + 1.0 * x,
-            extra={"_potential": (lambda xx, t=0.0: 1.0 * np.asarray(xx).ravel()[0])},
+            extra={"_potential": (lambda t, x: 1.0 * x[0])},
         ),
         "howard",
         **BARE_STENCILS,

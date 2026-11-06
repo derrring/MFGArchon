@@ -59,11 +59,7 @@ def _window(form: str, face: tuple[int, str], cover: str, cond: str) -> tuple[Bo
     if form == "region_name":
         grid.mark_region(
             "window",
-            predicate=lambda x: (
-                (np.abs(np.asarray(x)[..., axis] - at) <= 1e-9)
-                & (np.asarray(x)[..., other] >= lo - 1e-9)
-                & (np.asarray(x)[..., other] <= hi + 1e-9)
-            ),
+            predicate=lambda x: (np.abs(x[axis] - at) <= 1e-9) & (x[other] >= lo - 1e-9) & (x[other] <= hi + 1e-9),
         )
     return grid.get_boundary_conditions(), grid
 
@@ -129,7 +125,7 @@ def test_a_marked_exit_window_absorbs_only_in_its_cells_on_both_drift_routes_and
     drift does: it absorbs only on x_min, within the marked nodes' cells, y in [0.3 - h/2, 0.7 + h/2]. Then the coupled
     HJB-GFDM + particle solve runs, so HJB-GFDM's classification of the cloud's corners is reached too."""
     reach = (0.3 - H / 2 - 1e-9, 0.7 + H / 2 + 1e-9)
-    for drift in (np.zeros((5, N, N)), lambda t, x, m: np.zeros_like(np.asarray(x, dtype=float))):
+    for drift in (np.zeros((5, N, N)), lambda t, x, m: np.zeros((*np.shape(x[0]), 2))):
         _, problem = _exit_problem("region_name")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

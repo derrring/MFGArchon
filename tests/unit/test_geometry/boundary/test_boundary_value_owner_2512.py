@@ -16,40 +16,37 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.types import segment_value
-from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, SOLVER_SOURCE_SLOTS, bind_user_callable
-
-_OUT_OF_ORDER = r"out of order\. Since #2378 phase 5 \(#2375 ruling 8\) a boundary value takes \(t, x\), time first: reorder its parameters"
-_NOT_ALL_NAMED = r"whose parameters are not all named after the slots, and a boundary value is called by name"
-_REFUSED = {
-    "unnamed one-arg": (lambda s: s, r"cannot be matched to \(t, x\)\. Name each parameter after what it reads"),
-    "unnamed two-arg": (lambda a, b: a, r"none of its parameters is named after a slot"),
-    "(x, t)": (lambda x, t: t, _OUT_OF_ORDER),
-    "(point, time)": (lambda point, time: time, _OUT_OF_ORDER),
-    "(p, t)": (lambda p, t: t, _OUT_OF_ORDER),
-    "varargs": (lambda *args, **kw: 0.0, r"nothing reaches \*args, \*\*kw"),
-    # Called by name, these read in silence at main: what a partial froze is overridden by the slot passed by name,
-    # and nothing reaches *a or **kw, so the time read is 0 (#2296 review 2).
-    "partial freezing t by keyword": (
-        functools.partial(lambda t, x: t + x[0], t=0.25),
-        r"freezes t by keyword: called by name",
-    ),
-    "(x, *a, **kw)": (lambda x, *a, **kw: x[0] + kw.get("t", 0.0), r"\(x, \*a, \*\*kw\).*nothing reaches \*a, \*\*kw"),
-    # Time first but a parameter named otherwise: the shared binder would bind these positionally, which the
-    # ruling for boundary values does not allow.
-    "(t, pos)": (lambda t, pos: t, _NOT_ALL_NAMED),
-    "(time, pos)": (lambda time, pos: time, _NOT_ALL_NAMED),
-    "(s, x)": (lambda s, x: s, _NOT_ALL_NAMED),
-}
-_BOUND = {
-    "(t, x)": (lambda t, x: t + x[0], 1.4),
-    "(x)": (lambda x: x[0], 0.9),
-    "(t)": (lambda t: t, 0.5),
-    "(time)": (lambda time: time, 0.5),
-}
 
 
 def _segment(value, boundary="x_max") -> BCSegment:
     return BCSegment(name="d", bc_type=BCType.DIRICHLET, value=value, boundary=boundary)
+
+
+_NOT_NAMED = r"has no default and names no slot of \(t, x\)"
+_STARRED = r"nothing reaches a starred parameter"
+_REFUSED = {
+    "unnamed one-arg": (lambda s: s, _NOT_NAMED),
+    "unnamed two-arg": (lambda a, b: a, _NOT_NAMED),
+    "(point, time)": (lambda point, time: time, _NOT_NAMED),
+    "(p, t)": (lambda p, t: t, _NOT_NAMED),
+    "(time)": (lambda time: time, _NOT_NAMED),
+    "varargs": (lambda *args, **kw: 0.0, _STARRED),
+    # Called by name, what a partial froze is overridden by the slot passed by name, and nothing reaches *a or **kw, so the
+    # time read would be 0 (#2296 review 2).
+    "partial freezing t by keyword": (
+        functools.partial(lambda t, x: t + x[0], t=0.25),
+        r"freezes t by keyword: called by name",
+    ),
+    "(x, *a, **kw)": (lambda x, *a, **kw: x[0] + kw.get("t", 0.0), _STARRED),
+    "(t, pos)": (lambda t, pos: t, _NOT_NAMED),
+    "(s, x)": (lambda s, x: s, _NOT_NAMED),
+}
+_BOUND = {
+    "(t, x)": (lambda t, x: t + x[0], 1.4),
+    "(x, t)": (lambda x, t: t + x[0], 1.4),
+    "(x)": (lambda x: x[0], 0.9),
+    "(t)": (lambda t: t, 0.5),
+}
 
 
 @pytest.mark.parametrize("form", sorted(_REFUSED))
@@ -66,25 +63,14 @@ def test_a_callable_named_after_its_slots_is_called_by_keyword_with_what_it_decl
     assert segment_value(_segment(fn), t=0.5, x=np.array([0.9]), where="test") == pytest.approx(expected, abs=1e-15)
 
 
-def test_the_unnamed_refusal_offers_no_positional_binding_to_a_reordered_role():
-    """The binder's advice for an unnamed callable used to end "or take exactly 2 positionally in that order", which
-    under a reordered role leads into the next refusal. Pinned on a second reordered role, the potential, and with a
-    control: a role ruling 8 did not reorder still binds positionally, though the advice no longer says so (#2861)."""
-    with pytest.raises(TypeError) as excinfo:
-        bind_user_callable(lambda s: s, POTENTIAL_SLOTS, role="potential")
-    assert "positionally" not in str(excinfo.value)
-    assert "put them in the order (t, x), time first" in str(excinfo.value)
-    assert bind_user_callable(lambda a, b: a, SOLVER_SOURCE_SLOTS, role="source term")(t=0.5, x=0.9) == 0.5
-
-
 def test_a_value_reassigned_after_construction_is_bound_afresh():
     """The binding is keyed on the value's identity: a stale one would read the new callable through the old
     signature, here as g(t) = 0.5 instead of 2 x[0] = 1.8."""
     segment = _segment(lambda t: t)
     segment.value = lambda x: 2.0 * x[0]
     assert segment_value(segment, t=0.5, x=np.array([0.9]), where="test") == pytest.approx(1.8)
-    segment.value = lambda x, t: t
-    with pytest.raises(TypeError, match=_OUT_OF_ORDER):
+    segment.value = lambda s: s
+    with pytest.raises(TypeError, match=_NOT_NAMED):
         segment_value(segment, t=0.5, x=np.array([0.9]), where="test")
 
 
@@ -275,9 +261,8 @@ def test_an_operator_given_no_time_refuses_and_its_advice_runs(entry):
 # `BCSegment.get_value(point=[0.9], t=0.5)`, HJB-GFDM's Dirichlet read: the callable, the value b10b9e65 read, and
 # the value now (None: refused when the segment is built). b10b9e65 tried four positional signatures.
 _GET_VALUE = {
-    "(x, t)": (lambda x, t: t + 10.0 * x[0], 9.5, None),  # the one form it read right
+    "(x, t)": (lambda x, t: t + 10.0 * x[0], 9.5, 9.5),
     "(t, x)": (lambda t, x: t + 10.0 * x[0], 0.0, 9.5),  # every try failed: 0.0, with a warning
-    "(t, x) unindexed": (lambda t, x: t + 10.0 * x, 5.9, 9.5),  # called (point, t): swapped
     "(x)": (lambda x: 10.0 * x[0], 9.0, 9.0),
     "(t)": (lambda t: t, 0.9, 0.5),  # the position read as time
 }
@@ -286,10 +271,6 @@ _GET_VALUE = {
 @pytest.mark.parametrize("form", sorted(_GET_VALUE))
 def test_get_value_passes_its_point_as_x_and_its_time_as_t(form):
     fn, before, expected = _GET_VALUE[form]
-    if expected is None:
-        with pytest.raises(TypeError, match=_OUT_OF_ORDER):
-            _segment(fn)
-        return
     got = _segment(fn).get_value(np.array([0.9]), t=0.5)
     assert got == pytest.approx(expected, abs=1e-15), f"{form}: read {got}; b10b9e65 read {before}"
 
@@ -412,7 +393,7 @@ def test_a_callable_that_is_not_a_function_you_write_is_refused_when_the_segment
     data would be read as g(x), time data at the position. b10b9e65 called FDM's value as ``value(time)`` and read it."""
     with pytest.raises(
         TypeError,
-        match=r"not a plain def or lambda: a boundary value is a function whose parameter names declare what it reads",
+        match=r"not a plain def or lambda: a boundary value is read by the parameter names it declares",
     ):
         _segment(make())
 
@@ -435,7 +416,7 @@ def test_a_positional_only_function_is_refused_and_its_advised_wrap_reads():
     import math
 
     with pytest.raises(
-        TypeError, match=r"takes \(t, /\), with positional-only parameters.*wrap it in a function named for the slots"
+        TypeError, match=r"takes \(t\), with positional-only parameters.*Wrap it in a function named for the slots"
     ):
         _segment(eval("lambda t, /: t"))
     assert _fdm_ghost_wall(_fdm_bc(lambda t: math.sin(t))) == pytest.approx(math.sin(0.5), abs=1e-12)
@@ -519,7 +500,7 @@ def test_fem_passes_each_dof_as_x_of_shape_d():
         segments=[_segment(lambda x: 0.5 + x[0]), BCSegment(name="w", bc_type=BCType.NO_FLUX, boundary="x_min")],
     )
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
-    conditions = Conditions(m_initial=lambda x: 8 / 9 + 0.0 * x[..., 0], u_terminal=lambda x: 0.0, T=0.5)
+    conditions = Conditions(m_initial=lambda x: 8 / 9 + 0.0 * x[0], u_terminal=lambda x: 0.0, T=0.5)
     solver = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=conditions, Nt=4))
     x = solver._disc.dof_coordinates[:, 0]
     U = np.asarray(

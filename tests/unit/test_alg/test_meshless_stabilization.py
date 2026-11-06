@@ -68,7 +68,9 @@ def _meshless_pair(n=21, sd_scale=1.0):
         control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 0.0 * m + 1.0
     )
     comp = MFGComponents(
-        hamiltonian=H, m_initial=lambda x: _np.exp(-40 * (x - 0.35) ** 2), u_terminal=lambda x: 0.5 * (x - 0.5) ** 2
+        hamiltonian=H,
+        m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2),
+        u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
     )
     problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3, coupling_coefficient=0.5)
     cloud = _np.linspace(0.0, 1.0, n)[:, None]
@@ -121,7 +123,7 @@ def test_stabilization_requires_newton_fails_fast():
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
-    comp = MFGComponents(hamiltonian=H, m_initial=lambda x: _np.ones_like(x), u_terminal=lambda x: x * 0)
+    comp = MFGComponents(hamiltonian=H, m_initial=lambda x: _np.ones_like(x[0]), u_terminal=lambda x: x[0] * 0)
     problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=5, volatility=0.3)
     cloud = _np.linspace(0.0, 1.0, 11)[:, None]
     with pytest.raises(ValueError, match="streamline_diffusion_scale > 0 requires use_newton=True"):
@@ -153,7 +155,7 @@ def test_recipe_defaults_off_byte_identical():
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[15], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
-    comp = MFGComponents(hamiltonian=H, m_initial=lambda x: _np.ones_like(x), u_terminal=lambda x: x * 0)
+    comp = MFGComponents(hamiltonian=H, m_initial=lambda x: _np.ones_like(x[0]), u_terminal=lambda x: x[0] * 0)
     problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=0.3)
     cloud = _np.linspace(0.0, 1.0, 15)[:, None]
     hjb, fp = create_paired_solvers(
@@ -214,7 +216,9 @@ def test_recipe_coupled_matches_fdm_on_wellposed_problem(use_newton, sd_scale):
             coupling=None,
         )
         comp = MFGComponents(
-            hamiltonian=H, m_initial=lambda x: _np.exp(-40 * (x - 0.35) ** 2), u_terminal=lambda x: 0.5 * (x - 0.5) ** 2
+            hamiltonian=H,
+            m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2),
+            u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
         )
         return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3, coupling_coefficient=0.5)
 

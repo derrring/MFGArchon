@@ -276,7 +276,7 @@ def _sl_problem(bc, dim=2, n=9, nt=4):
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=bc)
     components = MFGComponents(
-        m_initial=lambda x: float(np.exp(-np.sum((np.atleast_1d(x) - 0.5) ** 2))),
+        m_initial=lambda x: np.exp(-sum((xi - 0.5) ** 2 for xi in x)),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
     )

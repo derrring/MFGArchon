@@ -50,7 +50,7 @@ SIGMA = 0.2
 
 def _problem(control_cost: float, coupling_coefficient: float) -> MFGProblem:
     comp = MFGComponents(
-        m_initial=lambda x: np.exp(-20 * (x - 0.5) ** 2) + 0.1,
+        m_initial=lambda x: np.exp(-20 * (x[0] - 0.5) ** 2) + 0.1,
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=control_cost),

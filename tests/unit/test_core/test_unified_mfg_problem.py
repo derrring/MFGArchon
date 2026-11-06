@@ -42,7 +42,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for 1D testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=_default_hamiltonian(),
     )
@@ -52,8 +52,8 @@ def _default_components_nd(dimension: int):
     """Default MFGComponents for N-D testing (Issue #670: explicit specification required)."""
 
     def m_initial_nd(x):
-        x_arr = np.asarray(x)
-        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
+        x_arr = np.stack(x, axis=-1)
+        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     return MFGComponents(
         m_initial=m_initial_nd,
@@ -565,21 +565,14 @@ class TestCustomComponentExceptionPropagation:
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
         components = MFGComponents(
             hamiltonian=BrokenHamiltonian(),
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
             u_terminal=lambda x: 0.0,
             problem_type="custom",
         )
 
-        problem = MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
-
-        # Exception should propagate, not be silently caught
+        # A problem reads the Hamiltonian when it takes it (#2875), so the exception is raised there, not caught
         with pytest.raises(ValueError, match="Intentional error"):
-            problem.H(
-                x_idx=5,
-                m_at_x=1.0,
-                derivs={(1,): 0.5},
-                t_idx=0,
-            )
+            MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
 
     def test_custom_hamiltonian_dm_exception_propagates(self):
         """Test that exceptions in custom dH/dm propagate to caller."""
@@ -600,7 +593,7 @@ class TestCustomComponentExceptionPropagation:
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
         components = MFGComponents(
             hamiltonian=BrokenDmHamiltonian(),
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
             u_terminal=lambda x: 0.0,
             problem_type="custom",
         )

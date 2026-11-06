@@ -35,8 +35,8 @@ def _grid() -> TensorProductGrid:
 
 MODEL = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3)
 CONDITIONS = Conditions(
-    u_terminal=lambda x: (np.asarray(x) - 0.3) ** 2,
-    m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x)),
+    u_terminal=lambda x: (np.asarray(x[0]) - 0.3) ** 2,
+    m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x[0])),
     T=1.0,
 )
 
@@ -59,14 +59,14 @@ def test_every_rebuild_solves_as_the_fresh_build_of_its_inputs():
     The issue's measurement is the last line: the source dropped, solve(Nt=20) gave the sourceless answer."""
 
     def source(t, x, v, m):
-        return 50.0 * np.ones(len(x))
+        return 50.0 * np.ones(np.shape(x[0]))
 
-    inputs = {"source_term_hjb": source, "state_penalty": lambda x: np.maximum(0.0, np.asarray(x) - 0.5)}
+    inputs = {"source_term_hjb": source, "state_penalty": lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5)}
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=2.0)), volatility=0.45)
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
     conditions = Conditions(
-        u_terminal=lambda x: (np.asarray(x) - 0.7) ** 2,
-        m_initial=lambda x: 1.0 + 0.5 * np.cos(2 * np.pi * np.asarray(x)),
+        u_terminal=lambda x: (np.asarray(x[0]) - 0.7) ** 2,
+        m_initial=lambda x: 1.0 + 0.5 * np.cos(2 * np.pi * np.asarray(x[0])),
         T=2.0,
     )
     original = _problem(**inputs)
@@ -92,10 +92,10 @@ def test_every_rebuild_carries_every_input_the_constructor_took():
         return problem  # solve(Nt=) rebuilds, then calls solve on the rebuilt problem without Nt
 
     inputs = {
-        "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(len(x)),
-        "source_term_fp": lambda t, x, v, m: np.zeros(len(x)),
+        "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(np.shape(x[0])),
+        "source_term_fp": lambda t, x, v, m: np.zeros(np.shape(x[0])),
         "nonlocal_operator": 0.3 * np.eye(21),
-        "state_penalty": lambda x: np.maximum(0.0, np.asarray(x) - 0.5),
+        "state_penalty": lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5),
         "state_penalty_scale": 3.0,
         "lambda_": 2.0,
         "coupling_coefficient": 0.9,
@@ -161,8 +161,8 @@ def test_the_conditional_problem_carries_every_input_of_the_components_form():
     def conditional_of(**given):
         components = MFGComponents(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)),
-            u_terminal=lambda x: (np.asarray(x) - 0.3) ** 2,
-            m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x)),
+            u_terminal=lambda x: (np.asarray(x[0]) - 0.3) ** 2,
+            m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x[0])),
             parameters={"label": "parent"},
         )
         with warnings.catch_warnings():
@@ -206,4 +206,4 @@ def test_the_conditional_problem_carries_every_input_of_the_components_form():
     assert not missing, f"MFGProblem.__init__ takes {missing}, which the components form's record does not keep"
 
     with pytest.raises(NotImplementedError, match=r"common-noise problem declares state_penalty.*#2700"):
-        conditional_of(state_penalty=lambda x: np.maximum(0.0, np.asarray(x) - 0.5))
+        conditional_of(state_penalty=lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5))

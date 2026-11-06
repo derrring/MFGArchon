@@ -406,12 +406,14 @@ class FPSLSolver(BaseFPSolver):
         source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
 
         def _source_increment(t: float) -> np.ndarray:
-            values = np.asarray(evaluate_solver_source(source_term, t=t, x=source_points), dtype=float).ravel()
+            values = np.asarray(
+                evaluate_solver_source(source_term, t=t, x=source_points, dimension=self.problem.dimension), dtype=float
+            ).ravel()
             if values.size != M[0].size:
                 raise ValueError(
                     f"FPSLSolver: source_term returned {values.size} values at t={t:.6g}, expected "
-                    f"{M[0].size}. The package convention is source_term(t, x) -> (N,) with x of "
-                    f"shape (N, d) from geometry.get_spatial_grid()."
+                    f"{M[0].size}. The package convention is source_term(t, x) -> (N,) with x a "
+                    f"coordinate tuple of geometry.get_spatial_grid()'s points."
                 )
             return values
 

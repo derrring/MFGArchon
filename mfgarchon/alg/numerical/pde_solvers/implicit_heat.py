@@ -25,6 +25,8 @@ import scipy.sparse.linalg as spla
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary import BoundaryConditions
+from mfgarchon.types.callable_protocols import SOLVER_SOURCE_SLOTS, bind_user_callable
+from mfgarchon.utils.pde_coefficients import points_of
 
 
 class ImplicitHeatSolver:
@@ -97,6 +99,9 @@ class ImplicitHeatSolver:
         self.bc = bc
         self.theta = theta
         self.forcing = forcing
+        self._forcing = (
+            bind_user_callable(forcing, SOLVER_SOURCE_SLOTS, role="forcing") if forcing is not None else None
+        )
 
         # Validate theta
         if not 0.0 <= theta <= 1.0:
@@ -191,7 +196,9 @@ class ImplicitHeatSolver:
         if self.forcing is not None:
             # For simplicity, evaluate forcing at T_prev (explicit)
             # More sophisticated: evaluate at θ·T^{n+1} + (1-θ)·T^n (requires iteration)
-            f_values = self.forcing(self.grid.coordinates, 0.0)  # t=0 placeholder
+            f_values = np.asarray(
+                self._forcing(t=0.0, x=points_of(self.grid.coordinates, self.grid.dimension))  # t=0 placeholder
+            )
             rhs += dt * f_values.ravel()
 
         # Solve: (I - θ·α·dt·L)·T^{n+1} = rhs

@@ -30,7 +30,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for 1D testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -41,8 +41,8 @@ def _default_components_2d():
 
     def m_initial_2d(x):
         # x is [x, y] coordinate - compute Gaussian at center (0.5, 0.5)
-        x_arr = np.asarray(x)
-        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2))
+        x_arr = np.stack(x, axis=-1)
+        return np.exp(-10 * np.sum((x_arr - 0.5) ** 2, axis=-1))
 
     return MFGComponents(
         m_initial=m_initial_2d,
@@ -1092,7 +1092,9 @@ class TestBoundaryGradientBCAware1384:
         With the Jacobian also BC-aware the solve stays finite and bounded."""
         from mfgarchon.geometry.boundary import dirichlet_bc as _db
 
-        U = self._solve(_db(0.0, dimension=1), Nx=42, sigma=0.05, Nt=3, T=2.0, terminal=lambda x: np.sin(3 * np.pi * x))
+        U = self._solve(
+            _db(0.0, dimension=1), Nx=42, sigma=0.05, Nt=3, T=2.0, terminal=lambda x: np.sin(3 * np.pi * x[0])
+        )
         assert np.all(np.isfinite(U)), "Dirichlet steep-terminal solve produced NaN/Inf"
         assert np.max(np.abs(U)) < 10.0, "Dirichlet solve blew up (Newton J/residual boundary mismatch)"
 

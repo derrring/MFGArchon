@@ -143,7 +143,7 @@ def _solve_with_a_sink(rate: float) -> np.ndarray:
     m0 = m0 / float(problem.geometry.integrate(m0))
 
     def sink(t, x):
-        return np.where(np.asarray(x)[:, 0] < 0.5, rate, 0.0)
+        return np.where(x[0] < 0.5, rate, 0.0)
 
     return FPFVMSolver(problem, reconstruction="muscl").solve_fp_system(m0, source_term=sink)
 

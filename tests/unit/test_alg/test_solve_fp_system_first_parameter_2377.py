@@ -80,7 +80,7 @@ def test_every_fp_solver_names_its_first_parameter_M_initial():
 
 def _problem():
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
-    bump = lambda x: np.exp(-10 * (np.asarray(x, dtype=float) - 0.5) ** 2)  # noqa: E731
+    bump = lambda x: np.exp(-10 * (np.asarray(x[0], dtype=float) - 0.5) ** 2)  # noqa: E731
     mass = grid.integrate(bump(grid.get_spatial_grid()[:, 0]))
     return MFGProblem(
         model=Model(
@@ -91,7 +91,7 @@ def _problem():
             )
         ),
         domain=grid,
-        conditions=Conditions(m_initial=lambda x: bump(x) / mass, u_terminal=lambda x: 0.0, T=0.2),
+        conditions=Conditions(m_initial=lambda x: bump(x[0]) / mass, u_terminal=lambda x: 0.0, T=0.2),
         Nt=5,
     )
 
@@ -115,7 +115,9 @@ def _weak_form():
         domain=mesh,
         # (N-1)/N integrates to 1 on the mesh's uniform-cell measure (N nodes, cells of 1/(N-1)).
         conditions=Conditions(
-            m_initial=lambda x: np.full_like(np.asarray(x, dtype=float), (_N - 1) / _N), u_terminal=lambda x: 0.0, T=0.2
+            m_initial=lambda x: np.full_like(np.asarray(x[0], dtype=float), (_N - 1) / _N),
+            u_terminal=lambda x: 0.0,
+            T=0.2,
         ),
         Nt=5,
     )

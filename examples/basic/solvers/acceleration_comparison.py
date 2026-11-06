@@ -43,7 +43,7 @@ def create_test_problem():
 
     def hamiltonian(x, p, m):
         """Simple LQ Hamiltonian: H = (1/2)p² + (1/2)x² + m"""
-        return 0.5 * p**2 + 0.5 * x**2 + m
+        return 0.5 * p**2 + 0.5 * x[0] ** 2 + m
 
     problem = MFGProblem(
         geometry=TensorProductGrid(

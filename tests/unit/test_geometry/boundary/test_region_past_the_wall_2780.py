@@ -35,7 +35,7 @@ def _remaining(placement: dict, start=((0.8, 0.43), (0.95, 0.47)), drift=(3.0, 0
     solver = FPParticleSolver(problem, num_particles=200, seed=0, boundary_conditions=bc)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform(start[0], start[1], (200, 2)),
-        drift_field=lambda t, x, m: np.broadcast_to(np.array(drift), np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to(np.array(drift), (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -48,7 +48,7 @@ def _remaining(placement: dict, start=((0.8, 0.43), (0.95, 0.47)), drift=(3.0, 0
     [
         ({"region": {"x": (1.0, 1.0), "y": (0.42, 0.48)}}, (0.42, 0.48)),
         ({"region": {"x": (1.0, 1.0), "y": (0.3, 0.7)}}, (0.3, 0.7)),
-        ({"sdf_region": lambda p: float(np.hypot(p[0] - 1.0, p[1] - 0.45) - 0.05)}, (0.40, 0.50)),
+        ({"sdf_region": lambda x: np.hypot(x[0] - 1.0, x[1] - 0.45) - 0.05}, (0.40, 0.50)),
     ],
     ids=["a region between the nodes", "a region holding nodes", "an sdf_region disk"],
 )
@@ -63,9 +63,9 @@ def test_an_exit_on_part_of_a_face_absorbs_as_its_boundary_placed_twin(placement
     assert _remaining(placement) == expected
 
 
-def _unit_box_sdf(p):
-    q = np.abs(np.asarray(p, dtype=float).ravel() - 0.5) - 0.5
-    return float(np.linalg.norm(np.maximum(q, 0.0)) + min(q.max(), 0.0))
+def _unit_box_sdf(x):
+    q = np.abs(np.stack(x, axis=-1) - 0.5) - 0.5
+    return np.linalg.norm(np.maximum(q, 0.0), axis=-1) + np.minimum(q.max(axis=-1), 0.0)
 
 
 def test_a_normal_direction_exit_reads_the_sdf_normal_at_the_particle():

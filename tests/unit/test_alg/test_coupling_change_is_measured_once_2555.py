@@ -57,9 +57,9 @@ def _problem(data: str = "moving") -> MFGProblem:
     """
     x = np.linspace(0.0, 1.0, _NX)
     mass = np.sum(np.exp(-30 * (x - 0.3) ** 2) * np.r_[0.5, np.ones(_NX - 2), 0.5]) / (_NX - 1)
-    bump = lambda x: np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2) / mass  # noqa: E731
-    flat = lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)  # noqa: E731
-    well = lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2  # noqa: E731
+    bump = lambda x: np.exp(-30 * (np.asarray(x[0], dtype=float) - 0.3) ** 2) / mass  # noqa: E731
+    flat = lambda x: 1.0 + 0.0 * np.asarray(x[0], dtype=float)  # noqa: E731
+    well = lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2  # noqa: E731
     coupled = data in ("moving", "heavy", "static_m")
     c = {"heavy": 0.1, "static_m": 5.0}.get(data, 1.0)
     return MFGProblem(
@@ -75,7 +75,7 @@ def _problem(data: str = "moving") -> MFGProblem:
             ),
             u_terminal=well
             if data in ("moving", "heavy")
-            else (lambda x: (1.0 if data == "static_m" else 0.0) + 0.0 * np.asarray(x)),
+            else (lambda x: (1.0 if data == "static_m" else 0.0) + 0.0 * np.asarray(x[0])),
             m_initial={"heavy": lambda x: 10.0 * bump(x)}.get(data, bump if data in ("moving", "static_u") else flat),
         ),
     )
@@ -310,8 +310,8 @@ def test_problem_solve_threads_the_absolute_bound(route):
             ),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),
             conditions=Conditions(
-                m_initial=lambda x: 10.0 * np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2) / mass,
-                u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
+                m_initial=lambda x: 10.0 * np.exp(-30 * (np.asarray(x[0], dtype=float) - 0.3) ** 2) / mass,
+                u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.7) ** 2,
                 T=0.2,
             ),
             Nt=_NT,

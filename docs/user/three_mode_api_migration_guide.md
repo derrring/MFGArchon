@@ -287,7 +287,7 @@ grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[30], boundary_condition
 problem = MFGProblem(
     model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3),
     domain=grid,
-    conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[..., 0], u_terminal=lambda x: -x[..., 0], T=1.0),
+    conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: -x[0], T=1.0),
     Nt=20,
 )
 points = grid.get_spatial_grid()

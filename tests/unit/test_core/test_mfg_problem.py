@@ -63,8 +63,8 @@ def default_components():
     """
     return MFGComponents(
         hamiltonian=default_hamiltonian(),
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian at center
-        u_terminal=lambda x: x**2,  # Quadratic terminal cost
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian at center
+        u_terminal=lambda x: x[0] ** 2,  # Quadratic terminal cost
     )
 
 
@@ -244,7 +244,7 @@ def test_mfg_problem_with_custom_initial_density():
     """
 
     def custom_initial(x):
-        return np.exp(-10 * (x - 0.5) ** 2)
+        return np.exp(-10 * (x[0] - 0.5) ** 2)
 
     geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])
     # Issue #670: must provide both m_initial and u_final
@@ -272,7 +272,7 @@ def test_mfg_problem_with_custom_final_value():
     """Test MFGProblem with custom final value function."""
 
     def custom_final(x):
-        return np.sin(x * np.pi)
+        return np.sin(x[0] * np.pi)
 
     geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])
     # Issue #670: must provide both m_initial and u_final
@@ -296,8 +296,8 @@ def test_mfg_problem_with_custom_initial_density_2d():
     """Test MFGProblem with callable m_initial in 2D (Issue #777)."""
 
     def gaussian_2d(x):
-        x_arr = np.asarray(x)
-        return np.exp(-5 * np.sum(x_arr**2))
+        x_arr = np.stack(x, axis=-1)
+        return np.exp(-5 * np.sum(x_arr**2, axis=-1))
 
     geometry = default_geometry(
         bounds=[(-1.0, 1.0), (-1.0, 1.0)],
@@ -307,7 +307,7 @@ def test_mfg_problem_with_custom_initial_density_2d():
     components = MFGComponents(
         hamiltonian=default_hamiltonian(),
         m_initial=gaussian_2d,
-        u_terminal=lambda x: 0.5 * np.sum(np.asarray(x) ** 2),
+        u_terminal=lambda x: 0.5 * sum(xi**2 for xi in x),
     )
     problem = MFGProblem(geometry=geometry, components=components)
 
@@ -329,8 +329,8 @@ def test_mfg_problem_with_custom_final_value_2d():
     """Test MFGProblem with callable u_terminal in 2D."""
 
     def quadratic_2d(x):
-        x_arr = np.asarray(x)
-        return 0.5 * np.sum(x_arr**2)
+        x_arr = np.stack(x, axis=-1)
+        return 0.5 * np.sum(x_arr**2, axis=-1)
 
     geometry = default_geometry(
         bounds=[(-1.0, 1.0), (-1.0, 1.0)],
@@ -362,7 +362,7 @@ def test_mfg_problem_validates_negative_m_initial():
     # Invalid: negative density
     components = MFGComponents(
         hamiltonian=default_hamiltonian(),
-        m_initial=lambda x: x - 0.5,  # Negative for x < 0.5
+        m_initial=lambda x: x[0] - 0.5,  # Negative for x < 0.5
         u_terminal=lambda x: 0.0,
     )
 
@@ -469,8 +469,7 @@ def test_mfg_problem_custom_hamiltonian():
         """Custom Hamiltonian: H = |p|² + m²"""
 
         def __call__(self, t, x, p, m):
-            p_scalar = float(p[0]) if hasattr(p, "__len__") else float(p)
-            return p_scalar**2 + m**2
+            return np.sum(np.asarray(p) ** 2, axis=-1) + np.asarray(m) ** 2
 
         def dp(self, t, x, p, m):
             # dH/dp = 2p
@@ -932,8 +931,8 @@ def test_tensor_volatility_shape_is_checked_against_the_problem():
     grid_2d = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 4], dimension=2)
     components_2d = MFGComponents(
         hamiltonian=default_hamiltonian(),
-        m_initial=lambda x: np.exp(-np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
-        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+        m_initial=lambda x: np.exp(-sum((xi - 0.5) ** 2 for xi in x)),
+        u_terminal=lambda x: np.zeros(np.shape(x[0])),
     )
 
     def build(volatility):
@@ -996,11 +995,11 @@ def test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor():
     x = np.linspace(0.0, 1.0, 11)
     D_of_x = 0.02 + 0.1 * x
 
-    from_diffusion = create_test_problem(diffusion=lambda t, x, m: 0.02 + 0.1 * np.asarray(x))
-    np.testing.assert_allclose(from_diffusion.volatility(0.0, x, None), np.sqrt(2.0 * D_of_x), rtol=1e-15)
+    from_diffusion = create_test_problem(diffusion=lambda t, x, m: 0.02 + 0.1 * np.asarray(x[0]))
+    np.testing.assert_allclose(from_diffusion.volatility(0.0, (x,), None), np.sqrt(2.0 * D_of_x), rtol=1e-15)
 
-    from_volatility = create_test_problem(volatility=lambda t, x, m: np.sqrt(2.0 * (0.02 + 0.1 * np.asarray(x))))
-    np.testing.assert_allclose(from_volatility.diffusion(0.0, x, None), D_of_x, rtol=1e-14)
+    from_volatility = create_test_problem(volatility=lambda t, x, m: np.sqrt(2.0 * (0.02 + 0.1 * np.asarray(x[0]))))
+    np.testing.assert_allclose(from_volatility.diffusion(0.0, (x,), None), D_of_x, rtol=1e-14)
 
 
 @pytest.mark.unit
@@ -1014,8 +1013,8 @@ def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
     grid_2d = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 4], dimension=2)
     components_2d = MFGComponents(
         hamiltonian=default_hamiltonian(),
-        m_initial=lambda x: np.exp(-np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
-        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+        m_initial=lambda x: np.exp(-sum((xi - 0.5) ** 2 for xi in x)),
+        u_terminal=lambda x: np.zeros(np.shape(x[0])),
     )
     S = np.array([[0.3, 0.1], [0.1, 0.2]])
 
@@ -1023,19 +1022,21 @@ def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
         return create_test_problem(geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: S, **kind)
 
     with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes.*volatility_kind='tensor'"):
-        build().diffusion(0.0, np.zeros((4, 2)), None)
-    np.testing.assert_allclose(build(volatility_kind="tensor").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S @ S.T)
-    np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S**2)
+        build().diffusion(0.0, tuple(np.zeros((2, 4))), None)
+    np.testing.assert_allclose(
+        build(volatility_kind="tensor").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S @ S.T
+    )
+    np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, tuple(np.zeros((2, 4))), None), 0.5 * S**2)
     # A (N,) output from N points is per point, declared or not.
     per_point = create_test_problem(
-        geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: np.full(len(x), 0.3)
+        geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: np.full(np.shape(x[0]), 0.3)
     )
-    np.testing.assert_allclose(per_point.diffusion(0.0, np.zeros((4, 2)), None), np.full(4, 0.045))
+    np.testing.assert_allclose(per_point.diffusion(0.0, tuple(np.zeros((2, 4))), None), np.full(4, 0.045))
 
     with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
         create_test_problem(
             geometry=grid_2d, components=components_2d, diffusion=lambda t, x, m: 0.5 * S @ S.T
-        ).volatility(0.0, np.zeros((4, 2)), None)
+        ).volatility(0.0, tuple(np.zeros((2, 4))), None)
 
     # On a 2 x 2 grid a (2, 2) output from the grid's own points is either reading: still refused.
     grid_2x2 = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[2, 2], dimension=2)
@@ -1043,7 +1044,7 @@ def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
         geometry=grid_2x2, components=components_2d, volatility=lambda t, x, m: np.full(np.shape(m), 0.3)
     )
     with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
-        per_point_2x2.diffusion(0.0, None, np.ones((2, 2)))
+        per_point_2x2.diffusion(0.0, tuple(np.zeros((2, 2, 2))), np.ones((2, 2)))
 
 
 @pytest.mark.unit
@@ -1059,8 +1060,8 @@ def test_a_per_point_callable_on_a_grid_ending_in_d_by_d_is_read_per_point():
     grid_3d = default_geometry(bounds=[(0.0, 1.0)] * 3, Nx_points=[4, 3, 3], dimension=3)
     components_3d = MFGComponents(
         hamiltonian=default_hamiltonian(),
-        m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
-        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+        m_initial=lambda x: np.exp(-10 * sum((xi - 0.5) ** 2 for xi in x)),
+        u_terminal=lambda x: np.zeros(np.shape(x[0])),
     )
     x, y, z = np.meshgrid(np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3), indexing="ij")
     m0 = np.exp(-10 * ((x - 0.5) ** 2 + (y - 0.3) ** 2 + (z - 0.6) ** 2))
@@ -1071,14 +1072,13 @@ def test_a_per_point_callable_on_a_grid_ending_in_d_by_d_is_read_per_point():
 
     np.testing.assert_array_equal(solve(lambda t, x, m: np.full(np.shape(m), 0.02)), solve(0.02))
 
-    # Called directly with no density, the points are read from x: a meshgrid list is the grid's
-    # points, so its per-point output is accepted; per-axis coordinate vectors are not points, so a
-    # (3, 3)-trailing output from them stays refused (#2378 re-review, F2).
+    # Called directly with no density, the points are read from x: a meshgrid tuple is the grid's
+    # points, so its per-point output is accepted; x in any other form is refused (#2875).
     per_point = create_test_problem(
         geometry=grid_3d, components=components_3d, diffusion=lambda t, x, m: np.full((4, 3, 3), 0.02)
     )
-    np.testing.assert_allclose(per_point.volatility(0.0, [x, y, z], None), np.full((4, 3, 3), 0.2))
-    with pytest.raises(ValueError, match=r"trailing \(3, 3\) axes"):
+    np.testing.assert_allclose(per_point.volatility(0.0, (x, y, z), None), np.full((4, 3, 3), 0.2))
+    with pytest.raises(TypeError, match=r"x as list, and x is a coordinate tuple"):
         per_point.volatility(0.0, [np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3)], None)
 
 
@@ -1098,7 +1098,7 @@ def test_callable_volatility_is_held_as_supplied():
     problem = create_test_problem(volatility=sigma_func)
 
     assert problem.volatility is sigma_func
-    assert problem.diffusion(0.0, 0.3, 0.4) == pytest.approx(0.5 * (0.1 + 0.5 * 0.4) ** 2)
+    assert problem.diffusion(0.0, (0.3,), 0.4) == pytest.approx(0.5 * (0.1 + 0.5 * 0.4) ** 2)
     with pytest.raises(NotImplementedError, match="SomeSolver uses one scalar volatility"):
         scalar_volatility(problem.volatility, consumer="SomeSolver")
     assert problem.has_state_dependent_coefficients()
@@ -1246,7 +1246,7 @@ def test_volatility_field_with_geometry():
 
     def sigma_func(t, x, m):
         """2D state-dependent diffusion."""
-        return 0.1 + 0.1 * np.sum(x**2)
+        return 0.1 + 0.1 * sum(xi**2 for xi in x)
 
     # Issue #670: must provide m_initial and u_final
     components = MFGComponents(

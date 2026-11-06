@@ -115,8 +115,8 @@ def _fp_pure_diffusion_decay(path: str, sigma: float, n: int = 81, nt: int = 40,
     )
     x = np.linspace(0.0, 1.0, n)
     comps = MFGComponents(
-        m_initial=lambda x: 1.0 + 0.4 * np.cos(_K * np.asarray(x)),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x: 1.0 + 0.4 * np.cos(_K * np.asarray(x[0])),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
@@ -176,8 +176,8 @@ def test_weak_form_fem_fp_diffusion_magnitude():
         coupling_dm=lambda m: np.asarray(m) * 0.0,
     )
     comps = MFGComponents(
-        m_initial=lambda x: 1.0 + 0.4 * np.cos(_K * np.asarray(x)),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x: 1.0 + 0.4 * np.cos(_K * np.asarray(x[0])),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=geom, T=T, Nt=nt, volatility=sigma, components=comps, coupling_coefficient=0.0)
@@ -229,8 +229,8 @@ def _gfdm_diffusion_field_relerr(
     )
     x = np.linspace(0.0, 1.0, n_x)
     comps = MFGComponents(
-        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-        u_terminal=lambda x: amp * np.cos(_PI * np.asarray(x, dtype=float)),
+        m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
+        u_terminal=lambda x: amp * np.cos(_PI * np.asarray(x[0], dtype=float)),
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
@@ -243,7 +243,7 @@ def _gfdm_diffusion_field_relerr(
     # heat equation with an analytic solution. It now uses `source_term`, the channel that exists
     # for exactly this. The sign flips because `running_cost = -source_term`.
     def source_fn(t, x):  # S = +H(grad u*) on the analytic field
-        xx = np.asarray(x, dtype=float).reshape(-1)
+        xx = np.asarray(x[0], dtype=float).reshape(-1)
         grad_u_star = -amp * np.exp(-D_reference * _PI**2 * (T - t)) * _PI * np.sin(_PI * xx)
         return (grad_u_star**2) / (2.0 * lam)
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import functools
 import math
-import re
 
 import pytest
 
@@ -40,7 +39,7 @@ def _problem(grid, u_terminal, m_initial, T=1.0):
 
 
 def _one(x):
-    return 1.0 + 0.0 * float(np.sum(x))
+    return 1.0 + 0.0 * sum(x)
 
 
 def _u_terminal(problem):
@@ -48,78 +47,44 @@ def _u_terminal(problem):
 
 
 def _exact(t, x):
-    return x**2 + 10.0 * t
-
-
-def _undecorated(fn):
-    """A decorator that forwards without functools.wraps, so its signature is (*args, **kwargs)."""
-
-    def wrapper(*args, **kwargs):
-        return fn(*args, **kwargs)
-
-    return wrapper
-
-
-class _NoSignature:
-    """A callable whose signature cannot be read, like a C extension's."""
-
-    def __init__(self, fn):
-        self._fn = fn
-
-    def __call__(self, *args):
-        return self._fn(*args)
-
-    @property
-    def __signature__(self):
-        raise ValueError("no signature")
+    return x[0] ** 2 + 10.0 * t
 
 
 @pytest.mark.parametrize("T", [1.0, 2.0])
 @pytest.mark.parametrize(
     "u_terminal",
     [
-        lambda t, x: x**2 + t,  # bound by name
-        lambda x, *, t=0.0: x**2 + t,  # keyword-only time: read at T, not at its default
+        lambda t, x: x[0] ** 2 + t,
+        lambda x, *, t=0.0: x[0] ** 2 + t,  # keyword-only time: read at T, not at its default
+        lambda x, t: x[0] ** 2 + t,  # read by name, so the order it is written in does not matter
     ],
-    ids=["t_x", "keyword_only_t"],
+    ids=["t_x", "keyword_only_t", "x_t"],
 )
-def test_a_time_first_terminal_condition_is_read_at_x_and_at_T(u_terminal, T):
+def test_a_condition_that_declares_time_is_read_at_x_and_at_T(u_terminal, T):
     x = _GRID_1D.coordinates[0]
     np.testing.assert_array_equal(_u_terminal(_problem(_GRID_1D, u_terminal, _one, T=T)), x**2 + T)
 
 
 def test_a_time_first_initial_density_is_read_at_x_and_at_0():
     x = _GRID_1D.coordinates[0]
-    # Mass 1 on [0, 1] at t = 0, so the construction does not warn. Not symmetric in (t, x): read
-    # with x as time it would give 0.5 + x**2.
-    problem = _problem(_GRID_1D, lambda x: 0.0 * x, lambda t, x: 0.5 + x + t**2, T=2.0)
+    problem = _problem(_GRID_1D, lambda x: 0.0 * x[0], lambda t, x: 0.5 + x[0] + t**2, T=2.0)
     np.testing.assert_array_equal(np.asarray(problem.m_initial).reshape(-1), 0.5 + x)
 
 
 def test_validation_reads_a_time_first_terminal_condition_at_T():
     # Finite at T = 2 and not at t = 0: validating it at 0 refuses a well-posed condition.
     x = _GRID_1D.coordinates[0]
-    np.testing.assert_array_equal(_u_terminal(_problem(_GRID_1D, lambda t, x: x**2 / t, _one, T=2.0)), x**2 / 2.0)
+    np.testing.assert_array_equal(_u_terminal(_problem(_GRID_1D, lambda t, x: x[0] ** 2 / t, _one, T=2.0)), x**2 / 2.0)
 
 
-@pytest.mark.parametrize(
-    ("u_terminal", "plus_T"),
-    [
-        (lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t, True),  # bound by name
-        (lambda tau, x: float(np.sum(np.asarray(x) ** 2)) + tau, True),  # by position: x names the order
-        (lambda t, x: float(np.sum(np.asarray(x) ** 2)), False),  # ignores t: the defect read x as T here
-    ],
-    ids=["t_x", "tau_x", "t_x_time_independent"],
-)
-def test_a_time_first_condition_in_2d_is_read_at_the_point_not_as_expanded_coordinates(u_terminal, plus_T):
+def test_a_time_first_condition_in_2d_reads_each_coordinate():
     X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")
-    problem = _problem(_GRID_2D, u_terminal, _one, T=2.0)
-    expected = X**2 + Y**2 + (2.0 if plus_T else 0.0)
-    np.testing.assert_allclose(_u_terminal(problem), expected.reshape(-1), rtol=0, atol=1e-15)
+    problem = _problem(_GRID_2D, lambda t, x: x[0] ** 2 + x[1] ** 2 + t, _one, T=2.0)
+    np.testing.assert_allclose(_u_terminal(problem), (X**2 + Y**2 + 2.0).reshape(-1), rtol=0, atol=1e-15)
 
 
-def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
-    # Its signature reports the wrapped (t, x); it takes x alone.
+def test_a_wraps_wrapper_is_read_by_its_own_names():
+    # Its __wrapped__ reports (t, x); it takes x alone, and that is what it is passed.
     @functools.wraps(_exact)
     def at_half(x):
         return _exact(0.5, x)
@@ -128,70 +93,25 @@ def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
     np.testing.assert_array_equal(_u_terminal(_problem(_GRID_1D, at_half, _one, T=2.0)), x**2 + 5.0)
 
 
-@pytest.mark.parametrize(
-    ("u_terminal", "expected"),
-    [
-        (lambda x, y: x**2 + y**2, lambda X, Y: X**2 + Y**2),
-        (lambda x, y: (y - 0.5) ** 2, lambda X, Y: (Y - 0.5) ** 2),  # independent of its first coordinate
-        (lambda x, y: 1.0, lambda X, Y: np.ones_like(X)),
-        # A bare *args names nothing and takes one argument per axis, as this repository's own tests use it.
-        (lambda *c: sum((float(a) - 0.5) ** 2 for a in c), lambda X, Y: (X - 0.5) ** 2 + (Y - 0.5) ** 2),
-        # Later parameters defaulted: a closure capture, and a function written for 2-D and 3-D alike.
-        (lambda x, y=0.0: x**2 + y**2, lambda X, Y: X**2 + Y**2),
-        (lambda x, y, c=1.0: c * (x**2 + y**2), lambda X, Y: X**2 + Y**2),
-        (lambda x, y, z=0.0: x**2 + y**2 + z, lambda X, Y: X**2 + Y**2),
-    ],
-    ids=["both", "y_only", "constant", "varargs", "y_defaulted", "closure_capture", "z_defaulted"],
-)
-def test_expanded_coordinates_in_2d_named_x_y_or_varargs_are_still_read_as_coordinates(u_terminal, expected):
-    X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")
-    with pytest.warns(DeprecationWarning, match=r"expanded coordinate signature f\(x, y\)"):
-        problem = _problem(_GRID_2D, u_terminal, _one)
-    np.testing.assert_allclose(_u_terminal(problem), expected(X, Y).reshape(-1), rtol=0, atol=1e-15)
-
-
-_OUT_OF_ORDER = r"takes \(x, t\), which is out of order.*\(t, x\)"
+class _NotAFunction:
+    def __call__(self, x):
+        return 0.0
 
 
 @pytest.mark.parametrize(
     ("grid", "unreadable", "reason"),
     [
-        (_GRID_1D, lambda x, t: x**2 + t, _OUT_OF_ORDER),
-        (_GRID_1D, lambda x, t=0.0: x**2 + t, _OUT_OF_ORDER),  # a default does not make it readable
-        (_GRID_2D, lambda x, t: float(np.sum(np.asarray(x) ** 2)) + t, _OUT_OF_ORDER),
-        # Time not named t: names that say neither order are not read as expanded coordinates (x, y).
-        (_GRID_2D, lambda x, tau: float(np.sum(np.asarray(x) ** 2)) + tau, r"cannot be matched to \(t, x\)"),
-        # Time-first by its names, but failing at the point: not re-read as expanded coordinates or
-        # as a space-only callable with a default.
-        (_GRID_2D, lambda t, x: math.cos(x) + t, r"bound by its parameter names"),
-        (_GRID_1D, lambda t, x=np.array([0.0]): float(x[0]) ** 2 + t, r"bound by its parameter names"),
-        (_GRID_1D, functools.partial(_exact, t=0.5), r"functools\.partial that fixes t=0\.5"),
+        (_GRID_2D, lambda x, y: x + y, r"y has no default and names no slot"),
+        (_GRID_2D, lambda x, tau: x[0] + tau, r"tau has no default and names no slot"),
+        (_GRID_2D, lambda *c: c[0], r"nothing reaches a starred parameter"),
+        (_GRID_2D, lambda x, **kw: x[0], r"nothing reaches a starred parameter"),
+        (_GRID_1D, functools.partial(_exact, t=0.5), r"freezes t by keyword"),
+        (_GRID_1D, _NotAFunction(), r"not a plain def or lambda"),
         (_GRID_1D, lambda t: t**2, r"takes time and no space"),
-        (_GRID_1D, _NoSignature(lambda x, t: x**2 + t), r"no readable signature"),
-        (_GRID_2D, _NoSignature(lambda t, x: float(np.sum(x**2)) + t), r"no readable signature"),
-        # *args with **kwargs names nothing and cannot be told from a wrapper (user ruling on #2434).
-        (_GRID_2D, _undecorated(lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t), r"functools\.wraps"),
-        (_GRID_2D, lambda *c, **kw: sum(float(a) ** 2 for a in c), r"functools\.wraps"),
-        # A 1-D bare *args that needs more than x: refused with the attempts, not a crash.
-        (_GRID_1D, lambda *c: c[0] + c[1], r"Cannot determine signature of IC/BC callable"),
+        (_GRID_1D, lambda t, x: math.cos(x[0]) + t, r"raised TypeError"),
     ],
-    ids=[
-        "1d",
-        "1d_default",
-        "2d",
-        "2d_tau",
-        "2d_fails_at_point",
-        "1d_default_changes_type",
-        "partial_fixing_t",
-        "time_only",
-        "no_signature",
-        "2d_no_signature",
-        "undecorated_wrapper",
-        "varargs_varkwargs",
-        "1d_varargs",
-    ],
+    ids=["expanded", "unnamed_time", "varargs", "varkwargs", "partial_fixing_t", "instance", "time_only", "point_only"],
 )
-def test_a_condition_whose_time_cannot_be_read_is_refused_rather_than_misread(grid, unreadable, reason):
-    with pytest.raises(ValidationError, match=r"u_terminal") as refused:
+def test_a_condition_that_cannot_be_read_by_its_names_is_refused(grid, unreadable, reason):
+    with pytest.raises((ValidationError, TypeError, ValueError), match=reason):
         _problem(grid, unreadable, _one, T=2.0)
-    assert re.search(reason, str(refused.value), flags=re.S), str(refused.value)

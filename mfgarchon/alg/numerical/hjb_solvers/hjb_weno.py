@@ -1049,7 +1049,7 @@ class HJBWENOSolver(BaseHJBSolver):
         """Solve 1D HJB system (original implementation).
 
         ``source_term(t, x) -> array`` is the MMS forcing ``r_u`` of
-        ``-u_t - (sigma^2/2) u_xx + H(x, u_x, m) = r_u``, with ``x`` of shape ``(N, d)`` per the
+        ``-u_t - (sigma^2/2) u_xx + H(x, u_x, m) = r_u``, with ``x`` a coordinate tuple per the
         contract in :mod:`base_hjb`. It enters as a *rate* in each RK stage and is multiplied by
         the sub-step there, evaluated at that sub-step's own physical time, so the clock has to
         advance with the sub-steps rather than per interval.
@@ -1066,12 +1066,12 @@ class HJBWENOSolver(BaseHJBSolver):
         # Set final condition (last time index)
         U_solved[-1, :] = U_final_condition_at_T
         if source_term is not None:
-            # base_hjb.py documents the contract as `source_term(t, x)` with x of shape (N, d),
-            # and both existing implementations get it from the geometry. Building a bare (N,)
+            # evaluate_solver_source takes the points as (N, d) and hands a body a coordinate tuple,
+            # and both existing implementations get them from the geometry. Building a bare (N,)
             # linspace here would make one manufactured source unrunnable across two solvers,
             # which defeats the point of a shared MMS channel.
             x_grid = self.problem.geometry.get_spatial_grid()
-            forcing = lambda tt: evaluate_solver_source(source_term, t=tt, x=x_grid)  # noqa: E731
+            forcing = lambda tt: evaluate_solver_source(source_term, t=tt, x=x_grid, dimension=self.problem.dimension)  # noqa: E731
 
         # Backward time integration
         for t_idx in range(n_time_points - 2, -1, -1):

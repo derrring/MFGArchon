@@ -40,7 +40,7 @@ def _make_lq_problem(coupling_coeff: float = 1.0, sigma: float = 0.1) -> MFGProb
         coupling_dm=lambda m: coupling_coeff,
     )
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
         hamiltonian=hamiltonian,
     )

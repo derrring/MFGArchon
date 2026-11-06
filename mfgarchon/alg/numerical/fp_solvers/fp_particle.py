@@ -25,6 +25,13 @@ from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
+from mfgarchon.types.callable_protocols import (
+    COEFFICIENT_SLOTS,
+    VOLATILITY_SLOTS,
+    _held_by_the_library,
+    _remembered,
+    coordinate_tuple,
+)
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.utils.mfg_logging import get_logger
@@ -1050,7 +1057,9 @@ class FPParticleSolver(BaseFPSolver):
             seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
             # t = 0 of #2688: a jitter that lands outside the particles' domain, the box included, is redrawn within
             # its cell (#2733: the contact loop starts every step inside it).
-            navigable=self._particle_domain().contains,
+            # The domain's own method, which takes points as an array by the geometry's contract, on a subclass the user
+            # wrote too: a closure the library wrote, and not a callable the user handed (#2875).
+            navigable=_held_by_the_library(lambda points, domain=self._particle_domain(): domain.contains(points)),
         )
 
     def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:
@@ -1934,9 +1943,7 @@ class FPParticleSolver(BaseFPSolver):
                 # Pure diffusion with spatially varying coefficient
                 # Use callable drift path with zero drift
                 def zero_drift(t, x, m):
-                    if isinstance(x, np.ndarray) and x.ndim > 1:
-                        return np.zeros_like(x)
-                    return np.zeros_like(np.atleast_1d(x))
+                    return 0.0  # a constant holds at every particle
 
                 return self._solve_fp_system_callable_drift(
                     M_initial=M_initial,
@@ -2049,7 +2056,9 @@ class FPParticleSolver(BaseFPSolver):
 
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
-            return H.optimal_control(x=positions, m=None, p=grad_at_particles, t=t)
+            return H.optimal_control(
+                x=coordinate_tuple(positions, self.problem.dimension), m=None, p=grad_at_particles, t=t
+            )
         return -coupling_coefficient * grad_at_particles
 
     def _solve_fp_system_cpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
@@ -2687,8 +2696,8 @@ class FPParticleSolver(BaseFPSolver):
         # Validate callable
         if not isinstance(drift_callable, DriftCallable):
             raise TypeError(
-                "drift_field callable does not match DriftCallable protocol. "
-                "Expected signature: (t: float, x: ndarray, m: ndarray) -> ndarray"
+                "drift_field callable does not match DriftCallable protocol. A drift is a function read by "
+                "the names it declares, of t, x and m, with x a coordinate tuple."
             )
 
         # Get parameters
@@ -2715,6 +2724,8 @@ class FPParticleSolver(BaseFPSolver):
             volatility, volatility_kind, problem=self.problem, consumer="FPParticleSolver.solve_fp_system"
         )
         volatility_is_callable = callable(volatility)
+        drift_bound = _remembered(drift_callable, COEFFICIENT_SLOTS, "drift_field")  # one state across solves
+        volatility_bound = _remembered(volatility, VOLATILITY_SLOTS, "volatility") if volatility_is_callable else None
         volatility_is_array = isinstance(volatility, np.ndarray)
         if volatility_kind == "tensor" and volatility_is_callable:
             raise NotImplementedError(
@@ -2889,16 +2900,16 @@ class FPParticleSolver(BaseFPSolver):
             # Evaluate drift callable
             # For 1D: x is (N,) and returns (N,)
             # For nD: x is (N, d) and returns (N, d)
+            x_for_callable = coordinate_tuple(particles_t, dimension)
+            drift_values = np.asarray(drift_bound(t=t_current, x=x_for_callable, m=m_at_particles), dtype=float)
             if dimension == 1:
-                x_for_callable = particles_t[:, 0]  # Flatten to (N,)
-                drift_values = drift_callable(t_current, x_for_callable, m_at_particles)
                 # Ensure shape is (N, 1) for consistent processing
                 if drift_values.ndim == 1:
                     drift = drift_values[:, np.newaxis]
                 else:
                     drift = drift_values
             else:
-                drift = drift_callable(t_current, particles_t, m_at_particles)
+                drift = drift_values
                 if drift.ndim == 1:
                     # Scalar drift applied to all dimensions
                     drift = np.tile(drift[:, np.newaxis], (1, dimension))
@@ -2930,11 +2941,7 @@ class FPParticleSolver(BaseFPSolver):
                 # Spatially varying or callable volatility - evaluate at particle positions
                 if volatility_is_callable:
                     # Callable: sigma(t, x, m) -> per-particle sigma
-                    if dimension == 1:
-                        x_for_callable = particles_t[:, 0]
-                    else:
-                        x_for_callable = particles_t
-                    sigma_at_particles = volatility(t_current, x_for_callable, m_at_particles)
+                    sigma_at_particles = volatility_bound(t=t_current, x=x_for_callable, m=m_at_particles)
                 else:
                     # Array: interpolate from grid
                     sigma_at_particles = self._interpolate_field_at_particles(

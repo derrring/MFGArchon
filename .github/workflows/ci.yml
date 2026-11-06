@@ -325,7 +325,7 @@ jobs:
 
         # Create problem with modern API (TensorProductGrid + explicit components)
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[26], boundary_conditions=no_flux_bc(dimension=1))
-        components = MFGComponents(hamiltonian=H, m_initial=lambda x: np.exp(-10*(x-0.5)**2), u_terminal=lambda x: 0.0)
+        components = MFGComponents(hamiltonian=H, m_initial=lambda x: np.exp(-10*(x[0]-0.5)**2), u_terminal=lambda x: 0.0)
         problem = MFGProblem(geometry=domain, T=1.0, Nt=15, diffusion=0.5, components=components)
 
         # Create config
@@ -467,7 +467,7 @@ jobs:
 
         # Create problem with modern API (TensorProductGrid + explicit components)
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-        components = MFGComponents(hamiltonian=H, m_initial=lambda x: np.exp(-10*(x-0.5)**2), u_terminal=lambda x: 0.0)
+        components = MFGComponents(hamiltonian=H, m_initial=lambda x: np.exp(-10*(x[0]-0.5)**2), u_terminal=lambda x: 0.0)
         problem = MFGProblem(geometry=domain, T=1.0, Nt=10, diffusion=0.5, components=components)
 
         # Test problem.solve() API
@@ -534,7 +534,7 @@ jobs:
             coupling_dm=lambda m: 1.0,
         )
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
-        components = MFGComponents(hamiltonian=H, m_initial=lambda x: np.exp(-10*(x-0.5)**2), u_terminal=lambda x: 0.0)
+        components = MFGComponents(hamiltonian=H, m_initial=lambda x: np.exp(-10*(x[0]-0.5)**2), u_terminal=lambda x: 0.0)
         problem = MFGProblem(geometry=domain, T=1.0, Nt=5, diffusion=0.5, components=components)
         result = problem.solve()
         print('✅ Package installation and basic functionality verified')

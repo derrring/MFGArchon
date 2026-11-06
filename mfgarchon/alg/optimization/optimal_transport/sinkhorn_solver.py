@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
+from mfgarchon.types.callable_protocols import REGION_SLOTS, _remembered
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.flux_diagnostics import compute_mass_conservation_error
 
@@ -288,8 +289,9 @@ class SinkhornMFGSolver(BaseOptimizationSolver):
         # Problem API: use getattr instead of hasattr (Issue #543 fix)
         initial_density = getattr(self.problem, "initial_density", None)
         if initial_density is not None:
+            initial_density = _remembered(initial_density, REGION_SLOTS, "initial_density")
             for i, x in enumerate(self.spatial_grid):
-                densities[0, i] = initial_density(x)
+                densities[0, i] = initial_density(x=(x,))
         else:
             # Default Gaussian
             center = (xmin + xmax) / 2

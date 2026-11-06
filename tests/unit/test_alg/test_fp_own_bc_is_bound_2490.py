@@ -27,7 +27,7 @@ def _grid_marking_a_gate(name="gate"):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
     )
-    grid.mark_region(name, predicate=lambda x: (x[:, 0] > 0.95) & (x[:, 1] > 0.35) & (x[:, 1] < 0.65))
+    grid.mark_region(name, predicate=lambda x: (x[0] > 0.95) & (x[1] > 0.35) & (x[1] < 0.65))
     return grid
 
 
@@ -68,7 +68,7 @@ def test_an_explicit_region_name_exit_is_read_on_the_grid_that_marks_it(name, st
     start = np.column_stack([np.full(200, 0.9), np.full(200, start_y)])
     solver.solve_fp_system(
         initial_particles=start,
-        drift_field=lambda t, x, m: np.broadcast_to([3.0, 0.0], np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to([3.0, 0.0], (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -91,7 +91,7 @@ def test_the_solver_binds_a_copy_and_leaves_the_callers_bc_unbound():
     solver = FPParticleSolver(_problem(grid), num_particles=50, seed=0, boundary_conditions=bc)
     solver.solve_fp_system(
         initial_particles=np.column_stack([np.full(50, 0.9), np.full(50, 0.5)]),
-        drift_field=lambda t, x, m: np.broadcast_to([3.0, 0.0], np.shape(x)),
+        drift_field=lambda t, x, m: np.broadcast_to([3.0, 0.0], (*np.shape(x[0]), 2)),
         drift_needs_density=False,
         show_progress=False,
     )

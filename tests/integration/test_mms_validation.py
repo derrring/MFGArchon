@@ -43,7 +43,7 @@ def _default_hamiltonian():
 def _default_components():
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),  # Gaussian centered at 0.5
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -376,8 +376,8 @@ class TestMMSFokkerPlanck1D:
             U_zero = np.zeros((problem.Nt + 1, Nx))
 
             # Source term: callable (t, x_grid) -> values
-            def source_fn(t, x_arr, _mfg=manufactured):
-                return _mfg.fp_source(t, x_arr)
+            def source_fn(t, x, _mfg=manufactured):
+                return _mfg.fp_source(t, x[0])
 
             M_numerical = solver.solve_fp_system(
                 M_initial=m_init,
@@ -776,7 +776,7 @@ class TestMMSHJB1D:
 
         manufactured = BackwardHeatSolution1D(sigma=sigma, amplitude=1.0, T=T)
         components = MFGComponents(
-            m_initial=lambda x: np.ones_like(x),
+            m_initial=lambda x: np.ones_like(x[0]),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         )
@@ -793,7 +793,7 @@ class TestMMSHJB1D:
                 M_density=np.ones((Nt + 1, Nx)),
                 U_terminal=manufactured.terminal_condition(x_grid),
                 U_coupling_prev=np.zeros((Nt + 1, Nx)),
-                source_term=lambda t, x: manufactured.hjb_source(t, x),
+                source_term=lambda t, x: manufactured.hjb_source(t, x[0]),
             )
             errors.append(np.sqrt(np.mean((U_numerical[0, :] - manufactured.solution(0.0, x_grid)) ** 2)))
 

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from mfgarchon.types.callable_protocols import read_region
 from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -1145,7 +1146,7 @@ def sample_from_density(
     num_samples: int,
     jitter: bool = True,
     seed: int | None = None,
-    navigable: Callable[[NDArray], NDArray | bool] | None = None,
+    navigable: Callable[..., NDArray | bool] | None = None,
 ) -> NDArray:
     """
     Sample particle positions from a density field on a regular grid.
@@ -1173,8 +1174,8 @@ def sample_from_density(
     seed : int or None, default=None
         Random seed for reproducibility.
     navigable : callable or None, default=None
-        ``navigable(points)``, for points of shape (n, d), is a boolean array saying where a particle may be --
-        ``ImplicitDomain.contains`` for a domain with obstacles. When given, every returned particle is navigable
+        ``navigable(x)``, read by name with ``x`` a coordinate tuple, is a boolean array saying where a particle may
+        be: ``lambda x: domain.contains(np.stack(x, axis=-1))`` for a domain with obstacles. When given, every returned particle is navigable
         (#2688):
 
         - A jitter that lands where ``navigable`` is False is redrawn within the same cell, so the cell's mass
@@ -1295,7 +1296,7 @@ _MAX_REDRAW_ROUNDS = 1000
 
 
 def _leave_out_cells_with_no_navigable_point(
-    probs: NDArray, coordinates: list[NDArray], navigable: Callable[[NDArray], NDArray | bool]
+    probs: NDArray, coordinates: list[NDArray], navigable: Callable[..., NDArray | bool]
 ) -> NDArray:
     """The cell probabilities with the cells that hold no navigable point left out, or a refusal (#2688, #2706).
 
@@ -1312,7 +1313,7 @@ def _leave_out_cells_with_no_navigable_point(
     carrying = np.flatnonzero(probs > 0)
     multi = np.unravel_index(carrying, grid_shape)
     nodes = np.column_stack([coordinates[d][multi[d]] for d in range(dimension)])
-    suspect = ~np.atleast_1d(np.asarray(navigable(nodes), dtype=bool))
+    suspect = ~np.atleast_1d(np.asarray(read_region(navigable, nodes, role="navigable"), dtype=bool))
     if not suspect.any():
         return probs
     spacings = np.array([c[1] - c[0] if len(c) > 1 else 0.0 for c in coordinates])
@@ -1320,7 +1321,9 @@ def _leave_out_cells_with_no_navigable_point(
     offsets = np.stack(np.meshgrid(*([ticks] * dimension), indexing="ij"), axis=-1).reshape(-1, dimension) * spacings
     centres = nodes[suspect]
     probes = (centres[:, None, :] + offsets[None, :, :]).reshape(-1, dimension)
-    blocked_here = ~np.asarray(navigable(probes), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
+    blocked_here = ~np.asarray(read_region(navigable, probes, role="navigable"), dtype=bool).reshape(
+        len(centres), len(offsets)
+    ).any(axis=1)
     if not blocked_here.any():
         return probs
     blocked = np.zeros(probs.shape, dtype=bool)
@@ -1336,27 +1339,23 @@ def _leave_out_cells_with_no_navigable_point(
             "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
             "caller gave."
         ),
-        remedy=(
-            "Set the density to zero at the nodes outside the navigable set: density * "
-            "navigable(nodes).reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
-            'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
-        ),
+        remedy=("Set the density to zero at the grid's nodes where navigable reads False, and pass it again."),
     )
 
 
 def _redraw_until_navigable(
     particles: NDArray,
     redraw: Callable[[NDArray], NDArray],
-    navigable: Callable[[NDArray], NDArray | bool],
+    navigable: Callable[..., NDArray | bool],
     within: str,
 ) -> None:
     """Redraw, in place, the particles where ``navigable`` is False, until none is (#2688)."""
-    pending = np.flatnonzero(~np.asarray(navigable(particles), dtype=bool))
+    pending = np.flatnonzero(~np.asarray(read_region(navigable, particles, role="navigable"), dtype=bool))
     for _ in range(_MAX_REDRAW_ROUNDS):
         if pending.size == 0:
             return
         particles[pending] = redraw(pending)
-        pending = pending[~np.asarray(navigable(particles[pending]), dtype=bool)]
+        pending = pending[~np.asarray(read_region(navigable, particles[pending], role="navigable"), dtype=bool)]
     if pending.size:
         raise ValueError(
             f"sample_from_density: {pending.size} particle(s) found no navigable position within {within} in "

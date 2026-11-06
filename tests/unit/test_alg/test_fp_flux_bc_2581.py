@@ -369,8 +369,7 @@ def _mms(t, x, y):
 
 def _mms_source(t, x):
     """``S = m_t + alpha . grad m - D lap m``, for a constant alpha."""
-    x = np.asarray(x)
-    m, mx, my, lap = _mms(t, x[:, 0], x[:, 1])
+    m, mx, my, lap = _mms(t, x[0], x[1])
     return -0.3 * m + MMS_DRIFT[0] * mx + MMS_DRIFT[1] * my - (MMS_SIGMA**2 / 2) * lap
 
 
@@ -709,7 +708,7 @@ def test_fp_fdm_refuses_a_flux_off_its_implicit_step():
     grid = _grid(1, 11)
     solver = FPFDMSolver(_problem(grid), boundary_conditions=_segments(1, {"x_max": Q}))
     with pytest.raises(NotImplementedError, match=r"explicit step for a callable drift"):
-        solver.solve_fp_system(np.ones(11), drift_field=lambda t, x, m: np.zeros_like(x), show_progress=False)
+        solver.solve_fp_system(np.ones(11), drift_field=lambda t, x, m: np.zeros_like(x[0]), show_progress=False)
     with pytest.raises(NotImplementedError, match=r"solve_fp_step_adjoint_mode"):
         solver.solve_fp_step_adjoint_mode(np.ones(11), np.zeros((11, 11)))
 

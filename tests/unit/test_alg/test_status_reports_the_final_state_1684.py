@@ -97,8 +97,8 @@ def _problem():
         population_index=0,
     )
     comps = MFGComponents(
-        m_initial=lambda x: np.exp(-((np.asarray(x) - 0.5) ** 2) / 0.02),
-        u_terminal=lambda x: np.asarray(x) * 0.0,
+        m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 0.5) ** 2) / 0.02),
+        u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=H,
     )
     return MFGProblem(

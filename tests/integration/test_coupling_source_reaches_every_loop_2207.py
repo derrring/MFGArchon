@@ -98,17 +98,16 @@ _LOOPS = [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator, 
 _POSITIVE_CONTROL = FixedPointIterator
 
 
-class _CountingSource:
-    """The problem-level ``(x, m, v, t)`` callback, constant ``value``, counting its own invocations."""
+def _CountingSource(value: float = _MAGNITUDE):
+    """The problem-level ``(t, x, v, m)`` callback, constant ``value``, counting its own calls in ``.calls``."""
 
-    def __init__(self, value: float = _MAGNITUDE) -> None:
-        self.value = value
-        self.calls = 0
+    def source(t, x, v, m):
+        source.calls += 1
+        return np.full(np.shape(x[0]), source.value)
 
-    def __call__(self, t, x, v, m):
-        self.calls += 1
-        a = np.asarray(x, dtype=float)
-        return np.full(a.shape[0] if a.ndim == 2 else a.size, self.value)
+    source.value = value
+    source.calls = 0
+    return source
 
 
 def _nonlocal_operator():
@@ -136,7 +135,7 @@ def _u_terminal(x):
     nonlocal row on all four loops INCLUDING the positive control. That is the file's own control
     doing its job: when the control row fails, the fixture is wrong and not the library.
     """
-    a = np.asarray(x, dtype=float)
+    a = np.asarray(x[0], dtype=float)
     return (a - 0.5) ** 2
 
 
@@ -149,7 +148,7 @@ def _m_initial(x):
     returns ``0.9999999999999999``, which is what matters because that is the value its warning
     tests. An earlier draft of this line said "exactly 1", which is true of one of those two
     measures and was written without running the other."""
-    return 1.0 + 0.5 * np.cos(2.0 * np.pi * np.asarray(x, dtype=float))
+    return 1.0 + 0.5 * np.cos(2.0 * np.pi * np.asarray(x[0], dtype=float))
 
 
 def _problem(**source_fields):

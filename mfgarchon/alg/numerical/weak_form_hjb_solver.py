@@ -26,7 +26,7 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
@@ -309,8 +309,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
         for k in range(max_iterations):
             p_nodal = np.column_stack([self._apply_gradient_operator(d, U_current) for d in range(dim)])  # (N, dim)
 
-            H_vals = np.asarray(H_class(x=x_grid, m=m_n, p=p_nodal, t=t), dtype=float).ravel()
-            dH_dp = np.asarray(H_class.dp(x=x_grid, m=m_n, p=p_nodal, t=t), dtype=float)
+            H_vals = np.asarray(H_class(x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t), dtype=float).ravel()
+            dH_dp = np.asarray(H_class.dp(x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t), dtype=float)
             if dH_dp.ndim == 1:
                 dH_dp = dH_dp.reshape(-1, 1)
 
@@ -460,7 +460,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
             if source_term is None:
                 return np.zeros(N)
             s_vals = np.asarray(
-                evaluate_solver_source(source_term, t=t, x=self._disc.dof_coordinates), dtype=float
+                evaluate_solver_source(
+                    source_term, t=t, x=self._disc.dof_coordinates, dimension=self._disc.dof_coordinates.shape[1]
+                ),
+                dtype=float,
             ).ravel()
             if s_vals.shape != (N,):
                 raise ValueError(
@@ -530,7 +533,13 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 if H_class is not None:
                     p_prev = self._nodal_gradient(U_coupling_prev[n])
                     H_values = np.asarray(
-                        H_class(x=self._disc.dof_coordinates, m=M_density[n], p=p_prev, t=n * dt), dtype=float
+                        H_class(
+                            x=coordinate_tuple(self._disc.dof_coordinates, self._disc.dof_coordinates.shape[1]),
+                            m=M_density[n],
+                            p=p_prev,
+                            t=n * dt,
+                        ),
+                        dtype=float,
                     ).ravel()
                     # MINUS. The canonical equation (the MFGProblem class docstring) is
                     # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives

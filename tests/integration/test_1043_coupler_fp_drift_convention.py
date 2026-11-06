@@ -66,8 +66,8 @@ def _lq_problem() -> MFGProblem:
         boundary_conditions=no_flux_bc(dimension=1),
     )
     components = MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-        u_terminal=lambda x: (x - 0.8) ** 2,  # non-trivial: drives U gradients
+        m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+        u_terminal=lambda x: (x[0] - 0.8) ** 2,  # non-trivial: drives U gradients
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
             coupling=lambda m: m,
@@ -326,8 +326,8 @@ class TestBlockIteratorFPDriftConvention:
             boundary_conditions=no_flux_bc(dimension=1),
         )
         components = MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: (x - 0.8) ** 2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: (x[0] - 0.8) ** 2,
             hamiltonian=SeparableHamiltonian(
                 control_cost=L1ControlCost(lambda_=1.0),  # non-smooth!
                 coupling=lambda m: m,
@@ -389,8 +389,8 @@ class TestBlockIteratorFPDriftConvention:
             boundary_conditions=no_flux_bc(dimension=1),
         )
         components = MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
-            u_terminal=lambda x: (x - 0.8) ** 2,
+            m_initial=lambda x: np.exp(-10 * (x[0] - 0.5) ** 2),
+            u_terminal=lambda x: (x[0] - 0.8) ** 2,
             hamiltonian=SeparableHamiltonian(
                 control_cost=L1ControlCost(lambda_=1.0),
                 coupling=lambda m: m,
