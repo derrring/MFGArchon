@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import HEvalState
+from mfgarchon.core.hamiltonian import HEvalState, _own_rows
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 
@@ -52,7 +52,7 @@ def eval_H_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t
     inline ``np.asarray(H_class(t=t, x=x, p=p, m=m), dtype=float)`` it replaced; callers
     ``.ravel()`` / reshape as their assembly needs.
     """
-    return H_class.evaluate_H(HEvalState(x=x, p=p, m=m, t=t))
+    return H_class.evaluate_H(HEvalState(x=x, p=p, m=m, t=t, cross_density=_own_rows(m)))
 
 
 def eval_dH_dp_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t: float) -> NDArray:
@@ -64,7 +64,7 @@ def eval_dH_dp_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArra
     so several callers negate the result). Byte-identical to the inline
     ``np.asarray(H_class.dp(t=t, x=x, p=p, m=m), dtype=float)``.
     """
-    return H_class.evaluate_dp(HEvalState(x=x, p=p, m=m, t=t))
+    return H_class.evaluate_dp(HEvalState(x=x, p=p, m=m, t=t, cross_density=_own_rows(m)))
 
 
 def assemble_hjb_residual(

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import _family_call, _population_rows
+from mfgarchon.core.hamiltonian import _family_call, _own_rows, _population_rows
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
@@ -804,7 +804,7 @@ def compute_fp_velocity_field(
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
             m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
-            cross_n = None if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
+            cross_n = _own_rows(m_n) if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
             p_n = p_faces[n].reshape(-1, 1)
             alpha_faces[n] = np.ravel(
                 _family_call(
@@ -847,7 +847,12 @@ def compute_fp_velocity_field(
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
             alpha_n = np.asarray(
                 _family_call(
-                    H_class.optimal_control, x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt
+                    H_class.optimal_control,
+                    x=coordinate_tuple(x_points, ndim),
+                    m=m_points,
+                    p=p_points,
+                    t=n * dt,
+                    cross_density=_own_rows(m_points),
                 )
             )
             if alpha_n.shape != (n_points, ndim):

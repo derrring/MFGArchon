@@ -78,7 +78,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian, _family_call
+from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian, _family_call, _own_rows
 from mfgarchon.types.callable_protocols import (
     EXACT_SOLUTION_SLOTS,
     BoundCallable,
@@ -253,6 +253,7 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
             hamiltonian.optimal_control,
             x=coordinate_tuple(np.zeros_like(probes), dim),
             m=np.ones(len(probes)),
+            cross_density=_own_rows(np.ones(len(probes))),
             p=probes,
             t=0.0,
         ),
@@ -296,7 +297,9 @@ def hjb_source(
         diffusion_tensor = _diffusion_tensor(volatility, dim, volatility_kind)
         p = _gradient(pair.at("grad_u", t, pts), n, dim, "grad_u")
         m = _scalar(pair.at("m", t, pts), n, "m")
-        h = np.asarray(hamiltonian.evaluate_H(HEvalState(x=pts, p=p, m=m, t=t)), dtype=float).ravel()
+        h = np.asarray(
+            hamiltonian.evaluate_H(HEvalState(x=pts, p=p, m=m, t=t, cross_density=_own_rows(m))), dtype=float
+        ).ravel()
         h = _scalar(h, n, "evaluate_H")
         hess = _hessian(pair.at("hess_u", t, pts), n, dim, "hess_u")
         diffusion = np.einsum("ij,nij->n", diffusion_tensor, hess)
@@ -338,7 +341,15 @@ def fp_source(
         m = _scalar(pair.at("m", t, pts), n, "m")
         alpha = _gradient(
             np.asarray(
-                _family_call(hamiltonian.optimal_control, x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float
+                _family_call(
+                    hamiltonian.optimal_control,
+                    x=coordinate_tuple(pts, dim),
+                    m=m,
+                    p=grad_u,
+                    t=t,
+                    cross_density=_own_rows(m),
+                ),
+                dtype=float,
             ),
             n,
             dim,

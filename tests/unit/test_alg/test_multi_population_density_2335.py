@@ -453,9 +453,7 @@ def test_an_override_that_drops_the_slot_is_refused_where_a_term_reads_it():
     problem's first read. The same subclass forwarding the slot reads every population."""
     seen = []
     # Refused at the problem's first read of it, its validation, which reports the refusal it raised.
-    with pytest.raises(
-        ValidationError, match=r"coupling declares cross_density, and the method that reads it was handed none"
-    ):
+    with pytest.raises(ValidationError, match=r"coupling declares cross_density, and was handed none"):
         _solve(
             [_DropsOnOverride(QuadraticControlCost(control_cost=1.0), coupling=_sum_coupling([])) for _ in range(2)],
             [0.25, 0.75],
@@ -502,3 +500,64 @@ def test_dm_reads_a_term_that_declares_the_slot_at_the_own_density(kind):
         )
     x, p, m = (np.linspace(0.0, 1.0, 4),), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
     np.testing.assert_array_equal(declaring.dm(t=0.0, x=x, p=p, m=m), plain.dm(t=0.0, x=x, p=p, m=m))
+
+
+class _LegacyOptimalControl(_OnCallOnly):
+    """`optimal_control` written as before #2335: it calls `dp` without passing the slot on."""
+
+    def optimal_control(self, t, x, p, m):
+        return -self.dp(t=t, x=x, p=p, m=m)
+
+
+class _ForwardingOptimalControl(_OnCallOnly):
+    def optimal_control(self, t, x, p, m, cross_density):
+        return -self.dp(t=t, x=x, p=p, m=m, cross_density=cross_density)
+
+
+def test_an_optimal_control_that_drops_the_slot_is_refused_where_it_reaches_a_declaring_call():
+    """The library's `dp` handed no slot passes `None` on; the `__call__` it reaches requires the slot, so it is refused
+    rather than read at the own density alone while the residual reads every population. Forwarded, the same
+    Hamiltonian solves as the one whose base-class `optimal_control` hands the slot on."""
+    centres = [0.25, 0.75]
+    with pytest.raises(TypeError, match=r"__call__ declares cross_density, and was handed none"):
+        _solve([_LegacyOptimalControl(k) for k in range(2)], centres)
+    forwarded = _solve([_ForwardingOptimalControl(k) for k in range(2)], centres)
+    inherited = _solve([_OnCallOnly(k) for k in range(2)], centres)
+    for k in range(2):
+        np.testing.assert_array_equal(forwarded[k][0], inherited[k][0])
+        np.testing.assert_array_equal(forwarded[k][1], inherited[k][1])
+
+
+def test_a_raw_subclass_called_directly_with_the_own_row_reads_as_its_plain_twin():
+    """Control: a subclass that requires the slot, called directly at one population with `cross_density=m[np.newaxis]`,
+    reads as the same Hamiltonian written without it."""
+
+    class Plain(HamiltonianBase):
+        def __call__(self, t, x, p, m):
+            return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) / (1.0 + np.asarray(m)) - np.asarray(m)
+
+    x, p, m = (np.linspace(0.0, 1.0, 4),), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
+    np.testing.assert_array_equal(
+        _OnCallOnly(0)(t=0.0, x=x, p=p, m=m, cross_density=m[np.newaxis]), Plain()(t=0.0, x=x, p=p, m=m)
+    )
+
+
+def test_a_one_population_solve_hands_a_term_that_declares_the_slot_its_own_row():
+    """With no stack handed, each door builds the own row itself: a congestion factor written over every population reads,
+    at one population, as the same factor written for one. The iterator hands its HJB step no stack at K = 1, so the
+    residual and Jacobian doors build it there; the FP velocity door builds it when it is called with none."""
+    cost = QuadraticControlCost(control_cost=1.0)
+    declaring = CongestionHamiltonian(
+        cost, congestion_factor=lambda m, cross_density: 1.0 + np.asarray(cross_density).sum(axis=0)
+    )
+    plain = CongestionHamiltonian(cost, congestion_factor=lambda m: 1.0 + m)
+    (declared,), (alone,) = _solve([declaring], [0.4]), _solve([plain], [0.4])
+    np.testing.assert_array_equal(declared[0], alone[0])
+    np.testing.assert_array_equal(declared[1], alone[1])
+    problem = _problem(plain)
+    nodes = np.linspace(0.0, 1.0, N)
+    U = np.outer(np.linspace(1.0, 0.5, NT + 1), 0.7 * nodes + 0.4 * nodes**2)
+    M = np.outer(np.linspace(1.0, 1.5, NT + 1), 0.2 + nodes**2)
+    np.testing.assert_array_equal(
+        compute_fp_velocity_field(problem, U, M, declaring), compute_fp_velocity_field(problem, U, M, plain)
+    )

@@ -26,7 +26,7 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
-from mfgarchon.core.hamiltonian import _family_call
+from mfgarchon.core.hamiltonian import _family_call, _own_rows
 from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
@@ -311,10 +311,16 @@ class WeakFormHJBSolver(BaseHJBSolver):
             p_nodal = np.column_stack([self._apply_gradient_operator(d, U_current) for d in range(dim)])  # (N, dim)
 
             H_vals = np.asarray(
-                _family_call(H_class, x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t), dtype=float
+                _family_call(
+                    H_class, x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t, cross_density=_own_rows(m_n)
+                ),
+                dtype=float,
             ).ravel()
             dH_dp = np.asarray(
-                _family_call(H_class.dp, x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t), dtype=float
+                _family_call(
+                    H_class.dp, x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t, cross_density=_own_rows(m_n)
+                ),
+                dtype=float,
             )
             if dH_dp.ndim == 1:
                 dH_dp = dH_dp.reshape(-1, 1)
@@ -542,6 +548,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                             H_class,
                             x=coordinate_tuple(self._disc.dof_coordinates, self._disc.dof_coordinates.shape[1]),
                             m=M_density[n],
+                            cross_density=_own_rows(M_density[n]),
                             p=p_prev,
                             t=n * dt,
                         ),

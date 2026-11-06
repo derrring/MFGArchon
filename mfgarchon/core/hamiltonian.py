@@ -849,17 +849,10 @@ def _read_of_the_density(owner: Any, name: str, m: Any, count: int | None = None
     at a time: a body that cannot read a batch raises, and the problem's check refuses it when it takes the Hamiltonian."""
     read = bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
     if cross_density is None and "cross_density" in read.passes:
-        # Every library call of a family method hands the slot (`_family_call`), so a declaring term reached without it
-        # was reached by a call that dropped it: an override calling the library's method, or a direct call (#2335).
-        raise TypeError(
-            f"{type(owner).__name__}.{name.lstrip('_')} declares cross_density, and the method that reads it was handed "
-            "none. Pass cross_density=m[np.newaxis] for one population, or, from an override of a library method, pass "
-            "on the cross_density the library hands the override (#2335)."
-        )
-    rows = _density_rows(cross_density, m)
+        _refuse_a_dropped_slot(f"{type(owner).__name__}.{name.lstrip('_')}")
     if count is None:
-        return float(read(m=m, cross_density=rows))
-    values = np.asarray(read(m=np.asarray(m), cross_density=rows), dtype=float).ravel()
+        return float(read(m=m, cross_density=cross_density))
+    values = np.asarray(read(m=np.asarray(m), cross_density=cross_density), dtype=float).ravel()
     if values.size not in (1, count):
         what = f"{type(owner).__name__}.{name.lstrip('_')}"
         raise ValueError(_unpaired_density(what, np.size(m), count, returned=values.size))
@@ -1075,9 +1068,9 @@ class HEvalState:
         The population's own density, shape ``(N,)``, a scalar at one point. In a multi-population solve too (#2335).
     cross_density : NDArray | None
         Every population's density at the same points, its own included: shape ``(K, N)``, row ``j`` population ``j``'s,
-        and ``(K,)`` at one point. ``None`` means the own density alone, ``m[np.newaxis]``, as in every
-        single-population solve. A family method reads it only by declaring a parameter named ``cross_density``
-        (#2335).
+        and ``(K,)`` at one point; ``m[np.newaxis]`` where there is one population. ``None`` means no stack was handed:
+        a method or term that declares the slot is then refused. A family method reads it only by declaring a
+        parameter named ``cross_density`` (#2335).
     """
 
     t: float
@@ -1092,12 +1085,19 @@ class HEvalState:
         return self.p
 
 
-def _density_rows(cross_density: Any, m: Any) -> NDArray:
-    """``cross_density`` as a body reads it: as handed, or, where none was, the own density alone, ``m[np.newaxis]``, one
-    row at the same points as ``m`` (#2335)."""
-    if cross_density is not None:
-        return np.asarray(cross_density)
+def _own_rows(m: Any) -> NDArray | None:
+    """One population's stack: the own density alone, ``m[np.newaxis]``, one row at the same points as ``m``, or ``None``
+    where there is no density. A caller with no stack to hand builds it here, from the ``m`` it reads at (#2335)."""
     return None if m is None else np.asarray(m, dtype=float)[np.newaxis]
+
+
+def _refuse_a_dropped_slot(target: str) -> NoReturn:
+    """The one refusal of a ``cross_density`` that never arrived: ``target`` declares the slot and was handed none, which
+    no library call does, so a call between the library and it dropped the slot (#2335)."""
+    raise TypeError(
+        f"{target} declares cross_density, and was handed none. Pass cross_density=m[np.newaxis] for one population, "
+        "or pass on the cross_density a library method or override was handed (#2335)."
+    )
 
 
 def _population_rows(stack: Any, count: int, where: str) -> NDArray:
@@ -1114,30 +1114,38 @@ def _population_rows(stack: Any, count: int, where: str) -> NDArray:
 
 
 @functools.lru_cache(maxsize=1024)
-def _declares_cross_density(fn: Any) -> bool:
-    """Whether ``fn`` takes a parameter named ``cross_density``, read once per function (#2335)."""
+def _cross_density_parameter(fn: Any) -> str | None:
+    """How ``fn`` takes ``cross_density``: ``"required"``, ``"defaulted"``, or ``None`` where it does not, read once per
+    function (#2335)."""
     try:
-        return "cross_density" in inspect.signature(fn).parameters
+        parameter = inspect.signature(fn).parameters.get("cross_density")
     except (TypeError, ValueError):
-        return False
+        return None
+    if parameter is None:
+        return None
+    return "required" if parameter.default is inspect.Parameter.empty else "defaulted"
 
 
 def _family_call(method: Any, *, t: Any, x: Any, p: Any, m: Any, cross_density: Any = None) -> Any:
     """Call a Hamiltonian's family method by keyword: the one way the library calls ``__call__``, ``dp``, ``dm``, ``dx`` or
-    ``optimal_control`` (#2335). A method that declares ``cross_density`` is handed it: the door's rows, or the own
-    density alone where there is no stack (`_density_rows`). One written before the slot is called as it always was. A
-    user's own call that drops a declared slot gets Python's TypeError naming it, and a partial that froze it is refused,
-    since the slot passed by name would override it."""
+    ``optimal_control`` (#2335). A method that declares ``cross_density`` is handed what the caller hands: the door's
+    rows, or the own row a caller with no stack builds (`_own_rows`). A method that requires it and is handed none is
+    refused (`_refuse_a_dropped_slot`); one that gives it a default receives ``None`` and passes it on. One written
+    before the slot is called as it always was, and a partial that froze the slot is refused, since the slot passed by
+    name would override it."""
     if isinstance(method, types.MethodType):
         key = method.__func__
     elif isinstance(method, (types.FunctionType, functools.partial)):
         key = method
     else:
         key = type(method).__call__
-    if _declares_cross_density(key):
-        refuse_overridden(method, ("cross_density",), role="Hamiltonian method")
-        return method(t=t, x=x, p=p, m=m, cross_density=_density_rows(cross_density, m))
-    return method(t=t, x=x, p=p, m=m)
+    takes = _cross_density_parameter(key)
+    if takes is None:
+        return method(t=t, x=x, p=p, m=m)
+    refuse_overridden(method, ("cross_density",), role="Hamiltonian method")
+    if cross_density is None and takes == "required":
+        _refuse_a_dropped_slot(getattr(method, "__qualname__", repr(method)))
+    return method(t=t, x=x, p=p, m=m, cross_density=cross_density)
 
 
 def _a_point_of(state: dict[str, Any], i: int) -> dict[str, Any]:
@@ -1515,8 +1523,14 @@ class HamiltonianBase(MFGOperatorBase):
             m_arr = np.asarray(m)
             eps = self.finite_diff_eps
             try:
-                H_plus = np.asarray(_family_call(self.__call__, x=x, m=m_arr + eps, p=p_arr, t=t), dtype=float).ravel()
-                H_minus = np.asarray(_family_call(self.__call__, x=x, m=m_arr - eps, p=p_arr, t=t), dtype=float).ravel()
+                H_plus = np.asarray(
+                    _family_call(self.__call__, x=x, m=m_arr + eps, p=p_arr, t=t, cross_density=_own_rows(m_arr + eps)),
+                    dtype=float,
+                ).ravel()
+                H_minus = np.asarray(
+                    _family_call(self.__call__, x=x, m=m_arr - eps, p=p_arr, t=t, cross_density=_own_rows(m_arr - eps)),
+                    dtype=float,
+                ).ravel()
                 return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError) as batch_error:
                 m_points = _density_at_points(m, p_arr.shape[0], f"{type(self).__name__}.dm", after=batch_error)
@@ -1650,7 +1664,7 @@ class HamiltonianBase(MFGOperatorBase):
         >>> A_upper = diffusion_upper + jac.upper
         """
         # Get ∂H/∂p from the class method
-        dH_dp = _family_call(self.dp, x=x, m=m, p=p, t=t)
+        dH_dp = _family_call(self.dp, x=x, m=m, p=p, t=t, cross_density=_own_rows(m))
         # Issue #1068: use np.ndim() instead of hasattr(, "__len__") to detect arrays.
         dH_dp_scalar = float(dH_dp[0]) if np.ndim(dH_dp) > 0 else float(dH_dp)
 
@@ -1726,8 +1740,8 @@ class HamiltonianBase(MFGOperatorBase):
         eps = self.finite_diff_eps
         m_scalar = float(m) if np.isscalar(m) else float(np.mean(m))
 
-        H_plus = _family_call(self.__call__, x=x, m=m_scalar + eps, p=p, t=t)
-        H_minus = _family_call(self.__call__, x=x, m=m_scalar - eps, p=p, t=t)
+        H_plus = _family_call(self.__call__, x=x, m=m_scalar + eps, p=p, t=t, cross_density=_own_rows(m_scalar + eps))
+        H_minus = _family_call(self.__call__, x=x, m=m_scalar - eps, p=p, t=t, cross_density=_own_rows(m_scalar - eps))
 
         return float(_central_difference(H_plus, H_minus, eps))
 
@@ -1747,8 +1761,8 @@ class HamiltonianBase(MFGOperatorBase):
             x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
             x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
 
-            H_plus = _family_call(self.__call__, x=x_plus, m=m, p=p, t=t)
-            H_minus = _family_call(self.__call__, x=x_minus, m=m, p=p, t=t)
+            H_plus = _family_call(self.__call__, x=x_plus, m=m, p=p, t=t, cross_density=_own_rows(m))
+            H_minus = _family_call(self.__call__, x=x_minus, m=m, p=p, t=t, cross_density=_own_rows(m))
             grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
@@ -2456,7 +2470,7 @@ class DualLagrangian(LagrangianBase):
             values = np.array(
                 [
                     -float(p) * float(alpha_flat[0])
-                    - float(_family_call(self.hamiltonian, x=x, m=m, p=np.array([p]), t=t))
+                    - float(_family_call(self.hamiltonian, x=x, m=m, p=np.array([p]), t=t, cross_density=_own_rows(m)))
                     for p in p_grid
                 ]
             )
@@ -2471,7 +2485,10 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(-np.dot(p, alpha_flat) - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t)))
+                return -(
+                    -np.dot(p, alpha_flat)
+                    - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m)))
+                )
 
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
@@ -2486,7 +2503,9 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = -np.dot(p, alpha_flat) - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t))
+                val = -np.dot(p, alpha_flat) - float(
+                    _family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m))
+                )
                 best_val = max(best_val, val)
 
             return float(best_val)
@@ -2538,7 +2557,7 @@ class DualLagrangian(LagrangianBase):
             values = np.array(
                 [
                     -float(p) * float(alpha_flat[0])
-                    - float(_family_call(self.hamiltonian, x=x, m=m, p=np.array([p]), t=t))
+                    - float(_family_call(self.hamiltonian, x=x, m=m, p=np.array([p]), t=t, cross_density=_own_rows(m)))
                     for p in p_grid
                 ]
             )
@@ -2550,7 +2569,10 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(-np.dot(p, alpha_flat) - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t)))
+                return -(
+                    -np.dot(p, alpha_flat)
+                    - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m)))
+                )
 
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
@@ -2566,7 +2588,9 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = -np.dot(p, alpha_flat) - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t))
+                val = -np.dot(p, alpha_flat) - float(
+                    _family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m))
+                )
                 if val > best_val:
                     best_val = val
                     best_p = p
@@ -2731,9 +2755,9 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._coupling_dm is not None:
             if is_batch:
-                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0], _density_rows(None, m))
+                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0], _own_rows(m))
                 return -result
-            return -_read_of_the_density(self, "_coupling_dm", m, cross_density=_density_rows(None, m))
+            return -_read_of_the_density(self, "_coupling_dm", m, cross_density=_own_rows(m))
 
         if self._coupling is None:
             if is_batch:
@@ -2977,13 +3001,13 @@ class CongestionHamiltonian(HamiltonianBase):
                 H_kin = float(H_kin.sum())
 
             if is_batch:
-                own = _density_rows(None, m)  # dm is read on single-population paths only (#2335)
+                own = _own_rows(m)  # dm is read on single-population paths only (#2335)
                 c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0], own)
                 c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, p_arr.shape[0], own)
 
                 kinetic_dm = -c_dm * H_kin / c_m**2
             else:
-                own = _density_rows(None, m)  # dm is read on single-population paths only (#2335)
+                own = _own_rows(m)  # dm is read on single-population paths only (#2335)
                 c_m = _read_of_the_density(self, "_congestion_factor", m, cross_density=own)
                 c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, cross_density=own)
                 kinetic_dm = -c_dm * H_kin / c_m**2
@@ -2991,13 +3015,9 @@ class CongestionHamiltonian(HamiltonianBase):
             # Coupling contribution f'(m)
             if self._coupling_dm is not None:
                 if is_batch:
-                    coupling_dm_val = _read_of_the_density(
-                        self, "_coupling_dm", m, p_arr.shape[0], _density_rows(None, m)
-                    )
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0], _own_rows(m))
                 else:
-                    coupling_dm_val = _read_of_the_density(
-                        self, "_coupling_dm", m, cross_density=_density_rows(None, m)
-                    )
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, cross_density=_own_rows(m))
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -3192,7 +3212,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
         "such as 0.5*np.sum(p**2, axis=-1), and to read x[0] as the coordinate (#2875)."
     )
     # A problem's own view: every population's density is its own alone, one row (#2335).
-    batch = {"x": x, "p": p, "m": m, "t": t, "cross_density": m[np.newaxis]}
+    batch = {"x": x, "p": p, "m": m, "t": t, "cross_density": _own_rows(m)}
     for name, evaluate in (("evaluate_H", hamiltonian.evaluate_H), ("evaluate_dp", hamiltonian.evaluate_dp)):
         refuse_batch_disagreement(
             lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),

@@ -301,23 +301,26 @@ else 0 * m`. `cross_density` is an array where `x` is a tuple: its leading axis 
 and every row has `m`'s shape, so `cross_density[j]` reads the same at one point and on a batch, as `x[0]` does for a
 tuple whose entries are scalars at one point and arrays on a batch.
 
-The library calls a method that declares `cross_density` with it, and the populations of one solve share one grid: the
-iterator refuses populations whose node coordinates differ, since the rows are read at one population's points. A
-method of yours that declares `cross_density` is called with it by the library; one of yours that calls it without
-passing it on raises Python's `TypeError` naming `cross_density`, rather than reading the own density alone, unless
-you gave the parameter a default, which then stands. A library Hamiltonian's methods give it a default, `None`, which
-holds for terms that do not declare the slot: a term that declares it, read by a method handed none, is refused, so a
-direct call of such a Hamiltonian passes `cross_density=m[np.newaxis]` for one population, and an override of a library
-method passes on the `cross_density` the library hands it.
+The populations of one solve share one grid: the iterator refuses populations whose node coordinates differ, since the
+rows are read at one population's points.
 
-The library's own `dm` methods take no `cross_density`: `dm` is read on single-population paths only, and no
-multi-population door reads it (measured for #2335: no call to `dm` or `dH_dm` in a two- or three-population solve of
-a separable, an L1 or a congestion Hamiltonian).
+A method or a term that declares `cross_density` is handed rows, never `None`: every population's at a
+multi-population door, and `m[np.newaxis]` everywhere else, and a call that hands it none is refused with Python's
+`TypeError` naming the slot. So a direct call of such a Hamiltonian, or of one whose term declares it, passes
+`cross_density=m[np.newaxis]` for one population, and a method, or an override of a library method, passes on the
+`cross_density` it was handed. A library method's own default, `None`, holds only where nothing it reaches declares the
+slot; a method of yours that gives the slot a default keeps it.
+
+The library's own `dm`, `dx` and `jacobian_fd` take no `cross_density`: these derivatives are taken on one population,
+with the own row built from the `m` each evaluates at, which for `dm`'s finite difference is the perturbed `m`. No
+multi-population door reads them (measured for #2335 over the CI-marked suite: none of them, nor `dH_dm`, is called
+inside a multi-population solve).
 
 Until #2335 the stack was handed as `m`. A body that still reads it from `m` gets its own population's values: one
 that branches on `m`'s shape may raise, or may take its other branch with no error, as the coupling of
 `tests/integration/test_multi_population_cross_coupling.py`, guarded on `m.shape[-1] % K`, did before it declared
 `cross_density`: its cross term vanished.
+
 ---
 
 ## 4. Derivatives
