@@ -331,14 +331,7 @@ class FPFDMSolver(BaseFPSolver):
         total = int(np.prod(shape))
         u_flat = np.asarray(U, dtype=float).ravel()
         if coupling_coefficient is None:
-            from mfgarchon.alg.numerical.fp_solvers.fp_fvm import what_solves_an_own_control
-
-            own_walls = self.boundary_conditions if self._own_bc else None
-            coupling_coefficient = fp_drift_coefficient(
-                self.problem,
-                context="FPFDMSolver.build_advection_operator",
-                advice=lambda: what_solves_an_own_control(self.problem, own_walls=own_walls),
-            )
+            coupling_coefficient = fp_drift_coefficient(self.problem, context="FPFDMSolver.build_advection_operator")
         # `self.boundary_conditions` and not `geometry.get_boundary_conditions()`: the constructor resolves the BC
         # through components, geometry and the periodic convention (#527), and every real assembly call passes the
         # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the

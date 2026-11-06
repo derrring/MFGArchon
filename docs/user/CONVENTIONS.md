@@ -247,8 +247,8 @@ on their own basis.
 
 `fp_drift_coefficient(problem)` resolves in this order:
 
-1. A `SeparableHamiltonian` that serves an optimal control of its own → **raises**, naming what solves
-   it (#2900). It serves its own unless the method it serves is `SeparableHamiltonian.optimal_control`
+1. A `SeparableHamiltonian` that serves an optimal control of its own → **raises**, stating what was
+   run (#2900). It serves its own unless the method it serves is `SeparableHamiltonian.optimal_control`
    bound to it and, for a `QuadraticControlCost`, the cost serves that class's own
    (`drift_is_the_control_costs`).
 2. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
@@ -282,17 +282,18 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   with `NO_FLUX` walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an
   advection scheme that reads a velocity. Anywhere else, and on the semi-Lagrangian solver, the
   coupling layer refuses it. FP-FDM's velocity route off that set is #2904.
-- **A refusal's advice names a target only when two things hold.**
-  1. The target's own acceptance check accepts what the refusing site reads: its walls, which are the
-     solver's own when it was handed them, and the problem's volatility. For FVM that check is
-     `fvm_refusal`, and for `build_linearized_operator` it is the operator's wall check.
-  2. The target runs the library $H$'s own discretisation of that case, so naming it changes the route
-     and not the scheme. FVM and `build_linearized_operator` read `optimal_control` or `dp` on their
-     own route. The meshless HJB's `streamline_diffusion_scale=0` does not: it is another, unstabilised
-     discretisation, so the meshless stabilisation's refusal names no scheme.
-
-  Where either fails, the advice says that no scheme of the library has been run on the case, and
-  quotes the target's refusal where there is one.
+  A refusal states what was run and on what, and why it refuses; it names no other scheme.
+- **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
+  refusals state it:
+  - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$. It refuses
+    walls that are not one uniform condition, Dirichlet walls, a volatility that is not one constant,
+    and, on its value-function route, a control cost that is not quadratic (#1542).
+  - **The particle solver** reads it for a separable $H$, and hands it `m=None` (#2903). It refuses a
+    control cost that is not quadratic (#1542).
+  - **The weak-form family** (FEM, meshless Galerkin) reads it at $t = 0$ with `m=None` (#2903). The
+    meshless HJB with `streamline_diffusion_scale > 0` forms $-c\,\nabla u$ for its stabilisation,
+    and refuses such an $H$ there.
+  - **FP-FDM** reads it as a velocity inside the set above.
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or

@@ -884,12 +884,24 @@ def _why_an_own_control_is_not_a_velocity_here(
     return reasons
 
 
-def _its_own_walls(fp_solver: Any) -> Any:
-    """The BC ``fp_solver`` was handed, or ``None`` where it solves with the problem's. FP-FDM keeps it resolved as
-    ``boundary_conditions`` beside ``_own_bc``; the base chain keeps it as ``_boundary_conditions``."""
-    if getattr(fp_solver, "_own_bc", False):
-        return fp_solver.boundary_conditions
-    return getattr(fp_solver, "_boundary_conditions", None)
+def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None) -> str:
+    """What the closed set read, for its refusal to state (#2900): the grid's dimension, whether one population is
+    solved, and for a solver that holds its walls and an advection scheme, those, then the shape of M."""
+    from mfgarchon.geometry.boundary.types import BoundaryFace
+
+    read = [
+        f"a {problem.dimension}-D grid",
+        "one population" if cross_density is None else "a MultiPopulationIterator solve",
+    ]
+    bc = getattr(fp_solver, "boundary_conditions", None)
+    if bc is not None:
+        faces = [BoundaryFace(axis, side) for axis in range(problem.dimension) for side in ("min", "max")]
+        read.append(f"walls {[bc.segment_for_face(face, problem.geometry).bc_type.name for face in faces]}")
+    scheme = getattr(fp_solver, "advection_scheme", None)
+    if scheme is not None:
+        read.append(f"advection_scheme {scheme!r}")
+    read.append(f"M of shape {np.shape(M)}")
+    return ", ".join(read)
 
 
 def resolve_fp_drift_kwargs(
@@ -924,8 +936,8 @@ def resolve_fp_drift_kwargs(
           path below, which reads its ``optimal_control``, only where
           ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: one population on
           a 1-D grid with ``NO_FLUX`` walls, a density trajectory, and an advection scheme that reads
-          a velocity. Anywhere else this refuses, naming FVM only where FVM's own check accepts the
-          walls the solver reads (``what_solves_an_own_control``). Every other solver (FVM,
+          a velocity. Anywhere else this refuses, stating what it read and why, and names no other
+          scheme. Every other solver (FVM,
           particle, the weak-form family) keeps ``potential_field`` and reads ``optimal_control``
           itself. With ``drift_convention=None`` the pre-#1489 gate below decides, and a solver that
           forms $-c\\,\\nabla U$ refuses through ``fp_drift_coefficient``.
@@ -985,7 +997,6 @@ def resolve_fp_drift_kwargs(
             drift_kwargs["drift_field"] = drift_field_override
     else:
         from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
-        from mfgarchon.alg.numerical.fp_solvers.fp_fvm import what_solves_an_own_control
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
         from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs, refuse_the_scalar_drift
 
@@ -1015,19 +1026,18 @@ def resolve_fp_drift_kwargs(
             takes_a_velocity = drift_convention == DriftConvention.VELOCITY and "drift_field" in params
             reasons = _why_an_own_control_is_not_a_velocity_here(problem, fp_solver, M, cross_density, takes_a_velocity)
             if reasons:
-                solves = what_solves_an_own_control(
-                    problem, own_walls=_its_own_walls(fp_solver), several_populations=cross_density is not None
-                )
+                name = type(fp_solver).__name__
                 refuse_the_scalar_drift(
                     H_class,
-                    f"{type(fp_solver).__name__}.solve_fp_system(potential_field=U)",
+                    f"{name}.solve_fp_system(potential_field=U)",
+                    _what_the_router_read(problem, fp_solver, M, cross_density),
                     (
-                        f"{type(fp_solver).__name__} takes its optimal_control as a velocity only for one population on a "
-                        "1-D grid with NO_FLUX walls, handed a density trajectory, with an advection scheme that reads "
-                        "a velocity, where that route has been measured equal to the value-function route (#2904). "
-                        f"Here {'; '.join(reasons)}. {solves}"
+                        f"{name} takes its optimal_control as a velocity only for one population on a 1-D grid with "
+                        "NO_FLUX walls, handed the density trajectory, with an advection scheme that reads a velocity, "
+                        "where that route has been measured equal to the value-function route (#2904). "
+                        f"Here {'; '.join(reasons)}."
                         if takes_a_velocity
-                        else f"{'; '.join(reasons)}. {solves}"
+                        else f"{'; '.join(reasons)}."
                     ),
                 )
             drift_from_u = False

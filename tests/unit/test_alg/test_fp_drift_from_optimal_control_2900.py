@@ -4,7 +4,8 @@ The FP drift of a smooth separable H was formed as -c*grad(U), its control cost'
 function, so a subclass that redefined H solved with the base class's drift on problem.solve()'s default scheme, with
 no error. The oracle is the library SeparableHamiltonian for the same H: the subclass must solve as it does. Where the
 FP solver forms -c*grad(U) and its velocity route is not measured equal to its value-function route, the solve refuses,
-and the advice it gives is run here against the library H on the scheme it names.
+stating what was run and on what, and naming no other scheme (user ruling, 2026-11-06). The last rows run the CONVENTIONS
+sentences on the solvers that read optimal_control themselves.
 """
 
 from __future__ import annotations
@@ -46,7 +47,11 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, d
 from mfgarchon.geometry.boundary.conditions import periodic_bc
 from mfgarchon.types import NumericalScheme
 from mfgarchon.utils import pde_coefficients
-from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs, fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import (
+    WHERE_OWN_CONTROLS_ARE_READ,
+    drift_is_the_control_costs,
+    fp_drift_coefficient,
+)
 
 
 def _coupling(m):
@@ -302,134 +307,94 @@ def test_an_own_optimal_control_solves_as_the_library_hamiltonian_it_describes(c
     np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
 
 
-#: Where the default scheme's FP-FDM cannot take an own optimal control as a velocity, and the reason it names. The
-#: advice there names FVM_UPWIND, and each row runs it against the library H on FVM_UPWIND.
+def _refused_saying(refused, *, site, ran_on, why=""):
+    """A refusal of -c*grad(U) states what was run and on what, then why, and points to CONVENTIONS; it names no other
+    scheme or operator (user ruling, 2026-11-06)."""
+    said = str(refused.value)
+    assert said.startswith(f"{site}, run on {ran_on}: "), said
+    assert why in said, said
+    assert said.endswith(WHERE_OWN_CONTROLS_ARE_READ), said
+    for other in (
+        "FVM_UPWIND",
+        "FPFVMSolver",
+        "FPParticleSolver",
+        "build_linearized_operator",
+        "streamline_diffusion_scale",
+    ):
+        assert other not in said, (other, said)
+
+
+ROUTER = "FPFDMSolver.solve_fp_system(potential_field=U)"
+
+#: Where the default scheme's FP-FDM cannot take an own optimal control as a velocity: what the refusal says it read,
+#: and why it refuses.
 OFF_THE_MEASURED_SET = {
-    "1-D periodic": ({"walls": "periodic"}, "its walls are ['PERIODIC', 'PERIODIC']"),
-    "2-D no-flux": ({"d": 2, "n": 7}, "the grid is 2-D"),
+    "1-D periodic": (
+        {"walls": "periodic"},
+        "a 1-D grid, one population, walls ['PERIODIC', 'PERIODIC'], advection_scheme 'divergence_upwind', "
+        "M of shape (11, 21)",
+        "Here its walls are ['PERIODIC', 'PERIODIC'].",
+    ),
+    "2-D no-flux": (
+        {"d": 2, "n": 7},
+        "a 2-D grid, one population, walls ['NO_FLUX', 'NO_FLUX', 'NO_FLUX', 'NO_FLUX'], "
+        "advection_scheme 'divergence_upwind', M of shape (11, 7, 7)",
+        "Here the grid is 2-D.",
+    ),
+    "1-D Dirichlet": (
+        {"walls": "dirichlet"},
+        "a 1-D grid, one population, walls ['DIRICHLET', 'DIRICHLET'], advection_scheme 'divergence_upwind', "
+        "M of shape (11, 21)",
+        "Here its walls are ['DIRICHLET', 'DIRICHLET'].",
+    ),
 }
 
 
 @pytest.mark.parametrize("where", sorted(OFF_THE_MEASURED_SET))
-def test_off_the_measured_set_the_default_scheme_refuses_and_its_advice_runs(where):
-    """FP-FDM's velocity route differs from its value-function route off 1-D no-flux (#2904), so it refuses there, naming
-    why and FVM_UPWIND, which solves it as the library H. Off in M at 6f02506c, which drove it by -c*grad(U): 1.1121e+00
-    periodic, 2.5675e+00 in 2-D; at 855dcb6e, which routed it: 1.7056e-01 and 1.4074e+00."""
-    setting, reason = OFF_THE_MEASURED_SET[where]
-    with pytest.raises(NotImplementedError, match=r"FPFDMSolver\.solve_fp_system\(potential_field=U\)") as refused:
-        _solve(_steep(_OwnControl), **setting)
-    assert reason in str(refused.value)
-    assert "FVM_UPWIND" in str(refused.value)
-    U_ref, M_ref = _solve(_library(), scheme=NumericalScheme.FVM_UPWIND, **setting)
-    U, M = _solve(_steep(_OwnControl), scheme=NumericalScheme.FVM_UPWIND, **setting)
-    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(U, U_ref, rtol=0, atol=1e-12)
-
-
-def test_fvm_solves_it_on_a_periodic_grid_across_a_value_function_that_jumps_at_the_wrap():
-    """The periodic row's FVM advice, on the U that separates FP-FDM's two routes at the wrap face: FP alone, on
-    U = 0.3 sin(2 pi x) + 0.2 x, so U(1) - U(0) = 0.2."""
-    nodes = np.linspace(0.0, 1.0, 21)
-    U = np.stack([0.3 * np.sin(2 * np.pi * nodes) + 0.2 * nodes] * 11)
-    m0 = 1.0 + 0.5 * np.cos(2 * np.pi * nodes)
-
-    def fp_alone(hamiltonian):
-        fp = FPFVMSolver(_problem(hamiltonian, walls="periodic"))
-        return np.asarray(_quietly(lambda: fp.solve_fp_system(m0, potential_field=U, show_progress=False)))
-
-    np.testing.assert_allclose(fp_alone(_steep(_OwnControl)), fp_alone(_library()), rtol=0, atol=1e-12)
-
-
-NO_SCHEME = "No scheme of the library has been run on such a Hamiltonian with these walls and this volatility"
-
-#: Walls off the measured set that FVM refuses, so the advice names no scheme, and the scheme that meets them there:
-#: FP-FDM on Dirichlet walls, FP-SL on no-flux walls written per face, FP-FDM's centred scheme on mixed no-flux and
-#: Neumann(0) walls, which FP-FDM reads as no-flux per face.
-FVM_REFUSES = {
-    "dirichlet": ({}, "its walls are ['DIRICHLET', 'DIRICHLET']", "does not support Dirichlet BC"),
-    "no_flux_per_face": ({"scheme": NumericalScheme.SL_LINEAR}, "takes the value function only", "only uniform"),
-    "no_flux_and_neumann_0": ({"scheme": NumericalScheme.FDM_CENTERED}, "does not read a velocity", "only uniform"),
-}
-
-
-@pytest.mark.parametrize("walls", sorted(FVM_REFUSES))
-def test_on_walls_fvm_refuses_the_refusal_names_no_scheme_and_fvm_refuses_them(walls):
-    """Where FVM refuses the walls the refusing solver reads, the advice names no scheme and quotes FVM's refusal, and
-    FVM_UPWIND refuses the same problem. At 775f3b30 the advice named FVM on these walls (review 2 of #2902)."""
-    setting, reason, fvm_says = FVM_REFUSES[walls]
+def test_off_the_measured_set_the_default_scheme_refuses_stating_what_it_read(where):
+    """FP-FDM's velocity route differs from its value-function route off 1-D no-flux (#2904), so it refuses there,
+    stating what it read and why. Off in M at 6f02506c, which drove it by -c*grad(U): 1.1121e+00 periodic, 2.5675e+00
+    in 2-D; at 855dcb6e, which routed it: 1.7056e-01 and 1.4074e+00."""
+    setting, ran_on, why = OFF_THE_MEASURED_SET[where]
     with pytest.raises(NotImplementedError, match="#2900") as refused:
-        _solve(_steep(_OwnControl), walls=walls, **setting)
-    assert reason in str(refused.value)
-    assert f"{NO_SCHEME}: FPFVMSolver, which reads optimal_control, refuses them: " in str(refused.value)
-    assert fvm_says in str(refused.value)
-    with pytest.raises(NotImplementedError, match=fvm_says):
-        _solve(_library(), walls=walls, scheme=NumericalScheme.FVM_UPWIND)
+        _solve(_steep(_OwnControl), **setting)
+    _refused_saying(refused, site=ROUTER, ran_on=ran_on, why=why)
 
 
-def test_a_solver_holding_its_own_walls_is_advised_on_those_walls():
-    """FP-FDM handed Dirichlet walls on a no-flux problem is refused on its own walls, and the advice asks FVM about
-    them, not about the problem's: FVM refuses them, so it names no scheme. At 775f3b30 it named FVM_UPWIND, which on
-    the problem's walls solved another problem (review 2 of #2902, W7)."""
-    own_walls = functools.partial(FPFDMSolver, boundary_conditions=dirichlet_bc(value=0.0, dimension=1))
-    with pytest.raises(NotImplementedError, match=r"its walls are \['DIRICHLET', 'DIRICHLET'\]") as refused:
-        _solve(_steep(_OwnControl), fp_solver=own_walls)
-    assert f"{NO_SCHEME}: FPFVMSolver, which reads optimal_control, refuses them: " in str(refused.value)
-    with pytest.raises(NotImplementedError, match="does not support Dirichlet BC"):
-        FPFVMSolver(_problem(_library()), boundary_conditions=dirichlet_bc(value=0.0, dimension=1))
-
-
-def test_a_solver_holding_walls_fvm_accepts_is_advised_to_hand_fvm_the_same_walls():
-    """The reverse: FP-FDM's centred scheme handed no-flux walls on a Dirichlet problem names FVM with the same walls,
-    which solves it as the library H. At 775f3b30 the advice read the problem's Dirichlet walls and named none."""
-    own_walls = functools.partial(
-        FPFDMSolver, boundary_conditions=no_flux_bc(dimension=1), advection_scheme="divergence_centered"
-    )
-    with pytest.raises(NotImplementedError, match="construct it with the same boundary_conditions"):
-        _solve(_steep(_OwnControl), walls="dirichlet", fp_solver=own_walls)
-    fvm = functools.partial(FPFVMSolver, boundary_conditions=no_flux_bc(dimension=1))
-    _, M_ref = _solve(_library(), walls="dirichlet", fp_solver=fvm)
-    _, M = _solve(_steep(_OwnControl), walls="dirichlet", fp_solver=fvm)
+def test_the_set_reads_the_walls_the_solver_was_handed():
+    """FP-FDM handed Dirichlet walls on a no-flux problem is refused on those walls; handed no-flux walls on a Dirichlet
+    problem it is inside the set, and solves as the library H (review 2 of #2902, W7 and its reverse)."""
+    dirichlet = functools.partial(FPFDMSolver, boundary_conditions=dirichlet_bc(value=0.0, dimension=1))
+    with pytest.raises(NotImplementedError, match="#2900") as refused:
+        _solve(_steep(_OwnControl), fp_solver=dirichlet)
+    assert "walls ['DIRICHLET', 'DIRICHLET']" in str(refused.value)
+    no_flux = functools.partial(FPFDMSolver, boundary_conditions=no_flux_bc(dimension=1))
+    _, M_ref = _solve(_library(), walls="dirichlet", fp_solver=no_flux)
+    _, M = _solve(_steep(_OwnControl), walls="dirichlet", fp_solver=no_flux)
     np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
 
 
-#: The sites that form -c*grad(U) when a solver is called directly, each on a solver handed its own walls on a
-#: no-flux problem, and what its advice must say: Dirichlet walls FVM refuses, periodic walls it accepts.
+#: The sites that form -c*grad(U) when a solver is called directly, and the context each refusal names.
 _U = np.tile(0.3 * np.sin(2 * np.pi * NODES) + 0.2 * NODES, (11, 1))
 DIRECT_SITES = {
-    "FPFDMSolver.solve_fp_system": (
-        lambda problem: FPFDMSolver(problem, boundary_conditions=dirichlet_bc(value=0.0, dimension=1)).solve_fp_system(
-            problem.get_m_initial(), potential_field=_U, show_progress=False
-        ),
-        NO_SCHEME,
+    "FPFDMSolver, from potential_field=U": lambda problem: FPFDMSolver(problem).solve_fp_system(
+        problem.get_m_initial(), potential_field=_U, show_progress=False
     ),
-    "FPFDMSolver.build_advection_operator": (
-        lambda problem: FPFDMSolver(
-            problem, boundary_conditions=dirichlet_bc(value=0.0, dimension=1)
-        ).build_advection_operator(_U[0]),
-        NO_SCHEME,
+    "FPFDMSolver.build_advection_operator": lambda problem: FPFDMSolver(problem).build_advection_operator(_U[0]),
+    "FPSLSolver": lambda problem: FPSLSolver(problem).solve_fp_system(
+        problem.get_m_initial(), potential_field=_U, show_progress=False
     ),
-    "FPSLSolver.solve_fp_system": (
-        lambda problem: FPSLSolver(problem, boundary_conditions=periodic_bc(dimension=1)).solve_fp_system(
-            problem.get_m_initial(), potential_field=_U, show_progress=False
-        ),
-        "construct it with the same boundary_conditions",
-    ),
+    "HJBFDMSolver.build_advection_matrix": lambda problem: HJBFDMSolver(problem).build_advection_matrix(_U[0]),
 }
 
 
 @pytest.mark.parametrize("site", sorted(DIRECT_SITES))
-def test_a_solver_called_directly_is_advised_on_the_walls_it_reads(site):
-    """Called directly with U, FP-FDM and FP-SL refuse an own optimal control at the site that forms the scalar, and the
-    advice asks FVM about the walls the solver was handed, not the problem's no-flux ones."""
-    run, says = DIRECT_SITES[site]
+def test_a_site_called_directly_refuses_stating_what_it_ran(site):
+    """Called directly, each site that forms -c*grad(U) refuses an own optimal control, naming itself and the problem's
+    dimension, and no other scheme or operator."""
     with pytest.raises(NotImplementedError, match="#2900") as refused:
-        _quietly(lambda: run(_problem(_steep(_OwnControl))))
-    context = {
-        "FPFDMSolver.solve_fp_system": "FPFDMSolver, from potential_field=U",
-        "FPSLSolver.solve_fp_system": "FPSLSolver",
-    }
-    assert str(refused.value).startswith(context.get(site, site) + ": ")
-    assert says in str(refused.value)
+        _quietly(lambda: DIRECT_SITES[site](_problem(_steep(_OwnControl))))
+    _refused_saying(refused, site=site, ran_on="a 1-D problem")
 
 
 @pytest.mark.parametrize("shape", [(10, 21), (12, 21), (1, 21), (11, 20)])
@@ -451,26 +416,26 @@ def test_a_density_that_is_not_the_trajectory_is_refused_by_name(shape):
         route(np.ones(shape))
 
 
-def test_an_advection_scheme_that_reads_no_velocity_refuses_and_its_advice_runs():
+def test_an_advection_scheme_that_reads_no_velocity_is_refused():
     """FDM_CENTERED's FP-FDM ignores a velocity (#1632), so it refuses before the velocity is dropped: 5.9844e-01 off in M
-    at 6f02506c, #1632's refusal at 855dcb6e. At sigma = 0.8, where the centred scheme solves this fixture, FVM_UPWIND
-    solves it as the library H."""
-    with pytest.raises(NotImplementedError, match=r"its advection_scheme 'divergence_centered' does not read"):
+    at 6f02506c, #1632's refusal at 855dcb6e. At sigma = 0.8 the centred scheme solves the library H on this fixture."""
+    with pytest.raises(NotImplementedError, match="#2900") as refused:
         _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
-    _solve(_library(), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)  # the scheme solves the library H here
-    _, M_ref = _solve(_library(), volatility=0.8, scheme=NumericalScheme.FVM_UPWIND)
-    _, M = _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FVM_UPWIND)
-    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+    assert "Here its advection_scheme 'divergence_centered' does not read a velocity." in str(refused.value)
+    _solve(_library(), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
 
 
-def test_a_solver_that_takes_the_value_function_only_refuses_and_its_advice_runs():
+def test_a_solver_that_takes_the_value_function_only_is_refused():
     """FP-SL forms the drift as -c*grad(U) and takes no velocity, so it refuses rather than solve with the control
-    cost's drift (1.1519e+00 off in M at 6f02506c on this fixture, SL_LINEAR). Its advice, FVM_UPWIND, solves it."""
-    with pytest.raises(NotImplementedError, match=r"FPSLSolver takes the value function only\. FVM_UPWIND"):
+    cost's drift (1.1519e+00 off in M at 6f02506c on this fixture, SL_LINEAR)."""
+    with pytest.raises(NotImplementedError, match="#2900") as refused:
         _solve(_steep(_OwnControl), scheme=NumericalScheme.SL_LINEAR)
-    _, M_ref = _solve(_library(), scheme=NumericalScheme.FVM_UPWIND)
-    _, M = _solve(_steep(_OwnControl), scheme=NumericalScheme.FVM_UPWIND)
-    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+    _refused_saying(
+        refused,
+        site="FPSLSolver.solve_fp_system(potential_field=U)",
+        ran_on="a 1-D grid, one population, M of shape (11, 21)",
+        why="FPSLSolver takes the value function only.",
+    )
 
 
 @pytest.mark.parametrize(
@@ -489,7 +454,7 @@ def test_the_refusal_names_whose_optimal_control_is_served(make, names):
     the class."""
     with pytest.raises(NotImplementedError, match="#2900") as refused:
         fp_drift_coefficient(_problem(make()), context="here")
-    assert str(refused.value).startswith(f"here: {names},")
+    assert str(refused.value).startswith(f"here, run on a 1-D problem: {names},")
 
 
 def _multi_population(fp_solver):
@@ -506,17 +471,13 @@ def _multi_population(fp_solver):
     return run
 
 
-def test_a_multi_population_solve_refuses_on_fp_fdm_and_its_advice_runs():
+def test_a_multi_population_solve_refuses_on_fp_fdm():
     """MultiPopulationIterator hands FP-FDM each population's value function, and the velocity route is not measured
-    there, so it refuses, naming FPFVMSolver, which accepts these walls and solves it as the library H."""
-    with pytest.raises(
-        NotImplementedError,
-        match=r"Here this is a MultiPopulationIterator solve\. FPFVMSolver reads optimal_control itself and accepts "
-        r"these walls and this volatility\. Hand each population an FPFVMSolver\.",
-    ):
+    there, so it refuses."""
+    with pytest.raises(NotImplementedError, match="#2900") as refused:
         _multi_population(FPFDMSolver)("own")
-    run = _multi_population(FPFVMSolver)
-    np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
+    assert "run on a 1-D grid, a MultiPopulationIterator solve," in str(refused.value)
+    assert "Here this is a MultiPopulationIterator solve." in str(refused.value)
 
 
 #: The router's callers not reached by problem.solve(), each on the measured set, own against library.
@@ -549,26 +510,20 @@ def test_each_router_caller_hands_the_solver_so_the_own_control_is_read(caller):
     np.testing.assert_allclose(caller(_steep(_OwnControl)), caller(_library()), rtol=0, atol=1e-12)
 
 
-def test_regime_switching_refuses_without_a_density_trajectory_and_its_advice_runs():
+def test_regime_switching_refuses_without_a_density_trajectory():
     """RegimeSwitchingIterator hands the router a single density on its first sweep, not a trajectory (#2905), so FP-FDM
-    refuses rather than reach the velocity route, which reads the trajectory. FVM_UPWIND's solver solves it as the
-    library H."""
-
-    def run(fp_solver, kind):
-        problems = [_problem(_library() if kind == "library" else _steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
-        iterator = RegimeSwitchingIterator(
-            problems,
-            RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]])),
-            [HJBFDMSolver(problem) for problem in problems],
-            [fp_solver(problem) for problem in problems],
-            max_iterations=6,
-            tolerance=1e-12,
-        )
-        return np.asarray([np.asarray(m) for m in _quietly(iterator.solve).densities])
-
+    refuses rather than reach the velocity route, which reads the trajectory."""
+    problems = [_problem(_steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
+    iterator = RegimeSwitchingIterator(
+        problems,
+        RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]])),
+        [HJBFDMSolver(problem) for problem in problems],
+        [FPFDMSolver(problem) for problem in problems],
+        max_iterations=6,
+        tolerance=1e-12,
+    )
     with pytest.raises(NotImplementedError, match=r"Here it is handed M of shape \(21,\), not a density trajectory"):
-        run(FPFDMSolver, "own")
-    np.testing.assert_allclose(run(FPFVMSolver, "own"), run(FPFVMSolver, "library"), rtol=0, atol=1e-12)
+        _quietly(iterator.solve)
 
 
 def test_a_graph_solve_takes_the_velocity_route_on_each_node():
@@ -617,16 +572,13 @@ def _meshless(hamiltonian, streamline_diffusion_scale, walls="no_flux"):
 
 
 @pytest.mark.parametrize("walls", ["no_flux", "dirichlet"])
-def test_the_meshless_stabilization_refuses_and_its_advice_runs(walls):
-    """The meshless HJB's streamline diffusion forms its velocity from the scalar, so it refuses, naming no scheme:
+def test_the_meshless_stabilization_refuses_stating_what_it_ran(walls):
+    """The meshless HJB's streamline diffusion forms its velocity from the scalar, so it refuses, naming no other scheme.
     streamline_diffusion_scale=0 is another, unstabilised discretisation, which on this fixture's Dirichlet walls the
-    library H itself diverges under (max|M| 4.0577e+03 against 2.5047e+00 at 1, review 2 of #2902)."""
-    with pytest.raises(
-        NotImplementedError,
-        match=r"MeshlessGalerkinHJBSolver streamline diffusion: .* No scheme of the library has been run on such a "
-        r"Hamiltonian with this stabilization\.$",
-    ):
+    library H itself diverges under: max|M| 4.0577e+03 against 2.5047e+00 at 1 (review 2 of #2902)."""
+    with pytest.raises(NotImplementedError, match="#2900") as refused:
         _meshless(_steep(_OwnControl), 1.0, walls)
+    _refused_saying(refused, site="MeshlessGalerkinHJBSolver streamline diffusion", ran_on="a 1-D problem")
 
 
 def test_without_the_stabilization_the_meshless_pair_forms_no_scalar():
@@ -638,35 +590,81 @@ def test_without_the_stabilization_the_meshless_pair_forms_no_scalar():
     np.testing.assert_allclose(U, U_ref, rtol=0, atol=1e-9)
 
 
-@pytest.mark.parametrize("d", [1, 2])
-def test_the_advection_matrix_refuses_and_the_linearized_operator_it_names_reads_dp(d):
-    """HJBFDMSolver.build_advection_matrix's velocity is -c*grad(U), so it refuses; build_linearized_operator, which it
-    names, reads the Hamiltonian's dp and equals the library H's."""
-    axes = np.meshgrid(*[np.linspace(0.0, 1.0, 11)] * d, indexing="ij")
-    U = 0.3 * np.sin(2 * np.pi * axes[0]) + 0.2 * axes[0] + (0.3 * axes[-1] if d == 2 else 0.0)
-    M = 1.0 + 0.2 * np.cos(np.pi * axes[0])
-    own, library = (HJBFDMSolver(_problem(h, d=d, n=11)) for h in (_steep(_OwnControl), _library()))
-    with pytest.raises(NotImplementedError, match=r"HJBFDMSolver\.build_advection_matrix: .*build_linearized_operator"):
-        own.build_advection_matrix(U)
-    np.testing.assert_allclose(
-        own.build_linearized_operator(U, M).toarray(),
-        library.build_linearized_operator(U, M).toarray(),
-        rtol=0,
-        atol=1e-12,
-    )
+# ---- the CONVENTIONS sentences on the solvers that read optimal_control themselves, each run once ------------------
 
 
-def test_on_walls_the_linearized_operator_refuses_the_advection_matrix_names_no_operator():
-    """On periodic walls build_linearized_operator refuses, so build_advection_matrix's refusal names no operator and
-    quotes it; the operator refuses the library H there too. At 775f3b30 it named the operator (review 2 of #2902)."""
-    U = 0.3 * np.sin(2 * np.pi * NODES)
-    own, library = (HJBFDMSolver(_problem(h, walls="periodic")) for h in (_steep(_OwnControl), _library()))
+def test_conventions_fvm_reads_the_own_control_at_its_faces():
+    """FVM reads optimal_control at its faces, from U: FP alone on a periodic grid, across a U that jumps at the wrap
+    face, U(1) - U(0) = 0.2, the own control solves as the library H."""
+    nodes = np.linspace(0.0, 1.0, 21)
+    U = np.stack([0.3 * np.sin(2 * np.pi * nodes) + 0.2 * nodes] * 11)
+    m0 = 1.0 + 0.5 * np.cos(2 * np.pi * nodes)
+
+    def fp_alone(hamiltonian):
+        fp = FPFVMSolver(_problem(hamiltonian, walls="periodic"))
+        return np.asarray(_quietly(lambda: fp.solve_fp_system(m0, potential_field=U, show_progress=False)))
+
+    np.testing.assert_allclose(fp_alone(_steep(_OwnControl)), fp_alone(_library()), rtol=0, atol=1e-12)
+
+
+class _ServesItsOwn(SeparableHamiltonian):
+    """Serves an optimal_control of its own, which is the base's formula: H and dp stay the cost's."""
+
+    def optimal_control(self, t, x, p, m):
+        return SeparableHamiltonian.optimal_control(self, t, x, p, m)
+
+
+def _moreau_yosida_own():
+    from mfgarchon.core.hamiltonian import L1ControlCost
+
+    return _ServesItsOwn(L1ControlCost(lambda_=0.5).regularize(0.2), coupling=_coupling)
+
+
+#: What FVM refuses, as CONVENTIONS states it, each run on the own control: the problem, and what FVM says.
+FVM_REFUSES = {
+    "walls not one uniform condition": (
+        lambda: _problem(_steep(_OwnControl), walls="no_flux_per_face"),
+        "FP FVM solver supports only uniform boundary conditions",
+    ),
+    "Dirichlet walls": (
+        lambda: _problem(_steep(_OwnControl), walls="dirichlet"),
+        r"FP FVM \(v1\) does not support Dirichlet BC",
+    ),
+    "a volatility that is not one constant": (
+        lambda: MFGProblem(
+            model=Model(hamiltonian=_steep(_OwnControl), volatility=lambda t, x, m: 0.2 + 0.1 * np.asarray(x[0])),
+            domain=_problem(_library()).geometry,
+            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0 * x[0], T=0.5),
+            Nt=10,
+        ),
+        "FP FVM solver supports only scalar/None volatility",
+    ),
+    "a control cost that is not quadratic": (
+        lambda: _problem(_moreau_yosida_own()),
+        r"FP FVM potential_field: the scalar FP drift .* is defined only for a quadratic SeparableHamiltonian",
+    ),
+}
+
+
+@pytest.mark.parametrize("what", sorted(FVM_REFUSES))
+def test_conventions_what_fvm_refuses(what):
+    """CONVENTIONS: FVM refuses walls that are not one uniform condition, Dirichlet walls, a volatility that is not one
+    constant, and, on its value-function route, a control cost that is not quadratic (#1542)."""
+    make, says = FVM_REFUSES[what]
+    problem = make()
+    with pytest.raises(NotImplementedError, match=says):
+        _quietly(
+            lambda: problem.solve(max_iterations=2, tolerance=1e-12, verbose=False, scheme=NumericalScheme.FVM_UPWIND)
+        )
+
+
+def test_conventions_the_particle_solver_refuses_a_control_cost_that_is_not_quadratic():
+    """CONVENTIONS: the particle solver refuses a control cost that is not quadratic (#1542)."""
+    particles = functools.partial(FPParticleSolver, num_particles=500, seed=7)
     with pytest.raises(
-        NotImplementedError, match=r"No operator of this solver reads the Hamiltonian's dp on these walls"
+        NotImplementedError, match=r"FPParticleSolver: the scalar FP drift .* defined only for a quadratic"
     ):
-        own.build_advection_matrix(U)
-    with pytest.raises(NotImplementedError, match="hardcodes no-flux at every boundary"):
-        library.build_linearized_operator(U, np.ones(21))
+        _solve(_moreau_yosida_own(), fp_solver=particles)
 
 
 # ---- the attribute the router reads, against what each FP solver does --------------------------------------------------

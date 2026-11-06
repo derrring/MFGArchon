@@ -56,9 +56,19 @@ def drift_is_the_control_costs(hamiltonian: Any) -> bool:
     )
 
 
-def refuse_the_scalar_drift(hamiltonian: Any, context: str, advice: str = "") -> NoReturn:
+#: Where a refusal of -c*grad(U) points: the one statement of which FP solvers read optimal_control themselves, and of
+#: what each one refuses (#2900). A refusal names no other scheme.
+WHERE_OWN_CONTROLS_ARE_READ = (
+    "The FP solvers that read optimal_control themselves, and what each of them refuses, are in "
+    'docs/user/CONVENTIONS.md, section "What the Fokker-Planck solver receives".'
+)
+
+
+def refuse_the_scalar_drift(hamiltonian: Any, context: str, ran_on: str, why: str = "") -> NoReturn:
     """The refusal of ``-c*grad(U)`` as the drift of a Hamiltonian ``drift_is_the_control_costs`` does not hold for
-    (#2900): it says what was run, which optimal control the Hamiltonian serves, and the caller's ``advice``."""
+    (#2900). It says what was run (``context``) and on what (``ran_on``), which optimal control the Hamiltonian serves,
+    and why the site refuses (``why``, after the reason every such site shares), then points to
+    ``WHERE_OWN_CONTROLS_ARE_READ``. It names no other scheme."""
     from mfgarchon.core.hamiltonian import QuadraticControlCost
 
     name = type(hamiltonian).__name__
@@ -73,8 +83,10 @@ def refuse_the_scalar_drift(hamiltonian: Any, context: str, advice: str = "") ->
     else:
         whose = f"{name} serves an optimal_control of its own"
     raise NotImplementedError(
-        f"{context}: {whose}, so -c*grad(U), the quadratic control cost's drift, is not its drift, and {context} forms "
-        f"the drift from that scalar (#2900)." + (f" {advice}" if advice else "")
+        f"{context}, run on {ran_on}: {whose}, so -c*grad(U), the quadratic control cost's drift, is not its drift, "
+        f"and {context} forms the drift from that scalar (#2900)."
+        + (f" {why}" if why else "")
+        + f" {WHERE_OWN_CONTROLS_ARE_READ}"
     )
 
 
@@ -138,9 +150,7 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     )
 
 
-def fp_drift_coefficient(
-    problem: Any, *, context: str = "fp_drift_coefficient", advice: Callable[[], str] | None = None
-) -> float:
+def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient") -> float:
     """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
     control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
 
@@ -173,14 +183,14 @@ def fp_drift_coefficient(
     a wrong-temperature drift with no error — CLAUDE.md "NO silent fallbacks").
 
     Fail-loud on a ``SeparableHamiltonian`` that ``drift_is_the_control_costs`` does not hold for (#2900): ``-c·∇U`` is
-    not its drift. ``context`` names the caller that forms the drift from the scalar, and ``advice``, called only when
-    it refuses, what the caller's own walls and solver admit instead, so the refusal says what was run and what to do.
+    not its drift. ``context`` names the caller that forms the drift from the scalar, so the refusal says what was run,
+    on a problem of which dimension, and points to where the solvers that read ``optimal_control`` are described.
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
     h_class = getattr(problem, "hamiltonian_class", None)
     if isinstance(h_class, SeparableHamiltonian) and not drift_is_the_control_costs(h_class):
-        refuse_the_scalar_drift(h_class, context, "" if advice is None else advice())
+        refuse_the_scalar_drift(h_class, context, f"a {getattr(problem, 'dimension', '?')}-D problem")
     if isinstance(h_class, SeparableHamiltonian) and isinstance(h_class.control_cost, QuadraticControlCost):
         return 1.0 / h_class.control_cost.lambda_
     # A SeparableHamiltonian that fell past the quadratic branch has a non-quadratic (e.g.
