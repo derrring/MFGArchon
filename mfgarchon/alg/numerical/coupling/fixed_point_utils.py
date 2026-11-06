@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
+from mfgarchon.core.hamiltonian import HEvalState, _population_rows
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
-from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -721,6 +721,12 @@ def diverged_value_function(
     return preserve_terminal_condition(published, U_terminal)
 
 
+def _density_at_faces(m: np.ndarray) -> np.ndarray:
+    """A 1-D density at the faces $x_{i+1/2}$, the mean of its two nodes, along the last axis: the points the 1-D
+    velocity reads it at, for the own density and for each block of a multi-population stack alike (#2335)."""
+    return 0.5 * (m[..., :-1] + m[..., 1:])
+
+
 def compute_fp_velocity_field(
     problem: object,
     U: np.ndarray,
@@ -742,12 +748,12 @@ def compute_fp_velocity_field(
         M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
         H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
         cross_density: Optional stacked multi-population density trajectory
-            ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
-            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``, which the
-            Hamiltonian must slice itself by ``population_index``; no library grid Hamiltonian does, #2335)
-            instead of the own-population density — replacing the ``BoundHamiltonian`` wrapper's
-            ``m_all[round(t/dt)]`` (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
-            In nD only a stack with one value per node (K = 1) is accepted (#2330).
+            ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). The Hamiltonian is read through
+            ``evaluate_optimal_control`` at the own density as ``m``. In 1-D this is handed too, as the state's
+            ``cross_density``: at integer timestep ``n``, one row per population, at the faces as ``m`` is, each row
+            averaged by ``_density_at_faces``, for the density terms that declare it (#2335). ``None`` =>
+            single-population. In nD only a stack with one value per node (K = 1) is accepted, and it is read as
+            ``m`` (#2330).
 
     Returns:
         Velocity $\\alpha^*$.
@@ -785,22 +791,23 @@ def compute_fp_velocity_field(
         # Face gradient: p_{i+1/2} = (U[i+1] - U[i]) / dx
         p_faces = np.diff(U, axis=-1) / dx  # (Nt, Nx-1)
 
-        # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2
-        m_faces = 0.5 * (M[:, :-1] + M[:, 1:])  # (Nt, Nx-1)
+        # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2, the own density's, in a multi-population solve too (#2335). The
+        # stacked cross-density trajectory a multi-population solve passes (#1071) goes beside it as cross_density, read
+        # at the faces too: each population's row averaged by the same function, so at K = 1 its one row is m.
+        m_faces = _density_at_faces(M)  # (Nt, Nx-1)
+        if cross_density is not None:
+            stacked = np.asarray(cross_density)
+            rows = np.stack([_population_rows(row, Nx, "compute_fp_velocity_field") for row in stacked])
+            cross_faces = _density_at_faces(rows)  # (Nt, K, Nx-1)
 
         alpha_faces = np.zeros((Nt, Nx - 1))
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
-            # Issue #1071: a multi-population solve passes the stacked cross-density trajectory;
-            # optimal_control then sees the other populations' density (sliced via population_index)
-            # at this integer timestep, replacing the BoundHamiltonian wrapper's m_all[round(t/dt)]
-            # (n*dt/dt == n, byte-identical). Single-population: the own face-centered density.
-            if cross_density is not None:
-                m_n = cross_density[n]
-            else:
-                m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
+            m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
+            cross_n = None if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
             p_n = p_faces[n].reshape(-1, 1)
-            alpha_faces[n] = H_class.optimal_control(x=coordinate_tuple(x_arr, 1), m=m_n, p=p_n, t=n * dt).ravel()
+            state = HEvalState(t=n * dt, x=x_arr, p=p_n, m=m_n, cross_density=cross_n)
+            alpha_faces[n] = np.ravel(H_class.evaluate_optimal_control(state))
 
         return alpha_faces
     else:
@@ -824,9 +831,9 @@ def compute_fp_velocity_field(
             if cross_density is not None:
                 stacked = np.asarray(cross_density[n])
                 if stacked.size != n_points:
-                    # A stack of another size cannot be paired with the (N, d) batch node by node, and no grid
-                    # Hamiltonian in the library slices one by `population_index` (#2335). This also refuses a
-                    # Hamiltonian that would ignore m, which is the price of not guessing (#2330 review).
+                    # A stack of another size is more than one population, which this door does not pair with an nD
+                    # batch, nor hand on as cross_density (#2335). This also refuses a Hamiltonian that would ignore m,
+                    # the price of not guessing (#2330 review).
                     raise NotImplementedError(
                         f"compute_fp_velocity_field: a cross density of {stacked.size} values for {n_points} nodes "
                         f"has no per-node form for an nD optimal_control batch; only one value per node is "
@@ -836,7 +843,7 @@ def compute_fp_velocity_field(
             else:
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
             alpha_n = np.asarray(
-                H_class.optimal_control(x=coordinate_tuple(x_points, ndim), m=m_points, p=p_points, t=n * dt)
+                H_class.evaluate_optimal_control(HEvalState(t=n * dt, x=x_points, p=p_points, m=m_points))
             )
             if alpha_n.shape != (n_points, ndim):
                 raise ValueError(
@@ -854,8 +861,9 @@ def _why_an_own_control_is_not_a_velocity_here(
 ) -> list[str]:
     """Why ``fp_solver``, which forms its drift from U (``_forms_its_drift_from_u``), cannot take an own optimal control
     as a velocity here, or ``[]`` where it can (#2900). The set where it can is closed, stated positively, and is where
-    FP-FDM's velocity route was measured equal to its value-function route: one population on a 1-D grid with NO_FLUX
-    walls, a density trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the velocity.
+    FP-FDM's velocity route was measured equal to its value-function route: a 1-D grid with NO_FLUX walls, a density
+    trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the velocity, in a
+    multi-population solve too, where the velocity door reads each population at its own density (#2335).
     Off it, the velocity route is unmeasured, or measured wrong: periodic and 2-D are #2904. The walls are the ones the
     solver solves with, its own when it was handed them."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _INTERFACE_VELOCITY_SCHEMES
@@ -866,8 +874,6 @@ def _why_an_own_control_is_not_a_velocity_here(
     if not takes_a_velocity:
         return [f"{name} takes the value function only"]
     reasons = []
-    if cross_density is not None:
-        reasons.append("this is a MultiPopulationIterator solve")
     if problem.dimension != 1:
         reasons.append(f"the grid is {problem.dimension}-D")
     else:
@@ -934,9 +940,9 @@ def resolve_fp_drift_kwargs(
         - Smooth separable $H$ for which ``drift_is_the_control_costs`` does not hold (#2900), handed
           to a solver whose class sets ``_forms_its_drift_from_u`` (FP-FDM, FP-SL) → the velocity
           path below, which reads its ``optimal_control``, only where
-          ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: one population on
-          a 1-D grid with ``NO_FLUX`` walls, a density trajectory, and an advection scheme that reads
-          a velocity. Anywhere else this refuses, stating what it read and why, and names no other
+          ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: a 1-D grid with
+          ``NO_FLUX`` walls, a density trajectory, and an advection scheme that reads a velocity, for
+          any number of populations (#2335). Anywhere else this refuses, stating what it read and why, and names no other
           scheme. Every other solver (FVM,
           particle, the weak-form family) keeps ``potential_field`` and reads ``optimal_control``
           itself. With ``drift_convention=None`` the pre-#1489 gate below decides, and a solver that
@@ -1032,7 +1038,7 @@ def resolve_fp_drift_kwargs(
                     f"{name}.solve_fp_system(potential_field=U)",
                     _what_the_router_read(problem, fp_solver, M, cross_density),
                     (
-                        f"{name} takes its optimal_control as a velocity only for one population on a 1-D grid with "
+                        f"{name} takes its optimal_control as a velocity only on a 1-D grid with "
                         "NO_FLUX walls, handed the density trajectory, with an advection scheme that reads a velocity, "
                         "where that route has been measured equal to the value-function route (#2904). "
                         f"Here {'; '.join(reasons)}."

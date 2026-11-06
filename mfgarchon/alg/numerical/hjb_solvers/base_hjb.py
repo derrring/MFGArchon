@@ -11,7 +11,7 @@ import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
-from mfgarchon.core.hamiltonian import HEvalState
+from mfgarchon.core.hamiltonian import HEvalState, _population_rows
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
@@ -944,22 +944,25 @@ def compute_hjb_residual(
     if precomputed_grad is not None and backend is None and H_class is not None:
         # Build batch arrays
         x_grid = problem.geometry.get_spatial_grid()  # (Nx, 1)
-        # Issue #1071: a multi-population solve passes the stacked cross-density already
-        # indexed to this timestep by the backward loop (integer n_idx_hjb); the per-population
-        # H reads the other populations' density from it (via population_index). The row-pick
-        # lives in the solver loop, so HEvalState stays physics-only — no dt on the state, and
-        # no reverse-engineered round(t/dt). Single-population: the solver's own density.
-        if cross_density_at_n is not None:
-            m_grid = np.asarray(cross_density_at_n, dtype=float)  # (K*Nx,)
-        else:
-            m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
+        # The population's own density is m, in a multi-population solve too (#2335). The stacked cross-density the
+        # backward loop indexed to this timestep (integer n_idx_hjb, #1071) goes beside it as cross_density, one row per
+        # population, which only a density term that declares that slot reads; with no stack, a term reads the own row.
+        # HEvalState stays physics-only: no dt on the state, and no reverse-engineered round(t/dt).
+        m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
+        cross_grid = (
+            None
+            if cross_density_at_n is None
+            else _population_rows(cross_density_at_n, m_grid.size, "compute_hjb_residual")
+        )
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
         # Single batch call — eliminates per-point problem.H() overhead.
         # Issue #1071: consume the single-source residual primitive (H only); the
         # Jacobian below independently calls evaluate_dp (∂H/∂p only), so the
         # residual never computes the drift gradient.
-        H_values = H_class.evaluate_H(HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time)).ravel()
+        H_values = H_class.evaluate_H(
+            HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time, cross_density=cross_grid)
+        ).ravel()
 
         # Mask: propagate NaN from existing Phi_U or from NaN gradients
         nan_mask = np.isnan(Phi_U) | np.isnan(precomputed_grad) | ~np.isfinite(H_values)
@@ -1371,19 +1374,20 @@ def compute_hjb_jacobian(
 
         # Build batch arrays for H_class.dp()
         x_grid = problem.geometry.get_spatial_grid()  # (Nx, 1)
-        # Issue #1071: stacked cross-density (already indexed to this timestep) for multi-pop;
-        # own density otherwise. See compute_hjb_residual for the rationale (lock-faithful).
-        if cross_density_at_n is not None:
-            m_grid = np.asarray(cross_density_at_n, dtype=float)  # (K*Nx,)
-        else:
-            m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
+        # The own density is m, and the stacked cross-density goes beside it, as in compute_hjb_residual (#2335).
+        m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
+        cross_grid = (
+            None
+            if cross_density_at_n is None
+            else _population_rows(cross_density_at_n, m_grid.size, "compute_hjb_jacobian")
+        )
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
         # Single batch call: dH/dp at all grid points.
         # Issue #1071: consume the single-source Jacobian primitive (∂H/∂p only);
         # this never recomputes the Hamiltonian value H.
         dH_dp = H_class.evaluate_dp(
-            HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time)
+            HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time, cross_density=cross_grid)
         ).ravel()  # (Nx,) — squeeze the 1D momentum dimension
 
         # dp_i/dU_j: row i of the SAME gradient operator the residual applied, extracted rather than
