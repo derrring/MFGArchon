@@ -167,7 +167,9 @@ class MultiPopulationIterator:
         # on [0, 2] is two grids.
         if K > 1:
             nodes = [np.asarray(self.multi_problem.get_population(k).geometry.get_spatial_grid()) for k in range(K)]
-            apart = [k for k in range(1, K) if nodes[k].shape != nodes[0].shape or not np.array_equal(nodes[k], nodes[0])]
+            apart = [
+                k for k in range(1, K) if nodes[k].shape != nodes[0].shape or not np.array_equal(nodes[k], nodes[0])
+            ]
             if apart:
                 raise ValueError(
                     f"MultiPopulationIterator: population(s) {apart} sit on a grid other than population 0's "
