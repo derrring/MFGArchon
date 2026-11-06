@@ -109,6 +109,7 @@ class FPFDMSolver(BaseFPSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.FDM
+    _forms_its_drift_from_u = True  # potential_field=U gives alpha = -c*grad(U), from fp_drift_coefficient (#2900)
 
     # BoundaryCapable protocol (Issue #1456): FP-FDM assembles Dirichlet / Neumann / no-flux /
     # periodic boundary rows, and a prescribed flux on its implicit step (FLUX, #2581); Robin has no

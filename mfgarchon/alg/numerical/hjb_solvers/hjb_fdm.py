@@ -67,6 +67,14 @@ HJBAdvectionScheme = Literal["gradient_centered", "gradient_upwind"]
 NewtonFailurePolicy = Literal["raise", "warn_and_fallback"]
 _NEWTON_FAILURE_TO_INNER = {"raise": "raise", "warn_and_fallback": "fallback"}
 
+# The advice of build_advection_matrix's refusal of a Hamiltonian whose optimal_control is its own (#2900): its velocity
+# is -c*grad(U), while build_linearized_operator reads the Hamiltonian's dp, and the #2900 tests run it on such a one.
+_LINEARIZED_OPERATOR_READS_DP = (
+    "build_linearized_operator(U, M) reads the Hamiltonian's dp instead of the scalar, and is the operator the "
+    "strict-adjoint path uses; the #2900 tests run it on such a Hamiltonian in 1-D and 2-D, where it equals the "
+    "library Hamiltonian's for the same function."
+)
+
 
 def is_diagonal_tensor(Sigma: NDArray, rtol: float = 1e-10) -> bool:
     """
@@ -1209,7 +1217,9 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
+            coupling_coefficient = fp_drift_coefficient(
+                self.problem, context="HJBFDMSolver.build_advection_matrix", advice=_LINEARIZED_OPERATOR_READS_DP
+            )
 
         # Compute gradient ∂U/∂x using BC-aware computation
         bc = self.get_boundary_conditions()
@@ -1287,7 +1297,9 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
+            coupling_coefficient = fp_drift_coefficient(
+                self.problem, context="HJBFDMSolver.build_advection_matrix", advice=_LINEARIZED_OPERATOR_READS_DP
+            )
 
         # Compute gradients using trait-based operators
         gradients = self._compute_gradients_nd(U, time=time)

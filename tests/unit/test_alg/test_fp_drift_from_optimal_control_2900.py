@@ -2,26 +2,47 @@
 
 The FP drift of a smooth separable H was formed as -c*grad(U), its control cost's, by any solver handed the value
 function, so a subclass that redefined H solved with the base class's drift on problem.solve()'s default scheme, with
-no error. The oracle is the library SeparableHamiltonian for the same H: the subclass must solve as it does.
+no error. The oracle is the library SeparableHamiltonian for the same H: the subclass must solve as it does. Where the
+FP solver forms -c*grad(U) and its velocity route is not measured equal to its value-function route, the solve refuses,
+and the advice it gives is run here against the library H on the scheme it names.
 """
 
 from __future__ import annotations
 
 import functools
+import importlib
 import logging
+import pkgutil
+import sys
 import warnings
 
 import pytest
 
 import numpy as np
 
+import mfgarchon.alg.numerical
 from mfgarchon import Conditions, MFGProblem, Model
-from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPParticleSolver
+from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, QuadraticMFGHamiltonian, SeparableHamiltonian
+from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+from mfgarchon.factory.scheme_factory import create_paired_solvers
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
+from mfgarchon.geometry.boundary.conditions import periodic_bc
 from mfgarchon.types import NumericalScheme
+from mfgarchon.utils import pde_coefficients
+from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs, fp_drift_coefficient
 
 
 def _coupling(m):
@@ -33,13 +54,23 @@ def _steep_control(self, t, x, p, m):
 
 
 class _Steep(SeparableHamiltonian):
-    """H = 1.5|p|^2 - f(m) on a control_cost=1 base, whose control cost's drift is -grad(U), not -3 grad(U)."""
+    """H = 1.5|p|^2 - f(m) on a control_cost=1 base, whose control cost's drift is -grad(U), not -3 grad(U). The base
+    reads the coupling, so the density it is handed is read as the library reads it."""
 
     def __call__(self, t, x, p, m):
-        return 1.5 * np.sum(np.asarray(p, dtype=float) ** 2, axis=-1) - _coupling(np.asarray(m, dtype=float))
+        p_arr = np.atleast_1d(np.asarray(p, dtype=float))
+        extra = np.sum(p_arr**2, axis=-1)
+        return super().__call__(t, x, p, m) + (extra if p_arr.ndim == 2 else float(extra))
 
     def dp(self, t, x, p, m):
         return 3.0 * np.asarray(p, dtype=float)
+
+
+def _library(**kwargs):
+    return SeparableHamiltonian(QuadraticControlCost(control_cost=1 / 3), coupling=_coupling, **kwargs)
+
+
+_LIBRARY = _library()
 
 
 class _OwnControl(_Steep):
@@ -56,76 +87,353 @@ class _WrappedOwnControl(_Steep):
     )
 
 
+class _OwnStatic(_Steep):
+    optimal_control = staticmethod(lambda t, x, p, m: _LIBRARY.optimal_control(t, x, p, m))
+
+
+class _OwnClassmethod(_Steep):
+    @classmethod
+    def optimal_control(cls, t, x, p, m):
+        return _LIBRARY.optimal_control(t, x, p, m)
+
+
+class _OwnProperty(_Steep):
+    @property
+    def optimal_control(self):
+        return _LIBRARY.optimal_control
+
+
+class _OwnGetattribute(_Steep):
+    """__getattribute__ runs on every lookup, so the method served is the library H's."""
+
+    def __getattribute__(self, name):
+        if name == "optimal_control":
+            return _LIBRARY.optimal_control
+        return object.__getattribute__(self, name)
+
+
+class _OwnGetattr(_Steep):
+    """__getattr__ runs only when the normal lookup fails, and SeparableHamiltonian.optimal_control is found first."""
+
+    def __getattr__(self, name):
+        if name == "optimal_control":
+            return _LIBRARY.optimal_control
+        raise AttributeError(name)
+
+
+class _OwnMixin:
+    def optimal_control(self, t, x, p, m):
+        return _LIBRARY.optimal_control(t, x, p, m)
+
+
+class _OwnByMixin(_OwnMixin, _Steep):
+    pass
+
+
+_QUADRATIC_MFG_3 = QuadraticMFGHamiltonian(coupling_coefficient=3.0)
+
+
+class _OwnQuadraticMFG(QuadraticMFGHamiltonian):
+    """A QuadraticMFGHamiltonian(c=1) whose H, dp and optimal_control are QuadraticMFGHamiltonian(c=3)'s."""
+
+    def __init__(self):
+        super().__init__(coupling_coefficient=1.0)
+
+    def __call__(self, t, x, p, m):
+        return _QUADRATIC_MFG_3(t, x, p, m)
+
+    def dp(self, t, x, p, m):
+        return _QUADRATIC_MFG_3.dp(t, x, p, m)
+
+    def optimal_control(self, t, x, p, m):
+        return _QUADRATIC_MFG_3.optimal_control(t, x, p, m)
+
+
+class _SteepCost(QuadraticControlCost):
+    """A QuadraticControlCost(control_cost=1) whose evaluate, dp and optimal_control are control_cost=1/3's."""
+
+    _target = QuadraticControlCost(control_cost=1 / 3)
+
+    def optimal_control(self, p):
+        return self._target.optimal_control(p)
+
+    def evaluate(self, p):
+        return self._target.evaluate(p)
+
+    def dp(self, p):
+        return self._target.dp(p)
+
+
+def _steep(cls=_Steep, **kwargs):
+    return cls(QuadraticControlCost(control_cost=1.0), coupling=_coupling, **kwargs)
+
+
 def _assigned_on_the_instance():
-    hamiltonian = _Steep(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
+    hamiltonian = _steep()
     hamiltonian.optimal_control = functools.partial(_steep_control, hamiltonian)
     return hamiltonian
 
 
-OWN_CONTROL = {
-    "on_the_class": lambda: _OwnControl(QuadraticControlCost(control_cost=1.0), coupling=_coupling),
-    "inherited_from_a_subclass": lambda: _InheritsOwnControl(
-        QuadraticControlCost(control_cost=1.0), coupling=_coupling
+def _library_method_assigned_on_the_instance():
+    hamiltonian = _steep()
+    hamiltonian.optimal_control = _LIBRARY.optimal_control
+    return hamiltonian
+
+
+#: name -> (the Hamiltonian, its reference: the library H for the same function, whether -c*grad(U) is its drift).
+CASES = {
+    "on_the_class": (lambda: _steep(_OwnControl), _library, False),
+    "inherited_from_a_subclass": (lambda: _steep(_InheritsOwnControl), _library, False),
+    "wrapped_with_functools_wraps": (lambda: _steep(_WrappedOwnControl), _library, False),
+    "assigned_on_the_instance": (_assigned_on_the_instance, _library, False),
+    "library_method_assigned_on_the_instance": (_library_method_assigned_on_the_instance, _library, False),
+    "staticmethod": (lambda: _steep(_OwnStatic), _library, False),
+    "classmethod": (lambda: _steep(_OwnClassmethod), _library, False),
+    "property": (lambda: _steep(_OwnProperty), _library, False),
+    "__getattribute__": (lambda: _steep(_OwnGetattribute), _library, False),
+    "mixin_before_SeparableHamiltonian": (lambda: _steep(_OwnByMixin), _library, False),
+    "QuadraticMFGHamiltonian_subclass": (
+        _OwnQuadraticMFG,
+        lambda: QuadraticMFGHamiltonian(coupling_coefficient=3.0),
+        False,
     ),
-    "wrapped_with_functools_wraps": lambda: _WrappedOwnControl(
-        QuadraticControlCost(control_cost=1.0), coupling=_coupling
+    "QuadraticControlCost_subclass": (
+        lambda: SeparableHamiltonian(_SteepCost(control_cost=1.0), coupling=_coupling),
+        _library,
+        False,
     ),
-    "assigned_on_the_instance": _assigned_on_the_instance,
+    "library_SeparableHamiltonian": (_library, _library, True),
+    "library_QuadraticMFGHamiltonian": (
+        lambda: QuadraticMFGHamiltonian(coupling_coefficient=3.0),
+        lambda: QuadraticMFGHamiltonian(coupling_coefficient=3.0),
+        True,
+    ),
 }
 
-
-def _library():
-    return SeparableHamiltonian(QuadraticControlCost(control_cost=1 / 3), coupling=_coupling)
-
+#: Hamiltonians that serve SeparableHamiltonian.optimal_control with a QuadraticControlCost's, so the predicate holds,
+#: but whose __call__ and dp are not that control's: #2901, out of this fix's scope.
+SERVES_THE_BASE_CONTROL = {"__getattr__": lambda: _steep(_OwnGetattr), "H_redefined_control_inherited": _steep}
 
 NODES = np.linspace(0.0, 1.0, 21)
-MASS = np.trapezoid(0.2 + np.exp(-40 * (NODES - 0.3) ** 2), NODES)  # the grid's measure, so the mass is 1
 
 
-def _solve(hamiltonian, **solver):
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(
-        model=Model(hamiltonian=hamiltonian, volatility=0.3),
+def _problem(hamiltonian, *, d=1, walls="no_flux", centre=0.3, volatility=0.3, n=None):
+    n = n or (21 if d == 1 else 11)
+    nodes = np.linspace(0.0, 1.0, n)
+    mass = np.trapezoid(0.2 + np.exp(-40 * (nodes - centre) ** 2), nodes)  # the grid's measure, so the 1-D mass is 1
+    bc = {"no_flux": no_flux_bc, "periodic": periodic_bc, "dirichlet": functools.partial(dirichlet_bc, value=0.0)}[
+        walls
+    ]
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=bc(dimension=d))
+    return MFGProblem(
+        model=Model(hamiltonian=hamiltonian, volatility=volatility),
         domain=grid,
         conditions=Conditions(
-            m_initial=lambda x: (0.2 + np.exp(-40 * (x[0] - 0.3) ** 2)) / MASS,
-            u_terminal=lambda x: 2.0 * (x[0] - 0.8) ** 2,
+            m_initial=lambda x: (0.2 + np.exp(-40 * (x[0] - centre) ** 2)) / mass,
+            u_terminal=lambda x: 2.0 * sum((x[i] - 0.8) ** 2 for i in range(d)),
             T=0.5,
         ),
         Nt=10,
     )
-    if "fp_solver" in solver:
-        solver = {"hjb_solver": HJBFDMSolver(problem), "fp_solver": solver["fp_solver"](problem)}
+
+
+def _quietly(run):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         logging.disable(logging.CRITICAL)
         try:
-            result = problem.solve(max_iterations=6, tolerance=1e-12, verbose=False, **solver)
+            return run()
         finally:
             logging.disable(logging.NOTSET)
+
+
+def _solve(hamiltonian, *, d=1, walls="no_flux", volatility=0.3, n=None, **solver):
+    problem = _problem(hamiltonian, d=d, walls=walls, volatility=volatility, n=n)
+    if "fp_solver" in solver:
+        solver = {"hjb_solver": HJBFDMSolver(problem), "fp_solver": solver["fp_solver"](problem)}
+    result = _quietly(lambda: problem.solve(max_iterations=6, tolerance=1e-12, verbose=False, **solver))
     return np.asarray(result.U), np.asarray(result.M)
 
 
-@pytest.mark.parametrize("own", sorted(OWN_CONTROL))
-def test_an_own_optimal_control_solves_as_the_library_hamiltonian_it_describes(own):
-    """On the default scheme the subclass solves as the library H for the same function: 7.411e-01 off in M at
-    6f02506c, where its optimal_control was never called, wherever it was given."""
-    U_ref, M_ref = _solve(_library())
-    U, M = _solve(OWN_CONTROL[own]())
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_the_predicate_reads_the_optimal_control_the_hamiltonian_serves(case):
+    """drift_is_the_control_costs holds only where the method served is SeparableHamiltonian.optimal_control, bound to
+    the Hamiltonian, and a quadratic control cost serves QuadraticControlCost's own."""
+    make, _, expected = CASES[case]
+    assert drift_is_the_control_costs(make()) is expected
+
+
+@pytest.mark.parametrize("case", sorted(SERVES_THE_BASE_CONTROL))
+def test_a_hamiltonian_serving_the_base_control_keeps_the_value_function_route(case):
+    """These serve the base class's optimal_control, so the predicate holds and -c*grad(U) is the drift of the control
+    they serve. That their __call__ and dp say otherwise is #2901."""
+    assert drift_is_the_control_costs(SERVES_THE_BASE_CONTROL[case]()) is True
+
+
+@pytest.mark.parametrize("case", sorted(name for name, (_, _, holds) in CASES.items() if not holds))
+def test_an_own_optimal_control_solves_as_the_library_hamiltonian_it_describes(case):
+    """On the default scheme, 1-D with no-flux walls, each solves as the library H for the same function. At 6f02506c,
+    where the default scheme drove each by -c*grad(U), the on_the_class row was 1.2074e+00 off in M on this fixture."""
+    make, reference, _ = CASES[case]
+    U_ref, M_ref = _solve(reference())
+    U, M = _solve(make())
     np.testing.assert_allclose(U, U_ref, rtol=0, atol=1e-12)
     np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
 
 
-def test_a_solver_that_forms_minus_c_grad_u_refuses_it_and_its_advice_runs():
-    """FP-SL forms the drift as -c*grad(U), so it refuses rather than solve with the control cost's drift (9.444e-01 off
-    at 6f02506c). The refusal names the schemes that read optimal_control; each solves as the library H on that scheme."""
-    with pytest.raises(NotImplementedError, match=r"FPSLSolver: _OwnControl\.optimal_control is its own") as refused:
-        _solve(OWN_CONTROL["on_the_class"](), scheme=NumericalScheme.SL_LINEAR)
-    for scheme in ("FDM_UPWIND", "FVM_UPWIND"):
-        assert scheme in str(refused.value)
-        _, M_ref = _solve(_library(), scheme=NumericalScheme[scheme])
-        _, M = _solve(OWN_CONTROL["on_the_class"](), scheme=NumericalScheme[scheme])
-        np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12, err_msg=scheme)
+#: Where the default scheme's FP-FDM cannot take an own optimal control as a velocity, and the reason it names. The
+#: advice there names FVM_UPWIND, and each row runs it against the library H on FVM_UPWIND.
+OFF_THE_MEASURED_SET = {
+    "1-D periodic": ({"walls": "periodic"}, "its walls are ['PERIODIC', 'PERIODIC']"),
+    "2-D no-flux": ({"d": 2, "n": 7}, "the grid is 2-D"),
+}
+
+
+@pytest.mark.parametrize("where", sorted(OFF_THE_MEASURED_SET))
+def test_off_the_measured_set_the_default_scheme_refuses_and_its_advice_runs(where):
+    """FP-FDM's velocity route differs from its value-function route off 1-D no-flux (#2904), so it refuses there, naming
+    why and FVM_UPWIND, which solves it as the library H. Off in M at 6f02506c, which drove it by -c*grad(U): 1.1121e+00
+    periodic, 2.5675e+00 in 2-D; at 855dcb6e, which routed it: 1.7056e-01 and 1.4074e+00."""
+    setting, reason = OFF_THE_MEASURED_SET[where]
+    with pytest.raises(NotImplementedError, match=r"FPFDMSolver\.solve_fp_system\(potential_field=U\)") as refused:
+        _solve(_steep(_OwnControl), **setting)
+    assert reason in str(refused.value)
+    assert "FVM_UPWIND" in str(refused.value)
+    U_ref, M_ref = _solve(_library(), scheme=NumericalScheme.FVM_UPWIND, **setting)
+    U, M = _solve(_steep(_OwnControl), scheme=NumericalScheme.FVM_UPWIND, **setting)
+    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(U, U_ref, rtol=0, atol=1e-12)
+
+
+def test_fvm_solves_it_on_a_periodic_grid_across_a_value_function_that_jumps_at_the_wrap():
+    """The periodic row's FVM advice, on the U that separates FP-FDM's two routes at the wrap face: FP alone, on
+    U = 0.3 sin(2 pi x) + 0.2 x, so U(1) - U(0) = 0.2."""
+    nodes = np.linspace(0.0, 1.0, 21)
+    U = np.stack([0.3 * np.sin(2 * np.pi * nodes) + 0.2 * nodes] * 11)
+    m0 = 1.0 + 0.5 * np.cos(2 * np.pi * nodes)
+
+    def fp_alone(hamiltonian):
+        fp = FPFVMSolver(_problem(hamiltonian, walls="periodic"))
+        return np.asarray(_quietly(lambda: fp.solve_fp_system(m0, potential_field=U, show_progress=False)))
+
+    np.testing.assert_allclose(fp_alone(_steep(_OwnControl)), fp_alone(_library()), rtol=0, atol=1e-12)
+
+
+def test_on_walls_no_solver_has_been_run_on_it_refuses_naming_none():
+    """A Dirichlet wall is off the measured set, and FVM does not take it, so the refusal names no scheme."""
+    with pytest.raises(NotImplementedError, match=r"its walls are \['DIRICHLET', 'DIRICHLET'\]") as refused:
+        _solve(_steep(_OwnControl), walls="dirichlet")
+    assert "No FP solver of the library has been run on such a Hamiltonian with ['DIRICHLET'] walls." in str(
+        refused.value
+    )
+    assert "FVM_UPWIND" not in str(refused.value)
+
+
+def test_an_advection_scheme_that_reads_no_velocity_refuses_and_its_advice_runs():
+    """FDM_CENTERED's FP-FDM ignores a velocity (#1632), so it refuses before the velocity is dropped: 5.9844e-01 off in M
+    at 6f02506c, #1632's refusal at 855dcb6e. At sigma = 0.8, where the centred scheme solves this fixture, FVM_UPWIND
+    solves it as the library H."""
+    with pytest.raises(NotImplementedError, match=r"its advection_scheme 'divergence_centered' does not read"):
+        _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
+    _solve(_library(), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)  # the scheme solves the library H here
+    _, M_ref = _solve(_library(), volatility=0.8, scheme=NumericalScheme.FVM_UPWIND)
+    _, M = _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FVM_UPWIND)
+    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+
+
+def test_a_solver_that_takes_the_value_function_only_refuses_and_its_advice_runs():
+    """FP-SL forms the drift as -c*grad(U) and takes no velocity, so it refuses rather than solve with the control
+    cost's drift (1.1519e+00 off in M at 6f02506c on this fixture, SL_LINEAR). Its advice, FVM_UPWIND, solves it."""
+    with pytest.raises(NotImplementedError, match=r"FPSLSolver takes the value function only\. FVM_UPWIND"):
+        _solve(_steep(_OwnControl), scheme=NumericalScheme.SL_LINEAR)
+    _, M_ref = _solve(_library(), scheme=NumericalScheme.FVM_UPWIND)
+    _, M = _solve(_steep(_OwnControl), scheme=NumericalScheme.FVM_UPWIND)
+    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("make", "names"),
+    [
+        (_assigned_on_the_instance, "this _Steep instance serves an optimal_control assigned on it"),
+        (
+            lambda: SeparableHamiltonian(_SteepCost(control_cost=1.0), coupling=_coupling),
+            "SeparableHamiltonian's control cost, _SteepCost, serves an optimal_control of its own",
+        ),
+        (lambda: _steep(_OwnControl), "_OwnControl serves an optimal_control of its own"),
+    ],
+)
+def test_the_refusal_names_whose_optimal_control_is_served(make, names):
+    """The refusal says where the optimal control it will not replace comes from: the instance, the control cost, or
+    the class."""
+    with pytest.raises(NotImplementedError, match="FVM_UPWIND") as refused:
+        fp_drift_coefficient(_problem(make()), context="here")
+    assert str(refused.value).startswith(f"here: {names},")
+
+
+def _multi_population(fp_solver):
+    def run(kind):
+        hamiltonian = _library if kind == "library" else functools.partial(_steep, _OwnControl)
+        problems = [_problem(hamiltonian(population_index=k), centre=c) for k, c in enumerate((0.3, 0.7))]
+        iterator = MultiPopulationIterator(
+            MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
+            [HJBFDMSolver(problem) for problem in problems],
+            [fp_solver(problem) for problem in problems],
+        )
+        return np.asarray(_quietly(lambda: iterator.solve(max_iterations=6, tolerance=1e-12)).M)
+
+    return run
+
+
+def test_a_multi_population_solve_refuses_on_fp_fdm_and_its_advice_runs():
+    """MultiPopulationIterator hands FP-FDM each population's value function, and the velocity route is not measured
+    there, so it refuses, naming FPFVMSolver and FPParticleSolver; each solves it as the library H."""
+    with pytest.raises(NotImplementedError, match=r"Here this is a MultiPopulationIterator solve\. FPFVMSolver and "):
+        _multi_population(FPFDMSolver)("own")
+    for fp_solver in (FPFVMSolver, functools.partial(FPParticleSolver, num_particles=4000, seed=7)):
+        run = _multi_population(fp_solver)
+        np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
+
+
+def test_regime_switching_refuses_without_a_density_trajectory_and_its_advice_runs():
+    """RegimeSwitchingIterator hands the router a single density on its first sweep, not a trajectory (#2905), so FP-FDM
+    refuses rather than reach the velocity route, which reads the trajectory. FVM_UPWIND's solver solves it as the
+    library H."""
+
+    def run(fp_solver, kind):
+        problems = [_problem(_library() if kind == "library" else _steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
+        iterator = RegimeSwitchingIterator(
+            problems,
+            RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]])),
+            [HJBFDMSolver(problem) for problem in problems],
+            [fp_solver(problem) for problem in problems],
+            max_iterations=6,
+            tolerance=1e-12,
+        )
+        return np.asarray([np.asarray(m) for m in _quietly(iterator.solve).densities])
+
+    with pytest.raises(NotImplementedError, match=r"Here it is handed M of shape \(21,\), not a density trajectory"):
+        run(FPFDMSolver, "own")
+    np.testing.assert_allclose(run(FPFVMSolver, "own"), run(FPFVMSolver, "library"), rtol=0, atol=1e-12)
+
+
+def test_a_graph_solve_takes_the_velocity_route_on_each_node():
+    """GraphMFGSolver hands each node its own density trajectory and no cross density, so each node is one population
+    on the measured set: the own optimal control is read, as the library H's control is (1.202e+00 off in M at
+    6f02506c)."""
+
+    def run(kind):
+        problems = [_problem(_library() if kind == "library" else _steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
+        solver = GraphMFGSolver(
+            problems,
+            AdjacencyCoupling(np.ones((2, 2)) - np.eye(2), alpha=0.05, beta=0.02),
+            [HJBFDMSolver(problem) for problem in problems],
+            [FPFDMSolver(problem) for problem in problems],
+            max_iterations=6,
+            tolerance=1e-12,
+        )
+        return np.asarray([np.asarray(m) for m in _quietly(solver.solve).densities])
+
+    np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
 
 
 def test_particle_still_reads_an_own_optimal_control():
@@ -133,5 +441,153 @@ def test_particle_still_reads_an_own_optimal_control():
     non-separable H only."""
     particles = functools.partial(FPParticleSolver, num_particles=4000, seed=7)
     _, M_ref = _solve(_library(), fp_solver=particles)
-    _, M = _solve(OWN_CONTROL["on_the_class"](), fp_solver=particles)
+    _, M = _solve(_steep(_OwnControl), fp_solver=particles)
     np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+
+
+def _meshless(hamiltonian, streamline_diffusion_scale):
+    problem = _problem(hamiltonian)
+    config = {
+        "collocation_points": NODES.reshape(-1, 1),
+        "delta": 2.6 / np.sqrt(21),
+        "degree": 2,
+        "use_newton": True,
+        "streamline_diffusion_scale": streamline_diffusion_scale,
+    }
+    hjb, fp = create_paired_solvers(problem, NumericalScheme.MESHLESS_GALERKIN, hjb_config=config)
+    result = _quietly(
+        lambda: problem.solve(max_iterations=6, tolerance=1e-12, verbose=False, hjb_solver=hjb, fp_solver=fp)
+    )
+    return np.asarray(result.U), np.asarray(result.M)
+
+
+def test_the_meshless_stabilization_refuses_and_its_advice_runs():
+    """The meshless HJB's streamline diffusion forms its velocity from the scalar, so it refuses, naming
+    streamline_diffusion_scale=0; with it, the meshless pair solves the subclass as the library H (5.335e-11 off in M,
+    the pair's own convergence, not a drift difference)."""
+    with pytest.raises(NotImplementedError, match=r"MeshlessGalerkinHJBSolver streamline diffusion: .*streamline_dif"):
+        _meshless(_steep(_OwnControl), 1.0)
+    U_ref, M_ref = _meshless(_library(), 0.0)
+    U, M = _meshless(_steep(_OwnControl), 0.0)
+    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(U, U_ref, rtol=0, atol=1e-9)
+
+
+@pytest.mark.parametrize("d", [1, 2])
+def test_the_advection_matrix_refuses_and_the_linearized_operator_it_names_reads_dp(d):
+    """HJBFDMSolver.build_advection_matrix's velocity is -c*grad(U), so it refuses; build_linearized_operator, which it
+    names, reads the Hamiltonian's dp and equals the library H's."""
+    axes = np.meshgrid(*[np.linspace(0.0, 1.0, 11)] * d, indexing="ij")
+    U = 0.3 * np.sin(2 * np.pi * axes[0]) + 0.2 * axes[0] + (0.3 * axes[-1] if d == 2 else 0.0)
+    M = 1.0 + 0.2 * np.cos(np.pi * axes[0])
+    own, library = (HJBFDMSolver(_problem(h, d=d, n=11)) for h in (_steep(_OwnControl), _library()))
+    with pytest.raises(NotImplementedError, match=r"HJBFDMSolver\.build_advection_matrix: .*build_linearized_operator"):
+        own.build_advection_matrix(U)
+    np.testing.assert_allclose(
+        own.build_linearized_operator(U, M).toarray(),
+        library.build_linearized_operator(U, M).toarray(),
+        rtol=0,
+        atol=1e-12,
+    )
+
+
+# ---- the attribute the router reads, against what each FP solver does --------------------------------------------------
+
+
+def _on_the_grid(fp_solver):
+    def run():
+        problem = _problem(_library())
+        U = np.tile(0.5 * (NODES - 0.3) ** 2, (11, 1))
+        fp_solver(problem).solve_fp_system(problem.get_m_initial(), potential_field=U, show_progress=False)
+
+    return run
+
+
+def _meshless_fp_alone():
+    problem = _problem(_library())
+    fp = MeshlessGalerkinFPSolver(problem, collocation_points=NODES[:, None], delta=2.6 / np.sqrt(21))
+    fp.solve_fp_system(np.ones(21), potential_field=np.tile(0.5 * (NODES - 0.3) ** 2, (11, 1)))
+
+
+def _fem_fp_alone():
+    skfem = pytest.importorskip("skfem")
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+    from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
+
+    mesh = skfem.MeshTri.init_sqsymmetric().refined(2)
+    geometry = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
+    geometry.mesh_data = skfem_to_meshdata(mesh)
+    geometry.boundary_conditions = no_flux_bc(dimension=2)
+    problem = MFGProblem(
+        geometry=geometry,
+        T=0.2,
+        Nt=5,
+        volatility=0.3,
+        components=MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=_library()),
+    )
+    U = np.tile(0.6 * mesh.p[0] ** 2 + 0.3 * mesh.p[1], (problem.Nt + 1, 1))
+    FPFEMSolver(problem).solve_fp_system(np.ones(mesh.p.shape[1]), U)
+
+
+#: Each FP solver, by name, run on its value-function route with the library H.
+RUN_ON_THE_VALUE_FUNCTION = {
+    "FPFDMSolver": _on_the_grid(FPFDMSolver),
+    "FPSLSolver": _on_the_grid(FPSLSolver),
+    "FPFVMSolver": _on_the_grid(FPFVMSolver),
+    "FPParticleSolver": _on_the_grid(functools.partial(FPParticleSolver, num_particles=500, seed=7)),
+    "MeshlessGalerkinFPSolver": _meshless_fp_alone,
+    "FPFEMSolver": _fem_fp_alone,
+}
+#: FP solvers with no such run, and why.
+NOT_RUN = {
+    "FPGFDMSolver": "withdrawn (#2583): construction raises",
+    "FPNetworkSolver": "a network solver: its rates are NetworkHamiltonian.optimal_control's",
+    "WeakFormFPSolver": "the weak-form family's base: FPFEMSolver and MeshlessGalerkinFPSolver are run",
+}
+
+
+def _every_fp_solver():
+    pytest.importorskip("skfem")  # the FEM modules import it
+    for module in pkgutil.walk_packages(mfgarchon.alg.numerical.__path__, "mfgarchon.alg.numerical."):
+        importlib.import_module(module.name)
+
+    def below(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from below(sub)
+
+    return {cls.__name__: cls for cls in below(BaseFPSolver) if cls.__module__.startswith("mfgarchon.")}
+
+
+def test_every_fp_solver_is_run_or_named_with_its_reason():
+    """The population of the attribute pin below is every FP solver class of the package, so a new one is classified."""
+    solvers = _every_fp_solver()
+    assert set(solvers) == set(RUN_ON_THE_VALUE_FUNCTION) | set(NOT_RUN)
+    assert not any(solvers[name]._forms_its_drift_from_u for name in NOT_RUN)
+    with pytest.raises(NotImplementedError, match="2583"):
+        FPGFDMSolver(_problem(_library()))
+
+
+@pytest.mark.parametrize("name", sorted(RUN_ON_THE_VALUE_FUNCTION))
+def test_the_attribute_the_router_reads_says_whether_the_solver_forms_its_drift_from_u(name, monkeypatch):
+    """_forms_its_drift_from_u is True exactly for the solvers whose value-function route forms the drift from the
+    scalar, -c*grad(U): the router reads it, and only it, to send such a solver an own optimal control as a velocity or
+    refuse it. Every module's binding of fp_drift_coefficient is spied, so a call through any of them is counted."""
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("context", "fp_drift_coefficient"))
+        return fp_drift_coefficient(*args, **kwargs)
+
+    solvers = _every_fp_solver()
+    for module_name, module in list(sys.modules.items()):
+        if (
+            module_name.startswith("mfgarchon")
+            and getattr(module, "fp_drift_coefficient", None) is fp_drift_coefficient
+        ):
+            monkeypatch.setattr(module, "fp_drift_coefficient", spy)
+    assert pde_coefficients.fp_drift_coefficient is spy
+    _quietly(RUN_ON_THE_VALUE_FUNCTION[name])
+    assert bool(calls) is solvers[name]._forms_its_drift_from_u, calls

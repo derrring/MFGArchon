@@ -339,6 +339,7 @@ class MultiPopulationIterator:
                         h_class=H_k,
                         cross_density=m_all,
                         drift_convention=self._fp_drift_convention[k],
+                        fp_solver=fp_k,
                     )
                     if use_positional_U:
                         M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False, **fp_kwargs)

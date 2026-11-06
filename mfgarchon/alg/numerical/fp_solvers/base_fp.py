@@ -124,6 +124,12 @@ class BaseFPSolver(BaseNumericalSolver):
     # signature-sniffing it would replace carries paper-number risk, deferred).
     _drift_convention: DriftConvention = DriftConvention.VELOCITY
 
+    # Whether this solver, handed the value function, forms the FP drift from it itself, as -c*grad(U) from
+    # `fp_drift_coefficient`, rather than from the Hamiltonian's `optimal_control` (#2900). The router reads it, and
+    # only it, to decide whether a Hamiltonian that serves an optimal control of its own is sent to this solver as a
+    # velocity or refused, rather than handed U.
+    _forms_its_drift_from_u: bool = False
+
     def mass_conservation_error_override(self) -> float | None:
         """This solver's own account of mass conservation, when the generic grid-density
         measurement cannot see what actually happened (Issue #2188).

@@ -148,7 +148,10 @@ _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 # verbatim and bypasses the smoothness dispatch. NOT reachable on the auto-routed coupling path: a
 # non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
 # quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
-# velocity -- measured, the coupling path raises rather than reaching it.
+# velocity -- measured, the coupling path raises rather than reaching it. The one exception is a
+# Hamiltonian for which `drift_is_the_control_costs` fails (#2900): the router sends it a velocity only
+# with an advection scheme in this set, on a 1-D grid, where a tensor volatility is refused at construction,
+# and refuses it otherwise.
 # This set is the accept-list the guard tests against, and it still tells the driver which schemes
 # leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
@@ -1175,7 +1178,8 @@ def solve_fp_nd_full_system(
             f"the solve would run at zero drift, returning a pure-diffusion density that looks "
             f"converged and conserves mass (Issue #1632). Supply the value function instead -- "
             f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so "
-            f"the drift is derived as -c*grad(U), valid only for a smooth separable Hamiltonian; "
+            f"the drift is derived as -c*grad(U), valid only for a smooth separable Hamiltonian for which "
+            f"drift_is_the_control_costs holds (#2900); "
             f"or use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with scalar "
             f"diffusion."
         )

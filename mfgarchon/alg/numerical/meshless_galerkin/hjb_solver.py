@@ -108,7 +108,15 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         # Issue #1487/#1420 (G-017): single-source the drift scale = 1/control_cost (not the raw
         # coupling_coefficient). The paired FP reads the SAME fp_drift_coefficient, so A_FP = A_HJB^T
         # (the adjoint-consistency thesis) AND both match the HJB optimal control.
-        coupling = fp_drift_coefficient(self.problem, context="MeshlessGalerkinHJBSolver streamline diffusion")
+        coupling = fp_drift_coefficient(
+            self.problem,
+            context="MeshlessGalerkinHJBSolver streamline diffusion",
+            advice=(
+                "With streamline_diffusion_scale=0 this solver forms no drift from the scalar, and the "
+                "MESHLESS_GALERKIN pair reads optimal_control; the #2900 tests run that pair on a 1-D grid, "
+                "where it solves it."
+            ),
+        )
         velocity = (-coupling * np.column_stack([G_d @ u for G_d in self._G_grad])).T
         return self._disc.streamline_diffusion(velocity, D, c_scale=self._sd_scale)
 

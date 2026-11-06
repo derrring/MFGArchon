@@ -141,6 +141,7 @@ class FPSLSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.SL  # Forward SL (adjoint of HJB Backward SL)
     _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
+    _forms_its_drift_from_u = True  # alpha = -c*grad(U), from fp_drift_coefficient (#2900)
 
     # BoundaryCapable protocol (Issue #1456): the implicit diffusion sub-step is zero-flux
     # (no-flux / Neumann g=0) and the advection wraps for periodic; Dirichlet / Robin / absorbing

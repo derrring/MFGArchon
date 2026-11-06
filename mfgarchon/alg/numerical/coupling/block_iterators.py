@@ -349,6 +349,7 @@ class BlockIterator(BaseCouplingIterator):
                 U,
                 _M_curr,
                 drift_convention=self._fp_drift_convention,
+                fp_solver=self.fp_solver,
             )
             kwargs.update(drift_kwargs)
             if use_positional_U:

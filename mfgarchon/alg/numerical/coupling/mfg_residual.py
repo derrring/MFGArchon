@@ -325,7 +325,13 @@ class MFGResidual:
         kwargs.update(resolve_source_kwarg(params, fp_source, type(self.fp_solver).__name__, "solve_fp_system", "FP"))
 
         drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-            self.problem, params, self.drift_field, U, M, drift_convention=self._fp_drift_convention
+            self.problem,
+            params,
+            self.drift_field,
+            U,
+            M,
+            drift_convention=self._fp_drift_convention,
+            fp_solver=self.fp_solver,
         )
         kwargs.update(drift_kwargs)
 
