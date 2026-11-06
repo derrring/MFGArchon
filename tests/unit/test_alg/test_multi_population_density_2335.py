@@ -34,6 +34,7 @@ from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.types.callable_protocols import FrozenSlotError, refuse_batch_disagreement
+from mfgarchon.utils.validation.protocol import ValidationError
 
 N, NT, SWEEPS = 21, 10, 4
 
@@ -425,3 +426,54 @@ def test_a_partial_that_froze_cross_density_is_refused_where_the_library_passes_
     state = HEvalState(x=np.linspace(0.0, 1.0, 4).reshape(-1, 1), p=np.zeros((4, 1)), m=np.ones(4), t=0.0)
     with pytest.raises(FrozenSlotError, match="freezes cross_density"):
         Frozen().evaluate_H(state)
+
+
+def _sum_coupling(rows_seen):
+    def coupling(m, cross_density):
+        if np.size(m) >= N - 1:  # a door's batch: the grid's nodes, or its faces; the problem's own checks read fewer
+            rows_seen.append(len(cross_density))
+        return m + 0.5 * (np.asarray(cross_density).sum(axis=0) - m)
+
+    return coupling
+
+
+class _DropsOnOverride(SeparableHamiltonian):
+    def __call__(self, t, x, p, m):
+        return super().__call__(t=t, x=x, p=p, m=m)
+
+
+class _ForwardsOnOverride(SeparableHamiltonian):
+    def __call__(self, t, x, p, m, cross_density):
+        return super().__call__(t=t, x=x, p=p, m=m, cross_density=cross_density)
+
+
+def test_an_override_that_drops_the_slot_is_refused_where_a_term_reads_it():
+    """A subclass of a library Hamiltonian whose override drops `cross_density`, calling the library's method through
+    `super()`, would read a term that declares the slot at the own density alone, with no error: refused, at the
+    problem's first read. The same subclass forwarding the slot reads every population."""
+    seen = []
+    # Refused at the problem's first read of it, its validation, which reports the refusal it raised.
+    with pytest.raises(
+        ValidationError, match=r"coupling declares cross_density, and the method that reads it was handed none"
+    ):
+        _solve(
+            [_DropsOnOverride(QuadraticControlCost(control_cost=1.0), coupling=_sum_coupling([])) for _ in range(2)],
+            [0.25, 0.75],
+        )
+    _solve(
+        [_ForwardsOnOverride(QuadraticControlCost(control_cost=1.0), coupling=_sum_coupling(seen)) for _ in range(2)],
+        [0.25, 0.75],
+    )
+    assert seen
+    assert set(seen) == {2}
+
+
+def test_a_direct_call_passing_the_own_row_reads_as_the_one_population_body():
+    """Control: a direct single-population call of a Hamiltonian whose term declares the slot passes `m[np.newaxis]`,
+    and reads as the same Hamiltonian written for one population."""
+    x, p, m = (np.linspace(0.0, 1.0, 4),), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
+    declaring = _separable(lambda m, cross_density: m + 0.5 * (cross_density.sum(axis=0) - m))
+    plain = _separable(lambda m: m)
+    np.testing.assert_array_equal(
+        declaring(t=0.0, x=x, p=p, m=m, cross_density=m[np.newaxis]), plain(t=0.0, x=x, p=p, m=m)
+    )

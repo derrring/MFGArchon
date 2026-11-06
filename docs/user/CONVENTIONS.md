@@ -305,7 +305,10 @@ The library calls a method that declares `cross_density` with it, and the popula
 iterator refuses populations whose node coordinates differ, since the rows are read at one population's points. A
 method of yours that declares `cross_density` is called with it by the library; one of yours that calls it without
 passing it on raises Python's `TypeError` naming `cross_density`, rather than reading the own density alone, unless
-you gave the parameter a default, which then stands.
+you gave the parameter a default, which then stands. A library Hamiltonian's methods give it a default, `None`, which
+holds for terms that do not declare the slot: a term that declares it, read by a method handed none, is refused, so a
+direct call of such a Hamiltonian passes `cross_density=m[np.newaxis]` for one population, and an override of a library
+method passes on the `cross_density` the library hands it.
 
 The library's own `dm` methods take no `cross_density`: `dm` is read on single-population paths only, and no
 multi-population door reads it (measured for #2335: no call to `dm` or `dH_dm` in a two- or three-population solve of

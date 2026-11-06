@@ -844,10 +844,18 @@ def _density_at_points(m: Any, count: int, what: str, *, after: Exception | None
 def _read_of_the_density(owner: Any, name: str, m: Any, count: int | None = None, cross_density: Any = None) -> Any:
     """``owner.<name>``, a function of the density, read by name at ``m``, the own density, and at ``cross_density``, every
     population's, if it declares that slot (#2875, #2335): a float at one point, and on a batch of ``count`` points one
-    value per point, a constant holding for all of them. A return of any other count is refused (#2335). Nothing falls
-    back to reading a batch one point at a time: a body that cannot read a batch raises, and the problem's check refuses
-    it when it takes the Hamiltonian."""
+    value per point, a constant holding for all of them. A return of any other count is refused (#2335), and so is a
+    term that declares ``cross_density`` when the method was handed none. Nothing falls back to reading a batch one point
+    at a time: a body that cannot read a batch raises, and the problem's check refuses it when it takes the Hamiltonian."""
     read = bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
+    if cross_density is None and "cross_density" in read.passes:
+        # Every library call of a family method hands the slot (`_family_call`), so a declaring term reached without it
+        # was reached by a call that dropped it: an override calling the library's method, or a direct call (#2335).
+        raise TypeError(
+            f"{type(owner).__name__}.{name.lstrip('_')} declares cross_density, and the method that reads it was handed "
+            "none. Pass cross_density=m[np.newaxis] for one population, or, from an override of a library method, pass "
+            "on the cross_density the library hands the override (#2335)."
+        )
     rows = _density_rows(cross_density, m)
     if count is None:
         return float(read(m=m, cross_density=rows))
@@ -2723,9 +2731,9 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._coupling_dm is not None:
             if is_batch:
-                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0])
+                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0], _density_rows(None, m))
                 return -result
-            return -_read_of_the_density(self, "_coupling_dm", m)
+            return -_read_of_the_density(self, "_coupling_dm", m, cross_density=_density_rows(None, m))
 
         if self._coupling is None:
             if is_batch:
@@ -2969,21 +2977,27 @@ class CongestionHamiltonian(HamiltonianBase):
                 H_kin = float(H_kin.sum())
 
             if is_batch:
-                c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0])
-                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, p_arr.shape[0])
+                own = _density_rows(None, m)  # dm is read on single-population paths only (#2335)
+                c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0], own)
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, p_arr.shape[0], own)
 
                 kinetic_dm = -c_dm * H_kin / c_m**2
             else:
-                c_m = _read_of_the_density(self, "_congestion_factor", m)
-                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m)
+                own = _density_rows(None, m)  # dm is read on single-population paths only (#2335)
+                c_m = _read_of_the_density(self, "_congestion_factor", m, cross_density=own)
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, cross_density=own)
                 kinetic_dm = -c_dm * H_kin / c_m**2
 
             # Coupling contribution f'(m)
             if self._coupling_dm is not None:
                 if is_batch:
-                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0])
+                    coupling_dm_val = _read_of_the_density(
+                        self, "_coupling_dm", m, p_arr.shape[0], _density_rows(None, m)
+                    )
                 else:
-                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m)
+                    coupling_dm_val = _read_of_the_density(
+                        self, "_coupling_dm", m, cross_density=_density_rows(None, m)
+                    )
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
