@@ -297,7 +297,10 @@ Where there is one population, in a single-population solve and in the problem's
 `m[np.newaxis]`, one row, so a body that reads the others reads them as possibly none, such as
 `cross_density[1 - k] if len(cross_density) > 1 else 0 * m`. `cross_density` is an array where `x` is a tuple because
 its rows always share one shape and its leading axis is always the number of populations, while `x`'s entries may be
-scalars and arrays mixed. Until #2335 the stack was handed as `m`. A body that still reads it from `m` gets its own
+scalars and arrays mixed. A Hamiltonian's `dm` takes no `cross_density`: it is read on single-population paths only,
+where every population's density is the own row, and no multi-population door reads it (measured for #2335: no call
+to `dm` or `dH_dm` in a two- or three-population solve of a separable, an L1 or a congestion Hamiltonian). Until #2335
+the stack was handed as `m`. A body that still reads it from `m` gets its own
 population's values: one that reads its shape raises, and one that does not, such as `np.mean(m)` meant as every
 population's mean, reads its own population's with no error.
 
