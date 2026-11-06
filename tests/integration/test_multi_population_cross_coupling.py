@@ -188,8 +188,12 @@ def test_fp_velocity_consumes_cross_density_1071():
         return CongestionHamiltonian(QuadraticControlCost(control_cost=1.0), congestion_factor=factor)
 
     class _Prob:
-        # A real grid, not a stand-in: the velocity reads the grid's node axes from their owner (#2756).
+        # A real grid, not a stand-in: the velocity reads the grid's node axes from their owner (#2756), and where an
+        # axis wraps from the problem's BC (#2904).
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
+
+        def get_boundary_conditions(self):
+            return self.geometry.get_boundary_conditions()
 
     prob = _Prob()
     prob.dt = dt

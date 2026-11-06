@@ -721,10 +721,32 @@ def diverged_value_function(
     return preserve_terminal_condition(published, U_terminal)
 
 
-def _density_at_faces(m: np.ndarray) -> np.ndarray:
+def _face_neighbours(n: int, span: int | None) -> np.ndarray:
+    """The node across the face (i + 1/2) from node i, along an axis of n nodes, as FP-FDM's divergence-upwind stencil
+    takes it (#2904): i + 1, wrapped modulo the periodic span (`periodic_axis_span`), so that the face across the wrap
+    reads node 0, never the node an endpoint-inclusive axis repeats. The last node of an axis that does not wrap has no
+    face, and is mapped to itself."""
+    nodes = np.arange(n)
+    return np.minimum(nodes + 1, n - 1) if span is None else (nodes + 1) % span
+
+
+def _density_at_faces(m: np.ndarray, across: np.ndarray | None = None) -> np.ndarray:
     """A 1-D density at the faces $x_{i+1/2}$, the mean of its two nodes, along the last axis: the points the 1-D
-    velocity reads it at, for the own density and for each block of a multi-population stack alike (#2335)."""
-    return 0.5 * (m[..., :-1] + m[..., 1:])
+    velocity reads it at, for the own density and for each block of a multi-population stack alike (#2335). ``across``
+    is each face's second node (`_face_neighbours`); without it the faces are the n - 1 between neighbours."""
+    if across is None:
+        return 0.5 * (m[..., :-1] + m[..., 1:])
+    return 0.5 * (m[..., : across.size] + m[..., across])
+
+
+def _centred_gradient(u: np.ndarray, axis: int, dx: float, span: int | None) -> np.ndarray:
+    """The centred difference of u along ``axis`` at every node, second order everywhere: `np.gradient`'s, with its
+    second-order one-sided ends, on an axis that does not wrap, and across the wrap through `periodic_axis_span`'s span
+    on one that does (#2904)."""
+    if span is None:
+        return np.gradient(u, dx, axis=axis, edge_order=2)
+    nodes = np.arange(u.shape[axis])
+    return (np.take(u, (nodes + 1) % span, axis=axis) - np.take(u, (nodes - 1) % span, axis=axis)) / (2.0 * dx)
 
 
 def compute_fp_velocity_field(
@@ -733,14 +755,17 @@ def compute_fp_velocity_field(
     M: np.ndarray,
     H_class: object,
     cross_density: np.ndarray | None = None,
+    boundary_conditions: object | None = None,
 ) -> np.ndarray:
-    """Compute the FP advection velocity $\\alpha^*$ from the value function: face-centered in 1D, node-centered in nD.
+    """Compute the FP advection velocity $\\alpha^*$ from the value function, at the faces FP-FDM's divergence-upwind
+    stencil reads it at (#919, #2904).
 
     Single-source for the velocity convention shared by the Picard
     ``FixedPointIterator`` and the Newton ``MFGResidual`` (Issue #1233). Evaluates
-    ``H.optimal_control`` at cell interfaces $x_{i+1/2}$ using the forward-difference
-    gradient $p_{i+1/2} = (U_{i+1} - U_i)/\\Delta x$ (Issue #919), which matches the
-    FDM divergence-upwind stencil exactly.
+    ``H.optimal_control`` at cell interfaces $x_{i+1/2}$, with the normal component of the gradient the stencil's own
+    forward difference $p_{i+1/2} = (U_{j} - U_i)/\\Delta x$, where $j$ is the node across the face as the stencil
+    takes it (`_face_neighbours`): $i + 1$, wrapped through `periodic_axis_span` on an axis that wraps. On the quadratic
+    control cost the velocity route then equals the value-function route the stencil forms from U (#2904).
 
     Args:
         problem: MFG problem (provides ``geometry`` and ``dt``).
@@ -754,23 +779,33 @@ def compute_fp_velocity_field(
             averaged by ``_density_at_faces``, for the density terms that declare it (#2335). ``None`` =>
             single-population. In nD only a stack with one value per node (K = 1) is accepted, and it is read as
             ``m`` (#2330).
+        boundary_conditions: The BC of the FP solver the velocity is for, which decides where an axis wraps
+            (`periodic_axis_span`). ``None`` => the problem's.
 
     Returns:
         Velocity $\\alpha^*$.
-        1D: shape ``(U.shape[0], Nx-1)`` — face-centered, at each face $(i+1/2)$.
-        nD: shape ``(U.shape[0], ndim, *spatial_shape)`` — node-centered (nD fallback). ``optimal_control`` is called
-        once per time step on the ``(N, d)`` batch of nodes, with ``m`` of shape ``(N,)`` (#2330).
+        1D: shape ``(U.shape[0], F)``, at the faces $(i+1/2)$: F = Nx - 1 on an axis that does not wrap, and the
+        periodic span on one that does, Nx - 1 on an endpoint-inclusive grid, whose last face reads node 0.
+        nD: shape ``(U.shape[0], ndim, *spatial_shape)``, one face array per axis: entry ``[d][i]`` is the velocity at
+        the face $(i + 1/2)$ along ``d``, the face the stencil reads at node ``i``; the last node of an axis that does
+        not wrap has no face and carries 0. ``optimal_control`` is called once per axis and time step, on the
+        ``(N, d)`` batch of that axis's faces: the normal component of p is the forward difference across the face, the
+        others the mean of the two nodes' centred differences, and ``m`` the mean of the two nodes (#2330, #2904).
 
     Raises:
         ValueError: in nD, when ``optimal_control`` does not return shape ``(N, d)``.
         NotImplementedError: in nD, when ``cross_density[n]`` does not hold exactly one value per node.
     """
+    from mfgarchon.geometry.boundary.conditions import periodic_axis_span
+
     geometry = problem.geometry
     grid_spacing = geometry.get_grid_spacing()
     dt = problem.dt
     Nt = U.shape[0]
     spatial_shape = U.shape[1:]
     ndim = len(spatial_shape)
+    bc = problem.get_boundary_conditions() if boundary_conditions is None else boundary_conditions
+    spans = [periodic_axis_span(bc, spatial_shape[d], ndim, geometry) for d in range(ndim)]
 
     # The grid's own node axes, from their one owner (#2756).
     axes = geometry_grid_axes(geometry)
@@ -783,24 +818,28 @@ def compute_fp_velocity_field(
     if ndim == 1:
         dx = grid_spacing[0]
         Nx = spatial_shape[0]
+        faces = Nx - 1 if spans[0] is None else spans[0]
+        across = _face_neighbours(Nx, spans[0])[:faces]
 
-        # Face centers: x_{i+1/2}
+        # Face centers: x_{i+1/2}. An axis that wraps with no repeated node has one face more, across the wrap.
         x_nodes = axes[0]
-        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])  # (Nx-1,)
+        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])
+        if faces == Nx:
+            x_faces = np.append(x_faces, x_nodes[-1] + 0.5 * dx)
 
-        # Face gradient: p_{i+1/2} = (U[i+1] - U[i]) / dx
-        p_faces = np.diff(U, axis=-1) / dx  # (Nt, Nx-1)
+        # Face gradient: p_{i+1/2} = (U[j] - U[i]) / dx, j the node across the face (#2904)
+        p_faces = (U[:, across] - U[:, :faces]) / dx  # (Nt, faces)
 
-        # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2, the own density's, in a multi-population solve too (#2335). The
+        # Face density: m_{i+1/2} = (m[i] + m[j]) / 2, the own density's, in a multi-population solve too (#2335). The
         # stacked cross-density trajectory a multi-population solve passes (#1071) goes beside it as cross_density, read
         # at the faces too: each population's row averaged by the same function, so at K = 1 its one row is m.
-        m_faces = _density_at_faces(M)  # (Nt, Nx-1)
+        m_faces = _density_at_faces(M, across)  # (Nt, faces)
         if cross_density is not None:
             stacked = np.asarray(cross_density)
             rows = np.stack([_population_rows(row, Nx, "compute_fp_velocity_field") for row in stacked])
-            cross_faces = _density_at_faces(rows)  # (Nt, K, Nx-1)
+            cross_faces = _density_at_faces(rows, across)  # (Nt, K, faces)
 
-        alpha_faces = np.zeros((Nt, Nx - 1))
+        alpha_faces = np.zeros((Nt, faces))
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
             m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
@@ -811,22 +850,14 @@ def compute_fp_velocity_field(
 
         return alpha_faces
     else:
-        # nD: node-centered fallback (face-centered nD deferred)
-        grad_components = []
-        for d in range(ndim):
-            grad_d = np.gradient(U, grid_spacing[d], axis=d + 1)
-            grad_components.append(grad_d)
-
         # Issue #2330: `HamiltonianBase` documents a point ``(d,)`` or a batch ``(N, d)``, with ``m`` one value per
-        # point. This called it on grid-shaped ``(nx, ny, d)`` arrays: `CongestionHamiltonian` and a user subclass
-        # written to the documented shapes raised, and a return that broadcast against the grid was spread into every
-        # velocity component. So call on the flattened batch, and refuse a return of any other shape.
-        x_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, ndim)
-        n_points = x_points.shape[0]
+        # point, so each axis's faces go as one flattened batch, and a return of any other shape is refused.
+        x_nodes = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)  # (*shape, ndim)
+        n_points = int(np.prod(spatial_shape))
 
         alpha_field = np.zeros((Nt, ndim, *spatial_shape))
         for n in range(Nt):
-            p_points = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1).reshape(n_points, ndim)
+            u = U[n]
             # Issue #1071: stacked cross-density at this integer timestep for multi-pop (see 1D path).
             if cross_density is not None:
                 stacked = np.asarray(cross_density[n])
@@ -839,19 +870,49 @@ def compute_fp_velocity_field(
                         f"has no per-node form for an nD optimal_control batch; only one value per node is "
                         f"accepted (#2330)."
                     )
-                m_points = stacked.reshape(n_points)
+                m_nodes = stacked.reshape(spatial_shape)
             else:
-                m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
-            alpha_n = np.asarray(
-                H_class.evaluate_optimal_control(HEvalState(t=n * dt, x=x_points, p=p_points, m=m_points))
-            )
-            if alpha_n.shape != (n_points, ndim):
-                raise ValueError(
-                    f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "
-                    f"{n_points} points in {ndim}-D; it must return one control vector per point, shape "
-                    f"({n_points}, {ndim}) (#2330)."
+                m_nodes = M[n] if n < M.shape[0] else M[-1]
+            centred = [_centred_gradient(u, e, grid_spacing[e], spans[e]) for e in range(ndim)]
+            for d in range(ndim):
+                across = _face_neighbours(spatial_shape[d], spans[d])
+                # The normal component is the stencil's forward difference across the face; the others are the mean of
+                # the two nodes' centred differences (#2904).
+                p_face = np.stack(
+                    [
+                        (np.take(u, across, axis=d) - u) / grid_spacing[d]
+                        if e == d
+                        else 0.5 * (centred[e] + np.take(centred[e], across, axis=d))
+                        for e in range(ndim)
+                    ],
+                    axis=-1,
                 )
-            alpha_field[n] = np.moveaxis(alpha_n.reshape(*spatial_shape, ndim), -1, 0)
+                x_face = x_nodes.copy()
+                x_face[..., d] += 0.5 * grid_spacing[d]
+                m_face = 0.5 * (m_nodes + np.take(m_nodes, across, axis=d))
+                alpha_n = np.asarray(
+                    H_class.evaluate_optimal_control(
+                        HEvalState(
+                            t=n * dt,
+                            x=x_face.reshape(n_points, ndim),
+                            p=p_face.reshape(n_points, ndim),
+                            m=m_face.reshape(n_points),
+                        )
+                    )
+                )
+                if alpha_n.shape != (n_points, ndim):
+                    raise ValueError(
+                        f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "
+                        f"{n_points} points in {ndim}-D; it must return one control vector per point, shape "
+                        f"({n_points}, {ndim}) (#2330)."
+                    )
+                component = alpha_n[:, d].reshape(spatial_shape)
+                if spans[d] is None:
+                    # The last node of an axis that does not wrap has no face along it.
+                    last = [slice(None)] * ndim
+                    last[d] = -1
+                    component[tuple(last)] = 0.0
+                alpha_field[n, d] = component
 
         return alpha_field
 
@@ -1064,7 +1125,14 @@ def resolve_fp_drift_kwargs(
             )
 
         if use_velocity:
-            drift_kwargs["drift_field"] = compute_fp_velocity_field(problem, U, M, H_class, cross_density=cross_density)
+            drift_kwargs["drift_field"] = compute_fp_velocity_field(
+                problem,
+                U,
+                M,
+                H_class,
+                cross_density=cross_density,
+                boundary_conditions=getattr(fp_solver, "boundary_conditions", None),
+            )
         elif "potential_field" in params:
             # Issue #1489 (S1): a VALUE_FUNCTION solver consumes `potential_field=U` and forms its
             # drift as alpha = -c*grad(U) internally. That is valid ONLY for a smooth separable H.
