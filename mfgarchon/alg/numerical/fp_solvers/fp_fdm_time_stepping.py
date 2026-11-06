@@ -1101,7 +1101,7 @@ def solve_fp_nd_full_system(
     def resolve_coupling_coefficient() -> float:
         """Drift coefficient c in alpha* = -c*grad(U), resolved once, only if consumed."""
         if not _resolved_coefficient:
-            _resolved_coefficient.append(fp_drift_coefficient(problem))
+            _resolved_coefficient.append(fp_drift_coefficient(problem, context="FPFDMSolver, from potential_field=U"))
         return _resolved_coefficient[0]
 
     # Get grid spacing and geometry

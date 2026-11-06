@@ -1209,7 +1209,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem)
+            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
 
         # Compute gradient ∂U/∂x using BC-aware computation
         bc = self.get_boundary_conditions()
@@ -1287,7 +1287,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem)
+            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
 
         # Compute gradients using trait-based operators
         gradients = self._compute_gradients_nd(U, time=time)

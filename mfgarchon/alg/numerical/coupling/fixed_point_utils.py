@@ -875,6 +875,14 @@ def resolve_fp_drift_kwargs(
           the velocity $\\alpha = -c\\,\\nabla U$ internally; ``potential_field`` is the live
           U-potential channel -- it was marked deprecated until #1771, in the wrong direction,
           while this very line emitted it on the default path).
+        - Smooth separable $H$ whose ``optimal_control`` is its own (#2900), with no
+          ``cross_density`` handed → on a ``VELOCITY``-channel solver, the velocity path below,
+          which reads that ``optimal_control``; $-c\\,\\nabla U$ is its control cost's drift, not
+          its own. On a ``VALUE_FUNCTION`` solver it keeps ``potential_field``: particle and the
+          weak-form family read ``optimal_control`` there, and a solver that forms
+          $-c\\,\\nabla U$ is refused by ``fp_drift_coefficient``. A multi-population caller
+          (``cross_density`` handed) keeps ``potential_field`` until its velocity door hands
+          each population its own density (#2335).
         - Non-smooth $H$ on a ``VELOCITY``-channel solver → pass the face-centered velocity
           $\\alpha^*$ as ``drift_field`` (see :func:`compute_fp_velocity_field`).
         - Non-smooth $H$ on a ``VALUE_FUNCTION`` solver (only ``potential_field=U``) → raise:
@@ -929,6 +937,7 @@ def resolve_fp_drift_kwargs(
     else:
         from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs
 
         H_class = h_class if h_class is not None else problem.hamiltonian_class
         # Issue #1071: the multi-population iterator now passes the population's own (unbound)
@@ -941,6 +950,9 @@ def resolve_fp_drift_kwargs(
         # non-separable) H has a set-valued / Clarke optimal control alpha* that is NOT -c*grad(U),
         # so it can only enter a VELOCITY-channel solver as a precomputed alpha*.
         h_is_smooth_separable = isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth()
+        # #2900: -c*grad(U) is a smooth separable H's drift only when its optimal_control is the base class's. One that
+        # is its own takes the velocity path, where that optimal_control is read, wherever no cross density is handed.
+        drift_from_u = h_is_smooth_separable and (cross_density is not None or drift_is_the_control_costs(H_class))
 
         # Issue #1489 (S1): param presence cannot disambiguate the drift convention — `drift_field`
         # is a real velocity channel on some solvers but a deprecated alias for `potential_field=U`
@@ -954,7 +966,7 @@ def resolve_fp_drift_kwargs(
                 drift_convention == DriftConvention.VELOCITY
                 and H_class is not None
                 and "drift_field" in params
-                and not h_is_smooth_separable
+                and not drift_from_u
             )
 
         if use_velocity:

@@ -262,12 +262,22 @@ to stand in for one.
 Two channels, and each FP solver declares which one it reads (`_drift_convention`):
 
 - **`potential_field` carries the value function $u$.** On the default path — a smooth separable
-  $H$ — the coupling layer passes `potential_field=U` to every FP solver that has that parameter, and
-  the solver forms $\alpha^* = -D_pH$ itself. *Not yet met (#2429): `MultiPopulationIterator` passes
-  the value function to network populations as `drift_field=`, the deprecated alias.*
-- **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it only for a
-  non-smooth or non-separable $H$, and passes it only to a solver whose convention is `VELOCITY`
-  (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
+  $H$ whose `optimal_control` is `SeparableHamiltonian`'s — the coupling layer passes
+  `potential_field=U` to every FP solver that has that parameter, and the solver forms the drift
+  itself. FP-FDM and the semi-Lagrangian solver form $-c\,\nabla u$, the control cost's drift. FVM,
+  the particle solver and the weak-form family read `optimal_control`. *Not yet met (#2429):
+  `MultiPopulationIterator` passes the value function to network populations as `drift_field=`, the
+  deprecated alias.*
+- **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it from
+  `optimal_control` for a non-smooth or non-separable $H$, and for a separable one whose
+  `optimal_control` is its own: on the class, inherited, or assigned on the instance. That optimal
+  control is not $-c\,\nabla u$ (#2900). It passes the velocity only to a solver whose convention is
+  `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583). A separable $H$ whose
+  `optimal_control` is its own goes to a `VALUE_FUNCTION` solver as $u$. That solver either reads
+  `optimal_control` itself, as the particle solver and the weak-form family do, or refuses it with
+  the schemes that do, as the semi-Lagrangian solver does. *Not yet met (#2335):
+  `MultiPopulationIterator` still hands such an $H$ to FP-FDM as $u$, which FP-FDM refuses, until its
+  velocity door hands each population its own density.*
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or

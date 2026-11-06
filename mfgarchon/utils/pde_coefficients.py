@@ -35,6 +35,19 @@ def has_quadratic_control_cost(hamiltonian: Any) -> bool:
     return isinstance(hamiltonian, SeparableHamiltonian) and isinstance(hamiltonian.control_cost, QuadraticControlCost)
 
 
+def drift_is_the_control_costs(hamiltonian: Any) -> bool:
+    """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` whose ``optimal_control`` is the base class's, so that its FP
+    drift is its control cost's (#2900). Neither its class, through any subclass, nor the instance may give
+    ``optimal_control`` a body of its own: one that does is driven by that body, never by ``-c*grad(U)``."""
+    from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+    return (
+        isinstance(hamiltonian, SeparableHamiltonian)
+        and type(hamiltonian).optimal_control is SeparableHamiltonian.optimal_control
+        and "optimal_control" not in getattr(hamiltonian, "__dict__", {})
+    )
+
+
 def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     """Fail loud if ``problem.hamiltonian_class`` is a ``SeparableHamiltonian`` whose control cost is
     NOT quadratic -- the case where the scalar FP drift ``-c*grad(U)`` misrepresents the optimal
@@ -95,7 +108,7 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     )
 
 
-def fp_drift_coefficient(problem: Any) -> float:
+def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient") -> float:
     """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
     control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
 
@@ -126,10 +139,22 @@ def fp_drift_coefficient(problem: Any) -> float:
     source ``1/control_cost`` from nor a ``coupling_coefficient`` on the problem, this raises rather
     than silently returning ``1.0`` (the prior fallback masked a malformed/duck-typed problem getting
     a wrong-temperature drift with no error — CLAUDE.md "NO silent fallbacks").
+
+    Fail-loud on a ``SeparableHamiltonian`` whose ``optimal_control`` is its own (#2900): ``-c·∇U`` is its control cost's
+    drift, not its own. ``context`` names the caller that forms the drift from the scalar, so the refusal says what was
+    run. ``resolve_fp_drift_kwargs`` routes such a Hamiltonian to a velocity-channel solver's drift path, so this fires
+    where the scalar is still formed as the drift.
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
     h_class = getattr(problem, "hamiltonian_class", None)
+    if isinstance(h_class, SeparableHamiltonian) and not drift_is_the_control_costs(h_class):
+        raise NotImplementedError(
+            f"{context}: {type(h_class).__name__}.optimal_control is its own, so -c*grad(U), the drift of its "
+            "control cost, is not its drift, and this forms the drift from that scalar (#2900). A solver that reads "
+            "optimal_control solves it: the default scheme FDM_UPWIND, or FVM_UPWIND, routes it to the drift path, "
+            "and FPFVMSolver, FPParticleSolver and the weak-form family read it themselves."
+        )
     if isinstance(h_class, SeparableHamiltonian) and isinstance(h_class.control_cost, QuadraticControlCost):
         return 1.0 / h_class.control_cost.lambda_
     # A SeparableHamiltonian that fell past the quadratic branch has a non-quadratic (e.g.

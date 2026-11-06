@@ -530,7 +530,12 @@ class FPParticleSolver(BaseFPSolver):
         # Without one, a scalar problem volatility is used as is, and a field or callable one gives
         # None rather than a collapsed scalar (#2376): the only readers of params["volatility"] are the
         # grid-drift solves, which run after solve_fp_system has installed a scalar.
-        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_diffusion_source
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.utils.pde_coefficients import (
+            assert_quadratic_drift,
+            fp_drift_coefficient,
+            resolve_diffusion_source,
+        )
 
         if self._effective_sigma_override is not None:
             sigma = resolve_diffusion_source(self._effective_sigma_override)
@@ -541,7 +546,14 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
         # (single source), not the independent coupling_coefficient field. This params value flows
         # to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
-        coupling_coefficient = fp_drift_coefficient(self.problem)
+        # #2900: a SeparableHamiltonian's particle drift is its own optimal_control (`_advective_drift`), so the scalar
+        # is built only for the non-separable fallback that reads it. #1542's quadratic guard still runs for a separable
+        # one, here rather than through the scalar, which refuses a Hamiltonian whose optimal_control is its own.
+        if isinstance(getattr(self.problem, "hamiltonian_class", None), SeparableHamiltonian):
+            assert_quadratic_drift(self.problem, context="FPParticleSolver")
+            coupling_coefficient = None
+        else:
+            coupling_coefficient = fp_drift_coefficient(self.problem)
 
         result = {
             # nD parameters
@@ -2031,16 +2043,16 @@ class FPParticleSolver(BaseFPSolver):
         positions: np.ndarray,
         grad_at_particles: np.ndarray,
         t: float,
-        coupling_coefficient: float,
+        coupling_coefficient: float | None,
     ) -> np.ndarray:
         """FP advective drift alpha* at the particles, from the single owner (Issue #1528).
 
         The control law alpha* = H.optimal_control(t, x, p, m) on the problem's
         ``hamiltonian_class`` is the single source of the FP advective drift, replacing the
         three hand-coded ``-fp_drift_coefficient(problem) * grad(U)`` copies (CPU 1D / CPU nD /
-        GPU). ``fp_drift_coefficient``'s #1542 guard (applied at param-build time, ~line 389)
-        guarantees any ``SeparableHamiltonian`` that reaches a solver is quadratic-MINIMIZE, for
-        which ``optimal_control == -p / lambda == -coupling_coefficient * p`` -- byte-identical
+        GPU). #1542's guard, ``assert_quadratic_drift`` at param-build time, guarantees any
+        ``SeparableHamiltonian`` that reaches a solver has a quadratic cost. For one whose
+        ``optimal_control`` is the base class's, ``optimal_control == -p / lambda`` -- byte-identical
         for dyadic lambda (incl. the paper's control_cost=1.0), <= 1 ULP for non-dyadic. The
         identical locally-computed ``grad_at_particles`` is fed to the owner, so byte-identity is
         independent of the coefficient.
