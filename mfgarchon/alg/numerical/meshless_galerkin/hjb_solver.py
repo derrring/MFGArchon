@@ -111,11 +111,9 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         coupling = fp_drift_coefficient(
             self.problem,
             context="MeshlessGalerkinHJBSolver streamline diffusion",
-            advice=(
-                "With streamline_diffusion_scale=0 this solver forms no drift from the scalar, and the "
-                "MESHLESS_GALERKIN pair reads optimal_control; the #2900 tests run that pair on a 1-D grid, "
-                "where it solves it."
-            ),
+            # No scheme is named: streamline_diffusion_scale=0 removes the scalar, but it is another, unstabilised
+            # discretisation, which the library H itself diverges under on Dirichlet walls (#2900, review 2 of #2902).
+            advice=lambda: "No scheme of the library has been run on such a Hamiltonian with this stabilization.",
         )
         velocity = (-coupling * np.column_stack([G_d @ u for G_d in self._G_grad])).T
         return self._disc.streamline_diffusion(velocity, D, c_scale=self._sd_scale)

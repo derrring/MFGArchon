@@ -461,6 +461,17 @@ class FPSLSolver(BaseFPSolver):
         n_sub = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
         return n_sub, self.dt / n_sub
 
+    def _drift_coefficient(self) -> float:
+        """c of the drift -c*grad(U) this solver forms, from ``fp_drift_coefficient``. A Hamiltonian that serves an optimal
+        control of its own is refused there, with FVM's verdict on the walls this solver reads (#2900)."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fvm import what_solves_an_own_control
+
+        return fp_drift_coefficient(
+            self.problem,
+            context="FPSLSolver",
+            advice=lambda: what_solves_an_own_control(self.problem, own_walls=self._boundary_conditions),
+        )
+
     def _compute_velocity_1d(self, U: np.ndarray, time: float) -> np.ndarray:
         """Compute the optimal-control drift alpha* = -grad(U) / control_cost for 1D.
 
@@ -471,7 +482,7 @@ class FPSLSolver(BaseFPSolver):
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1.
         """
-        return -fp_drift_coefficient(self.problem, context="FPSLSolver") * self._gradient(U, time)[0]
+        return -self._drift_coefficient() * self._gradient(U, time)[0]
 
     def _compute_velocity_nd(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
         """
@@ -481,7 +492,7 @@ class FPSLSolver(BaseFPSolver):
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1. Returns a tuple, one array per dimension.
         """
-        c = fp_drift_coefficient(self.problem, context="FPSLSolver")
+        c = self._drift_coefficient()
         return tuple(-c * g for g in self._gradient(U, time))
 
     def _gradient(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:

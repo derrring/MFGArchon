@@ -67,14 +67,6 @@ HJBAdvectionScheme = Literal["gradient_centered", "gradient_upwind"]
 NewtonFailurePolicy = Literal["raise", "warn_and_fallback"]
 _NEWTON_FAILURE_TO_INNER = {"raise": "raise", "warn_and_fallback": "fallback"}
 
-# The advice of build_advection_matrix's refusal of a Hamiltonian whose optimal_control is its own (#2900): its velocity
-# is -c*grad(U), while build_linearized_operator reads the Hamiltonian's dp, and the #2900 tests run it on such a one.
-_LINEARIZED_OPERATOR_READS_DP = (
-    "build_linearized_operator(U, M) reads the Hamiltonian's dp instead of the scalar, and is the operator the "
-    "strict-adjoint path uses; the #2900 tests run it on such a Hamiltonian in 1-D and 2-D, where it equals the "
-    "library Hamiltonian's for the same function."
-)
-
 
 def is_diagonal_tensor(Sigma: NDArray, rtol: float = 1e-10) -> bool:
     """
@@ -1218,7 +1210,7 @@ class HJBFDMSolver(BaseHJBSolver):
         # Get coupling coefficient
         if coupling_coefficient is None:
             coupling_coefficient = fp_drift_coefficient(
-                self.problem, context="HJBFDMSolver.build_advection_matrix", advice=_LINEARIZED_OPERATOR_READS_DP
+                self.problem, context="HJBFDMSolver.build_advection_matrix", advice=self._what_reads_dp_here
             )
 
         # Compute gradient ∂U/∂x using BC-aware computation
@@ -1298,7 +1290,7 @@ class HJBFDMSolver(BaseHJBSolver):
         # Get coupling coefficient
         if coupling_coefficient is None:
             coupling_coefficient = fp_drift_coefficient(
-                self.problem, context="HJBFDMSolver.build_advection_matrix", advice=_LINEARIZED_OPERATOR_READS_DP
+                self.problem, context="HJBFDMSolver.build_advection_matrix", advice=self._what_reads_dp_here
             )
 
         # Compute gradients using trait-based operators
@@ -1368,6 +1360,49 @@ class HJBFDMSolver(BaseHJBSolver):
     # True Adjoint Mode (Issue #707)
     # =========================================================================
 
+    def _linearized_operator_refusal(self) -> str | None:
+        """Why ``build_linearized_operator`` refuses this solver's walls, or ``None`` where it builds on them.
+
+        Issue #1564 / RFC #1574 Phase 0: the linearized operator hardcodes no-flux at every
+        boundary (both 1D and nD skip boundary rows as no-flux). HJBFDMSolver declares DIRICHLET/
+        PERIODIC supported for the NORMAL FDM solve (which honors them via its own assembly), but
+        THIS operator -- consumed only by the strict-adjoint BlockIterator (jacobian_transpose,
+        #707) as A_FP = A_HJB^T -- does not. A declared Dirichlet outflow would be silently treated
+        as mass-conserving no-flux. Fail loud on any BC this operator does not honor rather than
+        advect with the wrong wall physics (mirrors the HJBGFDMSolver Howard gate). The operator raises on this, and
+        ``build_advection_matrix``'s refusal of an own optimal control asks it before naming the operator (#2900).
+        """
+        bc = self.get_boundary_conditions()
+        if bc is None:
+            return None
+        honored = {BCType.NEUMANN, BCType.NO_FLUX}
+        requested = {seg.bc_type for seg in getattr(bc, "segments", [])}
+        default_bc = getattr(bc, "default_bc", None)
+        if default_bc is not None:
+            requested.add(default_bc)
+        unsupported = requested - honored
+        if not unsupported:
+            return None
+        names = ", ".join(sorted(str(getattr(t, "value", t)) for t in unsupported))
+        return (
+            f"build_linearized_operator (strict-adjoint FP operator, Issue #707) hardcodes "
+            f"no-flux at every boundary and does not honor {{{names}}}. The declared BC would "
+            f"be silently treated as no-flux, leaking no mass where a Dirichlet outflow should. "
+            f"Use the standard coupling path (FixedPointIterator) for non-Neumann boundaries, "
+            f"or a Neumann/no-flux BC on the strict-adjoint path (Issue #1564 / RFC #1574)."
+        )
+
+    def _what_reads_dp_here(self) -> str:
+        """``build_advection_matrix``'s advice for a Hamiltonian that serves an optimal control of its own (#2900):
+        the operator that reads its dp, where that operator accepts these walls."""
+        refused = self._linearized_operator_refusal()
+        if refused is None:
+            return (
+                "build_linearized_operator(U, M) reads the Hamiltonian's dp instead of the scalar, and accepts these "
+                "walls."
+            )
+        return f"No operator of this solver reads the Hamiltonian's dp on these walls: {refused}"
+
     def build_linearized_operator(
         self,
         U: NDArray,
@@ -1403,30 +1438,9 @@ class HJBFDMSolver(BaseHJBSolver):
             - Issue #706 (adjoint discretization)
             - compute_hjb_jacobian() in base_hjb.py (1D Newton solver version)
         """
-        # Issue #1564 / RFC #1574 Phase 0: the linearized operator hardcodes no-flux at every
-        # boundary (both 1D and nD skip boundary rows as no-flux). HJBFDMSolver declares DIRICHLET/
-        # PERIODIC supported for the NORMAL FDM solve (which honors them via its own assembly), but
-        # THIS operator -- consumed only by the strict-adjoint BlockIterator (jacobian_transpose,
-        # #707) as A_FP = A_HJB^T -- does not. A declared Dirichlet outflow would be silently treated
-        # as mass-conserving no-flux. Fail loud on any BC this operator does not honor rather than
-        # advect with the wrong wall physics (mirrors the HJBGFDMSolver Howard gate).
-        bc = self.get_boundary_conditions()
-        if bc is not None:
-            honored = {BCType.NEUMANN, BCType.NO_FLUX}
-            requested = {seg.bc_type for seg in getattr(bc, "segments", [])}
-            default_bc = getattr(bc, "default_bc", None)
-            if default_bc is not None:
-                requested.add(default_bc)
-            unsupported = requested - honored
-            if unsupported:
-                names = ", ".join(sorted(str(getattr(t, "value", t)) for t in unsupported))
-                raise NotImplementedError(
-                    f"build_linearized_operator (strict-adjoint FP operator, Issue #707) hardcodes "
-                    f"no-flux at every boundary and does not honor {{{names}}}. The declared BC would "
-                    f"be silently treated as no-flux, leaking no mass where a Dirichlet outflow should. "
-                    f"Use the standard coupling path (FixedPointIterator) for non-Neumann boundaries, "
-                    f"or a Neumann/no-flux BC on the strict-adjoint path (Issue #1564 / RFC #1574)."
-                )
+        refused = self._linearized_operator_refusal()
+        if refused is not None:
+            raise NotImplementedError(refused)
         if self.dimension == 1:
             return self._build_linearized_operator_1d(U, M, time=time)
         else:

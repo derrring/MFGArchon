@@ -56,10 +56,9 @@ def drift_is_the_control_costs(hamiltonian: Any) -> bool:
     )
 
 
-def refuse_the_scalar_drift(hamiltonian: Any, context: str, advice: str) -> NoReturn:
+def refuse_the_scalar_drift(hamiltonian: Any, context: str, advice: str = "") -> NoReturn:
     """The refusal of ``-c*grad(U)`` as the drift of a Hamiltonian ``drift_is_the_control_costs`` does not hold for
-    (#2900): it says what was run, which optimal control the Hamiltonian serves, and ``advice``, which names only what
-    solves it."""
+    (#2900): it says what was run, which optimal control the Hamiltonian serves, and the caller's ``advice``."""
     from mfgarchon.core.hamiltonian import QuadraticControlCost
 
     name = type(hamiltonian).__name__
@@ -75,40 +74,8 @@ def refuse_the_scalar_drift(hamiltonian: Any, context: str, advice: str) -> NoRe
         whose = f"{name} serves an optimal_control of its own"
     raise NotImplementedError(
         f"{context}: {whose}, so -c*grad(U), the quadratic control cost's drift, is not its drift, and {context} forms "
-        f"the drift from that scalar (#2900). {advice}"
+        f"the drift from that scalar (#2900)." + (f" {advice}" if advice else "")
     )
-
-
-def what_solves_an_own_control(problem: Any, *, several_populations: bool = False) -> str:
-    """The advice of a refusal of ``-c*grad(U)`` (#2900): what solves such a Hamiltonian on ``problem``'s dimension and
-    walls, at this population count, naming only what the #2900 tests run there. The walls are the problem's shared BC
-    at each face, a NEUMANN read as the zero flux an FP solver makes of it."""
-    from mfgarchon.geometry.boundary.types import BoundaryFace
-
-    dimension = getattr(problem, "dimension", None)
-    try:
-        bc = problem.get_boundary_conditions()
-        walls = {
-            bc.segment_for_face(BoundaryFace(axis, side), problem.geometry).bc_type.name
-            for axis in range(int(dimension))
-            for side in ("min", "max")
-        }
-    except (AttributeError, TypeError, ValueError):
-        walls = None
-    if walls is not None and not walls <= {"NO_FLUX", "NEUMANN", "PERIODIC"}:
-        return f"No FP solver of the library has been run on such a Hamiltonian with {sorted(walls)} walls."
-    if several_populations:
-        return (
-            "FPFVMSolver and FPParticleSolver read optimal_control themselves; the #2900 tests run each in a "
-            "two-population MultiPopulationIterator solve on a 1-D grid with no-flux walls, where it solves it."
-        )
-    if dimension in (1, 2):
-        return (
-            "FVM_UPWIND (FPFVMSolver) reads optimal_control itself, at its faces, and takes uniform no-flux or periodic "
-            "walls and a scalar volatility; the #2900 tests run it on 1-D no-flux, 1-D periodic and 2-D no-flux walls, "
-            "where it solves it."
-        )
-    return f"No FP solver of the library has been run on such a Hamiltonian on a {dimension}-D grid."
 
 
 def assert_quadratic_drift(problem: Any, *, context: str) -> None:
@@ -171,7 +138,9 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     )
 
 
-def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient", advice: str | None = None) -> float:
+def fp_drift_coefficient(
+    problem: Any, *, context: str = "fp_drift_coefficient", advice: Callable[[], str] | None = None
+) -> float:
     """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
     control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
 
@@ -204,15 +173,14 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient",
     a wrong-temperature drift with no error — CLAUDE.md "NO silent fallbacks").
 
     Fail-loud on a ``SeparableHamiltonian`` that ``drift_is_the_control_costs`` does not hold for (#2900): ``-c·∇U`` is
-    not its drift. ``context`` names the caller that forms the drift from the scalar, and ``advice`` what solves it there,
-    by default ``what_solves_an_own_control`` at the problem's dimension, so the refusal says what was run and what to
-    do.
+    not its drift. ``context`` names the caller that forms the drift from the scalar, and ``advice``, called only when
+    it refuses, what the caller's own walls and solver admit instead, so the refusal says what was run and what to do.
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
     h_class = getattr(problem, "hamiltonian_class", None)
     if isinstance(h_class, SeparableHamiltonian) and not drift_is_the_control_costs(h_class):
-        refuse_the_scalar_drift(h_class, context, what_solves_an_own_control(problem) if advice is None else advice)
+        refuse_the_scalar_drift(h_class, context, "" if advice is None else advice())
     if isinstance(h_class, SeparableHamiltonian) and isinstance(h_class.control_cost, QuadraticControlCost):
         return 1.0 / h_class.control_cost.lambda_
     # A SeparableHamiltonian that fell past the quadratic branch has a non-quadratic (e.g.

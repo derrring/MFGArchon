@@ -279,9 +279,20 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only where FP-FDM's
   velocity route has been measured equal to its value-function route: one population on a 1-D grid
-  with `NO_FLUX` walls, handed a density trajectory, with an advection scheme that reads a velocity.
-  Anywhere else, and on the semi-Lagrangian solver, the coupling layer refuses it, naming only what
-  the #2900 tests run there. FP-FDM's velocity route off that set is #2904.
+  with `NO_FLUX` walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an
+  advection scheme that reads a velocity. Anywhere else, and on the semi-Lagrangian solver, the
+  coupling layer refuses it. FP-FDM's velocity route off that set is #2904.
+- **A refusal's advice names a target only when two things hold.**
+  1. The target's own acceptance check accepts what the refusing site reads: its walls, which are the
+     solver's own when it was handed them, and the problem's volatility. For FVM that check is
+     `fvm_refusal`, and for `build_linearized_operator` it is the operator's wall check.
+  2. The target runs the library $H$'s own discretisation of that case, so naming it changes the route
+     and not the scheme. FVM and `build_linearized_operator` read `optimal_control` or `dp` on their
+     own route. The meshless HJB's `streamline_diffusion_scale=0` does not: it is another, unstabilised
+     discretisation, so the meshless stabilisation's refusal names no scheme.
+
+  Where either fails, the advice says that no scheme of the library has been run on the case, and
+  quotes the target's refusal where there is one.
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or

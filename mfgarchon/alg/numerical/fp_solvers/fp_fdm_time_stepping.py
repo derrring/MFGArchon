@@ -1104,7 +1104,15 @@ def solve_fp_nd_full_system(
     def resolve_coupling_coefficient() -> float:
         """Drift coefficient c in alpha* = -c*grad(U), resolved once, only if consumed."""
         if not _resolved_coefficient:
-            _resolved_coefficient.append(fp_drift_coefficient(problem, context="FPFDMSolver, from potential_field=U"))
+            from mfgarchon.alg.numerical.fp_solvers.fp_fvm import what_solves_an_own_control
+
+            _resolved_coefficient.append(
+                fp_drift_coefficient(
+                    problem,
+                    context="FPFDMSolver, from potential_field=U",
+                    advice=lambda: what_solves_an_own_control(problem, own_walls=boundary_conditions),
+                )
+            )
         return _resolved_coefficient[0]
 
     # Get grid spacing and geometry

@@ -855,8 +855,9 @@ def _why_an_own_control_is_not_a_velocity_here(
     """Why ``fp_solver``, which forms its drift from U (``_forms_its_drift_from_u``), cannot take an own optimal control
     as a velocity here, or ``[]`` where it can (#2900). The set where it can is closed, stated positively, and is where
     FP-FDM's velocity route was measured equal to its value-function route: one population on a 1-D grid with NO_FLUX
-    walls, a density trajectory, and an advection scheme that reads the velocity. Off it, the velocity route is
-    unmeasured, or measured wrong: periodic and 2-D are #2904."""
+    walls, a density trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the velocity.
+    Off it, the velocity route is unmeasured, or measured wrong: periodic and 2-D are #2904. The walls are the ones the
+    solver solves with, its own when it was handed them."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _INTERFACE_VELOCITY_SCHEMES
     from mfgarchon.geometry.boundary import BCType
     from mfgarchon.geometry.boundary.types import BoundaryFace
@@ -870,20 +871,25 @@ def _why_an_own_control_is_not_a_velocity_here(
     if problem.dimension != 1:
         reasons.append(f"the grid is {problem.dimension}-D")
     else:
-        bc = getattr(fp_solver, "boundary_conditions", None)
-        walls = (
-            [bc.segment_for_face(BoundaryFace(0, side), problem.geometry).bc_type for side in ("min", "max")]
-            if bc
-            else []
-        )
-        if not walls or any(wall != BCType.NO_FLUX for wall in walls):
-            reasons.append(f"its walls are {[wall.name for wall in walls] or 'unknown'}")
+        bc = fp_solver.boundary_conditions
+        walls = [bc.segment_for_face(BoundaryFace(0, side), problem.geometry).bc_type for side in ("min", "max")]
+        if any(wall != BCType.NO_FLUX for wall in walls):
+            reasons.append(f"its walls are {[wall.name for wall in walls]}")
     scheme = getattr(fp_solver, "advection_scheme", None)
     if scheme not in _INTERFACE_VELOCITY_SCHEMES:
         reasons.append(f"its advection_scheme {scheme!r} does not read a velocity")
-    if np.ndim(M) != problem.dimension + 1:
-        reasons.append(f"it is handed M of shape {np.shape(M)}, not a density trajectory")
+    trajectory = (problem.Nt + 1, *tuple(problem.geometry.get_grid_shape()))
+    if np.shape(M) != trajectory:
+        reasons.append(f"it is handed M of shape {np.shape(M)}, not a density trajectory of shape {trajectory}")
     return reasons
+
+
+def _its_own_walls(fp_solver: Any) -> Any:
+    """The BC ``fp_solver`` was handed, or ``None`` where it solves with the problem's. FP-FDM keeps it resolved as
+    ``boundary_conditions`` beside ``_own_bc``; the base chain keeps it as ``_boundary_conditions``."""
+    if getattr(fp_solver, "_own_bc", False):
+        return fp_solver.boundary_conditions
+    return getattr(fp_solver, "_boundary_conditions", None)
 
 
 def resolve_fp_drift_kwargs(
@@ -918,7 +924,8 @@ def resolve_fp_drift_kwargs(
           path below, which reads its ``optimal_control``, only where
           ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: one population on
           a 1-D grid with ``NO_FLUX`` walls, a density trajectory, and an advection scheme that reads
-          a velocity. Anywhere else this refuses, naming what solves it. Every other solver (FVM,
+          a velocity. Anywhere else this refuses, naming FVM only where FVM's own check accepts the
+          walls the solver reads (``what_solves_an_own_control``). Every other solver (FVM,
           particle, the weak-form family) keeps ``potential_field`` and reads ``optimal_control``
           itself. With ``drift_convention=None`` the pre-#1489 gate below decides, and a solver that
           forms $-c\\,\\nabla U$ refuses through ``fp_drift_coefficient``.
@@ -978,12 +985,9 @@ def resolve_fp_drift_kwargs(
             drift_kwargs["drift_field"] = drift_field_override
     else:
         from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
+        from mfgarchon.alg.numerical.fp_solvers.fp_fvm import what_solves_an_own_control
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
-        from mfgarchon.utils.pde_coefficients import (
-            drift_is_the_control_costs,
-            refuse_the_scalar_drift,
-            what_solves_an_own_control,
-        )
+        from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs, refuse_the_scalar_drift
 
         H_class = h_class if h_class is not None else problem.hamiltonian_class
         # Issue #1071: the multi-population iterator now passes the population's own (unbound)
@@ -1011,7 +1015,9 @@ def resolve_fp_drift_kwargs(
             takes_a_velocity = drift_convention == DriftConvention.VELOCITY and "drift_field" in params
             reasons = _why_an_own_control_is_not_a_velocity_here(problem, fp_solver, M, cross_density, takes_a_velocity)
             if reasons:
-                solves = what_solves_an_own_control(problem, several_populations=cross_density is not None)
+                solves = what_solves_an_own_control(
+                    problem, own_walls=_its_own_walls(fp_solver), several_populations=cross_density is not None
+                )
                 refuse_the_scalar_drift(
                     H_class,
                     f"{type(fp_solver).__name__}.solve_fp_system(potential_field=U)",

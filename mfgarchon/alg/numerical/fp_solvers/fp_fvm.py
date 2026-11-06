@@ -651,6 +651,42 @@ def _face_shape(shape: tuple[int, ...], axis: int) -> tuple[int, ...]:
     return tuple(n - 1 if d == axis else n for d, n in enumerate(shape))
 
 
+def fvm_refusal(problem: Any, boundary_conditions: BoundaryConditions | None = None) -> str | None:
+    """Why ``FPFVMSolver`` refuses ``problem`` on these walls (``None``: the problem's own) with the problem's
+    volatility, or ``None`` where it takes both. It asks the solver itself: its constructor's refusal of the walls,
+    then its diffusion step's of the volatility. A refusal of -c*grad(U) asks this before it names FVM (#2900), so it
+    names FVM only where FVM accepts the case."""
+    try:
+        FPFVMSolver(problem, boundary_conditions=boundary_conditions)._scalar_diffusion(None)
+    except (NotImplementedError, TypeError, ValueError) as refused:
+        return str(refused)
+    return None
+
+
+def what_solves_an_own_control(
+    problem: Any, *, own_walls: BoundaryConditions | None = None, several_populations: bool = False
+) -> str:
+    """The advice of a refusal of -c*grad(U) for a Hamiltonian that serves an optimal control of its own (#2900). It
+    names FVM, which reads ``optimal_control`` itself, only where ``fvm_refusal`` accepts the walls the refusing solver
+    reads (``own_walls`` when it was handed its own, else the problem's) and the problem's volatility; elsewhere it says
+    that no scheme of the library has been run on the case, and why FVM refuses it."""
+    refused = fvm_refusal(problem, own_walls)
+    if refused is not None:
+        return (
+            "No scheme of the library has been run on such a Hamiltonian with these walls and this volatility: "
+            f"FPFVMSolver, which reads optimal_control, refuses them: {refused}"
+        )
+    if several_populations:
+        hand = "Hand each population an FPFVMSolver" + (", with the same boundary_conditions" if own_walls else "")
+        return f"FPFVMSolver reads optimal_control itself and accepts these walls and this volatility. {hand}."
+    if own_walls is not None:
+        return (
+            "FPFVMSolver reads optimal_control itself and accepts these walls and this volatility: construct it with "
+            "the same boundary_conditions."
+        )
+    return "FVM_UPWIND (FPFVMSolver) reads optimal_control itself, and accepts these walls and this volatility."
+
+
 if __name__ == "__main__":
     """Smoke test: free diffusion of a Gaussian conserves mass to machine precision."""
     import numpy as _np
