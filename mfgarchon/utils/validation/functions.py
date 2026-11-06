@@ -52,7 +52,8 @@ _SMOOTHNESS_RTOL = 1e-3
 
 def _raw_callable_advice(fn: Any) -> str:
     """What a raw callable `_call_h` could not call is told, which keeps what a partial froze. A family object is called
-    by keyword, so its TypeError comes from a body it holds, and it is told that, not to rename its parameters."""
+    by keyword, so its TypeError comes from its own methods or a body it holds, and it is told that, not to rename its
+    parameters."""
     import functools
 
     from mfgarchon.core.hamiltonian import MFGOperatorBase
@@ -61,8 +62,9 @@ def _raw_callable_advice(fn: Any) -> str:
     target = fn.func if isinstance(fn, functools.partial) else fn
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         return (
-            "It is called by keyword, so the TypeError came from a body it holds, such as a coupling, read here at one "
-            "point, where the density is a number."
+            "It is called by keyword, with t, x, p and m at one point, x a tuple of numbers and the density a number, "
+            "so the TypeError came from its own methods or from a body it holds, such as a coupling, and not from the "
+            "names of its parameters."
         )
 
     named = f"Name each parameter of {getattr(fn, '__qualname__', fn)!r} after what it reads, from {', '.join(HAMILTONIAN_SLOTS.order)}"

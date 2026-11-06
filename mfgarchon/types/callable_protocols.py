@@ -280,13 +280,12 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
 
 @dataclass
 class CheckState:
-    """What is kept of a body's comparison, never the body itself: the slots it binds, whether its batch and point reads
-    have been compared, and the refusal if they were refused, which every later read raises again. Every `BoundCallable`
-    reads and writes one, so a door holds no flag of its own (#2875)."""
+    """What is kept of a body's comparison, never the body itself: the slots it binds, and whether its batch and point
+    reads have been compared and agreed. A refusal is not kept: it raises, and a later read compares again. Every
+    `BoundCallable` reads and writes one, kept with its binding, so a door holds no flag of its own (#2875)."""
 
     passes: tuple[str, ...]
     checked: bool = False
-    refusal: ValueError | None = None
 
 
 # How each source callable is bound -- the rule and the slots, never the callable itself -- keyed by
@@ -299,7 +298,7 @@ _SOURCE_PLANS: dict[tuple[int, Slots], tuple[weakref.ref, CheckState]] = {}
 
 def _remembered(fn: Callable[..., Any], slots: Slots, role: str) -> BoundCallable:
     """``fn`` bound to ``slots``, sharing the state kept under ``(id(fn), slots)`` while ``fn`` lives, so a door that binds
-    per read or per solve compares a body once, and refuses it on every read after a refusal. Per callable and not on a
+    per read or per solve compares a body until a comparison agrees, and not after. Per callable and not on a
     bound object, which held here would keep the callable alive, so a loop inspects the signature once (#2406 review: +7.5%
     on a small FP solve). Whatever `bind_user_callable` accepts, a function or a partial of one, can be weakly referenced."""
     key = (id(fn), slots)
@@ -375,7 +374,7 @@ def _defined_by_the_library(fn: Any) -> bool:
     couplers build one per Picard iteration (#2875). The test is the module that defined it, or the library's mark."""
     while isinstance(fn, functools.partial):
         fn = fn.func
-    if getattr(fn, "_held_by_the_library", False):
+    if getattr(fn, "_held_by_the_library", False) is True:  # a mock answers every attribute
         return True
     return (getattr(fn, "__module__", None) or "").partition(".")[0] == "mfgarchon"
 
@@ -449,19 +448,16 @@ def _entry_at(
     return None
 
 
-def _copies(values: Mapping[str, Any], slots: Slots) -> dict[str, Any]:
-    """``values`` with each array a field or a per-point slot holds copied, so a body that writes into one is read on what
-    the door handed it each time."""
+def _copies(values: Mapping[str, Any]) -> dict[str, Any]:
+    """``values`` with every array copied, so a body that writes into one is read on what the door handed it each time."""
     return {
-        slot: np.array(value, copy=True)
-        if slot in (*slots.fields, *slots.per_point) and isinstance(value, np.ndarray)
-        else value
-        for slot, value in values.items()
+        slot: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for slot, value in values.items()
     }
 
 
-def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: Slots, name: str, guidance: str) -> None:
+def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: Slots, name: str, guidance: str) -> int:
     """Compare a body's read of the batch ``values`` holds with its read of a few of those points, spread across it (#2875).
+    Returns how many distinct points the compared rows hold.
 
     A point read gets one point's ``x`` and each ``per_point`` slot's value there, and every other slot as the batch read
     gets it: so a body may read a field whole. A batch too small to compare, of fewer than two points or of exactly ``d``,
@@ -490,9 +486,7 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     described = f"{name}, on a batch of {count} points"
     try:
         # Copies, since a body may write into x or into a field it is handed, and the door reads it once more.
-        together = np.asarray(
-            read(**{**_copies(batch, slots), "x": tuple(entry.copy() for entry in entries)}), dtype=float
-        )
+        together = np.asarray(read(**{**_copies(batch), "x": tuple(entry.copy() for entry in entries)}), dtype=float)
     except _UNREADABLE as e:
         raise ValueError(f"{described}, raised {type(e).__name__}: {e}. {guidance}") from e
     if together.ndim == len(shape) + 1 and together.shape == (d, *shape):
@@ -501,16 +495,17 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
     fixed = together.ndim > 0 and together.size != 1 and together.shape[: len(shape)] != shape
     if fixed and not slots.fixed_return:
         raise ValueError(f"{described}: a return of shape {together.shape} has no entry per point. {guidance}")
-    rows_together, rows_alone = [], []
+    rows_together, rows_alone, compared = [], [], set()
     for flat in spread_samples(count, samples):
         index = tuple(int(i) for i in np.unravel_index(int(flat), shape))
         point = dict(batch)
         point["x"] = tuple(entry[index] for entry in entries)
+        compared.add(tuple(float(coordinate) for coordinate in point["x"]))
         for slot in slots.per_point:
             if np.ndim(batch.get(slot)) > 0:
                 point[slot] = np.asarray(batch[slot])[index]
         try:
-            alone = np.asarray(read(**_copies(point, slots)), dtype=float)
+            alone = np.asarray(read(**_copies(point)), dtype=float)
         except _UNREADABLE as e:
             raise ValueError(f"{described}, one point at a time, raised {type(e).__name__}: {e}. {guidance}") from e
         if alone.ndim == len(shape) + 1 and alone.shape == (d, *shape):
@@ -533,6 +528,7 @@ def _compare_reads(read: Callable[..., Any], values: Mapping[str, Any], slots: S
         described,
         guidance,
     )
+    return len(compared)
 
 
 class BoundCallable:
@@ -572,32 +568,25 @@ class BoundCallable:
         callable calls this there; any other is checked at its first batch, in `__call__`, on what that batch holds.
 
         - Not yet compared: a point, an empty batch or no ``x`` is read with no comparison. A batch is compared on copies:
-          a difference, or one of `_UNREADABLE`'s raises, refuses it; agreement on two or more distinct points marks it
-          compared, and on one distinct point, compared with itself, leaves it as it was.
+          a difference, or one of `_UNREADABLE`'s raises, is refused and leaves it as it was; agreement marks it compared
+          when the compared rows hold two or more distinct points, and leaves it as it was when they hold one.
         - Compared: read.
-        - Refused: the refusal is raised again, on every read.
+
+        A refusal is not remembered: a later read compares again, on its own samples.
         """
         state = self.state
-        if state.refusal is not None:
-            raise ValueError(str(state.refusal)) from state.refusal
         if state.checked:
             return
         entries = np.broadcast_arrays(*(np.asarray(entry, dtype=float) for entry in values["x"]))
         if not entries[0].shape or entries[0].size == 0:
             return
-        distinct = np.unique(np.stack([np.ravel(entry) for entry in entries], axis=-1), axis=0).shape[0]
         guidance = (
             "x is a tuple with one entry per coordinate, each a scalar or an array, and the library may hand either: "
             "write the body to read both the same way, such as x[0] for a coordinate and sum(xi**2 for xi in x) for a "
             "squared norm (#2875)."
         )
         name = f"{self.role} {getattr(self.fn, '__qualname__', self.fn)!r}"
-        try:
-            _compare_reads(self._read, values, self.slots, name, guidance)
-        except ValueError as refused:
-            state.refusal = refused
-            raise
-        state.checked = distinct > 1
+        state.checked = _compare_reads(self._read, values, self.slots, name, guidance) > 1
 
     def __call__(self, **values: Any) -> Any:
         if "x" in values:

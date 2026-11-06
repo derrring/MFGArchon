@@ -1156,16 +1156,136 @@ def _doors_that_keep_a_body():
 
 
 @pytest.mark.parametrize("door", sorted(_doors_that_keep_a_body()))
-def test_a_refused_body_is_refused_again_with_the_first_refusal_at_every_later_read(door):
-    """Run again in a notebook cell, or in a sweep's try/except, a refused body was read on its second batch and solved a
-    different problem. The refusal is kept with the body, and raised at every later read, here on a batch it reads the same
-    both ways."""
+def test_a_refused_body_is_compared_again_at_its_next_read(door):
+    """Run again in a notebook cell, or in a sweep's try/except, a refused body was read on its second batch: the body had
+    been marked compared before the comparison ran (review 1). A refusal is not remembered, so the next read compares
+    again: on the same batch it is refused again, and on a batch it reads the same both ways it is read (CONVENTIONS § 6,
+    "What this does not catch")."""
     read = _doors_that_keep_a_body()[door]
-    with pytest.raises(ValueError, match="reads differently") as first:
-        read(_BATCH)
-    with pytest.raises(ValueError) as again:
-        read(_SAME)
-    assert str(again.value) == str(first.value)
+    for _ in range(2):
+        with pytest.raises(ValueError, match="reads differently"):
+            read(_BATCH)
+    np.testing.assert_allclose(np.ravel(read(_SAME)), 0.5, rtol=0, atol=1e-15)
+
+
+def test_a_batch_whose_compared_rows_are_one_point_leaves_the_body_uncompared():
+    """The comparison reads a few rows of a batch. When every row it reads is the same point it has compared one point
+    with itself, so the body stays not yet compared, however many distinct points the rest of the batch holds, and the
+    next batch is compared (review 2)."""
+    bound = cp.bind_user_callable(
+        lambda x: x[0] + (np.max(x[0]) - np.min(x[0])) * (x[0] > 0.7), cp.REGION_SLOTS, role="r"
+    )
+    first = np.r_[np.full(20, 0.5), 0.9]
+    assert set(first[cp.spread_samples(first.size, 3)]) == {0.5}, "the rows the comparison reads"
+    bound(x=(first,))
+    assert not bound.checked
+    with pytest.raises(ValueError, match="reads differently"):
+        bound(x=(np.linspace(0.1, 0.9, 6),))
+
+
+def test_the_comparison_reads_copies_of_every_array_it_hands():
+    """A body that writes into an array it is handed sees the caller's array once per read it makes, whatever slot holds
+    it: the comparison's reads are of copies (review 2: an array ``mu`` was written at every one of them)."""
+
+    def writes(t, x, mu):
+        mu += 1.0
+        return x[0]
+
+    held = np.zeros(3)
+    FunctionalMeasureField(writes).evaluate(0.0, _BATCH, held)
+    np.testing.assert_array_equal(held, np.ones(3))
+
+
+def test_a_mock_does_not_pass_for_a_closure_the_library_marked():
+    from unittest.mock import MagicMock
+
+    assert not cp._defined_by_the_library(MagicMock())
+
+
+class _HandedError(Exception):
+    pass
+
+
+def test_the_particle_solvers_navigable_is_the_librarys_in_a_module_run_as_a_script(monkeypatch):
+    """``python -m`` runs fp_particle as ``__main__``, where its ``navigable`` closure, read as a user's, was refused in its
+    own ``__main__`` block: the solver marks the closure it hands its sampler, and the mark holds whatever its module."""
+    import mfgarchon.alg.numerical.fp_solvers.fp_particle as fp_particle_module
+
+    handed = {}
+
+    def capture(**kwargs):
+        handed.update(kwargs)
+        raise _HandedError
+
+    monkeypatch.setattr(fp_particle_module, "sample_from_density", capture)
+    with pytest.raises(_HandedError):
+        FPParticleSolver(_problem(dimension=2, n=5), num_particles=10, seed=0).solve_fp_system(
+            np.ones((5, 5)) / 25, drift_field=lambda t, x, m: 0.0, show_progress=False
+        )
+    navigable = handed["navigable"]
+    navigable.__module__ = "__main__"
+    assert cp._defined_by_the_library(navigable)
+
+
+# ------------------------------------------------------------------- the doors that read one point, recorded at d = 1
+
+
+def test_the_upwind_probe_reads_a_hamiltonian_at_one_point_as_a_number_at_d_1():
+    """The HJB-FDM upwind probe evaluates H at one point. Handed an array of one there, it read a Hamiltonian that the
+    problem's check accepts on another branch, and refused it (review 2)."""
+
+    class ArrayOfOneBranch(HamiltonianBase):
+        def __call__(self, t, x, p, m):
+            pa = np.asarray(p, dtype=float)
+            base = 0.5 * np.sum(pa**2, axis=-1)
+            return base + 0.1 * pa[..., 0] if np.ndim(x[0]) == 1 and np.size(x[0]) == 1 else base
+
+    HJBFDMSolver(_problem(hamiltonian=ArrayOfOneBranch()), advection_scheme="gradient_upwind")
+
+
+def test_the_semi_lagrangian_control_search_hands_its_lagrangian_one_point_as_numbers_at_d_1():
+    """The semi-Lagrangian solver's search over controls reads the Lagrangian at one point; it handed x an array of one,
+    so a potential inside it was compared at every read (review 2)."""
+    from mfgarchon.core.hamiltonian import L1ControlCost
+
+    forms = set()
+
+    def potential(t, x):
+        forms.add(tuple(np.shape(entry) for entry in x))
+        return 0.4 * np.asarray(x[0]) ** 2
+
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=L1ControlCost(lambda_=1.0), potential=potential),
+            volatility=0.15,
+        ),
+        domain=_grid(n=11),
+        conditions=Conditions(u_terminal=lambda x: (x[0] - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.2),
+        Nt=4,
+    )
+    forms.clear()
+    nodes = np.linspace(0.0, 1.0, 11)
+    solver = HJBSemiLagrangianSolver(problem)
+    assert solver._use_dpp, "the control search runs"
+    solver.solve_hjb_system(np.ones((5, 11)), (nodes - 0.5) ** 2, U_coupling_prev=np.zeros((5, 11)))
+    assert ((),) in forms
+    assert ((1,),) not in forms, forms
+
+
+def test_the_meshfree_particle_handler_reads_its_sdf_at_one_point_as_numbers():
+    from mfgarchon.geometry.boundary.applicator_meshfree import SDFParticleBCHandler
+
+    forms = set()
+
+    def disc(x):
+        forms.add(tuple(np.shape(entry) for entry in x))
+        return np.hypot(x[0] - 0.5, x[1] - 0.5) - 0.3
+
+    SDFParticleBCHandler(disc, dimension=2).apply_bc(
+        np.array([[0.5, 0.5], [0.7, 0.5]]), np.array([[0.55, 0.5], [0.9, 0.52]])
+    )
+    assert ((), ()) in forms
+    assert ((1,), (1,)) not in forms, forms
 
 
 @pytest.mark.parametrize("door", sorted(_doors_that_keep_a_body()))
@@ -1444,7 +1564,9 @@ def test_each_door_that_compares_at_its_first_batch_refuses_a_misread(door):
     D12, D13); the measure field, the manufactured pair and the drift are pinned with the doors that keep a body."""
     with pytest.raises(ValueError, match="reads differently") as refused:
         door(_BATCH)
-    if door is _state_penalty:  # composed into the potential, it is refused by name, not as the Hamiltonian's
+    if door is _state_penalty:
+        # Composed into the potential, it is refused inside the Hamiltonian's check, whose message wraps the
+        # state_penalty's own refusal: the inner one must name it, or the penalty's comparison was not the one that ran.
         assert str(refused.value).count("state_penalty '") == 1, refused.value
 
 

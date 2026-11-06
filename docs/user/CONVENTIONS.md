@@ -561,8 +561,8 @@ Each door states it, in `callable_protocols.py`'s `Slots`, and the check below r
 
 The library chooses when to loop and when to vectorize, so a body that reads differently comes back as a result and not
 as an error. So a callable's batch read is compared with its read of a few of those points, and a difference, or a raise
-of `TypeError`, `ValueError`, `IndexError`, `ArithmeticError`, `AttributeError` or `KeyError`, is refused and names both
-reads; any other raise reaches you as it is. Two functions make the comparison: `_compare_reads` for a callable at its
+of `TypeError`, `ValueError`, `IndexError`, `ArithmeticError`, `AttributeError` or `KeyError`, is refused: a difference
+names both reads, and a raise names the read that raised. Any other raise reaches you as it is. Two functions make the comparison: `_compare_reads` for a callable at its
 door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `evaluate_dp`.
 
 - **Where.** A door with samples when it accepts the callable compares there: `MFGProblem` for its conditions, its
@@ -570,11 +570,12 @@ door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `eval
   returns the result: a volatility or a source at a solver's first step, a solver's `source_term`, a drift at a
   particle's first step, a measure field, a manufactured pair. A door that hands one point, or an empty batch, has
   nothing to compare, and the next batch is compared.
-- **Once per body.** What a comparison found is kept with the body, for each door kind it is bound at (its `Slots`),
-  while the body lives, so every door and every solve that binds it there shares it. A comparison that agrees on two or
-  more distinct points marks the body compared, and it is read with no comparison after that. A refused body is refused
-  at every later read, with the first refusal. One point, a batch of one point compared with itself, an empty batch or a
-  read with no `x` leaves the body as it was.
+- **Once it agrees, for each binding.** A comparison that agrees, with two or more distinct points among the rows it
+  compares, marks the body compared, and it is read with no comparison after that. The mark is kept with the binding:
+  on the object that holds it, such as a problem, a Hamiltonian or a measure field, or, at a door that binds a body at
+  every read or every solve, with the body while it lives. So a body handed to a new holder is compared once more there.
+  A refusal raises and is not kept. One point, a batch whose compared rows are one point, an empty batch, or a read with
+  no `x` leaves the body as it was.
 - **The samples.** They are spread across the batch at the golden ratio's multiples and are not its ends and middle, where
   a term such as $\sin 2\pi x$ is the same on a uniform grid. A batch of fewer than two points, or of exactly $d$, is
   cycled up to a count that is neither, since a coordinate axis passes for a batch of $d$.
@@ -596,6 +597,11 @@ door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `eval
 - **A closure the library wrote is not compared.** The user's callable it wraps has its own door.
 
 **What this does not catch.**
+
+- A refusal is not remembered. A later read, by a new holder or the same one, compares again on its own samples, so a
+  sweep that catches a refusal and rebuilds its problem can be accepted where the new samples agree. A potential that
+  reads a batch differently from a point left of 1.5 is refused on `[0, 1]`, and accepted on `[1.4, 3.0]`, where the
+  samples sit right of 1.5 and the first nodes left of it, and that solve reads it on the batch.
 
 - A first batch can be narrow. A particle drift's first batch is the initial cloud, so a body that reads its largest
   coordinate past a dead zone reads the same both ways while the cloud is inside it, is accepted, and is not compared
