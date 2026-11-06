@@ -78,14 +78,14 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     """
     import functools
 
-    from mfgarchon.core.hamiltonian import MFGOperatorBase, _family_call, _own_rows
+    from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, _remembered, point_tuple, refuse_overridden
 
     x = point_tuple(x)
     target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         refuse_overridden(fn, HAMILTONIAN_SLOTS.order, role="Hamiltonian callable")
-        return _family_call(fn, t=t, x=x, p=p, m=m, cross_density=_own_rows(m))
+        return fn(t=t, x=x, p=p, m=m)
     return _remembered(fn, HAMILTONIAN_SLOTS, "Hamiltonian callable")(t=t, x=x, p=p, m=m)
 
 

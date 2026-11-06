@@ -59,11 +59,9 @@ For general cases, numerical Legendre transform is available.
 
 from __future__ import annotations
 
-import functools
 import inspect
 import math
 import numbers
-import types
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol
@@ -796,6 +794,18 @@ def _ruling8_order_violation(member: object) -> tuple[str, ...] | None:
     return named if _out_of_ruling8_order(named) else None
 
 
+def _declares_cross_density(member: object) -> bool:
+    """Whether ``member``, a family method, takes a parameter named ``cross_density``, which only a density term may
+    (#2335)."""
+    fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
+    if not callable(fn):
+        return False
+    try:
+        return "cross_density" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _out_of_ruling8_order(names: Iterable[str]) -> bool:
     """Whether the ranked names among ``names`` break ruling 8's relative order.
 
@@ -841,15 +851,14 @@ def _density_at_points(m: Any, count: int, what: str, *, after: Exception | None
     raise ValueError(_unpaired_density(what, values.size, count, after=after))
 
 
-def _read_of_the_density(owner: Any, name: str, m: Any, count: int | None = None, cross_density: Any = None) -> Any:
+def _read_of_the_density(owner: Any, name: str, m: Any, cross_density: NDArray, count: int | None = None) -> Any:
     """``owner.<name>``, a function of the density, read by name at ``m``, the own density, and at ``cross_density``, every
-    population's, if it declares that slot (#2875, #2335): a float at one point, and on a batch of ``count`` points one
-    value per point, a constant holding for all of them. A return of any other count is refused (#2335), and so is a
-    term that declares ``cross_density`` when the method was handed none. Nothing falls back to reading a batch one point
-    at a time: a body that cannot read a batch raises, and the problem's check refuses it when it takes the Hamiltonian."""
+    population's rows, if it declares that slot (#2875, #2335): a float at one point, and on a batch of ``count`` points
+    one value per point, a constant holding for all of them. The rows are always handed, the stack a door handed or the
+    own row (`_own_rows`), so the reader has no ``None`` to read. A return of any other count is refused (#2335).
+    Nothing falls back to reading a batch one point at a time: a body that cannot read a batch raises, and the
+    problem's check refuses it when it takes the Hamiltonian."""
     read = bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
-    if cross_density is None and "cross_density" in read.passes:
-        _refuse_a_dropped_slot(f"{type(owner).__name__}.{name.lstrip('_')}")
     if count is None:
         return float(read(m=m, cross_density=cross_density))
     values = np.asarray(read(m=np.asarray(m), cross_density=cross_density), dtype=float).ravel()
@@ -860,10 +869,23 @@ def _read_of_the_density(owner: Any, name: str, m: Any, count: int | None = None
 
 
 def _bind_density_terms(owner: Any, *names: str) -> None:
-    """Refuse a name-unbound density term where it is handed over, as ``_bound_potential`` does for the potential."""
+    """Refuse a name-unbound density term where it is handed over, as ``_bound_potential`` does for the potential, and
+    record the owner's density terms, which ``_terms_reading_every_population`` reads (#2335)."""
     for name in names:
         if getattr(owner, name) is not None:
             bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
+    owner._density_terms = (*getattr(owner, "_density_terms", ()), *names)
+
+
+def _terms_reading_every_population(owner: Any) -> list[str]:
+    """The density terms of ``owner`` that declare ``cross_density``: the ones a door must hand every population's rows
+    (#2335)."""
+    return [
+        name.lstrip("_")
+        for name in getattr(owner, "_density_terms", ())
+        if getattr(owner, name) is not None
+        and "cross_density" in bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_")).passes
+    ]
 
 
 class MFGOperatorBase(ABC):
@@ -982,6 +1004,13 @@ class MFGOperatorBase(ABC):
         for name, member in cls.__dict__.items():
             if name not in api:
                 continue
+            if _declares_cross_density(member):
+                raise TypeError(
+                    f"{cls.__qualname__}.{name} declares cross_density. A family method takes (t, x, p, m) and the "
+                    f"population's own density as m; every population's density reaches a density term only (#2335). "
+                    f"Give the cross term to a term that declares cross_density, such as coupling= or "
+                    f"congestion_factor=, and the library hands it every population's rows."
+                )
             named = _ruling8_order_violation(member)
             if named is not None:
                 raise TypeError(
@@ -1068,9 +1097,9 @@ class HEvalState:
         The population's own density, shape ``(N,)``, a scalar at one point. In a multi-population solve too (#2335).
     cross_density : NDArray | None
         Every population's density at the same points, its own included: shape ``(K, N)``, row ``j`` population ``j``'s,
-        and ``(K,)`` at one point; ``m[np.newaxis]`` where there is one population. ``None`` means no stack was handed:
-        a method or term that declares the slot is then refused. A family method reads it only by declaring a
-        parameter named ``cross_density`` (#2335).
+        and ``(K,)`` at one point. A multi-population door hands it; ``None`` means one population, whose terms read its
+        own row (`_rows_of`). It reaches a density term that declares ``cross_density`` through a library family class's
+        primitive, never a family method (#2335).
     """
 
     t: float
@@ -1085,24 +1114,20 @@ class HEvalState:
         return self.p
 
 
-def _own_rows(m: Any) -> NDArray | None:
-    """One population's stack: the own density alone, ``m[np.newaxis]``, one row at the same points as ``m``, or ``None``
-    where there is no density. A caller with no stack to hand builds it here, from the ``m`` it reads at (#2335)."""
-    return None if m is None else np.asarray(m, dtype=float)[np.newaxis]
+def _own_rows(m: Any) -> NDArray:
+    """One population's rows: its own density alone, ``m[np.newaxis]``, at the same points as ``m`` (#2335)."""
+    return np.asarray(m, dtype=float)[np.newaxis]
 
 
-def _refuse_a_dropped_slot(target: str) -> NoReturn:
-    """The one refusal of a ``cross_density`` that never arrived: ``target`` declares the slot and was handed none, which
-    no library call does, so a call between the library and it dropped the slot (#2335)."""
-    raise TypeError(
-        f"{target} declares cross_density, and was handed none. Pass cross_density=m[np.newaxis] for one population, "
-        "or pass on the cross_density a library method or override was handed (#2335)."
-    )
+def _rows_of(state: HEvalState) -> NDArray:
+    """The rows a state's density terms read: the stack a multi-population door handed, or, where it handed none, the
+    population's own row (#2335)."""
+    return _own_rows(state.m) if state.cross_density is None else state.cross_density
 
 
 def _population_rows(stack: Any, count: int, where: str) -> NDArray:
     """A solver's flat multi-population stack, ``K * count`` values for ``count`` points, as ``(K, count)`` rows, one per
-    population, which is how a body reads ``cross_density`` (#2335)."""
+    population, which is how a density term reads ``cross_density`` (#2335)."""
     flat = np.asarray(stack, dtype=float).ravel()
     rows, rest = divmod(flat.size, count)
     if rest or rows == 0:
@@ -1113,49 +1138,14 @@ def _population_rows(stack: Any, count: int, where: str) -> NDArray:
     return flat.reshape(rows, count)
 
 
-@functools.lru_cache(maxsize=1024)
-def _cross_density_parameter(fn: Any) -> str | None:
-    """How ``fn`` takes ``cross_density``: ``"required"``, ``"defaulted"``, or ``None`` where it does not, read once per
-    function (#2335)."""
-    try:
-        parameter = inspect.signature(fn).parameters.get("cross_density")
-    except (TypeError, ValueError):
-        return None
-    if parameter is None:
-        return None
-    return "required" if parameter.default is inspect.Parameter.empty else "defaulted"
-
-
-def _family_call(method: Any, *, t: Any, x: Any, p: Any, m: Any, cross_density: Any = None) -> Any:
-    """Call a Hamiltonian's family method by keyword: the one way the library calls ``__call__``, ``dp``, ``dm``, ``dx`` or
-    ``optimal_control`` (#2335). A method that declares ``cross_density`` is handed what the caller hands: the door's
-    rows, or the own row a caller with no stack builds (`_own_rows`). A method that requires it and is handed none is
-    refused (`_refuse_a_dropped_slot`); one that gives it a default receives ``None`` and passes it on. One written
-    before the slot is called as it always was, and a partial that froze the slot is refused, since the slot passed by
-    name would override it."""
-    if isinstance(method, types.MethodType):
-        key = method.__func__
-    elif isinstance(method, (types.FunctionType, functools.partial)):
-        key = method
-    else:
-        key = type(method).__call__
-    takes = _cross_density_parameter(key)
-    if takes is None:
-        return method(t=t, x=x, p=p, m=m)
-    refuse_overridden(method, ("cross_density",), role="Hamiltonian method")
-    if cross_density is None and takes == "required":
-        _refuse_a_dropped_slot(getattr(method, "__qualname__", repr(method)))
-    return method(t=t, x=x, p=p, m=m, cross_density=cross_density)
-
-
-def _a_point_of(state: dict[str, Any], i: int) -> dict[str, Any]:
-    """Point ``i`` of a batch evaluation state, as a per-point path reads it: ``x`` one point, ``p`` of shape ``(d,)``, ``m``
-    a scalar, and ``cross_density`` that point's column, one value per population. Its point axis is the last, where
-    every other slot's is the first (#2335)."""
-    point = {"x": state["x"][i], "p": state["p"][i], "m": state["m"][i], "t": state["t"]}
-    if state.get("cross_density") is not None:
-        point["cross_density"] = np.asarray(state["cross_density"])[..., i]
-    return point
+def _runs_its_own(hamiltonian: Any, name: str) -> bool:
+    """Whether ``hamiltonian`` runs the library's own ``name``: neither a class outside the package nor the instance gives
+    it another body. A library family class's primitive reads its terms at the door's rows only then, and otherwise
+    calls that body with the own density (#2335)."""
+    library = next(cls for cls in type(hamiltonian).__mro__ if cls.__module__.startswith("mfgarchon."))
+    return getattr(type(hamiltonian), name) is getattr(library, name, None) and name not in getattr(
+        hamiltonian, "__dict__", {}
+    )
 
 
 def _state_x(state: HEvalState) -> tuple[Any, ...]:
@@ -1316,8 +1306,7 @@ class HamiltonianBase(MFGOperatorBase):
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
         """
-        values = {"x": _state_x(state), "m": state.m, "p": state.p, "t": state.t, "cross_density": state.cross_density}
-        return np.asarray(_family_call(self.__call__, **values), dtype=float)
+        return np.asarray(self(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
@@ -1327,8 +1316,13 @@ class HamiltonianBase(MFGOperatorBase):
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
-        values = {"x": _state_x(state), "m": state.m, "p": state.p, "t": state.t, "cross_density": state.cross_density}
-        return np.asarray(_family_call(self.dp, **values), dtype=float)
+        return np.asarray(self.dp(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
+
+    def evaluate_optimal_control(self, state: HEvalState) -> NDArray:
+        """Optimal control ``α*`` over a batch: the FP velocity door's primitive, as :meth:`evaluate_dp` is the Jacobian's
+        (#2335). This base reads ``optimal_control`` at the population's own density; a library family class whose terms
+        may read every population's reads them here at the state's rows."""
+        return np.asarray(self.optimal_control(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def dH_dm(self, state: HEvalState) -> NDArray:
         """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
@@ -1336,8 +1330,7 @@ class HamiltonianBase(MFGOperatorBase):
         Separate from the residual/Jacobian primitives — the FP source term, not the
         HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
         """
-        values = {"x": _state_x(state), "m": state.m, "p": state.p, "t": state.t, "cross_density": state.cross_density}
-        return np.asarray(_family_call(self.dm, **values), dtype=float)
+        return np.asarray(self.dm(x=_state_x(state), m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate(self, state: HEvalState) -> HamiltonianValues:
         """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
@@ -1420,7 +1413,6 @@ class HamiltonianBase(MFGOperatorBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Compute ∂H/∂p (gradient w.r.t. momentum).
@@ -1462,24 +1454,15 @@ class HamiltonianBase(MFGOperatorBase):
                     p_plus[:, i] += eps
                     p_minus = p_arr.copy()
                     p_minus[:, i] -= eps
-                    at = {"x": x, "m": m, "t": t, "cross_density": cross_density}
-                    H_plus = np.asarray(_family_call(self.__call__, p=p_plus, **at), dtype=float).ravel()
-                    H_minus = np.asarray(_family_call(self.__call__, p=p_minus, **at), dtype=float).ravel()
+                    H_plus = np.asarray(self(x=x, m=m, p=p_plus, t=t), dtype=float).ravel()
+                    H_minus = np.asarray(self(x=x, m=m, p=p_minus, t=t), dtype=float).ravel()
                     grad[:, i] = _central_difference(H_plus, H_minus, eps)
                 return grad
             except (TypeError, ValueError) as batch_error:
                 # __call__ doesn't support batch m — fall back to per-point loop
                 m_points = _density_at_points(m, N, f"{type(self).__name__}.dp", after=batch_error)
-                columns = None if cross_density is None else np.asarray(cross_density)
-                return np.stack(
-                    [
-                        self._finite_diff_dp(
-                            point_at(x, i), m_points[i], p_arr[i], t, None if columns is None else columns[..., i]
-                        )
-                        for i in range(N)
-                    ]
-                )
-        return self._finite_diff_dp(x, m, p, t, cross_density)
+                return np.stack([self._finite_diff_dp(point_at(x, i), m_points[i], p_arr[i], t) for i in range(N)])
+        return self._finite_diff_dp(x, m, p, t)
 
     def dm(
         self,
@@ -1523,14 +1506,8 @@ class HamiltonianBase(MFGOperatorBase):
             m_arr = np.asarray(m)
             eps = self.finite_diff_eps
             try:
-                H_plus = np.asarray(
-                    _family_call(self.__call__, x=x, m=m_arr + eps, p=p_arr, t=t, cross_density=_own_rows(m_arr + eps)),
-                    dtype=float,
-                ).ravel()
-                H_minus = np.asarray(
-                    _family_call(self.__call__, x=x, m=m_arr - eps, p=p_arr, t=t, cross_density=_own_rows(m_arr - eps)),
-                    dtype=float,
-                ).ravel()
+                H_plus = np.asarray(self(x=x, m=m_arr + eps, p=p_arr, t=t), dtype=float).ravel()
+                H_minus = np.asarray(self(x=x, m=m_arr - eps, p=p_arr, t=t), dtype=float).ravel()
                 return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError) as batch_error:
                 m_points = _density_at_points(m, p_arr.shape[0], f"{type(self).__name__}.dm", after=batch_error)
@@ -1585,7 +1562,6 @@ class HamiltonianBase(MFGOperatorBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Compute optimal control α* given state and momentum.
@@ -1609,7 +1585,7 @@ class HamiltonianBase(MFGOperatorBase):
         NDArray
             Optimal control α*, same shape as p
         """
-        dH_dp = _family_call(self.dp, x=x, m=m, p=p, t=t, cross_density=cross_density)
+        dH_dp = self.dp(x=x, m=m, p=p, t=t)
         return -dH_dp
 
     def jacobian_fd(
@@ -1664,7 +1640,7 @@ class HamiltonianBase(MFGOperatorBase):
         >>> A_upper = diffusion_upper + jac.upper
         """
         # Get ∂H/∂p from the class method
-        dH_dp = _family_call(self.dp, x=x, m=m, p=p, t=t, cross_density=_own_rows(m))
+        dH_dp = self.dp(x=x, m=m, p=p, t=t)
         # Issue #1068: use np.ndim() instead of hasattr(, "__len__") to detect arrays.
         dH_dp_scalar = float(dH_dp[0]) if np.ndim(dH_dp) > 0 else float(dH_dp)
 
@@ -1708,7 +1684,6 @@ class HamiltonianBase(MFGOperatorBase):
         m: float | NDArray,
         p: NDArray,
         t: float,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """Compute ∂H/∂p using central finite differences."""
         eps = self.finite_diff_eps
@@ -1723,8 +1698,8 @@ class HamiltonianBase(MFGOperatorBase):
             p_plus[i] += eps
             p_minus[i] -= eps
 
-            H_plus = _family_call(self.__call__, x=x, m=m, p=p_plus, t=t, cross_density=cross_density)
-            H_minus = _family_call(self.__call__, x=x, m=m, p=p_minus, t=t, cross_density=cross_density)
+            H_plus = self(x=x, m=m, p=p_plus, t=t)
+            H_minus = self(x=x, m=m, p=p_minus, t=t)
             grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
@@ -1740,8 +1715,8 @@ class HamiltonianBase(MFGOperatorBase):
         eps = self.finite_diff_eps
         m_scalar = float(m) if np.isscalar(m) else float(np.mean(m))
 
-        H_plus = _family_call(self.__call__, x=x, m=m_scalar + eps, p=p, t=t, cross_density=_own_rows(m_scalar + eps))
-        H_minus = _family_call(self.__call__, x=x, m=m_scalar - eps, p=p, t=t, cross_density=_own_rows(m_scalar - eps))
+        H_plus = self(x=x, m=m_scalar + eps, p=p, t=t)
+        H_minus = self(x=x, m=m_scalar - eps, p=p, t=t)
 
         return float(_central_difference(H_plus, H_minus, eps))
 
@@ -1761,8 +1736,8 @@ class HamiltonianBase(MFGOperatorBase):
             x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
             x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
 
-            H_plus = _family_call(self.__call__, x=x_plus, m=m, p=p, t=t, cross_density=_own_rows(m))
-            H_minus = _family_call(self.__call__, x=x_minus, m=m, p=p, t=t, cross_density=_own_rows(m))
+            H_plus = self(x=x_plus, m=m, p=p, t=t)
+            H_minus = self(x=x_minus, m=m, p=p, t=t)
             grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
@@ -2190,7 +2165,7 @@ class SeparableLagrangian(LagrangianBase):
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
-        f_m = _read_of_the_density(self, "_coupling", m) if self._coupling is not None else 0.0
+        f_m = _read_of_the_density(self, "_coupling", m, _own_rows(m)) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
     def optimal_control(self, t, x, p, m):
@@ -2204,7 +2179,7 @@ class SeparableLagrangian(LagrangianBase):
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
         V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
-        f_m = _read_of_the_density(self, "_coupling", m) if self._coupling is not None else 0.0
+        f_m = _read_of_the_density(self, "_coupling", m, _own_rows(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
     def proximal(self, tau, z, *, t=0.0, x=None, m=None):
@@ -2343,7 +2318,6 @@ class DualHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Compute ∂H/∂p = -α*.
@@ -2469,8 +2443,7 @@ class DualLagrangian(LagrangianBase):
             p_grid = np.linspace(self.p_bounds[0], self.p_bounds[1], self.n_search)
             values = np.array(
                 [
-                    -float(p) * float(alpha_flat[0])
-                    - float(_family_call(self.hamiltonian, x=x, m=m, p=np.array([p]), t=t, cross_density=_own_rows(m)))
+                    -float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x=x, m=m, p=np.array([p]), t=t))
                     for p in p_grid
                 ]
             )
@@ -2485,10 +2458,7 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(
-                    -np.dot(p, alpha_flat)
-                    - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m)))
-                )
+                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t)))
 
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
@@ -2503,9 +2473,7 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = -np.dot(p, alpha_flat) - float(
-                    _family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m))
-                )
+                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t))
                 best_val = max(best_val, val)
 
             return float(best_val)
@@ -2556,8 +2524,7 @@ class DualLagrangian(LagrangianBase):
             p_grid = np.linspace(self.p_bounds[0], self.p_bounds[1], self.n_search)
             values = np.array(
                 [
-                    -float(p) * float(alpha_flat[0])
-                    - float(_family_call(self.hamiltonian, x=x, m=m, p=np.array([p]), t=t, cross_density=_own_rows(m)))
+                    -float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x=x, m=m, p=np.array([p]), t=t))
                     for p in p_grid
                 ]
             )
@@ -2569,10 +2536,7 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(
-                    -np.dot(p, alpha_flat)
-                    - float(_family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m)))
-                )
+                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t)))
 
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
@@ -2588,9 +2552,7 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = -np.dot(p, alpha_flat) - float(
-                    _family_call(self.hamiltonian, x=x, m=m, p=p, t=t, cross_density=_own_rows(m))
-                )
+                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t))
                 if val > best_val:
                     best_val = val
                     best_p = p
@@ -2685,7 +2647,6 @@ class SeparableHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> float | NDArray:
         """
         Evaluate H = H_control(p) - V(t, x) - f(m).
@@ -2694,6 +2655,11 @@ class SeparableHamiltonian(HamiltonianBase):
         For batch: p.shape = (N, d), returns shape (N,).
         For single-point: p.shape = (d,), returns float.
         """
+        return self._value(t, x, p, m, _own_rows(m))
+
+    def _value(self, t: float, x: tuple[Any, ...], p: NDArray, m: float | NDArray, rows: NDArray) -> float | NDArray:
+        """``__call__``'s body, its coupling reading every population's density ``rows`` beside the own ``m``: the own
+        row from ``__call__``, a door's stack from :meth:`evaluate_H` (#2335)."""
         p_arr = np.atleast_1d(p)
         is_batch = p_arr.ndim == 2
 
@@ -2712,13 +2678,20 @@ class SeparableHamiltonian(HamiltonianBase):
         # Coupling term
         if self._coupling is not None:
             if is_batch:
-                f_m = _read_of_the_density(self, "_coupling", m, p_arr.shape[0], cross_density)
+                f_m = _read_of_the_density(self, "_coupling", m, rows, p_arr.shape[0])
             else:
-                f_m = _read_of_the_density(self, "_coupling", m, cross_density=cross_density)
+                f_m = _read_of_the_density(self, "_coupling", m, rows)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
         return H_control - V - f_m
+
+    def evaluate_H(self, state: HEvalState) -> NDArray:
+        """The residual door's primitive, the coupling reading the state's rows (#2335). A subclass or an instance that gives
+        ``__call__`` its own body is read through that body, at its own density."""
+        if not _runs_its_own(self, "__call__"):
+            return super().evaluate_H(state)
+        return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, _rows_of(state)), dtype=float)
 
     def dp(
         self,
@@ -2726,7 +2699,6 @@ class SeparableHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         dH/dp from control cost component. No isinstance dispatch (Issue #898).
@@ -2755,9 +2727,9 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._coupling_dm is not None:
             if is_batch:
-                result = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0], _own_rows(m))
+                result = _read_of_the_density(self, "_coupling_dm", m, _own_rows(m), p_arr.shape[0])
                 return -result
-            return -_read_of_the_density(self, "_coupling_dm", m, cross_density=_own_rows(m))
+            return -_read_of_the_density(self, "_coupling_dm", m, _own_rows(m))
 
         if self._coupling is None:
             if is_batch:
@@ -2809,7 +2781,6 @@ class SeparableHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Optimal control from the control cost specification.
@@ -2903,7 +2874,6 @@ class CongestionHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> float | NDArray:
         """
         Evaluate H = |p|^2 / (2*lambda*c(m)) - V(t, x) - f(m).
@@ -2912,6 +2882,11 @@ class CongestionHamiltonian(HamiltonianBase):
         For batch: p.shape = (N, d), returns shape (N,).
         For single-point: p.shape = (d,), returns float.
         """
+        return self._value(t, x, p, m, _own_rows(m))
+
+    def _value(self, t: float, x: tuple[Any, ...], p: NDArray, m: float | NDArray, rows: NDArray) -> float | NDArray:
+        """``__call__``'s body, its congestion factor and coupling reading every population's density ``rows`` beside the
+        own ``m``: the own row from ``__call__``, a door's stack from :meth:`evaluate_H` (#2335)."""
         p_arr = np.atleast_1d(p)
         is_batch = p_arr.ndim == 2
 
@@ -2922,9 +2897,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Congestion factor c(m)
         if is_batch:
-            c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0], cross_density)
+            c_m = _read_of_the_density(self, "_congestion_factor", m, rows, p_arr.shape[0])
         else:
-            c_m = _read_of_the_density(self, "_congestion_factor", m, cross_density=cross_density)
+            c_m = _read_of_the_density(self, "_congestion_factor", m, rows)
 
         H_kinetic = H_kinetic / c_m
 
@@ -2938,9 +2913,9 @@ class CongestionHamiltonian(HamiltonianBase):
         # Coupling term f(m)
         if self._coupling is not None:
             if is_batch:
-                f_m = _read_of_the_density(self, "_coupling", m, p_arr.shape[0], cross_density)
+                f_m = _read_of_the_density(self, "_coupling", m, rows, p_arr.shape[0])
             else:
-                f_m = _read_of_the_density(self, "_coupling", m, cross_density=cross_density)
+                f_m = _read_of_the_density(self, "_coupling", m, rows)
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2952,7 +2927,6 @@ class CongestionHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Compute dH/dp = p / (lambda * c(m)).
@@ -2962,20 +2936,45 @@ class CongestionHamiltonian(HamiltonianBase):
 
         Returns shape (d,) for single-point, (N, d) for batch.
         """
+        return self._dp(p, m, _own_rows(m))
+
+    def _dp(self, p: NDArray, m: float | NDArray, rows: NDArray) -> NDArray:
+        """``dp``'s body, its congestion factor reading every population's density ``rows`` beside the own ``m`` (#2335)."""
         p_arr = np.atleast_1d(p)
         is_batch = p_arr.ndim == 2
 
         # Congestion factor c(m)
         if is_batch:
-            c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0], cross_density)
+            c_m = _read_of_the_density(self, "_congestion_factor", m, rows, p_arr.shape[0])
         else:
-            c_m = _read_of_the_density(self, "_congestion_factor", m, cross_density=cross_density)
+            c_m = _read_of_the_density(self, "_congestion_factor", m, rows)
 
         # Delegate to control_cost.dp(), then divide by c(m) (Issue #898)
         base_dp = self.control_cost.dp(p_arr)
         if is_batch:
             return base_dp / c_m[:, np.newaxis]
         return base_dp / c_m
+
+    def evaluate_H(self, state: HEvalState) -> NDArray:
+        """The residual door's primitive, the terms reading the state's rows (#2335); a ``__call__`` given another body is
+        read through it, at its own density."""
+        if not _runs_its_own(self, "__call__"):
+            return super().evaluate_H(state)
+        return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, _rows_of(state)), dtype=float)
+
+    def evaluate_dp(self, state: HEvalState) -> NDArray:
+        """The Jacobian door's primitive, the congestion factor reading the state's rows (#2335); a ``dp`` given another body
+        is read through it, at its own density."""
+        if not _runs_its_own(self, "dp"):
+            return super().evaluate_dp(state)
+        return np.asarray(self._dp(state.p, state.m, _rows_of(state)), dtype=float)
+
+    def evaluate_optimal_control(self, state: HEvalState) -> NDArray:
+        """The FP velocity door's primitive, ``-dp`` with the congestion factor reading the state's rows (#2335); an
+        ``optimal_control`` or a ``dp`` given another body is read through it, at its own density."""
+        if not (_runs_its_own(self, "optimal_control") and _runs_its_own(self, "dp")):
+            return super().evaluate_optimal_control(state)
+        return -np.asarray(self._dp(state.p, state.m, _rows_of(state)), dtype=float)
 
     def dm(
         self,
@@ -3001,23 +3000,21 @@ class CongestionHamiltonian(HamiltonianBase):
                 H_kin = float(H_kin.sum())
 
             if is_batch:
-                own = _own_rows(m)  # dm is read on single-population paths only (#2335)
-                c_m = _read_of_the_density(self, "_congestion_factor", m, p_arr.shape[0], own)
-                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, p_arr.shape[0], own)
+                c_m = _read_of_the_density(self, "_congestion_factor", m, _own_rows(m), p_arr.shape[0])
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, _own_rows(m), p_arr.shape[0])
 
                 kinetic_dm = -c_dm * H_kin / c_m**2
             else:
-                own = _own_rows(m)  # dm is read on single-population paths only (#2335)
-                c_m = _read_of_the_density(self, "_congestion_factor", m, cross_density=own)
-                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, cross_density=own)
+                c_m = _read_of_the_density(self, "_congestion_factor", m, _own_rows(m))
+                c_dm = _read_of_the_density(self, "_congestion_factor_dm", m, _own_rows(m))
                 kinetic_dm = -c_dm * H_kin / c_m**2
 
             # Coupling contribution f'(m)
             if self._coupling_dm is not None:
                 if is_batch:
-                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, p_arr.shape[0], _own_rows(m))
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, _own_rows(m), p_arr.shape[0])
                 else:
-                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, cross_density=_own_rows(m))
+                    coupling_dm_val = _read_of_the_density(self, "_coupling_dm", m, _own_rows(m))
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -3040,7 +3037,6 @@ class CongestionHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
-        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Optimal control: alpha* = -sign * dH/dp.
@@ -3048,7 +3044,7 @@ class CongestionHamiltonian(HamiltonianBase):
         For congestion Hamiltonian, the optimal control depends on density m
         (unlike separable case where it only depends on p).
         """
-        return -_family_call(self.dp, x=x, m=m, p=p, t=t, cross_density=cross_density)
+        return -self.dp(x=x, m=m, p=p, t=t)
 
     def is_smooth(self) -> bool:
         """Delegates to control cost component."""
@@ -3196,8 +3192,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
 
     The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
     passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479). A node
-    alone is read as the per-point solve paths read one: ``x`` one point, ``p`` of shape ``(d,)``, ``m`` a scalar, and
-    ``cross_density`` that point's column (#2335).
+    alone is read as the per-point solve paths read one: ``x`` one point, ``p`` of shape ``(d,)``, ``m`` a scalar.
     """
     if not hamiltonian.reads_a_batch:
         return
@@ -3211,13 +3206,11 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
         "x is a tuple with one entry per coordinate, p has shape (N, d) and m shape (N,): write it to act row-wise on p, "
         "such as 0.5*np.sum(p**2, axis=-1), and to read x[0] as the coordinate (#2875)."
     )
-    # A problem's own view: every population's density is its own alone, one row (#2335).
-    batch = {"x": x, "p": p, "m": m, "t": t, "cross_density": _own_rows(m)}
     for name, evaluate in (("evaluate_H", hamiltonian.evaluate_H), ("evaluate_dp", hamiltonian.evaluate_dp)):
         refuse_batch_disagreement(
             lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
-            batch,
-            [_a_point_of(batch, i) for i in range(k)],
+            {"x": x, "p": p, "m": m, "t": t},
+            [{"x": x[i], "p": p[i], "m": m[i], "t": t} for i in range(k)],
             name=f"{type(hamiltonian).__name__}.{name}",
             guidance=guidance,
         )

@@ -11,7 +11,7 @@ import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
-from mfgarchon.core.hamiltonian import HEvalState, _own_rows, _population_rows
+from mfgarchon.core.hamiltonian import HEvalState, _population_rows
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
@@ -946,11 +946,11 @@ def compute_hjb_residual(
         x_grid = problem.geometry.get_spatial_grid()  # (Nx, 1)
         # The population's own density is m, in a multi-population solve too (#2335). The stacked cross-density the
         # backward loop indexed to this timestep (integer n_idx_hjb, #1071) goes beside it as cross_density, one row per
-        # population, which a Hamiltonian reads only by declaring that slot. HEvalState stays physics-only: no dt on the
-        # state, and no reverse-engineered round(t/dt).
+        # population, which only a density term that declares that slot reads; with no stack, a term reads the own row.
+        # HEvalState stays physics-only: no dt on the state, and no reverse-engineered round(t/dt).
         m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
         cross_grid = (
-            _own_rows(m_grid)
+            None
             if cross_density_at_n is None
             else _population_rows(cross_density_at_n, m_grid.size, "compute_hjb_residual")
         )
@@ -1377,7 +1377,7 @@ def compute_hjb_jacobian(
         # The own density is m, and the stacked cross-density goes beside it, as in compute_hjb_residual (#2335).
         m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
         cross_grid = (
-            _own_rows(m_grid)
+            None
             if cross_density_at_n is None
             else _population_rows(cross_density_at_n, m_grid.size, "compute_hjb_jacobian")
         )

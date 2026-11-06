@@ -241,18 +241,23 @@ and for $\ell(\alpha) = \tfrac{\lambda}{2}|\alpha|^{2}$ this is $H_{\text{contro
 ### One drift, one owner
 
 The Fokker–Planck drift has one owner, the Hamiltonian's control cost, and no solver keeps its own
-copy. Solvers that advect with $-c\,\nabla u$ read $c$ from `fp_drift_coefficient(problem)`; FVM, FEM
-and meshless-Galerkin take $\alpha^*$ from `H.optimal_control` on their own basis.
+copy. Solvers that advect with $-c\,\nabla u$ read $c$ from `fp_drift_coefficient(problem)`; FVM, FEM,
+meshless-Galerkin and, for a separable $H$, the particle solver take $\alpha^*$ from `H.optimal_control`
+on their own basis.
 
 `fp_drift_coefficient(problem)` resolves in this order:
 
-1. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
+1. A `SeparableHamiltonian` that serves an optimal control of its own → **raises**, stating what was
+   run (#2900). It serves its own unless the method it serves is `SeparableHamiltonian.optimal_control`
+   bound to it and, for a `QuadraticControlCost`, the cost serves that class's own
+   (`drift_is_the_control_costs`).
+2. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
    well-formed problem takes.**
-2. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
+3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
    not represent that optimal control.
-3. Any Hamiltonian that is not a `SeparableHamiltonian`, or none at all → the problem's
+4. Any Hamiltonian that is not a `SeparableHamiltonian`, or none at all → the problem's
    `coupling_coefficient`, a legacy scalar.
-4. Neither of the above → **raises**.
+5. Neither of the above → **raises**.
 
 `coupling_coefficient` is **not** an alternative spelling of the control cost and must never be set
 to stand in for one.
@@ -263,11 +268,33 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
 
 - **`potential_field` carries the value function $u$.** On the default path — a smooth separable
   $H$ — the coupling layer passes `potential_field=U` to every FP solver that has that parameter, and
-  the solver forms $\alpha^* = -D_pH$ itself. *Not yet met (#2429): `MultiPopulationIterator` passes
-  the value function to network populations as `drift_field=`, the deprecated alias.*
-- **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it only for a
-  non-smooth or non-separable $H$, and passes it only to a solver whose convention is `VELOCITY`
-  (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
+  the solver forms the drift itself. FP-FDM and the semi-Lagrangian solver form $-c\,\nabla u$, the
+  control cost's drift, and say so by `_forms_its_drift_from_u`. FVM, the particle solver and the
+  weak-form family read `optimal_control`. *Not yet met (#2429): `MultiPopulationIterator` passes the
+  value function to network populations as `drift_field=`, the deprecated alias.*
+- **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it from
+  `optimal_control` for a non-smooth or non-separable $H$, and passes it only to a solver whose
+  convention is `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
+- **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
+  is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
+  any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only where FP-FDM's
+  velocity route has been measured equal to its value-function route: a 1-D grid with `NO_FLUX`
+  walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an advection scheme
+  that reads a velocity, in a multi-population solve too, where each population is read at its own
+  density (#2335). Anywhere else, and on the semi-Lagrangian solver, the
+  coupling layer refuses it. FP-FDM's velocity route off that set is #2904.
+  A refusal states what was run and on what, and why it refuses; it names no other scheme.
+- **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
+  refusals state it:
+  - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$. It refuses
+    walls that are not one uniform condition, Dirichlet walls, a volatility that is not one constant,
+    and, on its value-function route, a control cost that is not quadratic (#1542).
+  - **The particle solver** reads it for a separable $H$, and hands it `m=None` (#2903). It refuses a
+    control cost that is not quadratic (#1542).
+  - **The weak-form family** (FEM, meshless Galerkin) reads it at $t = 0$ with `m=None` (#2903). The
+    meshless HJB with `streamline_diffusion_scale > 0` forms $-c\,\nabla u$ for its stabilisation,
+    and refuses such an $H$ there.
+  - **FP-FDM** reads it as a velocity inside the set above.
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or
@@ -290,31 +317,32 @@ paired HJB–FP operator relation.
 
 In a multi-population solve (`MultiPopulationIterator`), `m` is the population's own density, at the points of the
 door that reads it: the grid's nodes at the HJB step, and the faces at the FP velocity, averaged there as a
-one-population solve averages its own density (#2335). A term or a Hamiltonian method that reads every population
-declares a parameter named `cross_density`. It holds one row per population, its own included, at the same points as
-`m`: row `j` is population `j`'s density, and `cross_density.sum(axis=0) - m` is the other populations' together. Each
-row carries the mass its population was handed: the library normalises no population and no total (#1887), so
-`cross_density.sum(axis=0)` is the densities summed as they were handed. Where there is one population, in a
-single-population solve and in the problem's own check, `cross_density` is `m[np.newaxis]`, one row, so a body that
-reads the others reads them as possibly none: for two populations, `cross_density[1 - k] if len(cross_density) > 1
-else 0 * m`. `cross_density` is an array where `x` is a tuple: its leading axis is always the number of populations
-and every row has `m`'s shape, so `cross_density[j]` reads the same at one point and on a batch, as `x[0]` does for a
-tuple whose entries are scalars at one point and arrays on a batch.
+one-population solve averages its own density (#2335). A density term that reads every population, a `coupling=` or a
+`congestion_factor=`, declares a parameter named `cross_density`. It holds one row per population, its own included,
+at the same points as `m`: row `j` is population `j`'s density, and `cross_density.sum(axis=0) - m` is the other
+populations' together. Each row carries the mass its population was handed: the library normalises no population and
+no total (#1887), so `cross_density.sum(axis=0)` is the densities summed as they were handed. Where there is one
+population, in a single-population solve, in a direct call and in the problem's own check, `cross_density` is
+`m[np.newaxis]`, one row, so a term that reads the others reads them as possibly none: for two populations,
+`cross_density[1 - k] if len(cross_density) > 1 else 0 * m`. `cross_density` is an array where `x` is a tuple: its
+leading axis is always the number of populations and every row has `m`'s shape, so `cross_density[j]` reads the same
+at one point and on a batch, as `x[0]` does for a tuple whose entries are scalars at one point and arrays on a batch.
 
-The populations of one solve share one grid: the iterator refuses populations whose node coordinates differ, since the
-rows are read at one population's points.
+Only a density term declares `cross_density`. A family method, `__call__`, `dp`, `dm`, `dx` or `optimal_control`, takes
+`(t, x, p, m)` and nothing else, and a class whose family method declares the slot is refused with `TypeError` when it
+is created: put the cross term in a density term instead. The library hands a term its rows through the doors'
+evaluation states, which reach `SeparableHamiltonian`'s and `CongestionHamiltonian`'s own bodies; a body of yours,
+overriding one of those, is read at the population's own density alone.
 
-A method or a term that declares `cross_density` is handed rows, never `None`: every population's at a
-multi-population door, and `m[np.newaxis]` everywhere else, and a call that hands it none is refused with Python's
-`TypeError` naming the slot. So a direct call of such a Hamiltonian, or of one whose term declares it, passes
-`cross_density=m[np.newaxis]` for one population, and a method, or an override of a library method, passes on the
-`cross_density` it was handed. A library method's own default, `None`, holds only where nothing it reaches declares the
-slot; a method of yours that gives the slot a default keeps it.
+The doors that hand every population's rows are the 1-D HJB residual and Jacobian of `HJBFDMSolver`, and the 1-D FP
+velocity, `compute_fp_velocity_field`. Before the first sweep, the iterator refuses by name what these doors cannot pair
+row for row: a grid of two or more dimensions; at two or more populations, node coordinates or time grids (`T` and
+`Nt`) that differ, compared exactly; and a Hamiltonian whose term declares `cross_density` while a method the doors
+reach, `__call__`, `dp`, `optimal_control` or the `evaluate_*` primitive standing for it, is given a body of your own.
 
-The library's own `dm`, `dx` and `jacobian_fd` take no `cross_density`: these derivatives are taken on one population,
-with the own row built from the `m` each evaluates at, which for `dm`'s finite difference is the perturbed `m`. No
-multi-population door reads them (measured for #2335 over the CI-marked suite: none of them, nor `dH_dm`, is called
-inside a multi-population solve).
+The library's own `dm`, `dx` and `jacobian_fd` are taken on one population, their terms reading the own row built
+from the `m` each evaluates at, which for `dm`'s finite difference is the perturbed `m`. No multi-population door reads
+them.
 
 Until #2335 the stack was handed as `m`. A body that still reads it from `m` gets its own population's values: one
 that branches on `m`'s shape may raise, or may take its other branch with no error, as the coupling of
@@ -590,7 +618,7 @@ Each door states it, in `callable_protocols.py`'s `Slots`, and the check below r
 | `m`, `v` | `source_term_hjb`, `source_term_fp`; `m` at a volatility, diffusion, drift or coefficient | a field over the points `x` holds | the field whole, so `np.max(m)` may read it |
 | `p`, `m` | a raw Hamiltonian, a conditional Hamiltonian, `alpha_star` | one value per point, in step with `x` | that point's |
 | `v`, `m` | a variational Lagrangian | one value per point, in step with `x` | that point's |
-| `cross_density` | a density term or a Hamiltonian method that declares it (§ *Several populations*) | one row per population, each one value per point | that point's column |
+| `cross_density` | a density term that declares it (§ *Several populations*) | one row per population, each one value per point | that point's column |
 | `t`, `t_idx`, `mu`, `theta` | wherever they appear | one value for the call | that value |
 
 ### A body must read a batch and a point the same

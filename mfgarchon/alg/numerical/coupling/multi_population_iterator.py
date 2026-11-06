@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
+from mfgarchon.core.hamiltonian import _runs_its_own, _terms_reading_every_population
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -39,6 +40,68 @@ if TYPE_CHECKING:
     from mfgarchon.core.multi_population import MultiPopulationProblem
 
 logger = get_logger(__name__)
+
+
+# The family methods a door reaches a Hamiltonian through: its primitives, and the public bodies they stand for (#2335).
+_DOOR_METHODS = ("__call__", "dp", "optimal_control", "evaluate_H", "evaluate_dp", "evaluate_optimal_control")
+
+
+def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> None:
+    """Refuse, before the first sweep, what the doors cannot read row for row (#2335).
+
+    The iterator stacks one row of nodes per population and step, and its doors (the 1-D HJB residual and Jacobian, and
+    the 1-D FP velocity) hand a density term that declares ``cross_density`` every population's row at the same points
+    and step. So at two or more populations it refuses a grid of two or more dimensions; nodes or time grids that
+    differ, compared exactly; and a library Hamiltonian whose term declares the slot while a door-reached method of it
+    is given another body, which is read at the own density and would hand its terms the own row alone.
+    """
+    K = multi_problem.K
+    if K < 2:
+        return
+    populations = [multi_problem.get_population(k) for k in range(K)]
+    flat = [k for k, population in enumerate(populations) if population.dimension != 1]
+    if flat:
+        raise NotImplementedError(
+            f"MultiPopulationIterator: population(s) {flat} sit on a grid of dimension "
+            f"{[populations[k].dimension for k in flat]}. The iterator stacks one row of nodes per population, and its "
+            "doors read the rows on a 1-D grid only (#2335)."
+        )
+    nodes = [np.asarray(population.geometry.get_spatial_grid(), dtype=float) for population in populations]
+    apart = {
+        k: f"{nodes[k].shape[0]} nodes against {nodes[0].shape[0]}"
+        if nodes[k].shape != nodes[0].shape
+        else f"coordinates up to {np.abs(nodes[k] - nodes[0]).max():.3e} apart"
+        for k in range(1, K)
+        if nodes[k].shape != nodes[0].shape or not np.array_equal(nodes[k], nodes[0])
+    }
+    if apart:
+        raise ValueError(
+            f"MultiPopulationIterator: population(s) {list(apart)} sit on a grid other than population 0's ("
+            + "; ".join(f"population {k}: {gap}" for k, gap in apart.items())
+            + ", compared exactly). Each population's density is read at the points of the door that reads it, and "
+            "every population's is handed beside it as cross_density at those same points, so the populations of one "
+            "solve share one grid (#2335)."
+        )
+    times = [(population.T, population.Nt) for population in populations]
+    late = [k for k in range(1, K) if times[k] != times[0]]
+    if late:
+        raise ValueError(
+            f"MultiPopulationIterator: population(s) {late} step through time other than population 0's: (T, Nt) "
+            f"{[times[k] for k in late]} against {times[0]}, compared exactly. Every population's density is handed "
+            "beside the own at the same step, so the populations of one solve share one time grid (#2335)."
+        )
+    for k, population in enumerate(populations):
+        hamiltonian = population.hamiltonian_class
+        terms = _terms_reading_every_population(hamiltonian)
+        overridden = [name for name in _DOOR_METHODS if terms and not _runs_its_own(hamiltonian, name)]
+        if overridden:
+            raise NotImplementedError(
+                f"MultiPopulationIterator: population {k}'s {type(hamiltonian).__name__} gives {overridden} a body of its "
+                f"own while its term(s) {terms} declare cross_density. A door hands every population's density to the "
+                "library's body, and reads one given another body at the own density alone, so the terms it reaches "
+                "would read the own row (#2335). Leave those methods to the library class, or put what they compute "
+                "into a density term."
+            )
 
 
 class MultiPopulationIterator:
@@ -162,22 +225,7 @@ class MultiPopulationIterator:
                 "population alone, with its own MFGProblem.solve(), or give each population's terminal cost through "
                 "Conditions(u_terminal=...)."
             )
-        # cross_density hands every population's density at one population's points, row for row (#2335), so with more
-        # than one population they must be the same points: compared by coordinates, since one node count on [0, 1] and
-        # on [0, 2] is two grids.
-        if K > 1:
-            nodes = [np.asarray(self.multi_problem.get_population(k).geometry.get_spatial_grid()) for k in range(K)]
-            apart = [
-                k for k in range(1, K) if nodes[k].shape != nodes[0].shape or not np.array_equal(nodes[k], nodes[0])
-            ]
-            if apart:
-                raise ValueError(
-                    f"MultiPopulationIterator: population(s) {apart} sit on a grid other than population 0's "
-                    f"({[nodes[k].shape for k in apart]} nodes against {nodes[0].shape}, compared by coordinates). Each "
-                    "population's density is read at the points of the door that reads it, and every population's is "
-                    "handed beside it as cross_density at those same points, so the populations of one solve share one "
-                    "grid (#2335)."
-                )
+        refuse_what_the_doors_cannot_pair(self.multi_problem)
 
         # Initialize from each population's problem
         M = []
@@ -356,6 +404,7 @@ class MultiPopulationIterator:
                         h_class=H_k,
                         cross_density=m_all,
                         drift_convention=self._fp_drift_convention[k],
+                        fp_solver=fp_k,
                     )
                     if use_positional_U:
                         M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False, **fp_kwargs)

@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
-from mfgarchon.core.hamiltonian import _family_call
 from mfgarchon.geometry.boundary import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
@@ -230,7 +229,7 @@ class FPFEMSolver(WeakFormFPSolver):
         # the base time-stepping loop threads neither the density DOFs nor the step index n into
         # _build_advection, so m/t are passed as None/0.0.
         x_qp = self._basis.global_coordinates().value
-        alpha = _family_call(H.optimal_control, x=tuple(x_qp), m=None, p=du.grad, t=0.0)
+        alpha = H.optimal_control(x=tuple(x_qp), m=None, p=du.grad, t=0.0)
 
         @BilinearForm
         def advection_form(u, v, w):

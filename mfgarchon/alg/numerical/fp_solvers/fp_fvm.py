@@ -82,7 +82,6 @@ from scipy.sparse.linalg import splu
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence, advective_outflow_rate
-from mfgarchon.core.hamiltonian import _family_call, _own_rows
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
@@ -353,9 +352,7 @@ class FPFVMSolver(BaseFPSolver):
             lo[d] = slice(0, shape[d] - 1)
             hi[d] = slice(1, shape[d])
             m_faces = 0.5 * (m_slice[tuple(lo)] + m_slice[tuple(hi)])
-            alpha_d = np.asarray(
-                _family_call(H.optimal_control, x=x_faces, m=m_faces, p=p_d, t=t, cross_density=_own_rows(m_faces))
-            ).reshape(p_d.shape)
+            alpha_d = np.asarray(H.optimal_control(x=x_faces, m=m_faces, p=p_d, t=t)).reshape(p_d.shape)
             alpha_faces.append(alpha_d)
             if self._bc_types[d] == "periodic":
                 wrap = np.take(u_slice, 0, axis=d) - np.take(u_slice, -1, axis=d)
@@ -367,9 +364,7 @@ class FPFVMSolver(BaseFPSolver):
                     for entry in np.meshgrid(*axes[:d], [nodes_d[-1] + 0.5 * dx], *axes[d + 1 :], indexing="ij")
                 )
                 m_wrap = 0.5 * (np.take(m_slice, 0, axis=d) + np.take(m_slice, -1, axis=d))
-                alpha_w = np.asarray(
-                    _family_call(H.optimal_control, x=x_wrap, m=m_wrap, p=p_wrap, t=t, cross_density=_own_rows(m_wrap))
-                ).reshape(p_wrap.shape)
+                alpha_w = np.asarray(H.optimal_control(x=x_wrap, m=m_wrap, p=p_wrap, t=t)).reshape(p_wrap.shape)
                 alpha_wrap.append(alpha_w)
             else:
                 alpha_wrap.append(None)

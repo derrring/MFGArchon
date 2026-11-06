@@ -141,6 +141,7 @@ class FPSLSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.SL  # Forward SL (adjoint of HJB Backward SL)
     _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
+    _forms_its_drift_from_u = True  # alpha = -c*grad(U), from fp_drift_coefficient (#2900)
 
     # BoundaryCapable protocol (Issue #1456): the implicit diffusion sub-step is zero-flux
     # (no-flux / Neumann g=0) and the advection wraps for periodic; Dirichlet / Robin / absorbing
@@ -470,7 +471,7 @@ class FPSLSolver(BaseFPSolver):
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1.
         """
-        return -fp_drift_coefficient(self.problem) * self._gradient(U, time)[0]
+        return -fp_drift_coefficient(self.problem, context="FPSLSolver") * self._gradient(U, time)[0]
 
     def _compute_velocity_nd(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
         """
@@ -480,7 +481,7 @@ class FPSLSolver(BaseFPSolver):
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1. Returns a tuple, one array per dimension.
         """
-        c = fp_drift_coefficient(self.problem)
+        c = fp_drift_coefficient(self.problem, context="FPSLSolver")
         return tuple(-c * g for g in self._gradient(U, time))
 
     def _gradient(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:

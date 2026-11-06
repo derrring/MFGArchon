@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
-from mfgarchon.core.hamiltonian import _family_call, _own_rows
 from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured grid ABC
 from mfgarchon.geometry.boundary.applicator_fdm import dirichlet_wall_rows
 from mfgarchon.geometry.boundary.types import BCType
@@ -149,16 +148,8 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(
                         p_pos[axis] = magnitude
                         p_neg = p_pos.copy()
                         p_neg[axis] = -magnitude
-                        h_pos = float(
-                            np.asarray(
-                                _family_call(H, x=point_tuple(x), m=m, p=p_pos, t=0.0, cross_density=_own_rows(m))
-                            ).ravel()[0]
-                        )
-                        h_neg = float(
-                            np.asarray(
-                                _family_call(H, x=point_tuple(x), m=m, p=p_neg, t=0.0, cross_density=_own_rows(m))
-                            ).ravel()[0]
-                        )
+                        h_pos = float(np.asarray(H(x=point_tuple(x), m=m, p=p_pos, t=0.0)).ravel()[0])
+                        h_neg = float(np.asarray(H(x=point_tuple(x), m=m, p=p_neg, t=0.0)).ravel()[0])
                         if h_zero is None:
                             h_zero = h_pos
                         spread = abs(h_pos - h_zero) + abs(h_neg - h_zero)
@@ -1218,7 +1209,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem)
+            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
 
         # Compute gradient ∂U/∂x using BC-aware computation
         bc = self.get_boundary_conditions()
@@ -1296,7 +1287,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem)
+            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
 
         # Compute gradients using trait-based operators
         gradients = self._compute_gradients_nd(U, time=time)

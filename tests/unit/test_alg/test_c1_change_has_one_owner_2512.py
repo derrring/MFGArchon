@@ -51,6 +51,9 @@ assignment, are out of scope: this guard names the shapes it covers and does not
 - `check_convergence_criteria`, the verdict's owner.
 - `AndersonAccelerator.update`. Its residual norm and its stagnation test decide how to mix: restart,
   skip, safeguard. They do not decide whether the outer loop has converged.
+- `refuse_what_the_doors_cannot_pair`, the multi-population iterator's refusal of populations on different
+  grids (#2335). Its max-abs is the gap between two populations' node coordinates, printed in the refusal,
+  not a change between iterates.
 
 `NewtonMFGSolver` stops on the Picard residual Phi(x) - x, the quantity this convention governs, and since
 #2565 it decides through the owners like the other iterators, so it carries no exclusion.
@@ -105,6 +108,7 @@ EXCLUDED_FUNCTIONS = frozenset(
     {
         ((COUPLING / "fixed_point_utils.py").as_posix(), "check_convergence_criteria"),
         ((COUPLING / "anderson_acceleration.py").as_posix(), "AndersonAccelerator.update"),
+        ((COUPLING / "multi_population_iterator.py").as_posix(), "refuse_what_the_doors_cannot_pair"),
     }
 )
 _ORDER = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
@@ -475,6 +479,10 @@ def test_each_exclusion_names_a_live_scope():
         ("fixed_point_iterator.py", None, "class AndersonAccelerator:\n" + _function("update", "    ", "self, a, b")),
         # a function of the same name as the verdict's owner, in another module
         ("fixed_point_iterator.py", None, _function("check_convergence_criteria")),
+        # another function in the module of the excluded grid refusal
+        ("multi_population_iterator.py", None, _function("_planted")),
+        # the grid refusal's name in another module
+        ("fixed_point_iterator.py", None, _function("refuse_what_the_doors_cannot_pair")),
     ],
 )
 def test_an_exclusion_reaches_nothing_else(alg_copy, module, anchor, planted):

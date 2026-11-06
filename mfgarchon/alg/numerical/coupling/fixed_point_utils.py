@@ -15,9 +15,8 @@ from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import _family_call, _own_rows, _population_rows
+from mfgarchon.core.hamiltonian import HEvalState, _population_rows
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
-from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -749,11 +748,12 @@ def compute_fp_velocity_field(
         M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
         H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
         cross_density: Optional stacked multi-population density trajectory
-            ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
-            receives the own density as ``m``. In 1-D it also receives this, if it declares ``cross_density``: at
-            integer timestep ``n``, one row per population, at the faces as ``m`` is, each row averaged by
-            ``_density_at_faces`` (#2335). ``None`` => single-population. In nD only a stack with one value per node
-            (K = 1) is accepted, and it is read as ``m`` (#2330).
+            ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). The Hamiltonian is read through
+            ``evaluate_optimal_control`` at the own density as ``m``. In 1-D this is handed too, as the state's
+            ``cross_density``: at integer timestep ``n``, one row per population, at the faces as ``m`` is, each row
+            averaged by ``_density_at_faces``, for the density terms that declare it (#2335). ``None`` =>
+            single-population. In nD only a stack with one value per node (K = 1) is accepted, and it is read as
+            ``m`` (#2330).
 
     Returns:
         Velocity $\\alpha^*$.
@@ -804,13 +804,10 @@ def compute_fp_velocity_field(
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
             m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
-            cross_n = _own_rows(m_n) if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
+            cross_n = None if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
             p_n = p_faces[n].reshape(-1, 1)
-            alpha_faces[n] = np.ravel(
-                _family_call(
-                    H_class.optimal_control, x=coordinate_tuple(x_arr, 1), m=m_n, p=p_n, t=n * dt, cross_density=cross_n
-                )
-            )
+            state = HEvalState(t=n * dt, x=x_arr, p=p_n, m=m_n, cross_density=cross_n)
+            alpha_faces[n] = np.ravel(H_class.evaluate_optimal_control(state))
 
         return alpha_faces
     else:
@@ -846,14 +843,7 @@ def compute_fp_velocity_field(
             else:
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
             alpha_n = np.asarray(
-                _family_call(
-                    H_class.optimal_control,
-                    x=coordinate_tuple(x_points, ndim),
-                    m=m_points,
-                    p=p_points,
-                    t=n * dt,
-                    cross_density=_own_rows(m_points),
-                )
+                H_class.evaluate_optimal_control(HEvalState(t=n * dt, x=x_points, p=p_points, m=m_points))
             )
             if alpha_n.shape != (n_points, ndim):
                 raise ValueError(
@@ -866,6 +856,60 @@ def compute_fp_velocity_field(
         return alpha_field
 
 
+def _why_an_own_control_is_not_a_velocity_here(
+    problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None, takes_a_velocity: bool
+) -> list[str]:
+    """Why ``fp_solver``, which forms its drift from U (``_forms_its_drift_from_u``), cannot take an own optimal control
+    as a velocity here, or ``[]`` where it can (#2900). The set where it can is closed, stated positively, and is where
+    FP-FDM's velocity route was measured equal to its value-function route: a 1-D grid with NO_FLUX walls, a density
+    trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the velocity, in a
+    multi-population solve too, where the velocity door reads each population at its own density (#2335).
+    Off it, the velocity route is unmeasured, or measured wrong: periodic and 2-D are #2904. The walls are the ones the
+    solver solves with, its own when it was handed them."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _INTERFACE_VELOCITY_SCHEMES
+    from mfgarchon.geometry.boundary import BCType
+    from mfgarchon.geometry.boundary.types import BoundaryFace
+
+    name = type(fp_solver).__name__
+    if not takes_a_velocity:
+        return [f"{name} takes the value function only"]
+    reasons = []
+    if problem.dimension != 1:
+        reasons.append(f"the grid is {problem.dimension}-D")
+    else:
+        bc = fp_solver.boundary_conditions
+        walls = [bc.segment_for_face(BoundaryFace(0, side), problem.geometry).bc_type for side in ("min", "max")]
+        if any(wall != BCType.NO_FLUX for wall in walls):
+            reasons.append(f"its walls are {[wall.name for wall in walls]}")
+    scheme = getattr(fp_solver, "advection_scheme", None)
+    if scheme not in _INTERFACE_VELOCITY_SCHEMES:
+        reasons.append(f"its advection_scheme {scheme!r} does not read a velocity")
+    trajectory = (problem.Nt + 1, *tuple(problem.geometry.get_grid_shape()))
+    if np.shape(M) != trajectory:
+        reasons.append(f"it is handed M of shape {np.shape(M)}, not a density trajectory of shape {trajectory}")
+    return reasons
+
+
+def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None) -> str:
+    """What the closed set read, for its refusal to state (#2900): the grid's dimension, whether one population is
+    solved, and for a solver that holds its walls and an advection scheme, those, then the shape of M."""
+    from mfgarchon.geometry.boundary.types import BoundaryFace
+
+    read = [
+        f"a {problem.dimension}-D grid",
+        "one population" if cross_density is None else "a MultiPopulationIterator solve",
+    ]
+    bc = getattr(fp_solver, "boundary_conditions", None)
+    if bc is not None:
+        faces = [BoundaryFace(axis, side) for axis in range(problem.dimension) for side in ("min", "max")]
+        read.append(f"walls {[bc.segment_for_face(face, problem.geometry).bc_type.name for face in faces]}")
+    scheme = getattr(fp_solver, "advection_scheme", None)
+    if scheme is not None:
+        read.append(f"advection_scheme {scheme!r}")
+    read.append(f"M of shape {np.shape(M)}")
+    return ", ".join(read)
+
+
 def resolve_fp_drift_kwargs(
     problem: object,
     fp_sig_params: set[str] | None,
@@ -876,6 +920,7 @@ def resolve_fp_drift_kwargs(
     h_class: object | None = None,
     cross_density: np.ndarray | None = None,
     drift_convention: DriftConvention | None = None,
+    fp_solver: object | None = None,
 ) -> tuple[dict, bool]:
     """Resolve how the value function enters ``solve_fp_system`` (drift vs potential).
 
@@ -892,6 +937,16 @@ def resolve_fp_drift_kwargs(
           the velocity $\\alpha = -c\\,\\nabla U$ internally; ``potential_field`` is the live
           U-potential channel -- it was marked deprecated until #1771, in the wrong direction,
           while this very line emitted it on the default path).
+        - Smooth separable $H$ for which ``drift_is_the_control_costs`` does not hold (#2900), handed
+          to a solver whose class sets ``_forms_its_drift_from_u`` (FP-FDM, FP-SL) → the velocity
+          path below, which reads its ``optimal_control``, only where
+          ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: a 1-D grid with
+          ``NO_FLUX`` walls, a density trajectory, and an advection scheme that reads a velocity, for
+          any number of populations (#2335). Anywhere else this refuses, stating what it read and why, and names no other
+          scheme. Every other solver (FVM,
+          particle, the weak-form family) keeps ``potential_field`` and reads ``optimal_control``
+          itself. With ``drift_convention=None`` the pre-#1489 gate below decides, and a solver that
+          forms $-c\\,\\nabla U$ refuses through ``fp_drift_coefficient``.
         - Non-smooth $H$ on a ``VELOCITY``-channel solver → pass the face-centered velocity
           $\\alpha^*$ as ``drift_field`` (see :func:`compute_fp_velocity_field`).
         - Non-smooth $H$ on a ``VALUE_FUNCTION`` solver (only ``potential_field=U``) → raise:
@@ -926,6 +981,9 @@ def resolve_fp_drift_kwargs(
             the solver only consumes $U$ (its ``drift_field`` is a deprecated alias for
             ``potential_field``), so a non-smooth $H$ raises instead of silently advecting $U$.
             ``None`` (caller did not thread it) => the pre-#1489 param-presence gate, byte-identical.
+        fp_solver: The FP solver the kwargs are for. Its class's ``_forms_its_drift_from_u`` and, for such a
+            solver, its walls and advection scheme decide where an own ``optimal_control`` goes (#2900). ``None``
+            => no solver is known, and such a Hamiltonian keeps ``potential_field``.
 
     Returns:
         ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
@@ -946,6 +1004,7 @@ def resolve_fp_drift_kwargs(
     else:
         from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs, refuse_the_scalar_drift
 
         H_class = h_class if h_class is not None else problem.hamiltonian_class
         # Issue #1071: the multi-population iterator now passes the population's own (unbound)
@@ -958,6 +1017,36 @@ def resolve_fp_drift_kwargs(
         # non-separable) H has a set-valued / Clarke optimal control alpha* that is NOT -c*grad(U),
         # so it can only enter a VELOCITY-channel solver as a precomputed alpha*.
         h_is_smooth_separable = isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth()
+        # #2900: -c*grad(U) is a smooth separable H's drift only where drift_is_the_control_costs holds. Only a solver
+        # whose class says it forms its drift from U is affected: FVM, particle and the weak-form family read
+        # optimal_control on the potential_field route. Such a solver takes the velocity path inside the closed set
+        # `_why_an_own_control_is_not_a_velocity_here` checks, and is refused outside it. With drift_convention=None
+        # the pre-#1489 gate below decides, and fp_drift_coefficient refuses where the scalar is formed.
+        drift_from_u = h_is_smooth_separable
+        if (
+            h_is_smooth_separable
+            and drift_convention is not None
+            and getattr(type(fp_solver), "_forms_its_drift_from_u", False)
+            and not drift_is_the_control_costs(H_class)
+        ):
+            takes_a_velocity = drift_convention == DriftConvention.VELOCITY and "drift_field" in params
+            reasons = _why_an_own_control_is_not_a_velocity_here(problem, fp_solver, M, cross_density, takes_a_velocity)
+            if reasons:
+                name = type(fp_solver).__name__
+                refuse_the_scalar_drift(
+                    H_class,
+                    f"{name}.solve_fp_system(potential_field=U)",
+                    _what_the_router_read(problem, fp_solver, M, cross_density),
+                    (
+                        f"{name} takes its optimal_control as a velocity only on a 1-D grid with "
+                        "NO_FLUX walls, handed the density trajectory, with an advection scheme that reads a velocity, "
+                        "where that route has been measured equal to the value-function route (#2904). "
+                        f"Here {'; '.join(reasons)}."
+                        if takes_a_velocity
+                        else f"{'; '.join(reasons)}."
+                    ),
+                )
+            drift_from_u = False
 
         # Issue #1489 (S1): param presence cannot disambiguate the drift convention — `drift_field`
         # is a real velocity channel on some solvers but a deprecated alias for `potential_field=U`
@@ -971,7 +1060,7 @@ def resolve_fp_drift_kwargs(
                 drift_convention == DriftConvention.VELOCITY
                 and H_class is not None
                 and "drift_field" in params
-                and not h_is_smooth_separable
+                and not drift_from_u
             )
 
         if use_velocity:

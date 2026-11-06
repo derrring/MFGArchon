@@ -1,4 +1,5 @@
-"""In a multi-population solve `m` is the population's own density, and every population's is `cross_density` (#2335).
+"""In a multi-population solve `m` is the population's own density, and every population's reaches a density term that
+declares `cross_density` (#2335).
 
 Before, each population's Hamiltonian was handed the stack of every population's density as `m`, and its terms paired
 the stack with the points by position: every population read population 0's density, with no error, and the FP
@@ -8,6 +9,7 @@ density, populations do not interact, so each must equal its own K = 1 run of th
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import warnings
@@ -19,8 +21,10 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
-from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPFVMSolver, FPParticleSolver, FPSLSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+from mfgarchon.core import hamiltonian as hamiltonian_module
 from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
     HamiltonianBase,
@@ -28,13 +32,11 @@ from mfgarchon.core.hamiltonian import (
     L1ControlCost,
     QuadraticControlCost,
     SeparableHamiltonian,
-    _a_point_of,
 )
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.types.callable_protocols import FrozenSlotError, refuse_batch_disagreement
-from mfgarchon.utils.validation.protocol import ValidationError
+from mfgarchon.types.callable_protocols import FrozenSlotError
 
 N, NT, SWEEPS = 21, 10, 4
 
@@ -54,12 +56,12 @@ def _problem(hamiltonian, centre=0.4):
     )
 
 
-def _solve(hamiltonians, centres):
+def _solve(hamiltonians, centres, fp=FPFDMSolver, problems=None):
     """Every population's (U, M) after a fixed number of sweeps: the tolerance is never met, so runs of any K stop together."""
-    problems = [_problem(h, c) for h, c in zip(hamiltonians, centres, strict=True)]
+    problems = problems or [_problem(h, c) for h, c in zip(hamiltonians, centres, strict=True)]
     multi = MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(len(problems))])
     iterator = MultiPopulationIterator(
-        multi, hjb_solvers=[HJBFDMSolver(p) for p in problems], fp_solvers=[FPFDMSolver(p) for p in problems]
+        multi, hjb_solvers=[HJBFDMSolver(p) for p in problems], fp_solvers=[fp(p) for p in problems]
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -73,6 +75,12 @@ def _solve(hamiltonians, centres):
 
 def _separable(coupling):
     return SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=coupling)
+
+
+def _congested(factor):
+    return CongestionHamiltonian(
+        QuadraticControlCost(control_cost=1.0), congestion_factor=factor, potential=lambda x: 0.5 * x[0]
+    )
 
 
 KINDS = {
@@ -99,12 +107,6 @@ def test_each_population_of_a_multi_population_solve_is_its_own_one_population_r
         alone = _solve([make()], [CENTRES[k]])[0]
         np.testing.assert_array_equal(together[k][0], alone[0], err_msg=f"U of population {k}")
         np.testing.assert_array_equal(together[k][1], alone[1], err_msg=f"M of population {k}")
-
-
-def _congested(factor):
-    return CongestionHamiltonian(
-        QuadraticControlCost(control_cost=1.0), congestion_factor=factor, potential=lambda x: 0.5 * x[0]
-    )
 
 
 @pytest.mark.parametrize("c", [0.5, 0.0])
@@ -196,7 +198,7 @@ def test_a_congestion_factor_reading_the_other_row_reads_it_at_every_door():
     """Two populations, each congested by the other, written two ways: by row, `cross_density[1 - k]`, and as
     `cross_density.sum(axis=0) - m`, which no order of the rows can change. At K = 2 the two are one density, so the
     solves agree, and differ from the run with no cross term. The factor is read at the HJB residual, the Jacobian and
-    the FP velocity, so a row handed in another order, or not handed, at any one of them is a difference."""
+    the FP velocity, so a row handed in another order at any one of them is a difference."""
 
     def by_row(k):
         return lambda m, cross_density: (
@@ -216,58 +218,17 @@ def test_a_congestion_factor_reading_the_other_row_reads_it_at_every_door():
         assert np.abs(rows[k][1] - uncrossed[k][1]).max() > 1e-3, f"population {k} read no other population"
 
 
-class _OnCallOnly(HamiltonianBase):
-    """`|p|^2 / (2 (1 + m + 0.8 q)) - m`, q the other population's density, read on `__call__` alone: `dp` and
-    `optimal_control` are the base class's, which hand it on."""
-
-    def __init__(self, k):
-        super().__init__()
-        self.k = k
-
-    def _other(self, m, cross_density):
-        return cross_density[1 - self.k] if len(cross_density) > 1 else 0.0 * np.asarray(m, dtype=float)
-
-    def __call__(self, t, x, p, m, cross_density):
-        crowd = 1.0 + np.asarray(m) + 0.8 * self._other(m, cross_density)
-        return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) / crowd - np.asarray(m)
-
-
-class _ExplicitTwin(_OnCallOnly):
-    """The same Hamiltonian with its derivative written out, so nothing the library hands on stands between them."""
-
-    def dp(self, t, x, p, m, cross_density):
-        crowd = 1.0 + np.asarray(m) + 0.8 * self._other(m, cross_density)
-        return np.asarray(p) / np.reshape(crowd, (-1, 1)) if np.ndim(p) == 2 else np.asarray(p) / crowd
-
-    def optimal_control(self, t, x, p, m, cross_density):
-        return -self.dp(t=t, x=x, p=p, m=m, cross_density=cross_density)
-
-
-def test_a_user_hamiltonian_reading_every_population_on_call_alone_is_its_explicit_twin():
-    """A subclass that declares `cross_density` on `__call__` only gets it in the base class's `dp` and
-    `optimal_control` too: it solves as the twin that writes them out, to the finite difference's error."""
-    centres = [0.25, 0.75]
-    inherited = _solve([_OnCallOnly(k) for k in range(2)], centres)
-    explicit = _solve([_ExplicitTwin(k) for k in range(2)], centres)
-    for k in range(2):
-        np.testing.assert_allclose(inherited[k][0], explicit[k][0], rtol=0, atol=1e-6)
-        np.testing.assert_allclose(inherited[k][1], explicit[k][1], rtol=0, atol=1e-6)
-
-
 def test_the_velocity_door_reads_each_density_at_the_faces_as_the_mean_of_its_nodes():
     """At the FP velocity a density is read at the faces: a linear one's value there is `a + b * x_face`, which no
-    node holds. Both `m` and each row of `cross_density` are read so."""
+    node holds. Both `m` and each row of `cross_density` are read so, by a congestion factor that declares the slot."""
     seen = []
 
-    class Recorder(HamiltonianBase):
-        def __call__(self, t, x, p, m, cross_density):
-            return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1)
-
-        def optimal_control(self, t, x, p, m, cross_density):
+    def factor(m, cross_density):
+        if np.size(m) == N - 1:  # the faces; the problem's own checks read fewer points
             seen.append((np.array(m, dtype=float), np.array(cross_density, dtype=float)))
-            return -np.asarray(p, dtype=float).ravel()
+        return 1.0 + 0.0 * np.asarray(m)
 
-    hamiltonian = Recorder()
+    hamiltonian = _congested(factor)
     problem = _problem(hamiltonian)
     nodes = np.linspace(0.0, 1.0, N)
     faces = 0.5 * (nodes[:-1] + nodes[1:])
@@ -284,197 +245,225 @@ def test_the_velocity_door_reads_each_density_at_the_faces_as_the_mean_of_its_no
         np.testing.assert_allclose(rows, np.stack([0.3 + 2.0 * faces, 1.2 - 0.5 * faces]), rtol=0, atol=1e-13)
 
 
-def test_the_checks_point_read_of_cross_density_is_that_points_column():
-    """`cross_density` holds one row per population, so a point is a column of it, where every other per-point slot is
-    indexed on its first axis. A body reading the second population reads the same batch and points."""
+def _crowd(k):
+    """`1 + m + 0.8 q`, q the other population's density, read as a density term."""
+    return lambda m, cross_density: 1.0 + m + 0.8 * (cross_density[1 - k] if len(cross_density) > 1 else 0.0 * m)
 
-    class SecondPopulation(HamiltonianBase):
-        def __call__(self, t, x, p, m, cross_density):
-            return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) - np.asarray(cross_density)[1]
 
-    hamiltonian = SecondPopulation()
-    batch = {
-        "x": np.linspace(0.0, 1.0, 3).reshape(-1, 1),
-        "p": np.linspace(-1.0, 1.0, 3).reshape(-1, 1),
-        "m": np.array([0.5, 0.9, 1.3]),
-        "t": 0.0,
-        "cross_density": np.array([[0.5, 0.9, 1.3], [2.0, 3.0, 5.0]]),
-    }
-    refuse_batch_disagreement(
-        lambda **state: hamiltonian.evaluate_H(HEvalState(**state)),
-        batch,
-        [_a_point_of(batch, i) for i in range(3)],
-        name="SecondPopulation.evaluate_H",
-        guidance="",
+@pytest.mark.parametrize("method", ["__call__", "dp", "optimal_control", "dm"])
+def test_a_family_method_that_declares_cross_density_is_refused_and_its_advice_runs(method):
+    """Every population's density reaches a density term only, so a class whose family method declares the slot is
+    refused when it is created. Its advice runs: `|p|^2 / (2 (1 + m + 0.8 q)) - m` written with the cross term in a
+    congestion factor reads the other population, and solves apart from the run with no cross term."""
+
+    def body(self, t, x, p, m, cross_density):
+        return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1)
+
+    members = {"__call__": lambda self, t, x, p, m: 0.0, method: body}
+    with pytest.raises(
+        TypeError, match=rf"\.{method} declares cross_density\. .* such as coupling= or congestion_factor="
+    ):
+        type("Declares", (HamiltonianBase,), members)
+    cost = QuadraticControlCost(control_cost=1.0)
+    centres = [0.25, 0.75]
+    crowded = _solve(
+        [CongestionHamiltonian(cost, congestion_factor=_crowd(k), coupling=lambda m: m) for k in range(2)], centres
     )
-
-    class OwnRow(HamiltonianBase):
-        def __call__(self, t, x, p, m, cross_density):
-            return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) - np.asarray(cross_density)[0]
-
-    # A problem's check reads it at its own density alone, one row, and takes it.
-    _problem(OwnRow())
+    alone = _solve(
+        [CongestionHamiltonian(cost, congestion_factor=lambda m: 1.0 + m, coupling=lambda m: m)] * 2, centres
+    )
+    for k in range(2):
+        assert np.abs(crowded[k][1] - alone[k][1]).max() > 1e-3, f"population {k} read no other population"
 
 
-class _DropsTheSlot(HamiltonianBase):
-    """`__call__` reads every population; `dp` is written as before #2335 and calls it without passing the slot on."""
-
-    def __call__(self, t, x, p, m, cross_density):
-        return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) - np.asarray(cross_density).sum(axis=0)
-
-    def dp(self, t, x, p, m):
-        return self(t=t, x=x, p=p, m=m)
-
-
-def test_a_method_of_yours_that_drops_the_slot_raises_naming_it():
-    """The library hands a method that declares `cross_density` the slot; a method of yours that calls it without the
-    slot gets Python's TypeError naming it, rather than the own density alone."""
-    state = HEvalState(x=np.linspace(0.0, 1.0, 4).reshape(-1, 1), p=np.zeros((4, 1)), m=np.ones(4), t=0.0)
-    with pytest.raises(TypeError, match="cross_density"):
-        _DropsTheSlot().evaluate_dp(state)
-
-
-# Calls that pass x, p and m by keyword but are not a Hamiltonian's family method: a conditional Hamiltonian (theta), a
-# bound raw callable, the problem-level `hamiltonian` method, Howard's alpha_star, a variational problem's converted
-# functions, the dual's own argmax, and helpers that go through `evaluate_H` / `evaluate_dp`.
-_OTHER_FAMILIES = {
-    "HEvalState",
-    "assemble_hjb_residual",
-    "assemble_hjb_jacobian_diag",
-    "self._alpha_star",
-    "self.conjugate_argmax",
-    "self.problem.hamiltonian",
-    "hamiltonian_funcs['hamiltonian']",
-    "hamiltonian_funcs['hamiltonian_dm']",
-}
-
-
-def _family_calls_outside_the_owner():
-    """Every call in the library with a family method's signature, by keyword, not made through `_family_call`, and
-    those in `__main__` demonstrations apart."""
-    import ast
-    import pathlib
-
-    import mfgarchon
-
-    outside, demo = [], []
-    for path in sorted(pathlib.Path(mfgarchon.__file__).parent.rglob("*.py")):
-        tree = ast.parse(path.read_text())
-        main = {
-            node.lineno
-            for top in tree.body
-            if isinstance(top, ast.If) and "__main__" in ast.unparse(top.test)
-            for node in ast.walk(top)
-            if hasattr(node, "lineno")
-        }
-        owner = {}
-        for fn in ast.walk(tree):
-            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for node in ast.walk(fn):
-                    owner.setdefault(getattr(node, "lineno", -1), fn.name)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or isinstance(node.func, ast.Call):
-                continue
-            names = {keyword.arg for keyword in node.keywords}
-            callee = ast.unparse(node.func)
-            if not {"x", "p", "m"} <= names or "theta" in names or callee in _OTHER_FAMILIES | {"_family_call"}:
-                continue
-            if owner.get(node.lineno) == "_family_call":
-                continue
-            (demo if node.lineno in main else outside).append(f"{path.name}:{node.lineno} {callee}")
-    return outside, demo
-
-
-def test_the_library_calls_a_family_method_only_through_its_one_owner():
-    """`_family_call` is how the library calls `__call__`, `dp`, `dm`, `dx` and `optimal_control`, so a method that
-    declares `cross_density` is handed it wherever the library calls it. Control: the `__main__` demonstrations, which
-    call a Hamiltonian as a user does, are found."""
-    outside, demo = _family_calls_outside_the_owner()
-    assert outside == []
-    assert demo, "the scan found no call at all"
-
-
-@pytest.mark.parametrize("second", ["more_nodes", "same_count_on_another_domain"])
-def test_populations_not_on_one_grid_are_refused(second):
-    """`cross_density` reads every population at one population's points, row for row, so the populations of one solve
-    share one grid, compared by coordinates: one node count on [0, 1] and on [0, 2] is two grids."""
-    first = _problem(_separable(lambda m: m), 0.25)
-    nodes, upper = (2 * N, 1.0) if second == "more_nodes" else (N, 2.0)
-    other = MFGProblem(
+def _second_population(nodes, upper, *, t_end=0.4, nt=NT):
+    return MFGProblem(
         model=Model(hamiltonian=_separable(lambda m: m), volatility=0.3),
         domain=TensorProductGrid(bounds=[(0.0, upper)], Nx_points=[nodes], boundary_conditions=no_flux_bc(dimension=1)),
-        conditions=Conditions(m_initial=lambda x: 1.0 / upper, u_terminal=lambda x: 0.0 * x[0], T=0.4),
-        Nt=NT,
+        conditions=Conditions(m_initial=lambda x: 1.0 / upper + 0.0 * x[0], u_terminal=lambda x: 0.0 * x[0], T=t_end),
+        Nt=nt,
     )
-    problems = [first, other]
-    iterator = MultiPopulationIterator(
-        MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
-        hjb_solvers=[HJBFDMSolver(p) for p in problems],
-        fp_solvers=[FPFDMSolver(p) for p in problems],
-    )
-    with pytest.raises(ValueError, match=r"population\(s\) \[1\] sit on a grid other than population 0's"):
-        iterator.solve(max_iterations=1, tolerance=1e-14)
 
 
-def test_a_partial_that_froze_cross_density_is_refused_where_the_library_passes_it():
-    def raw(t, x, p, m, cross_density):
-        return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) - np.asarray(cross_density).sum(axis=0)
+@pytest.mark.parametrize(
+    ("second", "said"),
+    [
+        (_second_population(2 * N, 1.0), "42 nodes against 21"),
+        (_second_population(N, 2.0), r"coordinates up to 1\.000e\+00 apart"),
+        (_second_population(N, 0.1 * 3 / 0.3), r"coordinates up to 2\.220e-16 apart"),
+    ],
+    ids=["more_nodes", "same_count_on_another_domain", "apart_by_round_off"],
+)
+def test_populations_not_on_one_grid_are_refused(second, said):
+    """`cross_density` reads every population at one population's points, row for row, so the populations of one solve
+    share one grid, compared exactly: one node count on [0, 1] and on [0, 2] is two grids, and so is an upper bound of
+    `0.1 * 3 / 0.3`. The refusal says how far apart they are."""
+    with pytest.raises(
+        ValueError, match=rf"population\(s\) \[1\] sit on a grid other than population 0's \(population 1: {said}"
+    ):
+        _solve(None, None, problems=[_problem(_separable(lambda m: m), 0.25), second])
 
-    class Frozen(HamiltonianBase):
-        __call__ = functools.partial(raw, cross_density=np.zeros((1, 4)))
 
-    state = HEvalState(x=np.linspace(0.0, 1.0, 4).reshape(-1, 1), p=np.zeros((4, 1)), m=np.ones(4), t=0.0)
+@pytest.mark.parametrize(
+    ("second", "said"),
+    [
+        (_second_population(N, 1.0, nt=12), r"\(0\.4, 12\)\] against \(0\.4, 10\)"),
+        (_second_population(N, 1.0, t_end=1.2), r"\(1\.2, 10\)\] against \(0\.4, 10\)"),
+    ],
+    ids=["other_nt", "other_t"],
+)
+def test_populations_not_on_one_time_grid_are_refused(second, said):
+    """Every population's density is handed at the same step, so the populations of one solve share one time grid. A
+    different `Nt` failed in numpy's concatenate; a different `T` with the same `Nt` solved, each population reading the
+    other's density at another time."""
+    with pytest.raises(
+        ValueError, match=rf"population\(s\) \[1\] step through time other than population 0's: \(T, Nt\) \[{said}"
+    ):
+        _solve(None, None, problems=[_problem(_separable(lambda m: m), 0.25), second])
+
+
+def test_a_grid_of_two_dimensions_is_refused():
+    """The iterator stacks one row of nodes per population and reads the rows on a 1-D grid; a 2-D grid failed in numpy's
+    broadcast when the iterator set the densities up."""
+    problems = [
+        MFGProblem(
+            model=Model(hamiltonian=_separable(lambda m: m), volatility=0.3),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)] * 2, Nx_points=[7, 7], boundary_conditions=no_flux_bc(dimension=2)
+            ),
+            conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[0], u_terminal=lambda x: 0.0 * x[0], T=0.4),
+            Nt=4,
+        )
+        for _ in range(2)
+    ]
+    with pytest.raises(NotImplementedError, match=r"population\(s\) \[0, 1\] sit on a grid of dimension \[2, 2\]"):
+        _solve(None, None, problems=problems)
+
+
+def test_a_term_that_froze_cross_density_by_keyword_is_refused():
+    """The library passes a term `cross_density` by name, so a partial that froze it by keyword would have its value
+    overridden: refused where the term is handed over (#2869)."""
+
+    def summed(m, cross_density):
+        return np.asarray(cross_density).sum(axis=0)
+
     with pytest.raises(FrozenSlotError, match="freezes cross_density"):
-        Frozen().evaluate_H(state)
+        _separable(functools.partial(summed, cross_density=np.zeros((1, 4))))
 
 
-def _sum_coupling(rows_seen):
-    def coupling(m, cross_density):
-        if np.size(m) >= N - 1:  # a door's batch: the grid's nodes, or its faces; the problem's own checks read fewer
-            rows_seen.append(len(cross_density))
-        return m + 0.5 * (np.asarray(cross_density).sum(axis=0) - m)
-
-    return coupling
+def _sum_coupling(m, cross_density):
+    return m + 0.5 * (np.asarray(cross_density).sum(axis=0) - m)
 
 
-class _DropsOnOverride(SeparableHamiltonian):
+class _OwnCall(SeparableHamiltonian):
     def __call__(self, t, x, p, m):
         return super().__call__(t=t, x=x, p=p, m=m)
 
 
-class _ForwardsOnOverride(SeparableHamiltonian):
-    def __call__(self, t, x, p, m, cross_density):
-        return super().__call__(t=t, x=x, p=p, m=m, cross_density=cross_density)
+def test_an_override_of_a_door_method_is_refused_where_a_term_declares_the_slot():
+    """A door hands every population's density to the library's body, and reads an override at the own density alone,
+    so a term that declares the slot would read the own row through it, with no error: refused before the first sweep.
+    The same override over a term that does not declare it solves as the library class."""
+    cost = QuadraticControlCost(control_cost=1.0)
+    with pytest.raises(NotImplementedError, match=r"population 0's _OwnCall gives \['__call__'\] a body of its own"):
+        _solve([_OwnCall(cost, coupling=_sum_coupling) for _ in range(2)], [0.25, 0.75])
+    overridden = _solve([_OwnCall(cost, coupling=lambda m: m) for _ in range(2)], [0.25, 0.75])
+    library = _solve([_separable(lambda m: m) for _ in range(2)], [0.25, 0.75])
+    for k in range(2):
+        np.testing.assert_array_equal(overridden[k][0], library[k][0])
+        np.testing.assert_array_equal(overridden[k][1], library[k][1])
 
 
-def test_an_override_that_drops_the_slot_is_refused_where_a_term_reads_it():
-    """A subclass of a library Hamiltonian whose override drops `cross_density`, calling the library's method through
-    `super()`, would read a term that declares the slot at the own density alone, with no error: refused, at the
-    problem's first read. The same subclass forwarding the slot reads every population."""
-    seen = []
-    # Refused at the problem's first read of it, its validation, which reports the refusal it raised.
-    with pytest.raises(ValidationError, match=r"coupling declares cross_density, and was handed none"):
-        _solve(
-            [_DropsOnOverride(QuadraticControlCost(control_cost=1.0), coupling=_sum_coupling([])) for _ in range(2)],
-            [0.25, 0.75],
-        )
-    _solve(
-        [_ForwardsOnOverride(QuadraticControlCost(control_cost=1.0), coupling=_sum_coupling(seen)) for _ in range(2)],
-        [0.25, 0.75],
+class _CouplingOfItsOwn(SeparableHamiltonian):
+    """`__call__` of its own, `|p|^2 / 2 - m`, over a base whose coupling is `0.5 m`."""
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * np.sum(np.asarray(p, dtype=float) ** 2, axis=-1) - np.asarray(m, dtype=float)
+
+
+class _FactorOfItsOwn(CongestionHamiltonian):
+    """`__call__`, `dp` and `optimal_control` of its own, for a congestion factor `1 + m`, over a base whose factor is
+    `1 + 0.5 m`."""
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * np.sum(np.asarray(p, dtype=float) ** 2, axis=-1) / (1.0 + np.asarray(m, dtype=float))
+
+    def dp(self, t, x, p, m):
+        p = np.asarray(p, dtype=float)
+        crowd = 1.0 + np.asarray(m, dtype=float)
+        return p / crowd[:, np.newaxis] if p.ndim == 2 else p / crowd
+
+    def optimal_control(self, t, x, p, m):
+        return -self.dp(t=t, x=x, p=p, m=m)
+
+
+@pytest.mark.parametrize(
+    ("own", "library"),
+    [
+        (
+            lambda: _CouplingOfItsOwn(QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.5 * m),
+            lambda: _separable(lambda m: m),
+        ),
+        (
+            lambda: _FactorOfItsOwn(QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + 0.5 * m),
+            lambda: CongestionHamiltonian(QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + m),
+        ),
+    ],
+    ids=["separable_call", "congestion_call_dp_and_optimal_control"],
+)
+def test_a_body_of_yours_overriding_a_library_method_is_read_at_every_door(own, library):
+    """A door reads a library class through its own primitive, which reads an override of the method it stands for: a
+    subclass that redefines H solves as the library class for that H, at the residual, the Jacobian and the velocity."""
+    (overridden,), (reference,) = _solve([own()], [0.4]), _solve([library()], [0.4])
+    np.testing.assert_allclose(overridden[0], reference[0], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(overridden[1], reference[1], rtol=0, atol=1e-12)
+
+
+def test_an_optimal_control_assigned_on_the_instance_is_read_at_the_velocity_door():
+    """_runs_its_own sees a method assigned on the instance, as well as one a subclass defines: the velocity door calls a
+    congestion Hamiltonian's optimal_control assigned on it rather than the library body. Calls are counted during the
+    solve only, so a read at the problem's construction does not count."""
+    hamiltonian = CongestionHamiltonian(
+        QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + 0.5 * m
     )
-    assert seen
-    assert set(seen) == {2}
+    library_control, calls = hamiltonian.optimal_control, []
+
+    def counted(t, x, p, m):
+        calls.append(np.shape(m))
+        return library_control(t=t, x=x, p=p, m=m)
+
+    hamiltonian.optimal_control = counted
+    problems = [_problem(hamiltonian, 0.4)]
+    calls.clear()
+    _solve([], [], problems=problems)
+    assert calls
 
 
-def test_a_direct_call_passing_the_own_row_reads_as_the_one_population_body():
-    """Control: a direct single-population call of a Hamiltonian whose term declares the slot passes `m[np.newaxis]`,
-    and reads as the same Hamiltonian written for one population."""
+class _OwnControl(SeparableHamiltonian):
+    """`optimal_control` of its own, the library's `-p` written out (#2900)."""
+
+    def optimal_control(self, t, x, p, m):
+        return -np.asarray(p, dtype=float)
+
+
+def test_an_own_optimal_control_is_read_at_the_own_density_in_a_multi_population_solve():
+    """#2900 routes an `optimal_control` of a class's own to the FP velocity door, which reads it at the own density in
+    a multi-population solve too: each population of a K = 2 solve is its own K = 1 run."""
+    cost = QuadraticControlCost(control_cost=1.0)
+    together = _solve([_OwnControl(cost, coupling=lambda m: m) for _ in range(2)], [0.25, 0.75])
+    for k, centre in enumerate([0.25, 0.75]):
+        (alone,) = _solve([_OwnControl(cost, coupling=lambda m: m)], [centre])
+        np.testing.assert_array_equal(together[k][0], alone[0])
+        np.testing.assert_array_equal(together[k][1], alone[1])
+
+
+def test_a_direct_call_reads_a_term_that_declares_the_slot_at_the_own_row():
+    """A direct call of a Hamiltonian whose term declares the slot is one population's: the term reads the own row,
+    `m[np.newaxis]`, and the Hamiltonian reads as the same one written for one population."""
     x, p, m = (np.linspace(0.0, 1.0, 4),), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
     declaring = _separable(lambda m, cross_density: m + 0.5 * (cross_density.sum(axis=0) - m))
     plain = _separable(lambda m: m)
-    np.testing.assert_array_equal(
-        declaring(t=0.0, x=x, p=p, m=m, cross_density=m[np.newaxis]), plain(t=0.0, x=x, p=p, m=m)
-    )
+    np.testing.assert_array_equal(declaring(t=0.0, x=x, p=p, m=m), plain(t=0.0, x=x, p=p, m=m))
 
 
 @pytest.mark.parametrize("kind", ["separable", "congestion"])
@@ -502,50 +491,10 @@ def test_dm_reads_a_term_that_declares_the_slot_at_the_own_density(kind):
     np.testing.assert_array_equal(declaring.dm(t=0.0, x=x, p=p, m=m), plain.dm(t=0.0, x=x, p=p, m=m))
 
 
-class _LegacyOptimalControl(_OnCallOnly):
-    """`optimal_control` written as before #2335: it calls `dp` without passing the slot on."""
-
-    def optimal_control(self, t, x, p, m):
-        return -self.dp(t=t, x=x, p=p, m=m)
-
-
-class _ForwardingOptimalControl(_OnCallOnly):
-    def optimal_control(self, t, x, p, m, cross_density):
-        return -self.dp(t=t, x=x, p=p, m=m, cross_density=cross_density)
-
-
-def test_an_optimal_control_that_drops_the_slot_is_refused_where_it_reaches_a_declaring_call():
-    """The library's `dp` handed no slot passes `None` on; the `__call__` it reaches requires the slot, so it is refused
-    rather than read at the own density alone while the residual reads every population. Forwarded, the same
-    Hamiltonian solves as the one whose base-class `optimal_control` hands the slot on."""
-    centres = [0.25, 0.75]
-    with pytest.raises(TypeError, match=r"__call__ declares cross_density, and was handed none"):
-        _solve([_LegacyOptimalControl(k) for k in range(2)], centres)
-    forwarded = _solve([_ForwardingOptimalControl(k) for k in range(2)], centres)
-    inherited = _solve([_OnCallOnly(k) for k in range(2)], centres)
-    for k in range(2):
-        np.testing.assert_array_equal(forwarded[k][0], inherited[k][0])
-        np.testing.assert_array_equal(forwarded[k][1], inherited[k][1])
-
-
-def test_a_raw_subclass_called_directly_with_the_own_row_reads_as_its_plain_twin():
-    """Control: a subclass that requires the slot, called directly at one population with `cross_density=m[np.newaxis]`,
-    reads as the same Hamiltonian written without it."""
-
-    class Plain(HamiltonianBase):
-        def __call__(self, t, x, p, m):
-            return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) / (1.0 + np.asarray(m)) - np.asarray(m)
-
-    x, p, m = (np.linspace(0.0, 1.0, 4),), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
-    np.testing.assert_array_equal(
-        _OnCallOnly(0)(t=0.0, x=x, p=p, m=m, cross_density=m[np.newaxis]), Plain()(t=0.0, x=x, p=p, m=m)
-    )
-
-
 def test_a_one_population_solve_hands_a_term_that_declares_the_slot_its_own_row():
-    """With no stack handed, each door builds the own row itself: a congestion factor written over every population reads,
-    at one population, as the same factor written for one. The iterator hands its HJB step no stack at K = 1, so the
-    residual and Jacobian doors build it there; the FP velocity door builds it when it is called with none."""
+    """With no stack handed, a door's state carries none, and the library class reads its terms at the own row: a
+    congestion factor written over every population reads, at one population, as the same factor written for one. The
+    iterator hands its HJB step no stack at K = 1; the FP velocity door is called with none here."""
     cost = QuadraticControlCost(control_cost=1.0)
     declaring = CongestionHamiltonian(
         cost, congestion_factor=lambda m, cross_density: 1.0 + np.asarray(cross_density).sum(axis=0)
@@ -561,3 +510,57 @@ def test_a_one_population_solve_hands_a_term_that_declares_the_slot_its_own_row(
     np.testing.assert_array_equal(
         compute_fp_velocity_field(problem, U, M, declaring), compute_fp_velocity_field(problem, U, M, plain)
     )
+
+
+FP_SOLVERS = {
+    "FPFDMSolver": FPFDMSolver,
+    "FPFVMSolver": FPFVMSolver,
+    "FPParticleSolver": functools.partial(FPParticleSolver, num_particles=1000, seed=5),
+    "FPSLSolver": FPSLSolver,
+    "MeshlessGalerkinFPSolver": lambda problem: MeshlessGalerkinFPSolver(
+        problem, collocation_points=np.linspace(0.0, 1.0, N)[:, None], delta=3.5 / (N - 1)
+    ),
+}
+DECLARING = {
+    "separable_coupling": lambda k: _separable(_sum_coupling),
+    "congestion_factor": lambda k: _congested(_crowd(k)),
+}
+# A non-separable H on a solver handed the value function: the route refuses it at the first FP step (#1489).
+ROUTE_REFUSES = {("congestion_factor", fp) for fp in ("FPParticleSolver", "FPSLSolver", "MeshlessGalerkinFPSolver")}
+
+
+@pytest.mark.parametrize("fp", sorted(FP_SOLVERS))
+@pytest.mark.parametrize("declaring", sorted(DECLARING))
+def test_every_term_read_inside_a_two_population_solve_is_handed_both_rows(declaring, fp, monkeypatch):
+    """The closed set: each library class whose term declares the slot, on each FP solver the iterator accepts on a 1-D
+    grid. Every read of a term inside the solve is handed both populations' rows; a solve the route refuses stops, its
+    reads so far handed both too. FEM needs a mesh, FP-GFDM is withdrawn, and the network solver refuses a grid."""
+    rows = []
+    read = hamiltonian_module._read_of_the_density
+    solving = [False]
+
+    def counted(owner, name, m, cross_density, count=None):
+        if solving[0]:
+            rows.append(np.shape(cross_density)[0])
+        return read(owner, name, m, cross_density, count)
+
+    monkeypatch.setattr(hamiltonian_module, "_read_of_the_density", counted)
+    problems = [_problem(DECLARING[declaring](k), c) for k, c in enumerate([0.25, 0.75])]
+    iterator = MultiPopulationIterator(
+        MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
+        hjb_solvers=[HJBFDMSolver(p) for p in problems],
+        fp_solvers=[FP_SOLVERS[fp](p) for p in problems],
+    )
+    refused = (declaring, fp) in ROUTE_REFUSES
+    solving[0] = True
+    try:
+        with (
+            warnings.catch_warnings(),
+            pytest.raises(ValueError, match="Cannot route the value function") if refused else contextlib.nullcontext(),
+        ):
+            warnings.simplefilter("ignore")
+            iterator.solve(max_iterations=2, tolerance=1e-14)
+    finally:
+        solving[0] = False
+    assert rows, "no term was read"
+    assert set(rows) == {2}

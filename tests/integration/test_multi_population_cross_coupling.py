@@ -168,30 +168,24 @@ def test_nonfdm_backend_multipop_fails_loud():
 
 def test_fp_velocity_consumes_cross_density_1071():
     """Issue #1071: the FP drift velocity must consume the ``cross_density`` trajectory — at each
-    integer timestep ``optimal_control`` sees every population's density at the faces as ``cross_density``, beside
-    its own as ``m`` (#2335). The integration test's separable H has a momentum-only
-    ``optimal_control`` (so it would not exercise this), hence a deliberately ``m``-dependent test
-    Hamiltonian; the velocity with a cross-density must differ from the own-density velocity."""
+    integer timestep a density term that declares ``cross_density`` reads every population's density at the faces,
+    beside the own as ``m`` (#2335). The integration test's separable H has a momentum-only
+    ``optimal_control`` (so it would not exercise this), hence a congestion factor that reads the other population's
+    row; the velocity with a cross-density must differ from the own-density velocity."""
     from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field
-    from mfgarchon.core.hamiltonian import HamiltonianBase
+    from mfgarchon.core.hamiltonian import CongestionHamiltonian
 
     K, Nx, Nt, T = 2, _NX + 1, _NT, _T
     dt = T / Nt
 
-    class _MDepH(HamiltonianBase):
-        """optimal_control reads the OTHER population's row of cross_density, so the velocity
+    def _crowded_by_the_other(k):
+        """optimal_control is -p / c, and c reads the OTHER population's row of cross_density, so the velocity
         genuinely depends on the cross-density (gives the flow test teeth)."""
 
-        def __init__(self, population_index):
-            self.population_index = population_index
+        def factor(m, cross_density):
+            return 1.0 + (cross_density[1 - k] if len(cross_density) > 1 else 0.0 * np.asarray(m))
 
-        def __call__(self, t, x, p, m):
-            return 0.5 * np.asarray(p, float) ** 2
-
-        def optimal_control(self, t, x, p, m, cross_density):
-            p = np.asarray(p, float)
-            other = float(np.mean(cross_density[1 - self.population_index])) if len(cross_density) > 1 else 0.0
-            return p.ravel() + other
+        return CongestionHamiltonian(QuadraticControlCost(control_cost=1.0), congestion_factor=factor)
 
     class _Prob:
         # A real grid, not a stand-in: the velocity reads the grid's node axes from their owner (#2756).
@@ -206,7 +200,7 @@ def test_fp_velocity_consumes_cross_density_1071():
     U = rng.rand(Nt + 1, Nx)
 
     for k in range(K):
-        h = _MDepH(k)
+        h = _crowded_by_the_other(k)
         v_cross = compute_fp_velocity_field(prob, U, M[k], h, cross_density=m_all)
         v_own = compute_fp_velocity_field(prob, U, M[k], h)  # own face density (no cross)
         assert not np.array_equal(v_cross, v_own), (
