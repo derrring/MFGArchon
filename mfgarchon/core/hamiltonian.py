@@ -1123,7 +1123,8 @@ def _with_own_rows(method: Any) -> Any:
     @functools.wraps(method)
     def with_own_rows(*args: Any, **kwargs: Any) -> Any:
         if kwargs.get("cross_density") is None:
-            given = signature.bind_partial(*args, **kwargs).arguments
+            # The library calls a family method by keyword (#2375 ruling 8), so binding is only for a positional call.
+            given = kwargs if "m" in kwargs else signature.bind_partial(*args, **kwargs).arguments
             if given.get("cross_density") is None and "m" in given:
                 kwargs["cross_density"] = _density_rows(None, given["m"])
         return method(*args, **kwargs)
@@ -2328,6 +2329,7 @@ class DualHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
+        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Compute ∂H/∂p = -α*.
@@ -2698,6 +2700,7 @@ class SeparableHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
+        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         dH/dp from control cost component. No isinstance dispatch (Issue #898).
@@ -2780,6 +2783,7 @@ class SeparableHamiltonian(HamiltonianBase):
         x: tuple[Any, ...],
         p: NDArray,
         m: float | NDArray,
+        cross_density: NDArray | None = None,
     ) -> NDArray:
         """
         Optimal control from the control cost specification.

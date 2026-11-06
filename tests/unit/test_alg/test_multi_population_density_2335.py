@@ -15,6 +15,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
@@ -28,8 +29,6 @@ from mfgarchon.core.hamiltonian import (
     SeparableHamiltonian,
     _a_point_of,
 )
-from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -39,17 +38,17 @@ N, NT, SWEEPS = 21, 10, 4
 
 
 def _problem(hamiltonian, centre=0.4):
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1))
+    nodes = np.linspace(0.0, 1.0, N)
+    mass = np.trapezoid(0.2 + np.exp(-40 * (nodes - centre) ** 2), nodes)  # the grid's measure, so the mass is 1
     return MFGProblem(
-        geometry=grid,
-        T=0.4,
-        Nt=NT,
-        volatility=0.3,
-        components=MFGComponents(
-            hamiltonian=hamiltonian,
-            m_initial=lambda x: 0.2 + np.exp(-40 * (x[0] - centre) ** 2),
+        model=Model(hamiltonian=hamiltonian, volatility=0.3),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1)),
+        conditions=Conditions(
+            m_initial=lambda x: (0.2 + np.exp(-40 * (x[0] - centre) ** 2)) / mass,
             u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
+            T=0.4,
         ),
+        Nt=NT,
     )
 
 
