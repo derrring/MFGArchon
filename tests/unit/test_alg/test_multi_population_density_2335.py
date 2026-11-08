@@ -12,7 +12,9 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
+import types
 import warnings
+from abc import ABCMeta
 
 import pytest
 
@@ -32,7 +34,9 @@ from mfgarchon.core.hamiltonian import (
     L1ControlCost,
     QuadraticControlCost,
     SeparableHamiltonian,
+    SeparableLagrangian,
 )
+from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -261,7 +265,9 @@ def test_a_family_method_that_declares_cross_density_is_refused_and_its_advice_r
 
     members = {"__call__": lambda self, t, x, p, m: 0.0, method: body}
     with pytest.raises(
-        TypeError, match=rf"\.{method} declares cross_density\. .* coupling= or congestion_factor= that declares"
+        TypeError,
+        match=rf"\.{method} declares cross_density\. .* coupling= or congestion_factor= of a SeparableHamiltonian or "
+        r"CongestionHamiltonian as the library ships it",
     ):
         type("Declares", (HamiltonianBase,), members)
     cost = QuadraticControlCost(control_cost=1.0)
@@ -374,13 +380,10 @@ class _OwnCall(SeparableHamiltonian):
         return super().__call__(t=t, x=x, p=p, m=m)
 
 
-def test_an_override_of_a_door_method_is_refused_where_a_term_declares_the_slot():
-    """A door hands every population's density to the library's body, and reads an override at the own density alone,
-    so a term that declares the slot would read the own row through it, with no error: refused before the first sweep.
-    The same override over a term that does not declare it solves as the library class."""
+def test_a_subclass_over_a_term_that_does_not_declare_the_slot_solves_as_the_library_class():
+    """A subclass is read through its public methods with the own density, which is all a term that does not declare
+    the slot reads: at two populations it solves as the library class."""
     cost = QuadraticControlCost(control_cost=1.0)
-    with pytest.raises(NotImplementedError, match=r"population 0's _OwnCall gives \['__call__'\] a body of its own"):
-        _solve([_OwnCall(cost, coupling=_sum_coupling) for _ in range(2)], [0.25, 0.75])
     overridden = _solve([_OwnCall(cost, coupling=lambda m: m) for _ in range(2)], [0.25, 0.75])
     library = _solve([_separable(lambda m: m) for _ in range(2)], [0.25, 0.75])
     for k in range(2):
@@ -456,9 +459,9 @@ def test_a_body_of_yours_overriding_a_library_method_is_read_at_every_door(own, 
 
 
 def test_an_optimal_control_assigned_on_the_instance_is_read_at_the_velocity_door():
-    """_runs_its_own sees a method assigned on the instance, as well as one a subclass defines: the velocity door calls a
-    congestion Hamiltonian's optimal_control assigned on it rather than the library body. Calls are counted during the
-    solve only, so a read at the problem's construction does not count."""
+    """At one population every primitive calls the public method, so the velocity door calls a congestion
+    Hamiltonian's optimal_control assigned on it. Calls are counted during the solve only, so a read at the problem's
+    construction does not count."""
     hamiltonian = CongestionHamiltonian(
         QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + 0.5 * m
     )
@@ -490,6 +493,33 @@ class _Served(CongestionHamiltonian):
         return super().__getattribute__(name)
 
 
+class _TwoFaced:
+    """A descriptor whose class face is a library function, as a function's is, and whose instance face another body."""
+
+    def __init__(self, library, body):
+        self.library, self.body = library, body
+
+    def __get__(self, instance, owner=None):
+        return self.library if instance is None else types.MethodType(self.body, instance)
+
+
+_OWN_BODIES = {
+    "__call__": lambda self, t, x, p, m: _call_for_factor_1_plus_m(t, x, p, m),
+    "dp": lambda self, t, x, p, m: _dp_for_factor_1_plus_m(t, x, p, m),
+    "optimal_control": lambda self, t, x, p, m: _control_for_factor_1_plus_m(t, x, p, m),
+}
+
+
+class _ShowsTheLibrary(ABCMeta):
+    """A metaclass whose `__getattribute__` shows `CongestionHamiltonian`'s family methods on the class, whatever its
+    body defines."""
+
+    def __getattribute__(cls, name):
+        if name in _OWN_BODIES:
+            return getattr(CongestionHamiltonian, name)
+        return super().__getattribute__(name)
+
+
 def _default_solve(hamiltonian):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -501,17 +531,35 @@ def _default_solve(hamiltonian):
     return np.asarray(result.U), np.asarray(result.M)
 
 
-@pytest.mark.parametrize("served", ["by_getattribute", "replaced_on_the_library_class"])
-def test_a_body_served_from_outside_the_class_body_is_read_on_the_default_scheme(served, monkeypatch):
-    """Whether a library body runs is asked of the method served, against the body the library class had when it was
-    created: a `dp` and an `optimal_control` served by `__getattribute__`, or `__call__`, `dp` and `optimal_control`
-    replaced on `CongestionHamiltonian` itself, are each read at every door, so the default scheme solves as the twin
-    that writes them in its class body. At ca9e9514 the doors read the library's own bodies instead, and this test
-    failed on U: 4.835e-05 off by `__getattribute__`, 1.040e-03 off replaced on the class."""
+@pytest.mark.parametrize("through", ["problem_solve", "the_iterator_at_one_population"])
+@pytest.mark.parametrize(
+    "served",
+    [
+        "by_getattribute",
+        "by_a_descriptor_showing_the_library",
+        "under_a_metaclass_showing_the_library",
+        "replaced_on_the_library_class",
+    ],
+)
+def test_a_body_served_from_outside_the_class_body_is_read_at_one_population(served, through, monkeypatch):
+    """At one population no door hands a stack, so every primitive calls the public method, as before #2335:
+    `__call__`, `dp` and `optimal_control` served however Python serves them are read at every door, and the default
+    scheme, or the iterator at K = 1, solves as the twin that writes them in its class body. At ca9e9514 the doors
+    asked a class-level identity instead and read the library's bodies: the default-scheme rows failed there on U."""
     cost = QuadraticControlCost(control_cost=1.0)
-    twin = _default_solve(_FactorOfItsOwn(cost, congestion_factor=lambda m: 1.0 + 0.5 * m))
+    solve = _default_solve if through == "problem_solve" else (lambda hamiltonian: _solve([hamiltonian], [0.4])[0])
+    twin = solve(_FactorOfItsOwn(cost, congestion_factor=lambda m: 1.0 + 0.5 * m))
     if served == "by_getattribute":
         hamiltonian = _Served(cost, congestion_factor=lambda m: 1.0 + 0.5 * m)
+    elif served == "by_a_descriptor_showing_the_library":
+        members = {name: _TwoFaced(getattr(CongestionHamiltonian, name), body) for name, body in _OWN_BODIES.items()}
+        hamiltonian = type("_TwoFacedFactor", (CongestionHamiltonian,), members)(
+            cost, congestion_factor=lambda m: 1.0 + 0.5 * m
+        )
+    elif served == "under_a_metaclass_showing_the_library":
+        hamiltonian = _ShowsTheLibrary("_ShownFactor", (CongestionHamiltonian,), dict(_OWN_BODIES))(
+            cost, congestion_factor=lambda m: 1.0 + 0.5 * m
+        )
     else:
         monkeypatch.setattr(
             CongestionHamiltonian, "__call__", lambda self, t, x, p, m: _call_for_factor_1_plus_m(t, x, p, m)
@@ -521,19 +569,9 @@ def test_a_body_served_from_outside_the_class_body_is_read_on_the_default_scheme
             CongestionHamiltonian, "optimal_control", lambda self, t, x, p, m: _control_for_factor_1_plus_m(t, x, p, m)
         )
         hamiltonian = CongestionHamiltonian(cost, congestion_factor=lambda m: 1.0 + 0.5 * m)
-    solved = _default_solve(hamiltonian)
+    solved = solve(hamiltonian)
     np.testing.assert_allclose(solved[0], twin[0], rtol=0, atol=1e-12)
     np.testing.assert_allclose(solved[1], twin[1], rtol=0, atol=1e-12)
-
-
-def test_a_call_assigned_on_the_instance_is_never_called_so_its_terms_read_every_row():
-    """Python reads `__call__` from the type, so one assigned on an instance runs neither in `h(...)` nor at a door:
-    the residual door's primitive reads the library body, and the coupling every row of the state."""
-    x, p, m = np.linspace(0.0, 1.0, 4), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
-    state = HEvalState(x=x.reshape(-1, 1), p=p, m=m, t=0.0, cross_density=np.stack([m, 2.0 * m + 1.0]))
-    assigned = _separable(_sum_coupling)
-    assigned.__call__ = lambda t, x, p, m: np.zeros(np.shape(m))
-    np.testing.assert_array_equal(assigned.evaluate_H(state), _separable(_sum_coupling).evaluate_H(state))
 
 
 class _OwnControl(SeparableHamiltonian):
@@ -550,70 +588,131 @@ class _OwnDp(SeparableHamiltonian):
         return np.asarray(p, dtype=float)
 
 
-@pytest.mark.parametrize("own", [_OwnControl, _OwnDp], ids=["optimal_control", "dp"])
-def test_a_separable_body_that_reads_no_term_is_not_refused_where_a_term_declares_the_slot(own):
-    """`SeparableHamiltonian`'s own `dp` and `optimal_control` read no density term, so a body of yours for either
-    leaves the coupling read through `__call__`, at every population's rows: a two-population solve whose coupling
-    declares the slot solves as the library class. At ca9e9514 both were refused before the first sweep."""
-    cost = QuadraticControlCost(control_cost=1.0)
-    overridden = _solve([own(cost, coupling=_sum_coupling) for _ in range(2)], [0.25, 0.75])
-    library = _solve([_separable(_sum_coupling) for _ in range(2)], [0.25, 0.75])
-    for k in range(2):
-        np.testing.assert_allclose(overridden[k][0], library[k][0], rtol=0, atol=1e-12)
-        np.testing.assert_allclose(overridden[k][1], library[k][1], rtol=0, atol=1e-12)
-
-
 class _DpOnly(CongestionHamiltonian):
     def dp(self, t, x, p, m):
         return _dp_for_factor_1_plus_m(t=t, x=x, p=p, m=m)
 
 
-def test_a_congestion_dp_of_its_own_is_refused_where_its_factor_declares_the_slot():
-    """`CongestionHamiltonian`'s `dp` reads the congestion factor, so a `dp` of yours over a factor that declares the
-    slot would hand it the own row alone at the Jacobian door: refused before the first sweep."""
-    cost = QuadraticControlCost(control_cost=1.0)
-    with pytest.raises(NotImplementedError, match=r"population 0's _DpOnly gives \['dp'\] a body of its own"):
-        _solve([_DpOnly(cost, congestion_factor=_crowd(k)) for k in range(2)], [0.25, 0.75])
+def _separable_form(cls):
+    return lambda k: cls(QuadraticControlCost(control_cost=1.0), coupling=_sum_coupling)
 
 
-DOOR_METHODS = ("__call__", "dp", "optimal_control", "evaluate_H", "evaluate_dp", "evaluate_optimal_control")
-FAMILIES = {
-    SeparableHamiltonian: lambda: _separable(lambda m: m),
-    hamiltonian_module.QuadraticMFGHamiltonian: lambda: hamiltonian_module.QuadraticMFGHamiltonian(),
-    CongestionHamiltonian: lambda: _congested(lambda m: 1.0 + m),
+def _dp_assigned_on_the_instance(k):
+    hamiltonian = _separable(_sum_coupling)
+    hamiltonian.dp = lambda t, x, p, m: np.asarray(p, dtype=float)
+    return hamiltonian
+
+
+_SEPARABLE_TWO_FACED = type(
+    "_SeparableTwoFaced",
+    (SeparableHamiltonian,),
+    {
+        "__call__": _TwoFaced(
+            SeparableHamiltonian.__call__, lambda self, t, x, p, m: SeparableHamiltonian.__call__(self, t, x, p, m)
+        )
+    },
+)
+_SEPARABLE_SHOWN = _ShowsTheLibrary(
+    "_SeparableShown",
+    (SeparableHamiltonian,),
+    {"__call__": lambda self, t, x, p, m: SeparableHamiltonian.__call__(self, t, x, p, m)},
+)
+#: name -> (one population's Hamiltonian, its terms that declare the slot, why it is not as the library ships it).
+NOT_AS_IT_SHIPS = {
+    "subclass_with_its_own_call": (_separable_form(_OwnCall), "coupling", "its class is _OwnCall"),
+    "subclass_with_its_own_optimal_control": (_separable_form(_OwnControl), "coupling", "its class is _OwnControl"),
+    "subclass_with_its_own_dp": (_separable_form(_OwnDp), "coupling", "its class is _OwnDp"),
+    "subclass_defining_nothing": (
+        _separable_form(type("_Bare", (SeparableHamiltonian,), {})),
+        "coupling",
+        "its class is _Bare",
+    ),
+    "descriptor_showing_the_library": (
+        _separable_form(_SEPARABLE_TWO_FACED),
+        "coupling",
+        "its class is _SeparableTwoFaced",
+    ),
+    "under_a_metaclass_showing_the_library": (
+        _separable_form(_SEPARABLE_SHOWN),
+        "coupling",
+        "its class is _SeparableShown",
+    ),
+    "dp_assigned_on_the_instance": (
+        _dp_assigned_on_the_instance,
+        "coupling",
+        r"its instance holds \['dp'\] of its own",
+    ),
+    "congestion_subclass_with_its_own_dp": (
+        lambda k: _DpOnly(QuadraticControlCost(control_cost=1.0), congestion_factor=_crowd(k)),
+        "congestion_factor",
+        "its class is _DpOnly",
+    ),
 }
 
 
-@pytest.mark.parametrize("family", list(FAMILIES), ids=lambda family: family.__name__)
-def test_each_family_names_the_door_methods_whose_body_reads_a_density_term(family, monkeypatch):
-    """The refusal of an override is keyed on `_methods_reading_its_terms`, so the attribute must name exactly the door
-    methods whose library body reads a density term: a spy on the one reader records which of them do, on a batch."""
-    hamiltonian, reads = FAMILIES[family](), []
-    read = hamiltonian_module._read_of_the_density
-
-    def spy(*args, **kwargs):
-        reads.append(args[1])
-        return read(*args, **kwargs)
-
-    monkeypatch.setattr(hamiltonian_module, "_read_of_the_density", spy)
-    x, p, m = np.linspace(0.0, 1.0, 4), np.linspace(-1.0, 1.0, 4).reshape(-1, 1), np.array([0.5, 0.9, 1.3, 1.7])
-    reading = set()
-    for name in DOOR_METHODS:
-        reads.clear()
-        if name.startswith("evaluate_"):
-            getattr(hamiltonian, name)(HEvalState(x=x.reshape(-1, 1), p=p, m=m, t=0.0))
-        else:
-            getattr(hamiltonian, name)(t=0.0, x=(x,), p=p, m=m)
-        if reads:
-            reading.add(name)
-    assert reading == family._methods_reading_its_terms
+@pytest.mark.parametrize("form", sorted(NOT_AS_IT_SHIPS))
+def test_at_two_populations_a_term_declaring_the_slot_takes_a_library_class_as_it_ships(form):
+    """The doors hand every population's rows to a `SeparableHamiltonian` or `CongestionHamiltonian` as the library
+    ships it, and read any other Hamiltonian at its own density, where a term that declares the slot would read the own
+    row alone: refused before the first sweep, naming the class, the term and why."""
+    make, terms, why = NOT_AS_IT_SHIPS[form]
+    population = type(make(0)).__name__
+    with pytest.raises(
+        NotImplementedError,
+        match=rf"population 0's {population} has term\(s\) \['{terms}'\] that declare cross_density, and is not a "
+        rf"SeparableHamiltonian or CongestionHamiltonian as the library ships it: {why}\.",
+    ):
+        _solve([make(k) for k in range(2)], [0.25, 0.75])
 
 
-def test_a_family_with_no_density_term_names_no_door_method():
-    """A library Hamiltonian class the spy above does not cover records no density term of its own, and names none."""
-    for family in hamiltonian_module._LIBRARY_BODIES:
-        if issubclass(family, HamiltonianBase) and family not in FAMILIES:
-            assert family._methods_reading_its_terms == frozenset(), family.__name__
+def _lagrangian_problem(operator, centre):
+    nodes = np.linspace(0.0, 1.0, N)
+    mass = np.trapezoid(0.2 + np.exp(-40 * (nodes - centre) ** 2), nodes)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return MFGProblem(
+            geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1)),
+            T=0.4,
+            Nt=NT,
+            volatility=0.3,
+            components=MFGComponents(
+                m_initial=lambda x: (0.2 + np.exp(-40 * (x[0] - centre) ** 2)) / mass,
+                u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
+                **operator,
+            ),
+        )
+
+
+def test_a_problem_built_from_a_separable_lagrangian_hands_its_coupling_every_row():
+    """`MFGComponents(lagrangian=...)` is solved through the `SeparableHamiltonian` it converts to, as the library ships
+    it and sharing the Lagrangian's coupling, so at two populations a coupling that declares the slot is handed every
+    population's rows, and the solve equals the one built from that Hamiltonian."""
+    handed = []
+
+    def coupling(k):
+        def read(m, cross_density):
+            handed.append(len(cross_density))
+            return m + 0.7 * (cross_density[1 - k] if len(cross_density) > 1 else 0.0 * m)
+
+        return read
+
+    cost = QuadraticControlCost(control_cost=1.0)
+    centres = (0.25, 0.75)
+    built = [
+        _lagrangian_problem({"lagrangian": SeparableLagrangian(cost, coupling=coupling(k))}, c)
+        for k, c in enumerate(centres)
+    ]
+    assert type(built[0].hamiltonian_class) is SeparableHamiltonian
+    by_lagrangian = _solve(None, None, problems=built)
+    assert 2 in handed
+    direct = [
+        _lagrangian_problem({"hamiltonian": SeparableHamiltonian(cost, coupling=coupling(k))}, c)
+        for k, c in enumerate(centres)
+    ]
+    by_hamiltonian = _solve(None, None, problems=direct)
+    for k in range(2):
+        np.testing.assert_array_equal(by_lagrangian[k][0], by_hamiltonian[k][0])
+        np.testing.assert_array_equal(by_lagrangian[k][1], by_hamiltonian[k][1])
 
 
 def test_a_per_point_loop_handed_one_density_value_reads_it_at_every_point():

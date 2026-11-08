@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
-from mfgarchon.core.hamiltonian import _library_class, _runs_its_own, _terms_reading_every_population
+from mfgarchon.core.hamiltonian import _terms_reading_every_population, _why_not_as_it_ships
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -48,10 +48,10 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
     The iterator stacks one row of nodes per population and step, and its doors (the 1-D HJB residual and Jacobian, and
     the 1-D FP velocity) hand a density term that declares ``cross_density`` every population's row at the same points
     and step. So at two or more populations it refuses a grid of two or more dimensions; nodes or time grids that
-    differ, compared exactly; and a library Hamiltonian whose term declares the slot while it gives another body to a
-    method whose library body reads its density terms (``_methods_reading_its_terms``): a door reads that body at the own
-    density, so its terms would be handed the own row alone. A method whose library body reads no term, such as
-    ``SeparableHamiltonian.optimal_control``, may be given a body of its own.
+    differ, compared exactly; and a Hamiltonian with a term that declares the slot which is not a
+    ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it (`_why_not_as_it_ships`): the doors hand the
+    rows to those two classes' own bodies only, and read any other Hamiltonian through its public methods with the
+    own density.
     """
     K = multi_problem.K
     if K < 2:
@@ -91,19 +91,14 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
     for k, population in enumerate(populations):
         hamiltonian = population.hamiltonian_class
         terms = _terms_reading_every_population(hamiltonian)
-        library = _library_class(hamiltonian)
-        overridden = [
-            name
-            for name in sorted(library._methods_reading_its_terms)
-            if terms and not _runs_its_own(hamiltonian, name)
-        ]
-        if overridden:
+        why = _why_not_as_it_ships(hamiltonian) if terms else None
+        if why:
             raise NotImplementedError(
-                f"MultiPopulationIterator: population {k}'s {type(hamiltonian).__name__} gives {overridden} a body of its "
-                f"own while its term(s) {terms} declare cross_density. {library.__name__}'s body of each of those "
-                "reads its density terms, which a door hands every population's rows through that body alone; one given "
-                "another body is read at the population's own density, so a term it reaches would be handed the own "
-                "row (#2335)."
+                f"MultiPopulationIterator: population {k}'s {type(hamiltonian).__name__} has term(s) {terms} that "
+                f"declare cross_density, and is not a SeparableHamiltonian or CongestionHamiltonian as the library "
+                f"ships it: {why}. The doors hand every population's rows to one of those two as it ships, and read "
+                "any other Hamiltonian at its own density, so a cross term at two or more populations takes one of "
+                "them as it ships (#2335)."
             )
 
 
@@ -375,9 +370,10 @@ class MultiPopulationIterator:
             # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced
             # through resolve_fp_drift_kwargs (Issue #1043), identical to the single-population
             # FixedPointIterator — so a K=1 multi-population solve matches single-pop. Issue #1071
-            # (lock-faithful): the population's OWN (unbound) Hamiltonian is passed as h_class plus
-            # the stacked cross-density trajectory m_all; the velocity (non-smooth H) reads its own
-            # density as m and every population's as cross_density, at the faces (#2335) — no
+            # (lock-faithful): the population's OWN (unbound) Hamiltonian is passed as h_class plus,
+            # at two or more populations, the stacked cross-density trajectory m_all, as at the HJB
+            # step; the velocity (non-smooth H) reads its own density as m and every population's as
+            # cross_density, at the faces (#2335) — no
             # BoundHamiltonian wrapper, no round(t/dt). Smooth-separable H takes the potential_field=U
             # path (cross-coupling enters via the HJB only). Network problems keep the U-as-drift
             # path (FPNetworkSolver extracts rates internally).
@@ -405,7 +401,7 @@ class MultiPopulationIterator:
                         U[k],
                         M[k],
                         h_class=H_k,
-                        cross_density=m_all,
+                        cross_density=None if K == 1 else m_all,
                         drift_convention=self._fp_drift_convention[k],
                         fp_solver=fp_k,
                     )

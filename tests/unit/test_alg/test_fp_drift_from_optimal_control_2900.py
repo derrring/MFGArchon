@@ -307,55 +307,6 @@ def test_an_own_optimal_control_solves_as_the_library_hamiltonian_it_describes(c
     np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
 
 
-def _replaced_on_separable_hamiltonian(monkeypatch):
-    call = SeparableHamiltonian.__call__
-
-    def steep_call(self, t, x, p, m):
-        return call(self, t, x, p, m) + np.sum(np.atleast_1d(np.asarray(p, dtype=float)) ** 2, axis=-1)
-
-    monkeypatch.setattr(SeparableHamiltonian, "__call__", steep_call)
-    monkeypatch.setattr(SeparableHamiltonian, "dp", lambda self, t, x, p, m: 3.0 * np.asarray(p, dtype=float))
-    monkeypatch.setattr(SeparableHamiltonian, "optimal_control", _steep_control)
-    return SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
-
-
-def _replaced_on_quadratic_control_cost(monkeypatch):
-    target = QuadraticControlCost(control_cost=1 / 3)
-    for name in ("evaluate", "dp", "optimal_control"):
-        body = getattr(QuadraticControlCost, name)
-        monkeypatch.setattr(QuadraticControlCost, name, lambda self, p, body=body: body(target, p))
-    return SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
-
-
-def _assigned_on_the_cost(monkeypatch):
-    cost, target = QuadraticControlCost(control_cost=1.0), QuadraticControlCost(control_cost=1 / 3)
-    for name in ("evaluate", "dp", "optimal_control"):
-        setattr(cost, name, getattr(target, name))
-    return SeparableHamiltonian(cost, coupling=_coupling)
-
-
-#: A control_cost=1 Hamiltonian whose methods are made control_cost=1/3's after its classes were created.
-REPLACED = {
-    "on_SeparableHamiltonian": _replaced_on_separable_hamiltonian,
-    "on_QuadraticControlCost": _replaced_on_quadratic_control_cost,
-    "on_the_cost_instance": _assigned_on_the_cost,
-}
-
-
-@pytest.mark.parametrize("where", sorted(REPLACED))
-def test_a_control_replaced_after_its_class_was_created_is_not_the_library_control(where, monkeypatch):
-    """The predicate compares the method served with the body its library class had when it was created (#2335), so
-    a control replaced on `SeparableHamiltonian` or `QuadraticControlCost` afterwards, or assigned on the cost, is
-    another control, and the default scheme solves as the library H it describes. At ca9e9514 the predicate held for
-    all three, and the default scheme drove them by -c*grad(U)."""
-    U_ref, M_ref = _solve(_library())
-    hamiltonian = REPLACED[where](monkeypatch)
-    assert drift_is_the_control_costs(hamiltonian) is False
-    U, M = _solve(hamiltonian)
-    np.testing.assert_allclose(U, U_ref, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
-
-
 def _refused_saying(refused, *, site, ran_on, why=""):
     """A refusal of -c*grad(U) states what was run and on what, then why, and points to CONVENTIONS; it names no other
     scheme or operator (user ruling, 2026-11-06)."""

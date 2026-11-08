@@ -103,20 +103,6 @@ def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: 
     return (f_plus - f_minus) / (2 * eps)
 
 
-#: Each library class's public methods and ``__call__``, by name, as the class had them when it was created: the bodies a
-#: served method is compared with, so that one replaced on the library class afterwards is not taken for the library's
-#: own (#2335).
-_LIBRARY_BODIES: dict[type, dict[str, Any]] = {}
-
-
-def _record_library_bodies(cls: type) -> None:
-    """Record ``cls``'s bodies in `_LIBRARY_BODIES` if it is a library class (#2335)."""
-    if cls.__module__.startswith("mfgarchon."):
-        _LIBRARY_BODIES[cls] = {
-            name: getattr(cls, name) for name in dir(cls) if name == "__call__" or not name.startswith("_")
-        }
-
-
 class ControlCostBase(ABC):
     """
     Kinetic/control cost component for MFG Hamiltonians.
@@ -140,11 +126,6 @@ class ControlCostBase(ABC):
     lambda_ : float or None
         Control cost weight lambda. Preferred over ``control_cost``.
     """
-
-    def __init_subclass__(cls, **kwargs):
-        """Record a library control cost's bodies as it is created (`_record_library_bodies`, #2335)."""
-        super().__init_subclass__(**kwargs)
-        _record_library_bodies(cls)
 
     def __init__(
         self,
@@ -1011,11 +992,8 @@ class MFGOperatorBase(ABC):
         demanding the new order of them would make the fix silently wrong (#2400 review).
         The library's own classes are held to the rule by
         ``test_every_library_family_method_takes_ruling_8s_order``.
-
-        A library class's bodies are recorded as it is created (`_record_library_bodies`, #2335).
         """
         super().__init_subclass__(**kwargs)
-        _record_library_bodies(cls)
         api = {
             name
             for base in cls.__mro__[1:]
@@ -1029,9 +1007,9 @@ class MFGOperatorBase(ABC):
             if _declares_cross_density(member):
                 raise TypeError(
                     f"{cls.__qualname__}.{name} declares cross_density. A family method reads the population's own "
-                    f"density as m, and every population's density reaches a density term only (#2335): a "
-                    f"Hamiltonian's coupling= or congestion_factor= that declares cross_density is handed every "
-                    f"population's rows at the multi-population doors."
+                    f"density as m, and every population's density reaches a density term only (#2335): the "
+                    f"coupling= or congestion_factor= of a SeparableHamiltonian or CongestionHamiltonian as the "
+                    f"library ships it, declaring cross_density, is handed every population's rows."
                 )
             named = _ruling8_order_violation(member)
             if named is not None:
@@ -1119,9 +1097,10 @@ class HEvalState:
         The population's own density, shape ``(N,)``, a scalar at one point. In a multi-population solve too (#2335).
     cross_density : NDArray | None
         Every population's density at the same points, its own included: shape ``(K, N)``, row ``j`` population ``j``'s,
-        and ``(K,)`` at one point. A multi-population door hands it; ``None`` means one population, whose terms read its
-        own row (`_rows_of`). It reaches a density term that declares ``cross_density`` through a library family class's
-        primitive, never a family method (#2335).
+        and ``(K,)`` at one point. A multi-population door hands it at two or more populations, and ``None`` means one
+        population. It reaches a density term that declares ``cross_density`` through the primitive of a
+        ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it (`_takes_the_rows_path`), never a
+        family method (#2335).
     """
 
     t: float
@@ -1141,12 +1120,6 @@ def _own_rows(m: Any) -> NDArray:
     return np.asarray(m, dtype=float)[np.newaxis]
 
 
-def _rows_of(state: HEvalState) -> NDArray:
-    """The rows a state's density terms read: the stack a multi-population door handed, or, where it handed none, the
-    population's own row (#2335)."""
-    return _own_rows(state.m) if state.cross_density is None else state.cross_density
-
-
 def _population_rows(stack: Any, count: int, where: str) -> NDArray:
     """A solver's flat multi-population stack, ``K * count`` values for ``count`` points, as ``(K, count)`` rows, one per
     population, which is how a density term reads ``cross_density`` (#2335)."""
@@ -1160,34 +1133,41 @@ def _population_rows(stack: Any, count: int, where: str) -> NDArray:
     return flat.reshape(rows, count)
 
 
-def _serves_the_library_body(owner: Any, name: str, library: type) -> bool:
-    """Whether ``owner`` serves ``library``'s own ``name``, the body `_LIBRARY_BODIES` recorded when ``library`` was
-    created (#2335, #2900). A dunder is read as Python calls it, from the type, past the instance and
-    ``__getattribute__``; any other name as an attribute read serves it, which must be that body bound to ``owner``. A
-    subclass, a mixin, an assignment on the instance or on a class after its creation, and a ``__getattribute__`` each
-    serve another body."""
-    body = _LIBRARY_BODIES[library][name]
-    if name.startswith("__") and name.endswith("__"):
-        return getattr(type(owner), name, None) is body
-    served = getattr(owner, name, None)
-    return getattr(served, "__func__", None) is body and getattr(served, "__self__", None) is owner
+#: The family methods and primitives an instance may not hold in its own ``__dict__`` to be read as it ships (#2335).
+_FAMILY_METHODS = (
+    "__call__",
+    "dp",
+    "dm",
+    "dx",
+    "optimal_control",
+    "evaluate_H",
+    "evaluate_dp",
+    "evaluate_optimal_control",
+)
 
 
-def _library_class(hamiltonian: Any) -> type[HamiltonianBase]:
-    """The first library Hamiltonian class in ``hamiltonian``'s MRO: the one whose bodies its primitives stand for
-    (#2335)."""
-    return next(
-        cls
-        for cls in type(hamiltonian).__mro__
-        if issubclass(cls, HamiltonianBase) and cls.__module__.startswith("mfgarchon.")
-    )
+def _why_not_as_it_ships(hamiltonian: Any) -> str | None:
+    """Why ``hamiltonian`` is not a ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it, or
+    ``None`` if it is one: of one of those two types exactly, compared by identity, with no family method in its own
+    ``__dict__`` (#2335). Only such a Hamiltonian's own bodies read its terms at a door's rows."""
+    kind = type(hamiltonian)
+    if not (kind is SeparableHamiltonian or kind is CongestionHamiltonian):
+        return f"its class is {kind.__name__}"
+    own = [name for name in _FAMILY_METHODS if name in vars(hamiltonian)]
+    return f"its instance holds {own} of its own" if own else None
 
 
-def _runs_its_own(hamiltonian: Any, name: str) -> bool:
-    """Whether ``hamiltonian`` serves its library class's own ``name`` (`_serves_the_library_body`). A library family
-    class's primitive reads its terms at the door's rows only then, and otherwise calls the body served, with the own
-    density (#2335)."""
-    return _serves_the_library_body(hamiltonian, name, _library_class(hamiltonian))
+def _as_it_ships(hamiltonian: Any) -> bool:
+    """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it
+    (`_why_not_as_it_ships`, #2335)."""
+    return _why_not_as_it_ships(hamiltonian) is None
+
+
+def _takes_the_rows_path(hamiltonian: Any, state: HEvalState) -> bool:
+    """Whether a library primitive reads its terms at the state's rows: a door handed every population's, which it does
+    at two or more populations only, to a Hamiltonian `_as_it_ships`. Otherwise the primitive calls the public method
+    with the own density, as before #2335, so a single-population solve is read as it was (#2335)."""
+    return state.cross_density is not None and _as_it_ships(hamiltonian)
 
 
 def _state_x(state: HEvalState) -> tuple[Any, ...]:
@@ -1316,11 +1296,6 @@ class HamiltonianBase(MFGOperatorBase):
     DualHamiltonian : Hamiltonian from Lagrangian via Legendre transform
     DualLagrangian : Lagrangian from Hamiltonian via inverse Legendre
     """
-
-    #: The methods a door reads whose library body reads a density term, which a door hands every population's rows
-    #: only through that body (#2335). A library family class names its own; the pin is
-    #: ``test_each_family_names_the_door_methods_whose_body_reads_a_density_term``.
-    _methods_reading_its_terms: frozenset[str] = frozenset()
 
     # Whether a problem compares this Hamiltonian's batch and point reads (`refuse_a_hamiltonian_whose_reads_disagree`).
     reads_a_batch = True
@@ -2671,8 +2646,6 @@ class SeparableHamiltonian(HamiltonianBase):
     ... )
     """
 
-    _methods_reading_its_terms = frozenset({"__call__", "evaluate_H"})
-
     def __init__(
         self,
         control_cost: ControlCostBase,
@@ -2736,12 +2709,11 @@ class SeparableHamiltonian(HamiltonianBase):
         return H_control - V - f_m
 
     def evaluate_H(self, state: HEvalState) -> NDArray:
-        """The residual door's primitive, the coupling reading the state's rows (#2335). A class that gives ``__call__``
-        another body, a subclass or a replacement on the library class, is read through that body at the own density.
-        Python reads ``__call__`` from the type, so one assigned on an instance is never called, here or by ``h(...)``."""
-        if not _runs_its_own(self, "__call__"):
+        """The residual door's primitive: on `_takes_the_rows_path`, the library body with the coupling reading the
+        state's rows (#2335); otherwise ``__call__`` with the own density, as before #2335."""
+        if not _takes_the_rows_path(self, state):
             return super().evaluate_H(state)
-        return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, _rows_of(state)), dtype=float)
+        return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, state.cross_density), dtype=float)
 
     def dp(
         self,
@@ -2896,10 +2868,6 @@ class CongestionHamiltonian(HamiltonianBase):
     ... )
     """
 
-    _methods_reading_its_terms = frozenset(
-        {"__call__", "dp", "optimal_control", "evaluate_H", "evaluate_dp", "evaluate_optimal_control"}
-    )
-
     def __init__(
         self,
         control_cost: ControlCostBase,
@@ -3010,26 +2978,25 @@ class CongestionHamiltonian(HamiltonianBase):
         return base_dp / c_m
 
     def evaluate_H(self, state: HEvalState) -> NDArray:
-        """The residual door's primitive, the terms reading the state's rows (#2335). A class that gives ``__call__``
-        another body is read through that body at the own density; Python reads ``__call__`` from the type, so one
-        assigned on an instance is never called, here or by ``h(...)``."""
-        if not _runs_its_own(self, "__call__"):
+        """The residual door's primitive: on `_takes_the_rows_path`, the library body with the terms reading the state's
+        rows (#2335); otherwise ``__call__`` with the own density, as before #2335."""
+        if not _takes_the_rows_path(self, state):
             return super().evaluate_H(state)
-        return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, _rows_of(state)), dtype=float)
+        return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, state.cross_density), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
-        """The Jacobian door's primitive, the congestion factor reading the state's rows (#2335); a ``dp`` given another body
-        is read through it, at its own density."""
-        if not _runs_its_own(self, "dp"):
+        """The Jacobian door's primitive: on `_takes_the_rows_path`, the library body with the congestion factor reading
+        the state's rows (#2335); otherwise ``dp`` with the own density, as before #2335."""
+        if not _takes_the_rows_path(self, state):
             return super().evaluate_dp(state)
-        return np.asarray(self._dp(state.p, state.m, _rows_of(state)), dtype=float)
+        return np.asarray(self._dp(state.p, state.m, state.cross_density), dtype=float)
 
     def evaluate_optimal_control(self, state: HEvalState) -> NDArray:
-        """The FP velocity door's primitive, ``-dp`` with the congestion factor reading the state's rows (#2335); an
-        ``optimal_control`` or a ``dp`` given another body is read through it, at its own density."""
-        if not (_runs_its_own(self, "optimal_control") and _runs_its_own(self, "dp")):
+        """The FP velocity door's primitive: on `_takes_the_rows_path`, the library body's ``-dp`` with the congestion
+        factor reading the state's rows (#2335); otherwise ``optimal_control`` with the own density, as before #2335."""
+        if not _takes_the_rows_path(self, state):
             return super().evaluate_optimal_control(state)
-        return -np.asarray(self._dp(state.p, state.m, _rows_of(state)), dtype=float)
+        return -np.asarray(self._dp(state.p, state.m, state.cross_density), dtype=float)
 
     def dm(
         self,
