@@ -16,7 +16,6 @@ BC Integration (Issue #527):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -216,29 +215,14 @@ class BaseMFGSolver(ABC):
         return self._with_geometry_periodic_convention(bc)
 
     def _with_geometry_periodic_convention(self, bc):
-        """Complete a periodic BC with the node layout of the geometry actually being solved on.
-
-        Issue #1822. A grid binds this when a BC is attached to it, but a BC the CALLER handed the
-        solver (``_boundary_conditions``) never met the grid, so its convention is unstated and
-        would wrap the historical way (all N nodes distinct) on a grid where the two endpoints are
-        one point. Measured on that path: the periodic gradient at the seam came out -1.5 where the
-        grid's own layout gives -1.0.
-
-        Only fills a gap; a stated convention is left alone, and the grid refuses one that
-        contradicts it at attachment time.
-        """
+        """Complete a periodic BC with the node layout of this problem's geometry (#1822), through the one owner of
+        that completion, `bc_utils.with_geometry_periodic_convention`, which the FP velocity builder calls too
+        (#2904)."""
         # Local import: this module is imported from mfgarchon.alg.__init__, and reaching
         # geometry.boundary at module scope closes an import cycle.
-        from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+        from mfgarchon.geometry.boundary.bc_utils import with_geometry_periodic_convention
 
-        if getattr(bc, "periodic_convention", None) is not None:
-            return bc
-        if not declares_periodic(bc):
-            return bc
-        measured = getattr(getattr(self.problem, "geometry", None), "periodic_convention", None)
-        if measured is None:
-            return bc
-        return replace(bc, periodic_convention=measured)
+        return with_geometry_periodic_convention(bc, getattr(self.problem, "geometry", None))
 
     #: Issue #1686: does this solver apply the *value* attached to a NEUMANN segment, or only
     #: its type? Every FP family currently reads the type and drops the value, so they override

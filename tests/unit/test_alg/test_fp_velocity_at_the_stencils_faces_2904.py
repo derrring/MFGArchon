@@ -25,7 +25,6 @@ Three oracles, each for what the other two cannot see:
 from __future__ import annotations
 
 import inspect
-import re
 import warnings
 
 import pytest
@@ -35,6 +34,8 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field, resolve_fp_drift_kwargs
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import (
     BoundedControlCost,
     CongestionHamiltonian,
@@ -54,7 +55,7 @@ from mfgarchon.geometry.boundary import (
     periodic_bc,
     robin_bc,
 )
-from mfgarchon.geometry.boundary.types import BoundaryFace
+from mfgarchon.geometry.boundary.types import BoundaryFace, PeriodicGridConvention
 
 L1_LAMBDA = 0.53
 MAX_CONTROL = 0.8
@@ -298,6 +299,38 @@ def test_a_control_that_couples_the_components_converges_at_second_order(dimensi
     )
 
 
+def _coupled_control_error_on(sizes, bounds):
+    """`_coupled_control_error` on no-flux walls of a box whose node counts and lengths differ per axis."""
+    dimension = len(sizes)
+    problem = _grid_problem(_Isotropic(), sizes, bounds, _walls("no-flux", dimension), Nt=1)
+    x = np.meshgrid(*[np.linspace(lo, hi, size) for (lo, hi), size in zip(bounds, sizes, strict=True)], indexing="ij")
+    u, _ = _smooth(x, False)
+    velocity = compute_fp_velocity_field(problem, np.stack([u, u]), np.ones((2, *u.shape)), _Isotropic())[0]
+    h = [(hi - lo) / (size - 1) for (lo, hi), size in zip(bounds, sizes, strict=True)]
+    error = 0.0
+    for d in range(dimension):
+        _, g = _smooth([x[k] + 0.5 * h[k] * (k == d) for k in range(dimension)], False)
+        exact = -g[d] / np.sqrt(sum(c * c for c in g) + SMOOTHING)
+        faces = tuple(slice(0, sizes[k] - 1) if k == d else slice(None) for k in range(dimension))
+        error = max(error, float(np.abs(velocity[d][faces] - exact[faces]).max()))
+    return error
+
+
+@pytest.mark.parametrize(
+    ("sizes", "bounds"),
+    [((17, 9), [(0.0, 1.0), (0.0, 2.5)]), ((9, 7, 13), [(0.0, 1.5), (0.0, 0.8), (0.0, 2.0)])],
+    ids=["2-D", "3-D"],
+)
+def test_on_a_box_whose_axes_differ_the_coupled_control_converges_at_second_order(sizes, bounds):
+    """The coupled control on a box whose node counts, lengths and spacings differ per axis, where a transverse
+    difference taken with another axis's spacing cannot pass: the observed order between it and the box refined twice
+    along each axis stays above 1.6."""
+    finer = tuple(2 * size - 1 for size in sizes)
+    errors = [_coupled_control_error_on(sizes, bounds), _coupled_control_error_on(finer, bounds)]
+    order = np.log2(errors[0] / errors[1])
+    assert order > 1.6, f"order {order:.2f} from errors {errors[0]:.3e}, {errors[1]:.3e} at {sizes}, {finer}"
+
+
 def _moved_one_cell(u, axis):
     """u on an endpoint-inclusive periodic axis moved by one cell: the distinct nodes rolled, the repeated one
     restored from node 0."""
@@ -350,23 +383,166 @@ def test_at_one_population_the_stack_reads_the_faces_m_does_across_the_wrap():
     )
 
 
+def _census_fields(x):
+    """The census test's frozen U and initial density on the nodes ``x``."""
+    u = 0.3 * np.sin(2 * np.pi * x[0]) + 0.2 * x[0]
+    for k in range(1, len(x)):
+        u = u + 0.3 * (k + 1) * x[k] + 0.1 * x[0] * x[k]
+    return np.stack([u] * 7), 1.0 + 0.5 * np.cos(2 * np.pi * x[0])
+
+
+def _routes_on(problem, hamiltonian, x, fp, handed=None):
+    """FP-FDM's value route and its velocity route, the velocity built on the BC ``handed`` to the builder."""
+    U, m0 = _census_fields(x)
+    by_value = np.asarray(fp.solve_fp_system(m0, potential_field=U, show_progress=False))
+    velocity = compute_fp_velocity_field(problem, U, np.stack([m0] * len(U)), hamiltonian, boundary_conditions=handed)
+    return np.asarray(fp.solve_fp_system(m0, drift_field=velocity, show_progress=False)), by_value
+
+
+@pytest.mark.parametrize("convention", ["unstated", "stated_exclusive"])
 @pytest.mark.parametrize("dimension", [1, 2])
-def test_a_wrap_with_no_repeated_endpoint_is_refused(dimension):
-    """FP-FDM's grids repeat a periodic axis's endpoint, and FP-FDM binds that layout to the BC it solves with. A
-    periodic BC that wraps with no repeated endpoint, here one whose convention is left unstated, is not the walls of
-    an FP-FDM solve: the builder refuses it, saying what it read, rather than wrap one node late."""
-    n = 11 if dimension == 1 else 9
-    hamiltonian = SeparableHamiltonian(L1ControlCost(lambda_=L1_LAMBDA))
-    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension), Nt=len(STEPS) - 1)
+def test_a_periodic_bc_handed_to_the_builder_is_read_as_fp_fdm_reads_it(dimension, convention):
+    """The builder reads a BC as FP-FDM reads the one it solves with: an unstated convention takes the grid's layout,
+    and a stated one is followed. Handed the same BC, the velocity route equals FP-FDM's value route. A stated
+    ENDPOINT_EXCLUSIVE on this endpoint-inclusive grid contradicts the grid, which FP-FDM accepts and solves on a torus
+    one cell too long (#2910); here it is a cross-path identity on that input, which #2910's fix may turn into a
+    refusal."""
+    n = 21 if dimension == 1 else 9
+    hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
+    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension))
+    handed = (
+        periodic_bc(dimension=dimension)
+        if convention == "unstated"
+        else periodic_bc(dimension=dimension, convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE)
+    )
     x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
-    U, _ = _degree_two(x)
-    unstated = periodic_bc(dimension=dimension)
-    assert unstated.periodic_convention is None
-    axes, sizes = list(range(dimension)), [n] * dimension
-    with pytest.raises(
-        ValueError, match=rf"wrap axis\(es\) {re.escape(str(axes))} of {re.escape(str(sizes))} nodes with no "
+    by_velocity, by_value = _routes_on(
+        problem, hamiltonian, x, FPFDMSolver(problem, boundary_conditions=handed), handed
+    )
+    np.testing.assert_allclose(by_velocity, by_value, rtol=0.0, atol=1e-12)
+
+
+class _KeepsTheBCItWasHanded(BaseFPSolver):
+    """A user FP solver: the BC it was handed kept as it was handed, and FP-FDM's solve behind it."""
+
+    def __init__(self, problem, boundary_conditions):
+        super().__init__(problem)
+        self.boundary_conditions = boundary_conditions
+        self._inner = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
+
+    def solve_fp_system(
+        self, M_initial, drift_field=None, potential_field=None, volatility=None, source_term=None, show_progress=False
     ):
-        compute_fp_velocity_field(problem, U, _density(x), hamiltonian, boundary_conditions=unstated)
+        return self._inner.solve_fp_system(
+            M_initial,
+            drift_field=drift_field,
+            potential_field=potential_field,
+            volatility=volatility,
+            source_term=source_term,
+            show_progress=show_progress,
+        )
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_a_user_solver_keeping_a_periodic_bc_solves_as_fp_fdm_handed_it(dimension):
+    """Through the router, a user solver that keeps an unstated periodic BC as it was handed solves as FP-FDM handed
+    the same BC, which completes it: the builder completes it the same way."""
+    n = 21 if dimension == 1 else 9
+    hamiltonian = SeparableHamiltonian(L1ControlCost(lambda_=0.3))
+    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension))
+    handed = periodic_bc(dimension=dimension)
+
+    def solved(fp):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = problem.solve(
+                max_iterations=3, tolerance=1e-12, verbose=False, hjb_solver=HJBFDMSolver(problem), fp_solver=fp
+            )
+        return np.asarray(result.M)
+
+    np.testing.assert_array_equal(
+        solved(_KeepsTheBCItWasHanded(problem, handed)), solved(FPFDMSolver(problem, boundary_conditions=handed))
+    )
+
+
+def _grid_problem(hamiltonian, sizes, bounds, walls, Nt=6):
+    grid = TensorProductGrid(bounds=bounds, Nx_points=list(sizes), boundary_conditions=walls)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return MFGProblem(
+            model=Model(hamiltonian=hamiltonian, volatility=0.3),
+            domain=grid,
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+            Nt=Nt,
+        )
+
+
+@pytest.mark.parametrize("sizes", [(9, 2), (2, 9)], ids=["9x2", "2x9"])
+def test_an_axis_of_two_nodes_carries_the_value_route_drift(sizes):
+    """An axis of two nodes has no second-order one-sided difference; its centred difference is first order there,
+    and the quadratic control cost's velocity route still equals FP-FDM's value route."""
+    hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
+    bounds = [(0.0, 1.0), (0.0, 0.6)]
+    problem = _grid_problem(hamiltonian, sizes, bounds, _walls("no-flux", 2))
+    x = np.meshgrid(*[np.linspace(lo, hi, size) for (lo, hi), size in zip(bounds, sizes, strict=True)], indexing="ij")
+    by_velocity, by_value = _routes_on(problem, hamiltonian, x, FPFDMSolver(problem))
+    np.testing.assert_allclose(by_velocity, by_value, rtol=0.0, atol=1e-12)
+
+
+class _InsideOnly(_Isotropic):
+    """The isotropic H, whose control refuses a point outside the unit square, as a map read off the grid does."""
+
+    def dp(self, t, x, p, m):
+        coordinates = np.atleast_2d(np.asarray(x, dtype=float).T).T if not isinstance(x, tuple) else x
+        if any(np.any((np.asarray(c) < -1e-12) | (np.asarray(c) > 1.0 + 1e-12)) for c in coordinates):
+            raise ValueError("_InsideOnly: a point outside the domain")
+        return super().dp(t, x, p, m)
+
+
+@pytest.mark.parametrize("walls", ["no-flux", "periodic"])
+def test_the_control_is_asked_only_inside_the_domain(walls):
+    """Each axis's batch holds the faces that exist, so the control is never asked at the phantom face past the last
+    node: a solve with a control that refuses a point outside the domain runs, on no-flux and periodic walls."""
+    problem = _problem(_InsideOnly(), 2, 9, _walls(walls, 2), Nt=4)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = problem.solve(max_iterations=2, tolerance=1e-12, verbose=False)
+    assert np.isfinite(np.asarray(result.M)).all()
+
+
+def test_a_node_a_wrapping_axis_repeats_carries_its_twins_face():
+    """On a wrapping axis the repeated node's face is its twin's face, node 0's: the entry is that face's velocity, bit
+    for bit, not a value of its own."""
+    n = 9
+    problem = _problem(_Isotropic(), 2, n, _walls("periodic", 2), Nt=1)
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * 2, indexing="ij")
+    u, _ = _smooth(x, True)
+    velocity = compute_fp_velocity_field(problem, np.stack([u, u]), np.ones((2, n, n)), _Isotropic())
+    for d in range(2):
+        np.testing.assert_array_equal(
+            np.take(velocity[:, d], [n - 1], axis=1 + d), np.take(velocity[:, d], [0], axis=1 + d), err_msg=f"axis {d}"
+        )
+
+
+def test_a_bc_wrapping_one_axis_only_is_refused_as_fp_fdm_refuses_it():
+    """FP-FDM wraps every axis or none and refuses a BC periodic on some faces only (#2495); handed such a BC, the
+    builder refuses it through the same owner rather than build as if no axis wrapped."""
+    segments = []
+    for axis in range(2):
+        for side in ("min", "max"):
+            face = BoundaryFace(axis, side).to_string()
+            kind = BCType.PERIODIC if axis == 0 else BCType.NO_FLUX
+            segments.append(BCSegment(name=face, bc_type=kind, boundary=face))
+    channel = BoundaryConditions(dimension=2, segments=segments)
+    problem = _problem(_Isotropic(), 2, 9, _walls("no-flux", 2), Nt=1)
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, 9)] * 2, indexing="ij")
+    u, _ = _smooth(x, False)
+    with pytest.raises(NotImplementedError, match="periodic on some faces"):
+        FPFDMSolver(problem, boundary_conditions=channel)
+    with pytest.raises(NotImplementedError, match="periodic on some faces"):
+        compute_fp_velocity_field(
+            problem, np.stack([u, u]), np.ones((2, 9, 9)), _Isotropic(), boundary_conditions=channel
+        )
 
 
 @pytest.mark.parametrize(

@@ -115,7 +115,7 @@ def test_the_velocity_is_the_optimal_control_at_each_points_own_density(hamilton
 @pytest.mark.parametrize("hamiltonian", [_ScalarSpeed(), _ComponentsFirst()], ids=["one_per_point", "components_first"])
 def test_a_control_of_the_wrong_shape_is_refused(hamiltonian):
     with pytest.raises(
-        ValueError, match=r"must return one control vector per point, shape \(99, 2\)|evaluate_dp, at 3"
+        ValueError, match=r"must return one control vector per point, shape \(90, 2\)|evaluate_dp, at 3"
     ):
         _velocity(hamiltonian)
 

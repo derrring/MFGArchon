@@ -308,6 +308,29 @@ def _describe_bc_value(value: Any) -> object | None:
         return f"<unrecognised {type(value).__name__}>"
 
 
+def with_geometry_periodic_convention(boundary_conditions: Any, geometry: Any) -> Any:
+    """Complete a periodic BC with the node layout of the geometry it is solved on (#1822).
+
+    A grid binds this when a BC is attached to it, but a BC handed straight to a solver, or to the FP velocity builder
+    (#2904), never met the grid, so its convention is unstated and would wrap the historical way (all N nodes
+    distinct) on a grid where the two endpoints are one point. Measured on that path: the periodic gradient at the seam
+    came out -1.5 where the grid's own layout gives -1.0.
+
+    Only fills a gap; a stated convention is left alone, and the grid refuses one that contradicts it at attachment
+    time. The one owner of that completion: ``BaseNumericalSolver._with_geometry_periodic_convention`` delegates here.
+    """
+    from dataclasses import replace
+
+    if getattr(boundary_conditions, "periodic_convention", None) is not None:
+        return boundary_conditions
+    if not declares_periodic(boundary_conditions):
+        return boundary_conditions
+    measured = getattr(geometry, "periodic_convention", None)
+    if measured is None:
+        return boundary_conditions
+    return replace(boundary_conditions, periodic_convention=measured)
+
+
 def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str) -> Any:
     """The Fokker-Planck reading of a shared problem/geometry BC (#2512, row B3).
 
