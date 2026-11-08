@@ -779,7 +779,8 @@ def compute_fp_velocity_field(
             single-population. In nD only a stack with one value per node (K = 1) is accepted, and it is read as
             ``m`` (#2330).
         boundary_conditions: The BC of the FP solver the velocity is for, which decides where an axis wraps
-            (`periodic_axis_span`). ``None`` => the problem's.
+            (`periodic_axis_span`). ``None`` => the problem's shared BC as an FP solver reads it
+            (`fp_view_of_shared_bc`), which refuses a Neumann value that is not zero and a Robin condition.
 
     Returns:
         Velocity $\\alpha^*$.
