@@ -12,6 +12,7 @@ strict XPASS fails the run and prints the reason, which says what to do.
 """
 
 import re
+import warnings
 
 import pytest
 
@@ -308,12 +309,16 @@ _QUADRATIC = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
 
 
 def _on(domain):
-    return MFGProblem(
-        model=Model(hamiltonian=_QUADRATIC, volatility=0.3),
-        domain=domain,
-        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
-        Nt=6,
-    )
+    """The problem the FP solvers read; its m_initial is never solved from (each solve is handed m0), so the mass report
+    MFGProblem makes for it is silenced."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return MFGProblem(
+            model=Model(hamiltonian=_QUADRATIC, volatility=0.3),
+            domain=domain,
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+            Nt=6,
+        )
 
 
 def _density(problem, mesh, route, bc=None):
