@@ -242,7 +242,9 @@ def _user_grid(d, n, nodes, states):
     m = n if nodes == "exclusive" else n + 1
     h = 1.0 / n
     axis = np.arange(m) * h
-    inner = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[n + 1] * d, boundary_conditions=periodic_bc(dimension=d))
+    inner = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * d, Nx_points=[n + 1] * d, boundary_conditions=periodic_bc(dimension=d)
+    )
     mesh = np.meshgrid(*[axis] * d, indexing="ij")
 
     class UserGrid(CartesianGrid):
@@ -329,8 +331,11 @@ def _density(problem, mesh, route, bc=None):
 #: 1-D face count, and FP-FDM's nD stencil. At ad1e800d each of these five crashed with an IndexError.
 EXCLUSIVE_LIMITS = {
     (1, "velocity"): r"this 1-D grid wraps with its last node distinct from node 0 .* the 1-D faces this builds number",
-    **{(d, route): r"of this \d-D grid wrap with their last node distinct .* add_interior_entries_divergence_upwind"
-       for d in (2, 3) for route in ("value", "velocity")},  # fmt: skip
+    **{
+        (d, route): r"of this \d-D grid wrap with their last node distinct .* add_interior_entries_divergence_upwind"
+        for d in (2, 3)
+        for route in ("value", "velocity")
+    },
 }
 STAGE_2_STENCIL = pytest.mark.xfail(
     strict=True, raises=NotImplementedError, reason="remove this xfail: stage 2 moved this stencil to the span"
@@ -352,14 +357,17 @@ def test_one_torus_in_two_layouts_gives_one_density(dimension, route):
     its acceptance check; one that fails any other way, as an IndexError does, is a failure."""
     n = {1: 20, 2: 8, 3: 4}[dimension]
     grid = TensorProductGrid(
-        bounds=[(0.0, 1.0)] * dimension, Nx_points=[n + 1] * dimension, boundary_conditions=periodic_bc(dimension=dimension)
+        bounds=[(0.0, 1.0)] * dimension,
+        Nx_points=[n + 1] * dimension,
+        boundary_conditions=periodic_bc(dimension=dimension),
     )
     oracle = _density(_on(grid), np.meshgrid(*grid.coordinates, indexing="ij"), route)
     exclusive, mesh = _user_grid(dimension, n, "exclusive", EXC)
     try:
         density = _density(_on(exclusive), mesh, route)
     except NotImplementedError as refusal:
-        assert re.search(EXCLUSIVE_LIMITS[(dimension, route)], str(refusal)), str(refusal)
+        if not re.search(EXCLUSIVE_LIMITS[(dimension, route)], str(refusal)):
+            raise AssertionError(f"refused, but not naming this cell's limit: {refusal}") from refusal
         raise
     shared = (slice(None), *[slice(0, n)] * dimension)
     np.testing.assert_allclose(density[shared], oracle[shared], rtol=0, atol=1e-10)
@@ -370,9 +378,17 @@ def test_one_torus_in_two_layouts_gives_one_density(dimension, route):
 #: user grid and was 3.52 off the TensorProductGrid in 1-D; a TensorProductGrid refused the contradiction when binding.
 LAYOUT_REFUSALS = {
     "neither states a layout": (None, None, r"neither it nor the periodic boundary condition states a node layout"),
-    "the two contradict": (INC, EXC, r"states the layout ENDPOINT_INCLUSIVE, but the periodic boundary condition declares"),
-    "a TensorProductGrid and its BC contradict": ("measured", EXC, r"coordinates are ENDPOINT_INCLUSIVE on axis 0 .* but "
-                                                  r"the periodic boundary condition declares ENDPOINT_EXCLUSIVE"),
+    "the two contradict": (
+        INC,
+        EXC,
+        r"states the layout ENDPOINT_INCLUSIVE, but the periodic boundary condition declares",
+    ),
+    "a TensorProductGrid and its BC contradict": (
+        "measured",
+        EXC,
+        r"coordinates are ENDPOINT_INCLUSIVE on axis 0 .* but "
+        r"the periodic boundary condition declares ENDPOINT_EXCLUSIVE",
+    ),
 }
 #: The readers that reach such an input. FP-FDM's 1-D value route reads the BC's convention field and does not ask the
 #: owner; stage 2 moves it.
@@ -384,7 +400,9 @@ STAGE_2_GUESS = pytest.mark.xfail(
 def _layout_reader(reader, geometry_states, bc_states):
     d = 1 if reader == "FP-FDM, 1-D value route" else 2
     if geometry_states == "measured":
-        grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[9] * d, boundary_conditions=no_flux_bc(dimension=d))
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0)] * d, Nx_points=[9] * d, boundary_conditions=no_flux_bc(dimension=d)
+        )
         mesh = np.meshgrid(*grid.coordinates, indexing="ij")
     else:
         grid, mesh = _user_grid(d, 8, "inclusive", geometry_states)

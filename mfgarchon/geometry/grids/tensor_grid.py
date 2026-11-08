@@ -2089,7 +2089,9 @@ def tensor_grid_axes(nodes: NDArray, grid_shape: tuple[int, ...]) -> list[NDArra
     return axes if points_are_grid_nodes(product, nodes) else None
 
 
-def _contradicted_layout(grid: Any, axis: int, measured: PeriodicGridConvention, declared: PeriodicGridConvention) -> str:
+def _contradicted_layout(
+    grid: Any, axis: int, measured: PeriodicGridConvention, declared: PeriodicGridConvention
+) -> str:
     """The refusal of a stated convention that contradicts the layout a TensorProductGrid measures on ``axis``."""
     return (
         f"This grid's coordinates are {measured.name} on axis {axis} "
