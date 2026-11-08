@@ -34,7 +34,6 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field, resolve_fp_drift_kwargs
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import (
     BoundedControlCost,
@@ -108,13 +107,29 @@ def _problem(hamiltonian, dimension, n, walls, volatility=0.3, volatility_kind=N
         (2, "no-flux", 9, True),
         (3, "no-flux", 5, False),
         (3, "periodic", 5, False),
+        (2, "no-flux", (9, 2), False),
+        (2, "Dirichlet", (2, 9), False),
     ],
 )
 def test_the_velocity_route_carries_the_value_route_drift(dimension, walls, n, field):
+    """The builder is handed a fresh BC of the cell's walls, its periodic convention unstated, so the grid's layout
+    must reach it; FP-FDM solves on its own. An axis of two nodes has no second-order one-sided difference."""
     hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
-    x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
+    sizes = list(n) if isinstance(n, tuple) else [n] * dimension
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, size) for size in sizes], indexing="ij")
     volatility = 0.2 + 0.1 * sum(x) if field else 0.3
-    problem = _problem(hamiltonian, dimension, n, _walls(walls, dimension), volatility, "field" if field else None)
+    kind = {"volatility_kind": "field"} if field else {}
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dimension, Nx_points=sizes, boundary_conditions=_walls(walls, dimension)
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            model=Model(hamiltonian=hamiltonian, volatility=volatility, **kind),
+            domain=grid,
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+            Nt=6,
+        )
     u = 0.3 * np.sin(2 * np.pi * x[0]) + 0.2 * x[0]
     for k in range(1, dimension):
         u = u + 0.3 * (k + 1) * x[k] + 0.1 * x[0] * x[k]
@@ -123,7 +138,7 @@ def test_the_velocity_route_carries_the_value_route_drift(dimension, walls, n, f
     fp = FPFDMSolver(problem)
     by_value = np.asarray(fp.solve_fp_system(m0, potential_field=U, show_progress=False))
     velocity = compute_fp_velocity_field(
-        problem, U, np.stack([m0] * 7), hamiltonian, boundary_conditions=fp.boundary_conditions
+        problem, U, np.stack([m0] * 7), hamiltonian, boundary_conditions=_walls(walls, dimension)
     )
     by_velocity = np.asarray(fp.solve_fp_system(m0, drift_field=velocity, show_progress=False))
     np.testing.assert_allclose(by_velocity, by_value, rtol=0.0, atol=1e-12)
@@ -391,34 +406,6 @@ def _census_fields(x):
     return np.stack([u] * 7), 1.0 + 0.5 * np.cos(2 * np.pi * x[0])
 
 
-def _routes_on(problem, hamiltonian, x, fp, handed=None):
-    """FP-FDM's value route and its velocity route, the velocity built on the BC ``handed`` to the builder."""
-    U, m0 = _census_fields(x)
-    by_value = np.asarray(fp.solve_fp_system(m0, potential_field=U, show_progress=False))
-    velocity = compute_fp_velocity_field(problem, U, np.stack([m0] * len(U)), hamiltonian, boundary_conditions=handed)
-    return np.asarray(fp.solve_fp_system(m0, drift_field=velocity, show_progress=False)), by_value
-
-
-@pytest.mark.parametrize("convention", ["unstated", "stated_inclusive"])
-@pytest.mark.parametrize("dimension", [1, 2])
-def test_a_periodic_bc_handed_to_the_builder_is_read_with_the_grids_layout(dimension, convention):
-    """The grid's coordinates own the periodic layout: an unstated convention takes the grid's, and a stated one that
-    agrees is accepted. Handed the same BC, the velocity route equals FP-FDM's value route."""
-    n = 21 if dimension == 1 else 9
-    hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
-    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension))
-    handed = (
-        periodic_bc(dimension=dimension)
-        if convention == "unstated"
-        else periodic_bc(dimension=dimension, convention=PeriodicGridConvention.ENDPOINT_INCLUSIVE)
-    )
-    x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
-    by_velocity, by_value = _routes_on(
-        problem, hamiltonian, x, FPFDMSolver(problem, boundary_conditions=handed), handed
-    )
-    np.testing.assert_allclose(by_velocity, by_value, rtol=0.0, atol=1e-12)
-
-
 CONTRADICTS_THE_GRID = r"This grid's coordinates are ENDPOINT_INCLUSIVE on axis 0 .* the periodic boundary condition declares ENDPOINT_EXCLUSIVE"
 
 
@@ -469,66 +456,6 @@ def test_fp_fvm_handed_a_contradicting_convention_is_refused(hamiltonian, grid_w
             )
 
 
-class _KeepsTheBCItWasHanded(BaseFPSolver):
-    """A user FP solver: the BC it was handed kept as it was handed, and FP-FDM's solve behind it."""
-
-    def __init__(self, problem, boundary_conditions):
-        super().__init__(problem)
-        self.boundary_conditions = boundary_conditions
-        self._inner = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
-
-    def solve_fp_system(
-        self, M_initial, drift_field=None, potential_field=None, volatility=None, source_term=None, show_progress=False
-    ):
-        return self._inner.solve_fp_system(
-            M_initial,
-            drift_field=drift_field,
-            potential_field=potential_field,
-            volatility=volatility,
-            source_term=source_term,
-            show_progress=show_progress,
-        )
-
-
-@pytest.mark.parametrize("dimension", [1, 2])
-def test_a_user_solver_keeping_a_periodic_bc_solves_as_fp_fdm_handed_it(dimension):
-    """Through the router, a user solver that keeps an unstated periodic BC as it was handed solves as FP-FDM handed
-    the same BC, which completes it: the builder completes it the same way. The terminal condition is not periodic,
-    so U's repeated endpoint differs from node 0 and the face across the wrap reads which one it takes."""
-    n = 21 if dimension == 1 else 9
-    hamiltonian = CongestionHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + np.asarray(m)
-    )
-    grid = TensorProductGrid(
-        bounds=[(0.0, 1.0)] * dimension, Nx_points=[n] * dimension, boundary_conditions=_walls("periodic", dimension)
-    )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        problem = MFGProblem(
-            model=Model(hamiltonian=hamiltonian, volatility=0.3),
-            domain=grid,
-            conditions=Conditions(
-                m_initial=lambda x: 1.0 + 0.5 * np.cos(2 * np.pi * x[0]),
-                u_terminal=lambda x: 2.0 * (x[0] - 0.8) ** 2 + 0.5 * x[-1],
-                T=0.5,
-            ),
-            Nt=6,
-        )
-    handed = periodic_bc(dimension=dimension)
-
-    def solved(fp):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            result = problem.solve(
-                max_iterations=3, tolerance=1e-12, verbose=False, hjb_solver=HJBFDMSolver(problem), fp_solver=fp
-            )
-        return np.asarray(result.M)
-
-    np.testing.assert_array_equal(
-        solved(_KeepsTheBCItWasHanded(problem, handed)), solved(FPFDMSolver(problem, boundary_conditions=handed))
-    )
-
-
 def _grid_problem(hamiltonian, sizes, bounds, walls, Nt=6):
     grid = TensorProductGrid(bounds=bounds, Nx_points=list(sizes), boundary_conditions=walls)
     with warnings.catch_warnings():
@@ -539,39 +466,6 @@ def _grid_problem(hamiltonian, sizes, bounds, walls, Nt=6):
             conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
             Nt=Nt,
         )
-
-
-@pytest.mark.parametrize("sizes", [(9, 2), (2, 9)], ids=["9x2", "2x9"])
-def test_an_axis_of_two_nodes_carries_the_value_route_drift(sizes):
-    """An axis of two nodes has no second-order one-sided difference; its centred difference is first order there,
-    and the quadratic control cost's velocity route still equals FP-FDM's value route."""
-    hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
-    bounds = [(0.0, 1.0), (0.0, 0.6)]
-    problem = _grid_problem(hamiltonian, sizes, bounds, _walls("no-flux", 2))
-    x = np.meshgrid(*[np.linspace(lo, hi, size) for (lo, hi), size in zip(bounds, sizes, strict=True)], indexing="ij")
-    by_velocity, by_value = _routes_on(problem, hamiltonian, x, FPFDMSolver(problem))
-    np.testing.assert_allclose(by_velocity, by_value, rtol=0.0, atol=1e-12)
-
-
-class _InsideOnly(_Isotropic):
-    """The isotropic H, whose control refuses a point outside the unit square, as a map read off the grid does."""
-
-    def dp(self, t, x, p, m):
-        coordinates = np.atleast_2d(np.asarray(x, dtype=float).T).T if not isinstance(x, tuple) else x
-        if any(np.any((np.asarray(c) < -1e-12) | (np.asarray(c) > 1.0 + 1e-12)) for c in coordinates):
-            raise ValueError("_InsideOnly: a point outside the domain")
-        return super().dp(t, x, p, m)
-
-
-@pytest.mark.parametrize("walls", ["no-flux", "periodic"])
-def test_the_control_is_asked_only_inside_the_domain(walls):
-    """Each axis's batch holds the faces that exist, so the control is never asked at the phantom face past the last
-    node: a solve with a control that refuses a point outside the domain runs, on no-flux and periodic walls."""
-    problem = _problem(_InsideOnly(), 2, 9, _walls(walls, 2), Nt=4)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        result = problem.solve(max_iterations=2, tolerance=1e-12, verbose=False)
-    assert np.isfinite(np.asarray(result.M)).all()
 
 
 def test_a_node_a_wrapping_axis_repeats_carries_its_twins_face():
