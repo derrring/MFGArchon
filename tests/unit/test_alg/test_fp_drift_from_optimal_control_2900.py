@@ -334,7 +334,7 @@ WIDENED = {
     "1-D periodic": {"walls": "periodic"},
     "2-D no-flux": {"d": 2, "n": 7},
     "1-D Dirichlet": {"walls": "dirichlet"},
-    "3-D Dirichlet": {"d": 3, "n": 5, "walls": "dirichlet"},
+    "3-D Dirichlet": {"d": 3, "n": 3, "walls": "dirichlet"},  # pins the router admitting 3-D; #2904's census, the route
 }
 
 
