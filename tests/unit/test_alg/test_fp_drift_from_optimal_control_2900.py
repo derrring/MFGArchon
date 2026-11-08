@@ -457,12 +457,12 @@ def test_the_refusal_names_whose_optimal_control_is_served(make, names):
     assert str(refused.value).startswith(f"here, run on a 1-D problem: {names},")
 
 
-def _multi_population(fp_solver):
+def _multi_population(fp_solver, centres=(0.3, 0.7)):
     def run(kind):
         hamiltonian = _library if kind == "library" else functools.partial(_steep, _OwnControl)
-        problems = [_problem(hamiltonian(population_index=k), centre=c) for k, c in enumerate((0.3, 0.7))]
+        problems = [_problem(hamiltonian(population_index=k), centre=c) for k, c in enumerate(centres)]
         iterator = MultiPopulationIterator(
-            MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
+            MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(len(centres))]),
             [HJBFDMSolver(problem) for problem in problems],
             [fp_solver(problem) for problem in problems],
         )
@@ -471,13 +471,13 @@ def _multi_population(fp_solver):
     return run
 
 
-def test_a_multi_population_solve_refuses_on_fp_fdm():
-    """MultiPopulationIterator hands FP-FDM each population's value function, and the velocity route is not measured
-    there, so it refuses."""
-    with pytest.raises(NotImplementedError, match="#2900") as refused:
-        _multi_population(FPFDMSolver)("own")
-    assert "run on a 1-D grid, a MultiPopulationIterator solve," in str(refused.value)
-    assert "Here this is a MultiPopulationIterator solve." in str(refused.value)
+@pytest.mark.parametrize("centres", [(0.3,), (0.3, 0.7)], ids=["K=1", "K=2"])
+def test_a_multi_population_solve_routes_each_population_at_its_own_density(centres):
+    """MultiPopulationIterator hands FP-FDM each population's value function, and its velocity door reads each population
+    at its own density (#2335), so on the measured set the own control routes there too, at K = 1 as at K = 2, and
+    solves as the library H. At f59bb154, before #2335's door, both were refused."""
+    run = _multi_population(FPFDMSolver, centres)
+    np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
 
 
 #: The router's callers not reached by problem.solve(), each on the measured set, own against library.

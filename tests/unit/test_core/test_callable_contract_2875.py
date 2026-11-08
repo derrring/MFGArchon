@@ -535,21 +535,6 @@ def test_a_coupling_returns_a_value_per_point_and_a_constant_holds_for_all():
     assert named(x=(0.5,), m=2.0, p=np.zeros(1), t=0.0) == pytest.approx(-4.0)
 
 
-@pytest.mark.parametrize("population", [0, 1])
-def test_a_stacked_density_still_reads_the_first_populations_entries(population):
-    """Not a contract: what #2335 will change, pinned so that this PR moves no value on a multi-population solve. A body
-    that reads the stack itself, by its own defaults, is left to."""
-    x = (np.linspace(0.0, 1.0, 4),)
-    p = np.zeros((4, 1))
-    first, second = np.array([1.0, 2.0, 3.0, 4.0]), np.array([10.0, 20.0, 30.0, 40.0])
-    stacked = np.concatenate([first, second])
-    cost = QuadraticControlCost(control_cost=1.0)
-    H = SeparableHamiltonian(cost, coupling=lambda m: m, population_index=population)
-    np.testing.assert_array_equal(H(x=x, m=stacked, p=p, t=0.0), -first)
-    own = SeparableHamiltonian(cost, coupling=lambda m, k=population: m[4 * k : 4 * k + 4], population_index=population)
-    np.testing.assert_array_equal(own(x=x, m=stacked, p=p, t=0.0), -(second if population else first))
-
-
 def test_a_node_rule_is_read_by_name():
     from mfgarchon.geometry.boundary.applicator_graph import NodeBC
 

@@ -59,7 +59,8 @@ class Slots:
 # `DualLagrangian` and the validators' reading of a family's method call a callable by name with no binding, and read
 # `refuse_overridden` (#2869).
 POTENTIAL_SLOTS = Slots(("t", "x"))
-DENSITY_SLOTS = Slots(("m",))
+# A density term reads the own density, and every population's if it declares `cross_density` (#2335).
+DENSITY_SLOTS = Slots(("m", "cross_density"))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
 BOUNDARY_VALUE_SLOTS = Slots(("t", "x"))
