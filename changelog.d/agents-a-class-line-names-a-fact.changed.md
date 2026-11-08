@@ -1,0 +1,5 @@
+- **AGENTS.md: a class line names the fact a defect is about** (user rulings, 2026-11-08 and 2026-11-09), in § *Local patches are the anti-pattern*.
+  - Item 1 names the fact several components must agree on, with its tracking issue, and the class is that fact's population.
+  - Its members are the places that decide the fact on their own, other than the owner the plan names, and the readers that disagree with the owner. A place that decides on its own is a member even when a pin shows it agrees today.
+  - A class fix leaves the owner as the one deciding place and no reader that disagrees with it. The others are deleted or made readers of it.
+  - A census is written once per fact, holds for its sha only, and is re-run by the next plan in that fact.
