@@ -493,9 +493,12 @@ class _KeepsTheBCItWasHanded(BaseFPSolver):
 @pytest.mark.parametrize("dimension", [1, 2])
 def test_a_user_solver_keeping_a_periodic_bc_solves_as_fp_fdm_handed_it(dimension):
     """Through the router, a user solver that keeps an unstated periodic BC as it was handed solves as FP-FDM handed
-    the same BC, which completes it: the builder completes it the same way."""
+    the same BC, which completes it: the builder completes it the same way. The terminal condition is not periodic,
+    so U's repeated endpoint differs from node 0 and the face across the wrap reads which one it takes."""
     n = 21 if dimension == 1 else 9
-    hamiltonian = SeparableHamiltonian(L1ControlCost(lambda_=0.3))
+    hamiltonian = CongestionHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + np.asarray(m)
+    )
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * dimension, Nx_points=[n] * dimension, boundary_conditions=_walls("periodic", dimension)
     )
@@ -506,7 +509,7 @@ def test_a_user_solver_keeping_a_periodic_bc_solves_as_fp_fdm_handed_it(dimensio
             domain=grid,
             conditions=Conditions(
                 m_initial=lambda x: 1.0 + 0.5 * np.cos(2 * np.pi * x[0]),
-                u_terminal=lambda x: np.sin(2 * np.pi * x[0]) + 0.5 * np.cos(2 * np.pi * x[-1]),
+                u_terminal=lambda x: 2.0 * (x[0] - 0.8) ** 2 + 0.5 * x[-1],
                 T=0.5,
             ),
             Nt=6,
