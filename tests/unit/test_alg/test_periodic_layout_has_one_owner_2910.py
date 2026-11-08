@@ -123,6 +123,46 @@ def test_the_velocity_builder_asks_at_the_faces_and_reads_node_0_across_the_wrap
     np.testing.assert_allclose(velocity[0, -1], -(U[0, 0] - U[0, -2]) / h, atol=1e-12)
 
 
+class _StatesItsLayout:
+    """A geometry that is not a `TensorProductGrid` but states its layout, delegating everything else to a grid."""
+
+    def __init__(self, grid, layout):
+        self._grid, self.periodic_convention = grid, layout
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return getattr(self._grid, name)
+
+
+class _Problem:
+    def __init__(self, geometry, bc):
+        self.geometry, self.dt, self._bc = geometry, 0.05, bc
+
+    def get_boundary_conditions(self):
+        return self._bc
+
+
+def test_the_velocity_builder_reads_the_same_span_on_a_grid_that_states_its_layout():
+    """Cross-reader identity across geometries (#2909 review 3, F1(a)): on a geometry that is not a
+    `TensorProductGrid` but states ENDPOINT_INCLUSIVE, the builder handed an unstated periodic BC builds what it
+    builds on the grid itself."""
+    from mfgarchon.geometry.boundary.types import PeriodicGridConvention
+
+    n = 21
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=periodic_bc(dimension=1))
+    x = np.linspace(0.0, 1.0, n)
+    U = np.stack([0.3 * np.sin(2 * np.pi * x) + 0.2 * x] * 2)
+    H = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
+
+    def build(geometry):
+        bc = periodic_bc(dimension=1)
+        return compute_fp_velocity_field(_Problem(geometry, bc), U, np.ones_like(U), H, boundary_conditions=bc)
+
+    view = _StatesItsLayout(grid, PeriodicGridConvention.ENDPOINT_INCLUSIVE)
+    np.testing.assert_array_equal(build(view), build(grid))
+
+
 @pytest.mark.parametrize(
     "solver",
     ["FP-FDM", "FP-FVM", "FP-SL", pytest.param("FP-Particle", marks=STAGE_2)],

@@ -1,0 +1,8 @@
+- **Which axes wrap, and how many nodes a wrapping axis spans, each have one owner** (Issues #2910 and #2911, stage 1).
+  - `wrapping_axes` and `periodic_axes` decide the topology: an axis wraps if and only if both of its faces are periodic, in any spelling, and its period is the span of the bounds. `periodic_axis_spans` decides the layout from the grid.
+  - `TensorProductGrid.periodic_dimensions`, `get_periods`, `wrap_coordinates`, its periodic distance and `periodic_on_every_face` now read them. A grid whose BC is periodic on every face, spelt with a segment per face or a periodic `default_bc`, used to report no periodic axes, so it did not wrap coordinates and its periodic distance ignored the wrap. It now does both, as it already did for a uniform periodic BC. HJB-GFDM and the collocation sampler on such a grid follow.
+  - **Refused now:**
+    - A BC periodic on one face of an axis, by every reader that asks the owner, with the axis named.
+    - `periodic_convention` on a grid whose axes differ in layout, which used to collapse them to one value.
+    - In the FP velocity builder: a wrapping grid that states no layout, and an axis whose last node is distinct from node 0 (supported in stage 2), where it used to fail with an `IndexError`.
+  - The FP velocity builder reads the layout from its owner on any Cartesian grid, so on a user `CartesianGrid` that states its layout it now builds what FP-FDM's stencil reads, as it does on a `TensorProductGrid`.

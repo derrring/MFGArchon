@@ -109,14 +109,22 @@ STAGE_2 = pytest.mark.xfail(
 )
 
 
+#: Every reader above, and the ones that answer a yes/no question about the wrap.
+ONE_FACE_READERS = {
+    **READERS,
+    "periodic_on_every_face": lambda g, bc: periodic_on_every_face(bc, 2, g),
+    "TensorProductGrid.get_periods": lambda g, bc: g.get_periods(),
+}
+
+
 @pytest.mark.parametrize(
     "reader",
-    [pytest.param(r, marks=STAGE_2) if r == "the grid's Laplacian" else r for r in READERS],
+    [pytest.param(r, marks=STAGE_2) if r == "the grid's Laplacian" else r for r in ONE_FACE_READERS],
 )
 def test_an_axis_periodic_on_one_face_is_refused_by_every_reader(reader):
     bc = _faces([(P, W), (W, W)])
     with pytest.raises(ValueError, match=r"periodic on the min face of axis 0 and not on its max face"):
-        READERS[reader](_grid(bc), bc)
+        ONE_FACE_READERS[reader](_grid(bc), bc)
 
 
 @pytest.mark.parametrize("spelling", [s for s, (_, axes) in SPELLINGS.items() if 0 in axes])
