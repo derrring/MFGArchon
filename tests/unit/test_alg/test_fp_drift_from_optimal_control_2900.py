@@ -352,9 +352,10 @@ OFF_THE_MEASURED_SET = {
 
 @pytest.mark.parametrize("where", sorted(OFF_THE_MEASURED_SET))
 def test_off_the_measured_set_the_default_scheme_refuses_stating_what_it_read(where):
-    """FP-FDM's velocity route differs from its value-function route off 1-D no-flux (#2904), so it refuses there,
-    stating what it read and why. Off in M at 6f02506c, which drove it by -c*grad(U): 1.1121e+00 periodic, 2.5675e+00
-    in 2-D; at 855dcb6e, which routed it: 1.7056e-01 and 1.4074e+00."""
+    """Off the closed set, the default scheme refuses an own control, stating what it read and why; routing
+    periodic walls and 2-D grids is #2908. Off in M at 6f02506c, which drove it by -c*grad(U): 1.1121e+00 periodic,
+    2.5675e+00 in 2-D; at 855dcb6e, which routed it through the velocity builder #2904 replaced: 1.7056e-01 and
+    1.4074e+00."""
     setting, ran_on, why = OFF_THE_MEASURED_SET[where]
     with pytest.raises(NotImplementedError, match="#2900") as refused:
         _solve(_steep(_OwnControl), **setting)

@@ -921,12 +921,15 @@ def _why_an_own_control_is_not_a_velocity_here(
     problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None, takes_a_velocity: bool
 ) -> list[str]:
     """Why ``fp_solver``, which forms its drift from U (``_forms_its_drift_from_u``), cannot take an own optimal control
-    as a velocity here, or ``[]`` where it can (#2900). The set where it can is closed, stated positively, and is where
-    FP-FDM's velocity route was measured equal to its value-function route: a 1-D grid with NO_FLUX walls, a density
-    trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the velocity, in a
-    multi-population solve too, where the velocity door reads each population at its own density (#2335).
-    Off it, the velocity route is unmeasured, or measured wrong: periodic and 2-D are #2904. The walls are the ones the
-    solver solves with, its own when it was handed them."""
+    as a velocity here, or ``[]`` where it can (#2900). The set where it can is closed and stated positively: a 1-D grid
+    with NO_FLUX walls, a density trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the
+    velocity, in a multi-population solve too, where the velocity door reads each population at its own density (#2335).
+    #2904's oracles measure the velocity route equal to the value-function route on periodic walls and 2-D and 3-D grids
+    as well, in ``test_fp_velocity_at_the_stencils_faces_2904.py``
+    (``test_the_velocity_route_carries_the_value_route_drift``,
+    ``test_each_library_control_is_read_at_the_exact_gradient_at_its_face`` and
+    ``test_a_control_that_couples_the_components_converges_at_second_order``); routing those here is #2908. The walls
+    are the ones the solver solves with, its own when it was handed them."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _INTERFACE_VELOCITY_SCHEMES
     from mfgarchon.geometry.boundary import BCType
     from mfgarchon.geometry.boundary.types import BoundaryFace
@@ -1100,8 +1103,8 @@ def resolve_fp_drift_kwargs(
                     _what_the_router_read(problem, fp_solver, M, cross_density),
                     (
                         f"{name} takes its optimal_control as a velocity only on a 1-D grid with "
-                        "NO_FLUX walls, handed the density trajectory, with an advection scheme that reads a velocity, "
-                        "where that route has been measured equal to the value-function route (#2904). "
+                        "NO_FLUX walls, handed the density trajectory, with an advection scheme that reads a velocity "
+                        "(#2900). "
                         f"Here {'; '.join(reasons)}."
                         if takes_a_velocity
                         else f"{'; '.join(reasons)}."

@@ -4,7 +4,8 @@ FP-FDM's stencil reads ``interface_velocity[d][i]`` as the velocity at the face 
 across it being ``i + 1``, wrapped through `periodic_axis_span` on an axis that wraps. `compute_fp_velocity_field` built
 another field: on a periodic 1-D grid its last face read the endpoint the grid repeats instead of node 0, and in nD it
 returned node values of centred differences. FP-FDM's velocity route then carried another drift than its
-value-function route, 9.3 apart in M on a 2-D periodic grid at f59bb154, and nothing raised.
+value-function route, and nothing raised: at 8f7c0db8 the first test's cells are 2.093 apart in M on the 1-D periodic
+grid, 7.790 on the 2-D periodic one and 14.81 on the 3-D periodic one.
 
 Three oracles, each for what the other two cannot see:
 
@@ -102,9 +103,7 @@ def test_the_velocity_route_carries_the_value_route_drift(dimension, walls, n, f
     hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
     x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
     volatility = 0.2 + 0.1 * sum(x) if field else 0.3
-    problem = _problem(
-        hamiltonian, dimension, n, _walls(walls, dimension), volatility, "field" if field else None
-    )
+    problem = _problem(hamiltonian, dimension, n, _walls(walls, dimension), volatility, "field" if field else None)
     u = 0.3 * np.sin(2 * np.pi * x[0]) + 0.2 * x[0]
     for k in range(1, dimension):
         u = u + 0.3 * (k + 1) * x[k] + 0.1 * x[0] * x[k]
@@ -129,9 +128,11 @@ def _degree_two(x):
     """U of total degree 2, scaled by (1 + 0.1 n) at step n, and its gradient."""
     dimension = len(x)
     u = sum(A[k] * x[k] ** 2 + B[k] * x[k] for k in range(dimension))
-    u = u + sum(c * x[k] * x[l] for (k, l), c in C.items() if l < dimension)
+    u = u + sum(c * x[k] * x[q] for (k, q), c in C.items() if q < dimension)
     gradient = [
-        2 * A[k] * x[k] + B[k] + sum(c * x[l if j == k else j] for (j, l), c in C.items() if l < dimension and k in (j, l))
+        2 * A[k] * x[k]
+        + B[k]
+        + sum(c * x[q if j == k else j] for (j, q), c in C.items() if q < dimension and k in (j, q))
         for k in range(dimension)
     ]
     scale = (1.0 + 0.1 * STEPS).reshape(-1, *[1] * dimension)
@@ -162,7 +163,9 @@ CONTROLS = {
 
 
 @pytest.mark.parametrize("control", sorted(CONTROLS))
-@pytest.mark.parametrize(("own", "problems"), [("periodic", "no-flux"), ("no-flux", "periodic"), ("Dirichlet", "periodic")])
+@pytest.mark.parametrize(
+    ("own", "problems"), [("periodic", "no-flux"), ("no-flux", "periodic"), ("Dirichlet", "periodic")]
+)
 @pytest.mark.parametrize("dimension", [1, 2, 3])
 def test_each_library_control_is_read_at_the_exact_gradient_at_its_face(dimension, own, problems, control):
     make, closed_form = CONTROLS[control]
@@ -280,4 +283,6 @@ def _coupled_control_error(dimension, walls, n):
 def test_a_control_that_couples_the_components_converges_at_second_order(dimension, walls, coarse):
     errors = [_coupled_control_error(dimension, walls, n) for n in (coarse, 2 * coarse - 1)]
     order = np.log2(errors[0] / errors[1])
-    assert order > 1.6, f"order {order:.2f} from errors {errors[0]:.3e}, {errors[1]:.3e} at n = {coarse}, {2 * coarse - 1}"
+    assert order > 1.6, (
+        f"order {order:.2f} from errors {errors[0]:.3e}, {errors[1]:.3e} at n = {coarse}, {2 * coarse - 1}"
+    )
