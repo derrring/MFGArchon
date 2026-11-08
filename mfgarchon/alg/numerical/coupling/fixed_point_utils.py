@@ -767,7 +767,7 @@ def compute_fp_velocity_field(
     control cost the velocity route then equals the value-function route the stencil forms from U (#2904).
 
     Args:
-        problem: MFG problem (provides ``geometry`` and ``dt``).
+        problem: MFG problem (provides ``geometry``, ``dt`` and, when no BC is handed, ``get_boundary_conditions``).
         U: Value function, shape ``(Nt+1, *spatial_shape)``.
         M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
         H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
@@ -781,15 +781,14 @@ def compute_fp_velocity_field(
         boundary_conditions: The BC of the FP solver the velocity is for, which decides where an axis wraps
             (`periodic_axis_span`). ``None`` => the problem's shared BC as an FP solver reads it
             (`fp_view_of_shared_bc`), which refuses a Neumann value that is not zero and a Robin condition. Either
-            is read as FP-FDM reads its own: an unstated periodic convention is completed from the geometry
-            (`with_geometry_periodic_convention`), and a BC periodic on some faces only is refused
-            (`_refuse_partial_periodic`).
+            is read with the grid's periodic layout, which the grid's coordinates own: an unstated convention is
+            completed from the geometry (`with_geometry_periodic_convention`), a stated one that contradicts the grid
+            is refused with the grid's message (`bind_periodic_convention`), and a BC periodic on some faces only is
+            refused (`_refuse_partial_periodic`).
 
     Returns:
         Velocity $\\alpha^*$.
-        1D: shape ``(U.shape[0], F)``, at the faces $(i+1/2)$: F = Nx - 1 on an axis that does not wrap, and the
-        periodic span on one that does, whose last face reads node 0: Nx - 1 where the BC's convention repeats the
-        endpoint, Nx where it does not.
+        1D: shape ``(U.shape[0], Nx - 1)``, at the faces $(i+1/2)$; on an axis that wraps, the last face reads node 0.
         nD: shape ``(U.shape[0], ndim, *spatial_shape)``, one face array per axis: entry ``[d][i]`` is the velocity at
         the face $(i + 1/2)$ along ``d``, the face the stencil reads at node ``i``. The last node of an axis that does
         not wrap has no face and carries 0; a node a wrapping axis repeats carries its twin's face, which is the same
@@ -799,7 +798,9 @@ def compute_fp_velocity_field(
         #2904).
 
     Raises:
-        ValueError: in nD, when ``optimal_control`` does not return shape ``(N, d)``.
+        ValueError: when U's shape has no tensor grid of the problem's geometry to sit on (#2756); when a stated
+            periodic convention contradicts the grid's layout; and in nD, when ``optimal_control`` does not return
+            shape ``(N, d)``.
         NotImplementedError: handed no BC, when the problem's shared BC has a Neumann value that is not zero or a
             Robin condition; when the BC is periodic on some faces only; and in nD, when ``cross_density[n]`` does not
             hold exactly one value per node.
@@ -807,6 +808,7 @@ def compute_fp_velocity_field(
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _refuse_partial_periodic
     from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc, with_geometry_periodic_convention
     from mfgarchon.geometry.boundary.conditions import periodic_axis_span
+    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, bind_periodic_convention
 
     geometry = problem.geometry
     grid_spacing = geometry.get_grid_spacing()
@@ -819,10 +821,13 @@ def compute_fp_velocity_field(
         if boundary_conditions is None
         else boundary_conditions
     )
-    # Read as FP-FDM reads the BC it solves with (#2904): the grid's layout for an unstated periodic convention, and a
-    # BC periodic on some faces only refused, since the stencil wraps every axis or none.
+    # The grid's coordinates own the periodic layout (#2904, user ruling 2026-11-08): an unstated convention takes the
+    # grid's, a stated one that contradicts the grid is refused with the grid's own message, and a BC periodic on some
+    # faces only is refused, since FP-FDM's stencil wraps every axis or none.
     bc = with_geometry_periodic_convention(bc, geometry)
-    _refuse_partial_periodic(bc, ndim, geometry)
+    if isinstance(geometry, TensorProductGrid):
+        bc = bind_periodic_convention(geometry, bc)
+    _refuse_partial_periodic(bc, ndim, geometry, consumer="compute_fp_velocity_field")
     spans = [periodic_axis_span(bc, spatial_shape[d], ndim, geometry) for d in range(ndim)]
 
     # The grid's own node axes, from their one owner (#2756).
@@ -836,28 +841,25 @@ def compute_fp_velocity_field(
     if ndim == 1:
         dx = grid_spacing[0]
         Nx = spatial_shape[0]
-        faces = Nx - 1 if spans[0] is None else spans[0]
-        across = _face_neighbours(Nx, spans[0])[:faces]
+        across = _face_neighbours(Nx, spans[0])[: Nx - 1]
 
-        # Face centers: x_{i+1/2}. A BC that wraps with no repeated endpoint has one face more, across the wrap.
+        # Face centers: x_{i+1/2}
         x_nodes = axes[0]
-        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])
-        if faces == Nx:
-            x_faces = np.append(x_faces, x_nodes[-1] + 0.5 * dx)
+        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])  # (Nx-1,)
 
         # Face gradient: p_{i+1/2} = (U[j] - U[i]) / dx, j the node across the face (#2904)
-        p_faces = (U[:, across] - U[:, :faces]) / dx  # (Nt, faces)
+        p_faces = (U[:, across] - U[:, : Nx - 1]) / dx  # (Nt, Nx-1)
 
         # Face density: m_{i+1/2} = (m[i] + m[j]) / 2, the own density's, in a multi-population solve too (#2335). The
         # stacked cross-density trajectory a multi-population solve passes (#1071) goes beside it as cross_density, read
         # at the faces too: each population's row averaged by the same function, so at K = 1 its one row is m.
-        m_faces = _density_at_faces(M, across)  # (Nt, faces)
+        m_faces = _density_at_faces(M, across)  # (Nt, Nx-1)
         if cross_density is not None:
             stacked = np.asarray(cross_density)
             rows = np.stack([_population_rows(row, Nx, "compute_fp_velocity_field") for row in stacked])
-            cross_faces = _density_at_faces(rows, across)  # (Nt, K, faces)
+            cross_faces = _density_at_faces(rows, across)  # (Nt, K, Nx-1)
 
-        alpha_faces = np.zeros((Nt, faces))
+        alpha_faces = np.zeros((Nt, Nx - 1))
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
             m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
@@ -955,10 +957,10 @@ def _why_an_own_control_is_not_a_velocity_here(
     with NO_FLUX walls, a density trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the
     velocity, in a multi-population solve too, where the velocity door reads each population at its own density (#2335).
     Off it, on periodic walls and 2-D and 3-D grids, ``test_fp_velocity_at_the_stencils_faces_2904.py`` measures the
-    velocity route equal to the value-function route (``test_the_velocity_route_carries_the_value_route_drift``) and
-    the velocity equal to the closed form at the faces and to the control at the exact face gradient
-    (``test_each_library_control_is_read_at_the_exact_gradient_at_its_face``,
-    ``test_a_control_that_couples_the_components_converges_at_second_order``); routing those here is #2908. The walls
+    velocity route equal to the value-function route (``test_the_velocity_route_carries_the_value_route_drift``), the
+    velocity equal to the closed form at the faces (``test_each_library_control_is_read_at_the_exact_gradient_at_its_face``),
+    and its convergence at second order to the control at the exact face gradient
+    (``test_a_control_that_couples_the_components_converges_at_second_order``); routing those here is #2908. The walls
     are the ones the solver solves with, its own when it was handed them."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _INTERFACE_VELOCITY_SCHEMES
     from mfgarchon.geometry.boundary import BCType

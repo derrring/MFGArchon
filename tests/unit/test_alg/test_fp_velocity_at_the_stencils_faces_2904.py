@@ -323,8 +323,8 @@ def _coupled_control_error_on(sizes, bounds):
 )
 def test_on_a_box_whose_axes_differ_the_coupled_control_converges_at_second_order(sizes, bounds):
     """The coupled control on a box whose node counts, lengths and spacings differ per axis, where a transverse
-    difference taken with another axis's spacing cannot pass: the observed order between it and the box refined twice
-    along each axis stays above 1.6."""
+    difference taken with another axis's spacing cannot pass: the observed order between it and the box refined once,
+    to 2n - 1 nodes along each axis, stays above 1.6."""
     finer = tuple(2 * size - 1 for size in sizes)
     errors = [_coupled_control_error_on(sizes, bounds), _coupled_control_error_on(finer, bounds)]
     order = np.log2(errors[0] / errors[1])
@@ -399,27 +399,74 @@ def _routes_on(problem, hamiltonian, x, fp, handed=None):
     return np.asarray(fp.solve_fp_system(m0, drift_field=velocity, show_progress=False)), by_value
 
 
-@pytest.mark.parametrize("convention", ["unstated", "stated_exclusive"])
+@pytest.mark.parametrize("convention", ["unstated", "stated_inclusive"])
 @pytest.mark.parametrize("dimension", [1, 2])
-def test_a_periodic_bc_handed_to_the_builder_is_read_as_fp_fdm_reads_it(dimension, convention):
-    """The builder reads a BC as FP-FDM reads the one it solves with: an unstated convention takes the grid's layout,
-    and a stated one is followed. Handed the same BC, the velocity route equals FP-FDM's value route. A stated
-    ENDPOINT_EXCLUSIVE on this endpoint-inclusive grid contradicts the grid, which FP-FDM accepts and solves on a torus
-    one cell too long (#2910); here it is a cross-path identity on that input, which #2910's fix may turn into a
-    refusal."""
+def test_a_periodic_bc_handed_to_the_builder_is_read_with_the_grids_layout(dimension, convention):
+    """The grid's coordinates own the periodic layout: an unstated convention takes the grid's, and a stated one that
+    agrees is accepted. Handed the same BC, the velocity route equals FP-FDM's value route."""
     n = 21 if dimension == 1 else 9
     hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
     problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension))
     handed = (
         periodic_bc(dimension=dimension)
         if convention == "unstated"
-        else periodic_bc(dimension=dimension, convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE)
+        else periodic_bc(dimension=dimension, convention=PeriodicGridConvention.ENDPOINT_INCLUSIVE)
     )
     x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
     by_velocity, by_value = _routes_on(
         problem, hamiltonian, x, FPFDMSolver(problem, boundary_conditions=handed), handed
     )
     np.testing.assert_allclose(by_velocity, by_value, rtol=0.0, atol=1e-12)
+
+
+CONTRADICTS_THE_GRID = r"This grid's coordinates are ENDPOINT_INCLUSIVE on axis 0 .* the periodic boundary condition declares ENDPOINT_EXCLUSIVE"
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_a_convention_that_contradicts_the_grid_is_refused_with_the_grids_message(dimension):
+    """A periodic BC whose stated convention contradicts the grid's coordinates is refused with the grid's message,
+    through the check the grid binds every BC with: the grid's coordinates own the layout. FP-FDM handed such a BC
+    still solves on a torus one cell too long, which is #2910's."""
+    n = 21 if dimension == 1 else 9
+    hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
+    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension))
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
+    U, m0 = _census_fields(x)
+    contradicting = periodic_bc(dimension=dimension, convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE)
+    with pytest.raises(ValueError, match=CONTRADICTS_THE_GRID):
+        compute_fp_velocity_field(problem, U, np.stack([m0] * len(U)), hamiltonian, boundary_conditions=contradicting)
+
+
+@pytest.mark.parametrize("grid_walls", ["periodic", "no-flux"])
+@pytest.mark.parametrize(
+    "hamiltonian",
+    [
+        lambda: SeparableHamiltonian(L1ControlCost(lambda_=0.3)),
+        lambda: CongestionHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + np.asarray(m)
+        ),
+    ],
+    ids=["L1", "congestion"],
+)
+def test_fp_fvm_handed_a_contradicting_convention_is_refused(hamiltonian, grid_walls):
+    """FP-FVM handed a stated ENDPOINT_EXCLUSIVE on an endpoint-inclusive grid keeps it. The velocity the router builds
+    for it is refused with the grid's message, as 8f7c0db8 refused the solve, rather than handed to FVM as faces it
+    would read as node values."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFVMSolver
+
+    h = hamiltonian()
+    problem = _problem(h, 1, 21, _walls(grid_walls, 1))
+    contradicting = periodic_bc(dimension=1, convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValueError, match=CONTRADICTS_THE_GRID):
+            problem.solve(
+                max_iterations=2,
+                tolerance=1e-12,
+                verbose=False,
+                hjb_solver=HJBFDMSolver(problem),
+                fp_solver=FPFVMSolver(problem, boundary_conditions=contradicting),
+            )
 
 
 class _KeepsTheBCItWasHanded(BaseFPSolver):
@@ -449,7 +496,21 @@ def test_a_user_solver_keeping_a_periodic_bc_solves_as_fp_fdm_handed_it(dimensio
     the same BC, which completes it: the builder completes it the same way."""
     n = 21 if dimension == 1 else 9
     hamiltonian = SeparableHamiltonian(L1ControlCost(lambda_=0.3))
-    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension))
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dimension, Nx_points=[n] * dimension, boundary_conditions=_walls("periodic", dimension)
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            model=Model(hamiltonian=hamiltonian, volatility=0.3),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.5 * np.cos(2 * np.pi * x[0]),
+                u_terminal=lambda x: np.sin(2 * np.pi * x[0]) + 0.5 * np.cos(2 * np.pi * x[-1]),
+                T=0.5,
+            ),
+            Nt=6,
+        )
     handed = periodic_bc(dimension=dimension)
 
     def solved(fp):
@@ -572,30 +633,3 @@ def test_handed_no_bc_the_builder_reads_the_problems_walls_as_the_fp_does(walls,
             NotImplementedError, match=rf"^{consumer}: the problem's shared boundary condition has a {said}"
         ):
             call()
-
-
-class _Shifted(HamiltonianBase):
-    """H = |p - 0.7 x|^2 / 2, whose control -(p - 0.7 x) reads the face's position."""
-
-    def __call__(self, t, x, p, m):
-        q = np.asarray(p, dtype=float) - 0.7 * np.asarray(x[0], dtype=float).reshape((*np.shape(p)[:-1], 1))
-        return 0.5 * np.sum(q * q, axis=-1)
-
-    def dp(self, t, x, p, m):
-        return np.asarray(p, dtype=float) - 0.7 * np.asarray(x[0], dtype=float).reshape((*np.shape(p)[:-1], 1))
-
-
-def test_a_1d_wrap_with_no_repeated_endpoint_has_a_face_across_it_at_its_own_position():
-    """A BC that wraps with no repeated endpoint gives the 1-D axis one face per node, the last across the wrap, between
-    the last node and node 0, at the last node's position plus half a cell. A control that reads the position gets
-    each face's own: the closed form from the stencil's index map, face by face."""
-    n, h = 11, 0.1
-    hamiltonian = _Shifted()
-    problem = _problem(hamiltonian, 1, n, _walls("periodic", 1), Nt=len(STEPS) - 1)
-    nodes = np.linspace(0.0, 1.0, n)
-    U, _ = _degree_two([nodes])
-    exclusive = periodic_bc(dimension=1, convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE)
-    velocity = compute_fp_velocity_field(problem, U, _density([nodes]), hamiltonian, boundary_conditions=exclusive)
-    across = (np.arange(n) + 1) % n
-    expected = -((U[:, across] - U) / h - 0.7 * (nodes + 0.5 * h))
-    np.testing.assert_allclose(velocity, expected, rtol=0.0, atol=1e-12)

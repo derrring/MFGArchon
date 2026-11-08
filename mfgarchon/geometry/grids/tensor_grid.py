@@ -343,42 +343,9 @@ class TensorProductGrid(
         return GeometryType.CARTESIAN_GRID
 
     def _bind_periodic_convention(self, bc):
-        """Complete a periodic BC with the node layout this grid measures. Issue #1822.
-
-        The convention travels on the BC, because that is what reaches solvers and operators. An
-        unstated one wraps as the package always did (all N nodes distinct), which is wrong for
-        THIS grid -- so binding it here is what makes solver paths correct without any of them
-        declaring anything, exactly as ``bind_dimension`` completes the BC's dimension.
-
-        A BC that states a convention is not overridden: it is checked, and a contradiction raises.
-        Silently replacing a caller's explicit statement would be the same silence this whole
-        change removes, one level up.
-
-        Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
-
-        A periodic ``default_bc`` counts as much as a periodic segment (``bc_utils.declares_periodic``): a
-        periodic default reached the solvers unbound, and the SL pair solved it up to 11% off (#1560).
-        """
-        from mfgarchon.geometry.boundary.bc_utils import declares_periodic
-
-        if not declares_periodic(bc):
-            return bc
-        measured = self.periodic_convention
-        declared = getattr(bc, "periodic_convention", None)
-        if declared is None:
-            return replace(bc, periodic_convention=measured)
-        if declared is not measured:
-            axis = self._first_axis_with_convention(measured)
-            raise ValueError(
-                f"This grid's coordinates are {measured.name} on axis {axis} "
-                f"(x[-1] = {self.coordinates[axis][-1]!r} against an upper bound of "
-                f"{self.bounds[axis][1]!r}), but the periodic boundary condition declares "
-                f"{declared.name}. They differ by exactly one node, so wrapping under the declared "
-                f"one would shift every periodic stencil by a cell and still return a finite field. "
-                f"Build the BC with periodic_bc(..., convention=PeriodicGridConvention."
-                f"{measured.name}), or build the grid to match (Issue #1822)."
-            )
-        return bc
+        """Complete a periodic BC with the node layout this grid measures, and refuse one that contradicts it: the one
+        check, `bind_periodic_convention`, which the FP velocity builder calls too (#1822, #2904)."""
+        return bind_periodic_convention(self, bc)
 
     def _first_axis_with_convention(self, convention: PeriodicGridConvention) -> int:
         """The axis the verdict came from, so the evidence in the message is that axis's.
@@ -2150,6 +2117,48 @@ def tensor_grid_axes(nodes: NDArray, grid_shape: tuple[int, ...]) -> list[NDArra
         return None
     product = np.stack([g.ravel() for g in np.meshgrid(*axes, indexing="ij")], axis=1)
     return axes if points_are_grid_nodes(product, nodes) else None
+
+
+def bind_periodic_convention(grid: Any, bc: Any) -> Any:
+    """Complete a periodic BC with the node layout ``grid`` measures, or refuse one that contradicts it (#1822).
+
+    The grid's coordinates are the only owner of the periodic layout (user ruling, 2026-11-08): ``TensorProductGrid``
+    binds every BC attached to it through here, and the FP velocity builder checks the BC it is handed here too (#2904).
+
+    The convention travels on the BC, because that is what reaches solvers and operators. An
+    unstated one wraps as the package always did (all N nodes distinct), which is wrong for
+    THIS grid -- so binding it here is what makes solver paths correct without any of them
+    declaring anything, exactly as ``bind_dimension`` completes the BC's dimension.
+
+    A BC that states a convention is not overridden: it is checked, and a contradiction raises.
+    Silently replacing a caller's explicit statement would be the same silence this whole
+    change removes, one level up.
+
+    Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
+
+    A periodic ``default_bc`` counts as much as a periodic segment (``bc_utils.declares_periodic``): a
+    periodic default reached the solvers unbound, and the SL pair solved it up to 11% off (#1560).
+    """
+    from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+
+    if not declares_periodic(bc):
+        return bc
+    measured = grid.periodic_convention
+    declared = getattr(bc, "periodic_convention", None)
+    if declared is None:
+        return replace(bc, periodic_convention=measured)
+    if declared is not measured:
+        axis = grid._first_axis_with_convention(measured)
+        raise ValueError(
+            f"This grid's coordinates are {measured.name} on axis {axis} "
+            f"(x[-1] = {grid.coordinates[axis][-1]!r} against an upper bound of "
+            f"{grid.bounds[axis][1]!r}), but the periodic boundary condition declares "
+            f"{declared.name}. They differ by exactly one node, so wrapping under the declared "
+            f"one would shift every periodic stencil by a cell and still return a finite field. "
+            f"Build the BC with periodic_bc(..., convention=PeriodicGridConvention."
+            f"{measured.name}), or build the grid to match (Issue #1822)."
+        )
+    return bc
 
 
 def geometry_grid_axes(geometry: Any) -> list[NDArray] | None:

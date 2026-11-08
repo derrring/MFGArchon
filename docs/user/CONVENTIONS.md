@@ -284,8 +284,10 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   conserves mass on no-flux and periodic walls, and FP-FDM's velocity step, implicit upwind, kept
   the density non-negative at every Courant number measured, from 0.2 to about 1000 (1-D and 2-D,
   no-flux and periodic walls, quadratic, L1 and congestion controls). What the face values decide is
-  consistency: on an axis of three nodes or more the transverse components of $p$ are second-order
-  accurate at the face, on an axis of two first order.
+  consistency: on an axis that does not wrap, the transverse components of $p$ are second-order
+  accurate at the face where the axis has three nodes or more, and first order where it has two. A
+  periodic BC's layout is the grid's: a convention stated on it that contradicts the grid's
+  coordinates is refused, with the grid's message.
 - **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
   is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed

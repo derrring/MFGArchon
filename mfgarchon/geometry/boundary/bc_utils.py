@@ -317,7 +317,7 @@ def with_geometry_periodic_convention(boundary_conditions: Any, geometry: Any) -
     came out -1.5 where the grid's own layout gives -1.0.
 
     Only fills a gap; a stated convention is left alone, and the grid refuses one that contradicts it at attachment
-    time. The one owner of that completion: ``BaseNumericalSolver._with_geometry_periodic_convention`` delegates here.
+    time. The one owner of that completion: ``BaseMFGSolver._with_geometry_periodic_convention`` delegates here.
     """
     from dataclasses import replace
 
