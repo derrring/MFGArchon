@@ -452,6 +452,11 @@ class QuadraticControlCost(ControlCostBase):
         return z / (1 + tau * self._lambda)
 
 
+#: The library's ``QuadraticControlCost.optimal_control``, held as this module defines it, so the #2900 predicate
+#: compares a served control with the library body rather than with whatever the class holds by then (#2907).
+_LIBRARY_QUADRATIC_CONTROL = QuadraticControlCost.optimal_control
+
+
 class L1ControlCost(ControlCostBase):
     """
     Bounded bang-bang control: L(alpha) = lambda * |alpha| + I_{|alpha|<=1}.
@@ -2828,6 +2833,11 @@ class SeparableHamiltonian(HamiltonianBase):
             coupling=self._coupling,
             coupling_dm=self._coupling_dm,
         )
+
+
+#: The library's ``SeparableHamiltonian.optimal_control``, held as this module defines it (#2907; see
+#: ``_LIBRARY_QUADRATIC_CONTROL``).
+_LIBRARY_SEPARABLE_CONTROL = SeparableHamiltonian.optimal_control
 
 
 class CongestionHamiltonian(HamiltonianBase):

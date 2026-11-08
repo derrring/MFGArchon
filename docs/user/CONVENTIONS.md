@@ -248,9 +248,10 @@ on their own basis.
 `fp_drift_coefficient(problem)` resolves in this order:
 
 1. A `SeparableHamiltonian` that serves an optimal control of its own → **raises**, stating what was
-   run (#2900). It serves its own unless the method it serves is `SeparableHamiltonian.optimal_control`
-   bound to it and, for a `QuadraticControlCost`, the cost serves that class's own
-   (`drift_is_the_control_costs`).
+   run (#2900). It serves its own unless the `optimal_control` it serves is the library's
+   `SeparableHamiltonian.optimal_control` bound to it and, for a `QuadraticControlCost`, the cost serves
+   the library's `QuadraticControlCost.optimal_control` bound to the cost. The library's is the body each
+   class had when `mfgarchon.core.hamiltonian` was imported (`drift_is_the_control_costs`, #2907).
 2. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
    well-formed problem takes.**
 3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does

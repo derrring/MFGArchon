@@ -35,24 +35,34 @@ def has_quadratic_control_cost(hamiltonian: Any) -> bool:
     return isinstance(hamiltonian, SeparableHamiltonian) and isinstance(hamiltonian.control_cost, QuadraticControlCost)
 
 
+def _serves_the_library_control(owner: Any, library: Any) -> bool:
+    """Whether the ``optimal_control`` that ``owner`` serves, read as a caller reads it, is ``library`` bound to
+    ``owner`` itself (#2907). ``__func__`` and ``__self__`` are read with a default, so a staticmethod, a plain function,
+    a partial or a callable object reads False rather than raising."""
+    served = getattr(owner, "optimal_control", None)
+    return getattr(served, "__func__", None) is library and getattr(served, "__self__", None) is owner
+
+
 def drift_is_the_control_costs(hamiltonian: Any) -> bool:
     """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` driven by the library's own optimal control (#2900): the
-    method it serves is ``SeparableHamiltonian.optimal_control`` bound to it, which a subclass, an instance attribute
-    or a ``__getattribute__`` would replace, and a quadratic control cost serves ``QuadraticControlCost``'s own
-    ``optimal_control``, which a subclass of it would replace. Only then is ``-c*grad(U)`` its drift. Any other control
-    cost reaches ``assert_quadratic_drift`` as before (#1542)."""
-    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    ``optimal_control`` it serves is the library's ``SeparableHamiltonian.optimal_control`` bound to it, and a
+    quadratic control cost serves the library's ``QuadraticControlCost.optimal_control`` bound to the cost. The
+    library's is the body each class had when ``mfgarchon.core.hamiltonian`` was imported (#2907), so a body served by
+    a subclass, an instance attribute, ``__getattribute__``, a descriptor or a replacement on the class, or a library
+    method bound to another object, is not the library's. Only then is ``-c*grad(U)`` its drift. Any other control cost
+    reaches ``assert_quadratic_drift`` as before (#1542)."""
+    from mfgarchon.core.hamiltonian import (
+        _LIBRARY_QUADRATIC_CONTROL,
+        _LIBRARY_SEPARABLE_CONTROL,
+        QuadraticControlCost,
+        SeparableHamiltonian,
+    )
 
-    served = getattr(hamiltonian, "optimal_control", None)
+    if not isinstance(hamiltonian, SeparableHamiltonian):
+        return False
     cost = getattr(hamiltonian, "control_cost", None)
-    return (
-        isinstance(hamiltonian, SeparableHamiltonian)
-        and getattr(served, "__func__", None) is SeparableHamiltonian.optimal_control
-        and getattr(served, "__self__", None) is hamiltonian
-        and (
-            not isinstance(cost, QuadraticControlCost)
-            or type(cost).optimal_control is QuadraticControlCost.optimal_control
-        )
+    return _serves_the_library_control(hamiltonian, _LIBRARY_SEPARABLE_CONTROL) and (
+        not isinstance(cost, QuadraticControlCost) or _serves_the_library_control(cost, _LIBRARY_QUADRATIC_CONTROL)
     )
 
 
