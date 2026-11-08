@@ -311,9 +311,9 @@ def _describe_bc_value(value: Any) -> object | None:
 def with_geometry_periodic_convention(boundary_conditions: Any, geometry: Any) -> Any:
     """Complete a periodic BC with the node layout of the geometry it is solved on (#1822).
 
-    A grid binds this when a BC is attached to it, but a BC handed straight to a solver, or to the FP velocity builder
-    (#2904), never met the grid, so its convention is unstated and would wrap the historical way (all N nodes
-    distinct) on a grid where the two endpoints are one point. Measured on that path: the periodic gradient at the seam
+    A grid binds this when a BC is attached to it, but a BC handed straight to a solver never met the grid, so its
+    convention is unstated and would wrap the historical way (all N nodes distinct) on a grid where the two endpoints
+    are one point. (The FP velocity builder binds through the grid's own check, `bind_periodic_convention`, #2904.) Measured on that path: the periodic gradient at the seam
     came out -1.5 where the grid's own layout gives -1.0.
 
     Only fills a gap; a stated convention is left alone, and the grid refuses one that contradicts it at attachment

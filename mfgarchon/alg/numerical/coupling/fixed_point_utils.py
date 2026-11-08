@@ -781,10 +781,10 @@ def compute_fp_velocity_field(
         boundary_conditions: The BC of the FP solver the velocity is for, which decides where an axis wraps
             (`periodic_axis_span`). ``None`` => the problem's shared BC as an FP solver reads it
             (`fp_view_of_shared_bc`), which refuses a Neumann value that is not zero and a Robin condition. Either
-            is read with the grid's periodic layout, which the grid's coordinates own: an unstated convention is
-            completed from the geometry (`with_geometry_periodic_convention`), a stated one that contradicts the grid
-            is refused with the grid's message (`bind_periodic_convention`), and a BC periodic on some faces only is
-            refused (`_refuse_partial_periodic`).
+            is read with the grid's periodic layout, which the grid's coordinates own: through the grid's one check
+            (`bind_periodic_convention`), an unstated convention is completed with the grid's and a stated one that
+            contradicts the grid is refused with the grid's message; and a BC periodic on some faces only is refused
+            (`_refuse_partial_periodic`).
 
     Returns:
         Velocity $\\alpha^*$.
@@ -806,7 +806,7 @@ def compute_fp_velocity_field(
             hold exactly one value per node.
     """
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _refuse_partial_periodic
-    from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc, with_geometry_periodic_convention
+    from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
     from mfgarchon.geometry.boundary.conditions import periodic_axis_span
     from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, bind_periodic_convention
 
@@ -821,10 +821,9 @@ def compute_fp_velocity_field(
         if boundary_conditions is None
         else boundary_conditions
     )
-    # The grid's coordinates own the periodic layout (#2904, user ruling 2026-11-08): an unstated convention takes the
-    # grid's, a stated one that contradicts the grid is refused with the grid's own message, and a BC periodic on some
-    # faces only is refused, since FP-FDM's stencil wraps every axis or none.
-    bc = with_geometry_periodic_convention(bc, geometry)
+    # The grid's coordinates own the periodic layout (#2904, user ruling 2026-11-08): through the grid's one check, an
+    # unstated convention takes the grid's and a stated one that contradicts the grid is refused with the grid's
+    # message; a BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none.
     if isinstance(geometry, TensorProductGrid):
         bc = bind_periodic_convention(geometry, bc)
     _refuse_partial_periodic(bc, ndim, geometry, consumer="compute_fp_velocity_field")
