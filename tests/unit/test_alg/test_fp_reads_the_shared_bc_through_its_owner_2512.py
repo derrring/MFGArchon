@@ -1,7 +1,8 @@
 """Row B3's structural guard: every FP solver reads the shared BC through one owner (#2512, row B3).
 
 The owner is `BaseFPSolver._fp_view_of_shared` (`bc_utils.fp_view_of_shared_bc`); `get_boundary_conditions()`
-ends in it, and a solver that resolves the shared BC through its own chain must pass the result to it. This
+ends in it, and a solver that resolves the shared BC through its own chain must pass the result to it. A call of
+either name is the owner's: the method delegates to the function, which a reader holding no solver calls (#2904). This
 guard fails if one reads the shared BC and uses the raw value (audit session ruling, 2026-10-09, #2512
 comment 6073690080).
 
@@ -37,7 +38,7 @@ import pytest
 
 from tests.structural_guard import ALG, FUNCTIONS, REPO, copy_alg, name_of, own_nodes, planted_scan
 
-OWNER = "_fp_view_of_shared"
+OWNERS = frozenset({"_fp_view_of_shared", "fp_view_of_shared_bc"})
 COUPLING = ALG / "numerical" / "coupling"
 SHARED_SOURCES = frozenset({"problem", "geometry", "components"})
 
@@ -104,7 +105,7 @@ def raw_reads(scope: ast.AST, coupling: bool = False) -> list[int]:
     owner_args = [
         arg
         for node in nodes
-        if isinstance(node, ast.Call) and name_of(node.func) == OWNER
+        if isinstance(node, ast.Call) and name_of(node.func) in OWNERS
         for arg in [*node.args, *(keyword.value for keyword in node.keywords)]
     ]
     inside_owner = {id(sub) for arg in owner_args for sub in ast.walk(arg)}
@@ -212,8 +213,9 @@ def test_every_fp_solver_reads_the_shared_bc_through_its_owner():
     readers = {"block_iterators.py", "regime_switching_iterator.py"}
     assert readers <= {Path(p).name for p in population}, "the population no longer reaches the coupling readers"
     assert sites == [], (
-        "each site reads the shared BC and uses it raw. Pass it to self._fp_view_of_shared, or read it through "
-        "self.get_boundary_conditions() (#2512, row B3):\n" + "\n".join(sites)
+        "each site reads the shared BC and uses it raw. Pass it to self._fp_view_of_shared, or to "
+        "bc_utils.fp_view_of_shared_bc where no solver is held, or read it through self.get_boundary_conditions() "
+        "(#2512, row B3):\n" + "\n".join(sites)
     )
 
 
@@ -294,6 +296,14 @@ _PLANT_COUPLING = "def _planted(problem, fp_solver):\n{body}"
         ('return getattr(fp_solver, "boundary_conditions", None)', []),
         ("return fp_solver.get_boundary_conditions()", []),
         ("return fp_solver._fp_view_of_shared(problem.geometry.boundary_conditions)", []),
+        ('return fp_view_of_shared_bc(problem.get_boundary_conditions(), consumer="planted")', []),
+        # The ruling's control for the function: one read translated by it, another used raw (#2904).
+        (
+            'view = fp_view_of_shared_bc(problem.get_boundary_conditions(), consumer="planted")\n'
+            "raw = problem.geometry.boundary_conditions\n"
+            "return view, raw",
+            [2],
+        ),
     ],
     ids=[
         "the-2529-fallback",
@@ -302,6 +312,8 @@ _PLANT_COUPLING = "def _planted(problem, fp_solver):\n{body}"
         "the-fp-solvers-own-attribute",
         "the-fp-solvers-owner-path",
         "translated",
+        "translated-by-the-function",
+        "the-function-translates-one-another-raw",
     ],
 )
 def test_each_coupling_shape_is_judged(alg_copy, body, raw):

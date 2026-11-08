@@ -731,12 +731,10 @@ def _face_neighbours(n: int, span: int | None) -> np.ndarray:
     return np.minimum(nodes + 1, n - 1) if span is None else (nodes + 1) % span
 
 
-def _density_at_faces(m: np.ndarray, across: np.ndarray | None = None) -> np.ndarray:
+def _density_at_faces(m: np.ndarray, across: np.ndarray) -> np.ndarray:
     """A 1-D density at the faces $x_{i+1/2}$, the mean of its two nodes, along the last axis: the points the 1-D
     velocity reads it at, for the own density and for each block of a multi-population stack alike (#2335). ``across``
-    is each face's second node (`_face_neighbours`); without it the faces are the n - 1 between neighbours."""
-    if across is None:
-        return 0.5 * (m[..., :-1] + m[..., 1:])
+    is each face's second node (`_face_neighbours`, #2904)."""
     return 0.5 * (m[..., : across.size] + m[..., across])
 
 
@@ -785,8 +783,7 @@ def compute_fp_velocity_field(
 
     Returns:
         Velocity $\\alpha^*$.
-        1D: shape ``(U.shape[0], F)``, at the faces $(i+1/2)$: F = Nx - 1 on an axis that does not wrap, and the
-        periodic span on one that does, Nx - 1 on an endpoint-inclusive grid, whose last face reads node 0.
+        1D: shape ``(U.shape[0], Nx - 1)``, at the faces $(i+1/2)$; on an axis that wraps, the last face reads node 0.
         nD: shape ``(U.shape[0], ndim, *spatial_shape)``, one face array per axis: entry ``[d][i]`` is the velocity at
         the face $(i + 1/2)$ along ``d``, the face the stencil reads at node ``i``; the last node of an axis that does
         not wrap has no face and carries 0. ``optimal_control`` is called once per axis and time step, on the
@@ -794,9 +791,11 @@ def compute_fp_velocity_field(
         others the mean of the two nodes' centred differences, and ``m`` the mean of the two nodes (#2330, #2904).
 
     Raises:
-        ValueError: in nD, when ``optimal_control`` does not return shape ``(N, d)``.
+        ValueError: in nD, when ``optimal_control`` does not return shape ``(N, d)``; and when the boundary
+            conditions wrap an axis with no repeated endpoint, a layout no grid FP-FDM solves on has.
         NotImplementedError: in nD, when ``cross_density[n]`` does not hold exactly one value per node.
     """
+    from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
     from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 
     geometry = problem.geometry
@@ -805,8 +804,20 @@ def compute_fp_velocity_field(
     Nt = U.shape[0]
     spatial_shape = U.shape[1:]
     ndim = len(spatial_shape)
-    bc = problem.get_boundary_conditions() if boundary_conditions is None else boundary_conditions
+    bc = (
+        fp_view_of_shared_bc(problem.get_boundary_conditions(), consumer="compute_fp_velocity_field")
+        if boundary_conditions is None
+        else boundary_conditions
+    )
     spans = [periodic_axis_span(bc, spatial_shape[d], ndim, geometry) for d in range(ndim)]
+    distinct = [d for d in range(ndim) if spans[d] == spatial_shape[d]]
+    if distinct:
+        raise ValueError(
+            f"compute_fp_velocity_field: the boundary conditions wrap axis(es) {distinct} of "
+            f"{[spatial_shape[d] for d in distinct]} nodes with no repeated endpoint: each axis's periodic span is "
+            "its node count. No grid FP-FDM solves on has that layout, so these are not the walls of an FP-FDM "
+            "solve, and the velocity was not built (#2904)."
+        )
 
     # The grid's own node axes, from their one owner (#2756).
     axes = geometry_grid_axes(geometry)
@@ -819,28 +830,25 @@ def compute_fp_velocity_field(
     if ndim == 1:
         dx = grid_spacing[0]
         Nx = spatial_shape[0]
-        faces = Nx - 1 if spans[0] is None else spans[0]
-        across = _face_neighbours(Nx, spans[0])[:faces]
+        across = _face_neighbours(Nx, spans[0])[: Nx - 1]
 
-        # Face centers: x_{i+1/2}. An axis that wraps with no repeated node has one face more, across the wrap.
+        # Face centers: x_{i+1/2}
         x_nodes = axes[0]
-        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])
-        if faces == Nx:
-            x_faces = np.append(x_faces, x_nodes[-1] + 0.5 * dx)
+        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])  # (Nx-1,)
 
         # Face gradient: p_{i+1/2} = (U[j] - U[i]) / dx, j the node across the face (#2904)
-        p_faces = (U[:, across] - U[:, :faces]) / dx  # (Nt, faces)
+        p_faces = (U[:, across] - U[:, : Nx - 1]) / dx  # (Nt, Nx-1)
 
         # Face density: m_{i+1/2} = (m[i] + m[j]) / 2, the own density's, in a multi-population solve too (#2335). The
         # stacked cross-density trajectory a multi-population solve passes (#1071) goes beside it as cross_density, read
         # at the faces too: each population's row averaged by the same function, so at K = 1 its one row is m.
-        m_faces = _density_at_faces(M, across)  # (Nt, faces)
+        m_faces = _density_at_faces(M, across)  # (Nt, Nx-1)
         if cross_density is not None:
             stacked = np.asarray(cross_density)
             rows = np.stack([_population_rows(row, Nx, "compute_fp_velocity_field") for row in stacked])
-            cross_faces = _density_at_faces(rows, across)  # (Nt, K, faces)
+            cross_faces = _density_at_faces(rows, across)  # (Nt, K, Nx-1)
 
-        alpha_faces = np.zeros((Nt, faces))
+        alpha_faces = np.zeros((Nt, Nx - 1))
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
             m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]

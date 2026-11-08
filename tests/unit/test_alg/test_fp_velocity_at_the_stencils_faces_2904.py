@@ -25,6 +25,7 @@ Three oracles, each for what the other two cannot see:
 from __future__ import annotations
 
 import inspect
+import re
 import warnings
 
 import pytest
@@ -43,7 +44,16 @@ from mfgarchon.core.hamiltonian import (
     SeparableHamiltonian,
 )
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary import (
+    BCSegment,
+    BCType,
+    BoundaryConditions,
+    dirichlet_bc,
+    neumann_bc,
+    no_flux_bc,
+    periodic_bc,
+    robin_bc,
+)
 from mfgarchon.geometry.boundary.types import BoundaryFace
 
 L1_LAMBDA = 0.53
@@ -338,3 +348,51 @@ def test_at_one_population_the_stack_reads_the_faces_m_does_across_the_wrap():
         compute_fp_velocity_field(problem, U, M, by_rows, cross_density=M.copy()),
         compute_fp_velocity_field(problem, U, M, by_m),
     )
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_a_wrap_with_no_repeated_endpoint_is_refused(dimension):
+    """FP-FDM's grids repeat a periodic axis's endpoint, and FP-FDM binds that layout to the BC it solves with. A
+    periodic BC that wraps with no repeated endpoint, here one whose convention is left unstated, is not the walls of
+    an FP-FDM solve: the builder refuses it, saying what it read, rather than wrap one node late."""
+    n = 11 if dimension == 1 else 9
+    hamiltonian = SeparableHamiltonian(L1ControlCost(lambda_=L1_LAMBDA))
+    problem = _problem(hamiltonian, dimension, n, _walls("periodic", dimension), Nt=len(STEPS) - 1)
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
+    U, _ = _degree_two(x)
+    unstated = periodic_bc(dimension=dimension)
+    assert unstated.periodic_convention is None
+    axes, sizes = list(range(dimension)), [n] * dimension
+    with pytest.raises(
+        ValueError, match=rf"wrap axis\(es\) {re.escape(str(axes))} of {re.escape(str(sizes))} nodes with no "
+    ):
+        compute_fp_velocity_field(problem, U, _density(x), hamiltonian, boundary_conditions=unstated)
+
+
+@pytest.mark.parametrize(
+    ("walls", "said"),
+    [
+        (neumann_bc(value=0.5, dimension=1), "NEUMANN value that is not zero"),
+        (robin_bc(value=0.5, dimension=1), "ROBIN"),
+    ],
+    ids=["neumann-g-not-zero", "robin"],
+)
+def test_handed_no_bc_the_builder_reads_the_problems_walls_as_the_fp_does(walls, said):
+    """Handed no BC, the builder reads the problem's shared BC as an FP solver reads it (`fp_view_of_shared_bc`): a
+    Neumann value that is not zero, or a Robin condition, is the HJB's datum and says nothing of the density's walls,
+    so the builder refuses it, as FP-FDM on the same problem does."""
+    hamiltonian = CongestionHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        congestion_factor=lambda m: 1.0 + CONGESTION * np.asarray(m),
+    )
+    problem = _problem(hamiltonian, 1, 11, walls, Nt=len(STEPS) - 1)
+    x = [np.linspace(0.0, 1.0, 11)]
+    U, _ = _degree_two(x)
+    for consumer, call in (
+        ("compute_fp_velocity_field", lambda: compute_fp_velocity_field(problem, U, _density(x), hamiltonian)),
+        ("FPFDMSolver", lambda: FPFDMSolver(problem)),
+    ):
+        with pytest.raises(
+            NotImplementedError, match=rf"^{consumer}: the problem's shared boundary condition has a {said}"
+        ):
+            call()
