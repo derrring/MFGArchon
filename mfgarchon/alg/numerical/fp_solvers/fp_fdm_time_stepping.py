@@ -867,7 +867,9 @@ def solve_timestep_explicit_with_drift(
     return M_next
 
 
-def _refuse_partial_periodic(boundary_conditions: Any, dimension: int, geometry: Any = None) -> None:
+def _refuse_partial_periodic(
+    boundary_conditions: Any, dimension: int, geometry: Any = None, consumer: str | None = None
+) -> None:
     """Refuse a BC that is periodic on some faces and not others. Issue #2495.
 
     This assembly wraps every axis or none. A wall node of any non-uniform BC is routed to
@@ -881,7 +883,8 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int, geometry:
     periodicity but shows it on no face -- a periodic default every face overrides -- is not periodic
     anywhere and is not refused.
 
-    Called where the handlers are dispatched, `solve_timestep_full_nd`, and by `FPFDMSolver` at hand-over.
+    Called where the handlers are dispatched, `solve_timestep_full_nd`, and by `FPFDMSolver` at hand-over, and by the
+    FP velocity builder, which names itself as ``consumer`` (#2904).
     The tensor and callable-drift paths never reach them; their operators refuse a non-uniform BC.
     """
     if boundary_conditions is None or not declares_periodic(boundary_conditions):
@@ -894,7 +897,8 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int, geometry:
     periodic = periodic_faces(boundary_conditions, dimension, geometry)
     if any(periodic) and not all(periodic):
         raise NotImplementedError(
-            "FP-FDM wraps every axis or none, and this boundary condition is periodic on some faces "
+            (f"{consumer}, which builds for FP-FDM: " if consumer else "")
+            + "FP-FDM wraps every axis or none, and this boundary condition is periodic on some faces "
             "only (a channel, or an axis periodic on one face). Its wall rows cannot wrap, so it would be "
             "solved as no-flux on every face. Use a BC periodic on every face, or the semi-Lagrangian "
             "pair, which honours a different BC on each axis (#1560). Per-axis FP-FDM is #2505. (#2495)"

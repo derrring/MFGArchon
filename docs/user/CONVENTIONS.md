@@ -275,14 +275,29 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
 - **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it from
   `optimal_control` for a non-smooth or non-separable $H$, and passes it only to a solver whose
   convention is `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
+  `compute_fp_velocity_field` builds it at the faces FP-FDM's divergence-upwind stencil reads
+  (#2904): along each axis, the face $(i + 1/2)$ between node $i$ and the node across it, the face
+  across a periodic wrap included, on the walls the FP solver solves with. On a
+  `TensorProductGrid` those walls are read through the grid's check (`bind_periodic_convention`);
+  FP-FDM's own route keeps a contradicting stated convention and solves, which is #2910's. There
+  the normal component of $p$ is the stencil's forward difference across the face, each other
+  component the mean of the two nodes' centred differences, and $m$ the mean of the two nodes; a
+  node a wrapping axis repeats carries its twin's face. Whatever the face values, the flux form
+  conserves mass on no-flux and periodic walls, and FP-FDM's velocity step, implicit upwind, kept
+  the density non-negative at every Courant number measured, from 0.2 to about 1000 (1-D and 2-D,
+  no-flux and periodic walls, quadratic, L1 and congestion controls). What the face values decide is
+  consistency: on an axis that does not wrap, the transverse components of $p$ are second-order
+  accurate at the face where the axis has three nodes or more, and first order where it has two. On
+  a `TensorProductGrid` the builder takes a periodic BC's layout from the grid, and refuses a
+  convention that contradicts the grid's coordinates with the grid's message.
 - **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
   is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
-  any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only where FP-FDM's
-  velocity route has been measured equal to its value-function route: a 1-D grid with `NO_FLUX`
-  walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an advection scheme
+  any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed
+  set: a 1-D grid with `NO_FLUX` walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an advection scheme
   that reads a velocity, in a multi-population solve too, where each population is read at its own
   density (#2335). Anywhere else, and on the semi-Lagrangian solver, the
-  coupling layer refuses it. FP-FDM's velocity route off that set is #2904.
+  coupling layer refuses it. #2904's census measures FP-FDM's velocity route equal to its
+  value-function route on periodic walls and 2-D and 3-D grids as well; routing those is #2908.
   A refusal states what was run and on what, and why it refuses; it names no other scheme.
 - **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
   refusals state it:

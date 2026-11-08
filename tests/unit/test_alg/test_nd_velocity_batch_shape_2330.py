@@ -6,11 +6,13 @@ subclass written to the documented shapes raised a ValueError. A return that bro
 into every velocity component: a ``dp`` returning one speed per point gave a velocity 1.98 off the closed form,
 silently.
 
-Oracle: for ``H = |p - s x|^2 / (2 (1 + lam m))`` the optimal control is ``-(p - s x) / (1 + lam m)`` at each point's
-own position and density at that time step. ``U = a x + b y + c x y + 0.1 n x`` is linear along each axis, so
-`np.gradient` recovers ``p`` exactly while ``p`` varies from node to node and from step to step; ``p``, ``x`` and ``m``
-each depend on the two axes differently, so a position, momentum or density mis-paired in space or in time, or a
-transposed axis, cannot pass. (Review of #2334: with ``U`` linear, no ``x`` term and ``p`` constant in time, six
+Oracle: for ``H = |p - s x|^2 / (2 (1 + lam m))`` the optimal control is ``-(p - s x) / (1 + lam m)``. Since #2904 the
+velocity is one face array per axis: entry ``[d][i]`` is component ``d`` at the face ``(i + 1/2)`` along ``d``, at the
+face's position, with ``m`` the mean of its two nodes, and 0 at the last node of each axis, which has no face.
+``U = a x + b y + c x y + 0.1 n x`` is linear along each axis, so the forward difference and the mean of the centred
+differences recover ``p`` at the face exactly while ``p`` varies from face to face and from step to step; ``p``, ``x``
+and ``m`` each depend on the two axes differently, so a position, momentum or density mis-paired in space or in time,
+or a transposed axis, cannot pass. (Review of #2334: with ``U`` linear, no ``x`` term and ``p`` constant in time, six
 pairing and layout mutants survived, and so did reading the momentum at another step.)
 
 A multi-population cross density must be one value per node to be paired with the batch; any other size is refused.
@@ -76,12 +78,22 @@ def _velocity(hamiltonian, cross_density=None):
             volatility=0.3,
             components=MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=hamiltonian),
         )
-    p = np.stack([SLOPES[0] + TWIST * y + 0.1 * steps, np.broadcast_to(SLOPES[1] + TWIST * x, U.shape)], axis=1)
     shift = np.zeros(2) if isinstance(hamiltonian, CongestionHamiltonian) else SHIFT
-    q = p - shift[None, :, None, None] * np.stack([x, y])[None]
     velocity = compute_fp_velocity_field(problem, U, M, hamiltonian, cross_density=cross_density)
     density = M if cross_density is None else cross_density
-    return velocity, -q / (1 + LAM * density)[:, None]
+    spacing = (x[1, 0] - x[0, 0], y[0, 1] - y[0, 0])
+    closed_form = np.zeros(velocity.shape)
+    for d in range(2):
+        xf, yf = x + 0.5 * spacing[0] * (d == 0), y + 0.5 * spacing[1] * (d == 1)
+        p = (SLOPES[0] + TWIST * yf + 0.1 * steps, np.broadcast_to(SLOPES[1] + TWIST * xf, U.shape))
+        q = p[d] - shift[d] * (xf, yf)[d]
+        m_face = 0.5 * (density + np.roll(density, -1, axis=d + 1))
+        component = -q / (1 + LAM * m_face)
+        last = [slice(None)] * 3
+        last[d + 1] = -1
+        component[tuple(last)] = 0.0
+        closed_form[:, d] = component
+    return velocity, closed_form
 
 
 @pytest.mark.parametrize(
@@ -103,7 +115,7 @@ def test_the_velocity_is_the_optimal_control_at_each_points_own_density(hamilton
 @pytest.mark.parametrize("hamiltonian", [_ScalarSpeed(), _ComponentsFirst()], ids=["one_per_point", "components_first"])
 def test_a_control_of_the_wrong_shape_is_refused(hamiltonian):
     with pytest.raises(
-        ValueError, match=r"must return one control vector per point, shape \(99, 2\)|evaluate_dp, at 3"
+        ValueError, match=r"must return one control vector per point, shape \(90, 2\)|evaluate_dp, at 3"
     ):
         _velocity(hamiltonian)
 
