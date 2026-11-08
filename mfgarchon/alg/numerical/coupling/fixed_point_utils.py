@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+    from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.utils.solver_result import SolverResult
 
 _Solver = TypeVar("_Solver")
@@ -750,7 +751,7 @@ def _centred_gradient(u: np.ndarray, axis: int, dx: float, span: int | None) -> 
 
 
 def compute_fp_velocity_field(
-    problem: object,
+    problem: MFGProblem,
     U: np.ndarray,
     M: np.ndarray,
     H_class: object,
@@ -909,7 +910,7 @@ def compute_fp_velocity_field(
                 component = alpha_n[:, d].reshape(spatial_shape)
                 if spans[d] is None:
                     # The last node of an axis that does not wrap has no face along it.
-                    last = [slice(None)] * ndim
+                    last: list[slice | int] = [slice(None)] * ndim
                     last[d] = -1
                     component[tuple(last)] = 0.0
                 alpha_field[n, d] = component
