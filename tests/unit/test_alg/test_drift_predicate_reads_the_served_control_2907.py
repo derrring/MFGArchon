@@ -197,5 +197,6 @@ def test_the_shipped_hamiltonian_is_certified_and_fp_sl_takes_it():
     from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs
 
     twin = copy.deepcopy(STEEP_H)
-    assert drift_is_the_control_costs(STEEP_H) and drift_is_the_control_costs(twin)
+    assert drift_is_the_control_costs(STEEP_H)
+    assert drift_is_the_control_costs(twin)
     np.testing.assert_allclose(_fp_sl(twin), _fp_sl(STEEP_H), rtol=0, atol=1e-12)
