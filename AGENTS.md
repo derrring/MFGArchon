@@ -369,13 +369,13 @@ maintainer explicitly chooses a minor release; do not add compatibility shims fo
 
 ### Local patches are the anti-pattern ⚠️ (user ruling, 2026-10-12; #2626)
 
-The paragraph above states the target. A **local patch** fixes a defect where it was found while other members of its class remain, which that paragraph rules out. The level is chosen when the work is planned, so the plan and the PR body of every defect fix carry a **class line**:
+The paragraph above states the target. A **local patch** fixes a defect where it was found while other members of its class remain, which that paragraph rules out. The level is chosen when the work is planned, so the plan and the PR body of every defect fix carry a **class line**, whose class is the population of the fact its item 1 names:
 
 1. the fact the defect is about — the quantity, meaning, layout or decision several components must agree on — named, with its tracking issue;
-2. its population: every place that decides the fact and every place that reads it, found by the census in item 3, each with the source it asks and whether it agrees with the others on identical inputs. A member is a place that decides on its own, or a reader that disagrees; a place that reads the owner is not a member, and a place that decides on its own is a member even when a pin shows it agrees today. A control the census must find at both shas, outside the count; the count at the base sha and at the head sha. The table is posted on the fact's tracking issue, which the class line links;
+2. its population: every place that decides the fact and every place that reads it, found by the census in item 3, each with the source it asks and whether it agrees with the others on identical inputs. A member is a place that decides on its own, other than the owner the plan names, or a reader that disagrees with the owner; a place that reads the owner and agrees with it is not a member, and a place that decides on its own is a member even when a pin shows it agrees today. A control the census must find at both shas, outside the count; the count at the base sha and at the head sha. The table is posted on the fact's tracking issue, which the class line links, and the PR body carries its counts; the plan's author opens that issue if none exists, one issue per fact;
 3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. The plan's approver names it, and runs it if the author has not;
 4. what a case the census did not select does at the head, per arm: reads right, raises, reds a test enumerating the class, or returns silently; one case on an axis the census held constant, with its output. If silent, the open issue;
-5. class fix (one deciding place at the head, the others deleted) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
+5. class fix (head count 0: the owner is the one deciding place, and no reader disagrees with it; the others deleted or made readers of it) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
 A partial fix is admitted only when:
 - it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records the plan's approval by someone other than its author and that the class line links;
@@ -388,7 +388,7 @@ The class line is checked when the plan is approved, and again at review (§ *Re
 
 How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan, unless *Before filing an issue* ledgers it as low priority. A raise: *Before filing an issue*.
 
-A census is written once per fact, at plan, by script, and re-run at the head; one that found a single deciding place holds for its sha only, and the next plan in that fact re-runs it. A review tries one case on an axis it held constant. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
+A census is written once per fact, at plan, by script, and re-run at the head; it holds for its sha only, and the next plan in that fact re-runs it. A review tries one case on an axis it held constant. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
 
 ### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
 
