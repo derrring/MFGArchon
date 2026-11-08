@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
-from mfgarchon.core.hamiltonian import _runs_its_own, _terms_reading_every_population
+from mfgarchon.core.hamiltonian import _library_class, _runs_its_own, _terms_reading_every_population
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -42,18 +42,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-# The family methods a door reaches a Hamiltonian through: its primitives, and the public bodies they stand for (#2335).
-_DOOR_METHODS = ("__call__", "dp", "optimal_control", "evaluate_H", "evaluate_dp", "evaluate_optimal_control")
-
-
 def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> None:
     """Refuse, before the first sweep, what the doors cannot read row for row (#2335).
 
     The iterator stacks one row of nodes per population and step, and its doors (the 1-D HJB residual and Jacobian, and
     the 1-D FP velocity) hand a density term that declares ``cross_density`` every population's row at the same points
     and step. So at two or more populations it refuses a grid of two or more dimensions; nodes or time grids that
-    differ, compared exactly; and a library Hamiltonian whose term declares the slot while a door-reached method of it
-    is given another body, which is read at the own density and would hand its terms the own row alone.
+    differ, compared exactly; and a library Hamiltonian whose term declares the slot while it gives another body to a
+    method whose library body reads its density terms (``_methods_reading_its_terms``): a door reads that body at the own
+    density, so its terms would be handed the own row alone. A method whose library body reads no term, such as
+    ``SeparableHamiltonian.optimal_control``, may be given a body of its own.
     """
     K = multi_problem.K
     if K < 2:
@@ -93,14 +91,19 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
     for k, population in enumerate(populations):
         hamiltonian = population.hamiltonian_class
         terms = _terms_reading_every_population(hamiltonian)
-        overridden = [name for name in _DOOR_METHODS if terms and not _runs_its_own(hamiltonian, name)]
+        library = _library_class(hamiltonian)
+        overridden = [
+            name
+            for name in sorted(library._methods_reading_its_terms)
+            if terms and not _runs_its_own(hamiltonian, name)
+        ]
         if overridden:
             raise NotImplementedError(
                 f"MultiPopulationIterator: population {k}'s {type(hamiltonian).__name__} gives {overridden} a body of its "
-                f"own while its term(s) {terms} declare cross_density. A door hands every population's density to the "
-                "library's body, and reads one given another body at the own density alone, so the terms it reaches "
-                "would read the own row (#2335). Leave those methods to the library class, or put what they compute "
-                "into a density term."
+                f"own while its term(s) {terms} declare cross_density. {library.__name__}'s body of each of those "
+                "reads its density terms, which a door hands every population's rows through that body alone; one given "
+                "another body is read at the population's own density, so a term it reaches would be handed the own "
+                "row (#2335)."
             )
 
 

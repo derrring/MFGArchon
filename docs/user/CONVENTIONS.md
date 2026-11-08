@@ -329,16 +329,25 @@ leading axis is always the number of populations and every row has `m`'s shape, 
 at one point and on a batch, as `x[0]` does for a tuple whose entries are scalars at one point and arrays on a batch.
 
 Only a density term declares `cross_density`. A family method, `__call__`, `dp`, `dm`, `dx` or `optimal_control`, takes
-`(t, x, p, m)` and nothing else, and a class whose family method declares the slot is refused with `TypeError` when it
-is created: put the cross term in a density term instead. The library hands a term its rows through the doors'
-evaluation states, which reach `SeparableHamiltonian`'s and `CongestionHamiltonian`'s own bodies; a body of yours,
-overriding one of those, is read at the population's own density alone.
+`(t, x, p, m)`, the population's own density as `m`, and no `cross_density`: put the cross term in a density term. A
+class whose body defines a family method that declares the slot is refused with `TypeError` when it is created. The
+check reads the members of the class body by their signature, so it does not see a wrapper that declares the slot
+around a body that does not, a `functools.partialmethod`, a property, a method a mixin placed before the library class
+brings, or a method assigned on the instance or on the class after creation. The library hands a term its rows through
+the doors' evaluation states, which reach `SeparableHamiltonian`'s and `CongestionHamiltonian`'s own bodies; a body of
+yours, overriding one of those, is read at the population's own density alone. A `SeparableLagrangian` whose coupling
+declares `cross_density` is accepted and always hands it one row, its own: `DualHamiltonian`, which would carry it into
+a solve, cannot evaluate a batch (#2315), so no solve reaches it.
 
 The doors that hand every population's rows are the 1-D HJB residual and Jacobian of `HJBFDMSolver`, and the 1-D FP
-velocity, `compute_fp_velocity_field`. Before the first sweep, the iterator refuses by name what these doors cannot pair
-row for row: a grid of two or more dimensions; at two or more populations, node coordinates or time grids (`T` and
-`Nt`) that differ, compared exactly; and a Hamiltonian whose term declares `cross_density` while a method the doors
-reach, `__call__`, `dp`, `optimal_control` or the `evaluate_*` primitive standing for it, is given a body of your own.
+velocity, `compute_fp_velocity_field`. At two or more populations the iterator refuses by name, before the first sweep,
+what these doors cannot pair row for row: a grid of two or more dimensions; node coordinates or time grids (`T` and
+`Nt`) that differ, compared exactly; and a Hamiltonian whose term declares `cross_density` while it gives a body of your
+own to a method whose library body reads its density terms. Those are `__call__` and `evaluate_H` on
+`SeparableHamiltonian`, and on `CongestionHamiltonian` also `dp`, `optimal_control`, `evaluate_dp` and
+`evaluate_optimal_control`. `SeparableHamiltonian`'s own `dp` and `optimal_control` read no term, so a body of yours for
+either is not refused, and its coupling is still handed every population's rows. At one population, a grid of two or
+more dimensions ends in numpy's broadcast error when the iterator sets the densities up.
 
 The library's own `dm`, `dx` and `jacobian_fd` are taken on one population, their terms reading the own row built
 from the `m` each evaluates at, which for `dm`'s finite difference is the perturbed `m`. No multi-population door reads

@@ -103,6 +103,20 @@ def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: 
     return (f_plus - f_minus) / (2 * eps)
 
 
+#: Each library class's public methods and ``__call__``, by name, as the class had them when it was created: the bodies a
+#: served method is compared with, so that one replaced on the library class afterwards is not taken for the library's
+#: own (#2335).
+_LIBRARY_BODIES: dict[type, dict[str, Any]] = {}
+
+
+def _record_library_bodies(cls: type) -> None:
+    """Record ``cls``'s bodies in `_LIBRARY_BODIES` if it is a library class (#2335)."""
+    if cls.__module__.startswith("mfgarchon."):
+        _LIBRARY_BODIES[cls] = {
+            name: getattr(cls, name) for name in dir(cls) if name == "__call__" or not name.startswith("_")
+        }
+
+
 class ControlCostBase(ABC):
     """
     Kinetic/control cost component for MFG Hamiltonians.
@@ -126,6 +140,11 @@ class ControlCostBase(ABC):
     lambda_ : float or None
         Control cost weight lambda. Preferred over ``control_cost``.
     """
+
+    def __init_subclass__(cls, **kwargs):
+        """Record a library control cost's bodies as it is created (`_record_library_bodies`, #2335)."""
+        super().__init_subclass__(**kwargs)
+        _record_library_bodies(cls)
 
     def __init__(
         self,
@@ -992,8 +1011,11 @@ class MFGOperatorBase(ABC):
         demanding the new order of them would make the fix silently wrong (#2400 review).
         The library's own classes are held to the rule by
         ``test_every_library_family_method_takes_ruling_8s_order``.
+
+        A library class's bodies are recorded as it is created (`_record_library_bodies`, #2335).
         """
         super().__init_subclass__(**kwargs)
+        _record_library_bodies(cls)
         api = {
             name
             for base in cls.__mro__[1:]
@@ -1006,10 +1028,10 @@ class MFGOperatorBase(ABC):
                 continue
             if _declares_cross_density(member):
                 raise TypeError(
-                    f"{cls.__qualname__}.{name} declares cross_density. A family method takes (t, x, p, m) and the "
-                    f"population's own density as m; every population's density reaches a density term only (#2335). "
-                    f"Give the cross term to a term that declares cross_density, such as coupling= or "
-                    f"congestion_factor=, and the library hands it every population's rows."
+                    f"{cls.__qualname__}.{name} declares cross_density. A family method reads the population's own "
+                    f"density as m, and every population's density reaches a density term only (#2335): a "
+                    f"Hamiltonian's coupling= or congestion_factor= that declares cross_density is handed every "
+                    f"population's rows at the multi-population doors."
                 )
             named = _ruling8_order_violation(member)
             if named is not None:
@@ -1138,14 +1160,29 @@ def _population_rows(stack: Any, count: int, where: str) -> NDArray:
     return flat.reshape(rows, count)
 
 
+def _serves_the_library_body(owner: Any, name: str, library: type) -> bool:
+    """Whether ``owner`` serves ``library``'s own ``name``, the body `_LIBRARY_BODIES` recorded when ``library`` was
+    created (#2335, #2900). A dunder is read as Python calls it, from the type, past the instance and
+    ``__getattribute__``; any other name as an attribute read serves it, which must be that body bound to ``owner``. A
+    subclass, a mixin, an assignment on the instance or on a class after its creation, and a ``__getattribute__`` each
+    serve another body."""
+    body = _LIBRARY_BODIES[library][name]
+    if name.startswith("__") and name.endswith("__"):
+        return getattr(type(owner), name, None) is body
+    served = getattr(owner, name, None)
+    return getattr(served, "__func__", None) is body and getattr(served, "__self__", None) is owner
+
+
+def _library_class(hamiltonian: Any) -> type:
+    """The first library class in ``hamiltonian``'s MRO: the one whose bodies its primitives stand for (#2335)."""
+    return next(cls for cls in type(hamiltonian).__mro__ if cls.__module__.startswith("mfgarchon."))
+
+
 def _runs_its_own(hamiltonian: Any, name: str) -> bool:
-    """Whether ``hamiltonian`` runs the library's own ``name``: neither a class outside the package nor the instance gives
-    it another body. A library family class's primitive reads its terms at the door's rows only then, and otherwise
-    calls that body with the own density (#2335)."""
-    library = next(cls for cls in type(hamiltonian).__mro__ if cls.__module__.startswith("mfgarchon."))
-    return getattr(type(hamiltonian), name) is getattr(library, name, None) and name not in getattr(
-        hamiltonian, "__dict__", {}
-    )
+    """Whether ``hamiltonian`` serves its library class's own ``name`` (`_serves_the_library_body`). A library family
+    class's primitive reads its terms at the door's rows only then, and otherwise calls the body served, with the own
+    density (#2335)."""
+    return _serves_the_library_body(hamiltonian, name, _library_class(hamiltonian))
 
 
 def _state_x(state: HEvalState) -> tuple[Any, ...]:
@@ -1274,6 +1311,11 @@ class HamiltonianBase(MFGOperatorBase):
     DualHamiltonian : Hamiltonian from Lagrangian via Legendre transform
     DualLagrangian : Lagrangian from Hamiltonian via inverse Legendre
     """
+
+    #: The methods a door reads whose library body reads a density term, which a door hands every population's rows
+    #: only through that body (#2335). A library family class names its own; the pin is
+    #: ``test_each_family_names_the_door_methods_whose_body_reads_a_density_term``.
+    _methods_reading_its_terms: frozenset[str] = frozenset()
 
     # Whether a problem compares this Hamiltonian's batch and point reads (`refuse_a_hamiltonian_whose_reads_disagree`).
     reads_a_batch = True
@@ -2624,6 +2666,8 @@ class SeparableHamiltonian(HamiltonianBase):
     ... )
     """
 
+    _methods_reading_its_terms = frozenset({"__call__", "evaluate_H"})
+
     def __init__(
         self,
         control_cost: ControlCostBase,
@@ -2687,8 +2731,9 @@ class SeparableHamiltonian(HamiltonianBase):
         return H_control - V - f_m
 
     def evaluate_H(self, state: HEvalState) -> NDArray:
-        """The residual door's primitive, the coupling reading the state's rows (#2335). A subclass or an instance that gives
-        ``__call__`` its own body is read through that body, at its own density."""
+        """The residual door's primitive, the coupling reading the state's rows (#2335). A class that gives ``__call__``
+        another body, a subclass or a replacement on the library class, is read through that body at the own density.
+        Python reads ``__call__`` from the type, so one assigned on an instance is never called, here or by ``h(...)``."""
         if not _runs_its_own(self, "__call__"):
             return super().evaluate_H(state)
         return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, _rows_of(state)), dtype=float)
@@ -2846,6 +2891,10 @@ class CongestionHamiltonian(HamiltonianBase):
     ... )
     """
 
+    _methods_reading_its_terms = frozenset(
+        {"__call__", "dp", "optimal_control", "evaluate_H", "evaluate_dp", "evaluate_optimal_control"}
+    )
+
     def __init__(
         self,
         control_cost: ControlCostBase,
@@ -2956,8 +3005,9 @@ class CongestionHamiltonian(HamiltonianBase):
         return base_dp / c_m
 
     def evaluate_H(self, state: HEvalState) -> NDArray:
-        """The residual door's primitive, the terms reading the state's rows (#2335); a ``__call__`` given another body is
-        read through it, at its own density."""
+        """The residual door's primitive, the terms reading the state's rows (#2335). A class that gives ``__call__``
+        another body is read through that body at the own density; Python reads ``__call__`` from the type, so one
+        assigned on an instance is never called, here or by ``h(...)``."""
         if not _runs_its_own(self, "__call__"):
             return super().evaluate_H(state)
         return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, _rows_of(state)), dtype=float)

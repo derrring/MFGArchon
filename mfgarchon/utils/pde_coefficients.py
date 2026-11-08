@@ -36,22 +36,20 @@ def has_quadratic_control_cost(hamiltonian: Any) -> bool:
 
 
 def drift_is_the_control_costs(hamiltonian: Any) -> bool:
-    """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` driven by the library's own optimal control (#2900): the
-    method it serves is ``SeparableHamiltonian.optimal_control`` bound to it, which a subclass, an instance attribute
-    or a ``__getattribute__`` would replace, and a quadratic control cost serves ``QuadraticControlCost``'s own
-    ``optimal_control``, which a subclass of it would replace. Only then is ``-c*grad(U)`` its drift. Any other control
-    cost reaches ``assert_quadratic_drift`` as before (#1542)."""
-    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` driven by the library's own optimal control (#2900): it
+    serves ``SeparableHamiltonian``'s own ``optimal_control``, and a quadratic control cost serves
+    ``QuadraticControlCost``'s own (`_serves_the_library_body`, which a subclass, an assignment on the instance or on
+    the class after its creation, or a ``__getattribute__`` makes another body, #2335). Only then is ``-c*grad(U)`` its
+    drift. Any other control cost reaches ``assert_quadratic_drift`` as before (#1542)."""
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian, _serves_the_library_body
 
-    served = getattr(hamiltonian, "optimal_control", None)
     cost = getattr(hamiltonian, "control_cost", None)
     return (
         isinstance(hamiltonian, SeparableHamiltonian)
-        and getattr(served, "__func__", None) is SeparableHamiltonian.optimal_control
-        and getattr(served, "__self__", None) is hamiltonian
+        and _serves_the_library_body(hamiltonian, "optimal_control", SeparableHamiltonian)
         and (
             not isinstance(cost, QuadraticControlCost)
-            or type(cost).optimal_control is QuadraticControlCost.optimal_control
+            or _serves_the_library_body(cost, "optimal_control", QuadraticControlCost)
         )
     )
 
@@ -69,15 +67,14 @@ def refuse_the_scalar_drift(hamiltonian: Any, context: str, ran_on: str, why: st
     (#2900). It says what was run (``context``) and on what (``ran_on``), which optimal control the Hamiltonian serves,
     and why the site refuses (``why``, after the reason every such site shares), then points to
     ``WHERE_OWN_CONTROLS_ARE_READ``. It names no other scheme."""
-    from mfgarchon.core.hamiltonian import QuadraticControlCost
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, _serves_the_library_body
 
     name = type(hamiltonian).__name__
     cost = getattr(hamiltonian, "control_cost", None)
     if "optimal_control" in getattr(hamiltonian, "__dict__", {}):
         whose = f"this {name} instance serves an optimal_control assigned on it"
-    elif (
-        isinstance(cost, QuadraticControlCost)
-        and type(cost).optimal_control is not QuadraticControlCost.optimal_control
+    elif isinstance(cost, QuadraticControlCost) and not _serves_the_library_body(
+        cost, "optimal_control", QuadraticControlCost
     ):
         whose = f"{name}'s control cost, {type(cost).__name__}, serves an optimal_control of its own"
     else:
