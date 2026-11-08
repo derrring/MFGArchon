@@ -801,12 +801,12 @@ def compute_fp_velocity_field(
     Raises:
         ValueError: when the geometry's `get_grid_spacing` refuses a grid that is not uniform; when U's shape has
             no tensor grid of the problem's geometry to sit on (#2756); when a stated periodic convention contradicts
-            the grid's layout, or a wrapping grid states no layout (#2910); and in nD, when ``optimal_control`` does not return
+            the grid's layout, or neither the grid nor the BC states a layout (#2910); and in nD, when ``optimal_control`` does not return
             shape ``(N, d)``.
         NotImplementedError: handed no BC, when the problem's shared BC has a Neumann value that is not zero or a
-            Robin condition; when the BC is periodic on some faces only; when an axis wraps with its last node
-            distinct from node 0, which this route does not build for yet (#2910); and in nD, when ``cross_density[n]`` does not
-            hold exactly one value per node.
+            Robin condition; when the BC is periodic on some faces only; on a 1-D grid that wraps with its last node
+            distinct from node 0, whose wrap face this does not build yet (#2910); and in nD, when
+            ``cross_density[n]`` does not hold exactly one value per node.
     """
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _refuse_partial_periodic
     from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
@@ -823,19 +823,8 @@ def compute_fp_velocity_field(
         if boundary_conditions is None
         else boundary_conditions
     )
-    # A BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none. The layout is the
-    # grid's, read from its one owner on any Cartesian grid (#2910): a stated convention that contradicts the grid is
-    # refused there, and so is a grid that states no layout.
+    # A BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none.
     _refuse_partial_periodic(bc, ndim, geometry, consumer="compute_fp_velocity_field")
-    spans = list(periodic_axis_spans(geometry, bc))
-    for d, span in enumerate(spans):
-        if span is not None and span == spatial_shape[d]:
-            raise NotImplementedError(
-                f"compute_fp_velocity_field: axis {d} wraps with its last node distinct from node 0 (the "
-                "endpoint-exclusive layout), and FP-FDM's velocity route builds faces for a grid whose last node "
-                "repeats node 0 only. Supporting the exclusive layout is stage 2 of #2910; meanwhile build the grid "
-                "endpoint-inclusive."
-            )
 
     # The grid's own node axes, from their one owner (#2756).
     axes = geometry_grid_axes(geometry)
@@ -843,6 +832,18 @@ def compute_fp_velocity_field(
         raise ValueError(
             f"compute_fp_velocity_field: U has spatial shape {tuple(spatial_shape)}, and the problem's geometry "
             f"({type(geometry).__name__}) has no tensor grid of that shape to place it on (#2756)."
+        )
+
+    # The layout of each wrapping axis, from its one owner on any Cartesian grid (#2910). The 1-D faces built below
+    # number n - 1, which an axis whose last node is distinct from node 0 wraps across n of; in 2-D and 3-D this builds
+    # that wrap, and FP-FDM refuses the layout itself.
+    grid_shape = tuple(int(n) for n in geometry.get_grid_shape())
+    spans = list(periodic_axis_spans(geometry, bc))
+    if len(grid_shape) == 1 and spans[0] == grid_shape[0]:
+        raise NotImplementedError(
+            "compute_fp_velocity_field: this 1-D grid wraps with its last node distinct from node 0 (the "
+            f"endpoint-exclusive layout), so its wrap has {grid_shape[0]} faces, and the 1-D faces this builds number "
+            f"{grid_shape[0] - 1}. Building the wrap face is stage 2 of #2910."
         )
 
     if ndim == 1:

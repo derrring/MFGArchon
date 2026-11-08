@@ -278,8 +278,9 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   `compute_fp_velocity_field` builds it at the faces FP-FDM's divergence-upwind stencil reads
   (#2904): along each axis, the face $(i + 1/2)$ between node $i$ and the node across it, the face
   across a periodic wrap included, on the walls the FP solver solves with. Those walls are read
-  with the grid's layout, from its owner `periodic_axis_spans` (§ 8); FP-FDM's own route still
-  reads the BC's convention field and keeps a contradicting stated convention, which is #2910's. There
+  with the grid's layout, from its owner `periodic_axis_spans` (§ 8). FP-FDM's own stencils still read
+  the BC's convention field, which is #2910's stage 2; in 2-D and 3-D FP-FDM asks the owner when it is
+  built, so there a contradicting stated convention is refused. There
   the normal component of $p$ is the stencil's forward difference across the face, each other
   component the mean of the two nodes' centred differences, and $m$ the mean of the two nodes; a
   node a wrapping axis repeats carries its twin's face. Whatever the face values, the flux form
@@ -833,23 +834,38 @@ raises. A caller may not assume a number.
 `x[-1]` are one physical point, and the spacing is $L/N_x$. The convention is carried on the periodic
 boundary condition as `PeriodicGridConvention.ENDPOINT_INCLUSIVE`.
 
+A parameter named for one count and holding the other is a defect, not a style choice, and an array
+shape is written with the point count. *Not yet met: several internals bind `Nx` to a point
+count (#2429), and many docstrings write a shape with `Nx` or `Nx+1` where `Nx_points` is meant (#2236).*
+
+### Periodic axes: which wrap, and how many nodes each spans
+
 **Which axes wrap, and with what period, has one owner** (`wrapping_axes` and `periodic_axes` in
 `geometry/boundary/conditions.py`, #2911). An axis wraps if and only if both of its faces are periodic,
 however the boundary condition spells it: a uniform periodic BC, a periodic segment on each face, or a
 periodic `default_bc`. Its period is the span of the bounds. A BC periodic on one face of an axis describes
-no topology, and is refused with the axis named.
+no topology, and the owner refuses it with the axis named.
 
-**How many distinct nodes a wrapping axis spans is the grid's** (`periodic_axis_spans` in
-`geometry/grids/tensor_grid.py`, #2910): $n - 1$ where the last node repeats node 0, and $n$ where it is
-distinct. A `TensorProductGrid` measures it per axis from its coordinates; any other Cartesian grid states it
-as `periodic_convention`; a grid that states none is refused rather than given one. A grid whose axes differ
-in layout has no single `periodic_convention`, and asking it for one is refused.
-*Not yet met: the stencils, ghost fills and operators that still read the BC's one convention field, or
-decide which axes wrap their own way, move to these owners in stage 2 of #2910 and #2911.*
+**How many distinct nodes a wrapping axis spans has one owner** (`periodic_axis_spans` in
+`geometry/grids/tensor_grid.py`, #2910): $n - 1$ where the last node repeats node 0 (endpoint-inclusive), and
+$n$ where it is distinct (endpoint-exclusive). It reads each wrapping axis on its own:
+- a `TensorProductGrid` measures each axis's layout from its coordinates, and a convention stated on the BC that
+  contradicts it is refused;
+- any other Cartesian grid states its layout as `periodic_convention`; one that states none takes the
+  convention stated on the BC; where both state one they must agree, and where neither does, the owner refuses
+  rather than choose.
 
-A parameter named for one count and holding the other is a defect, not a style choice, and an array
-shape is written with the point count. *Not yet met: several internals bind `Nx` to a point
-count (#2429), and many docstrings write a shape with `Nx` or `Nx+1` where `Nx_points` is meant (#2236).*
+**A periodic boundary condition carries one convention.** A `TensorProductGrid` binds into it the layout of
+the axes it wraps. A grid whose axes differ in layout has no single `periodic_convention`, and asking for one
+is refused; on such a grid a BC that wraps axes of one layout binds that layout, one that wraps none binds
+nothing, and one that wraps axes of two layouts is refused when it is bound.
+
+*Not yet met:*
+- *the stencils, ghost fills and operators that still read the BC's one convention field, or decide which
+  axes wrap their own way, move to these owners in stage 2 of #2910 and #2911;*
+- *the endpoint-exclusive layout: FP-FDM refuses it in 2-D and 3-D, where its stencil builds rows for a grid
+  whose last node repeats node 0, and the FP velocity builder refuses it in 1-D, where it builds $n - 1$
+  faces. FP-FDM's 1-D value route solves it. Stage 2 of #2910 lifts both refusals.*
 
 ### Spatial parameters are per-axis sequences
 

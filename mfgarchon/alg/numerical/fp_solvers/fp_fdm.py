@@ -24,6 +24,7 @@ from mfgarchon.utils.pde_coefficients import (
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
     _refuse_a_cap_off_upwind,
+    _refuse_an_exclusive_wrap_in_nd,
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
 )
@@ -219,6 +220,9 @@ class FPFDMSolver(BaseFPSolver):
         # Issue #2495: a BC periodic on some faces only is refused here, at hand-over, as well as by
         # every assembly entry -- this solver wraps every axis or none.
         _refuse_partial_periodic(self.boundary_conditions, self.dimension, self.problem.geometry)
+        # #2910: FP-FDM's nD stencil builds rows for a grid whose last node repeats node 0, so an axis whose last node
+        # is distinct is refused here, which both its routes pass.
+        _refuse_an_exclusive_wrap_in_nd(self.boundary_conditions, self.dimension, self.problem.geometry)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -342,7 +346,7 @@ class FPFDMSolver(BaseFPSolver):
             # Every face, however spelt -- `_get_bc_type` saw no periodicity in an empty segment
             # list over a periodic default (#2495).
             periodic = periodic_on_every_face(boundary_conditions, ndim, geometry)
-        except (AttributeError, TypeError):
+        except AttributeError:
             raise TypeError(  # an object FP-FDM cannot honour fails loud (#1559)
                 f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
                 "Expected BoundaryConditions from mfgarchon.geometry.boundary."

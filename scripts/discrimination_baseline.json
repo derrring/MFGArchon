@@ -114,7 +114,7 @@
     },
     "periodic_endpoint_convention_inverted": {
       "kill_count": 38,
-      "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:382) and `_first_axis_with_convention` calls it (:357). The property docstring states why it is derived rather than asserted: \"Derive",
+      "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:370), and so do `bind_periodic_convention` and `periodic_axis_spans`, the layout owner (#2910). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {

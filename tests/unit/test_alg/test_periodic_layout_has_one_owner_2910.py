@@ -3,13 +3,15 @@ its readers report what it says.
 
 The oracles of the approved plan (#2910, issuecomment-6724735013), stage 1:
 - cross-reader identity: each reader gives the span the rule gives. The rule, written here independently of the code:
-  an axis that wraps spans n - 1 distinct nodes on a grid whose last node repeats node 0 (endpoint-inclusive), and
-  does not wrap otherwise;
+  an axis that does not wrap has no span; one that wraps spans n - 1 distinct nodes where its last node repeats node 0
+  (endpoint-inclusive), and n where it is distinct (endpoint-exclusive);
 - twin nodes equal: on an endpoint-inclusive grid every FP solver returns node 0 and its repeat equal, from a value
   field whose repeat differs from node 0 (#2909 review 3, SF5).
 A cell red at stage 1's head is ``xfail(strict=True)`` naming the stage that moves its reader. When it turns green its
 strict XPASS fails the run and prints the reason, which says what to do.
 """
+
+import re
 
 import pytest
 
@@ -20,17 +22,21 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_veloci
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPFVMSolver, FPParticleSolver, FPSLSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions, periodic_bc
+from mfgarchon.geometry.base import CartesianGrid
+from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions, no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary.bc_utils import with_geometry_periodic_convention
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
-from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.boundary.types import BCType, PeriodicGridConvention
 from mfgarchon.geometry.grids.tensor_grid import periodic_axis_spans
 
 N = 9
 STAGE_2 = pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="remove this xfail: stage 2 of #2910/#2911 moved this reader to the layout owner, so it now agrees",
 )
 P, W = BCType.PERIODIC, BCType.NO_FLUX
+INC, EXC = PeriodicGridConvention.ENDPOINT_INCLUSIVE, PeriodicGridConvention.ENDPOINT_EXCLUSIVE
 
 
 def _faces(kinds):
@@ -74,16 +80,67 @@ def test_the_bc_field_reader_gives_the_same_span(spelling):
     assert tuple(periodic_axis_span(bc, N, 2, grid) for _ in range(2)) == expected
 
 
-def test_a_grid_whose_axes_differ_in_layout_has_no_one_convention():
-    grid = TensorProductGrid(
+def _mixed(bc):
+    """Axis 0 endpoint-inclusive (11 nodes, x[-1] = 1), axis 1 endpoint-exclusive (10 nodes, y[-1] = 0.9)."""
+    return TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 1.0)],
         Nx_points=[11, 10],
         spacing_type="custom",
         custom_coordinates=[np.linspace(0, 1, 11), np.linspace(0, 1, 10, endpoint=False)],
-        boundary_conditions=_faces([(W, W), (W, W)]),
+        boundary_conditions=bc,
     )
+
+
+def test_a_grid_whose_axes_differ_in_layout_has_no_one_convention():
     with pytest.raises(ValueError, match=r"axes differ in where the last node sits.*periodic_axis_spans"):
-        _ = grid.periodic_convention
+        _ = _mixed(_faces([(W, W), (W, W)])).periodic_convention
+
+
+#: case -> (the BC the grid holds, the convention the rule binds on it, the spans the rule gives). On a grid whose axes
+#: differ in layout only the wrapped axes' layouts are read: none wrapped binds nothing (#2916 review 1, X2), one wrapped
+#: binds that axis's layout, and the owner reads every wrapped axis on its own (X1).
+MIXED = {
+    "a periodic default every face overrides": (
+        lambda: BoundaryConditions(segments=_faces([(W, W), (W, W)]).segments, default_bc=P, dimension=2),
+        None,
+        (None, None),
+    ),
+    "a cylinder over the inclusive axis": (lambda: _faces([(P, P), (W, W)]), INC, (10, None)),
+    "a cylinder over the exclusive axis": (lambda: _faces([(W, W), (P, P)]), EXC, (None, 10)),
+}
+
+
+@pytest.mark.parametrize("case", list(MIXED))
+def test_a_grid_whose_axes_differ_binds_the_layout_of_the_axes_its_bc_wraps(case):
+    make, convention, spans = MIXED[case]
+    grid = _mixed(make())
+    bc = grid.get_boundary_conditions()
+    assert bc.periodic_convention is convention
+    assert periodic_axis_spans(grid, bc) == spans
+
+
+def test_the_layout_owner_reads_each_wrapped_axis_of_a_grid_whose_axes_differ():
+    assert periodic_axis_spans(_mixed(no_flux_bc(dimension=2)), periodic_bc(dimension=2)) == (10, 10)
+
+
+#: Every reader that would carry one convention for a torus whose axes differ in layout, and so refuses it with the
+#: binder's message (a BC carries one convention; at ad1e800d it was bound ENDPOINT_EXCLUSIVE, so the inclusive axis
+#: spanned 11 nodes where it has 10).
+TORUS_READERS = {
+    "TensorProductGrid": lambda: _mixed(periodic_bc(dimension=2)),
+    "TensorProductGrid.set_boundary_conditions": lambda: _mixed(no_flux_bc(dimension=2)).set_boundary_conditions(
+        periodic_bc(dimension=2)
+    ),
+    "with_geometry_periodic_convention": lambda: with_geometry_periodic_convention(
+        periodic_bc(dimension=2), _mixed(no_flux_bc(dimension=2))
+    ),
+}
+
+
+@pytest.mark.parametrize("reader", list(TORUS_READERS))
+def test_every_reader_refuses_one_convention_for_a_torus_whose_axes_differ(reader):
+    with pytest.raises(ValueError, match=r"wraps axes \[0, 1\], which differ in where the last node sits"):
+        TORUS_READERS[reader]()
 
 
 class _Recording(SeparableHamiltonian):
@@ -110,21 +167,19 @@ def _problem_1d(n=21):
     )
 
 
-def test_the_velocity_builder_asks_at_the_faces_and_reads_node_0_across_the_wrap():
-    """The faces sit midway between neighbours, inside the domain; the last one, across the wrap, reads node 0
-    (#2909 review 3, SF10). The value field's repeat differs from node 0, so a builder reading the repeat shows."""
+def test_the_velocity_builder_asks_at_the_faces():
+    """The faces sit midway between neighbours, inside the domain (#2909 review 3, SF10). The face across the wrap is
+    #2904's census's to pin."""
     problem, n = _problem_1d(), 21
     x = np.linspace(0.0, 1.0, n)
     U = np.stack([0.3 * np.sin(2 * np.pi * x) + 0.2 * x] * 2)
     recording = _Recording()
-    velocity = compute_fp_velocity_field(problem, U, np.ones_like(U), recording)
+    compute_fp_velocity_field(problem, U, np.ones_like(U), recording)
     np.testing.assert_allclose(np.concatenate(recording.points[:1]), 0.5 * (x[:-1] + x[1:]), atol=1e-14)
-    h = x[1] - x[0]
-    np.testing.assert_allclose(velocity[0, -1], -(U[0, 0] - U[0, -2]) / h, atol=1e-12)
 
 
 class _StatesItsLayout:
-    """A geometry that is not a `TensorProductGrid` but states its layout, delegating everything else to a grid."""
+    """A geometry that is not a `TensorProductGrid`, stating ``layout`` (None: none), delegating the rest to a grid."""
 
     def __init__(self, grid, layout):
         self._grid, self.periodic_convention = grid, layout
@@ -143,12 +198,11 @@ class _Problem:
         return self._bc
 
 
-def test_the_velocity_builder_reads_the_same_span_on_a_grid_that_states_its_layout():
-    """Cross-reader identity across geometries (#2909 review 3, F1(a)): on a geometry that is not a
-    `TensorProductGrid` but states ENDPOINT_INCLUSIVE, the builder handed an unstated periodic BC builds what it
+@pytest.mark.parametrize(("geometry_states", "bc_states"), [(INC, None), (None, INC)], ids=["the grid", "the BC"])
+def test_the_velocity_builder_reads_the_same_span_on_a_grid_that_states_its_layout(geometry_states, bc_states):
+    """Cross-reader identity across geometries: on a geometry that is not a `TensorProductGrid`, a layout stated by the
+    geometry (#2909 review 3, F1(a)) or, where it states none, by the BC (#2916 review 1, X4) builds what the builder
     builds on the grid itself."""
-    from mfgarchon.geometry.boundary.types import PeriodicGridConvention
-
     n = 21
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=periodic_bc(dimension=1))
     x = np.linspace(0.0, 1.0, n)
@@ -156,11 +210,10 @@ def test_the_velocity_builder_reads_the_same_span_on_a_grid_that_states_its_layo
     H = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
 
     def build(geometry):
-        bc = periodic_bc(dimension=1)
+        bc = periodic_bc(dimension=1, convention=bc_states)
         return compute_fp_velocity_field(_Problem(geometry, bc), U, np.ones_like(U), H, boundary_conditions=bc)
 
-    view = _StatesItsLayout(grid, PeriodicGridConvention.ENDPOINT_INCLUSIVE)
-    np.testing.assert_array_equal(build(view), build(grid))
+    np.testing.assert_array_equal(build(_StatesItsLayout(grid, geometry_states)), build(grid))
 
 
 @pytest.mark.parametrize(
@@ -180,3 +233,183 @@ def test_every_fp_solver_returns_twin_nodes_equal(solver):
     }[solver]
     M = np.asarray(make().solve_fp_system(m0, potential_field=U, show_progress=False))
     np.testing.assert_allclose(M[:, 0], M[:, -1], atol=1e-12 * np.abs(M).max())
+
+
+def _user_grid(d, n, nodes, states):
+    """A Cartesian grid that is not a `TensorProductGrid`: on [0, 1) per axis, the n nodes x = k / n, plus x = 1 when
+    ``nodes`` is "inclusive"; ``states`` is the layout it states as ``periodic_convention`` (None: none). Its BC is a
+    periodic one stating the same layout."""
+    m = n if nodes == "exclusive" else n + 1
+    h = 1.0 / n
+    axis = np.arange(m) * h
+    inner = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[n + 1] * d, boundary_conditions=periodic_bc(dimension=d))
+    mesh = np.meshgrid(*[axis] * d, indexing="ij")
+
+    class UserGrid(CartesianGrid):
+        dimension = property(lambda self: d)
+        geometry_type = property(lambda self: inner.geometry_type)
+        num_spatial_points = property(lambda self: m**d)
+        periodic_convention = property(lambda self: states)
+        coordinates = property(lambda self: tuple([axis] * d))
+        bounds = property(lambda self: [(0.0, 1.0)] * d)
+        Nx_points = property(lambda self: [m] * d)
+        spacing = property(lambda self: [h] * d)
+
+        def get_spatial_grid(self):
+            return np.stack([g.ravel() for g in mesh], axis=1)
+
+        def get_bounds(self):
+            return np.zeros(d), np.ones(d)
+
+        def get_problem_config(self):
+            shape = (m,) * d
+            bounds = [(0.0, 1.0)] * d
+            return {"num_spatial_points": m**d, "spatial_shape": shape, "spatial_bounds": bounds,
+                    "spatial_discretization": [m] * d, "legacy_1d_attrs": None}  # fmt: skip
+
+        def get_grid_shape(self):
+            return (m,) * d
+
+        def get_grid_spacing(self):
+            return [h] * d
+
+        def get_boundary_conditions(self):
+            return periodic_bc(dimension=d, convention=states)
+
+        def measure_weights(self, *args, **kwargs):
+            return np.full((m,) * d, h**d)
+
+        def get_collocation_points(self):
+            return self.get_spatial_grid()
+
+        def get_boundary_handler(self, *args, **kwargs):
+            raise NotImplementedError
+
+        get_gradient_operator = get_interpolator = get_laplacian_operator = get_boundary_handler
+
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return getattr(inner, name)
+
+    traits = set().union(*(getattr(base, "__protocol_attrs__", set()) for base in TensorProductGrid.__mro__))
+    for name in sorted(traits - set(UserGrid.__dict__)):
+        member = getattr(TensorProductGrid, name, None)
+        if isinstance(member, property):
+            setattr(UserGrid, name, property(lambda self, name=name: getattr(inner, name)))
+        else:
+            setattr(UserGrid, name, lambda self, *a, name=name, **k: getattr(inner, name)(*a, **k))
+    return UserGrid(), mesh
+
+
+_QUADRATIC = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))
+
+
+def _on(domain):
+    return MFGProblem(
+        model=Model(hamiltonian=_QUADRATIC, volatility=0.3),
+        domain=domain,
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=6,
+    )
+
+
+def _density(problem, mesh, route, bc=None):
+    """FP-FDM's density from a periodic U and m0 on ``mesh``, by the value route or the velocity route."""
+    U = np.stack([sum(0.3 * np.sin(2 * np.pi * x + k) for k, x in enumerate(mesh))] * (problem.Nt + 1))
+    m0 = 1.0 + 0.5 * np.prod([np.cos(2 * np.pi * x) for x in mesh], axis=0)
+    solver = FPFDMSolver(problem) if bc is None else FPFDMSolver(problem, boundary_conditions=bc)
+    if route == "value":
+        return np.asarray(solver.solve_fp_system(m0, potential_field=U, show_progress=False))
+    velocity = compute_fp_velocity_field(problem, U, np.stack([m0] * (problem.Nt + 1)), _QUADRATIC)
+    return np.asarray(solver.solve_fp_system(m0, drift_field=velocity, show_progress=False))
+
+
+#: (dimension, route) -> the limit each refusal names, where the exclusive layout is refused: the velocity builder's
+#: 1-D face count, and FP-FDM's nD stencil. At ad1e800d each of these five crashed with an IndexError.
+EXCLUSIVE_LIMITS = {
+    (1, "velocity"): r"this 1-D grid wraps with its last node distinct from node 0 .* the 1-D faces this builds number",
+    **{(d, route): r"of this \d-D grid wrap with their last node distinct .* add_interior_entries_divergence_upwind"
+       for d in (2, 3) for route in ("value", "velocity")},  # fmt: skip
+}
+STAGE_2_STENCIL = pytest.mark.xfail(
+    strict=True, raises=NotImplementedError, reason="remove this xfail: stage 2 moved this stencil to the span"
+)
+
+
+@pytest.mark.parametrize(
+    ("dimension", "route"),
+    [
+        pytest.param(d, route, marks=STAGE_2_STENCIL) if (d, route) in EXCLUSIVE_LIMITS else (d, route)
+        for d in (1, 2, 3)
+        for route in ("value", "velocity")
+    ],
+)
+def test_one_torus_in_two_layouts_gives_one_density(dimension, route):
+    """The oracle of the exclusive layout, one torus in two layouts (#2916 review 1, approver's ruling on item 3): the
+    n nodes x = k / n of an exclusive user grid are the first n of an inclusive TensorProductGrid of n + 1 nodes, so on
+    them FP-FDM's density must agree. A cell refused by name is an expected failure for stage 2, which takes this as
+    its acceptance check; one that fails any other way, as an IndexError does, is a failure."""
+    n = {1: 20, 2: 8, 3: 4}[dimension]
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dimension, Nx_points=[n + 1] * dimension, boundary_conditions=periodic_bc(dimension=dimension)
+    )
+    oracle = _density(_on(grid), np.meshgrid(*grid.coordinates, indexing="ij"), route)
+    exclusive, mesh = _user_grid(dimension, n, "exclusive", EXC)
+    try:
+        density = _density(_on(exclusive), mesh, route)
+    except NotImplementedError as refusal:
+        assert re.search(EXCLUSIVE_LIMITS[(dimension, route)], str(refusal)), str(refusal)
+        raise
+    shared = (slice(None), *[slice(0, n)] * dimension)
+    np.testing.assert_allclose(density[shared], oracle[shared], rtol=0, atol=1e-10)
+
+
+#: Inputs the layout owner refuses, on an inclusive grid: (the layout the grid states, "measured" for a
+#: TensorProductGrid, the layout the BC states, the owner's message). At ad1e800d the builder ignored both statements on a
+#: user grid and was 3.52 off the TensorProductGrid in 1-D; a TensorProductGrid refused the contradiction when binding.
+LAYOUT_REFUSALS = {
+    "neither states a layout": (None, None, r"neither it nor the periodic boundary condition states a node layout"),
+    "the two contradict": (INC, EXC, r"states the layout ENDPOINT_INCLUSIVE, but the periodic boundary condition declares"),
+    "a TensorProductGrid and its BC contradict": ("measured", EXC, r"coordinates are ENDPOINT_INCLUSIVE on axis 0 .* but "
+                                                  r"the periodic boundary condition declares ENDPOINT_EXCLUSIVE"),
+}
+#: The readers that reach such an input. FP-FDM's 1-D value route reads the BC's convention field and does not ask the
+#: owner; stage 2 moves it.
+STAGE_2_GUESS = pytest.mark.xfail(
+    strict=True, raises=pytest.fail.Exception, reason="remove this xfail: stage 2 moved this reader to the layout owner"
+)
+
+
+def _layout_reader(reader, geometry_states, bc_states):
+    d = 1 if reader == "FP-FDM, 1-D value route" else 2
+    if geometry_states == "measured":
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[9] * d, boundary_conditions=no_flux_bc(dimension=d))
+        mesh = np.meshgrid(*grid.coordinates, indexing="ij")
+    else:
+        grid, mesh = _user_grid(d, 8, "inclusive", geometry_states)
+    bc = periodic_bc(dimension=d, convention=bc_states)
+    if reader == "periodic_axis_spans":
+        return periodic_axis_spans(grid, bc)
+    if reader == "compute_fp_velocity_field":
+        U = np.ones((2, *grid.get_grid_shape()))
+        return compute_fp_velocity_field(_Problem(grid, bc), U, U, _QUADRATIC, boundary_conditions=bc)
+    if reader == "FP-FDM, 2-D construction":
+        return FPFDMSolver(_on(grid), boundary_conditions=bc)
+    return _density(_on(grid), mesh, "value", bc=bc)
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "periodic_axis_spans",
+        "compute_fp_velocity_field",
+        "FP-FDM, 2-D construction",
+        pytest.param("FP-FDM, 1-D value route", marks=STAGE_2_GUESS),
+    ],
+)
+@pytest.mark.parametrize("case", list(LAYOUT_REFUSALS))
+def test_every_reader_refuses_a_layout_the_owner_refuses(case, reader):
+    geometry_states, bc_states, message = LAYOUT_REFUSALS[case]
+    with pytest.raises(ValueError, match=message):
+        _layout_reader(reader, geometry_states, bc_states)

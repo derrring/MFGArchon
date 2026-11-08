@@ -6,8 +6,8 @@ The oracles of the approved plan (#2910, issuecomment-6724735013), stage 1:
   are PERIODIC, however spelt, and its period is the span of the bounds;
 - translation equivariance: a periodic field shifted by one cell along a wrapped axis gives an output shifted by one
   cell.
-A cell red at stage 1's head would land as ``xfail(strict=True)`` naming the stage that moves its reader; every reader
-here reads the owner at stage 1's head.
+A cell red at stage 1's head is ``xfail(strict=True)`` naming the stage that moves its reader: the grid's Laplacian
+decides one-face periodicity on its own until stage 2.
 """
 
 import pytest
@@ -105,6 +105,7 @@ def test_every_reader_takes_the_period_from_the_bounds(spelling):
 #: turns green, its strict XPASS fails the run and prints this reason, which says what to do.
 STAGE_2 = pytest.mark.xfail(
     strict=True,
+    raises=pytest.fail.Exception,
     reason="remove this xfail: stage 2 of #2910/#2911 moved this reader to the topology owner, so it now refuses too",
 )
 
