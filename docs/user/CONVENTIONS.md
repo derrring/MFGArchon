@@ -279,9 +279,9 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   (#2904): along each axis, the face $(i + 1/2)$ between node $i$ and the node across it, the face
   across a periodic wrap included. There the normal component of $p$ is the stencil's forward
   difference across the face, each other component the mean of the two nodes' centred differences,
-  and $m$ the mean of the two nodes. Whatever the face values, the flux form conserves mass and
-  upwinding keeps the density non-negative under the CFL condition; what they decide is
-  consistency. For a control that reads every component of $p$, such as one of $|p|$, the
+  and $m$ the mean of the two nodes. Whatever the face values, the flux form conserves mass on
+  no-flux and periodic walls, and upwinding keeps the density non-negative under the CFL condition;
+  what they decide is consistency. For a control that reads every component of $p$, such as one of $|p|$, the
   transverse components are second-order accurate at the face.
 - **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
   is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
