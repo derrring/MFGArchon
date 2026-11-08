@@ -600,7 +600,9 @@ def test_a_bc_wrapping_one_axis_only_is_refused_as_fp_fdm_refuses_it():
     u, _ = _smooth(x, False)
     with pytest.raises(NotImplementedError, match="periodic on some faces"):
         FPFDMSolver(problem, boundary_conditions=channel)
-    with pytest.raises(NotImplementedError, match="periodic on some faces"):
+    with pytest.raises(
+        NotImplementedError, match=r"^compute_fp_velocity_field, which builds for FP-FDM: .*periodic on some faces"
+    ):
         compute_fp_velocity_field(
             problem, np.stack([u, u]), np.ones((2, 9, 9)), _Isotropic(), boundary_conditions=channel
         )
