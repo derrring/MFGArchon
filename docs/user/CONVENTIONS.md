@@ -277,17 +277,19 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   convention is `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
   `compute_fp_velocity_field` builds it at the faces FP-FDM's divergence-upwind stencil reads
   (#2904): along each axis, the face $(i + 1/2)$ between node $i$ and the node across it, the face
-  across a periodic wrap included, on the walls the FP solver solves with, read as FP-FDM reads
-  them. There the normal component of $p$ is the stencil's forward difference across the face, each
-  other component the mean of the two nodes' centred differences, and $m$ the mean of the two nodes;
-  a node a wrapping axis repeats carries its twin's face. Whatever the face values, the flux form
+  across a periodic wrap included, on the walls the FP solver solves with. On a
+  `TensorProductGrid` those walls are read through the grid's check (`bind_periodic_convention`);
+  FP-FDM's own route keeps a contradicting stated convention and solves, which is #2910's. There
+  the normal component of $p$ is the stencil's forward difference across the face, each other
+  component the mean of the two nodes' centred differences, and $m$ the mean of the two nodes; a
+  node a wrapping axis repeats carries its twin's face. Whatever the face values, the flux form
   conserves mass on no-flux and periodic walls, and FP-FDM's velocity step, implicit upwind, kept
   the density non-negative at every Courant number measured, from 0.2 to about 1000 (1-D and 2-D,
   no-flux and periodic walls, quadratic, L1 and congestion controls). What the face values decide is
   consistency: on an axis that does not wrap, the transverse components of $p$ are second-order
-  accurate at the face where the axis has three nodes or more, and first order where it has two. A
-  periodic BC's layout is the grid's: a convention stated on it that contradicts the grid's
-  coordinates is refused, with the grid's message.
+  accurate at the face where the axis has three nodes or more, and first order where it has two. On
+  a `TensorProductGrid` a periodic BC's layout is the grid's: a convention stated on it that
+  contradicts the grid's coordinates is refused, with the grid's message.
 - **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
   is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed

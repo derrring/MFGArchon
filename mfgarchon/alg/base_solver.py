@@ -216,8 +216,7 @@ class BaseMFGSolver(ABC):
 
     def _with_geometry_periodic_convention(self, bc):
         """Complete a periodic BC with the node layout of this problem's geometry (#1822), through the one owner of
-        that completion, `bc_utils.with_geometry_periodic_convention`, which the FP velocity builder calls too
-        (#2904)."""
+        that completion, `bc_utils.with_geometry_periodic_convention`."""
         # Local import: this module is imported from mfgarchon.alg.__init__, and reaching
         # geometry.boundary at module scope closes an import cycle.
         from mfgarchon.geometry.boundary.bc_utils import with_geometry_periodic_convention

@@ -780,26 +780,29 @@ def compute_fp_velocity_field(
             ``m`` (#2330).
         boundary_conditions: The BC of the FP solver the velocity is for, which decides where an axis wraps
             (`periodic_axis_span`). ``None`` => the problem's shared BC as an FP solver reads it
-            (`fp_view_of_shared_bc`), which refuses a Neumann value that is not zero and a Robin condition. Either
-            is read with the grid's periodic layout, which the grid's coordinates own: through the grid's one check
-            (`bind_periodic_convention`), an unstated convention is completed with the grid's and a stated one that
-            contradicts the grid is refused with the grid's message; and a BC periodic on some faces only is refused
-            (`_refuse_partial_periodic`).
+            (`fp_view_of_shared_bc`), which refuses a Neumann value that is not zero and a Robin condition. On a
+            `TensorProductGrid` either is read with the grid's periodic layout, which the grid's coordinates own:
+            through the grid's one check (`bind_periodic_convention`), an unstated convention is completed with the
+            grid's and a stated one that contradicts the grid is refused with the grid's message. On any other
+            geometry the convention is read as handed, and an unstated one wraps every node as distinct (#2910). A
+            BC periodic on some faces only is refused (`_refuse_partial_periodic`).
 
     Returns:
         Velocity $\\alpha^*$.
-        1D: shape ``(U.shape[0], Nx - 1)``, at the faces $(i+1/2)$; on an axis that wraps, the last face reads node 0.
+        1D: shape ``(U.shape[0], Nx - 1)``, at the faces $(i+1/2)$; on a `TensorProductGrid`, on an axis that
+        wraps, the last face reads node 0.
         nD: shape ``(U.shape[0], ndim, *spatial_shape)``, one face array per axis: entry ``[d][i]`` is the velocity at
         the face $(i + 1/2)$ along ``d``, the face the stencil reads at node ``i``. The last node of an axis that does
         not wrap has no face and carries 0; a node a wrapping axis repeats carries its twin's face, which is the same
         face. ``optimal_control`` is called once per axis and time step, on the ``(N, d)`` batch of the faces that
-        exist along that axis, each inside the domain: the normal component of p is the forward difference across the
-        face, the others the mean of the two nodes' centred differences, and ``m`` the mean of the two nodes (#2330,
-        #2904).
+        exist along that axis, each inside the domain on a `TensorProductGrid`: the normal component of p is the
+        forward difference across the face, the others the mean of the two nodes' centred differences, and ``m``
+        the mean of the two nodes (#2330, #2904).
 
     Raises:
-        ValueError: when U's shape has no tensor grid of the problem's geometry to sit on (#2756); when a stated
-            periodic convention contradicts the grid's layout; and in nD, when ``optimal_control`` does not return
+        ValueError: when the geometry's `get_grid_spacing` refuses a grid that is not uniform; when U's shape has
+            no tensor grid of the problem's geometry to sit on (#2756); when a stated periodic convention contradicts
+            the grid's layout; and in nD, when ``optimal_control`` does not return
             shape ``(N, d)``.
         NotImplementedError: handed no BC, when the problem's shared BC has a Neumann value that is not zero or a
             Robin condition; when the BC is periodic on some faces only; and in nD, when ``cross_density[n]`` does not
@@ -895,7 +898,7 @@ def compute_fp_velocity_field(
             centred = [_centred_gradient(u, e, grid_spacing[e], spans[e]) for e in range(ndim)]
             for d in range(ndim):
                 # The faces that exist along d: every node but the last on an axis that does not wrap, and the span's
-                # distinct nodes on one that does, so each face sits inside the domain (#2904).
+                # distinct nodes on one that does, so on a TensorProductGrid each face sits inside the domain (#2904).
                 faces = spatial_shape[d] - 1 if spans[d] is None else spans[d]
                 own = np.arange(faces)
                 across = _face_neighbours(spatial_shape[d], spans[d])[:faces]
