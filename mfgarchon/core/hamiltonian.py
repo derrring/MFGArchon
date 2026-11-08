@@ -1173,9 +1173,14 @@ def _serves_the_library_body(owner: Any, name: str, library: type) -> bool:
     return getattr(served, "__func__", None) is body and getattr(served, "__self__", None) is owner
 
 
-def _library_class(hamiltonian: Any) -> type:
-    """The first library class in ``hamiltonian``'s MRO: the one whose bodies its primitives stand for (#2335)."""
-    return next(cls for cls in type(hamiltonian).__mro__ if cls.__module__.startswith("mfgarchon."))
+def _library_class(hamiltonian: Any) -> type[HamiltonianBase]:
+    """The first library Hamiltonian class in ``hamiltonian``'s MRO: the one whose bodies its primitives stand for
+    (#2335)."""
+    return next(
+        cls
+        for cls in type(hamiltonian).__mro__
+        if issubclass(cls, HamiltonianBase) and cls.__module__.startswith("mfgarchon.")
+    )
 
 
 def _runs_its_own(hamiltonian: Any, name: str) -> bool:
