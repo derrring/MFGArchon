@@ -286,3 +286,55 @@ def test_a_control_that_couples_the_components_converges_at_second_order(dimensi
     assert order > 1.6, (
         f"order {order:.2f} from errors {errors[0]:.3e}, {errors[1]:.3e} at n = {coarse}, {2 * coarse - 1}"
     )
+
+
+def _moved_one_cell(u, axis):
+    """u on an endpoint-inclusive periodic axis moved by one cell: the distinct nodes rolled, the repeated one
+    restored from node 0."""
+    moved = np.roll(np.take(u, np.arange(u.shape[axis] - 1), axis=axis), 1, axis=axis)
+    return np.concatenate([moved, np.take(moved, [0], axis=axis)], axis=axis)
+
+
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_on_a_periodic_grid_the_velocity_moves_with_u(dimension):
+    """A periodic grid is a torus, so U moved by one cell along an axis moves the velocity by one cell, for a control
+    that couples the components of p too: each transverse component is a centred difference across the wrap as well
+    as inside, where a one-sided difference at the ends would tie the field to where the grid's ends sit."""
+    n = 9
+    problem = _problem(_Isotropic(), dimension, n, _walls("periodic", dimension), Nt=1)
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
+    u, _ = _smooth(x, True)
+
+    def velocity(v):
+        return compute_fp_velocity_field(problem, np.stack([v, v]), np.ones((2, *v.shape)), _Isotropic())
+
+    distinct = (slice(None), slice(None), *[slice(0, n - 1)] * dimension)
+    unmoved = velocity(u)[distinct]
+    for axis in range(dimension):
+        moved = velocity(_moved_one_cell(u, axis))[distinct]
+        np.testing.assert_allclose(
+            moved, np.roll(unmoved, 1, axis=2 + axis), rtol=0.0, atol=1e-13, err_msg=f"axis {axis}"
+        )
+
+
+def test_at_one_population_the_stack_reads_the_faces_m_does_across_the_wrap():
+    """At one population the stack's one row is m, averaged at the faces by the same function: on a periodic 1-D grid
+    a congestion factor reading ``cross_density[0]`` gives the velocity a factor reading ``m`` gives, at the face
+    across the wrap too, for a density whose repeated endpoint differs from node 0."""
+    n = 11
+    x = [np.linspace(0.0, 1.0, n)]
+    by_m = CongestionHamiltonian(
+        QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + CONGESTION * np.asarray(m)
+    )
+    by_rows = CongestionHamiltonian(
+        QuadraticControlCost(control_cost=1.0),
+        congestion_factor=lambda m, cross_density: 1.0 + CONGESTION * np.asarray(cross_density)[0],
+    )
+    problem = _problem(by_m, 1, n, _walls("periodic", 1), Nt=len(STEPS) - 1)
+    U, _ = _degree_two(x)
+    M = _density(x)
+    assert np.abs(M[:, -1] - M[:, 0]).min() > 1.0
+    np.testing.assert_array_equal(
+        compute_fp_velocity_field(problem, U, M, by_rows, cross_density=M.copy()),
+        compute_fp_velocity_field(problem, U, M, by_m),
+    )
