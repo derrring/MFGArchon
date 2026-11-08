@@ -1750,7 +1750,7 @@ def solve_timestep_full_nd(
     _refuse_partial_periodic(boundary_conditions, ndim, grid)
     try:
         wraps_everywhere = periodic_on_every_face(boundary_conditions, ndim, grid)
-    except AttributeError:
+    except (AttributeError, TypeError):
         wraps_everywhere = False  # not a BoundaryConditions: refused below (#1559)
 
     # Nodes that an inclusive periodic wrap makes duplicates of another node (Issue #1822).

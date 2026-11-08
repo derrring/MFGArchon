@@ -810,8 +810,7 @@ def compute_fp_velocity_field(
     """
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _refuse_partial_periodic
     from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
-    from mfgarchon.geometry.boundary.conditions import periodic_axis_span
-    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, bind_periodic_convention
+    from mfgarchon.geometry.grids.tensor_grid import periodic_axis_spans
 
     geometry = problem.geometry
     grid_spacing = geometry.get_grid_spacing()
@@ -824,13 +823,19 @@ def compute_fp_velocity_field(
         if boundary_conditions is None
         else boundary_conditions
     )
-    # The grid's coordinates own the periodic layout (#2904, user ruling 2026-11-08): through the grid's one check, an
-    # unstated convention takes the grid's and a stated one that contradicts the grid is refused with the grid's
-    # message; a BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none.
-    if isinstance(geometry, TensorProductGrid):
-        bc = bind_periodic_convention(geometry, bc)
+    # A BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none. The layout is the
+    # grid's, read from its one owner on any Cartesian grid (#2910): a stated convention that contradicts the grid is
+    # refused there, and so is a grid that states no layout.
     _refuse_partial_periodic(bc, ndim, geometry, consumer="compute_fp_velocity_field")
-    spans = [periodic_axis_span(bc, spatial_shape[d], ndim, geometry) for d in range(ndim)]
+    spans = list(periodic_axis_spans(geometry, bc))
+    for d, span in enumerate(spans):
+        if span is not None and span == spatial_shape[d]:
+            raise NotImplementedError(
+                f"compute_fp_velocity_field: axis {d} wraps with its last node distinct from node 0 (the "
+                "endpoint-exclusive layout), and FP-FDM's velocity route builds faces for a grid whose last node "
+                "repeats node 0 only. Supporting the exclusive layout is stage 2 of #2910; meanwhile build the grid "
+                "endpoint-inclusive."
+            )
 
     # The grid's own node axes, from their one owner (#2756).
     axes = geometry_grid_axes(geometry)

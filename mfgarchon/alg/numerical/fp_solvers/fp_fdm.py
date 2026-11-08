@@ -342,7 +342,7 @@ class FPFDMSolver(BaseFPSolver):
             # Every face, however spelt -- `_get_bc_type` saw no periodicity in an empty segment
             # list over a periodic default (#2495).
             periodic = periodic_on_every_face(boundary_conditions, ndim, geometry)
-        except AttributeError:
+        except (AttributeError, TypeError):
             raise TypeError(  # an object FP-FDM cannot honour fails loud (#1559)
                 f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
                 "Expected BoundaryConditions from mfgarchon.geometry.boundary."
