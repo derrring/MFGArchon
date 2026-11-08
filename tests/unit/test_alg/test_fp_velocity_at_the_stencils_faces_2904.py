@@ -572,3 +572,30 @@ def test_handed_no_bc_the_builder_reads_the_problems_walls_as_the_fp_does(walls,
             NotImplementedError, match=rf"^{consumer}: the problem's shared boundary condition has a {said}"
         ):
             call()
+
+
+class _Shifted(HamiltonianBase):
+    """H = |p - 0.7 x|^2 / 2, whose control -(p - 0.7 x) reads the face's position."""
+
+    def __call__(self, t, x, p, m):
+        q = np.asarray(p, dtype=float) - 0.7 * np.asarray(x[0], dtype=float).reshape((*np.shape(p)[:-1], 1))
+        return 0.5 * np.sum(q * q, axis=-1)
+
+    def dp(self, t, x, p, m):
+        return np.asarray(p, dtype=float) - 0.7 * np.asarray(x[0], dtype=float).reshape((*np.shape(p)[:-1], 1))
+
+
+def test_a_1d_wrap_with_no_repeated_endpoint_has_a_face_across_it_at_its_own_position():
+    """A BC that wraps with no repeated endpoint gives the 1-D axis one face per node, the last across the wrap, between
+    the last node and node 0, at the last node's position plus half a cell. A control that reads the position gets
+    each face's own: the closed form from the stencil's index map, face by face."""
+    n, h = 11, 0.1
+    hamiltonian = _Shifted()
+    problem = _problem(hamiltonian, 1, n, _walls("periodic", 1), Nt=len(STEPS) - 1)
+    nodes = np.linspace(0.0, 1.0, n)
+    U, _ = _degree_two([nodes])
+    exclusive = periodic_bc(dimension=1, convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE)
+    velocity = compute_fp_velocity_field(problem, U, _density([nodes]), hamiltonian, boundary_conditions=exclusive)
+    across = (np.arange(n) + 1) % n
+    expected = -((U[:, across] - U) / h - 0.7 * (nodes + 0.5 * h))
+    np.testing.assert_allclose(velocity, expected, rtol=0.0, atol=1e-12)
