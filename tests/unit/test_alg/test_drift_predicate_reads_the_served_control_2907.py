@@ -1,17 +1,19 @@
-"""-c*grad(U) drives the FP only for the library's own control, as each object serves it (#2907).
+"""-c*grad(U) drives the FP only for a Hamiltonian and its cost exactly as the library ships them (#2907, #2914).
 
-`drift_is_the_control_costs` compared the control cost's type attribute with `QuadraticControlCost.optimal_control`,
-and both sides with the class attribute as it stood. A cost serving another control on its instance, through
-`__getattribute__`, a descriptor, a partial or a callable object, or another cost's library method, and either class
-with its control replaced, were taken for the library's: `problem.solve()`'s default scheme and FP-SL drove the FP by
--c*grad(U) with c = 1, 1.2074e+00 and 1.4437e+00 off in M at 8f7c0db8, with no error. The predicate now asks both
-sides one question: is the served `optimal_control` the library body, held when `mfgarchon.core.hamiltonian` was
-imported, bound to its own instance?
+At 8f7c0db8 `drift_is_the_control_costs` compared the control cost's type attribute with the library's, so a cost
+serving another control on its instance (an assignment, a partial, a callable object, another cost's library method)
+was taken for the library's: the default scheme and FP-SL drove the FP by -c*grad(U) with c = 1, 1.2074e+00 and
+1.4437e+00 off in M (1-D no-flux, 21 nodes, at 8f7c0db8), with no error. #2915's first head read the served method's
+`__func__` and `__self__`, which a forwarding wrapper reports falsely (#2915 review 1, B1 and F3). Under the user's
+coarse rule of 2026-11-09 it now checks types: the Hamiltonian's class one of the library's shipped classes whose drift
+is the cost's, its cost a `QuadraticControlCost`, and no family method in either instance's `__dict__`, through the one
+owner of "as the library ships it", `_why_not_as_it_ships`. A library class patched at run time is outside the rule
+(a stated limit, as for #2899's rows path; #2917).
 
-The oracle is the solve, not the predicate's value. Each form describes H = 1.5|p|^2 - 0.5 m on a
-`QuadraticControlCost(1)`, which is the library `SeparableHamiltonian(QuadraticControlCost(1/3))`. Where the predicate
-fails, the default scheme takes the control as a velocity and solves as that library H, and FP-SL, which forms
--c*grad(U) itself, refuses. Where it holds, FP-SL solves as that library H. 1-D no-flux, 21 nodes.
+Each form describes H = 1.5|p|^2 - 0.5 m: the library `SeparableHamiltonian(QuadraticControlCost(1/3))`. Uncertified,
+the default scheme takes the control as a velocity and solves as that library H, and FP-SL, which takes the value
+function only, refuses with the owner's reason. These are pins comparing two routes of one scheme (AGENTS.md § Closing
+out a fix, item 2), not an external oracle. 1-D no-flux, 21 nodes.
 """
 
 from __future__ import annotations
@@ -109,57 +111,91 @@ def _partials(monkeypatch):
     return SeparableHamiltonian(cost, coupling=_coupling)
 
 
-def _cost_class_replaced(monkeypatch):
-    for name in COST_METHODS:
-        monkeypatch.setattr(QuadraticControlCost, name, _steep_cost_body(name))
-    return SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
+class _Forwarding:
+    """A decorator serving its own body that forwards every attribute read, ``__func__`` and ``__self__`` included, to
+    the library method it wraps (#2915 review 1, B1 and F3): it reports the library's method and calls another."""
+
+    def __init__(self, library, body):
+        self.library, self.body = library, body
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        reported, body = self.library.__get__(instance, owner), self.body
+
+        class Bound:
+            def __call__(self, *args, **kwargs):
+                return body(instance, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(reported, name)
+
+        return Bound()
 
 
-def _h_class_replaced(monkeypatch):
-    for name in H_METHODS:
-        monkeypatch.setattr(SeparableHamiltonian, name, _steep_h_body(name))
-    return SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
+def _plain_subclass(monkeypatch):
+    cls = type("PlainH", (SeparableHamiltonian,), {})
+    return cls(QuadraticControlCost(control_cost=1 / 3), coupling=_coupling)
 
 
-def _cost_subclass(monkeypatch):
-    cls = type("SteepCost", (QuadraticControlCost,), {name: _steep_cost_body(name) for name in COST_METHODS})
-    return SeparableHamiltonian(cls(control_cost=1.0), coupling=_coupling)
+def _forwarding_cost(monkeypatch):
+    members = {name: _Forwarding(COST_LIBRARY[name], _steep_cost_body(name)) for name in COST_METHODS}
+    return SeparableHamiltonian(type("FwdCost", (QuadraticControlCost,), members)(control_cost=1.0), coupling=_coupling)
 
 
-def _h_subclass(monkeypatch):
-    cls = type("SteepH", (SeparableHamiltonian,), {name: _steep_h_body(name) for name in H_METHODS})
-    return cls(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
+def _forwarding_h(monkeypatch):
+    members = {name: _Forwarding(H_LIBRARY[name], _steep_h_body(name)) for name in H_METHODS}
+    return type("FwdH", (SeparableHamiltonian,), members)(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
 
 
-#: Forms whose served control is not the library's: the owner check, the served read on the cost, the library body held
-#: at import on each side, and the two subclass controls (#2900), which read False at the base too.
-NOT_THE_LIBRARYS = {
-    "another_costs_library_methods_on_the_instance": _another_costs_library_methods,
-    "partials_on_the_cost_instance": _partials,
-    "QuadraticControlCost_replaced_on_the_class": _cost_class_replaced,
-    "SeparableHamiltonian_replaced_on_the_class": _h_class_replaced,
-    "cost_subclass_control": _cost_subclass,
-    "hamiltonian_subclass_control": _h_subclass,
-}
+def _lambda_disagreeing(monkeypatch):
+    """The library body divides by ``_lambda`` = 1/3, while a class attribute ``lambda_`` reads 1 (#2915 review 1, F4)."""
+    cls = type("LambdaCost", (QuadraticControlCost,), {"lambda_": 1.0})
+    return SeparableHamiltonian(cls(control_cost=1 / 3), coupling=_coupling)
 
 
-@pytest.mark.parametrize("form", sorted(NOT_THE_LIBRARYS))
-def test_a_control_that_is_not_the_librarys_drives_the_fp_itself(form, monkeypatch):
-    """The default scheme solves as the library H the form describes, and FP-SL, which would form -c*grad(U) with
-    c = 1, refuses."""
-    hamiltonian = NOT_THE_LIBRARYS[form](monkeypatch)
-    np.testing.assert_allclose(_default(hamiltonian), _default(STEEP_H), rtol=0, atol=1e-12)
-    with pytest.raises(NotImplementedError, match=r"^FPSLSolver\.solve_fp_system\(potential_field=U\), run on "):
-        _fp_sl(hamiltonian)
-
-
-def test_a_property_serving_the_library_control_bound_to_its_cost_is_the_librarys():
-    """A cost subclass whose property returns the library method bound to the cost serves the library's control: FP-SL
-    takes it and solves as the library H. At 8f7c0db8 the type attribute, a property, read False and FP-SL refused."""
+def _property_serving_the_library(monkeypatch):
     cls = type(
         "SelfBound",
         (QuadraticControlCost,),
         {name: property(lambda self, name=name: types.MethodType(COST_LIBRARY[name], self)) for name in COST_METHODS},
     )
-    hamiltonian = SeparableHamiltonian(cls(control_cost=1 / 3), coupling=_coupling)
-    np.testing.assert_allclose(_fp_sl(hamiltonian), _fp_sl(STEEP_H), rtol=0, atol=1e-12)
+    return SeparableHamiltonian(cls(control_cost=1 / 3), coupling=_coupling)
+
+
+#: Forms the type rule does not certify: instance entries on the cost, a plain subclass, forwarding wrappers on each
+#: side, a cost whose lambda_ disagrees with the _lambda its body reads, and a property serving the library method.
+NOT_AS_SHIPPED = {
+    "another_costs_library_methods_on_the_instance": _another_costs_library_methods,
+    "partials_on_the_cost_instance": _partials,
+    "plain_subclass_of_SeparableHamiltonian": _plain_subclass,
+    "forwarding_wrappers_on_the_cost": _forwarding_cost,
+    "forwarding_wrappers_on_the_hamiltonian": _forwarding_h,
+    "lambda_disagreeing_with_its_body": _lambda_disagreeing,
+    "property_serving_the_library_method": _property_serving_the_library,
+}
+
+
+@pytest.mark.parametrize("form", sorted(NOT_AS_SHIPPED))
+def test_a_hamiltonian_not_as_shipped_is_read_as_it_serves(form, monkeypatch):
+    """The default scheme solves as the library H the form describes, and FP-SL, which would form -c*grad(U), refuses,
+    naming why the Hamiltonian is not as shipped."""
+    hamiltonian = NOT_AS_SHIPPED[form](monkeypatch)
+    np.testing.assert_allclose(_default(hamiltonian), _default(STEEP_H), rtol=0, atol=1e-12)
+    with pytest.raises(
+        NotImplementedError,
+        match=r"^FPSLSolver\.solve_fp_system\(potential_field=U\), run on .*: \w+ is not as the library ships it \(",
+    ):
+        _fp_sl(hamiltonian)
+
+
+def test_the_shipped_hamiltonian_is_certified_and_fp_sl_takes_it():
+    """The library H itself, and a deep copy of it, are certified, and FP-SL, which forms -c*grad(U), solves the copy
+    as it solves the library H."""
+    import copy
+
+    from mfgarchon.utils.pde_coefficients import drift_is_the_control_costs
+
+    twin = copy.deepcopy(STEEP_H)
+    assert drift_is_the_control_costs(STEEP_H) and drift_is_the_control_costs(twin)
+    np.testing.assert_allclose(_fp_sl(twin), _fp_sl(STEEP_H), rtol=0, atol=1e-12)

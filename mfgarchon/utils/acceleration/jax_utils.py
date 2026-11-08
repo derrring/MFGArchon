@@ -482,21 +482,6 @@ def compute_optimal_control(u_x: JAXArray) -> JAXArray:
 
 
 @jit
-def compute_drift(u_x: JAXArray, volatility: float) -> JAXArray:
-    """
-    Compute drift term for Fokker-Planck equation.
-
-    Args:
-        u_x: Spatial derivative of value function
-        volatility: SDE volatility σ; not read by this function (#2378 part 2b renamed it from sigma)
-
-    Returns:
-        Drift term
-    """
-    return compute_optimal_control(u_x)
-
-
-@jit
 def mass_conservation_constraint(m: JAXArray, dx: float) -> float:
     """
     Compute mass conservation constraint.
@@ -712,7 +697,6 @@ __all__ = [
     "adaptive_time_step",
     "apply_boundary_conditions",
     "compute_convergence_error",
-    "compute_drift",
     "compute_hamiltonian",
     "compute_jacobian",
     "compute_jacobian_jit",

@@ -1,0 +1,5 @@
+- **Removed: `utils.optimal_control_drift`, `utils.acceleration.compute_drift` and `utils.pde_coefficients.DriftField`** (Issue #2914; user ruling, 2026-11-09: before 1.0 a stale or duplicate symbol is deleted, not redirected). None had a library caller.
+  - `optimal_control_drift`, deprecated, formed `-grad(U) / getattr(problem, "control_cost", 1.0)`, which is not the drift for any Hamiltonian whose cost has `lambda_` other than 1.
+  - `compute_drift` hard-coded c = 1.
+  - `DriftField` returned a cost's optimal control at c·∇U, which is the FP drift only for a Hamiltonian as the library ships it.
+  - For the FP drift, use `problem.solve()`, or read `H.optimal_control` directly.

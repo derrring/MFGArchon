@@ -418,7 +418,6 @@ class BaseFPSolver(BaseNumericalSolver):
 
             >>> from mfgarchon.utils import (
             ...     zero_drift,
-            ...     optimal_control_drift,
             ...     prescribed_drift,
             ...     density_dependent_drift,
             ...     composite_drift,

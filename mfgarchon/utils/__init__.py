@@ -66,7 +66,6 @@ from .data.validation import (
 from .drift_helpers import (
     composite_drift,
     density_dependent_drift,
-    optimal_control_drift,
     prescribed_drift,
     zero_drift,
 )
@@ -281,7 +280,6 @@ __all__ = [
     "get_spatial_grid",
     # Drift field helpers for FP solvers
     "zero_drift",
-    "optimal_control_drift",
     "prescribed_drift",
     "density_dependent_drift",
     "composite_drift",

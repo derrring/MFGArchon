@@ -193,7 +193,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ### Functions / Classes
 
-- **`optimal_control_drift()`** — use `use H.optimal_control(t=t, x=x, p=grad_U, m=m) directly, or let FixedPointIterator handle it automatically` instead (remove by v0.25.0)
 
 ---
 

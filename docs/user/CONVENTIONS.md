@@ -247,13 +247,14 @@ on their own basis.
 
 `fp_drift_coefficient(problem)` resolves in this order:
 
-1. A `SeparableHamiltonian` that serves an optimal control of its own → **raises**, stating what was
-   run (#2900). It serves its own unless the `optimal_control` it serves is the library's
-   `SeparableHamiltonian.optimal_control` bound to it and, for a `QuadraticControlCost`, the cost serves
-   the library's `QuadraticControlCost.optimal_control` bound to the cost. The library's is the body each
-   class had when `mfgarchon.core.hamiltonian` was imported (`drift_is_the_control_costs`, #2907).
-2. A quadratic `SeparableHamiltonian` → $1/\lambda$, taken from its control cost. **This is the path a
-   well-formed problem takes.**
+1. A Hamiltonian and its quadratic cost exactly as the library ships them → $1/\lambda$, taken from the
+   cost's field. **This is the path a well-formed problem takes.** As shipped means the class
+   `SeparableHamiltonian` or `QuadraticMFGHamiltonian` exactly, the cost a `QuadraticControlCost` exactly,
+   and neither instance holding a family method of its own (`drift_is_the_control_costs`, through the one
+   owner of "as the library ships it", `_why_not_as_it_ships`; #2914).
+2. A `SeparableHamiltonian` with a `QuadraticControlCost` that is not as shipped → **raises**, stating
+   what was run and why it is not as shipped (#2900, #2914). A subclass, a wrapper or an instance entry is
+   not certified whatever it serves; a library class patched at run time is unsupported (#2917).
 3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
    not represent that optimal control.
 4. Any Hamiltonian that is not a `SeparableHamiltonian`, or none at all → the problem's
@@ -291,15 +292,21 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   accurate at the face where the axis has three nodes or more, and first order where it has two. On
   a `TensorProductGrid` the builder takes a periodic BC's layout from the grid, and refuses a
   convention that contradicts the grid's coordinates with the grid's message.
-- **A separable $H$ that serves an optimal control of its own** (#2900; `drift_is_the_control_costs`
-  is false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
+- **A separable $H$ not as the library ships it** (#2900, #2914; `drift_is_the_control_costs` is
+  false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed
-  set: a 1-D grid with `NO_FLUX` walls, handed the density trajectory, of shape `(Nt + 1, *grid shape)`, with an advection scheme
-  that reads a velocity, in a multi-population solve too, where each population is read at its own
-  density (#2335). Anywhere else, and on the semi-Lagrangian solver, the
-  coupling layer refuses it. #2904's census measures FP-FDM's velocity route equal to its
-  value-function route on periodic walls and 2-D and 3-D grids as well; routing those is #2908.
-  A refusal states what was run and on what, and why it refuses; it names no other scheme.
+  set: a 1-, 2- or 3-D tensor grid whose every face is `NO_FLUX`, `PERIODIC` or `DIRICHLET`,
+  periodic on every face or none, handed the density trajectory of shape `(Nt + 1, *grid shape)`,
+  one population in 2-D and 3-D, with an advection scheme that reads a velocity. In 1-D a
+  multi-population solve reads each population at its own density (#2335). #2904's census measures
+  FP-FDM's velocity route equal to its value-function route on each of those wall kinds (#2908).
+  Anywhere else it is refused, as it is by every consumer that takes the value function only and
+  forms $-c\,\nabla u$ itself: the semi-Lagrangian solver, FP-FDM handed `potential_field=U`
+  directly, `FPFDMSolver.build_advection_operator`, `HJBFDMSolver.build_advection_matrix`, and
+  the meshless Galerkin HJB solver's streamline diffusion when `streamline_diffusion_scale > 0`.
+  A plain subclass of a shipped class is refused there too, though it serves the library's
+  control: the rule checks types (#2914). A refusal states what was run and on what, and why
+  it refuses; it names no other scheme.
 - **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
   refusals state it:
   - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$. It refuses

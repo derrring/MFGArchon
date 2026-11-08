@@ -27,8 +27,6 @@ IMPORTANT - Current Implementation Status:
     Future Usage (Phase 2):
         # Callable drift (coming soon)
         M = fp_solver.solve_fp_system(m0, drift_field=zero_drift())
-        M = fp_solver.solve_fp_system(m0, drift_field=optimal_control_drift(U, problem))
-
     These helper functions are provided now to:
     1. Document intended usage patterns for future API
     2. Enable early adoption when callable support lands
@@ -37,16 +35,12 @@ IMPORTANT - Current Implementation Status:
 Usage (future API, Phase 2):
     from mfgarchon.utils.drift_helpers import (
         zero_drift,
-        optimal_control_drift,
         prescribed_drift,
         composite_drift,
     )
 
     # Pure diffusion (heat equation)
     M = fp_solver.solve_fp_system(m0, drift_field=zero_drift())
-
-    # MFG optimal control
-    M = fp_solver.solve_fp_system(m0, drift_field=optimal_control_drift(U, problem))
 
     # Prescribed wind
     M = fp_solver.solve_fp_system(m0, drift_field=prescribed_drift(wind_func))
@@ -55,7 +49,7 @@ Usage (future API, Phase 2):
     M = fp_solver.solve_fp_system(
         m0,
         drift_field=composite_drift([
-            optimal_control_drift(U, problem),
+            zero_drift(),
             prescribed_drift(lambda t, x, m: gravity(x)),
         ])
     )
@@ -66,14 +60,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, _remembered, bind_user_callable
-from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     import numpy as np
-
-    from mfgarchon.core.mfg_problem import MFGProblem
 
 
 def zero_drift() -> Callable:
@@ -111,93 +102,6 @@ def zero_drift() -> Callable:
             return np.zeros((*m.shape, 3))
 
     return _zero_drift
-
-
-@deprecated(
-    since="v0.19.0",
-    replacement="use H.optimal_control(t=t, x=x, p=grad_U, m=m) directly, or let FixedPointIterator handle it automatically",
-    reason="Hardcodes quadratic Hamiltonian assumption (Issue #896)",
-)
-def optimal_control_drift(
-    U: np.ndarray,
-    problem: MFGProblem,
-    control_cost: float | None = None,
-) -> Callable:
-    """
-    Create MFG optimal control drift field α = -∇U / λ.
-
-    .. deprecated:: 0.19.0
-        This function hardcodes the quadratic Hamiltonian assumption (α = -∇U/λ).
-        For general Hamiltonians, use the inline pipeline instead::
-
-            grad_U = np.gradient(U, dx, axis=-1)
-            alpha = H.optimal_control(t=t, x=x, p=grad_U, m=m)
-
-        The FixedPointIterator handles this automatically via
-        ``fixed_point_utils.resolve_fp_drift_kwargs`` /
-        ``fixed_point_utils.compute_fp_velocity_field``. Will be removed in v0.25.0.
-
-    Equation:
-        α(t,x) = -∇U(t,x) / λ
-
-    where:
-        U: HJB value function
-        λ: control cost parameter (default: problem.control_cost)
-
-    Args:
-        U: HJB value function array, shape (Nt, Nx) or (Nt, Nx, Ny) etc.
-        problem: MFG problem instance (for gradient computation)
-        control_cost: Control cost λ (default: use problem.control_cost)
-
-    Returns:
-        Callable with signature α(t, x, m) -> -∇U / λ
-
-    Example:
-        >>> from mfgarchon.utils.drift_helpers import optimal_control_drift
-        >>> drift = optimal_control_drift(U_hjb, problem)
-        >>> M = fp_solver.solve_fp_system(m0, drift_field=drift)
-
-    Note:
-        This helper precomputes the full drift field -∇U / λ for efficiency.
-        The returned callable simply indexes into the precomputed array.
-    """
-    import numpy as np
-
-    # Get control cost
-    lambda_cost = control_cost if control_cost is not None else getattr(problem, "control_cost", 1.0)
-
-    # Precompute gradient
-    if hasattr(problem, "compute_gradient"):
-        # Use problem's gradient method (handles boundary conditions)
-        grad_U = problem.compute_gradient(U)
-    else:
-        # Fallback: simple central difference
-        grid_spacing = problem.geometry.get_grid_spacing()
-        if U.ndim == 2:
-            # 1D spatial: U is (Nt, Nx_points)
-            grad_U = np.gradient(U, grid_spacing[0], axis=1)
-        elif U.ndim == 3:
-            # 2D spatial: U is (Nt, Nx_points, Ny_points)
-            grad_U_x = np.gradient(U, grid_spacing[0], axis=1)
-            grad_U_y = np.gradient(U, grid_spacing[1], axis=2)
-            grad_U = np.stack([grad_U_x, grad_U_y], axis=-1)
-        else:
-            raise NotImplementedError(f"Gradient for {U.ndim}D not implemented")
-
-    # Compute drift: α = -∇U / λ
-    alpha_field = -grad_U / lambda_cost
-
-    def _optimal_control_drift(t: float, x: np.ndarray, m: np.ndarray) -> np.ndarray:
-        """MFG optimal control drift α = -∇U / λ."""
-        # Find time index (assuming uniform time grid)
-        Nt = U.shape[0]
-        T = problem.T
-        dt = T / (Nt - 1)
-        t_idx = min(int(t / dt), Nt - 1)
-
-        return alpha_field[t_idx]
-
-    return _optimal_control_drift
 
 
 def prescribed_drift(drift_func: Callable) -> Callable:
@@ -294,13 +198,12 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
 
     Example:
         >>> from mfgarchon.utils.drift_helpers import (
-        ...     optimal_control_drift,
         ...     prescribed_drift,
         ...     composite_drift,
         ... )
         >>>
-        >>> # MFG control + constant wind
-        >>> control = optimal_control_drift(U_hjb, problem)
+        >>> # Constant wind over a density-dependent drift
+        >>> control = density_dependent_drift(lambda t, x, m: -m)
         >>> wind = prescribed_drift(lambda t, x, m: np.stack([np.ones_like(x[0]), np.zeros_like(x[0])]))
         >>> total_drift = composite_drift([control, wind])
         >>> M = fp_solver.solve_fp_system(m0, drift_field=total_drift)
