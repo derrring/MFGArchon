@@ -1007,9 +1007,9 @@ class MFGOperatorBase(ABC):
             if _declares_cross_density(member):
                 raise TypeError(
                     f"{cls.__qualname__}.{name} declares cross_density. A family method reads the population's own "
-                    f"density as m, and every population's density reaches a density term only (#2335): the "
-                    f"coupling= or congestion_factor= of a SeparableHamiltonian or CongestionHamiltonian as the "
-                    f"library ships it, declaring cross_density, is handed every population's rows."
+                    f"density as m (#2335). The coupling= or congestion_factor= of a SeparableHamiltonian or "
+                    f"CongestionHamiltonian as the library ships it, declaring cross_density, is handed every "
+                    f"population's rows."
                 )
             named = _ruling8_order_violation(member)
             if named is not None:
@@ -1149,7 +1149,8 @@ _FAMILY_METHODS = (
 def _why_not_as_it_ships(hamiltonian: Any) -> str | None:
     """Why ``hamiltonian`` is not a ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it, or
     ``None`` if it is one: of one of those two types exactly, compared by identity, with no family method in its own
-    ``__dict__`` (#2335). Only such a Hamiltonian's own bodies read its terms at a door's rows."""
+    ``__dict__`` (#2335). A library primitive reads its terms at a door's rows for such a Hamiltonian only
+    (`_takes_the_rows_path`)."""
     kind = type(hamiltonian)
     if not (kind is SeparableHamiltonian or kind is CongestionHamiltonian):
         return f"its class is {kind.__name__}"
@@ -1164,9 +1165,10 @@ def _as_it_ships(hamiltonian: Any) -> bool:
 
 
 def _takes_the_rows_path(hamiltonian: Any, state: HEvalState) -> bool:
-    """Whether a library primitive reads its terms at the state's rows: a door handed every population's, which it does
-    at two or more populations only, to a Hamiltonian `_as_it_ships`. Otherwise the primitive calls the public method
-    with the own density, as before #2335, so a single-population solve is read as it was (#2335)."""
+    """Whether a library primitive reads its terms at the state's rows: the state carries a stack, and the Hamiltonian
+    is `_as_it_ships`. Otherwise the primitive calls the public method with ``state.m`` (#2335). The library's own
+    solves hand a stack at two or more populations only; a direct door call handed one at one population takes the
+    rows path too."""
     return state.cross_density is not None and _as_it_ships(hamiltonian)
 
 
@@ -2710,7 +2712,7 @@ class SeparableHamiltonian(HamiltonianBase):
 
     def evaluate_H(self, state: HEvalState) -> NDArray:
         """The residual door's primitive: on `_takes_the_rows_path`, the library body with the coupling reading the
-        state's rows (#2335); otherwise ``__call__`` with the own density, as before #2335."""
+        state's rows (#2335); otherwise ``__call__`` with ``state.m``."""
         if not _takes_the_rows_path(self, state):
             return super().evaluate_H(state)
         return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, state.cross_density), dtype=float)
@@ -2979,21 +2981,21 @@ class CongestionHamiltonian(HamiltonianBase):
 
     def evaluate_H(self, state: HEvalState) -> NDArray:
         """The residual door's primitive: on `_takes_the_rows_path`, the library body with the terms reading the state's
-        rows (#2335); otherwise ``__call__`` with the own density, as before #2335."""
+        rows (#2335); otherwise ``__call__`` with ``state.m``."""
         if not _takes_the_rows_path(self, state):
             return super().evaluate_H(state)
         return np.asarray(self._value(state.t, _state_x(state), state.p, state.m, state.cross_density), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """The Jacobian door's primitive: on `_takes_the_rows_path`, the library body with the congestion factor reading
-        the state's rows (#2335); otherwise ``dp`` with the own density, as before #2335."""
+        the state's rows (#2335); otherwise ``dp`` with ``state.m``."""
         if not _takes_the_rows_path(self, state):
             return super().evaluate_dp(state)
         return np.asarray(self._dp(state.p, state.m, state.cross_density), dtype=float)
 
     def evaluate_optimal_control(self, state: HEvalState) -> NDArray:
         """The FP velocity door's primitive: on `_takes_the_rows_path`, the library body's ``-dp`` with the congestion
-        factor reading the state's rows (#2335); otherwise ``optimal_control`` with the own density, as before #2335."""
+        factor reading the state's rows (#2335); otherwise ``optimal_control`` with ``state.m``."""
         if not _takes_the_rows_path(self, state):
             return super().evaluate_optimal_control(state)
         return -np.asarray(self._dp(state.p, state.m, state.cross_density), dtype=float)

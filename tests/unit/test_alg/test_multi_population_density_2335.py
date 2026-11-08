@@ -153,7 +153,8 @@ def test_a_term_reading_the_other_population_reads_its_row():
 
 
 def test_the_velocity_door_at_one_population_hands_the_faces_a_single_population_solve_does():
-    """The iterator hands the FP velocity the stack at K = 1 too, where it was read as m: node values at the faces."""
+    """A direct call handing the FP velocity a one-row stack at one population reads the faces a single-population solve
+    does. At f59bb154 that stack was read as m, node values at the faces. The iterator hands no stack at K = 1."""
     hamiltonian = CongestionHamiltonian(QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + m)
     problem = _problem(hamiltonian)
     nodes = np.linspace(0.0, 1.0, N)
@@ -256,8 +257,8 @@ def _crowd(k):
 
 @pytest.mark.parametrize("method", ["__call__", "dp", "optimal_control", "dm"])
 def test_a_family_method_that_declares_cross_density_is_refused_and_its_advice_runs(method):
-    """Every population's density reaches a density term only, so a class whose family method declares the slot is
-    refused when it is created. Its advice runs: `|p|^2 / (2 (1 + m + 0.8 q)) - m` written with the cross term in a
+    """A family method reads the own density as m, so a class whose family method declares the slot is refused when
+    it is created. Its advice runs: `|p|^2 / (2 (1 + m + 0.8 q)) - m` written with the cross term in a
     congestion factor reads the other population, and solves apart from the run with no cross term."""
 
     def body(self, t, x, p, m, cross_density):
@@ -511,8 +512,8 @@ _OWN_BODIES = {
 
 
 class _ShowsTheLibrary(ABCMeta):
-    """A metaclass whose `__getattribute__` shows `CongestionHamiltonian`'s family methods on the class, whatever its
-    body defines."""
+    """A metaclass whose `__getattribute__` shows `CongestionHamiltonian`'s `__call__`, `dp` and `optimal_control` on
+    the class, whatever its body defines."""
 
     def __getattribute__(cls, name):
         if name in _OWN_BODIES:
@@ -542,7 +543,7 @@ def _default_solve(hamiltonian):
     ],
 )
 def test_a_body_served_from_outside_the_class_body_is_read_at_one_population(served, through, monkeypatch):
-    """At one population no door hands a stack, so every primitive calls the public method, as before #2335:
+    """At one population the iterator and `problem.solve()` hand no stack, so every primitive calls the public method:
     `__call__`, `dp` and `optimal_control` served however Python serves them are read at every door, and the default
     scheme, or the iterator at K = 1, solves as the twin that writes them in its class body. At ca9e9514 the doors
     asked a class-level identity instead and read the library's bodies: the default-scheme rows failed there on U."""
@@ -603,6 +604,18 @@ def _dp_assigned_on_the_instance(k):
     return hamiltonian
 
 
+def _library_method_assigned_on_the_instance(name):
+    """A congestion Hamiltonian over a declaring factor whose instance holds its own library method `name`, bound: the
+    body is the library's, and only the instance's `__dict__` differs from the class as it ships."""
+
+    def make(k):
+        hamiltonian = CongestionHamiltonian(QuadraticControlCost(control_cost=1.0), congestion_factor=_crowd(k))
+        setattr(hamiltonian, name, getattr(hamiltonian, name))
+        return hamiltonian
+
+    return make
+
+
 _SEPARABLE_TWO_FACED = type(
     "_SeparableTwoFaced",
     (SeparableHamiltonian,),
@@ -647,14 +660,22 @@ NOT_AS_IT_SHIPS = {
         "congestion_factor",
         "its class is _DpOnly",
     ),
+    **{
+        f"{name}_assigned_on_the_instance": (
+            _library_method_assigned_on_the_instance(name),
+            "congestion_factor",
+            rf"its instance holds \['{name}'\] of its own",
+        )
+        for name in ("__call__", "dm", "dx", "optimal_control", "evaluate_H", "evaluate_dp", "evaluate_optimal_control")
+    },
 }
 
 
 @pytest.mark.parametrize("form", sorted(NOT_AS_IT_SHIPS))
 def test_at_two_populations_a_term_declaring_the_slot_takes_a_library_class_as_it_ships(form):
-    """The doors hand every population's rows to a `SeparableHamiltonian` or `CongestionHamiltonian` as the library
-    ships it, and read any other Hamiltonian at its own density, where a term that declares the slot would read the own
-    row alone: refused before the first sweep, naming the class, the term and why."""
+    """At two populations a Hamiltonian with a term that declares the slot, which is not a `SeparableHamiltonian` or
+    `CongestionHamiltonian` as the library ships it, is refused before the first sweep, naming the class, the term and
+    why. The `*_assigned_on_the_instance` rows hold one name each in the instance's `__dict__`."""
     make, terms, why = NOT_AS_IT_SHIPS[form]
     population = type(make(0)).__name__
     with pytest.raises(
@@ -663,6 +684,44 @@ def test_at_two_populations_a_term_declaring_the_slot_takes_a_library_class_as_i
         rf"SeparableHamiltonian or CongestionHamiltonian as the library ships it: {why}\.",
     ):
         _solve([make(k) for k in range(2)], [0.25, 0.75])
+
+
+class _DoubledControl(CongestionHamiltonian):
+    """The library's `optimal_control`, doubled, in its class body."""
+
+    def optimal_control(self, t, x, p, m):
+        return 2.0 * np.asarray(super().optimal_control(t=t, x=x, p=p, m=m), dtype=float)
+
+
+def _doubled(control):
+    return lambda t, x, p, m: 2.0 * np.asarray(control(t=t, x=x, p=p, m=m), dtype=float)
+
+
+def test_at_two_populations_an_optimal_control_assigned_on_the_instance_solves_as_the_subclass_defining_it():
+    """Over a congestion factor that does not declare the slot, two populations whose `optimal_control`, the library's
+    doubled, is assigned on each instance solve bit for bit as `_DoubledControl`, which defines it in its class body,
+    and apart from the run with the library's: the velocity door reads the assignment at two populations too."""
+
+    def factor(m):
+        return 1.0 + 0.5 * m
+
+    def potential(x):
+        return 0.5 * x[0]
+
+    cost = QuadraticControlCost(control_cost=1.0)
+    assigned = [CongestionHamiltonian(cost, congestion_factor=factor, potential=potential) for _ in range(2)]
+    for hamiltonian in assigned:
+        hamiltonian.optimal_control = _doubled(hamiltonian.optimal_control)
+    centres = [0.25, 0.75]
+    solved = _solve(assigned, centres)
+    subclass = _solve([_DoubledControl(cost, congestion_factor=factor, potential=potential) for _ in range(2)], centres)
+    library = _solve(
+        [CongestionHamiltonian(cost, congestion_factor=factor, potential=potential) for _ in range(2)], centres
+    )
+    for k in range(2):
+        np.testing.assert_array_equal(solved[k][0], subclass[k][0], err_msg=f"U of population {k}")
+        np.testing.assert_array_equal(solved[k][1], subclass[k][1], err_msg=f"M of population {k}")
+        assert np.abs(solved[k][1] - library[k][1]).max() > 1e-2, f"population {k} read the library's optimal_control"
 
 
 def _lagrangian_problem(operator, centre):

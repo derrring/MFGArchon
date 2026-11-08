@@ -340,16 +340,19 @@ rows at the doors; the Lagrangian's own `__call__` and `evaluate_hamiltonian` ha
 cannot evaluate a batch (#2315).
 
 The doors that hand every population's rows are the 1-D HJB residual and Jacobian of `HJBFDMSolver`, and the 1-D FP
-velocity, `compute_fp_velocity_field`. They hand them at two or more populations, and a term reads them through the
-bodies of a `SeparableHamiltonian` or `CongestionHamiltonian` as the library ships it: of one of those two types
-exactly, with no family method or `evaluate_*` primitive assigned on its instance. Any other Hamiltonian, a subclass of
-either included, and every Hamiltonian at one population, is read through its public methods with its own density, as
-before #2335. At two or more populations the iterator refuses by name, before the first sweep, what these doors cannot
-pair row for row: a grid of two or more dimensions; node coordinates or time grids (`T` and `Nt`) that differ, compared
-exactly; and a Hamiltonian with a term that declares `cross_density` that is not one of those two classes as shipped.
-A cross term at two or more populations therefore takes one of them as it ships. A library class patched at run time is
-read through its own bodies at two or more populations, not through the patch: patching is not supported there. At one
-population, a grid of two or more dimensions ends in numpy's broadcast error when the iterator sets the densities up.
+velocity, `compute_fp_velocity_field`. At two or more populations the state a door hands a Hamiltonian's primitive
+(`evaluate_H`, `evaluate_dp` or `evaluate_optimal_control`) carries every population's rows. The library bodies of a
+`SeparableHamiltonian` or `CongestionHamiltonian` as the library ships it, of one of those two types exactly with no
+family method or `evaluate_*` primitive assigned on its instance, hand those rows to a term that declares
+`cross_density`. Any other Hamiltonian's library primitives call its public methods with its own density. A primitive of
+your own that reads `state.cross_density` is your code. At one population the iterator hands no rows, and the library
+primitives call the public methods with the own density; its FP velocity reads that density at the faces, averaged as a
+one-population solve averages it, where before #2335 it read node values there. At two or more populations the iterator
+refuses by name, before the first sweep, what these doors cannot pair row for row: a grid of two or more dimensions;
+node coordinates or time grids (`T` and `Nt`) that differ, compared exactly; and a Hamiltonian with a term that declares
+`cross_density` that is not one of those two classes as shipped. Patching a library class at run time, or replacing an
+instance's `__dict__`, is not supported at two or more populations. At one population, a grid of two or more dimensions
+ends in numpy's broadcast error when the iterator sets the densities up.
 
 The library's own `dm`, `dx` and `jacobian_fd` are taken on one population, their terms reading the own row built
 from the `m` each evaluates at, which for `dm`'s finite difference is the perturbed `m`. No multi-population door reads

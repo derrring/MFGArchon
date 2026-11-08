@@ -49,9 +49,8 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
     the 1-D FP velocity) hand a density term that declares ``cross_density`` every population's row at the same points
     and step. So at two or more populations it refuses a grid of two or more dimensions; nodes or time grids that
     differ, compared exactly; and a Hamiltonian with a term that declares the slot which is not a
-    ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it (`_why_not_as_it_ships`): the doors hand the
-    rows to those two classes' own bodies only, and read any other Hamiltonian through its public methods with the
-    own density.
+    ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it (`_why_not_as_it_ships`): the
+    library bodies of those two hand a declaring term the rows (`_takes_the_rows_path`).
     """
     K = multi_problem.K
     if K < 2:
@@ -96,9 +95,9 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
             raise NotImplementedError(
                 f"MultiPopulationIterator: population {k}'s {type(hamiltonian).__name__} has term(s) {terms} that "
                 f"declare cross_density, and is not a SeparableHamiltonian or CongestionHamiltonian as the library "
-                f"ships it: {why}. The doors hand every population's rows to one of those two as it ships, and read "
-                "any other Hamiltonian at its own density, so a cross term at two or more populations takes one of "
-                "them as it ships (#2335)."
+                f"ships it: {why}. Only the library bodies of a SeparableHamiltonian or CongestionHamiltonian as the "
+                "library ships it hand a term every population's rows; this population's Hamiltonian is not one, so "
+                "the solve was not run (#2335)."
             )
 
 
