@@ -2127,7 +2127,7 @@ def bind_periodic_convention(grid: Any, bc: Any) -> Any:
 
     The convention travels on the BC, because that is what reaches solvers and operators. An
     unstated one wraps as the package always did (all N nodes distinct), which is wrong for
-    THIS grid -- so binding it here is what makes solver paths correct without any of them
+    an inclusive grid -- so binding it here is what makes solver paths correct without any of them
     declaring anything, exactly as ``bind_dimension`` completes the BC's dimension.
 
     A BC that states a convention is not overridden: it is checked, and a contradiction raises.
