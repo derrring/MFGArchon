@@ -1276,8 +1276,8 @@ class _DriftDispatcher:
     """
     Internal data dispatcher for drift/velocity in FP equation (Issue #641).
 
-    This is an **internal** class for FP solver plumbing. For user-facing
-    MFG drift computation, use `DriftField` instead.
+    This is an **internal** class for FP solver plumbing. `DriftField` computes a control cost's optimal control from
+    U, which is the FP drift only when `drift_is_the_control_costs` holds (#2914).
 
     Handles data dispatch (when/how to get drift values):
     1. Zero drift (None): Pure diffusion, no advection
@@ -1468,14 +1468,20 @@ class _DriftArrayDispatcher(_DriftDispatcher):
 
 class DriftField:
     """
-    MFG drift field: computes optimal control α* from value function U (Issue #623).
+    A control cost's optimal control at ``coupling_coefficient * ∇U``, from a value function U (Issue #623).
 
-    Encapsulates the complete MFG coupling:
+    That is the FP drift only for a Hamiltonian whose drift is its control cost's, which
+    `drift_is_the_control_costs(H)` decides (#2914). For any other Hamiltonian, one that serves an optimal control of
+    its own, the FP drift is ``H.optimal_control``, which the coupling layer hands FP-FDM through
+    `compute_fp_velocity_field` (CONVENTIONS.md § *What the Fokker–Planck solver receives*). This class is handed a
+    cost and never sees ``H``, so it cannot tell the two apart.
+
+    The steps:
     1. Extract U slice at timestep
     2. Compute gradient ∇U using geometry
     3. Apply optimal control formula via ControlCostBase
 
-    This is the user-facing class for MFG drift computation. Use this when you have:
+    Use it when you have:
     - A value function U from HJB solver
     - A control cost specification (quadratic, L1, bounded, etc.)
     - A geometry that provides gradient computation
@@ -1560,10 +1566,10 @@ class DriftField:
 
     def get_velocity_at(self, timestep_idx: int, density: np.ndarray | None = None) -> np.ndarray:
         """
-        Compute optimal control velocity α* at timestep.
+        The control cost's optimal control at ``coupling_coefficient * ∇U``, at a timestep.
 
-        This is the primary method for MFG coupling:
-        α* = control_cost.optimal_control(∇U)
+        It is the FP drift only when `drift_is_the_control_costs` holds for the Hamiltonian this cost belongs to; see
+        the class docstring.
 
         Parameters
         ----------
@@ -1576,7 +1582,7 @@ class DriftField:
         Returns
         -------
         ndarray
-            Optimal control velocity α*
+            The cost's optimal control at that momentum.
         """
         # Get gradient
         grad_U = self.get_gradient_at(timestep_idx)
