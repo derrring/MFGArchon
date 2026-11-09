@@ -2252,7 +2252,8 @@ def periodic_faces(bc: Any, dimension: int, geometry: Any = None) -> list[bool]:
     periodicity as the equivalence: a segment covering part of a face is accepted when it agrees with the rest
     of the face on that, and refused otherwise (#2512 row B1). ``geometry`` is the grid, on which the owner
     reads a ``region``, ``sdf_region`` or ``region_name`` placement. The one face loop the topology owner
-    :func:`wrapping_axes`, the layout binder `bind_periodic_convention` and FP-FDM's channel refusal read.
+    :func:`wrapping_axes` reads, and through it the layout binder `bind_periodic_convention`; FP-FDM's channel
+    refusal and other readers call it directly (``git grep -n "periodic_faces("``).
     """
 
     def same_periodicity(first: BCSegment, second: BCSegment) -> bool:

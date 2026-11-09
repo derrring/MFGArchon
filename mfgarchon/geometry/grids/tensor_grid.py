@@ -320,7 +320,6 @@ class TensorProductGrid(
                 "from mfgarchon.geometry.boundary. "
                 "Example: boundary_conditions=no_flux_bc(dimension=1)"
             )
-        # bind_dimension returns a new BC with dimension set, or validates if already set
         # Cache for flattened grid (computed lazily, perf optimization)
         self._flattened_cache: NDArray | None = None
 
@@ -328,6 +327,7 @@ class TensorProductGrid(
         self._regions: dict[str, NDArray[np.bool_]] = {}
 
         # The bind reads a placed segment's faces through this grid, which needs the two above (#2910).
+        # bind_dimension returns a new BC with dimension set, or validates if already set.
         boundary_conditions = boundary_conditions.bind_dimension(dimension)
         boundary_conditions = self._bind_periodic_convention(boundary_conditions)
         self._boundary_conditions = boundary_conditions.bind_geometry(self)  # owner queries decide on it (#2512 B1)

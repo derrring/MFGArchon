@@ -345,8 +345,11 @@ def _user_grid(d, n, nodes, states):
             setattr(UserGrid, name, lambda self, *a, name=name, **k: getattr(inner, name)(*a, **k))
     grid = UserGrid()
     assert grid.total_points() == m**d == grid.get_spatial_grid().shape[0]
+    points = grid.get_spatial_grid()
     for flat in range(m**d):
-        assert grid.get_index(grid.get_multi_index(flat)) == flat
+        index = grid.get_multi_index(flat)
+        assert grid.get_index(index) == flat
+        np.testing.assert_array_equal(points[flat], [axis[i] for i in index])
     assert grid.get_multi_index(m**d - 1) == (m - 1,) * d
     return grid, mesh
 
@@ -413,7 +416,7 @@ def test_one_torus_in_two_layouts_gives_one_density(dimension, route):
     try:
         density = _density(_on(exclusive), mesh, route)
     except NotImplementedError as refusal:
-        if not re.search(EXCLUSIVE_LIMITS[(dimension, route)], str(refusal)):
+        if not re.search(EXCLUSIVE_LIMITS.get((dimension, route), r"(?!)"), str(refusal)):
             raise AssertionError(f"refused, but not naming this cell's limit: {refusal}") from refusal
         raise
     shared = (slice(None), *[slice(0, n)] * dimension)
