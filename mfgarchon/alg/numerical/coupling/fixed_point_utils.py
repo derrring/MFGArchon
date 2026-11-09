@@ -782,9 +782,9 @@ def compute_fp_velocity_field(
             => the problem's shared BC as an FP solver reads it (`fp_view_of_shared_bc`), which refuses a Neumann
             value that is not zero and a Robin condition. Either is read with the grid's layout, from its one owner
             `periodic_axis_spans` (#2910): a `TensorProductGrid` measures it from its coordinates, any other
-            Cartesian grid states it as ``periodic_convention``, a stated convention that contradicts the grid is
-            refused with the grid's message, and a grid that states no layout is refused. A BC periodic on some faces
-            only is refused (`_refuse_partial_periodic`).
+            Cartesian grid states it as ``periodic_convention`` or, stating none, takes the one the BC states; a
+            stated convention that contradicts the grid is refused with the grid's message, and a layout neither
+            states is refused. A BC periodic on some faces only is refused (`_refuse_partial_periodic`).
 
     Returns:
         Velocity $\\alpha^*$.
@@ -836,7 +836,7 @@ def compute_fp_velocity_field(
 
     # The layout of each wrapping axis, from its one owner on any Cartesian grid (#2910). The 1-D faces built below
     # number n - 1, which an axis whose last node is distinct from node 0 wraps across n of; in 2-D and 3-D this builds
-    # that wrap, and FP-FDM refuses the layout itself.
+    # that wrap.
     grid_shape = tuple(int(n) for n in geometry.get_grid_shape())
     spans = list(periodic_axis_spans(geometry, bc))
     if len(grid_shape) == 1 and spans[0] == grid_shape[0]:

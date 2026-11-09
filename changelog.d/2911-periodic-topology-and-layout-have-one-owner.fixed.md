@@ -4,10 +4,10 @@
     - A grid whose BC is periodic on every face, spelt with a segment per face or a periodic `default_bc`, used to report no periodic axes, so it did not wrap coordinates and its periodic distance ignored the wrap. It now does both, as it already did for a uniform periodic BC.
     - A cylinder spelt the same way used to report no periodic axis; it now reports its wrapped axis, and its periodic distance wraps that axis.
     - HJB-GFDM and the collocation sampler on such a grid follow.
-  - A `TensorProductGrid` binds into a periodic BC the layout of the axes it wraps, so on a grid whose axes differ in layout a BC that wraps axes of one layout, or none, is bound as before.
+  - On a grid whose axes differ in layout, a `TensorProductGrid` now binds into a periodic BC the layout of the axes it wraps, read from the topology owner. A BC that wraps axes of one layout carries that layout, and one that wraps none carries none. Both used to be bound ENDPOINT_EXCLUSIVE, whichever axes they wrapped.
   - **Refused now:**
     - A BC periodic on one face of an axis, by every reader that asks the owner, with the axis named.
     - `periodic_convention` on a grid whose axes differ in layout, which used to collapse them to one value; and a periodic BC wrapping axes of two layouts when a grid binds it, which used to be bound to that collapsed value, so the inclusive axis was read as one node longer than it is.
-    - In the FP velocity builder: a grid and a BC that both state no layout, or state contradicting ones, where the builder used to read neither statement and give one answer whatever they said.
-    - The endpoint-exclusive layout, where FP-FDM cannot solve it: in 2-D and 3-D by FP-FDM when it is built, since its stencil builds rows for a grid whose last node repeats node 0; and in 1-D by the FP velocity builder, which builds n − 1 faces where that wrap has n. Both used to fail with an `IndexError` in FP-FDM's stencil. FP-FDM's 1-D value route still solves that layout.
+    - In the FP velocity builder, on a Cartesian grid that is not a `TensorProductGrid`: a grid and a BC that both state no layout, or state contradicting ones. The builder used to read the BC's statement alone, whatever the grid stated.
+    - The endpoint-exclusive layout in the FP velocity builder's 1-D route, which builds n − 1 faces where that wrap has n. That route used to fail with an `IndexError` in FP-FDM's stencil. FP-FDM's 1-D value route, and both of its routes in 2-D and 3-D, solve that layout.
   - The FP velocity builder reads the layout from its owner on any Cartesian grid, so on a user `CartesianGrid` whose layout is stated, by the grid or by its BC, it now builds what it builds on a `TensorProductGrid`.

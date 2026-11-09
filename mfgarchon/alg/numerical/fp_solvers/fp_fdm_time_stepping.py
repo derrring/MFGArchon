@@ -905,35 +905,6 @@ def _refuse_partial_periodic(
         )
 
 
-def _refuse_an_exclusive_wrap_in_nd(boundary_conditions: Any, dimension: int, geometry: Any) -> None:
-    """Refuse, on a 2-D or 3-D grid, an axis that wraps with its last node distinct from node 0 (#2910).
-
-    `add_interior_entries_divergence_upwind` (`fp_fdm_alg_divergence_upwind.py`) builds the nD rows for a grid whose
-    last node repeats node 0 on each wrapping axis; on the endpoint-exclusive layout it indexes past the grid, on the
-    value route and the velocity route alike. The layout is read from its owner, `periodic_axis_spans`. A 1-D grid is
-    not refused here: its value route solves that layout correctly. Called by `FPFDMSolver` at hand-over, which both
-    routes pass; stage 2 of #2910 deletes it when that stencil reads the span.
-    """
-    from mfgarchon.geometry.boundary import BoundaryConditions
-    from mfgarchon.geometry.grids.tensor_grid import periodic_axis_spans
-
-    if dimension < 2 or not isinstance(boundary_conditions, BoundaryConditions):
-        return
-    if not declares_periodic(boundary_conditions):
-        return
-    shape = tuple(int(n) for n in geometry.get_grid_shape())
-    spans = periodic_axis_spans(geometry, boundary_conditions)
-    exclusive = [axis for axis, span in enumerate(spans) if span is not None and span == shape[axis]]
-    if exclusive:
-        raise NotImplementedError(
-            f"FP-FDM: axes {exclusive} of this {dimension}-D grid wrap with their last node distinct from node 0 (the "
-            "endpoint-exclusive layout). Its nD stencil, add_interior_entries_divergence_upwind in "
-            "fp_fdm_alg_divergence_upwind.py, builds the rows of a grid whose last node repeats node 0, and on this "
-            "layout it indexes past the grid on either route. Build the grid endpoint-inclusive; stage 2 of #2910 "
-            "lifts this."
-        )
-
-
 def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
     """Refuse a provider-valued wall coefficient rather than dropping it (#1979).
 

@@ -857,15 +857,19 @@ $n$ where it is distinct (endpoint-exclusive). It reads each wrapping axis on it
 
 **A periodic boundary condition carries one convention.** A `TensorProductGrid` binds into it the layout of
 the axes it wraps. A grid whose axes differ in layout has no single `periodic_convention`, and asking for one
-is refused; on such a grid a BC that wraps axes of one layout binds that layout, one that wraps none binds
-nothing, and one that wraps axes of two layouts is refused when it is bound.
+is refused. On such a grid the binding reads which axes wrap from the topology owner:
+- a BC that wraps axes of one layout binds that layout;
+- one that wraps none binds nothing;
+- one that wraps axes of two layouts is refused when it is bound;
+- one periodic on one face of an axis is refused there by the topology owner.
 
 *Not yet met:*
 - *the stencils, ghost fills and operators that still read the BC's one convention field, or decide which
   axes wrap their own way, move to these owners in stage 2 of #2910 and #2911;*
-- *the endpoint-exclusive layout: FP-FDM refuses it in 2-D and 3-D, where its stencil builds rows for a grid
-  whose last node repeats node 0, and the FP velocity builder refuses it in 1-D, where it builds $n - 1$
-  faces. FP-FDM's 1-D value route solves it. Stage 2 of #2910 lifts both refusals.*
+- *the endpoint-exclusive layout in the FP velocity builder's 1-D route: the builder builds $n - 1$ faces,
+  and that wrap has $n$, so it refuses the layout. Stage 2 of #2910 lifts the refusal. On the torus of
+  `test_one_torus_in_two_layouts_gives_one_density`, FP-FDM's density on an exclusive grid agrees with an
+  inclusive grid's on their shared nodes in 1-D by the value route, and in 2-D and 3-D by both routes.*
 
 ### Spatial parameters are per-axis sequences
 

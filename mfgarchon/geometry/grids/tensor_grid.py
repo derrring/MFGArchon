@@ -321,15 +321,16 @@ class TensorProductGrid(
                 "Example: boundary_conditions=no_flux_bc(dimension=1)"
             )
         # bind_dimension returns a new BC with dimension set, or validates if already set
-        boundary_conditions = boundary_conditions.bind_dimension(dimension)
-        boundary_conditions = self._bind_periodic_convention(boundary_conditions)
-        self._boundary_conditions = boundary_conditions.bind_geometry(self)  # owner queries decide on it (#2512 B1)
-
         # Cache for flattened grid (computed lazily, perf optimization)
         self._flattened_cache: NDArray | None = None
 
         # Region registry for named boundary/subdomain marking (Issue #590 Phase 1.3)
         self._regions: dict[str, NDArray[np.bool_]] = {}
+
+        # The bind reads a placed segment's faces through this grid, which needs the two above (#2910).
+        boundary_conditions = boundary_conditions.bind_dimension(dimension)
+        boundary_conditions = self._bind_periodic_convention(boundary_conditions)
+        self._boundary_conditions = boundary_conditions.bind_geometry(self)  # owner queries decide on it (#2512 B1)
 
     # Geometry ABC implementation - properties
     @property
@@ -2113,8 +2114,9 @@ def bind_periodic_convention(grid: Any, bc: Any) -> Any:
     is wrong on an inclusive axis, so binding it is what makes those paths read the layout without declaring anything.
 
     Where the grid's axes share one layout, that layout is the convention. Where they differ, only the axes the BC
-    puts a periodic face on are read (`periodic_faces`): a BC that wraps none of them, such as a periodic
-    ``default_bc`` every face overrides, is returned as it is, and one that wraps axes of one layout carries that one.
+    wraps are read, from the topology owner (`wrapping_axes`), which refuses a BC periodic on one face of an axis: a
+    BC that wraps none of them, such as a periodic ``default_bc`` every face overrides, is returned as it is, and one
+    that wraps axes of one layout carries that one.
     A BC carries one convention, so wrapped axes that differ in layout cannot be carried by it and are refused;
     reading each such axis's span is `periodic_axis_spans`, and carrying them is stage 2 of #2910. A BC that states a
     convention is not overridden: it is checked, and a contradiction raises.
@@ -2122,14 +2124,13 @@ def bind_periodic_convention(grid: Any, bc: Any) -> Any:
     Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
     """
     from mfgarchon.geometry.boundary.bc_utils import declares_periodic
-    from mfgarchon.geometry.boundary.conditions import periodic_faces
+    from mfgarchon.geometry.boundary.conditions import wrapping_axes
 
     if not declares_periodic(bc):
         return bc
     layouts = {axis: grid._axis_convention(axis) for axis, coords in enumerate(grid.coordinates) if len(coords) >= 2}
     if len(set(layouts.values())) > 1:
-        faces = periodic_faces(bc, grid.dimension, grid)
-        axes = [axis for axis in range(grid.dimension) if faces[2 * axis] or faces[2 * axis + 1]]
+        axes = list(wrapping_axes(bc, grid.dimension, grid))
         if not axes:
             return bc
         layouts = {axis: layouts[axis] for axis in axes if axis in layouts}
