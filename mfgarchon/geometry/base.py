@@ -1012,17 +1012,13 @@ class UnstructuredMesh(Geometry):
         if self.mesh_data is None:
             raise ValueError("Mesh not generated. Call generate_mesh() first.")
 
-        try:
-            from mfgarchon.alg.numerical.fem.assembly import (
-                assemble_mass,
-                assemble_stiffness,
-                create_basis,
-            )
-            from mfgarchon.alg.numerical.fem.mesh_adapter import meshdata_to_skfem
-        except ImportError:
-            raise ImportError(
-                "scikit-fem is required for FEM operators on unstructured meshes. Install with: pip install scikit-fem"
-            ) from None
+        # Both import without scikit-fem; their _import_skfem() refuses, with its install advice, when it is absent
+        from mfgarchon.alg.numerical.fem.assembly import (
+            assemble_mass,
+            assemble_stiffness,
+            create_basis,
+        )
+        from mfgarchon.alg.numerical.fem.mesh_adapter import meshdata_to_skfem
 
         self._skfem_mesh = meshdata_to_skfem(self.mesh_data)
         self._fem_basis = create_basis(self._skfem_mesh, order=1)

@@ -354,12 +354,9 @@ class HDF5Recorder(BaseRecorder):
             if key not in meta.attrs:
                 meta.attrs[key] = value
 
-        try:
-            from mfgarchon import __version__
+        from mfgarchon import __version__
 
-            meta.attrs["version"] = __version__
-        except ImportError:
-            meta.attrs["version"] = "unknown"
+        meta.attrs["version"] = __version__
 
         self._file.flush()
 

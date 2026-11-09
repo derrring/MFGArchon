@@ -17,7 +17,8 @@ from mfgarchon.utils.mfg_logging import get_logger
 from .mesh_2d import Mesh2D
 
 if TYPE_CHECKING:
-    from mfgarchon.geometry.meshes.mesh_data import BaseGeometry, MeshData
+    from mfgarchon.geometry.base import UnstructuredMesh
+    from mfgarchon.geometry.meshes.mesh_data import MeshData
 
 logger = get_logger(__name__)
 
@@ -32,7 +33,7 @@ class MeshPipeline:
 
     def __init__(
         self,
-        geometry: BaseGeometry | dict,
+        geometry: UnstructuredMesh | dict,
         output_dir: str | None = None,
         verbose: bool = True,
     ):
@@ -64,7 +65,7 @@ class MeshPipeline:
             "visualization_ready": False,
         }
 
-    def _create_geometry_from_config(self, config: dict) -> BaseGeometry:
+    def _create_geometry_from_config(self, config: dict) -> UnstructuredMesh:
         """Create geometry object from configuration dictionary."""
         geometry_type = config.get("type", "rectangle")
         dimension = config.get("dimension", 2)
@@ -297,10 +298,10 @@ class MeshManager:
             config: Global mesh configuration
         """
         self.config = config or {}
-        self.geometries: dict[str, BaseGeometry] = {}
+        self.geometries: dict[str, UnstructuredMesh] = {}
         self.pipelines: dict[str, MeshPipeline] = {}
 
-    def create_geometry(self, name: str, geometry_config: dict) -> BaseGeometry:
+    def create_geometry(self, name: str, geometry_config: dict) -> UnstructuredMesh:
         """Create and register a geometry."""
         if geometry_config.get("dimension", 2) == 2:
             geometry = Mesh2D(

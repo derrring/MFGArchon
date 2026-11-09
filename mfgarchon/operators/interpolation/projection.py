@@ -46,7 +46,7 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import numpy as np
 
@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.backends.base_backend import BaseBackend
-    from mfgarchon.geometry.base import BaseGeometry
 
 logger = get_logger(__name__)
 
@@ -114,9 +113,7 @@ class ProjectionRegistry:
         return decorator
 
     @classmethod
-    def get_projector(
-        cls, source: BaseGeometry, target: BaseGeometry, direction: Literal["hjb_to_fp", "fp_to_hjb"]
-    ) -> Callable | None:
+    def get_projector(cls, source: Any, target: Any, direction: Literal["hjb_to_fp", "fp_to_hjb"]) -> Callable | None:
         """
         Get specialized projector with hierarchical fallback.
 
@@ -177,8 +174,8 @@ class GeometryProjector:
 
     def __init__(
         self,
-        hjb_geometry: BaseGeometry,
-        fp_geometry: BaseGeometry,
+        hjb_geometry: Any,
+        fp_geometry: Any,
         projection_method: Literal["auto", "kde", "interpolation", "nearest"] = "auto",
     ):
         """
@@ -949,8 +946,8 @@ class GeometryProjector:
     @classmethod
     def create(
         cls,
-        hjb_geometry: BaseGeometry,
-        fp_geometry: BaseGeometry,
+        hjb_geometry: Any,
+        fp_geometry: Any,
         projection_method: Literal["auto", "kde", "interpolation", "nearest"] = "auto",
     ) -> GeometryProjector:
         """
@@ -989,7 +986,7 @@ class GeometryProjector:
 # =============================================================================
 
 
-def _mesh_to_grid_delaunay(mesh_geo: BaseGeometry, grid_geo: BaseGeometry, mesh_values: NDArray, **kwargs) -> NDArray:
+def _mesh_to_grid_delaunay(mesh_geo: Any, grid_geo: Any, mesh_values: NDArray, **kwargs) -> NDArray:
     """
     Project from FEM unstructured mesh to regular grid using Delaunay interpolation.
 
@@ -1065,9 +1062,7 @@ def _mesh_to_grid_delaunay(mesh_geo: BaseGeometry, grid_geo: BaseGeometry, mesh_
     return grid_values_flat
 
 
-def _grid_to_mesh_interpolation(
-    grid_geo: BaseGeometry, mesh_geo: BaseGeometry, grid_values: NDArray, **kwargs
-) -> NDArray:
+def _grid_to_mesh_interpolation(grid_geo: Any, mesh_geo: Any, grid_values: NDArray, **kwargs) -> NDArray:
     """
     Project from regular grid to FEM mesh using bilinear/trilinear interpolation.
 
@@ -1118,7 +1113,7 @@ def _register_fem_mesh_projections():
     """
     Automatically register specialized FEM mesh projections.
 
-    This function is called on module import if scipy is available.
+    This function is called on module import.
     It registers Delaunay-based projections for all UnstructuredMesh types
     (Mesh2D, Mesh3D, etc.).
 
@@ -1128,25 +1123,14 @@ def _register_fem_mesh_projections():
 
     Notes:
         - Uses category-based registration (isinstance checks)
-        - Falls back to nearest neighbor if scipy not available
-        - Silent failure if scipy missing (uses existing fallbacks)
     """
-    try:
-        # Only register if scipy available
-        import scipy.interpolate
-        import scipy.spatial  # noqa: F401
+    from mfgarchon.geometry.base import CartesianGrid, UnstructuredMesh
 
-        from mfgarchon.geometry.base import CartesianGrid, UnstructuredMesh
+    # Register mesh → grid (Delaunay interpolation)
+    ProjectionRegistry.register(UnstructuredMesh, CartesianGrid, "fp_to_hjb")(_mesh_to_grid_delaunay)
 
-        # Register mesh → grid (Delaunay interpolation)
-        ProjectionRegistry.register(UnstructuredMesh, CartesianGrid, "fp_to_hjb")(_mesh_to_grid_delaunay)
-
-        # Register grid → mesh (bilinear/trilinear interpolation)
-        ProjectionRegistry.register(CartesianGrid, UnstructuredMesh, "hjb_to_fp")(_grid_to_mesh_interpolation)
-
-    except ImportError:
-        # scipy not available - will use fallback methods
-        pass
+    # Register grid → mesh (bilinear/trilinear interpolation)
+    ProjectionRegistry.register(CartesianGrid, UnstructuredMesh, "hjb_to_fp")(_grid_to_mesh_interpolation)
 
 
 # Register on module import

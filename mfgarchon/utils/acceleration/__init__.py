@@ -35,35 +35,32 @@ except ImportError:
     DEFAULT_DEVICE = None
 
 # Re-export JAX utilities (explicit imports, Issue #756)
-try:
-    from .jax_utils import (
-        HAS_JAX,
-        adaptive_time_step,
-        apply_boundary_conditions,
-        compute_convergence_error,
-        compute_hamiltonian,
-        compute_jacobian,
-        compute_jacobian_jit,
-        compute_optimal_control,
-        create_optimization_schedule,
-        ensure_jax_available,
-        finite_difference_1d,
-        finite_difference_2d,
-        from_device,
-        mass_conservation_constraint,
-        memory_usage_tracker,
-        profile_jax_function,
-        to_device,
-        vectorized_solve,
-    )
-    from .jax_utils import (
-        tridiagonal_solve as jax_tridiagonal_solve,
-    )
+from .jax_utils import (  # noqa: E402
+    HAS_JAX,
+    adaptive_time_step,
+    apply_boundary_conditions,
+    compute_convergence_error,
+    compute_hamiltonian,
+    compute_jacobian,
+    compute_jacobian_jit,
+    compute_optimal_control,
+    create_optimization_schedule,
+    ensure_jax_available,
+    finite_difference_1d,
+    finite_difference_2d,
+    from_device,
+    mass_conservation_constraint,
+    memory_usage_tracker,
+    profile_jax_function,
+    to_device,
+    vectorized_solve,
+)
+from .jax_utils import (  # noqa: E402
+    tridiagonal_solve as jax_tridiagonal_solve,
+)
 
-    # Only mark as available if JAX is actually installed
-    JAX_UTILS_AVAILABLE = HAS_JAX
-except ImportError:
-    JAX_UTILS_AVAILABLE = False
+# Only mark as available if JAX is actually installed
+JAX_UTILS_AVAILABLE = HAS_JAX
 
 # PyTorch utilities, re-exported LAZILY (PEP 562).
 #
@@ -147,15 +144,11 @@ def __getattr__(name: str):
     if name in _LAZY_TORCH:
         from importlib import import_module
 
-        try:
-            module = import_module(f".{_LAZY_TORCH[name]}", __name__)
-        except ImportError:
-            if name == "TORCH_UTILS_AVAILABLE":
-                globals()[name] = False
-                return False
-            raise
+        # torch_utils imports without torch, and reports torch in HAS_TORCH (#2088): a failure here is a defect in
+        # the library, not an absent dependency, so it propagates.
+        module = import_module(f".{_LAZY_TORCH[name]}", __name__)
         if name == "TORCH_UTILS_AVAILABLE":
-            value = bool(getattr(module, "HAS_TORCH", False))
+            value = bool(module.HAS_TORCH)
             globals()[name] = value
             return value
         attr = "tridiagonal_solve" if name == "torch_tridiagonal_solve" else name
@@ -177,17 +170,14 @@ def get_acceleration_info():
     }
 
     if JAX_UTILS_AVAILABLE:
-        try:
-            from .jax_utils import HAS_GPU, HAS_JAX
+        from .jax_utils import HAS_GPU, HAS_JAX
 
-            info.update(
-                {
-                    "jax_available": HAS_JAX,
-                    "jax_gpu_available": HAS_GPU,
-                }
-            )
-        except ImportError as e:
-            logger.debug(f"Could not retrieve JAX detailed info: {e}")
+        info.update(
+            {
+                "jax_available": HAS_JAX,
+                "jax_gpu_available": HAS_GPU,
+            }
+        )
 
     # `sys.modules[__name__].NAME`, not the bare name and not `__getattr__(...)` directly.
     # A bare global lookup inside a function does not consult the module `__getattr__` -- it goes to
@@ -197,18 +187,15 @@ def get_acceleration_info():
     # flag would have been silently ignored. A real attribute lookup checks `__dict__` first and
     # falls through to `__getattr__` only when unbound. Found by review.
     if sys.modules[__name__].TORCH_UTILS_AVAILABLE:
-        try:
-            from .torch_utils import HAS_CUDA, HAS_MPS, HAS_TORCH
+        from .torch_utils import HAS_CUDA, HAS_MPS, HAS_TORCH
 
-            info.update(
-                {
-                    "torch_available": HAS_TORCH,
-                    "torch_cuda_available": HAS_CUDA,
-                    "torch_mps_available": HAS_MPS,
-                }
-            )
-        except ImportError as e:
-            logger.debug(f"Could not retrieve PyTorch detailed info: {e}")
+        info.update(
+            {
+                "torch_available": HAS_TORCH,
+                "torch_cuda_available": HAS_CUDA,
+                "torch_mps_available": HAS_MPS,
+            }
+        )
 
     return info
 

@@ -4,9 +4,8 @@ MFGarchon Utilities Module.
 This module contains core utilities for the MFGarchon package.
 All plotting functionality has been permanently moved to mfgarchon.visualization.
 
-For visualization, use:
-    from mfgarchon.visualization import create_visualization_manager
-    from mfgarchon.visualization import plot_convergence, plot_results
+For visualization, use for example:
+    from mfgarchon.visualization import plot_convergence_summary, plot_mass_history
 
 For logging (preferred import path):
     from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
@@ -49,6 +48,7 @@ from .adjoint_validation import (
 
 # Core utility functions (non-plotting)
 from .aux_func import npart, ppart
+from .cli import main as cli_main  # noqa: F401
 from .convergence import (
     ConvergenceWrapper,
     DistributionComparator,
@@ -64,6 +64,27 @@ from .convergence import (
     sweep_change,
     test_particle_detection,
     wrap_solver_with_adaptive_convergence,
+)
+from .data.polars_integration import (  # noqa: F401
+    POLARS_AVAILABLE,
+    MFGDataFrame,
+    benchmark_polars_vs_pandas,
+    create_data_exporter,
+    create_mfg_dataframe,
+    create_parameter_sweep_analyzer,
+    create_time_series_analyzer,
+)
+
+# Data recorder with pluggable backends (NPZ, HDF5)
+from .data.recorder import (  # noqa: F401
+    BaseRecorder,
+    DataRecorderProtocol,
+    HDF5Recorder,
+    NPZRecorder,
+    create_recorder,
+    get_convergence_history,
+    inspect_experiment,
+    load_experiment,
 )
 
 # Subdirectory imports
@@ -92,6 +113,13 @@ from .exceptions import (
     validate_array_dimensions,
     validate_parameter_value,
     validate_solver_state,
+)
+from .experiment_manager import (  # noqa: F401
+    load_experiment_data,
+    load_experiments_from_dir,
+    plot_comparison_final_m,
+    plot_comparison_total_mass,
+    save_experiment_data,
 )
 from .geometry import (
     BoxObstacle,
@@ -135,7 +163,15 @@ from .mfg_logging.logger import (
     log_solver_start,
     log_validation_error,
 )
+from .notebooks.reporting import (  # noqa: F401
+    MFGNotebookReporter,
+    create_comparative_analysis,
+    create_mfg_research_report,
+)
 from .numerical.integration import get_integration_info, trapezoid
+
+# NOTE: adaptive_bandwidth_selection alias was removed in v0.17.0
+# Use estimate_kde_bandwidth directly instead
 from .numerical.particle.interpolation import (
     estimate_kde_bandwidth,
     interpolate_grid_to_particles,
@@ -152,122 +188,42 @@ from .sparse_operations import (
     sparse_matmul,
 )
 
-# NOTE: adaptive_bandwidth_selection alias was removed in v0.17.0
-# Use estimate_kde_bandwidth directly instead
-
-# Optional modules with graceful handling
+# memory_management and performance.monitoring import psutil at module top, and AGENTS.md calls psutil optional
+# (#2930). Only psutil's absence is caught: any other failure of these imports is a defect and propagates.
 try:
-    from .notebooks.reporting import (  # noqa: F401
-        MFGNotebookReporter,
-        create_comparative_analysis,
-        create_mfg_research_report,
-    )
-
-    NOTEBOOK_REPORTING_AVAILABLE = True
-except ImportError:
-    NOTEBOOK_REPORTING_AVAILABLE = False
-
-try:
-    from .data.polars_integration import (
-        MFGDataFrame,  # noqa: F401
-        benchmark_polars_vs_pandas,  # noqa: F401
-        create_data_exporter,  # noqa: F401
-        create_mfg_dataframe,  # noqa: F401
-        create_parameter_sweep_analyzer,  # noqa: F401
-        create_time_series_analyzer,  # noqa: F401
-    )
-
-    POLARS_AVAILABLE = True
-except ImportError:
-    POLARS_AVAILABLE = False
-
-# Utility modules
-try:
-    from .cli import main as cli_main  # noqa: F401
-
-    CLI_AVAILABLE = True
-except ImportError:
-    CLI_AVAILABLE = False
-
-try:
-    from .experiment_manager import (
-        load_experiment_data,  # noqa: F401
-        load_experiments_from_dir,  # noqa: F401
-        plot_comparison_final_m,  # noqa: F401
-        plot_comparison_total_mass,  # noqa: F401
-        save_experiment_data,  # noqa: F401
-    )
-
-    EXPERIMENT_MANAGER_AVAILABLE = True
-except ImportError:
-    EXPERIMENT_MANAGER_AVAILABLE = False
-
-# Data recorder with pluggable backends (NPZ, HDF5)
-try:
-    from .data.recorder import (
-        BaseRecorder,  # noqa: F401
-        DataRecorderProtocol,  # noqa: F401
-        HDF5Recorder,  # noqa: F401
-        NPZRecorder,  # noqa: F401
-        create_recorder,  # noqa: F401
-        get_convergence_history,  # noqa: F401
-        inspect_experiment,  # noqa: F401
-        load_experiment,  # noqa: F401
-    )
-
-    DATA_RECORDER_AVAILABLE = True
-except ImportError:
-    DATA_RECORDER_AVAILABLE = False
-
-# HDF5_RECORDER_AVAILABLE deprecated - use DATA_RECORDER_AVAILABLE instead
-HDF5_RECORDER_AVAILABLE = DATA_RECORDER_AVAILABLE  # Backward compatibility alias
-
-try:
-    from .memory_management import (
-        MemoryMonitor,  # noqa: F401
-        check_system_memory_availability,  # noqa: F401
-        estimate_problem_memory_requirements,  # noqa: F401
-        memory_usage_report,  # noqa: F401
+    from .memory_management import (  # noqa: F401
+        MemoryMonitor,
+        check_system_memory_availability,
+        estimate_problem_memory_requirements,
+        memory_usage_report,
     )
 
     MEMORY_MANAGEMENT_AVAILABLE = True
-except ImportError:
+except ModuleNotFoundError as err:
+    if err.name != "psutil":
+        raise
     MEMORY_MANAGEMENT_AVAILABLE = False
 
 try:
-    from .performance.monitoring import (
-        PerformanceMonitor,  # noqa: F401
-        benchmark_solver,  # noqa: F401
-        get_performance_report,  # noqa: F401
-        performance_tracked,  # noqa: F401
+    from .performance.monitoring import (  # noqa: F401
+        PerformanceMonitor,
+        benchmark_solver,
+        get_performance_report,
+        performance_tracked,
     )
 
     PERFORMANCE_MONITORING_AVAILABLE = True
-except ImportError:
+except ModuleNotFoundError as err:
+    if err.name != "psutil":
+        raise
     PERFORMANCE_MONITORING_AVAILABLE = False
-
-# Availability info
-AVAILABLE_MODULES = {
-    "notebook_reporting": NOTEBOOK_REPORTING_AVAILABLE,
-    "polars_integration": POLARS_AVAILABLE,
-    "cli": CLI_AVAILABLE,
-    "experiment_manager": EXPERIMENT_MANAGER_AVAILABLE,
-    "data_recorder": DATA_RECORDER_AVAILABLE,
-    "hdf5_recorder": HDF5_RECORDER_AVAILABLE,  # Deprecated, use data_recorder
-    "memory_management": MEMORY_MANAGEMENT_AVAILABLE,
-    "performance_monitoring": PERFORMANCE_MONITORING_AVAILABLE,
-}
 
 # Public API - Core utilities always available
 # Keep organized with comments, don't auto-sort
 __all__ = [
-    # Availability flags
-    "AVAILABLE_MODULES",
-    "CLI_AVAILABLE",
-    "EXPERIMENT_MANAGER_AVAILABLE",
-    "HDF5_RECORDER_AVAILABLE",
+    # Availability flags: whether polars is installed (re-exported from data.polars_integration), and whether the
+    # two psutil-backed modules imported
     "MEMORY_MANAGEMENT_AVAILABLE",
-    "NOTEBOOK_REPORTING_AVAILABLE",
     "PERFORMANCE_MONITORING_AVAILABLE",
     "POLARS_AVAILABLE",
     # Adjoint duality validation (Issue #580)
@@ -386,49 +342,43 @@ __all__ = [
     "create_circle_obstacle",
     "create_rectangle_obstacle",
     "create_sphere_obstacle",
-    # Data recorder availability
-    "DATA_RECORDER_AVAILABLE",
 ]
 
-# Add optional modules to public API if available
-if NOTEBOOK_REPORTING_AVAILABLE:
-    __all__.extend(
-        [
-            "MFGNotebookReporter",
-            "create_comparative_analysis",
-            "create_mfg_research_report",
-        ]
-    )
+# Re-exported submodule APIs
+__all__.extend(
+    [
+        "MFGNotebookReporter",
+        "create_comparative_analysis",
+        "create_mfg_research_report",
+    ]
+)
 
-if POLARS_AVAILABLE:
-    __all__.extend(
-        [
-            "MFGDataFrame",
-            "benchmark_polars_vs_pandas",
-            "create_data_exporter",
-            "create_mfg_dataframe",
-            "create_parameter_sweep_analyzer",
-            "create_time_series_analyzer",
-        ]
-    )
+__all__.extend(
+    [
+        "MFGDataFrame",
+        "benchmark_polars_vs_pandas",
+        "create_data_exporter",
+        "create_mfg_dataframe",
+        "create_parameter_sweep_analyzer",
+        "create_time_series_analyzer",
+    ]
+)
 
-if CLI_AVAILABLE:
-    __all__.extend(
-        [
-            "cli_main",
-        ]
-    )
+__all__.extend(
+    [
+        "cli_main",
+    ]
+)
 
-if EXPERIMENT_MANAGER_AVAILABLE:
-    __all__.extend(
-        [
-            "load_experiment_data",
-            "load_experiments_from_dir",
-            "plot_comparison_final_m",
-            "plot_comparison_total_mass",
-            "save_experiment_data",
-        ]
-    )
+__all__.extend(
+    [
+        "load_experiment_data",
+        "load_experiments_from_dir",
+        "plot_comparison_final_m",
+        "plot_comparison_total_mass",
+        "save_experiment_data",
+    ]
+)
 
 if MEMORY_MANAGEMENT_AVAILABLE:
     __all__.extend(
@@ -450,16 +400,15 @@ if PERFORMANCE_MONITORING_AVAILABLE:
         ]
     )
 
-if DATA_RECORDER_AVAILABLE:
-    __all__.extend(
-        [
-            "BaseRecorder",
-            "DataRecorderProtocol",
-            "HDF5Recorder",
-            "NPZRecorder",
-            "create_recorder",
-            "load_experiment",
-            "get_convergence_history",
-            "inspect_experiment",
-        ]
-    )
+__all__.extend(
+    [
+        "BaseRecorder",
+        "DataRecorderProtocol",
+        "HDF5Recorder",
+        "NPZRecorder",
+        "create_recorder",
+        "load_experiment",
+        "get_convergence_history",
+        "inspect_experiment",
+    ]
+)

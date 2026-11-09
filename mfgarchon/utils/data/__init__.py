@@ -60,27 +60,24 @@ __all__ = [
     "validate_solution_array",
 ]
 
-# Optional polars integration
-try:
-    from .polars_integration import (
-        MFGDataFrame,  # noqa: F401
-        benchmark_polars_vs_pandas,  # noqa: F401
-        create_data_exporter,  # noqa: F401
-        create_mfg_dataframe,  # noqa: F401
-        create_parameter_sweep_analyzer,  # noqa: F401
-        create_time_series_analyzer,  # noqa: F401
-    )
+# Polars integration: importable without polars; POLARS_AVAILABLE, owned there, says whether polars is installed
+from .polars_integration import (  # noqa: F401
+    POLARS_AVAILABLE,
+    MFGDataFrame,
+    benchmark_polars_vs_pandas,
+    create_data_exporter,
+    create_mfg_dataframe,
+    create_parameter_sweep_analyzer,
+    create_time_series_analyzer,
+)
 
-    __all__.extend(
-        [
-            "MFGDataFrame",
-            "benchmark_polars_vs_pandas",
-            "create_data_exporter",
-            "create_mfg_dataframe",
-            "create_parameter_sweep_analyzer",
-            "create_time_series_analyzer",
-        ]
-    )
-    POLARS_AVAILABLE = True
-except ImportError:
-    POLARS_AVAILABLE = False
+__all__.extend(
+    [
+        "MFGDataFrame",
+        "benchmark_polars_vs_pandas",
+        "create_data_exporter",
+        "create_mfg_dataframe",
+        "create_parameter_sweep_analyzer",
+        "create_time_series_analyzer",
+    ]
+)

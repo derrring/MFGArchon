@@ -64,37 +64,16 @@ from .geometry import (  # noqa: E402
 )
 from .types import NumericalScheme  # noqa: E402
 
-# Geometry system for 2D/3D complex domains (optional dependency)
-try:
-    from .geometry import (
-        BoundaryManager,  # noqa: F401
-        GeometricBoundaryCondition,  # noqa: F401
-        Mesh2D,  # noqa: F401
-        Mesh3D,  # noqa: F401
-        MeshData,  # noqa: F401
-        MeshManager,  # noqa: F401
-        MeshPipeline,  # noqa: F401
-    )
-
-    GEOMETRY_SYSTEM_AVAILABLE = True
-except ImportError:
-    GEOMETRY_SYSTEM_AVAILABLE = False
-
 # High-dimensional MFG capabilities - REMOVED in v0.14.0
 # Use MFGProblem directly with spatial_bounds and spatial_discretization parameters
 HIGHDIM_MFG_AVAILABLE = False
 
-# Interactive research reporting (optional dependency)
-try:
-    from .utils.notebooks.reporting import (  # noqa: F401
-        MFGNotebookReporter,
-        create_comparative_analysis,
-        create_mfg_research_report,
-    )
-
-    NOTEBOOK_REPORTING_AVAILABLE = True
-except ImportError:
-    NOTEBOOK_REPORTING_AVAILABLE = False
+# Interactive research reporting
+from .utils.notebooks.reporting import (  # noqa: E402, F401
+    MFGNotebookReporter,
+    create_comparative_analysis,
+    create_mfg_research_report,
+)
 
 
 # Optional dependency utilities
@@ -173,28 +152,13 @@ __all__ = [
     "show_optional_features",
 ]
 
-# Add conditionally available imports to __all__ when available
-if GEOMETRY_SYSTEM_AVAILABLE:
-    __all__.extend(
-        [
-            "BoundaryManager",
-            "GeometricBoundaryCondition",
-            "Mesh2D",
-            "Mesh3D",
-            "MeshData",
-            "MeshManager",
-            "MeshPipeline",
-        ]
-    )
-
 # GridBasedMFGProblem, HighDimMFGProblem, HybridMFGSolver removed in v0.14.0
 # Use MFGProblem directly instead
 
-if NOTEBOOK_REPORTING_AVAILABLE:
-    __all__.extend(
-        [
-            "MFGNotebookReporter",
-            "create_comparative_analysis",
-            "create_mfg_research_report",
-        ]
-    )
+__all__.extend(
+    [
+        "MFGNotebookReporter",
+        "create_comparative_analysis",
+        "create_mfg_research_report",
+    ]
+)

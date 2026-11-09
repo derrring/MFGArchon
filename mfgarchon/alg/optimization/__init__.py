@@ -11,6 +11,10 @@ providing alternatives to the classical HJB-FP system approach.
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
 
+# Optimal transport solvers exist only when POT is installed: the subpackage defines them under that condition and
+# reports it in POT_AVAILABLE, so they are imported only then.
+from .optimal_transport import POT_AVAILABLE, SCIPY_AVAILABLE
+
 # Import variational problem formulation
 from .variational_problem import (
     VariationalMFGComponents,
@@ -25,11 +29,22 @@ from .variational_solvers import (
     VariationalSolverResult,
 )
 
-# Import optimal transport solvers (conditional on dependencies)
-try:
+OT_IMPORTS_AVAILABLE = SCIPY_AVAILABLE and POT_AVAILABLE
+
+__all__ = [
+    "BaseOptimizationSolver",
+    # Variational Problem
+    "VariationalMFGComponents",
+    "VariationalMFGProblem",
+    # Variational Solvers
+    "BaseVariationalSolver",
+    "PrimalDualMFGSolver",
+    "VariationalMFGSolver",
+    "VariationalSolverResult",
+]
+
+if OT_IMPORTS_AVAILABLE:
     from .optimal_transport import (
-        POT_AVAILABLE,
-        SCIPY_AVAILABLE,
         SinkhornMFGSolver,
         SinkhornSolverConfig,
         SinkhornSolverResult,
@@ -38,53 +53,13 @@ try:
         WassersteinSolverResult,
     )
 
-    OT_IMPORTS_AVAILABLE = SCIPY_AVAILABLE and POT_AVAILABLE
-
-    if OT_IMPORTS_AVAILABLE:
-        __all__ = [
-            "BaseOptimizationSolver",
-            # Variational Problem
-            "VariationalMFGComponents",
-            "VariationalMFGProblem",
-            # Variational Solvers
-            "BaseVariationalSolver",
-            "PrimalDualMFGSolver",
-            "SinkhornMFGSolver",
-            "SinkhornSolverConfig",
-            "SinkhornSolverResult",
-            "VariationalMFGSolver",
-            "VariationalSolverResult",
-            # Optimal Transport Solvers
-            "WassersteinMFGSolver",
-            "WassersteinSolverConfig",
-            "WassersteinSolverResult",
-        ]
-    else:
-        __all__ = [
-            "BaseOptimizationSolver",
-            # Variational Problem
-            "VariationalMFGComponents",
-            "VariationalMFGProblem",
-            # Variational Solvers
-            "BaseVariationalSolver",
-            "PrimalDualMFGSolver",
-            "VariationalMFGSolver",
-            "VariationalSolverResult",
-        ]
-
-except ImportError:
-    # Optimal transport not available
-    OT_IMPORTS_AVAILABLE = False
-    __all__ = [
-        "BaseOptimizationSolver",
-        # Variational Problem
-        "VariationalMFGComponents",
-        "VariationalMFGProblem",
-        # Variational Solvers
-        "BaseVariationalSolver",
-        "PrimalDualMFGSolver",
-        "VariationalMFGSolver",
-        "VariationalSolverResult",
+    __all__ += [
+        "SinkhornMFGSolver",
+        "SinkhornSolverConfig",
+        "SinkhornSolverResult",
+        "WassersteinMFGSolver",
+        "WassersteinSolverConfig",
+        "WassersteinSolverResult",
     ]
 
 # Always export availability info

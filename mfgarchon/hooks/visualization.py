@@ -425,23 +425,15 @@ class ProgressBarHook(SolverHooks):
         self.max_iterations = max_iterations
         self.update_every = update_every
         self.pbar = None
-        self.tqdm_available = False
 
-        # Import progress bar (requires rich)
-        try:
-            from mfgarchon.utils.progress import RichProgressBar
+        from mfgarchon.utils.progress import RichProgressBar
 
-            self.progress_bar_class = RichProgressBar
-            self.tqdm_available = True
-        except ImportError:
-            self.tqdm_available = False
-            print("Warning: Progress bar not available (install rich)")
+        self.progress_bar_class = RichProgressBar
 
     def on_solve_start(self, initial_state: SpatialTemporalState) -> None:
         """Initialize progress bar."""
-        if self.tqdm_available:
-            desc = f"Solving MFG (residual: {initial_state.residual:.2e})"
-            self.pbar = self.progress_bar_class(total=self.max_iterations, desc=desc, unit="iter", dynamic_ncols=True)
+        desc = f"Solving MFG (residual: {initial_state.residual:.2e})"
+        self.pbar = self.progress_bar_class(total=self.max_iterations, desc=desc, unit="iter", dynamic_ncols=True)
 
     def on_iteration_end(self, state: SpatialTemporalState) -> str | None:
         """Update progress bar."""
