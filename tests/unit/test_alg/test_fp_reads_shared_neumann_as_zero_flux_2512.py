@@ -177,7 +177,7 @@ def test_every_explicit_route_refuses_a_neumann(family):
 
 
 def test_the_refusal_names_a_neumann_fall_through():
-    """A BC whose segments cover every face can still carry default_bc=NEUMANN, which the deprecated
+    """A BC whose segments cover every face can still carry default_bc=NEUMANN, which
     mixed_bc sets; the refusal says so and how to avoid it. It refuses even where no face reaches the
     default, until #2512's row B1 resolves face coverage."""
     covered = BoundaryConditions(

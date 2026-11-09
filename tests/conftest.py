@@ -396,18 +396,6 @@ def solver_type(request):
     return request.param
 
 
-@pytest.fixture
-def solver_factory():
-    """Factory function for creating solvers."""
-
-    def _create_solver(problem, config=None):
-        from mfgarchon.factory import create_solver
-
-        return create_solver(problem, config=config)
-
-    return _create_solver
-
-
 # =============================================================================
 # Mathematical Properties Fixtures
 # =============================================================================

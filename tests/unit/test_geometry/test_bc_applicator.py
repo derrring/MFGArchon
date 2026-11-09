@@ -679,6 +679,15 @@ class TestCalculatorClasses:
         )
         assert np.isclose(ghost, 7.0)
 
+    def test_zero_flux_calculator(self):
+        """Test ZeroFluxCalculator (physics-aware zero total flux)."""
+        from mfgarchon.geometry.boundary import ZeroFluxCalculator
+
+        # Zero drift: reduces to Neumann (ghost = interior)
+        calc = ZeroFluxCalculator(drift_velocity=0.0, diffusion_coeff=1.0)
+        ghost = calc.compute(interior_value=3.0, dx=0.1, side="min")
+        assert np.isclose(ghost, 3.0)
+
 
 class TestGhostBuffer:
     """Test GhostBuffer with Topology/Calculator composition."""

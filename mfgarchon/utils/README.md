@@ -492,8 +492,7 @@ with solver_progress(max_iterations, "My Solver") as progress:
 ```python
 # Good: Use configuration files for reproducibility
 config = load_config_file("experiment_config.yaml")
-solver = create_solver(**config['solver'])
-result = solver.solve(**config['execution'])
+result = problem.solve(**config['solver'])
 ```
 
 ## 📊 Integration Examples
@@ -540,8 +539,6 @@ def production_solve(problem_spec, solver_config):
     problem = validation.validate_problem_specification(problem_spec)
     config = validation.validate_solver_configuration(solver_config)
     
-    # Create solver with enhancements
-    solver = create_solver(**config)
     # Solve with comprehensive error handling
     try:
         with SolverTimer("Production Solve") as timer:

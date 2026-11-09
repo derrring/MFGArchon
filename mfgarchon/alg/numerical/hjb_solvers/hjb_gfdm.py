@@ -2424,20 +2424,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         "robin": BCType.ROBIN,
     }
 
-    @staticmethod
-    def _refuse_unread(carried: dict[str, Any]) -> None:
-        unread = {
-            k: v
-            for k, v in carried.items()
-            if v is not None and (callable(v) or np.any(np.asarray(v, dtype=float) != 0))
-        }
-        if unread:
-            raise NotImplementedError(
-                f"HJBGFDMSolver: the BC carries {sorted(unread)} = {list(unread.values())}, which no "
-                f"boundary row reads, so it would be solved as 0 (#2513). Pass a BoundaryConditions "
-                f"(e.g. dirichlet_bc(value=...) or per-face BCSegments)."
-            )
-
     def _classified_boundary_points(self):
         """``(i, bc_enum, segment, normal)`` for every boundary point, by `_classify_boundary_point`, in the order of
         ``self.boundary_indices``. No BC value is evaluated. The one loop `_value_form_bc_rows` and positive_qp_fan's

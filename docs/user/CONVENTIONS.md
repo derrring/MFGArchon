@@ -1295,11 +1295,19 @@ scalar (§ *Volatility and diffusion*), and the public API names it `volatility`
 
 ### Removed
 
-Before 1.0 a name the library no longer wants is deleted, not deprecated (AGENTS.md § *Removal before 1.0*), so
-using one raises Python's own `TypeError`, `AttributeError` or `ImportError`. Two entry points keep a `**kwargs` and
-refuse by name instead: `FixedPointIterator.solve` and `FictitiousPlayIterator.solve` refuse `return_tuple`,
-`Niter_max`, `max_picard_iterations`, `l2errBoundPicard` and `picard_tolerance`, and `MFGProblem` refuses a
-`components.parameters` entry named after an input it no longer reads.
+Before 1.0 a name the library no longer wants is deleted, not deprecated (AGENTS.md § *Removal before 1.0*). Passing
+or reading one raises Python's own `TypeError`, `AttributeError` or `ImportError`. Assigning one to an object, as
+`solver.damping_factor = 0.3`, succeeds and does nothing, as it does for any name Python does not know. Where a
+function keeps a `**kwargs`, a removed keyword is not Python's to refuse:
+
+- `FixedPointIterator.solve` and `FictitiousPlayIterator.solve` refuse `return_tuple`, `Niter_max`,
+  `max_picard_iterations`, `l2errBoundPicard` and `picard_tolerance` by name;
+- `MFGProblem` refuses a `components.parameters` key named after one of the 14 inputs it no longer reads, and accepts
+  any other key;
+- `BlockIterator.solve` and `NewtonMFGSolver.solve` accept and ignore a keyword they do not read (#2922).
+
+Names deprecated only in a docstring, and `WeakFormHJBSolver.solve_hjb_system`'s three pre-v0.12 names (§ *Solver
+method surface*), are not removed yet.
 
 | removed | use |
 |---|---|
@@ -1324,7 +1332,7 @@ refuse by name instead: `FixedPointIterator.solve` and `FictitiousPlayIterator.s
 | `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
 | `AdjointConsistentProvider`, `NormalDriftProvider` | nothing |
 
-The `removed` changelog fragment of the removal before 1.0 lists every name it deleted.
+The `removed` changelog fragment of the removal before 1.0 lists the names it deleted and what replaces them.
 
 `sigma` remains correct as the parameter of another distribution or kernel: a stochastic process's
 own volatility (`OrnsteinUhlenbeckProcess(sigma=...)` and its siblings), a Lévy jump width

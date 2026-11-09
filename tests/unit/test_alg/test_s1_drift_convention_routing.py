@@ -4,8 +4,9 @@
 Before this fix the ``use_velocity`` gate keyed on ``"drift_field" in params``, but
 parameter presence cannot disambiguate the drift convention: some solvers expose
 ``drift_field`` as a real VELOCITY channel (fp_fvm / fp_gfdm / FPFDM), while the weak-form
-family exposes ``drift_field`` as a DEPRECATED ALIAS for ``potential_field=U``
-(``DriftConvention.VALUE_FUNCTION``). For a non-smooth ``H`` + a VALUE_FUNCTION solver the
+family exposed ``drift_field`` as a DEPRECATED ALIAS for ``potential_field=U``
+(``DriftConvention.VALUE_FUNCTION``); that alias was removed before 1.0, and the particle solver
+keeps a live one. For a non-smooth ``H`` + a VALUE_FUNCTION solver the
 old gate fired and set ``drift_field=alpha*`` (a velocity), which such a solver treats as
 ``U`` and DIFFERENTIATES — a silently wrong drift.
 
@@ -36,7 +37,8 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 # Solver signatures, reduced to the two params resolve_fp_drift_kwargs actually inspects.
-# weak-form / network family: both present (drift_field is a deprecated alias for U).
+# value-function family: both present (the particle solver's drift_field is an alias for U; the weak-form and
+# network families' alias was removed before 1.0).
 _VALUE_FUNCTION_SIG = {"m_initial_condition", "potential_field", "drift_field"}
 # meshfree velocity-only family (e.g. the withdrawn FP-GFDM): drift_field is a true velocity alpha*.
 _VELOCITY_ONLY_SIG = {"m_initial_condition", "drift_field"}

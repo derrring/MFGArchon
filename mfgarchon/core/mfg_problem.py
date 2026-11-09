@@ -2463,9 +2463,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # ============================================================================
 
     #: Names that ``MFGComponents.parameters`` once carried into this constructor and no longer does, each with what
-    #: replaces it (Issue #666, #670, #2554). The dict is free-form -- its readers are the variational problem's
-    #: ``lagrangian_parameters``, ``StochasticMFGProblem``'s copy and this problem's record -- so it would accept these
-    #: in silence; they are refused by name instead.
+    #: replaces it (Issue #666, #670, #2554). The dict is free-form -- its readers are ``get_problem_info`` and
+    #: ``StochasticMFGProblem``'s conditional copy -- so it would accept these in silence; they are refused by name
+    #: instead.
     _RETIRED_PARAMETER_KEYS: ClassVar[dict[str, str]] = {
         "hamiltonian": "Model(hamiltonian=...), or MFGComponents(hamiltonian=...) in the components= form, a Hamiltonian "
         "object such as SeparableHamiltonian(...). Beside components=, put the one you mean there: that is the one read "

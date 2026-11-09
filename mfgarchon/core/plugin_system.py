@@ -29,7 +29,6 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
     from mfgarchon.config import MFGSolverConfig
-    from mfgarchon.factory.solver_factory import SolverType
 
 logger = get_logger(__name__)
 
@@ -412,10 +411,6 @@ class PluginManager:
             else:
                 raise ValueError(f"Plugin {plugin_name} providing {solver_type} is not loaded")
 
-        # Check if it's a core solver
-        if solver_type in self._core_solvers:
-            return self._create_core_solver(problem, solver_type, config, **kwargs)
-
         raise ValueError(f"Unknown solver type: {solver_type}")
 
     def run_analysis(self, result: Any, analysis_type: str, **kwargs: Any) -> Any:
@@ -522,21 +517,6 @@ class PluginManager:
         # For now, return the known core solver types
         # Note: "particle_collocation" has been removed from core package
         return ["fixed_point", "hjb_fdm", "hjb_collocation"]
-
-    def _create_core_solver(
-        self,
-        problem: Any,
-        solver_type: str,
-        config: MFGSolverConfig | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Create core solver instance."""
-        # Late import: transitive cycle through mfgarchon.__init__ -> plugin_system
-        from typing import cast
-
-        from mfgarchon.factory import create_solver
-
-        return create_solver(problem, cast("SolverType", solver_type), config=config, **kwargs)
 
     def _get_default_plugin_paths(self) -> list[Path]:
         """Get default plugin search paths."""

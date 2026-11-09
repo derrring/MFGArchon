@@ -15,9 +15,16 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import compute_gfdm_parameters
+from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
+from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.alg.optimization.optimal_transport.wasserstein_solver import WassersteinSolverConfig
 from mfgarchon.alg.optimization.variational_problem import VariationalMFGComponents
+from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.extensions.topology import NetworkMFGComponents
 from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, NodeBC
@@ -122,10 +129,23 @@ POSITIONAL = [
     (SweepConfiguration, 3),
     (PerformanceHook, 1),
     (MFGNotebookReporter, 1),
+    # The removal before 1.0's parameter sites (a deleted parameter, every later one keyword-only). An unbound method
+    # counts `self`. The two iterators' `solve()` sit behind a wrapper that reads the instance first, so their
+    # positional case is in `test_alg/test_retired_solve_keywords_are_refused.py`.
+    (FPFDMSolver.solve_fp_system, 6),
+    (FPSLSolver.solve_fp_system, 6),
+    (FPNetworkSolver.solve_fp_system, 5),
+    (WeakFormFPSolver.solve_fp_system, 4),
+    (compute_gfdm_parameters, 2),
+    (HJBFDMSolver, 9),
+    (HJBGFDMSolver, 14),
+    (MFGProblem.H, 4),
+    (MFGProblem.dH_dm, 4),
+    (SolverResult, 9),
 ]
 
 
-@pytest.mark.parametrize(("target", "n"), POSITIONAL, ids=[t.__name__ for t, _ in POSITIONAL])
+@pytest.mark.parametrize(("target", "n"), POSITIONAL, ids=[t.__qualname__ for t, _ in POSITIONAL])
 def test_a_positional_argument_past_a_deleted_slot_is_refused(target, n):
     """The guard a deletion owes its neighbours: without it, the argument meant for the deleted slot binds silently to
     the next parameter. Every later parameter is keyword-only, so one positional argument too many is a TypeError."""

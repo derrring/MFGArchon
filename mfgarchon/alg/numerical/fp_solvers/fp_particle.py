@@ -3236,8 +3236,8 @@ if __name__ == "__main__":
     print("\nTesting 2D FPParticleSolver with absorbing BC...")
     from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
 
-    # Create BC with exit on right wall (DIRICHLET = absorbing for particles). Built directly: the deprecated
-    # mixed_bc sets a NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
+    # Create BC with exit on right wall (DIRICHLET = absorbing for particles). Built directly: mixed_bc
+    # sets a NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
     bc_absorbing = BoundaryConditions(
         dimension=2,
         segments=[

@@ -343,7 +343,7 @@ def run_solver_from_cli(args: argparse.Namespace) -> None:
     try:
         # Late import: CLI lazy-loads heavy modules only when actually invoked
         from mfgarchon import MFGProblem
-        from mfgarchon.factory import create_solver
+        from mfgarchon.factory import SolverFactory
 
         # Create problem instance
         # This is a simplified example - in practice, you'd load from problem_file
@@ -391,7 +391,7 @@ def run_solver_from_cli(args: argparse.Namespace) -> None:
         grid_shape = problem.geometry.get_grid_shape()
         collocation_points = np.linspace(bounds[0][0], bounds[1][0], grid_shape[0]).reshape(-1, 1)
 
-        solver = create_solver(
+        solver = SolverFactory.create_solver(
             problem=problem,
             solver_type=solver_config["type"],
             preset=solver_config["preset"],

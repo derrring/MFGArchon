@@ -429,7 +429,7 @@ def test_hamiltonian_h_default():
 
     x_idx = 5
     m_at_x = 1.0
-    # Issue #673: Use derivs with tuple notation (p_values deprecated)
+    # Issue #673: Use derivs with tuple notation (p_values was removed before 1.0)
     derivs = {(1,): 0.1}  # 1D gradient = 0.1
     t_idx = 5
 
@@ -447,7 +447,7 @@ def test_hamiltonian_dh_dm_default():
 
     x_idx = 5
     m_at_x = 1.0
-    # Issue #673: Use derivs with tuple notation (p_values deprecated)
+    # Issue #673: Use derivs with tuple notation (p_values was removed before 1.0)
     derivs = {(1,): 0.1}  # 1D gradient = 0.1
     t_idx = 5
 
