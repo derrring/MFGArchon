@@ -174,7 +174,7 @@ def _why_a_velocity_is_not_consumed(advection_scheme: str, use_tensor_diffusion:
     if use_tensor_diffusion:
         return (
             "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
-            "(solve_timestep_tensor_explicit takes no such parameter), so the accept-list does not apply here"
+            "(solve_timestep_tensor_explicit takes no such parameter), whatever the scheme"
         )
     if _resolve_and_validate_scheme(advection_scheme) not in _INTERFACE_VELOCITY_SCHEMES:
         return f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
