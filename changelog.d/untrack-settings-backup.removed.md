@@ -1,1 +1,1 @@
-- **A local settings backup is no longer tracked.** `.claude/settings.local.json.bak-onedrive` was a local settings backup that should not have been tracked. It is deleted, and `.gitignore` now ignores `.claude/settings.local.json*`.
+- **A local settings backup is no longer tracked.** `.claude/settings.local.json.bak-onedrive` was a local settings backup that should not have been tracked. It is deleted, and `.gitignore` now ignores `.claude/settings.local*`.

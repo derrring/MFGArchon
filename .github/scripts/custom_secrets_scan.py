@@ -3,8 +3,9 @@
 Custom secrets scanning script for MFGArchon security pipeline.
 Scans for hardcoded secrets, API keys, and sensitive information.
 
-It reads every file git tracks that decodes as UTF-8 text, whatever its name or suffix, and its reports
-name the file, line and kind of each finding, never the matched text.
+It reads every file git tracks that holds no NUL byte in its first 8000 bytes, whatever its name or suffix,
+as UTF-8 with any byte that does not decode replaced, and its reports name the file, line and kind of each
+finding, never the matched text.
 """
 
 import json
@@ -65,9 +66,9 @@ class CustomSecretsScanner:
             r"(?i)email[_-]?password['\"\s]*[:=]['\"\s]*[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]{8,}",
         ],
         # A key, token or secret name, then = or :, then a quoted run of 32 or more alphanumerics. Either quote
-        # may be backslash-escaped, as it is inside a JSON string.
+        # may be backslash-escaped, as it is inside a JSON string. The whitelist reads the value alone.
         "credential_assignment": [
-            r"""(?i)(?:key|token|secret)[\w.-]*\\?["']?\s*[:=]\s*\\?["'][A-Za-z0-9]{32,}""",
+            r"""(?i)(?:key|token|secret)[\w.-]{0,64}\\?["']?\s*[:=]\s*\\?["'](?P<value>[A-Za-z0-9]{32,})""",
         ],
     }
 
@@ -126,7 +127,7 @@ class CustomSecretsScanner:
                     matched_text = match.group(0)
 
                     # Skip if whitelisted
-                    if self.is_whitelisted(matched_text):
+                    if self.is_whitelisted(match.groupdict().get("value") or matched_text):
                         continue
 
                     # Find line number
@@ -138,7 +139,7 @@ class CustomSecretsScanner:
                         "line": line_num,
                         "type": secret_type,
                         "pattern": pattern,
-                        "match": f"<{len(matched_text)} characters, not recorded>",
+                        "match": "<not recorded>",
                         "severity": self.get_severity(secret_type),
                     }
 
@@ -159,32 +160,30 @@ class CustomSecretsScanner:
             return "LOW"
 
     def scan_directory(self) -> list[dict]:
-        """Scan every file git tracks under root_dir that decodes as UTF-8 text."""
+        """Scan every file git tracks under root_dir that holds no NUL byte in its first 8000 bytes."""
         print(f"🔍 Scanning {self.root_dir} for secrets...")
 
         listed = subprocess.run(
             ["git", "-C", str(self.root_dir), "ls-files", "-z"], capture_output=True, check=True
         ).stdout.decode("utf-8")
         names = [name for name in listed.split("\0") if name]
-        scanned, not_text, absent = 0, 0, 0
+        scanned, binary, not_regular = 0, 0, 0
         for name in names:
             file_path = self.root_dir / name
             if not file_path.is_file():
-                absent += 1
+                not_regular += 1
                 continue
             raw = file_path.read_bytes()
-            try:
-                content = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                not_text += 1
-                continue
-            if "\0" in content:
-                not_text += 1
+            if b"\0" in raw[:8000]:
+                binary += 1
                 continue
             scanned += 1
-            self.findings.extend(self.scan_file(file_path, content))
+            self.findings.extend(self.scan_file(file_path, raw.decode("utf-8", errors="replace")))
 
-        print(f"Tracked files: {len(names)}; scanned as text: {scanned}; not text: {not_text}; not on disk: {absent}")
+        print(
+            f"Tracked files: {len(names)}; scanned as text: {scanned}; "
+            f"binary (a NUL in the first 8000 bytes): {binary}; not a regular file: {not_regular}"
+        )
         return self.findings
 
     def generate_report(self) -> dict:
