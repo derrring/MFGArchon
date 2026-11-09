@@ -49,11 +49,7 @@ if TYPE_CHECKING:
 
 
 # WENO5 scheme support (Issue #606)
-_WENO5_AVAILABLE = True
-try:
-    from mfgarchon.operators.reconstruction.weno import compute_weno5_derivative_1d
-except ImportError:
-    _WENO5_AVAILABLE = False
+from mfgarchon.operators.reconstruction.weno import compute_weno5_derivative_1d
 
 
 class PartialDerivOperator(LinearOperator):
@@ -152,9 +148,6 @@ class PartialDerivOperator(LinearOperator):
 
         # WENO5 scheme: use dedicated implementation (Issue #606)
         if self.scheme == "weno5":
-            if not _WENO5_AVAILABLE:
-                raise ImportError("WENO5 scheme requires mfgarchon.operators.reconstruction.weno")
-
             # Currently only 1D supported
             if len(self.field_shape) != 1:
                 raise NotImplementedError(f"WENO5 not yet implemented for {len(self.field_shape)}D")

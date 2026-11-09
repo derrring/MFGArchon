@@ -1051,13 +1051,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             coupling_coefficient: Physical parameters
             lambda_: control cost parameter
         """
-        # Import geometry protocol
-        try:
-            from mfgarchon.geometry import GeometryProtocol, validate_geometry
-        except ImportError as err:
-            raise ImportError(
-                "Geometry mode requires geometry module. Install with: pip install mfgarchon[geometry]"
-            ) from err
+        from mfgarchon.geometry import GeometryProtocol, validate_geometry
 
         # Validate geometry object implements GeometryProtocol
         if not isinstance(geometry, GeometryProtocol):
@@ -1536,10 +1530,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # Detect legacy format: geometry=None but has legacy 1D attrs
         if state.get("geometry") is None and state.get("xmin") is not None:
-            try:
-                from mfgarchon.geometry import TensorProductGrid
-                from mfgarchon.geometry.boundary import no_flux_bc
+            from mfgarchon.geometry import TensorProductGrid
+            from mfgarchon.geometry.boundary import no_flux_bc
 
+            try:
                 # Reconstruct geometry from legacy attributes
                 xmin = state.get("xmin")
                 xmax = state.get("xmax")
@@ -1563,7 +1557,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     Nx_points=Nx_points,
                     boundary_conditions=no_flux_bc(dimension=dimension),
                 )
-            except (KeyError, ImportError) as e:
+            except KeyError as e:
                 import warnings
 
                 warnings.warn(

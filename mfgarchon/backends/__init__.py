@@ -12,7 +12,6 @@ Auto-selection returns the NumPy backend; torch and jax must be asked for by nam
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 from mfgarchon.utils.mfg_logging import get_logger
@@ -105,25 +104,15 @@ def create_backend(backend_name: str | None = None, **kwargs):
 
     if backend_name not in _BACKENDS:
         if backend_name == "torch":
-            # Try to register PyTorch backend
-            try:
-                from .torch_backend import TorchBackend
+            # torch_backend imports without torch; TorchBackend refuses at construction when torch is absent
+            from .torch_backend import TorchBackend
 
-                register_backend("torch", TorchBackend)
-            except ImportError:
-                raise ImportError(
-                    "PyTorch backend requested but not available. Install with: pip install torch"
-                ) from None
+            register_backend("torch", TorchBackend)
         elif backend_name == "jax":
-            # Try to register JAX backend
-            try:
-                from .jax_backend import JAXBackend
+            # jax_backend imports without JAX; JAXBackend refuses at construction when JAX is absent
+            from .jax_backend import JAXBackend
 
-                register_backend("jax", JAXBackend)
-            except ImportError:
-                raise ImportError(
-                    "JAX backend requested but not available. Install with: pip install 'mfgarchon[jax]'"
-                ) from None
+            register_backend("jax", JAXBackend)
         elif backend_name == "numpy":
             from .numpy_backend import NumPyBackend
 
@@ -190,12 +179,9 @@ def get_backend_info() -> dict[str, Any]:
 
 
 # Initialize default backends
-try:
-    from .numpy_backend import NumPyBackend
+from .numpy_backend import NumPyBackend  # noqa: E402
 
-    register_backend("numpy", NumPyBackend)
-except ImportError:
-    warnings.warn("NumPy backend not available")
+register_backend("numpy", NumPyBackend)
 
 # torch and jax are NOT registered here. `create_backend` already carries the on-demand path --
 # `if backend_name not in _BACKENDS:` imports and registers whichever backend was asked for -- and
@@ -224,12 +210,7 @@ except ImportError:
 def ensure_numpy_backend():
     """Ensure NumPy backend is always available for compatibility."""
     if "numpy" not in _BACKENDS:
-        try:
-            from .numpy_backend import NumPyBackend
-
-            register_backend("numpy", NumPyBackend)
-        except ImportError as e:
-            raise ImportError("NumPy backend is required for MFGarchon compatibility") from e
+        register_backend("numpy", NumPyBackend)
 
 
 # Auto-initialize on import

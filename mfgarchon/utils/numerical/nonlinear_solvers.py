@@ -38,15 +38,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 logger = get_logger(__name__)
-# Try to import JAX autodiff utilities
-_JAX_AVAILABLE = False
-try:
-    from mfgarchon.utils.acceleration import HAS_JAX
-    from mfgarchon.utils.acceleration.jax_utils import compute_jacobian
+# JAX autodiff utilities: importable without JAX, which HAS_JAX reports
+from mfgarchon.utils.acceleration import HAS_JAX  # noqa: E402
+from mfgarchon.utils.acceleration.jax_utils import compute_jacobian  # noqa: E402
 
-    _JAX_AVAILABLE = HAS_JAX
-except ImportError:
-    logger.debug("JAX acceleration utilities not available")
+_JAX_AVAILABLE = HAS_JAX
 
 
 class SolverInfo:

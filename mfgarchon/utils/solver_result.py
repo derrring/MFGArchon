@@ -817,13 +817,7 @@ comparison = result.compare_to(other_result)
             export_summary: For lightweight template-based notebooks
             mfgarchon.utils.notebooks.reporting: For direct access to MFGNotebookReporter
         """
-        try:
-            from mfgarchon.utils.notebooks.reporting import create_mfg_research_report
-        except ImportError as e:
-            raise ImportError(
-                "Research reports require notebook support with plotly. "
-                "Install with: pip install plotly nbformat jupyter"
-            ) from e
+        from mfgarchon.utils.notebooks.reporting import create_mfg_research_report
 
         # Construct solver_results dictionary from SolverResult attributes
         solver_results = {

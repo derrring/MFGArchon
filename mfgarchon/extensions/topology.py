@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from scipy.sparse import csr_matrix
 
-    from mfgarchon.geometry.graph.network_geometry import BaseNetworkGeometry
+    from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
     from mfgarchon.types.callable_protocols import Slots
 
 
@@ -392,7 +392,7 @@ class NetworkMFGProblem(MFGProblem):
 
     def __init__(
         self,
-        geometry: BaseNetworkGeometry | None = None,
+        geometry: NetworkGeometry | None = None,
         T: float = 1.0,
         Nt: int = 100,
         components: NetworkMFGComponents | None = None,

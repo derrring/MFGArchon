@@ -1,0 +1,1 @@
+- **`mfgarchon.utils.POLARS_AVAILABLE` and `mfgarchon.utils.data.POLARS_AVAILABLE` now say whether polars is installed** (#2088). Both were `True` whenever `mfgarchon.utils.data.polars_integration` imported, which it does without polars, so they read `True` on an install without it. They now re-export that module's own `POLARS_AVAILABLE`, which tests for polars.
