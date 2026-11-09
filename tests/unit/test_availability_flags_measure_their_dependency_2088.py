@@ -1,4 +1,4 @@
-"""An availability flag reads `False` when its dependency is absent, and the package still imports (#2088).
+"""An availability flag reads `False` when its dependency is absent, and a psutil guard catches nothing else (#2088).
 
 - polars: `mfgarchon.utils.POLARS_AVAILABLE` and `mfgarchon.utils.data.POLARS_AVAILABLE` were set `True` by a guard
   around `utils.data.polars_integration`, which imports without polars, so they read `True` without it. They now
@@ -7,10 +7,14 @@
   psutil optional (#2930). Their guards in `mfgarchon.utils` stay, narrowed to psutil's absence, so without it the
   package imports and both flags read `False`.
 
-Each case runs in a fresh interpreter, with the dependency refused before `mfgarchon` is first imported: a meta-path
-finder raises `ModuleNotFoundError` for it, and `importlib.util.find_spec` returns `None` for it, as on an install that
-lacks it. The child is pointed at this tree explicitly, because under `PYTHONSAFEPATH=1` it would resolve `mfgarchon`
-from the editable install instead (see `test_utils_does_not_import_alg.py`), and it prints the module it loaded.
+Every case runs in a fresh interpreter pointed at this tree explicitly, because under `PYTHONSAFEPATH=1` it would
+resolve `mfgarchon` from the editable install instead (see `test_utils_does_not_import_alg.py`).
+- The flag cases refuse the dependency before `mfgarchon` is first imported: a meta-path finder raises
+  `ModuleNotFoundError` for it, and `importlib.util.find_spec` returns `None` for it, as on an install that lacks it.
+  The child prints the module it loaded, and the test checks it.
+- The narrowing cases refuse a module the psutil guards import, with a `ModuleNotFoundError` naming another module, and
+  expect `import mfgarchon.utils` to fail. The test checks that the traceback runs through this tree's
+  `mfgarchon/utils/__init__.py`.
 """
 
 from __future__ import annotations
@@ -87,12 +91,14 @@ import mfgarchon.utils
 
 
 @pytest.mark.parametrize("module", ["mfgarchon.utils.memory_management", "mfgarchon.utils.performance.monitoring"])
-def test_a_psutil_guard_lets_any_other_import_failure_through(module):
-    """The two guards stay for psutil alone. A module they guard that fails to import for any other reason is a defect,
-    and the guard must not turn it into a `False` flag, which is what `except ImportError` did at the base."""
+def test_a_psutil_guard_lets_a_failure_naming_another_module_through(module):
+    """The two guards stay for psutil alone. A module they guard that fails with a `ModuleNotFoundError` naming another
+    module is a defect, and the guard must not turn it into a `False` flag, which is what `except ImportError` did at
+    the base. This is one input class: it does not pin the handler's exception type."""
     env = {**os.environ}
     env.pop("PYTHONSAFEPATH", None)
     code = _NOT_PSUTIL.format(repo=str(REPO), module=module)
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, env=env)
     assert proc.returncode != 0, f"importing mfgarchon.utils swallowed a failure of {module} that is not psutil's"
     assert "planted_dependency" in proc.stderr, proc.stderr[-1500:]
+    assert str(REPO / "mfgarchon" / "utils" / "__init__.py") in proc.stderr, proc.stderr[-1500:]

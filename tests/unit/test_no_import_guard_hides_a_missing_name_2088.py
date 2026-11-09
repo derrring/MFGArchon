@@ -6,34 +6,31 @@ block imported three names that never existed. At #2088's base, the other guards
 - guards whose imports all exist, which never fired on an install that satisfies `[project].dependencies`, even with
   every optional dependency unimportable;
 - one more around names that never existed (`mfgarchon/__init__.py`'s geometry block);
-- three that fired for an absent optional dependency: POT's, now an `if` on the flag its subpackage reports, and
-  psutil's two, allowed below.
+- three that fired when a dependency was absent: POT's, now an `if` on `OT_IMPORTS_AVAILABLE` (`SCIPY_AVAILABLE and
+  POT_AVAILABLE`, both reported by its subpackage), and psutil's two, allowed below. psutil is optional by AGENTS.md
+  and required by pyproject (#2930).
 
-What the census sees is a `try` whose handlers name `ImportError` or `ModuleNotFoundError` as a bare name, alone or in a
-literal tuple. Anywhere in its body, it looks for:
-- an `import mfgarchon...` or a `from mfgarchon... import`;
+What the census sees, and nothing else: a `try` whose handlers name `ImportError` or `ModuleNotFoundError` as a bare
+name, alone or in a flat literal tuple, with, anywhere in its body, one of
+- an `import mfgarchon...`, or an absolute `from mfgarchon... import`;
 - a relative `from . import`;
-- a call to `import_module(...)` or `__import__(...)` whose first positional argument is a string constant, or an
-  f-string whose first part is a constant, starting with `mfgarchon` or `.`.
+- a call to a function or attribute named `import_module` or `__import__`, whose first positional argument is a string
+  constant, or an f-string whose first part is a constant, starting with `mfgarchon` or `.`.
 
-Each form has a planted positive control below.
-
-What it does not see:
-- handlers: a bare `except`, `except Exception` or `except BaseException`, `except builtins.ImportError`, an exception
-  tuple held in a name, and `except*`;
-- `contextlib.suppress(ImportError)`;
-- a module name built by concatenation, `.format` or `%`, or passed as `import_module(name=...)`;
-- `__import__(..., level=n)` with a bare name;
-- a module loaded by path (`importlib.util.spec_from_file_location`) or from source text (`exec`, `compile`);
-- a guard around a call into a helper that imports.
-
-A census reports only what its predicate reaches, and #2088's own census first missed a guarded `import_module` for
-exactly that reason.
+Each of those forms, and the tuple handler, has a planted positive control below. Every other form is unseen. That
+includes, for example: a bare `except`, `except Exception`, `except builtins.ImportError`, an exception tuple held in a
+name or nested, and `except*`; `contextlib.suppress(ImportError)`; a module name held in a variable, read from an
+attribute or a subscript, chosen by a conditional, built by concatenation, `.format` or `%`, or by an f-string that
+does not start with a constant; `import_module(name=...)`, `__import__(name=...)` and `__import__(..., level=n)`; an
+import function reached through `getattr`; `runpy`; loading by path (`importlib.util.spec_from_file_location`) or from
+source text (`exec`, `compile`); and a guard around a call into a helper that imports. A census reports only what its
+predicate reaches, and #2088's own census first missed a guarded `import_module` for exactly that reason.
 
 An allowed guard catches an absent third-party dependency and nothing else, and carries its reason. This test checks
 only that each allowance still covers a guard; an allowance that covers none fails, so a guard that is removed takes its
-allowance with it. That the two psutil guards let every other import failure through is pinned in
-`test_availability_flags_measure_their_dependency_2088.py`.
+allowance with it. `test_availability_flags_measure_their_dependency_2088.py` pins one input class of the psutil
+guards' narrowing: a `ModuleNotFoundError` that names another module propagates. It does not pin the handler's
+exception type.
 """
 
 from __future__ import annotations
@@ -119,20 +116,27 @@ def test_no_guard_hides_an_internal_import():
     assert stale == [], f"An allowance covers no guard any more; delete it: {stale}"
 
 
+#: form -> (the guarded statements, the handler's exception expression)
 _PLANTED = {
-    "Import": "import mfgarchon.core\n",
-    "ImportFrom": "from .sibling import name_that_does_not_exist\n",
-    "import_module": "from importlib import import_module\nmodule = import_module(f'.{NAME}', __name__)\n",
-    "__import__": "module = __import__('mfgarchon.sibling')\n",
+    "Import": ("import mfgarchon.core\n", "ImportError"),
+    "ImportFrom, absolute": ("from mfgarchon.core import name_that_does_not_exist\n", "ImportError"),
+    "ImportFrom, relative": ("from .sibling import name_that_does_not_exist\n", "ImportError"),
+    "import_module": (
+        "from importlib import import_module\nmodule = import_module(f'.{NAME}', __name__)\n",
+        "ImportError",
+    ),
+    "__import__": ("module = __import__('mfgarchon.sibling')\n", "ImportError"),
+    "a handler tuple": ("from .sibling import name_that_does_not_exist\n", "(KeyError, ModuleNotFoundError)"),
 }
 
 
 @pytest.mark.parametrize("form", sorted(_PLANTED))
 def test_the_census_sees_each_import_form_it_claims(tmp_path, form):
-    body = "".join("    " + line + "\n" for line in _PLANTED[form].splitlines())
+    statements, handler = _PLANTED[form]
+    body = "".join("    " + line + "\n" for line in statements.splitlines())
     planted = tmp_path / "mfgarchon" / "planted.py"
     planted.parent.mkdir()
-    planted.write_text(f"NAME = 'sibling'\ntry:\n{body}except ImportError:\n    FLAG = False\n")
+    planted.write_text(f"NAME = 'sibling'\ntry:\n{body}except {handler}:\n    FLAG = False\n")
     assert len(census(tmp_path)) == 1, census(tmp_path)
 
 
