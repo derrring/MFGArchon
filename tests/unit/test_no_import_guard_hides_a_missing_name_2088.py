@@ -2,22 +2,38 @@
 
 Such a guard cannot tell "an optional dependency is absent" from "this module names something that does not exist":
 both give the same silent fallback. #2088's flag `VISUALIZATION_AVAILABLE` was `False` on every install because its
-block imported three names that never existed. Every other internal import in the library imports with every optional
-dependency unimportable, so the guards around those never fired either.
+block imported three names that never existed. At #2088's base, the other guards fell into three groups:
+- guards whose imports all exist, which never fired on an install that satisfies `[project].dependencies`, even with
+  every optional dependency unimportable;
+- one more around names that never existed (`mfgarchon/__init__.py`'s geometry block);
+- three that fired for an absent optional dependency: POT's, now an `if` on the flag its subpackage reports, and
+  psutil's two, allowed below.
 
-What the census sees: a `try` whose handlers name `ImportError` or `ModuleNotFoundError` (alone or in a tuple), with,
-anywhere in its body, an `import mfgarchon...` or `from mfgarchon... import`, a relative `from . import`, or a call to
-`import_module(...)` or `__import__(...)` whose first argument is a string or f-string starting with `mfgarchon` or `.`.
+What the census sees is a `try` whose handlers name `ImportError` or `ModuleNotFoundError` as a bare name, alone or in a
+literal tuple. Anywhere in its body, it looks for:
+- an `import mfgarchon...` or a `from mfgarchon... import`;
+- a relative `from . import`;
+- a call to `import_module(...)` or `__import__(...)` whose first positional argument is a string constant, or an
+  f-string whose first part is a constant, starting with `mfgarchon` or `.`.
+
 Each form has a planted positive control below.
 
-What it does not see: a guard written as a bare `except`, `except Exception` or `except BaseException`; one written as
-`contextlib.suppress(ImportError)`; a module loaded by path (`importlib.util.spec_from_file_location`) or from source
-text (`exec`, `compile`); a module name built at run time from anything but a literal prefix; and a guard around a call
-into a helper that imports. A census reports only what its predicate reaches, and #2088's own census first missed a
-guarded `import_module` for exactly that reason.
+What it does not see:
+- handlers: a bare `except`, `except Exception` or `except BaseException`, `except builtins.ImportError`, an exception
+  tuple held in a name, and `except*`;
+- `contextlib.suppress(ImportError)`;
+- a module name built by concatenation, `.format` or `%`, or passed as `import_module(name=...)`;
+- `__import__(..., level=n)` with a bare name;
+- a module loaded by path (`importlib.util.spec_from_file_location`) or from source text (`exec`, `compile`);
+- a guard around a call into a helper that imports.
 
-An allowed guard is one that catches an absent third-party dependency and nothing else, with its reason. An allowance
-that covers no guard fails, so a guard that is removed takes its allowance with it.
+A census reports only what its predicate reaches, and #2088's own census first missed a guarded `import_module` for
+exactly that reason.
+
+An allowed guard catches an absent third-party dependency and nothing else, and carries its reason. This test checks
+only that each allowance still covers a guard; an allowance that covers none fails, so a guard that is removed takes its
+allowance with it. That the two psutil guards let every other import failure through is pinned in
+`test_availability_flags_measure_their_dependency_2088.py`.
 """
 
 from __future__ import annotations

@@ -188,8 +188,6 @@ from .sparse_operations import (
     sparse_matmul,
 )
 
-# Public API - Core utilities always available
-# Keep organized with comments, don't auto-sort
 # memory_management and performance.monitoring import psutil at module top, and AGENTS.md calls psutil optional
 # (#2930). Only psutil's absence is caught: any other failure of these imports is a defect and propagates.
 try:
@@ -220,6 +218,8 @@ except ModuleNotFoundError as err:
         raise
     PERFORMANCE_MONITORING_AVAILABLE = False
 
+# Public API - Core utilities always available
+# Keep organized with comments, don't auto-sort
 __all__ = [
     # Availability flags: whether polars is installed (re-exported from data.polars_integration), and whether the
     # two psutil-backed modules imported

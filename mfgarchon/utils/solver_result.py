@@ -797,7 +797,7 @@ comparison = result.compare_to(other_result)
             Dictionary with 'notebook' and optionally 'html' keys containing file paths
 
         Raises:
-            NotebookReportError: If plotly or nbformat is unavailable, or the HTML export fails
+            NotebookReportError: If plotly or nbformat is unavailable
 
         Example:
             >>> result = solver.solve()

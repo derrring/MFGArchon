@@ -69,3 +69,30 @@ def test_a_flag_reads_false_without_its_dependency_and_the_package_imports(absen
     assert got["tree"].startswith(str(REPO / "mfgarchon")), got["tree"]
     assert len(got["flags"]) == len(CASES[absent]), got["flags"]
     assert got["flags"] == dict.fromkeys(got["flags"], False), got["flags"]
+
+
+_NOT_PSUTIL = """
+import importlib.abc, sys
+sys.path.insert(0, {repo!r})
+
+class _Broken(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name == {module!r}:
+            raise ModuleNotFoundError("No module named 'planted_dependency'", name="planted_dependency")
+        return None
+
+sys.meta_path.insert(0, _Broken())
+import mfgarchon.utils
+"""
+
+
+@pytest.mark.parametrize("module", ["mfgarchon.utils.memory_management", "mfgarchon.utils.performance.monitoring"])
+def test_a_psutil_guard_lets_any_other_import_failure_through(module):
+    """The two guards stay for psutil alone. A module they guard that fails to import for any other reason is a defect,
+    and the guard must not turn it into a `False` flag, which is what `except ImportError` did at the base."""
+    env = {**os.environ}
+    env.pop("PYTHONSAFEPATH", None)
+    code = _NOT_PSUTIL.format(repo=str(REPO), module=module)
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, env=env)
+    assert proc.returncode != 0, f"importing mfgarchon.utils swallowed a failure of {module} that is not psutil's"
+    assert "planted_dependency" in proc.stderr, proc.stderr[-1500:]
