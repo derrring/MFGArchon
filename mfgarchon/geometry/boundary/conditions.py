@@ -2251,8 +2251,9 @@ def periodic_faces(bc: Any, dimension: int, geometry: Any = None) -> list[bool]:
     Read through the face owner, :meth:`BoundaryConditions.segment_for_face`, asked by `BoundaryFace` and with
     periodicity as the equivalence: a segment covering part of a face is accepted when it agrees with the rest
     of the face on that, and refused otherwise (#2512 row B1). ``geometry`` is the grid, on which the owner
-    reads a ``region``, ``sdf_region`` or ``region_name`` placement. The one face loop both
-    :func:`periodic_on_every_face` and FP-FDM's refusal read.
+    reads a ``region``, ``sdf_region`` or ``region_name`` placement. The one face loop the topology owner
+    :func:`wrapping_axes` reads, and through it the layout binder `bind_periodic_convention`; FP-FDM's channel
+    refusal and other readers call it directly (``git grep -n "periodic_faces("``).
     """
 
     def same_periodicity(first: BCSegment, second: BCSegment) -> bool:
@@ -2265,26 +2266,63 @@ def periodic_faces(bc: Any, dimension: int, geometry: Any = None) -> list[bool]:
     ]
 
 
-def periodic_on_every_face(bc: Any, dimension: int | None = None, geometry: Any = None) -> bool:
-    """Whether every face of ``bc`` is periodic, however the periodicity is spelt. Issue #2495.
+def wrapping_axes(bc: Any, dimension: int, geometry: Any = None) -> tuple[int, ...]:
+    """The axes ``bc`` identifies with their opposites, on a domain of ``dimension`` axes: the one owner of which axes
+    wrap (#2911).
 
-    A uniform periodic BC, one PERIODIC segment per face, and an empty segment list over a periodic
-    ``default_bc`` all say the same thing. The test this replaced, ``bc.is_uniform and bc.type ==
-    "periodic"``, accepted only the first; FP-FDM then solved the other two as no-flux, bit for bit,
-    with no error raised.
-
-    The faces are read through :func:`periodic_faces`, that is through the face owner, on ``geometry`` when
-    given (#2512 row B1). ``dimension`` is the domain's, for a BC not yet bound to one; without either, there
-    are no faces to read and the answer is ``False``.
+    An axis wraps if and only if both of its faces are PERIODIC, however the periodicity is spelt: a uniform periodic
+    BC, one PERIODIC segment per face, or an empty segment list over a periodic ``default_bc``. A BC periodic on one
+    face of an axis and not the other describes no topology, so the owner refuses it, naming the axis; a reader that
+    asks the owner refuses it with that message. The faces are read through :func:`periodic_faces`, the face owner, on
+    ``geometry`` when given (#2512 row B1).
     """
+    if bc is None:
+        return ()
+    if bc.is_uniform:
+        return tuple(range(dimension)) if bc.type == "periodic" else ()
     from .bc_utils import declares_periodic
 
+    if not declares_periodic(bc):
+        return ()
+    faces = periodic_faces(bc, dimension, geometry)
+    axes = []
+    for axis in range(dimension):
+        low, high = faces[2 * axis], faces[2 * axis + 1]
+        if low and high:
+            axes.append(axis)
+        elif low or high:
+            side, other = ("min", "max") if low else ("max", "min")
+            raise ValueError(
+                f"This boundary condition is periodic on the {side} face of axis {axis} and not on its {other} face. "
+                "A periodic axis identifies its two faces, so one periodic face describes no topology. Make both "
+                f"faces of axis {axis} periodic, or neither (#2911)."
+            )
+    return tuple(axes)
+
+
+def periodic_axes(bc: Any, dimension: int, geometry: Any) -> dict[int, float]:
+    """For each axis ``bc`` wraps (:func:`wrapping_axes`), its period L: the span of ``geometry``'s bounds (#2911)."""
+    axes = wrapping_axes(bc, dimension, geometry)
+    if not axes:
+        return {}
+    low, high = (np.asarray(b, dtype=float) for b in geometry.get_bounds())
+    return {axis: float(high[axis] - low[axis]) for axis in axes}
+
+
+def periodic_on_every_face(bc: Any, dimension: int | None = None, geometry: Any = None) -> bool:
+    """Whether every axis of ``bc`` wraps, read from :func:`wrapping_axes` (#2495, #2911).
+
+    A uniform periodic BC, one PERIODIC segment per face, and an empty segment list over a periodic ``default_bc`` all
+    say the same thing, and a BC periodic on one face of an axis is refused by the owner. ``dimension`` is the
+    domain's, for a BC not yet bound to one; without either, a BC that is not uniform has no faces to read and the
+    answer is ``False``.
+    """
     if bc.is_uniform:
         return bc.type == "periodic"
     dimension = dimension or getattr(bc, "dimension", None)
-    if not declares_periodic(bc) or not dimension:
+    if not dimension:
         return False
-    return all(periodic_faces(bc, dimension, geometry))
+    return len(wrapping_axes(bc, dimension, geometry)) == dimension
 
 
 def periodic_axis_span(bc: Any, n: int, dimension: int | None = None, geometry: Any = None) -> int | None:

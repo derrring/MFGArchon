@@ -724,7 +724,7 @@ def diverged_value_function(
 
 def _face_neighbours(n: int, span: int | None) -> np.ndarray:
     """The node across the face (i + 1/2) from node i, along an axis of n nodes, as FP-FDM's divergence-upwind stencil
-    takes it (#2904): i + 1, wrapped modulo the periodic span (`periodic_axis_span`), so that the face across the wrap
+    takes it (#2904): i + 1, wrapped modulo the periodic span (`periodic_axis_spans`), so that the face across the wrap
     reads node 0, never the node an endpoint-inclusive axis repeats. The last node of an axis that does not wrap has no
     face, and is mapped to itself."""
     nodes = np.arange(n)
@@ -741,7 +741,7 @@ def _density_at_faces(m: np.ndarray, across: np.ndarray) -> np.ndarray:
 def _centred_gradient(u: np.ndarray, axis: int, dx: float, span: int | None) -> np.ndarray:
     """The centred difference of u along ``axis`` at every node: `np.gradient`'s on an axis that does not wrap, with
     second-order one-sided ends where the axis has three nodes or more and first-order ones on an axis of two, and
-    across the wrap through `periodic_axis_span`'s span on one that does (#2904)."""
+    across the wrap through `periodic_axis_spans`' span on one that does (#2904)."""
     if span is None:
         return np.gradient(u, dx, axis=axis, edge_order=2 if u.shape[axis] >= 3 else 1)
     nodes = np.arange(u.shape[axis])
@@ -763,7 +763,7 @@ def compute_fp_velocity_field(
     ``FixedPointIterator`` and the Newton ``MFGResidual`` (Issue #1233). Evaluates
     ``H.optimal_control`` at cell interfaces $x_{i+1/2}$, with the normal component of the gradient the stencil's own
     forward difference $p_{i+1/2} = (U_{j} - U_i)/\\Delta x$, where $j$ is the node across the face as the stencil
-    takes it (`_face_neighbours`): $i + 1$, wrapped through `periodic_axis_span` on an axis that wraps. On the quadratic
+    takes it (`_face_neighbours`): $i + 1$, wrapped through `periodic_axis_spans` on an axis that wraps. On the quadratic
     control cost the velocity route then equals the value-function route the stencil forms from U (#2904).
 
     Args:
@@ -778,40 +778,39 @@ def compute_fp_velocity_field(
             averaged by ``_density_at_faces``, for the density terms that declare it (#2335). ``None`` =>
             single-population. In nD only a stack with one value per node (K = 1) is accepted, and it is read as
             ``m`` (#2330).
-        boundary_conditions: The BC of the FP solver the velocity is for, which decides where an axis wraps
-            (`periodic_axis_span`). ``None`` => the problem's shared BC as an FP solver reads it
-            (`fp_view_of_shared_bc`), which refuses a Neumann value that is not zero and a Robin condition. On a
-            `TensorProductGrid` either is read with the grid's periodic layout, which the grid's coordinates own:
-            through the grid's one check (`bind_periodic_convention`), an unstated convention is completed with the
-            grid's and a stated one that contradicts the grid is refused with the grid's message. On any other
-            geometry the convention is read as handed, and an unstated one wraps every node as distinct (#2910). A
-            BC periodic on some faces only is refused (`_refuse_partial_periodic`).
+        boundary_conditions: The BC of the FP solver the velocity is for, which decides which axes wrap. ``None``
+            => the problem's shared BC as an FP solver reads it (`fp_view_of_shared_bc`), which refuses a Neumann
+            value that is not zero and a Robin condition. Either is read with the grid's layout, from its one owner
+            `periodic_axis_spans` (#2910): a `TensorProductGrid` measures it from its coordinates, any other
+            Cartesian grid states it as ``periodic_convention`` or, stating none, takes the one the BC states; a
+            stated convention that contradicts the grid is refused with the grid's message, and a layout neither
+            states is refused. A BC periodic on some faces only is refused (`_refuse_partial_periodic`).
 
     Returns:
         Velocity $\\alpha^*$.
-        1D: shape ``(U.shape[0], Nx - 1)``, at the faces $(i+1/2)$; on a `TensorProductGrid`, on an axis that
-        wraps, the last face reads node 0.
+        1D: shape ``(U.shape[0], Nx - 1)``, at the faces $(i+1/2)$; on an axis that wraps, the last face reads
+        node 0.
         nD: shape ``(U.shape[0], ndim, *spatial_shape)``, one face array per axis: entry ``[d][i]`` is the velocity at
         the face $(i + 1/2)$ along ``d``, the face the stencil reads at node ``i``. The last node of an axis that does
         not wrap has no face and carries 0; a node a wrapping axis repeats carries its twin's face, which is the same
         face. ``optimal_control`` is called once per axis and time step, on the ``(N, d)`` batch of the faces that
-        exist along that axis, each inside the domain on a `TensorProductGrid`: the normal component of p is the
+        exist along that axis, each inside the domain: the normal component of p is the
         forward difference across the face, the others the mean of the two nodes' centred differences, and ``m``
         the mean of the two nodes (#2330, #2904).
 
     Raises:
         ValueError: when the geometry's `get_grid_spacing` refuses a grid that is not uniform; when U's shape has
             no tensor grid of the problem's geometry to sit on (#2756); when a stated periodic convention contradicts
-            the grid's layout; and in nD, when ``optimal_control`` does not return
+            the grid's layout, or neither the grid nor the BC states a layout (#2910); and in nD, when ``optimal_control`` does not return
             shape ``(N, d)``.
         NotImplementedError: handed no BC, when the problem's shared BC has a Neumann value that is not zero or a
-            Robin condition; when the BC is periodic on some faces only; and in nD, when ``cross_density[n]`` does not
-            hold exactly one value per node.
+            Robin condition; when the BC is periodic on some faces only; on a 1-D grid that wraps with its last node
+            distinct from node 0, whose wrap face this does not build yet (#2910); and in nD, when
+            ``cross_density[n]`` does not hold exactly one value per node.
     """
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _refuse_partial_periodic
     from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
-    from mfgarchon.geometry.boundary.conditions import periodic_axis_span
-    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, bind_periodic_convention
+    from mfgarchon.geometry.grids.tensor_grid import periodic_axis_spans
 
     geometry = problem.geometry
     grid_spacing = geometry.get_grid_spacing()
@@ -824,13 +823,8 @@ def compute_fp_velocity_field(
         if boundary_conditions is None
         else boundary_conditions
     )
-    # The grid's coordinates own the periodic layout (#2904, user ruling 2026-11-08): through the grid's one check, an
-    # unstated convention takes the grid's and a stated one that contradicts the grid is refused with the grid's
-    # message; a BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none.
-    if isinstance(geometry, TensorProductGrid):
-        bc = bind_periodic_convention(geometry, bc)
+    # A BC periodic on some faces only is refused, since FP-FDM's stencil wraps every axis or none.
     _refuse_partial_periodic(bc, ndim, geometry, consumer="compute_fp_velocity_field")
-    spans = [periodic_axis_span(bc, spatial_shape[d], ndim, geometry) for d in range(ndim)]
 
     # The grid's own node axes, from their one owner (#2756).
     axes = geometry_grid_axes(geometry)
@@ -838,6 +832,18 @@ def compute_fp_velocity_field(
         raise ValueError(
             f"compute_fp_velocity_field: U has spatial shape {tuple(spatial_shape)}, and the problem's geometry "
             f"({type(geometry).__name__}) has no tensor grid of that shape to place it on (#2756)."
+        )
+
+    # The layout of each wrapping axis, from its one owner on any Cartesian grid (#2910). The 1-D faces built below
+    # number n - 1, which an axis whose last node is distinct from node 0 wraps across n of; in 2-D and 3-D this builds
+    # that wrap.
+    grid_shape = tuple(int(n) for n in geometry.get_grid_shape())
+    spans = list(periodic_axis_spans(geometry, bc))
+    if len(grid_shape) == 1 and spans[0] == grid_shape[0]:
+        raise NotImplementedError(
+            "compute_fp_velocity_field: this 1-D grid wraps with its last node distinct from node 0 (the "
+            f"endpoint-exclusive layout), so its wrap has {grid_shape[0]} faces, and the 1-D faces this builds number "
+            f"{grid_shape[0] - 1}. Building the wrap face is stage 2 of #2910."
         )
 
     if ndim == 1:
@@ -898,7 +904,7 @@ def compute_fp_velocity_field(
             centred = [_centred_gradient(u, e, grid_spacing[e], spans[e]) for e in range(ndim)]
             for d in range(ndim):
                 # The faces that exist along d: every node but the last on an axis that does not wrap, and the span's
-                # distinct nodes on one that does, so on a TensorProductGrid each face sits inside the domain (#2904).
+                # distinct nodes on one that does, so each face sits inside the domain (#2904, #2910).
                 faces = spatial_shape[d] - 1 if spans[d] is None else spans[d]
                 own = np.arange(faces)
                 across = _face_neighbours(spatial_shape[d], spans[d])[:faces]

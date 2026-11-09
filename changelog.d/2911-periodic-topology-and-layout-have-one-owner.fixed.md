@@ -1,0 +1,13 @@
+- **Which axes wrap, and how many nodes a wrapping axis spans, each have one owner** (Issues #2910 and #2911, stage 1).
+  - `wrapping_axes` and `periodic_axes` decide the topology: an axis wraps if and only if both of its faces are periodic, in any spelling, and its period is the span of the bounds. `periodic_axis_spans` decides the layout of each wrapping axis: a `TensorProductGrid` measures it, another Cartesian grid states it, and where the grid states none the boundary condition's stated convention is taken.
+  - `TensorProductGrid.periodic_dimensions`, `get_periods`, `wrap_coordinates`, its periodic distance and `periodic_on_every_face` now read them.
+    - A grid whose BC is periodic on every face, spelt with a segment per face or a periodic `default_bc`, used to report no periodic axes, so it did not wrap coordinates and its periodic distance ignored the wrap. It now does both, as it already did for a uniform periodic BC.
+    - A cylinder spelt the same way used to report no periodic axis; it now reports its wrapped axis, and its periodic distance wraps that axis.
+    - HJB-GFDM and the collocation sampler on such a grid follow.
+  - On a grid whose axes differ in layout, a `TensorProductGrid` now binds into a periodic BC the layout of the axes it wraps, read from the topology owner. A BC that wraps axes of one layout carries that layout, and one that wraps none carries none. Both used to be bound ENDPOINT_EXCLUSIVE, whichever axes they wrapped.
+  - **Refused now:**
+    - A BC periodic on one face of an axis, by every reader that asks the owner, with the axis named.
+    - `periodic_convention` on a grid whose axes differ in layout, which used to collapse them to one value; and a periodic BC wrapping axes of two layouts when a grid binds it, which used to be bound to that collapsed value, so the inclusive axis was read as one node longer than it is.
+    - In the FP velocity builder, on a Cartesian grid that is not a `TensorProductGrid`: a grid and a BC that both state no layout, or state contradicting ones. The builder used to read the BC's statement alone, whatever the grid stated.
+    - The endpoint-exclusive layout in the FP velocity builder's 1-D route, which builds n − 1 faces where that wrap has n. That route used to fail with an `IndexError` in FP-FDM's stencil. On the torus of `test_one_torus_in_two_layouts_gives_one_density`, FP-FDM's density on an exclusive user grid agrees with an inclusive grid's on their shared nodes, in 1-D by the value route and in 2-D and 3-D by both routes.
+  - The FP velocity builder reads the layout from its owner on any Cartesian grid, so on a user `CartesianGrid` whose layout is stated, by the grid or by its BC, it now builds what it builds on a `TensorProductGrid`.

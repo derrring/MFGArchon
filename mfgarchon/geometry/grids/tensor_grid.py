@@ -320,16 +320,17 @@ class TensorProductGrid(
                 "from mfgarchon.geometry.boundary. "
                 "Example: boundary_conditions=no_flux_bc(dimension=1)"
             )
-        # bind_dimension returns a new BC with dimension set, or validates if already set
-        boundary_conditions = boundary_conditions.bind_dimension(dimension)
-        boundary_conditions = self._bind_periodic_convention(boundary_conditions)
-        self._boundary_conditions = boundary_conditions.bind_geometry(self)  # owner queries decide on it (#2512 B1)
-
         # Cache for flattened grid (computed lazily, perf optimization)
         self._flattened_cache: NDArray | None = None
 
         # Region registry for named boundary/subdomain marking (Issue #590 Phase 1.3)
         self._regions: dict[str, NDArray[np.bool_]] = {}
+
+        # The bind reads a placed segment's faces through this grid, which needs the two above (#2910).
+        # bind_dimension returns a new BC with dimension set, or validates if already set.
+        boundary_conditions = boundary_conditions.bind_dimension(dimension)
+        boundary_conditions = self._bind_periodic_convention(boundary_conditions)
+        self._boundary_conditions = boundary_conditions.bind_geometry(self)  # owner queries decide on it (#2512 B1)
 
     # Geometry ABC implementation - properties
     @property
@@ -343,20 +344,9 @@ class TensorProductGrid(
         return GeometryType.CARTESIAN_GRID
 
     def _bind_periodic_convention(self, bc):
-        """Complete a periodic BC with the node layout this grid measures, and refuse one that contradicts it: the one
-        check, `bind_periodic_convention`, which the FP velocity builder calls too (#1822, #2904)."""
+        """Complete a periodic BC with the node layout this grid measures on the axes it wraps, and refuse one that
+        contradicts it (`bind_periodic_convention`, #1822, #2910)."""
         return bind_periodic_convention(self, bc)
-
-    def _first_axis_with_convention(self, convention: PeriodicGridConvention) -> int:
-        """The axis the verdict came from, so the evidence in the message is that axis's.
-
-        Reporting axis 0's coordinates for a verdict reached on axis 1 prints a parenthetical that
-        contradicts its own conclusion.
-        """
-        for axis, coords in enumerate(self.coordinates):
-            if len(coords) >= 2 and self._axis_convention(axis) is convention:
-                return axis
-        return 0
 
     def _axis_convention(self, axis: int) -> PeriodicGridConvention:
         """Where the last node sits on one axis, measured."""
@@ -368,25 +358,29 @@ class TensorProductGrid(
 
     @property
     def periodic_convention(self) -> PeriodicGridConvention:
-        """Where the last node sits, MEASURED from the coordinates this grid actually built.
+        """Where the last node sits, MEASURED from the coordinates this grid actually built, when every axis agrees.
 
         Issue #1822. Derived rather than asserted, so that changing how ``coordinates`` is
         constructed cannot leave a stale claim behind: the whole defect class here is a wrap that
         believes something about the node layout which stopped being true.
 
-        A periodic ``BoundaryConditions`` carries this too -- that is what reaches solvers and
-        operators, which hold no grid -- and ``__init__`` refuses a BC that contradicts what is
-        measured here.
+        The layout is per axis (`_axis_convention`), and `periodic_axis_spans` reads it so (#2910). This one value is
+        the layout the axes share, so a grid whose axes differ has none and is refused here; collapsing it to one value
+        wrapped the other axes a node off (#2910, disagreement 6).
         """
-        # Inclusive iff the last node sits ON the upper bound, on every axis. The tolerance is
-        # relative to the spacing because the alternative sits exactly one dx below it -- the two
-        # are never close by accident.
-        for axis, coords in enumerate(self.coordinates):
-            if len(coords) < 2:
-                continue
-            if self._axis_convention(axis) is PeriodicGridConvention.ENDPOINT_EXCLUSIVE:
-                return PeriodicGridConvention.ENDPOINT_EXCLUSIVE
-        return PeriodicGridConvention.ENDPOINT_INCLUSIVE
+        conventions = {self._axis_convention(axis) for axis, coords in enumerate(self.coordinates) if len(coords) >= 2}
+        if len(conventions) > 1:
+            per_axis = {
+                axis: self._axis_convention(axis).name
+                for axis, coords in enumerate(self.coordinates)
+                if len(coords) >= 2
+            }
+            raise ValueError(
+                f"This grid's axes differ in where the last node sits ({per_axis}), so it has no one periodic "
+                "convention for a boundary condition to carry. Read each axis's span from periodic_axis_spans "
+                "(#2910)."
+            )
+        return conventions.pop() if conventions else PeriodicGridConvention.ENDPOINT_INCLUSIVE
 
     @property
     def num_spatial_points(self) -> int:
@@ -1426,54 +1420,31 @@ class TensorProductGrid(
 
     @property
     def periodic_dimensions(self) -> tuple[int, ...]:
-        """
-        Get dimensions with periodic topology.
+        """The axes this grid's boundary condition wraps, read from the topology owner `wrapping_axes` (#2911).
 
-        Checks boundary conditions to determine which dimensions are periodic.
-
-        Returns:
-            Tuple of dimension indices that are periodic (empty if none)
+        Every spelling of a periodic face counts: a uniform periodic BC, a PERIODIC segment per face, or a periodic
+        ``default_bc``. A BC periodic on one face of an axis is refused there.
 
         Example:
             >>> from mfgarchon.geometry.boundary import periodic_bc
-            >>> bc = periodic_bc(dimension=2)
-            >>> grid = TensorProductGrid(bounds=[(0,2*np.pi),(0,1)],
-            ...                           Nx=[20,10], boundary_conditions=bc)
-            >>> # Note: Current BC doesn't track per-dimension periodicity yet
+            >>> grid = TensorProductGrid(bounds=[(0, 1), (0, 2)], Nx_points=[11, 21],
+            ...                          boundary_conditions=periodic_bc(dimension=2))
+            >>> grid.periodic_dimensions  # (0, 1)
         """
-        # Check boundary conditions for periodicity
-        # Note: Current BC system doesn't have per-dimension periodic flags yet
-        # This will be enhanced when SupportsRegionMarking is implemented
-        if self._boundary_conditions is None:
-            return ()
+        from mfgarchon.geometry.boundary.conditions import wrapping_axes
 
-        from mfgarchon.geometry.boundary.types import BCType
-
-        if self._boundary_conditions.is_uniform:
-            if self._boundary_conditions.bc_type == BCType.PERIODIC:
-                # All dimensions periodic
-                return tuple(range(self._dimension))
-
-        return ()  # Default: no periodicity
+        return wrapping_axes(self._boundary_conditions, self._dimension, self)
 
     def get_periods(self) -> dict[int, float]:
-        """
-        Get period lengths for periodic dimensions.
-
-        Returns:
-            Dictionary mapping dimension index → period length (L = xmax - xmin)
+        """Period lengths of the wrapping axes, read from the topology owner `periodic_axes` (#2911): L = xmax - xmin.
 
         Example:
-            >>> # Assuming periodic BC
             >>> grid = TensorProductGrid(bounds=[(0, 2*np.pi)], Nx=[100], boundary_conditions=periodic_bc(dimension=1))
             >>> grid.get_periods()[0]  # 6.283185307179586
         """
-        periodic_dims = self.periodic_dimensions
-        periods = {}
-        for dim_idx in periodic_dims:
-            xmin, xmax = self.bounds[dim_idx]
-            periods[dim_idx] = xmax - xmin
-        return periods
+        from mfgarchon.geometry.boundary.conditions import periodic_axes
+
+        return periodic_axes(self._boundary_conditions, self._dimension, self)
 
     def wrap_coordinates(
         self,
@@ -2119,46 +2090,115 @@ def tensor_grid_axes(nodes: NDArray, grid_shape: tuple[int, ...]) -> list[NDArra
     return axes if points_are_grid_nodes(product, nodes) else None
 
 
+def _contradicted_layout(
+    grid: Any, axis: int, measured: PeriodicGridConvention, declared: PeriodicGridConvention
+) -> str:
+    """The refusal of a stated convention that contradicts the layout a TensorProductGrid measures on ``axis``."""
+    return (
+        f"This grid's coordinates are {measured.name} on axis {axis} "
+        f"(x[-1] = {grid.coordinates[axis][-1]!r} against an upper bound of "
+        f"{grid.bounds[axis][1]!r}), but the periodic boundary condition declares "
+        f"{declared.name}. They differ by exactly one node, so wrapping under the declared "
+        f"one would shift every periodic stencil by a cell and still return a finite field. "
+        f"Build the BC with periodic_bc(..., convention=PeriodicGridConvention."
+        f"{measured.name}), or build the grid to match (Issue #1822)."
+    )
+
+
 def bind_periodic_convention(grid: Any, bc: Any) -> Any:
-    """Complete a periodic BC with the node layout ``grid`` measures, or refuse one that contradicts it (#1822).
+    """Complete a periodic BC with the node layout ``grid`` measures on the axes it wraps, or refuse one that
+    contradicts it (#1822, #2910).
 
-    The grid's coordinates are the only owner of the periodic layout (user ruling, 2026-11-08): ``TensorProductGrid``
-    binds every BC attached to it through here, and the FP velocity builder checks the BC it is handed here too (#2904).
+    ``TensorProductGrid`` binds every BC attached to it through here. The convention travels on the BC, because that is
+    what reaches solvers and operators that hold no grid; an unstated one wraps as if all N nodes were distinct, which
+    is wrong on an inclusive axis, so binding it is what makes those paths read the layout without declaring anything.
 
-    The convention travels on the BC, because that is what reaches solvers and operators. An
-    unstated one wraps as the package always did (all N nodes distinct), which is wrong for
-    an inclusive grid -- so binding it here is what makes solver paths correct without any of them
-    declaring anything, exactly as ``bind_dimension`` completes the BC's dimension.
-
-    A BC that states a convention is not overridden: it is checked, and a contradiction raises.
-    Silently replacing a caller's explicit statement would be the same silence this whole
-    change removes, one level up.
+    Where the grid's axes share one layout, that layout is the convention. Where they differ, only the axes the BC
+    wraps are read, from the topology owner (`wrapping_axes`), which refuses a BC periodic on one face of an axis: a
+    BC that wraps none of them, such as a periodic ``default_bc`` every face overrides, is returned as it is, and one
+    that wraps axes of one layout carries that one.
+    A BC carries one convention, so wrapped axes that differ in layout cannot be carried by it and are refused;
+    reading each such axis's span is `periodic_axis_spans`, and carrying them is stage 2 of #2910. A BC that states a
+    convention is not overridden: it is checked, and a contradiction raises.
 
     Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
-
-    A periodic ``default_bc`` counts as much as a periodic segment (``bc_utils.declares_periodic``): a
-    periodic default reached the solvers unbound, and the SL pair solved it up to 11% off (#1560).
     """
     from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+    from mfgarchon.geometry.boundary.conditions import wrapping_axes
 
     if not declares_periodic(bc):
         return bc
-    measured = grid.periodic_convention
+    layouts = {axis: grid._axis_convention(axis) for axis, coords in enumerate(grid.coordinates) if len(coords) >= 2}
+    if len(set(layouts.values())) > 1:
+        axes = list(wrapping_axes(bc, grid.dimension, grid))
+        if not axes:
+            return bc
+        layouts = {axis: layouts[axis] for axis in axes if axis in layouts}
+        if len(set(layouts.values())) > 1:
+            raise ValueError(
+                f"The periodic boundary condition wraps axes {axes}, which differ in where the last node sits "
+                f"({ {axis: layout.name for axis, layout in layouts.items()} }), and a boundary condition carries one "
+                "convention, so it cannot carry them. Wrap only axes of one layout, or build the grid with one layout "
+                "on its wrapped axes; each axis's span is read from periodic_axis_spans (#2910)."
+            )
+    measured = next(iter(layouts.values()), PeriodicGridConvention.ENDPOINT_INCLUSIVE)
     declared = getattr(bc, "periodic_convention", None)
     if declared is None:
         return replace(bc, periodic_convention=measured)
     if declared is not measured:
-        axis = grid._first_axis_with_convention(measured)
-        raise ValueError(
-            f"This grid's coordinates are {measured.name} on axis {axis} "
-            f"(x[-1] = {grid.coordinates[axis][-1]!r} against an upper bound of "
-            f"{grid.bounds[axis][1]!r}), but the periodic boundary condition declares "
-            f"{declared.name}. They differ by exactly one node, so wrapping under the declared "
-            f"one would shift every periodic stencil by a cell and still return a finite field. "
-            f"Build the BC with periodic_bc(..., convention=PeriodicGridConvention."
-            f"{measured.name}), or build the grid to match (Issue #1822)."
-        )
+        raise ValueError(_contradicted_layout(grid, next(iter(layouts), 0), measured, declared))
     return bc
+
+
+def periodic_axis_spans(grid: Any, bc: Any) -> tuple[int | None, ...]:
+    """How many distinct nodes each axis of ``grid`` wraps over under ``bc``, or None where the axis does not wrap: the
+    one owner of the periodic layout on a Cartesian grid (#2910).
+
+    Which axes wrap is the topology owner's (`wrapping_axes`). Where the last node sits, on each wrapped axis:
+    - a `TensorProductGrid` measures it on that axis from its coordinates, and a convention stated on ``bc`` that
+      contradicts an axis is refused with the grid's message;
+    - any other Cartesian grid states it as ``periodic_convention``; one that states none takes the convention stated
+      on ``bc``; a stated convention on both must agree;
+    - where neither the grid nor ``bc`` states a layout, the owner refuses rather than choose one.
+    An axis whose last node repeats node 0 (ENDPOINT_INCLUSIVE) spans n - 1 distinct nodes, and one whose last node is
+    distinct (ENDPOINT_EXCLUSIVE) spans n.
+    """
+    from mfgarchon.geometry.boundary.conditions import wrapping_axes
+    from mfgarchon.geometry.boundary.types import repeated_endpoint_count
+
+    shape = tuple(int(n) for n in grid.get_grid_shape())
+    wrapped = wrapping_axes(bc, len(shape), grid)
+    if not wrapped:
+        return (None,) * len(shape)
+    stated = getattr(bc, "periodic_convention", None)
+    if isinstance(grid, TensorProductGrid):
+        layout = {
+            axis: grid._axis_convention(axis) if shape[axis] >= 2 else PeriodicGridConvention.ENDPOINT_INCLUSIVE
+            for axis in wrapped
+        }
+        for axis in wrapped:
+            if stated is not None and stated is not layout[axis]:
+                raise ValueError(_contradicted_layout(grid, axis, layout[axis], stated))
+    else:
+        declared = getattr(grid, "periodic_convention", None)
+        if declared is not None and stated is not None and stated is not declared:
+            raise ValueError(
+                f"{type(grid).__name__} states the layout {declared.name}, but the periodic boundary condition "
+                f"declares {stated.name}. They differ by exactly one node, so wrapping under the declared one would "
+                "shift every periodic stencil by a cell. State the same layout on both (#2910)."
+            )
+        source = declared if declared is not None else stated
+        if source is None:
+            raise ValueError(
+                f"{type(grid).__name__} wraps axes {list(wrapped)}, and neither it nor the periodic boundary condition "
+                "states a node layout, so periodic_axis_spans cannot tell whether the last node repeats node 0 and "
+                "does not choose. Give the grid a periodic_convention, state convention= on the boundary condition, or "
+                "use a TensorProductGrid, which measures its own (#2910)."
+            )
+        layout = dict.fromkeys(wrapped, source)
+    return tuple(
+        shape[axis] - repeated_endpoint_count(layout[axis]) if axis in wrapped else None for axis in range(len(shape))
+    )
 
 
 def geometry_grid_axes(geometry: Any) -> list[NDArray] | None:
