@@ -211,16 +211,17 @@ def test_the_report_still_sees_a_pair_that_is_not_adjoint():
 
 
 @pytest.mark.parametrize("mode", ["transpose", "auto"])
-def test_the_removed_adjoint_modes_refuse_and_name_the_one_that_transposes(mode):
+def test_the_removed_adjoint_modes_are_refused_with_the_modes_that_remain(mode):
     """`transpose` and `auto` built the FP operator from `build_advection_matrix`, whose transpose is not the HJB
     linearisation's (on `_problem(n=40)` under `engquist_osher`, the first sweep's U, interior window: up to 245
-    against 2.8e-14). They were removed after their deprecation window. The mode they name is the one
-    `_verified_run` above executes; under `engquist_osher`, the default, it reports no mismatch.
+    against 2.8e-14). They are removed: each is refused as an unknown mode, with the modes that remain. The mode
+    that transposes is the one `_verified_run` above executes; under `engquist_osher`, the default, it reports no
+    mismatch.
 
     This replaces a pin that the check ran in every adjoint mode, which with one non-`off` mode left has nothing
     to separate."""
     problem = _problem()
-    with pytest.raises(ValueError, match=rf"adjoint_mode='{mode}' was removed.*jacobian_transpose"):
+    with pytest.raises(ValueError, match=rf"adjoint_mode must be one of \('off', 'jacobian_transpose'\), got '{mode}'"):
         BlockIterator(problem, HJBFDMSolver(problem), FPFDMSolver(problem), adjoint_mode=mode)
 
 

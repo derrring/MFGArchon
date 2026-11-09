@@ -1053,8 +1053,8 @@ def resolve_fp_drift_kwargs(
 
     Issue #1489 (S1): the drift convention cannot be inferred from parameter presence.
     ``drift_field`` is a real velocity channel on some solvers (fp_fvm / FPFDM)
-    but a DEPRECATED ALIAS for ``potential_field=U`` on the weak-form family
-    (``DriftConvention.VALUE_FUNCTION``). The routing therefore keys on the solver-declared
+    but, on the particle solver (``DriftConvention.VALUE_FUNCTION``), a live alias for
+    ``potential_field=U``. The routing therefore keys on the solver-declared
     ``drift_convention`` when the caller supplies it, and falls back byte-for-byte to the
     pre-#1489 param-presence gate when it is ``None`` (un-updated callers are unaffected).
 
@@ -1075,8 +1075,8 @@ def resolve_fp_drift_kwargs(
         drift_convention: The FP solver's declared ``_drift_convention`` (Issue #1489 S1). When
             given, it disambiguates the ``drift_field`` channel: ``DriftConvention.VELOCITY`` means
             ``drift_field`` is a true velocity $\\alpha^*$; ``DriftConvention.VALUE_FUNCTION`` means
-            the solver only consumes $U$ (its ``drift_field`` is a deprecated alias for
-            ``potential_field``), so a non-smooth $H$ raises instead of silently advecting $U$.
+            the solver only consumes $U$ (a ``drift_field`` it has, as the particle solver does, is an alias
+            for ``potential_field``), so a non-smooth $H$ raises instead of silently advecting $U$.
             ``None`` (caller did not thread it) => the pre-#1489 param-presence gate, byte-identical.
         fp_solver: The FP solver the kwargs are for. Its class's ``_forms_its_drift_from_u`` and drift convention
             decide where an own ``optimal_control`` goes (#2900); whether its step then reads the velocity is the
@@ -1147,8 +1147,8 @@ def resolve_fp_drift_kwargs(
             drift_from_u = False
 
         # Issue #1489 (S1): param presence cannot disambiguate the drift convention — `drift_field`
-        # is a real velocity channel on some solvers but a deprecated alias for `potential_field=U`
-        # on the weak-form family (VALUE_FUNCTION). Key on the solver-declared `drift_convention`
+        # is a real velocity channel on some solvers but, on the particle solver (VALUE_FUNCTION), a
+        # live alias for `potential_field=U`. Key on the solver-declared `drift_convention`
         # when the caller threads it; when it is None, reproduce the pre-#1489 param-presence gate
         # byte-for-byte so un-updated callers are unaffected.
         if drift_convention is None:

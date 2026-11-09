@@ -52,7 +52,7 @@ import numpy as np
 from scipy import sparse
 
 from mfgarchon.utils.numerical.implicit_diffusion import cn_alpha, neumann_cn_stencil, wall_factor
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, retired_sigma_keyword
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -109,7 +109,6 @@ class OperatorConfig:
     """Boundary condition type: 'neumann', 'dirichlet', 'periodic'."""
 
 
-@retired_sigma_keyword
 def build_diffusion_matrix(
     grid_shape: int | tuple[int, ...],
     dx: float | tuple[float, ...],
@@ -302,7 +301,6 @@ def _kron_with_identity(L_1d: sparse.spmatrix, dim: int, grid_shape: tuple[int, 
     return result
 
 
-@retired_sigma_keyword
 def build_diffusion_matrix_1d(
     Nx: int,
     dx: float,
@@ -395,7 +393,6 @@ def build_diffusion_matrix_1d(
     return A.tocsr()
 
 
-@retired_sigma_keyword
 def build_diffusion_matrix_2d(
     grid_shape: tuple[int, int],
     dx: float | tuple[float, float],
@@ -642,7 +639,6 @@ def make_operator_adjoint(
 # =============================================================================
 
 
-@retired_sigma_keyword
 def build_diffusion_matrix_from_geometry(
     geometry: OperatorGeometry,
     volatility: float,

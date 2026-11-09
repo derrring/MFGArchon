@@ -64,7 +64,7 @@ import math
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -191,22 +191,6 @@ class ControlCostBase(ABC):
         """Control cost weight lambda."""
         return self._lambda
 
-    @property
-    def control_cost(self) -> float:
-        """Control cost weight lambda.
-
-        .. deprecated:: 0.19.0
-            Use ``lambda_`` instead. Will be removed in v0.25.0.
-        """
-        import warnings
-
-        warnings.warn(
-            "ControlCostBase.control_cost is deprecated, use .lambda_ instead. Will be removed in v0.25.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._lambda
-
     # === PRIMARY interface (solvers use these via HamiltonianBase delegation) ===
 
     @abstractmethod
@@ -324,27 +308,6 @@ class ControlCostBase(ABC):
         Issue #1644 (capability B4), which owns the guarded conjugate helper.
         """
         return None
-
-    # === DEPRECATED: hamiltonian() -> use evaluate() ===
-
-    def hamiltonian(self, p: np.ndarray) -> np.ndarray:
-        """
-        Evaluate Hamiltonian H(p).
-
-        .. deprecated:: 0.19.0
-            Use ``evaluate(p)`` instead. ``hamiltonian()`` may return +inf
-            for non-smooth costs (L1). ``evaluate()`` always returns finite
-            values. Will be removed in v0.25.0.
-        """
-        import warnings
-
-        warnings.warn(
-            "ControlCostBase.hamiltonian() is deprecated, use .evaluate() instead. "
-            "evaluate() always returns finite values. Will be removed in v0.25.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.evaluate(p)
 
     # === REGULARIZATION ===
 
@@ -1233,13 +1196,6 @@ class HamiltonianValues:
     H: NDArray
     dH_dp: NDArray
     volatility: NDArray
-
-    @property
-    def sigma(self) -> NoReturn:
-        raise AttributeError(
-            "HamiltonianValues.sigma is retired (#2378 part 2b); the physical volatility it held is "
-            "HamiltonianValues.volatility."
-        )
 
 
 class Regularizer(Protocol):

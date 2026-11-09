@@ -31,13 +31,11 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 _logger = get_logger(__name__)
@@ -117,7 +115,6 @@ class FPNetworkSolver(BaseFPSolver):
         cfl_factor: float = 0.5,
         max_iterations: int = 1000,
         tolerance: float = 1e-6,
-        enforce_mass_conservation: bool | None = None,
     ):
         """
         Initialize network FP solver.
@@ -133,10 +130,6 @@ class FPNetworkSolver(BaseFPSolver):
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
-            enforce_mass_conservation: REMOVED (Issue #1683). Passing any value raises.
-                Conservation is a property of the discretisation, not a switch: when the
-                scheme conserves the flag did nothing, and when it did not the flag forced
-                the output to look conserved. Neither branch was useful.
         """
         super().__init__(problem)
 
@@ -196,26 +189,6 @@ class FPNetworkSolver(BaseFPSolver):
                 "the implicit scheme is a direct sparse solve (spsolve), not iterative, so "
                 "max_iterations is never used. Omit it (default 1000)."
             )
-        # Issue #1683: `enforce_mass_conservation` normalised the caller's initial condition to
-        # unit mass and divided every step by its total. Both were removed. Conservation is a
-        # property of the discretisation: this scheme conserves by construction (measured at
-        # 0.00-0.01% drift over 20 steps with the division removed), so the flag did nothing on
-        # a healthy solve -- and on an unhealthy one it forced the output to look conserved,
-        # which is the defect #1683 exists to remove. There is no setting of a boolean that
-        # makes a non-conservative scheme conservative.
-        #
-        # The default is a sentinel rather than a bool so that BOTH `True` and `False` raise.
-        # A user who passed `False` was asking for the honest behaviour, which is now the only
-        # behaviour; silently accepting either value would hide that the semantics moved.
-        if enforce_mass_conservation is not None:
-            raise NotImplementedError(
-                f"FPNetworkSolver(enforce_mass_conservation={enforce_mass_conservation!r}) was "
-                "removed in Issue #1683. It normalised your initial condition to unit mass and "
-                "divided every step by its total, so the returned density was exactly "
-                "mass-conserving whatever the scheme produced. The scheme conserves by "
-                "construction, so there is nothing to enforce; the drift is now reported and "
-                "the density you get back is the one the scheme computed. Drop the argument."
-            )
         if tolerance != 1e-6:
             raise NotImplementedError(
                 f"FPNetworkSolver(tolerance={tolerance}) is not implemented (Issue #1426): the "
@@ -254,18 +227,13 @@ class FPNetworkSolver(BaseFPSolver):
             if self.dt > self.dt_stable:
                 print(f"Warning: dt={self.dt:.2e} > dt_stable={self.dt_stable:.2e}")
 
-    @retired_volatility_keywords
-    @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
-    @deprecated_parameter(param_name="drift_field", since="v0.21.0", replacement="potential_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         potential_field: np.ndarray | Callable | None = None,
         volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
-        # Deprecated parameter names for backward compatibility
-        m_initial_condition: np.ndarray | None = None,
-        drift_field: np.ndarray | Callable | None = None,
+        *,
         volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
@@ -273,15 +241,11 @@ class FPNetworkSolver(BaseFPSolver):
 
         Args:
             M_initial: Initial density m_0(i).
-            m_initial_condition: DEPRECATED since v0.17.0 — use M_initial.
             potential_field: Value function U(t, i) specification (optional):
                 - None: Zero drift (pure diffusion on network).
                 - np.ndarray: Value function array, shape (Nt+1, num_nodes).
                   The solver differentiates U internally to compute drift.
                 - Callable: Function U(t, i) -> value (Phase 2, not yet supported).
-            drift_field: DEPRECATED since v0.21.0 — use potential_field.
-                Accepted U under the old drift_field name (U-semantic). The rename
-                mirrors the weak-form rename from PR #1205 (Issue #1043 Phase 2).
             volatility: SDE volatility sigma (optional); D = sigma^2/2 internally
                 (Issue #1429 S0-15 — the base_fp contract, consistent with FDM/FVM/GFDM):
                 - None: Use the D-valued self.diffusion_coefficient constructor knob (backward
@@ -295,26 +259,6 @@ class FPNetworkSolver(BaseFPSolver):
         Returns:
             (Nt+1, num_nodes) density evolution.
         """
-        # Handle deprecated m_initial_condition redirect
-        if m_initial_condition is not None:
-            if M_initial is not None:
-                raise ValueError(
-                    "Cannot specify both M_initial and m_initial_condition. "
-                    "Use M_initial (m_initial_condition is deprecated)."
-                )
-            M_initial = m_initial_condition
-
-        # Handle deprecated drift_field redirect (Issue #1043 Phase 2).
-        # FPNetworkSolver's drift_field was U-semantic (value function), not alpha*;
-        # rename to potential_field to make this explicit.
-        if drift_field is not None:
-            if potential_field is not None:
-                raise ValueError(
-                    "Cannot specify both potential_field and drift_field. "
-                    "Use potential_field (drift_field is deprecated since v0.21.0)."
-                )
-            potential_field = drift_field
-
         # Validate required parameter
         if M_initial is None:
             raise ValueError("M_initial is required")
@@ -458,10 +402,7 @@ class FPNetworkSolver(BaseFPSolver):
             # logged; a drift that shows up here is the scheme failing, which is the thing the
             # old `enforce_mass_conservation` division made unobservable.
             #
-            # A logger rather than `warnings.warn`, for two measured reasons. (1) This method
-            # carries two `@deprecated_parameter` decorators, so `stacklevel=2` resolved to
-            # `utils/deprecation.py` rather than to the caller -- the user could not tell which
-            # solve drifted. (2) The drift value is in the message text, so `warnings`' dedup
+            # A logger rather than `warnings.warn`: the drift value is in the message text, so `warnings`' dedup
             # keys on a string that changes every Picard iteration: a 15-iteration coupled solve
             # with an absorbing node emitted 15 warnings for behaviour that is correct. The GFDM
             # sibling reports its drift the same way.

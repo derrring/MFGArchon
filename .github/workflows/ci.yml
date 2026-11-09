@@ -348,15 +348,6 @@ jobs:
             print(f'✅ Memory usage efficient: {memory_used:.1f} MB')
         "
 
-    - name: Parameter migration system check
-      run: |
-        echo "🔍 Validating parameter migration system..."
-        python -c "
-        from mfgarchon.utils.parameter_migration import global_parameter_migrator
-        assert len(global_parameter_migrator.mappings) > 0, 'parameter migration registry is empty'; print(f'✅ Parameter migration system loaded with {len(global_parameter_migrator.mappings)} mappings')
-        print('📋 Migration system operational for runtime parameter conversion')
-        "
-
   # === PHASE 3: Security Scanning (Conditional) ===
   security-scan:
     name: Security Analysis

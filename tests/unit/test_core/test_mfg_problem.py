@@ -98,7 +98,6 @@ def test_mfg_components_defaults():
 
     # Optional fields have None/empty defaults
     assert components.m_initial is None
-    assert components.u_final is None
     assert components.boundary_conditions is None
     assert components.parameters == {}
     assert components.description == "MFG Problem"
@@ -430,7 +429,7 @@ def test_hamiltonian_h_default():
 
     x_idx = 5
     m_at_x = 1.0
-    # Issue #673: Use derivs with tuple notation (p_values deprecated)
+    # Issue #673: Use derivs with tuple notation (p_values was removed before 1.0)
     derivs = {(1,): 0.1}  # 1D gradient = 0.1
     t_idx = 5
 
@@ -448,7 +447,7 @@ def test_hamiltonian_dh_dm_default():
 
     x_idx = 5
     m_at_x = 1.0
-    # Issue #673: Use derivs with tuple notation (p_values deprecated)
+    # Issue #673: Use derivs with tuple notation (p_values was removed before 1.0)
     derivs = {(1,): 0.1}  # 1D gradient = 0.1
     t_idx = 5
 
@@ -1126,12 +1125,12 @@ def test_volatility_is_the_sde_volatility():
 
 @pytest.mark.unit
 def test_sigma_is_retired():
-    """#2375 ruling 6: sigma= is refused, naming its replacement, and problem.sigma is gone."""
-    with pytest.raises(TypeError, match=r"MFGProblem\(sigma=\.\.\.\) is retired.*volatility="):
+    """#2375 ruling 6: sigma= and problem.sigma are gone (the removal before 1.0): Python's own errors name them."""
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'sigma'"):
         create_test_problem(sigma=0.5)
     problem = create_test_problem(volatility=0.5)
     for name in ("sigma", "volatility_field", "diffusion_field"):
-        with pytest.raises(AttributeError, match=rf"problem\.{name} is retired"):
+        with pytest.raises(AttributeError, match=rf"has no attribute '{name}'"):
             getattr(problem, name)
 
     import dataclasses
@@ -1139,12 +1138,11 @@ def test_sigma_is_retired():
     from mfgarchon.core.model import Model
 
     model = Model(hamiltonian=default_hamiltonian(), volatility=0.2)
-    with pytest.raises(TypeError, match=r"Model\(sigma=\.\.\.\) is retired.*volatility="):
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'sigma'"):
         Model(hamiltonian=default_hamiltonian(), sigma=0.2)
-    with pytest.raises(TypeError, match=r"Model\(sigma=\.\.\.\) is retired"):
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'sigma'"):
         dataclasses.replace(model, sigma=0.3)
-    # Read, it raises too: a retired field read back as None would pass every getattr default.
-    with pytest.raises(AttributeError, match=r"Model\.sigma is retired.*Model\.volatility"):
+    with pytest.raises(AttributeError, match=r"has no attribute 'sigma'"):
         model.sigma  # noqa: B018
     assert dataclasses.replace(model, volatility=0.3).volatility == 0.3
 

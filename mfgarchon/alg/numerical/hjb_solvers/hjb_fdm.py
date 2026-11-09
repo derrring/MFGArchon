@@ -27,7 +27,6 @@ from mfgarchon.operators.stencils.finite_difference import (
     upwind_momentum_derivatives,
 )
 from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
@@ -35,7 +34,6 @@ from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 from . import base_hjb
@@ -61,11 +59,6 @@ _UNASSEMBLED_TENSOR_REFUSAL = (
 
 # Type alias for HJB advection schemes (gradient form only - HJB is not a conservation law)
 HJBAdvectionScheme = Literal["gradient_centered", "gradient_upwind"]
-
-# Type alias for Newton failure behavior (Issue #669); `on_newton_failure` is the deprecated name of
-# `on_inner_failure`, and "warn_and_fallback" is its "fallback" (#2644)
-NewtonFailurePolicy = Literal["raise", "warn_and_fallback"]
-_NEWTON_FAILURE_TO_INNER = {"raise": "raise", "warn_and_fallback": "fallback"}
 
 
 def is_diagonal_tensor(Sigma: NDArray, rtol: float = 1e-10) -> bool:
@@ -227,16 +220,6 @@ class HJBFDMSolver(BaseHJBSolver):
     # The nD Newton can retry a step with value iteration, so it also takes "fallback" (#2644).
     _inner_failure_policies = ("raise", "record", "fallback")
 
-    @deprecated_parameter(
-        param_name="damping_factor",
-        since="v0.19.2",
-        replacement="relaxation",
-    )
-    @deprecated_parameter(
-        param_name="on_newton_failure",
-        since="v0.22.0",
-        replacement="on_inner_failure",
-    )
     def __init__(
         self,
         problem: MFGProblem,
@@ -248,10 +231,8 @@ class HJBFDMSolver(BaseHJBSolver):
         newton_tolerance: float | None = None,
         constraint: ConstraintProtocol | None = None,
         on_inner_failure: str | None = None,
-        on_newton_failure: NewtonFailurePolicy | None = None,
+        *,
         analytic_jacobian: bool | None = None,
-        # Deprecated parameter (decorator handles warnings)
-        damping_factor: float | None = None,
         backend: str | None = None,
     ):
         """
@@ -272,7 +253,6 @@ class HJBFDMSolver(BaseHJBSolver):
                   its Jacobian there is a Clarke element.
                 The two differ only at a discrete local maximum along an axis.
             relaxation: Under-relaxation factor ω ∈ (0,1] for fixed-point iteration.
-                Legacy `damping_factor` kwarg still accepted with DeprecationWarning.
             max_newton_iterations: Max iterations per timestep
             newton_tolerance: Convergence tolerance
             constraint: Variational inequality constraint (Issue #591):
@@ -289,7 +269,6 @@ class HJBFDMSolver(BaseHJBSolver):
                   solve sets this for its sweeps and does not report convergence over a recorded step (#1878).
                 - 'fallback': retry a failed nD Newton step with value iteration, and record if that fails too. On
                   the 1-D Newton and the nD fixed point, which have no fallback, it records as 'record' does.
-            on_newton_failure: Deprecated name of `on_inner_failure` (Issue #669); 'warn_and_fallback' is 'fallback'.
             analytic_jacobian: Which 1D Newton path the solve takes.
                 - None (default): the batch path on the NumPy backend, the per-point path
                   on any other.
@@ -346,10 +325,6 @@ class HJBFDMSolver(BaseHJBSolver):
             )
         self.numerical_hamiltonian: NumericalHamiltonian = numerical_hamiltonian
 
-        # Redirect deprecated parameter (decorator handles warnings)
-        if damping_factor is not None:
-            relaxation = damping_factor
-
         # Set defaults (use None check to avoid treating 0 as falsy)
         self.max_newton_iterations = base_hjb.checked_inner_budget(
             max_newton_iterations if max_newton_iterations is not None else base_hjb.DEFAULT_NEWTON_MAX_ITERATIONS,
@@ -360,11 +335,7 @@ class HJBFDMSolver(BaseHJBSolver):
         self.solver_type = solver_type
         self.relaxation = relaxation
         self.constraint = constraint  # Variational inequality constraint (Issue #591)
-        # Issue #669, #2644: what an inner solve that stops without a root does; the old name maps onto the new.
-        if on_newton_failure is not None:
-            if on_inner_failure is not None:
-                raise TypeError("HJBFDMSolver: pass on_inner_failure, not on_newton_failure as well (#2644).")
-            on_inner_failure = _NEWTON_FAILURE_TO_INNER.get(on_newton_failure, on_newton_failure)
+        # Issue #669, #2644: what an inner solve that stops without a root does.
         self.on_inner_failure = "raise" if on_inner_failure is None else on_inner_failure
 
         # Validate
@@ -452,11 +423,6 @@ class HJBFDMSolver(BaseHJBSolver):
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
-    @property
-    def damping_factor(self) -> float:
-        """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
-        return self.relaxation
-
     def _get_laplacian_op(self):
         """Get (or create) cached Laplacian operator for diffusion term."""
         if self._laplacian_op is None:
@@ -496,30 +462,6 @@ class HJBFDMSolver(BaseHJBSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
-    @property
-    def on_newton_failure(self) -> str:
-        """Deprecated name of ``on_inner_failure`` (Issue #669, #2644); 'warn_and_fallback' is its 'fallback'."""
-        import warnings
-
-        warnings.warn(
-            "HJBFDMSolver.on_newton_failure is deprecated; read on_inner_failure (#2644).",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return {"fallback": "warn_and_fallback"}.get(self.on_inner_failure, self.on_inner_failure)
-
-    @on_newton_failure.setter
-    def on_newton_failure(self, policy: str) -> None:
-        import warnings
-
-        warnings.warn(
-            "HJBFDMSolver.on_newton_failure is deprecated; set on_inner_failure (#2644).",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.on_inner_failure = _NEWTON_FAILURE_TO_INNER.get(policy, policy)
-
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: NDArray | None = None,

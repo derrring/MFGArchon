@@ -266,7 +266,7 @@ def main():
 
     # Solve using network MFG solver
     logger.info("\n[2/3] Solving MFG system...")
-    solver = create_simple_network_solver(problem, scheme="implicit", damping=0.6)
+    solver = create_simple_network_solver(problem, scheme="implicit", relaxation=0.6)
 
     # solve() returns (U, M, iterations, error_U_history, error_M_history)
     U, M, iterations, error_U_hist, error_M_hist = solver.solve(max_iterations=100, tolerance=1e-6)

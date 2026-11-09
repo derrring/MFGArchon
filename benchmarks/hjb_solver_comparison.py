@@ -65,7 +65,7 @@ def benchmark_1d_solver(Nx=100, Nt=50, solver_type="newton"):
         solver = HJBFDMSolver(
             problem,
             solver_type="fixed_point",
-            damping_factor=0.8,
+            relaxation=0.8,
             max_newton_iterations=100,
             newton_tolerance=1e-6,
         )
@@ -109,7 +109,7 @@ def benchmark_2d_solver(N=20, Nt=20, solver_type="newton"):
         solver = HJBFDMSolver(
             problem,
             solver_type="fixed_point",
-            damping_factor=0.8,
+            relaxation=0.8,
             max_newton_iterations=100,
             newton_tolerance=1e-6,
         )

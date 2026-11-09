@@ -644,33 +644,6 @@ class TestCalculatorClasses:
                     "retire this defect pin and restore the agreement assertion (#1919, #1935)"
                 )
 
-    @pytest.mark.parametrize(
-        ("name", "args", "replacement"),
-        [
-            ("high_order_ghost_neumann", ([1.0, 2.0, 3.0, 4.0], 1.0, 1.0), "ghost_cell_neumann"),
-            ("high_order_ghost_dirichlet", ([1.0, 1.0, 1.0, 1.0], 1.0), "ghost_cell_dirichlet"),
-        ],
-    )
-    def test_the_retired_high_order_ghosts_refuse_and_name_their_replacement(self, name, args, replacement):
-        """#1936. Both shipped in v0.21.0, so the import must survive the retirement.
-
-        The refusal has to NAME the replacement, not merely refuse: neither function had a caller
-        or a test, so the next reader has nothing but this message to go on and would otherwise
-        reimplement the same formula.
-
-        Neither is uniformly wrong, which is why reading them did not settle it. `u = x`, max wall:
-        +1.5 / -0.5909 / -0.4600 against +0.5; the SAME order=4 and order=5 branches are exact at
-        the min wall. `u = 1`, dirichlet: [1.6, 4.0] and [1.5, 3.3333] against [1.0, 1.0] on the
-        default cell-centred path, correct on the vertex-centred one. What condemns them is the
-        rate, not any single row: the neumann ghost is O(h) where `ghost_cell_neumann` is O(h^3).
-        """
-        import mfgarchon.geometry.boundary as boundary
-
-        func = getattr(boundary, name)
-        with pytest.raises(NotImplementedError, match="RETIRED") as excinfo:
-            func(*args)
-        assert replacement in str(excinfo.value), f"{name}'s refusal does not name {replacement}"
-
     def test_robin_calculator(self):
         """Test RobinCalculator for mixed boundary conditions."""
         from mfgarchon.geometry.boundary import RobinCalculator
@@ -681,14 +654,6 @@ class TestCalculatorClasses:
         ghost = calc_dirichlet.compute(interior_value=1.0, dx=0.1, side="min")
         # Should behave like Dirichlet: ghost = 2*2 - 1 = 3
         assert np.isclose(ghost, 3.0)
-
-    def test_no_flux_calculator(self):
-        """Test NoFluxCalculator (edge extension)."""
-        from mfgarchon.geometry.boundary import NoFluxCalculator
-
-        calc = NoFluxCalculator()
-        ghost = calc.compute(interior_value=7.5, dx=0.1, side="max")
-        assert np.isclose(ghost, 7.5)
 
     def test_linear_extrapolation_calculator(self):
         """Test LinearExtrapolationCalculator (zero second derivative)."""
@@ -714,12 +679,12 @@ class TestCalculatorClasses:
         )
         assert np.isclose(ghost, 7.0)
 
-    def test_fp_no_flux_calculator(self):
-        """Test FPNoFluxCalculator (physics-aware zero total flux)."""
-        from mfgarchon.geometry.boundary import FPNoFluxCalculator
+    def test_zero_flux_calculator(self):
+        """Test ZeroFluxCalculator (physics-aware zero total flux)."""
+        from mfgarchon.geometry.boundary import ZeroFluxCalculator
 
         # Zero drift: reduces to Neumann (ghost = interior)
-        calc = FPNoFluxCalculator(drift_velocity=0.0, diffusion_coeff=1.0)
+        calc = ZeroFluxCalculator(drift_velocity=0.0, diffusion_coeff=1.0)
         ghost = calc.compute(interior_value=3.0, dx=0.1, side="min")
         assert np.isclose(ghost, 3.0)
 

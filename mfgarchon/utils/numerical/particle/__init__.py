@@ -16,7 +16,6 @@ Organization:
 - sampling: Monte Carlo integration, variance reduction, density-based sampling
 - mcmc: MCMC samplers (Metropolis-Hastings, HMC, NUTS, Langevin)
 - interpolation: Particle-grid conversion utilities
-- boundary: Particle boundary condition application
 - kde_boundary: Boundary-corrected KDE for density estimation (Issue #709)
 
 Typical Usage:
@@ -29,9 +28,6 @@ Typical Usage:
         monte_carlo_integrate,
         MCConfig,
         MCResult,
-        # Boundary conditions (deprecated: mfgarchon.utils.particle_utils holds the pair)
-        apply_boundary_conditions_gpu,
-        apply_boundary_conditions_numpy,
         # MCMC
         MetropolisHastings,
         HamiltonianMonteCarlo,
@@ -42,7 +38,6 @@ Typical Usage:
     from mfgarchon.utils.numerical.kernels import GaussianKernel, WendlandKernel
 """
 
-# Boundary conditions
 # Kernels - re-export from new location for backward compatibility
 from mfgarchon.utils.numerical.kernels import (
     CubicKernel,
@@ -53,10 +48,6 @@ from mfgarchon.utils.numerical.kernels import (
     QuinticSplineKernel,
     WendlandKernel,
     create_kernel,
-)
-from mfgarchon.utils.numerical.particle.boundary import (
-    apply_boundary_conditions_gpu,
-    apply_boundary_conditions_numpy,
 )
 
 # CIC density estimation (Issue #721)
@@ -138,8 +129,6 @@ __all__ = [
     "interpolate_particles_to_grid",
     "estimate_kde_bandwidth",
     # Boundary conditions
-    "apply_boundary_conditions_gpu",
-    "apply_boundary_conditions_numpy",
     # Boundary-corrected KDE (Issue #709)
     "create_ghost_particles",
     "reflection_kde",

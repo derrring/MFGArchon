@@ -13,7 +13,6 @@ Submodules:
 """
 
 # Flux diagnostics for mass conservation analysis
-# GFDMOperator: deprecated, moved to _compat. Import without triggering warning.
 # GFDM strategies are NOT re-exported here. They live in
 # `mfgarchon.alg.numerical.gfdm_components.gfdm_strategies`; import them from there.
 #
@@ -54,7 +53,6 @@ from mfgarchon.geometry.meshes.mesh_distances import (
     compute_distances_for_eoc_study,
     compute_mesh_distances,
 )
-from mfgarchon.utils.numerical._compat.gfdm_operators import GFDMOperator
 from mfgarchon.utils.numerical.flux_diagnostics import (
     BoundaryFluxResult,
     FluxDiagnostics,
@@ -119,7 +117,6 @@ from mfgarchon.utils.numerical.particle.interpolation import (
 
 __all__ = [
     # GFDM operators (legacy; canonical: alg.numerical.gfdm_components.gfdm_strategies)
-    "GFDMOperator",
     # Monotonicity tracking
     "MonotonicityStats",
     "verify_m_matrix_property",

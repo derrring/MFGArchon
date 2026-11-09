@@ -12,14 +12,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
-from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -28,6 +26,7 @@ from .base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     refuse_a_capped_exit_in_a_coupled_solve,
+    refuse_retired_solve_keywords,
     resolve_backend,
 )
 from .fixed_point_utils import (
@@ -100,22 +99,6 @@ class FixedPointIterator(BaseCouplingIterator):
             - Callable: State-dependent drift α(t, x, m) -> ndarray
     """
 
-    # v0.25.0 removal: 7 legacy `damping_*` kwargs removed per the 3-version
-    # deprecation window (Issue #1070). Caught upfront in `__init__` via
-    # `validate_kwargs` with a curated migration message instead of Python's
-    # generic "unexpected keyword argument" — matches the mfgarchon
-    # convention used by MFGProblem._validate_kwargs.
-    _REMOVED_KWARGS: ClassVar[dict[str, str]] = {
-        "damping_factor": "Use 'relaxation' instead (v0.25.0 removal, Issue #1070).",
-        "damping_factor_M": "Use 'relaxation_M' instead (v0.25.0 removal, Issue #1070).",
-        "adaptive_damping": "Use 'adaptive_relaxation' instead (v0.25.0 removal, Issue #1070).",
-        "adaptive_damping_decay": "Use 'adaptive_relaxation_decay' instead (v0.25.0 removal, Issue #1070).",
-        "adaptive_damping_min": "Use 'adaptive_relaxation_min' instead (v0.25.0 removal, Issue #1070).",
-        "damping_schedule": "Use 'relaxation_schedule' instead (v0.25.0 removal, Issue #1070).",
-        "damping_schedule_M": "Use 'relaxation_schedule_M' instead (v0.25.0 removal, Issue #1070).",
-    }
-
-    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -136,7 +119,6 @@ class FixedPointIterator(BaseCouplingIterator):
         relaxation_schedule: str = "constant",
         relaxation_schedule_M: str | None = None,
         volatility_kind: str | None = None,
-        **kwargs: Any,
     ):
         """
         Args:
@@ -146,21 +128,6 @@ class FixedPointIterator(BaseCouplingIterator):
                 Recommended for MFG: relaxation=1.0, relaxation_M=0.2 (U adapts fully,
                 M filters particle noise).
         """
-        # Reject removed kwargs with a curated migration message, and any other name: every name this
-        # constructor takes is a named parameter, so **kwargs only ever holds a removed name or a typo,
-        # and a typo accepted with a warning is a keyword silently dropped (#2419).
-        if kwargs:
-            validate_kwargs(
-                kwargs=kwargs,
-                deprecated_kwargs=self._REMOVED_KWARGS,
-                recognized_kwargs=set(),
-                context="FixedPointIterator",
-                error_on_deprecated=True,
-                warn_on_unrecognized=False,
-            )
-            unknown = sorted(set(kwargs) - set(self._REMOVED_KWARGS))
-            if unknown:
-                raise TypeError(f"FixedPointIterator.__init__() got unexpected keyword argument(s): {unknown}")
         super().__init__(problem)
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
         # again in allocate_state_arrays, which also catches a name or bad type assigned
@@ -264,12 +231,12 @@ class FixedPointIterator(BaseCouplingIterator):
         config: MFGSolverConfig | None = None,
         max_iterations: int | None = None,
         tolerance: float | None = None,
-        return_tuple: bool = False,
+        *,
         iteration_callback: IterationCallback | None = None,
         track_measure_field: bool = False,
         absolute_tolerance: float | None = None,
         **kwargs: Any,
-    ) -> SolverResult | tuple[np.ndarray, np.ndarray, int, np.ndarray, np.ndarray]:
+    ) -> SolverResult:
         """
         Solve coupled MFG system using fixed-point iteration.
 
@@ -277,7 +244,6 @@ class FixedPointIterator(BaseCouplingIterator):
             config: Solver configuration (overrides instance config)
             max_iterations: Maximum iterations (legacy parameter)
             tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
-            return_tuple: Return legacy tuple format instead of SolverResult
             iteration_callback: Optional callback called after each Picard iteration.
                 Signature: callback(iteration, U, M, error_U, error_M) -> bool
                 Return True to continue, False to stop early.
@@ -287,10 +253,11 @@ class FixedPointIterator(BaseCouplingIterator):
                 GridMeasureField is attached to SolverResult.metadata["measure_field"].
                 Each snapshot stores (ParticleMeasure from M_k, U_k). Default False.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: Additional parameters for backward compatibility
+            **kwargs: Not read: ``problem.solve()`` passes ``verbose=`` here. A keyword this method no longer takes
+                (``RETIRED_SOLVE_KEYWORDS``) is refused by name.
 
         Returns:
-            SolverResult object (or tuple if return_tuple=True)
+            SolverResult object
 
         Example:
             >>> def monitor(i, U, M, err_U, err_M):
@@ -301,6 +268,7 @@ class FixedPointIterator(BaseCouplingIterator):
             ...     return True  # Continue
             >>> result = solver.solve(iteration_callback=monitor)
         """
+        refuse_retired_solve_keywords(kwargs, "FixedPointIterator.solve")
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FixedPointIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
@@ -319,11 +287,8 @@ class FixedPointIterator(BaseCouplingIterator):
             final_adaptive_damping = solve_config.picard.adaptive_relaxation or self.adaptive_relaxation
             verbose = solve_config.picard.verbose
         else:
-            # Legacy parameter precedence
-            final_max_iterations = (
-                max_iterations or kwargs.get("max_picard_iterations") or kwargs.get("Niter_max") or 100
-            )
-            final_tolerance = tolerance or kwargs.get("picard_tolerance") or kwargs.get("l2errBoundPicard") or 1e-6
+            final_max_iterations = max_iterations or 100
+            final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
             final_damping_factor = self.relaxation
             final_damping_factor_M = self.relaxation_M  # Issue #719
@@ -930,26 +895,7 @@ class FixedPointIterator(BaseCouplingIterator):
             mass_conservation_error=mass_conservation_error,
         )
 
-        # Return tuple for backward compatibility if requested
-        if return_tuple:
-            import warnings
-
-            warnings.warn(
-                "return_tuple=True is deprecated since v0.17.13. "
-                "Use SolverResult object instead (the default). "
-                "Will be removed in v1.0.0.",
-                DeprecationWarning,
-                stacklevel=SOLVE_CALLER_STACKLEVEL,
-            )
-            return (
-                self.U,
-                self.M,
-                self.iterations_run,
-                self.l2distu_rel[: self.iterations_run],
-                self.l2distm_rel[: self.iterations_run],
-            )
-        else:
-            return result
+        return result
 
     @property
     def name(self) -> str:

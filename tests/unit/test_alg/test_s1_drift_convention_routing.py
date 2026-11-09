@@ -3,9 +3,10 @@
 ``resolve_fp_drift_kwargs`` decides how the value function ``U`` enters the FP solver.
 Before this fix the ``use_velocity`` gate keyed on ``"drift_field" in params``, but
 parameter presence cannot disambiguate the drift convention: some solvers expose
-``drift_field`` as a real VELOCITY channel (fp_fvm / fp_gfdm / FPFDM), while the weak-form
-family exposes ``drift_field`` as a DEPRECATED ALIAS for ``potential_field=U``
-(``DriftConvention.VALUE_FUNCTION``). For a non-smooth ``H`` + a VALUE_FUNCTION solver the
+``drift_field`` as a real VELOCITY channel (fp_fvm / FPFDM), while the weak-form
+family exposed ``drift_field`` as a DEPRECATED ALIAS for ``potential_field=U``
+(``DriftConvention.VALUE_FUNCTION``); that alias was removed before 1.0, and the particle solver
+keeps a live one. For a non-smooth ``H`` + a VALUE_FUNCTION solver the
 old gate fired and set ``drift_field=alpha*`` (a velocity), which such a solver treats as
 ``U`` and DIFFERENTIATES — a silently wrong drift.
 
@@ -36,9 +37,10 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 # Solver signatures, reduced to the two params resolve_fp_drift_kwargs actually inspects.
-# weak-form / network family: both present (drift_field is a deprecated alias for U).
+# value-function family: both present (the particle solver's drift_field is an alias for U; the weak-form and
+# network families' alias was removed before 1.0).
 _VALUE_FUNCTION_SIG = {"m_initial_condition", "potential_field", "drift_field"}
-# meshfree velocity-only family (e.g. FPGFDMSolver): drift_field is a true velocity alpha*.
+# meshfree velocity-only family (e.g. the withdrawn FP-GFDM): drift_field is a true velocity alpha*.
 _VELOCITY_ONLY_SIG = {"m_initial_condition", "drift_field"}
 # FDM reference solver: exposes both, drift_field is a true velocity alpha*.
 _VELOCITY_BOTH_SIG = {"m_initial_condition", "potential_field", "drift_field"}
@@ -163,13 +165,11 @@ def test_declared_conventions_match_solver_traits():
     flip, resolve_fp_drift_kwargs silently reroutes drift, so pin them."""
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
-    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
     from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 
     assert BaseFPSolver._drift_convention is DriftConvention.VELOCITY
     assert FPFVMSolver._drift_convention is DriftConvention.VELOCITY
-    assert FPGFDMSolver._drift_convention is DriftConvention.VELOCITY
     assert WeakFormFPSolver._drift_convention is DriftConvention.VALUE_FUNCTION
     assert FPParticleSolver._drift_convention is DriftConvention.VALUE_FUNCTION
 
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
-def test_resolver_never_emits_a_deprecated_kwarg():
+def test_resolver_emits_only_kwargs_the_receiving_solver_takes():
     """The kwarg ``resolve_fp_drift_kwargs`` emits must be live on the receiving solver.
 
     Issue #919 attached a deprecation to ``potential_field`` on ``FPFDMSolver`` — the
@@ -187,7 +187,8 @@ def test_resolver_never_emits_a_deprecated_kwarg():
     pins both: the advice was wrong (obeying it advects ``U`` as if it were alpha*), and
     the deprecation was un-completable, because the resolver emits ``potential_field=U``
     on the default smooth-separable path that both Picard and Newton take. Removing it
-    at the scheduled v0.25.0 would have broken the library's own primary path.
+    at the scheduled v0.25.0 would have broken the library's own primary path. With no deprecation left in the
+    library (the removal before 1.0), the property is that every emitted kwarg is a parameter of the solver.
     """
     import inspect
 
@@ -196,79 +197,21 @@ def test_resolver_never_emits_a_deprecated_kwarg():
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
-    from mfgarchon.utils.deprecation import get_deprecated_parameters
 
     problem = _problem(QuadraticControlCost(control_cost=1.0))
     U, M = _state(problem)
 
-    # FPSLSolver is VALUE_FUNCTION with `drift_field` deprecated: the shape that makes this test able to
-    # fail on a real solver, which FPSLJacobianSolver supplied until #1756.
     for solver_cls in (FPFDMSolver, FPFVMSolver, FPParticleSolver, FPSLSolver):
         method = solver_cls.solve_fp_system
         sig_params = set(inspect.signature(method).parameters)
         emitted, _ = resolve_fp_drift_kwargs(
             problem, sig_params, None, U, M, drift_convention=solver_cls._drift_convention
         )
-        deprecated = {d["param"] for d in get_deprecated_parameters(method)}
-        collision = set(emitted) & deprecated
-        assert not collision, (
+        unknown = set(emitted) - sig_params
+        assert not unknown, (
             f"{solver_cls.__name__}: resolve_fp_drift_kwargs emits {sorted(emitted)}, but "
-            f"{sorted(collision)} is deprecated on this solver. Either the routing or the "
-            f"deprecation is wrong — the library cannot schedule its own primary path for removal."
+            f"{sorted(unknown)} is not a parameter of this solver."
         )
-
-
-def test_potential_field_is_never_deprecated_on_any_fp_solver():
-    """``potential_field`` is the value-function channel on every FP solver that has one.
-
-    On a VALUE_FUNCTION solver it is the canonical name; on a VELOCITY solver it is a live second
-    channel (the solver forms alpha = -c*grad(U) internally). It is never an alias for
-    ``drift_field``, so it must never carry a deprecation -- in either direction.
-
-    Enumerates ``BaseFPSolver`` subclasses rather than a hand-written list. An earlier version
-    named six classes, which left ``WeakFormFPSolver``, ``FPFEMSolver``,
-    ``MeshlessGalerkinFPSolver`` and ``FPGFDMSolver`` outside the pin: adding the deprecation to
-    ``WeakFormFPSolver`` left every test in this file green. A test that names its instances
-    cannot pin a class.
-    """
-    import inspect
-
-    # Import the solver modules EXPLICITLY. `import mfgarchon` alone left WeakFormFPSolver out of
-    # __subclasses__() when this test ran in isolation -- it only entered because a sibling test
-    # earlier in the file imports it, so the enumeration silently covered 7 classes standalone and
-    # 10 under full collection. A pin whose coverage depends on collection order is not a pin.
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
-    from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver  # noqa: F401
-    from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver  # noqa: F401
-    from mfgarchon.utils.deprecation import get_deprecated_parameters
-
-    def all_subclasses(cls):
-        for sub in cls.__subclasses__():
-            yield sub
-            yield from all_subclasses(sub)
-
-    checked = []
-    for solver_cls in sorted(set(all_subclasses(BaseFPSolver)), key=lambda c: c.__name__):
-        method = getattr(solver_cls, "solve_fp_system", None)
-        if method is None or "potential_field" not in inspect.signature(method).parameters:
-            continue
-        checked.append(solver_cls.__name__)
-        deprecated = {d["param"] for d in get_deprecated_parameters(method)}
-        assert "potential_field" not in deprecated, (
-            f"{solver_cls.__name__}: potential_field is marked deprecated. It is the value-"
-            f"function channel, not an alias for drift_field, which carries the velocity."
-        )
-
-    # Calibrated ABOVE the degraded count, not below it: standalone the enumeration reached 7,
-    # so a `>= 6` guard could never fire on the very gap it was written to catch.
-    assert "WeakFormFPSolver" in checked, (
-        f"WeakFormFPSolver is not in the enumeration ({checked}); it is a VALUE_FUNCTION solver "
-        f"with a live potential_field, and it was the class the earlier hand-written list missed"
-    )
-    assert len(checked) >= 8, (
-        f"only {len(checked)} solvers expose potential_field ({checked}); the enumeration is not "
-        f"seeing the solver modules, which would make this pass vacuously"
-    )
 
 
 def test_u_as_drift_field_solves_a_different_problem_than_u_as_potential_field():

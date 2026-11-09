@@ -23,8 +23,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from mfgarchon.utils.deprecation import deprecated
-
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
@@ -107,63 +105,6 @@ class LinearizedOperatorCapable(Protocol):
         Transpose A_adv^T is the correct FP advection operator.
         """
         ...
-
-
-@deprecated(
-    since="v0.17.0",
-    replacement="validate_scheme_pairing",
-    reason="The adjoint_mode approach (using A_hjb.T for FP) is mathematically incorrect. "
-    "Use scheme pairing instead: gradient_upwind + divergence_upwind. See Issue #706.",
-)
-def validate_adjoint_capability(
-    hjb_solver: object,
-    fp_solver: object,
-    strict: bool = True,
-) -> tuple[bool, list[str]]:
-    """
-    DEPRECATED: Validate that solvers support strict adjoint mode.
-
-    This function is deprecated because the adjoint mode approach is mathematically
-    incorrect. Use scheme pairing validation instead:
-
-    ```python
-    def validate_scheme_pairing(hjb_solver, fp_solver) -> bool:
-        valid_pairs = {
-            "gradient_upwind": "divergence_upwind",
-            "gradient_centered": "divergence_centered",
-        }
-        hjb_scheme = getattr(hjb_solver, 'advection_scheme', None)
-        fp_scheme = getattr(fp_solver, 'advection_scheme', None)
-        return valid_pairs.get(hjb_scheme) == fp_scheme
-    ```
-
-    See Issue #706 (adjoint discretization).
-    """
-    issues = []
-
-    if not isinstance(hjb_solver, AdjointCapableHJBSolver):
-        issues.append(
-            f"HJB solver {type(hjb_solver).__name__} does not implement "
-            "AdjointCapableHJBSolver protocol (missing build_advection_matrix)"
-        )
-
-    if not isinstance(fp_solver, AdjointCapableFPSolver):
-        issues.append(
-            f"FP solver {type(fp_solver).__name__} does not implement "
-            "AdjointCapableFPSolver protocol (missing solve_fp_step_adjoint_mode)"
-        )
-
-    is_valid = len(issues) == 0
-
-    if strict and not is_valid:
-        raise TypeError(
-            "Solvers do not support strict adjoint mode:\n  - "
-            + "\n  - ".join(issues)
-            + "\n\nNOTE: This validation is deprecated. The adjoint_mode approach "
-            "is mathematically incorrect. Use scheme pairing instead."
-        )
-
-    return is_valid, issues
 
 
 def validate_scheme_pairing(hjb_solver: object, fp_solver: object) -> tuple[bool, str | None]:

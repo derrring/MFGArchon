@@ -41,7 +41,6 @@ from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     has_quadratic_control_cost,
     resolve_volatility_override,
-    retired_volatility_keywords,
     scalar_volatility,
 )
 
@@ -933,7 +932,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U, bc, spacing=np.atleast_1d(self.dx), time=time, geometry=self.problem.geometry
         )
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
@@ -1239,7 +1237,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Args:
             U_next: Value function at next time step
                 - 1D: shape (Nx,)
-                - nD: shape matching grid.num_points
+                - nD: shape matching grid.Nx_points
             M_next: Density at next time step (same shape as U_next)
             U_prev_picard: Value from previous Picard iteration (for coupling)
             time_idx: Current time index
@@ -2472,7 +2470,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Args:
             U_values: Value function on grid
                 - 1D: shape (Nx,)
-                - nD: shape matching grid.num_points, e.g., (Nx, Ny) for 2D
+                - nD: shape matching grid.Nx_points, e.g., (Nx, Ny) for 2D
             x_query: Query point for interpolation
                 - 1D: scalar float
                 - nD: array of shape (dimension,), e.g., [x, y] for 2D

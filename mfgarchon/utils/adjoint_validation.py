@@ -220,7 +220,7 @@ def check_solver_duality(
                 f"Recommendation: Use matching families:\n"
                 f"  • HJBFDMSolver ↔ FPFDMSolver (discrete duality)\n"
                 f"  • HJBSemiLagrangianSolver ↔ FPSLSolver (discrete duality)\n"
-                f"  • HJBGFDMSolver has no dual FP until #2584 (FPGFDMSolver is withdrawn, #2583)\n"
+                f"  • HJBGFDMSolver has no dual FP until #2584 (FP-GFDM is withdrawn, #2583)\n"
                 f"{'=' * 70}\n",
                 UserWarning,
                 stacklevel=2,

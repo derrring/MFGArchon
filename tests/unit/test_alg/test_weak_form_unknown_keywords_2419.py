@@ -69,13 +69,10 @@ def test_the_fp_side_still_takes_the_base_interface_show_progress():
     np.testing.assert_array_equal(_solve("fp", show_progress=False), _solve("fp"))
 
 
-def test_the_fixed_point_iterator_refuses_an_unknown_keyword_and_explains_a_removed_one():
+def test_the_fixed_point_iterator_refuses_an_unknown_keyword():
     problem, hjb, fp = _setup()
     with pytest.raises(TypeError, match=r"unexpected keyword argument.*relaxtion"):
         FixedPointIterator(problem, hjb, fp, relaxtion=0.5)
-    # A removed name keeps its curated migration message.
-    with pytest.raises(ValueError, match=r"damping_factor.*relaxation"):
-        FixedPointIterator(problem, hjb, fp, damping_factor=0.5)
 
 
 def test_the_meshless_constructor_use_newton_is_the_solve_default():

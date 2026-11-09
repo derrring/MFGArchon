@@ -351,8 +351,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
             An array without volatility_kind is refused: a (d, d) tensor and a d x d field have the
             same shape. volatility is the SDE noise coefficient σ or Σ, converted internally to the
-            diffusion D. The retired keywords volatility_field, volatility_matrix,
-            tensor_diffusion_field and diffusion_field raise TypeError naming volatility=.
+            diffusion D.
 
         Args:
             M_initial: Initial density M(0,x) at t=0

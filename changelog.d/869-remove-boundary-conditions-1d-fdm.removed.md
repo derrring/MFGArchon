@@ -8,8 +8,7 @@
   boundary="x_min"), BCSegment(name="right", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max")])`. Stored on
   the grid, a BC is shared, and the FP reads its Dirichlet walls as absorbing exits, m = 0; to impose m = g, give
   the FP solver the BC as its own `boundary_conditions`.
-  - **Reading either name from `mfgarchon.geometry.boundary`** raises an `AttributeError` that names the
-    replacement. A `from mfgarchon.geometry.boundary import ...` of either, and an import of `fdm_bc_1d`, raise
+  - **Reading either name from `mfgarchon.geometry.boundary`** raises an `AttributeError`. A `from mfgarchon.geometry.boundary import ...` of either, and an import of `fdm_bc_1d`, raise
     Python's own `ImportError`.
   - **Every branch that read the class goes with it.** These include the FDM applicator's calculator route and
     ghost update, the interpolation applicator, `get_ghost_values_nd`, FP-FDM's boundary reads, and HJB-GFDM's
@@ -25,8 +24,7 @@
     since a grid requires a BC at construction. It now builds the unified class in every dimension, by one factory.
     - On a 1-D grid, `"no_flux"` was a legacy Neumann wall and is `NO_FLUX` now, the zero total flux, and
       `"neumann"`, which raised a `ValueError`, builds `NEUMANN`.
-    - Where that default is reached, `custom_conditions` is refused in every dimension; with a stored BC it is
-      ignored, as before. On a 1-D grid it built the legacy class, and only for a `bc_type` the grid did not
+    - `custom_conditions` is removed, later in this release. On a 1-D grid it built the legacy class, and only for a `bc_type` the grid did not
       recognise; otherwise, and on every grid of two or more dimensions, it was ignored.
     - FP-FDM does not reach this method on a cleared grid: it reads the grid's `get_boundary_conditions()` first,
       whose default is a no-flux BC, and solves that.

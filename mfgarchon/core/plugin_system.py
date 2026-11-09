@@ -29,7 +29,6 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
     from mfgarchon.config import MFGSolverConfig
-    from mfgarchon.factory.solver_factory import SolverType
 
 logger = get_logger(__name__)
 
@@ -191,15 +190,14 @@ class PluginManager:
     """Central plugin management system for MFGarchon.
 
     Handles plugin discovery, registration, loading, and lifecycle management.
-    Provides a unified interface for accessing both core and plugin-provided
-    solver implementations.
+    Provides a unified interface for accessing plugin-provided solver
+    implementations.
     """
 
     def __init__(self):
         self.plugins: dict[str, RegisteredPlugin] = {}
         self.solver_type_registry: dict[str, str] = {}  # solver_type -> plugin_name
         self.analysis_type_registry: dict[str, str] = {}  # analysis_type -> plugin_name
-        self._core_solvers = self._discover_core_solvers()
 
         # Initialize logging
         self.logger = get_logger(__name__ + ".PluginManager")
@@ -384,7 +382,7 @@ class PluginManager:
         config: MFGSolverConfig | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Create solver instance using registered plugins or core solvers.
+        """Create solver instance using registered plugins.
 
         Args:
             problem: MFG problem instance
@@ -411,10 +409,6 @@ class PluginManager:
                 return plugin_info.plugin_instance.create_solver(problem, solver_type, config, **kwargs)
             else:
                 raise ValueError(f"Plugin {plugin_name} providing {solver_type} is not loaded")
-
-        # Check if it's a core solver
-        if solver_type in self._core_solvers:
-            return self._create_core_solver(problem, solver_type, config, **kwargs)
 
         raise ValueError(f"Unknown solver type: {solver_type}")
 
@@ -454,14 +448,6 @@ class PluginManager:
             Dictionary mapping solver types to their information
         """
         solvers = {}
-
-        # Add core solvers
-        for solver_type in self._core_solvers:
-            solvers[solver_type] = {
-                "provider": "core",
-                "description": f"Core MFGarchon solver: {solver_type}",
-                "parameters": {},
-            }
 
         # Add plugin solvers
         for solver_type, plugin_name in self.solver_type_registry.items():
@@ -515,28 +501,6 @@ class PluginManager:
             Dictionary of all registered plugins
         """
         return self.plugins.copy()
-
-    def _discover_core_solvers(self) -> list[str]:
-        """Discover core solver types available in MFGarchon."""
-        # This would scan the core solver modules to find available types
-        # For now, return the known core solver types
-        # Note: "particle_collocation" has been removed from core package
-        return ["fixed_point", "hjb_fdm", "hjb_collocation"]
-
-    def _create_core_solver(
-        self,
-        problem: Any,
-        solver_type: str,
-        config: MFGSolverConfig | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Create core solver instance."""
-        # Late import: transitive cycle through mfgarchon.__init__ -> plugin_system
-        from typing import cast
-
-        from mfgarchon.factory import create_solver
-
-        return create_solver(problem, cast("SolverType", solver_type), config=config, **kwargs)
 
     def _get_default_plugin_paths(self) -> list[Path]:
         """Get default plugin search paths."""

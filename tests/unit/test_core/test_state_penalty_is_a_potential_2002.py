@@ -107,15 +107,10 @@ def test_the_wall_is_local(measured):
     assert at_edge < 0.01 * at_middle, f"edge moved {at_edge:.3e} against middle {at_middle:.3e}"
 
 
-def test_the_retired_obstacle_field_refuses_and_names_both_successors():
-    with pytest.raises(NotImplementedError) as excinfo:
+def test_the_retired_obstacle_keyword_is_refused():
+    """``obstacle=`` is gone (the removal before 1.0); its successors are ``state_penalty`` and ``constraint=``."""
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'obstacle'"):
         _problem(obstacle=_wall)
-
-    message = str(excinfo.value)
-    assert "RETIRED" in message
-    assert "state_penalty" in message, "must name the soft-wall successor"
-    assert "constraint=" in message, "must name the reserved VI slot"
-    assert "obstacles" in message, "must disambiguate from a geometric obstacle"
 
 
 def test_a_hamiltonian_that_cannot_carry_a_potential_refuses():

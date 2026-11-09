@@ -1,7 +1,6 @@
 """The particle applicator reads the BC it is handed and writes nothing into it (Issue #2738).
 
-`ParticleApplicator.apply` set ``bc.domain_bounds`` at its first step when the BC had none, and so did
-``apply_with_flux_limits``, which no solver calls. On the shared route, when the solver's view translates nothing, that
+`ParticleApplicator.apply` set ``bc.domain_bounds`` at its first step when the BC had none. On the shared route, when the solver's view translates nothing, that
 BC is the problem's own; so on the legacy route, where the grid holds a bound copy of the components' BC, every later
 ``problem.get_boundary_conditions()`` refused the two as declaring the BC twice. Only the per-point path calls
 ``apply``; the fast path never wrote.
@@ -42,7 +41,7 @@ def _exit_bc() -> BoundaryConditions:
     )
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 def test_the_applicator_writes_nothing_into_the_bc_it_reads(method):
     """The BC keeps ``domain_bounds=None``, and the step is the one a BC carrying the same box gives: a particle past
     x_max is absorbed, one past x_min is reflected."""
@@ -53,10 +52,7 @@ def test_the_applicator_writes_nothing_into_the_bc_it_reads(method):
 
     def step(b):
         applicator = ParticleApplicator()
-        if method == "apply":
-            return applicator.apply(particles.copy(), b, [(0.0, 1.0)])
-        with pytest.warns(DeprecationWarning, match="apply_with_flux_limits is deprecated"):
-            return applicator.apply_with_flux_limits(particles.copy(), b, [(0.0, 1.0)], {"exit": 10})
+        return applicator.apply(particles.copy(), b, [(0.0, 1.0)])
 
     got, expected = step(bc), step(boxed)
     assert bc.domain_bounds is None, f"{method} wrote domain_bounds into the BC it was handed: {bc.domain_bounds!r}"

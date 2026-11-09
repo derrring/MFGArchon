@@ -612,7 +612,7 @@ class TestFPParticleSolverCallableDrift:
         problem = MFGProblem(geometry=domain, T=0.3, Nt=15, volatility=0.05, components=_default_components_2d())
         solver = FPParticleSolver(problem, num_particles=2000)
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
 
         # Diagonal drift pushing toward upper-right
         def diagonal_drift(t, x, m):

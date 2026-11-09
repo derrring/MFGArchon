@@ -181,7 +181,7 @@ MUTATIONS: list[Mutation] = [
         path="mfgarchon/geometry/grids/tensor_grid.py",
         old="        if abs(coords[-1] - hi) > 0.5 * abs(coords[-1] - coords[-2]):\n            return PeriodicGridConvention.ENDPOINT_EXCLUSIVE\n        return PeriodicGridConvention.ENDPOINT_INCLUSIVE",
         new="        if abs(coords[-1] - hi) > 0.5 * abs(coords[-1] - coords[-2]):  # MUTATED: verdicts swapped\n            return PeriodicGridConvention.ENDPOINT_INCLUSIVE\n        return PeriodicGridConvention.ENDPOINT_EXCLUSIVE",
-        owner='where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:370), and so do `bind_periodic_convention` and `periodic_axis_spans`, the layout owner (#2910). The property docstring states why it is derived rather than asserted: "Derive',
+        owner='where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:354), and so do `bind_periodic_convention` and `periodic_axis_spans`, the layout owner (#2910). The property docstring states why it is derived rather than asserted: "Derive',
         verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE",
     ),
     Mutation(

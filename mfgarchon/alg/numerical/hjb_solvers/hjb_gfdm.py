@@ -37,13 +37,11 @@ from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
 from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
-from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_diffusion_source,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 from .base_hjb import (
@@ -296,20 +294,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         kwargs.update(extra)
         return cls(problem, collocation_points, **kwargs)
 
-    @deprecated_value(
-        "boundary_conditions",
-        {dict: "BoundaryConditions"},
-        since="v0.22.0",
-        deprecated_on="2026-10-11",
-        # The equivalence test is `test_a_dict_bc_solves_as_the_boundary_conditions_it_spells` (#2597).
-        removal_blockers=["internal_usage", "migration_docs"],
-    )
-    @retired_parameters(
-        {"qp_usage_target": "the derivative-coefficient QP it named is deleted (#1689)"},
-        issue="#2648",
-        since="v0.22.0",
-        never_read=True,
-    )
     def __init__(
         self,
         problem: MFGProblem,
@@ -332,11 +316,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         # a convergence hypothesis, not a runnability one -- is not guaranteed.
         inner_solver: str = "newton",
         boundary_indices: np.ndarray | None = None,
-        boundary_conditions: dict | BoundaryConditions | None = None,
+        boundary_conditions: BoundaryConditions | None = None,
         # Monotone stencil construction: "none" or "joint_socp". See the docstring.
         monotonicity_scheme: str | None = None,
         monotonicity_application: str | None = None,
-        qp_usage_target: float = NEVER_READ,
+        *,
         # Adaptive neighborhood parameters
         adaptive_neighborhoods: bool = False,
         k_min: int | None = None,
@@ -348,7 +332,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         derivative_method: str = "taylor",  # "taylor"; "rbf" unsupported since #1526 (raises, #1553)
         rbf_kernel: str = "phs3",  # For RBF-FD: "phs3", "phs5", "gaussian"
         rbf_poly_degree: int = 2,  # Polynomial augmentation degree for RBF-FD
-        use_new_infrastructure: bool = True,  # Use new Strategy Pattern (recommended)
         # Local Coordinate Rotation for boundary accuracy (Issue #531)
         use_local_coordinate_rotation: bool = False,
         # Ghost Nodes for Neumann BC enforcement (Issue #531 - Terminal BC compatibility)
@@ -418,8 +401,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 2-D (comment 6333097202), ``monotonicity_scheme="none"`` converges at second order with Newton and at
                 first order with Howard.
             boundary_indices: Indices of boundary collocation points
-            boundary_conditions: A BoundaryConditions. A dict, ``{"type": ..., "values": ...}``, is deprecated since
-                v0.22.0 (#2597) and is translated to the BoundaryConditions it spells (`_boundary_conditions_from_dict`).
+            boundary_conditions: A BoundaryConditions, or None to use the problem's.
             monotonicity_scheme: Which monotonicity construction to enforce on the GFDM
                 Laplacian (and, for joint_socp, the per-edge cone on the gradient stencil):
                 - "none": no constraints (fastest; no monotonicity guarantee).
@@ -455,8 +437,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             monotonicity_application: ``"precompute"`` (the only one ``joint_socp`` has: its weights
                 are solved once at construction) or None, which means the same. Any other value is refused,
                 with either scheme; with ``"none"`` the two have no effect.
-            qp_usage_target: Refused when passed (#2648): it never had an effect, and the QP it named is
-                deleted (#1689). The name goes in v0.25.0.
             adaptive_neighborhoods: Enable adaptive delta enlargement to guarantee well-posed problems.
                 When enabled, points with insufficient neighbors get locally enlarged delta.
                 Maintains theoretical soundness while ensuring practical robustness.
@@ -482,9 +462,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 - "phs5": r⁵ polyharmonic spline (higher accuracy)
                 - "gaussian": Gaussian RBF (requires shape parameter tuning)
             rbf_poly_degree: Polynomial augmentation degree for RBF-FD (default 2)
-            use_new_infrastructure: Use new Strategy Pattern infrastructure (default True).
-                When True, uses TaylorOperator/LocalRBFOperator + DirectCollocationHandler.
-                When False, raises ValueError (legacy GFDMOperator removed in v0.17.15).
             use_local_coordinate_rotation: Enable Local Coordinate Rotation (LCR) for
                 boundary stencils (default False, Issue #531). When True, rotates
                 neighbor offsets at boundary points to align with the boundary normal,
@@ -615,7 +592,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "to suppress this warning if the bare scheme is intentional.",
                 UserWarning,
                 stacklevel=2,
-                skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
             )
 
         if monotonicity_scheme is not None or monotonicity_application is not None:
@@ -719,11 +695,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             self.boundary_indices = self._detect_boundary_indices(collocation_points)
         # Get BC from parameter, or from problem geometry (Issue #542 fix, Issue #527 centralized BC)
         if boundary_conditions is not None:
-            if isinstance(boundary_conditions, dict):
-                # The deprecated dict form (#2597), translated once into the BoundaryConditions it spells, so every
-                # reader below reads one form.
-                boundary_conditions = self._boundary_conditions_from_dict(boundary_conditions, self.dimension)
-            elif not isinstance(boundary_conditions, BoundaryConditions):
+            if not isinstance(boundary_conditions, BoundaryConditions):
                 # Anything else read some of its attributes and dropped the rest (#2513, #1559).
                 raise TypeError(
                     f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. Expected "
@@ -829,14 +801,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"Using k_min={n_derivatives_required} instead.",
                     UserWarning,
                     stacklevel=2,
-                    skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
                 )
                 self.k_min = n_derivatives_required
             else:
                 self.k_min = k_min
 
         # Store new infrastructure parameters
-        self._use_new_infrastructure = use_new_infrastructure
         # Issue #1553: fail loud at construction rather than deep in Newton-Jacobian assembly.
         # (An unrecognized derivative_method is already rejected at construction by the operator
         # dispatch's else-branch below, so only 'rbf' needs an explicit guard here.)
@@ -877,7 +847,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "Ghost nodes take precedence and LCR will be disabled for boundary points.",
                 UserWarning,
                 stacklevel=2,
-                skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
             )
 
         # Ghost nodes keep the PDE row at a Neumann boundary node and close it with mirrored neighbour values, so that
@@ -904,99 +873,93 @@ class HJBGFDMSolver(BaseHJBSolver):
             logger.info(f"Wind-dependent BC enabled with {len(self.boundary_indices)} boundary points")
 
         # Create differential operator using Strategy Pattern
-        if use_new_infrastructure:
-            # New infrastructure: TaylorOperator or LocalRBFOperator
-            if derivative_method == "taylor":
-                self._gfdm_operator = TaylorOperator(
-                    points=collocation_points,
-                    delta=delta,
-                    taylor_order=taylor_order,
-                    weight_function=weight_function,
-                    k_neighbors=k_neighbors,
-                    neighborhood_mode=neighborhood_mode,
-                    # Issue #711 periodic support. The resolved geometry, so this and boundary
-                    # detection cannot disagree about which axes are periodic (#1841).
-                    geometry=self._collocation_geometry,
-                    # Issue #1124: visibility filter at operator level so
-                    # D_lap / D_grad respect obstacle connectivity (not just
-                    # NeighborhoodBuilder's post-filter view).
-                    obstacle_sdf=obstacle_sdf,
-                    visibility_samples=visibility_samples,
-                    visibility_margin=visibility_margin,
-                )
-            elif derivative_method == "rbf":
-                self._gfdm_operator = create_operator(
-                    points=collocation_points,
-                    delta=delta,
-                    method="rbf",
-                    kernel=rbf_kernel,
-                    poly_degree=rbf_poly_degree,
-                    k_neighbors=k_neighbors,
-                    neighborhood_mode=neighborhood_mode,
-                )
-            else:
-                raise ValueError(f"Unknown derivative_method: {derivative_method}")
-
-            # Initialize BC handler with Row Replacement pattern
-            self._bc_handler = DirectCollocationHandler()
-
-            # Initialize BoundaryHandler component (Issue #545: composition over mixins)
-            # This component handles boundary normals, LCR, ghost nodes, etc.
-            self._boundary_handler = BoundaryHandler(
-                collocation_points=collocation_points,
-                dimension=self.dimension,
-                domain_bounds=self.domain_bounds,
-                boundary_indices=self.boundary_indices,
-                neighborhoods={},  # Will be populated by _build_neighborhood_structure
-                boundary_conditions=self.boundary_conditions,
-                use_ghost_nodes=self._use_ghost_nodes,
-                use_wind_dependent_bc=self._use_wind_dependent_bc,
-                gfdm_operator=self._gfdm_operator,
-                bc_property_getter=lambda prop, default=None: self._get_boundary_condition_property(prop) or default,
-                gradient_computer=None,  # Will be set later if needed
-            )
-
-            # Compute boundary normals for Neumann BC
-            self._boundary_normals = self._boundary_handler.compute_boundary_normals()
-            # Store in handler for access by other components
-            self._boundary_handler.boundary_normals = self._boundary_normals
-
-            # Create unified BC config (single source of truth)
-            self._bc_config = self._boundary_handler.create_bc_config()
-
-            # Pre-classify every boundary collocation point to (BoundaryFace,
-            # BCSegment) at construction time. Fails fast if any point cannot
-            # be matched — better diagnostic than discovering it as a zero
-            # Jacobian row 80 Newton iters later.
-            self._preclassify_boundary_points()
-
-            # Initialize NeighborhoodBuilder component (Issue #545: composition over mixins)
-            # This component handles stencil construction, Taylor matrices, weight functions
-            self._neighborhood_builder = NeighborhoodBuilder(
-                collocation_points=collocation_points,
-                dimension=self.dimension,
+        # New infrastructure: TaylorOperator or LocalRBFOperator
+        if derivative_method == "taylor":
+            self._gfdm_operator = TaylorOperator(
+                points=collocation_points,
                 delta=delta,
                 taylor_order=taylor_order,
                 weight_function=weight_function,
-                weight_scale=weight_scale,
-                k_min=self.k_min,
-                adaptive_neighborhoods=adaptive_neighborhoods,
-                max_delta_multiplier=max_delta_multiplier,
-                boundary_indices=self.boundary_indices,
-                n_derivatives=0,  # Will be set after multi_indices are determined
-                multi_indices=[],  # Will be populated after operator initialization
-                gfdm_operator=self._gfdm_operator,
-                use_local_coordinate_rotation=self._use_local_coordinate_rotation,
-                boundary_handler=self._boundary_handler,
+                k_neighbors=k_neighbors,
+                neighborhood_mode=neighborhood_mode,
+                # Issue #711 periodic support. The resolved geometry, so this and boundary
+                # detection cannot disagree about which axes are periodic (#1841).
+                geometry=self._collocation_geometry,
+                # Issue #1124: visibility filter at operator level so
+                # D_lap / D_grad respect obstacle connectivity (not just
+                # NeighborhoodBuilder's post-filter view).
                 obstacle_sdf=obstacle_sdf,
                 visibility_samples=visibility_samples,
                 visibility_margin=visibility_margin,
             )
-        else:
-            raise ValueError(
-                "use_new_infrastructure=False is no longer supported (removed in v0.17.15). "
-                "Use use_new_infrastructure=True (default) with TaylorOperator."
+        elif derivative_method == "rbf":
+            self._gfdm_operator = create_operator(
+                points=collocation_points,
+                delta=delta,
+                method="rbf",
+                kernel=rbf_kernel,
+                poly_degree=rbf_poly_degree,
+                k_neighbors=k_neighbors,
+                neighborhood_mode=neighborhood_mode,
             )
+        else:
+            raise ValueError(f"Unknown derivative_method: {derivative_method}")
+
+        # Initialize BC handler with Row Replacement pattern
+        self._bc_handler = DirectCollocationHandler()
+
+        # Initialize BoundaryHandler component (Issue #545: composition over mixins)
+        # This component handles boundary normals, LCR, ghost nodes, etc.
+        self._boundary_handler = BoundaryHandler(
+            collocation_points=collocation_points,
+            dimension=self.dimension,
+            domain_bounds=self.domain_bounds,
+            boundary_indices=self.boundary_indices,
+            neighborhoods={},  # Will be populated by _build_neighborhood_structure
+            boundary_conditions=self.boundary_conditions,
+            use_ghost_nodes=self._use_ghost_nodes,
+            use_wind_dependent_bc=self._use_wind_dependent_bc,
+            gfdm_operator=self._gfdm_operator,
+            bc_property_getter=lambda prop, default=None: self._get_boundary_condition_property(prop) or default,
+            gradient_computer=None,  # Will be set later if needed
+        )
+
+        # Compute boundary normals for Neumann BC
+        self._boundary_normals = self._boundary_handler.compute_boundary_normals()
+        # Store in handler for access by other components
+        self._boundary_handler.boundary_normals = self._boundary_normals
+
+        # Create unified BC config (single source of truth)
+        self._bc_config = self._boundary_handler.create_bc_config()
+
+        # Pre-classify every boundary collocation point to (BoundaryFace,
+        # BCSegment) at construction time. Fails fast if any point cannot
+        # be matched — better diagnostic than discovering it as a zero
+        # Jacobian row 80 Newton iters later.
+        self._preclassify_boundary_points()
+
+        # Initialize NeighborhoodBuilder component (Issue #545: composition over mixins)
+        # This component handles stencil construction, Taylor matrices, weight functions
+        self._neighborhood_builder = NeighborhoodBuilder(
+            collocation_points=collocation_points,
+            dimension=self.dimension,
+            delta=delta,
+            taylor_order=taylor_order,
+            weight_function=weight_function,
+            weight_scale=weight_scale,
+            k_min=self.k_min,
+            adaptive_neighborhoods=adaptive_neighborhoods,
+            max_delta_multiplier=max_delta_multiplier,
+            boundary_indices=self.boundary_indices,
+            n_derivatives=0,  # Will be set after multi_indices are determined
+            multi_indices=[],  # Will be populated after operator initialization
+            gfdm_operator=self._gfdm_operator,
+            use_local_coordinate_rotation=self._use_local_coordinate_rotation,
+            boundary_handler=self._boundary_handler,
+            obstacle_sdf=obstacle_sdf,
+            visibility_samples=visibility_samples,
+            visibility_margin=visibility_margin,
+        )
 
         # Get multi-indices from operator
         self.multi_indices = self._gfdm_operator.multi_indices
@@ -1030,7 +993,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         if self.llf_augmentation:
             self._llf_sigma_eff = self._compute_llf_sigma_eff()
 
-        # Build neighborhood structure - uses GFDMOperator's neighborhoods as base,
+        # Build neighborhood structure - uses the GFDM operator's neighborhoods as base,
         # only extends for points needing adaptive delta enlargement
         if self._neighborhood_builder is not None:
             self._neighborhood_builder.build_neighborhood_structure()
@@ -1962,7 +1925,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         neighborhood = self.neighborhoods[point_idx]
         has_ghost = neighborhood.get("has_ghost", False)
 
-        # Fast path: GFDMOperator, at level "none" with no ghost particles
+        # Fast path: the GFDM operator, at level "none" with no ghost particles
         if qp_level == "none" and not has_ghost:
             return self._gfdm_operator.approximate_derivatives_at_point(u_values, point_idx)
 
@@ -2133,7 +2096,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         Compute derivatives at all collocation points using precomputed Taylor matrices, with this
         solver's ghost handling and boundary rotation. For general GFDM derivatives use
-        ``mfgarchon.utils.numerical.GFDMOperator``.
+        ``TaylorOperator`` (``mfgarchon.alg.numerical.gfdm_components.gfdm_strategies``).
 
         Args:
             u: Function values at collocation points, shape (n_points,)
@@ -2460,82 +2423,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         "periodic": BCType.PERIODIC,
         "robin": BCType.ROBIN,
     }
-
-    @staticmethod
-    def _refuse_unread(carried: dict[str, Any]) -> None:
-        unread = {
-            k: v
-            for k, v in carried.items()
-            if v is not None and (callable(v) or np.any(np.asarray(v, dtype=float) != 0))
-        }
-        if unread:
-            raise NotImplementedError(
-                f"HJBGFDMSolver: the BC carries {sorted(unread)} = {list(unread.values())}, which no "
-                f"boundary row reads, so it would be solved as 0 (#2513). Pass a BoundaryConditions "
-                f"(e.g. dirichlet_bc(value=...) or per-face BCSegments)."
-            )
-
-    @staticmethod
-    def _boundary_conditions_from_dict(bc: dict, dimension: int) -> BoundaryConditions:
-        """The `BoundaryConditions` a deprecated dict BC spells (#2597, since v0.22.0).
-
-        ``{"type": t, "values": g}`` becomes ``dirichlet_bc``, ``neumann_bc``, ``no_flux_bc`` or ``periodic_bc`` of
-        the solver's dimension, with ``g`` as the value. ``t`` must be one of those four names, as a string:
-
-        - a number, or an array of one element, is the value, and a missing ``"values"`` is 0;
-        - a callable keeps its old call, by the point alone, so it is wrapped as ``g(x)``. What it returns, and a
-          constant, now meet the value contract, so ``None`` returned, a boolean or a string is refused at the solve;
-        - a per-point ``"values"`` (a list, tuple, a dict by point index, or an array of more than one element) is
-          refused: a value per node is a planned capability (#2600).
-
-        A Neumann ``"values"`` was read only as an index dict, so a number or a callable was solved as 0 (#2520); it
-        is now the Neumann datum, as it is for ``neumann_bc(value=g)``. The dict's ``"value"`` is checked against
-        ``"values"`` as #2513 ruled. A Robin dict, which carried no coefficients and was refused at the row, is
-        refused here, and so is a value on a no-flux or periodic dict, which no row reads.
-        """
-        from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc
-
-        # "values" is the key the rows read; a "value" equal to it says nothing they miss (#2513).
-        value, values = bc.get("value"), bc.get("values")
-        agrees = "values" in bc and (
-            value is values
-            or (not callable(value) and not callable(values) and np.array_equal(np.asarray(value), np.asarray(values)))
-        )
-        HJBGFDMSolver._refuse_unread({} if agrees else {"value": value})
-
-        factories: dict[str, Callable[..., BoundaryConditions]] = {
-            "dirichlet": dirichlet_bc,
-            "neumann": neumann_bc,
-            "no_flux": no_flux_bc,
-            "periodic": periodic_bc,
-        }
-        kind = bc.get("type")
-        if not isinstance(kind, str):
-            # A dict with no "type" was refused at the solve ("Boundary conditions required ... but not specified").
-            raise ValueError(
-                f'HJBGFDMSolver: a dict BC needs a "type" string, one of {sorted(factories)}; it has {kind!r} (#2597).'
-            )
-        kind = kind.lower()
-        if kind == "robin":
-            raise NotImplementedError(
-                "HJBGFDMSolver: a dict BC of type 'robin' carries no coefficients, and HJB-GFDM's Robin row takes "
-                "only alpha = 0, beta = 1, the condition n.grad u = g, which is the Neumann condition: pass "
-                "neumann_bc(value=g) (#2597)."
-            )
-        if kind not in factories:
-            raise ValueError(f"HJBGFDMSolver: unknown dict BC type {kind!r}; supported: {sorted(factories)} (#2597).")
-        if isinstance(values, np.ndarray) and values.size == 1:
-            pass  # one element: the owner reads it as its element
-        elif isinstance(values, (list, tuple, dict, np.ndarray)):
-            raise NotImplementedError(
-                f'HJBGFDMSolver: a dict BC\'s per-point "values" (a {type(values).__name__}) is not accepted since '
-                "v0.22.0 (#2597). Give one number or a callable g(x) per face, in a BoundaryConditions; a value per "
-                "node is a planned capability (#2600)."
-            )
-        if kind in ("no_flux", "periodic"):
-            HJBGFDMSolver._refuse_unread({"values": values})
-            return factories[kind](dimension=dimension)
-        return factories[kind](value=0.0 if values is None else values, dimension=dimension)
 
     def _classified_boundary_points(self):
         """``(i, bc_enum, segment, normal)`` for every boundary point, by `_classify_boundary_point`, in the order of
@@ -3073,7 +2960,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         return resolve_diffusion_source(source, index=point_idx, points=self.collocation_points)
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
@@ -4056,8 +3942,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         jacobian_bc = jacobian.copy()
         residual_bc = residual.copy()
 
-        # Use new infrastructure with DirectCollocationHandler
-        if self._use_new_infrastructure and self._bc_handler is not None:
+        # The DirectCollocationHandler rows
+        if self._bc_handler is not None:
             self._bc_handler.apply_to_matrix(
                 A=jacobian_bc,
                 b=residual_bc,

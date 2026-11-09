@@ -272,8 +272,7 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   $H$ — the coupling layer passes `potential_field=U` to every FP solver that has that parameter, and
   the solver forms the drift itself. FP-FDM and the semi-Lagrangian solver form $-c\,\nabla u$, the
   control cost's drift, and say so by `_forms_its_drift_from_u`. FVM, the particle solver and the
-  weak-form family read `optimal_control`. *Not yet met (#2429): `MultiPopulationIterator` passes the
-  value function to network populations as `drift_field=`, the deprecated alias.*
+  weak-form family read `optimal_control`.
 - **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it from
   `optimal_control` for a non-smooth or non-separable $H$, and passes it only to a solver whose
   convention is `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
@@ -334,9 +333,9 @@ to hand it $u$ as a velocity; that refusal still guards any solver that takes on
 accept `potential_field=U` with a non-separable $H$ and advect with $-c\,\nabla u$, $c$ being the legacy
 `coupling_coefficient`.*
 
-`drift_field=` is a deprecated alias for `potential_field=` on the semi-Lagrangian pair, the network
-solver and the weak-form family. On the particle solver it is a live alias for the same slot, and also
-takes a callable drift, or a precomputed velocity with `drift_is_precomputed=True`.
+The semi-Lagrangian FP solver, the network solver and the weak-form family take no `drift_field=`. On the
+particle solver it is a live alias for `potential_field=`, and also takes a callable drift, or a precomputed
+velocity with `drift_is_precomputed=True`.
 
 The two halves of the system agree because both read one Hamiltonian object, not because of where
 the drift is computed. The weak-form family differentiates $u$ on its own FEM or MLS basis; do not
@@ -778,8 +777,7 @@ pair, the network solver and the weak-form family `potential_field` is the secon
 parameter. `HJBHowardSolver` takes no `U_coupling_prev`; the network HJB solvers take no
 `source_term`.
 
-The FP solver's first argument is `M_initial` on every solver. `m_initial_condition=` (GFDM,
-network) and `m_initial=` (the weak-form family) survive as deprecated aliases.
+The FP solver's first argument is `M_initial` on every solver.
 
 *Not yet met (#2429): `WeakFormHJBSolver.solve_hjb_system` still accepts the pre-v0.12 names
 `M_density_evolution_from_FP`, `U_final_condition_at_T` and `U_from_prev_picard` for `M_density`,
@@ -907,9 +905,9 @@ axes and refused. The sequence form is the convention, and library code uses it.
     logged warning, one per FP solver in a solve, and a `warnings` filter does not see it, and in
     `result.metadata["fp_negative_density"]`: per time level, `fraction`, the negative part against that level's positive
     part, and `minimum`; then `cumulative`, `largest`, `largest_level`, `lowest`, `lowest_level`, `levels_negative` and
-    `levels`. The record is a list on several FP solvers, is in `info` on `NewtonMFGSolver`, and is absent with
-    `return_tuple=True`. A solver called alone holds it as `last_negative_density`. On the meshless FP these are MLS
-    coefficients, not the density at a point (#2672). A level that is all NaN holds no negative in this record.
+    `levels`. The record is a list on several FP solvers, and is in `info` on `NewtonMFGSolver`. A solver called
+    alone holds it as `last_negative_density`. On the meshless FP these are MLS coefficients, not the density at a
+    point (#2672). A level that is all NaN holds no negative in this record.
   - **A non-finite value function ends a coupled solve at the guard all seven couplers share.** It logs the site, the
     iteration and the minimum of the density that solve was handed, and returns `converged=False`, without raising. `np.log(m)`
     in a `coupling` or a `source_term_hjb` reached it on the six couplers that take FP-FEM, at 81 nodes and sigma 0.3, and on
@@ -1081,12 +1079,11 @@ arithmetic on one axis is `corner.fold_axis` and `periodic.wrap_axis`, on NumPy 
 lands in [lo, hi] and the wrap in [lo, hi), as the result's dtype holds them, and only a result rounding left outside
 is moved, under a refusal bounded by the rule's own rounding (#2830). An absorbed
 particle is removed and never moved, and the mass it carried leaves through the wall (§ 9). Its exit position is where
-its reader last saw it: the contact for a reader of the path, the end for a reader of the end. `corner.absorb_positions`
-clamps a particle to the wall and keeps it, so it is not an absorbing wall; it is deprecated (#2550). A structural
+its reader last saw it: the contact for a reader of the path, the end for a reader of the end. A structural
 guard (`test_particle_wall_has_one_owner_2550.py`) fails if a function under `mfgarchon/` outside the owners applies a
 box wall rule to positions in one of the shapes its docstring lists: a modulo, a mirror or a shift by the box, or a
-clip to it. It allows by name the owners' per-axis rules (`fold_axis`, `wrap_axis`), the contact loop and the
-deprecated `absorb_positions`, and code that is not a box wall rule for particles: the semi-Lagrangian
+clip to it. It allows by name the owners' per-axis rules (`fold_axis`, `wrap_axis`), the contact loop, and code
+that is not a box wall rule for particles: the semi-Lagrangian
 departure-point folds (#2815), a KDE's reflection ghosts, and clips with another purpose (a control's or a field's
 bounds, a point read for its segment, the geometry API's projections).
 
@@ -1249,9 +1246,8 @@ change through `dataclasses.replace`. There are no per-field shortcuts.
 defaults the volatility to `0.1` where the legacy constructor gives `0.0`. There is no stationary (ergodic) problem: `ErgodicConditions`, which
 declared one that no `MFGProblem` accepted, is removed (#2648).*
 
-A **legacy constructor**, the components= form `MFGProblem(geometry=, components=, T=, Nt=, …)`, also exists. It
-emits a `PendingDeprecationWarning`: the model/domain/conditions form is planned to replace it, and nothing needs
-to change now (#2184). `volatility=`, `volatility_kind=` and `diffusion=` as `MFGProblem` keywords exist only there.
+A **legacy constructor**, the components= form `MFGProblem(geometry=, components=, T=, Nt=, …)`, also exists
+(#2184). `volatility=`, `volatility_kind=` and `diffusion=` as `MFGProblem` keywords exist only there.
 
 ---
 
@@ -1297,11 +1293,26 @@ scalar (§ *Volatility and diffusion*), and the public API names it `volatility`
 `MFGProblem.get_diffusion_coefficient_field` as `override`, and internal helpers as `tensor_field`,
 `sigma_tensor`, `Sigma` or `override`.*
 
-### Retired
+### Removed
 
-**Refused**, with an error naming the replacement:
+Before 1.0 a name the library no longer wants is deleted, not deprecated (AGENTS.md § *Removal before 1.0*). Passing
+or reading one raises Python's own `TypeError`, `AttributeError` or `ImportError`. Assigning one to an object, as
+`solver.damping_factor = 0.3`, succeeds and does nothing, as it does for any name Python does not know; `PicardConfig`
+and `MFGGridConfig` raise `ValueError`, and the frozen dataclasses `HamiltonianValues` and `GraphBCConfig` raise
+`FrozenInstanceError`, for any unknown name. A removed keyword that lands in a `**kwargs`, or a removed key in a
+free-form dict, is not Python's to refuse:
 
-| retired | use |
+- `FixedPointIterator.solve` and `FictitiousPlayIterator.solve` keep a `**kwargs` and refuse `return_tuple`,
+  `Niter_max`, `max_picard_iterations`, `l2errBoundPicard` and `picard_tolerance` by name;
+- `MFGProblem` refuses a key of the free-form `components.parameters` dict named after one of the 14 inputs it no
+  longer reads, and accepts any other key;
+- `BlockIterator.solve` and `NewtonMFGSolver.solve` keep a `**kwargs` and accept and ignore a keyword they do not read
+  (#2922).
+
+Names deprecated only in a docstring, and `WeakFormHJBSolver.solve_hjb_system`'s three pre-v0.12 names (§ *Solver
+method surface*), are not removed yet.
+
+| removed | use |
 |---|---|
 | `sigma` (the agents' volatility, on every public API), `problem.sigma` | `volatility` |
 | `sigma_kind` | `volatility_kind` |
@@ -1312,21 +1323,19 @@ scalar (§ *Volatility and diffusion*), and the public API names it `volatility`
 | `obstacle=` | `state_penalty`, or `constraint=ObstacleConstraint(...)` |
 | `MFGComponents(potential_func=)` | the Hamiltonian's `potential=`, e.g. `SeparableHamiltonian(potential=...)`. It was stored and no solver added it to $H$ (#2554) |
 | `MFGProblem(gamma=)` | the Hamiltonian's `coupling=` (with `coupling_dm=`). It was stored and nothing read it (#2554) |
-| `damping_factor` on `FixedPointIterator` | `relaxation` |
-| `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
-| `AdjointConsistentProvider`, `NormalDriftProvider` | nothing — removed |
+| `problem.f_potential`, `problem.gamma` | nothing: they held the two inputs above (#2554) |
+| `damping_factor`, `damping_factor_M`, `damping` | `relaxation`, `relaxation_M` |
+| `MFGComponents(u_final=)` | `u_terminal=` |
+| `velocity_field=` on `FPFDMSolver.solve_fp_system` | `drift_field=` |
+| `m_initial_condition=`, `m_initial=` | `M_initial=` |
+| `drift_field=` on the semi-Lagrangian FP solver, `FPNetworkSolver` and the weak-form family | `potential_field=` |
+| `ControlCostBase.control_cost` | `lambda_` |
+| `TensorProductGrid.num_points` | `Nx_points`; the `num_points=` argument stays |
 | `problem.spatial_discretization` | `problem.geometry.Nx` (intervals) or `problem.geometry.Nx_points` (points). It held one count or the other depending on the constructor (#1889); the `spatial_discretization=` argument stays and counts intervals |
+| `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
+| `AdjointConsistentProvider`, `NormalDriftProvider` | nothing |
 
-**Removed**, with no named error: `problem.f_potential` and `problem.gamma`, which held the two inputs
-retired above (#2554). Reading either raises a plain `AttributeError`.
-
-**Deprecated**, still accepted with a warning: `num_points` → `Nx_points`; `damping_factor` →
-`relaxation`, `damping_factor_M` → `relaxation_M` and `damping` → `relaxation` elsewhere; `u_final` →
-`u_terminal`; `velocity_field` → `drift_field`; `m_initial_condition` and `m_initial` → `M_initial`;
-`drift_field` → `potential_field` on the semi-Lagrangian pair, `FPNetworkSolver` and the weak-form
-family; `ControlCostBase.control_cost` →
-`lambda_`. When each goes is recorded in `docs/user/DEPRECATION_MODERNIZATION_GUIDE.md`, which is
-generated from the code.
+The `removed` changelog fragment of the removal before 1.0 lists the names it deleted and what replaces them.
 
 `sigma` remains correct as the parameter of another distribution or kernel: a stochastic process's
 own volatility (`OrnsteinUhlenbeckProcess(sigma=...)` and its siblings), a Lévy jump width

@@ -27,8 +27,8 @@ class NumericalScheme(Enum):
     Numerical discretization schemes for MFG with duality guarantees.
 
     This enum defines the available schemes for the Safe Mode API:
-        >>> from mfgarchon import create_crowd_problem, NumericalScheme
-        >>> problem = create_crowd_problem(...)
+        >>> from mfgarchon import MFGProblem, NumericalScheme
+        >>> problem = MFGProblem(...)
         >>> result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
 
     Duality Guarantees
@@ -130,8 +130,8 @@ class NumericalScheme(Enum):
     --------
 
     Safe Mode (validated pairing):
-        >>> from mfgarchon import create_lq_problem, NumericalScheme
-        >>> problem = create_lq_problem(dimension=1, nx=100, T=1.0)
+        >>> from mfgarchon import MFGProblem, NumericalScheme
+        >>> problem = MFGProblem(...)
         >>> result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
 
     Comparing schemes:

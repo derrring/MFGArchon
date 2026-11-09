@@ -579,35 +579,6 @@ def _diffusion_tensor(
         return _tensor_diffusion_nd(u, Sigma, tuple(spacings), bc, geometry)
 
 
-def tensor_diffusion(
-    u: NDArray,
-    Sigma: NDArray,
-    spacings: list[float] | tuple[float, ...],
-    bc: BoundaryConditions | None = None,
-    domain_bounds: NDArray | None = None,
-    time: float | None = None,
-) -> NDArray:
-    """
-    Compute anisotropic diffusion ∇·(Σ∇u).
-
-    .. deprecated:: 0.18.0
-        Use ``diffusion(u, Sigma, ...)`` instead. This function is kept
-        for backward compatibility and will be removed in v1.0.
-
-    See Also
-    --------
-    diffusion : Unified diffusion operator (recommended).
-    """
-    import warnings
-
-    warnings.warn(
-        "tensor_diffusion is deprecated, use diffusion(u, Sigma, ...) instead. Will be removed in v1.0.0.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return diffusion(u, Sigma, spacings, bc=bc, domain_bounds=domain_bounds, time=time)
-
-
 # =============================================================================
 # Transport Operators: Advection
 # =============================================================================

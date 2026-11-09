@@ -26,6 +26,19 @@ Deprecation Note (v0.19.0):
 # NOTE: The `logging` alias (from . import mfg_logging as logging) was removed in v0.17.0
 # Users should import from mfgarchon.utils.mfg_logging or use the re-exported functions directly
 
+# SDF utilities, re-exported from their home in geometry
+from mfgarchon.geometry.implicit.sdf_utils import (
+    sdf_box,
+    sdf_complement,
+    sdf_difference,
+    sdf_gradient,
+    sdf_intersection,
+    sdf_smooth_intersection,
+    sdf_smooth_union,
+    sdf_sphere,
+    sdf_union,
+)
+
 # Adjoint duality validation (Issue #580)
 from .adjoint_validation import (
     DualityStatus,
@@ -44,7 +57,6 @@ from .convergence import (
     SolverTypeDetector,
     adaptive_convergence,
     calculate_error,
-    calculate_l2_convergence_metrics,
     compute_norm,
     create_distribution_monitor,
     create_rolling_monitor,
@@ -128,17 +140,6 @@ from .numerical.particle.interpolation import (
     estimate_kde_bandwidth,
     interpolate_grid_to_particles,
     interpolate_particles_to_grid,
-)
-from .numerical.sdf_utils import (
-    sdf_box,
-    sdf_complement,
-    sdf_difference,
-    sdf_gradient,
-    sdf_intersection,
-    sdf_smooth_intersection,
-    sdf_smooth_union,
-    sdf_sphere,
-    sdf_union,
 )
 
 # PDE coefficient handling
@@ -289,7 +290,6 @@ __all__ = [
     "RollingConvergenceMonitor",
     "SolverTypeDetector",
     "calculate_error",
-    "calculate_l2_convergence_metrics",
     "l2_change",
     "sweep_change",
     "create_distribution_monitor",

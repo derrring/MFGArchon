@@ -42,7 +42,6 @@ from mfgarchon.utils.numerical.particle import (
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights
 from mfgarchon.utils.pde_coefficients import (
     resolve_volatility_override,
-    retired_volatility_keywords,
     scalar_volatility,
 )
 
@@ -1700,7 +1699,6 @@ class FPParticleSolver(BaseFPSolver):
         mass = float(arr)
         return mass if np.isfinite(mass) and mass > 0.0 else None
 
-    @retired_volatility_keywords
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
@@ -3238,8 +3236,8 @@ if __name__ == "__main__":
     print("\nTesting 2D FPParticleSolver with absorbing BC...")
     from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
 
-    # Create BC with exit on right wall (DIRICHLET = absorbing for particles). Built directly: the deprecated
-    # mixed_bc sets a NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
+    # Create BC with exit on right wall (DIRICHLET = absorbing for particles). Built directly: mixed_bc
+    # sets a NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
     bc_absorbing = BoundaryConditions(
         dimension=2,
         segments=[

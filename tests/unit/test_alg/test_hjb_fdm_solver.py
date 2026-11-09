@@ -546,64 +546,6 @@ class TestHJBFDMSolverDiagonalTensor:
 class TestHJBFDMSolverGhostValueBC:
     """Test HJB FDM solver with ghost value boundary conditions (Issue #494)."""
 
-    def test_get_ghost_values_nd_dirichlet(self):
-        """Test get_ghost_values_nd for Dirichlet BC."""
-        from mfgarchon.geometry.boundary import dirichlet_bc, get_ghost_values_nd
-
-        # Create 2D field
-        field = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        bc = dirichlet_bc(dimension=2, value=0.0)
-        spacing = (0.1, 0.1)
-
-        ghosts = get_ghost_values_nd(field, bc, spacing)
-
-        # Check all boundaries have ghost values
-        assert (0, 0) in ghosts  # x_min
-        assert (0, 1) in ghosts  # x_max
-        assert (1, 0) in ghosts  # y_min
-        assert (1, 1) in ghosts  # y_max
-
-        # For Dirichlet g=0, cell-centered: u_ghost = 2*0 - u_interior = -u_interior
-        # Left boundary (axis 0): interior values are [1, 2, 3]
-        np.testing.assert_allclose(ghosts[(0, 0)], -np.array([1.0, 2.0, 3.0]))
-        # Right boundary (axis 0): interior values are [4, 5, 6]
-        np.testing.assert_allclose(ghosts[(0, 1)], -np.array([4.0, 5.0, 6.0]))
-
-    def test_get_ghost_values_nd_neumann(self):
-        """Test get_ghost_values_nd for Neumann/no-flux BC."""
-        from mfgarchon.geometry.boundary import get_ghost_values_nd, no_flux_bc
-
-        # Create 2D field
-        field = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        bc = no_flux_bc(dimension=2)
-        spacing = (0.1, 0.1)
-
-        ghosts = get_ghost_values_nd(field, bc, spacing)
-
-        # No-flux is `du/dn = 0`, so `ghost_cell_neumann` gives `u_int + dx*0` -- the ADJACENT
-        # interior row, mirrored about the wall. #2067: this asserted `field[1]` / `field[-2]`,
-        # the retired `2*dx` form measured off the second interior row, which disagrees with the
-        # owner on any field that is not constant along the axis.
-        np.testing.assert_allclose(ghosts[(0, 0)], field[0, :])
-        np.testing.assert_allclose(ghosts[(0, 1)], field[-1, :])
-
-    def test_get_ghost_values_nd_periodic(self):
-        """Test get_ghost_values_nd for periodic BC."""
-        from mfgarchon.geometry.boundary import get_ghost_values_nd, periodic_bc
-
-        # Create 2D field
-        field = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        bc = periodic_bc(dimension=2)
-        spacing = (0.1, 0.1)
-
-        ghosts = get_ghost_values_nd(field, bc, spacing)
-
-        # For periodic: ghost = opposite boundary value
-        # Left ghost (axis 0) = right interior [4, 5, 6]
-        np.testing.assert_allclose(ghosts[(0, 0)], np.array([4.0, 5.0, 6.0]))
-        # Right ghost (axis 0) = left interior [1, 2, 3]
-        np.testing.assert_allclose(ghosts[(0, 1)], np.array([1.0, 2.0, 3.0]))
-
     def test_hjb_solver_uses_ghost_values_with_geometry(self):
         """Test that HJB solver uses ghost values when geometry has BCs."""
         from mfgarchon.geometry.boundary import no_flux_bc
@@ -704,32 +646,6 @@ class TestHJBFDMSolverGhostValueBC:
         t_grid = np.linspace(0.0, problem.T, Nt_points)
         expected = np.tile(((problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
         np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-12)
-
-    def test_time_varying_dirichlet_bc(self):
-        """Test that time-varying Dirichlet BC receives correct time (Issue #496)."""
-        from mfgarchon.geometry.boundary import dirichlet_bc, get_ghost_values_nd
-
-        # Track times when BC is called
-        call_times = []
-
-        def time_varying_value(t):
-            call_times.append(t)
-            return np.sin(2 * np.pi * t)
-
-        # Create BC with time-varying value
-        bc = dirichlet_bc(dimension=2, value=time_varying_value)
-
-        # Create test field
-        field = np.array([[1.0, 2.0], [3.0, 4.0]])
-        spacing = (0.1, 0.1)
-
-        # Call at different times
-        for t in [0.0, 0.25, 0.5, 0.75]:
-            call_times.clear()
-            _ = get_ghost_values_nd(field, bc, spacing, time=t)
-
-            # Read once per ghost update, at that time, through the one owner (#2512 row B2); before, once per axis.
-            assert call_times == [t], f"expected one read at t={t}, got {call_times}"
 
     def test_hjb_solver_time_varying_bc(self):
         """Test HJB solver with time-varying Dirichlet BC (Issue #496)."""
@@ -945,20 +861,6 @@ class TestHJBFDMSolverNewtonFallback:
         U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
         assert U_solution.shape == (Nt_points, Nx, Ny)
         assert np.all(np.isfinite(U_solution))
-
-    def test_on_newton_failure_is_the_deprecated_name_of_on_inner_failure(self):
-        """`on_newton_failure` (#669) is the old name of `on_inner_failure` (#2644): passing, reading and setting it warn,
-        and "warn_and_fallback" is "fallback"."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, components=_default_components())
-        with pytest.deprecated_call():
-            solver = HJBFDMSolver(problem, on_newton_failure="warn_and_fallback")
-        assert solver.on_inner_failure == "fallback"
-        with pytest.deprecated_call():
-            assert solver.on_newton_failure == "warn_and_fallback"
-        with pytest.deprecated_call():
-            solver.on_newton_failure = "raise"
-        assert solver.on_inner_failure == "raise"
 
     def test_convergence_error_attributes(self):
         """Test ConvergenceError exception has correct attributes."""

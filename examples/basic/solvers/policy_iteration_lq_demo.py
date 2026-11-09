@@ -139,7 +139,7 @@ def solve_lq_mfg_with_value_iteration():
     solver = HJBFDMSolver(
         problem,
         solver_type="fixed_point",
-        damping_factor=0.7,
+        relaxation=0.7,
         max_newton_iterations=100,
         newton_tolerance=1e-6,
     )

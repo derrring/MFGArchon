@@ -238,7 +238,7 @@ solver = create_network_mfg_solver(
     solver_type="fixed_point",
     hjb_solver_type="explicit",
     fp_solver_type="explicit",
-    damping_factor=0.6
+    relaxation=0.6
 )
 
 # Flow-based solver
@@ -449,7 +449,7 @@ create_network_visualizer(problem=None, network_data=None) -> NetworkMFGVisualiz
 **Solver Configuration:**
 - `max_iterations`: Maximum Picard iterations
 - `tolerance`: Convergence tolerance
-- `damping_factor`: Picard damping parameter (0.5-0.8 recommended)
+- `relaxation`: Picard damping parameter (0.5-0.8 recommended)
 - `cfl_factor`: CFL stability factor for explicit schemes
 - `diffusion_coefficient`: Network diffusion strength
 
@@ -528,7 +528,7 @@ mfg_solver = NetworkFixedPointIterator(
     problem,
     hjb_solver_type="custom",  # Would need implementation
     fp_solver_type="custom",   # Would need implementation
-    damping_factor=0.7
+    relaxation=0.7
 )
 ```
 

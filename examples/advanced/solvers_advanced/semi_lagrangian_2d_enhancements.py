@@ -190,7 +190,7 @@ def compare_configurations():
 
     print("\nProblem setup:")
     print("  Domain: [0, 1] × [0, 1]")
-    print(f"  Grid: {problem.geometry.grid.num_points}")
+    print(f"  Grid: {problem.geometry.grid.Nx_points}")
     print(f"  Time steps: {problem.geometry.time_grid.num_points}")
     print(f"  Initial position: {problem.initial_position}")
     print(f"  Goal position: {problem.goal_position}")
@@ -243,7 +243,7 @@ def visualize_results(results, problem):
     config_names = ["baseline", "rk4", "cubic", "enhanced"]
 
     # Get grid for reshaping
-    grid_shape = problem.geometry.grid.num_points
+    grid_shape = problem.geometry.grid.Nx_points
 
     for col, config_name in enumerate(config_names):
         result = results[config_name]

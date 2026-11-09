@@ -213,15 +213,12 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
         )
 
 
-def test_the_removed_legacy_names_say_what_replaces_them():
-    """The legacy 1-D class (fdm_bc_1d) is removed in 0.22.0 by user ruling (deprecated since 0.14.0, #869). Its two
-    names raise an AttributeError naming the unified API, not a bare "no attribute"."""
+def test_the_removed_legacy_names_are_gone():
+    """The legacy 1-D class (fdm_bc_1d) is removed (#869); its two names are a plain AttributeError."""
     import mfgarchon.geometry.boundary as boundary
 
     for name in ("BoundaryConditions1DFDM", "LegacyBoundaryConditions1D"):
-        with pytest.raises(
-            AttributeError, match=r"is removed .*#869.* Use mfgarchon\.geometry\.boundary\.BoundaryConditions"
-        ):
+        with pytest.raises(AttributeError, match=rf"has no attribute '{name}'"):
             getattr(boundary, name)
 
 
@@ -243,7 +240,5 @@ def test_a_1d_grid_builds_the_unified_bc_and_no_flux_is_a_zero_total_flux():
         bc = grid.get_boundary_handler(bc_type)
         assert isinstance(bc, BoundaryConditions), (bc_type, type(bc))
         assert {seg.bc_type for seg in bc.segments} | ({bc.default_bc} - {None}) == {kind}, bc_type
-    with pytest.raises(
-        ValueError, match=r"custom_conditions is refused: in 1-D it built the legacy fdm_bc_1d class, which is removed"
-    ):
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'custom_conditions'"):
         grid.get_boundary_handler("periodic", custom_conditions={"type": "periodic"})

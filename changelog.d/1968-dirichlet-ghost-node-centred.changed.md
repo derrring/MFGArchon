@@ -23,4 +23,4 @@
 - **Two more changes come with the node form:**
   - at ghost depth ≥ 2 the Dirichlet layers were in the wrong order, and now are not;
   - an axis with ≤ g nodes now raises for Dirichlet as it already did for Neumann (#1935), where it computed before.
-- **The other ghost routes no longer agree with the buffer on Dirichlet.** These are the calculator route (`bc_to_topology_calculator`) and `_compat.get_ghost_values_nd`, which nothing in the library consumes. #1968 stays open for them.
+- **The other ghost route no longer agrees with the buffer on Dirichlet:** the calculator route (`bc_to_topology_calculator`), which nothing in the library consumes. #1968 stays open for it.

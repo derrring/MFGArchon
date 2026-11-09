@@ -27,7 +27,6 @@ from scipy.sparse.linalg import spsolve
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.mass_fabrication_gate import (
     MAX_CLIP_MASS_FABRICATION,
@@ -37,8 +36,6 @@ from mfgarchon.utils.numerical.mass_fabrication_gate import (
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_sigma_keyword,
-    retired_volatility_keywords,
     scalar_volatility,
 )
 
@@ -194,17 +191,13 @@ class WeakFormFPSolver(BaseFPSolver):
         volatility = volatility if volatility is not None else self.problem.volatility
         return diffusion_from_volatility(scalar_volatility(volatility, consumer=type(self).__name__))
 
-    @retired_volatility_keywords
-    @deprecated_parameter(param_name="drift_field", since="v0.20.0", replacement="potential_field")
-    @deprecated_parameter(param_name="m_initial", since="v0.22.0", replacement="M_initial")
     def solve_fp_system(
         self,
         M_initial: NDArray | None = None,
         potential_field: NDArray | None = None,
         volatility: float | NDArray | None = None,
-        drift_field: NDArray | None = None,  # DEPRECATED alias for potential_field (Issue #1043)
+        *,
         source_term: Callable | None = None,
-        m_initial: NDArray | None = None,  # DEPRECATED alias for M_initial, the base's name (#2377)
         volatility_kind: str | None = None,
         show_progress: bool | None = None,
     ) -> NDArray:
@@ -213,22 +206,13 @@ class WeakFormFPSolver(BaseFPSolver):
         ``potential_field`` is the value function ``U(t,x)`` (Issue #1043); this solver recovers
         the advective velocity ``α = -coupling·∇U`` on its own quadrature/MLS basis. It was
         historically -- and misleadingly -- named ``drift_field``, but on this solver that input
-        always meant ``U``, never the velocity; ``drift_field`` is kept as a deprecated alias.
+        always meant ``U``, never the velocity.
 
         ``show_progress`` is the base interface's display switch; this solver shows no progress. It does
         not take the base's ``progress_callback``, which it would never call. A keyword this signature does
         not name raises (#2419).
         """
         self.last_negative_density = None
-        # Issue #1043: drift_field is the deprecated name for the U (potential) input here.
-        if drift_field is not None:
-            if potential_field is not None:
-                raise ValueError("Pass only potential_field; drift_field is its deprecated alias (Issue #1043).")
-            potential_field = drift_field
-        if m_initial is not None:
-            if M_initial is not None:
-                raise ValueError("Pass only M_initial; m_initial is its deprecated alias (#2377).")
-            M_initial = m_initial
         if M_initial is None:
             raise ValueError("M_initial is required")
 
@@ -375,7 +359,6 @@ class WeakFormFPSolver(BaseFPSolver):
         if self.on_negative_density == "warn":
             self.warn_negative_density(self.last_negative_density)
 
-    @retired_sigma_keyword
     def solve_fp_step_adjoint_mode(
         self,
         M_current: NDArray,

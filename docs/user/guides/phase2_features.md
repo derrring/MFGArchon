@@ -13,8 +13,8 @@ This guide covers all Phase 2 improvements:
 
 > **`solve_mfg()` does not exist** (#1741). This section taught `from mfgarchon import solve_mfg`,
 > which raises `ImportError`. The one-line interface is `problem.solve()` — the three-mode API of
-> #580 — and `create_solver()`, the other name once suggested here, is itself deprecated since
-> 0.17.0 and points to the same place. Every example below was run before being written down.
+> #580 — and `create_solver()`, the other name once suggested here, was removed before 1.0.
+> Every example below was run before being written down.
 
 ### Overview
 
@@ -152,7 +152,7 @@ three. A backend goes through `config`, not a keyword — `problem.solve(backend
 
 **Returns**: `SolverResult` with U, M, convergence info, error histories
 
-**Example**: See `examples/basic/three_mode_api_demo.py`, which `create_solver`'s own deprecation note points at.
+**Example**: See `examples/basic/three_mode_api_demo.py`.
 
 ---
 

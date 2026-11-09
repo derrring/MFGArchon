@@ -1,5 +1,5 @@
-**BREAKING.** `high_order_ghost_neumann` and `high_order_ghost_dirichlet` are retired and now raise
-`NotImplementedError` (#1936). Both were added 2025-12-17 by `1a1ebec6` and are present and
+**BREAKING.** `high_order_ghost_neumann` and `high_order_ghost_dirichlet` are removed (#1936); use
+`ghost_cell_neumann` and `ghost_cell_dirichlet`. Both were added 2025-12-17 by `1a1ebec6` and are present and
 exported in v0.20.0 and every tag since, both were called by nothing in the package or the tests, and neither delivers the order in its name.
 
 Neither is uniformly wrong, which is why reading them did not settle it. `high_order_ghost_neumann`

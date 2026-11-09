@@ -53,7 +53,6 @@ HONOUR = {FPFDMSolver, FPFEMSolver}
 
 #: Every concrete class that declares no ``_SUPPORTED_BC_TYPES``, with what a FLUX meets there.
 UNDECLARED = {
-    "PenaltyHJBSolver": "wraps an inner HJB solver, whose gate and the shared BC's owner refuse a FLUX",
     "WeakFormHJBSolver": "takes no BC of its own; the shared BC's owner refuses a FLUX",
     "SinkhornMFGSolver": "takes no BC of its own; the shared BC's owner refuses a FLUX",
     "WassersteinMFGSolver": "takes no BC of its own; the shared BC's owner refuses a FLUX",

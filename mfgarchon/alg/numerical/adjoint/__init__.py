@@ -77,7 +77,6 @@ from .protocols import (
     AdjointCapableHJBSolver,
     # True adjoint via Jacobian (Issue #707)
     LinearizedOperatorCapable,
-    validate_adjoint_capability,
     # Scheme pairing validation
     validate_scheme_pairing,
 )
@@ -121,7 +120,6 @@ __all__ = [
     # Protocols (deprecated, kept for backward compatibility)
     "AdjointCapableHJBSolver",
     "AdjointCapableFPSolver",
-    "validate_adjoint_capability",
     # Protocols (new - correct approach)
     "validate_scheme_pairing",
     # True adjoint via Jacobian (Issue #707)

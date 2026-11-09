@@ -13,8 +13,6 @@ Usage:
 
 from __future__ import annotations
 
-import warnings
-
 from numpy.typing import NDArray
 
 # === Public Array Types (User-Facing) ===
@@ -125,25 +123,3 @@ SpatialGrid", which stopped being satisfiable when `SpatialGrid` above was corre
 `(Nx,)` -- the two lines were consistent while both were wrong and contradicted each other
 once one was fixed. Measured: `Nx_points=[21]` gives a density of shape `(21,)`.
 """
-
-# === Legacy Compatibility ===
-
-# Map old names to new standard names for backward compatibility
-# These are accessed via __getattr__ to emit deprecation warnings
-_DEPRECATED_ALIASES = {
-    "SpatialCoordinates": ("SpatialGrid", SpatialGrid),
-    "TemporalCoordinates": ("TimeGrid", TimeGrid),
-}
-
-
-def __getattr__(name: str):
-    """Emit deprecation warnings for legacy type aliases."""
-    if name in _DEPRECATED_ALIASES:
-        new_name, value = _DEPRECATED_ALIASES[name]
-        warnings.warn(
-            f"'{name}' is deprecated, use '{new_name}' instead. This alias will be removed in v1.0.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

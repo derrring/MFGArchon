@@ -17,8 +17,6 @@ import ast
 import textwrap
 from dataclasses import dataclass
 
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
-
 
 @dataclass
 class DiscretizationScheme:
@@ -28,22 +26,6 @@ class DiscretizationScheme:
     order: int  # Approximation order
     stencil: list[int]  # Stencil points
     coefficients: list[float]  # Stencil coefficients
-    boundary_treatment: str = NEVER_READ  # refused when passed; never read (#2648)
-
-
-DiscretizationScheme.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {
-        "boundary_treatment": "no generator reads it; the boundary is MFGSolverGenerator.generate_hjb_solver's "
-        "boundary_type argument, which generate_solver_class leaves at its periodic default"
-    },
-    issue="#2648",
-    since="v0.22.0",
-    never_read=True,
-)(DiscretizationScheme.__init__)
-
-
-#: Why ``backend=`` is refused at every entry point that accepts it (#2648).
-_BACKEND_NEVER_READ = {"backend": "every generator emits the same source whatever backend is named, so omit it"}
 
 
 class CodeGenerator:
@@ -54,9 +36,7 @@ class CodeGenerator:
     and optimization-specific transformations.
     """
 
-    @retired_parameters(_BACKEND_NEVER_READ, issue="#2648", since="v0.22.0", never_read=True)
-    def __init__(self, backend: str = NEVER_READ):
-        self.backend = backend
+    def __init__(self):
         self.templates: dict[str, str] = {}
         self.optimizations: list[str] = []
 
@@ -135,9 +115,8 @@ class MFGSolverGenerator(CodeGenerator):
     and discretization schemes.
     """
 
-    @retired_parameters(_BACKEND_NEVER_READ, issue="#2648", since="v0.22.0", never_read=True)
-    def __init__(self, backend: str = NEVER_READ):
-        super().__init__(backend)
+    def __init__(self):
+        super().__init__()
         self._setup_mfg_templates()
 
     def _setup_mfg_templates(self):
@@ -456,12 +435,10 @@ class Generated{solver_name}(BaseMFGSolver):
         ).strip()
 
 
-@retired_parameters(_BACKEND_NEVER_READ, issue="#2648", since="v0.22.0", never_read=True)
 def generate_solver_class(
     solver_name: str,
     mathematical_system,
     discretization_schemes: dict[str, DiscretizationScheme],
-    backend: str = NEVER_READ,
 ) -> str:
     """
     Generate complete solver class from mathematical specification.
@@ -470,13 +447,11 @@ def generate_solver_class(
         solver_name: Name for generated solver class
         mathematical_system: CompiledMFGSystem instance
         discretization_schemes: Dict mapping operators to schemes
-        backend: Refused when passed (#2648): every backend name produced the same source, so it never had an
-            effect. The name goes in v0.25.0.
 
     Returns:
         Generated solver class code as string
     """
-    generator = MFGSolverGenerator(backend)
+    generator = MFGSolverGenerator()
 
     # Extract Hamiltonian code
     if "hamiltonian" in mathematical_system.expressions:

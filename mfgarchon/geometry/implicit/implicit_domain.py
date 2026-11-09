@@ -17,7 +17,6 @@ References:
 - TECHNICAL_REFERENCE_HIGH_DIMENSIONAL_MFG.md Section 4
 """
 
-import warnings
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -421,7 +420,6 @@ class ImplicitDomain(
         self,
         x: NDArray[np.float64],
         tolerance: float | None = None,
-        tol: float | None = None,
     ) -> bool | NDArray[np.bool_]:
         """
         Check if point(s) are on the domain boundary using SDF.
@@ -439,13 +437,12 @@ class ImplicitDomain(
         and `ImplicitApplicator._detect_boundary_points` used the keyword form -- an applicator that
         exists *for* this family, calling it in the spelling this family did not accept.
 
-        `tol=` is still accepted and deprecated. Six subclasses inherit this method rather than
-        overriding it, so this is the one definition the whole family reads.
+        Six subclasses inherit this method rather than overriding it, so this is the one definition the
+        whole family reads.
 
         Args:
             x: Point(s) to check - shape (d,) or (N, d)
             tolerance: Tolerance for boundary detection
-            tol: Deprecated alias for `tolerance`
 
         Returns:
             Boolean or array of booleans indicating if points are on boundary
@@ -457,19 +454,6 @@ class ImplicitDomain(
             >>> sphere.is_on_boundary(np.array([0.5, 0.0]))
             False
         """
-        if tol is not None:
-            if tolerance is not None:
-                raise TypeError(
-                    "is_on_boundary() received both `tolerance` and `tol`; they are the same "
-                    "argument. Use `tolerance`, which is what GeometryProtocol declares (#1943)."
-                )
-            warnings.warn(
-                "is_on_boundary(tol=...) is deprecated; use `tolerance=`, which is the spelling "
-                "GeometryProtocol and the other eighteen implementers use (#1943).",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            tolerance = tol
         if tolerance is None:
             tolerance = SDF_BOUNDARY_TOL
 
@@ -1085,8 +1069,8 @@ class ImplicitDomain(
 
         Notes:
             Implicit domains support general BC via signed distance function. The one channel a problem on an
-            implicit domain has is the components form's MFGComponents(boundary_conditions=), which is deprecated;
-            the model/domain/conditions form has none (#2684). A solver may also take them directly.
+            implicit domain has is the components form's MFGComponents(boundary_conditions=); the
+            model/domain/conditions form has none (#2684). A solver may also take them directly.
         """
         return None
 

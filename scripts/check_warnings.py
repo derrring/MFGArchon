@@ -37,8 +37,7 @@ no new identity. Verified by construction, not inferred.
 WHAT AN IDENTITY IS, because "225" reads as 225 distinct warnings and is not. The key is per
 CALL SITE: one API's warning raised from 153 test files is 153 identities. The 225 are 44 distinct
 (kind, message) pairs across 189 files, the largest group being 153 sharing
-`Legacy MFGProblem(geometry=, components=` (#2119's measurement; since #2184 that warning is the
-components= form's PendingDeprecationWarning, which is not a deprecation). That is the intended behaviour, not an artifact -- a
+`Legacy MFGProblem(geometry=, components=` (#2119's measurement). That is the intended behaviour, not an artifact -- a
 new test reaching for an API that warns should turn this red, and it only can if the caller is part
 of the key.
 

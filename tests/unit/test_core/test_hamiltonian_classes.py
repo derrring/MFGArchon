@@ -961,25 +961,6 @@ class TestControlCostLambda:
             cost = QuadraticControlCost(control_cost=3.0)
             assert cost.lambda_ == 3.0
 
-    def test_control_cost_property_deprecated(self):
-        import warnings
-
-        cost = QuadraticControlCost(lambda_=2.0)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            val = cost.control_cost
-            assert val == 2.0
-            assert any("deprecated" in str(x.message).lower() for x in w)
-
-    def test_hamiltonian_method_deprecated(self):
-        import warnings
-
-        cost = QuadraticControlCost(lambda_=2.0)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            cost.hamiltonian(np.array([1.0]))
-            assert any("deprecated" in str(x.message).lower() for x in w)
-
     def test_cannot_specify_both(self):
         with pytest.raises(ValueError, match="Cannot specify both"):
             QuadraticControlCost(control_cost=1.0, lambda_=2.0)

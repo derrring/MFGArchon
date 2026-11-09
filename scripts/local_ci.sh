@@ -88,7 +88,7 @@ cannot_run() {  # environment failure: say what was measured, and exit distingui
 #
 # What must import is what will actually run. `--fast` (ruff, mypy, and three stdlib-only AST
 # scanners, per CLAUDE.md the iterate-while-working mode) does not need pytest. It DOES need the
-# package: `scripts/check_internal_deprecation.py` does `import mfgarchon`, and on a package-less
+# package: `scripts/check_docstring_kwargs.py` imports `mfgarchon`, and on a package-less
 # interpreter that step exits with ModuleNotFoundError. The sentence claimed otherwise, and so did
 # its first correction, which fixed the tooling clause and preserved the package one -- the same
 # shape as the defect it was written to fix.
@@ -539,8 +539,8 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
-# written and this gate never invoked either. ~6.8 s for all five (three runs: 7.1 / 6.7 / 6.7),
-# of which check_internal_deprecation is 5.0 s and check_citations adds 0.4 s.
+# written and this gate never invoked either. ~4.1 s for the ten in the loop (three runs: 4.1 / 4.1 / 4.1),
+# of which check_manifests is 2.0 s.
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
@@ -550,7 +550,7 @@ step "Ratchet self-tests (the instruments, before their numbers)"
 # arm runs in `.github/workflows/family-emptied.yml`, which has a token anyway. Proven rather than
 # assumed: with a `gh` on PATH that exits 127 and says so, `--self-test` passes and
 # `--self-test --online` fails, so the offline pass is not an artefact of the stub being missed.
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue generate_deprecation_guide check_oracle_pins; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue check_oracle_pins; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -594,46 +594,6 @@ check $? "every unguarded import is declared in pyproject.toml"
 step "Docstring keyword ratchet"
 "${PYS[@]}" scripts/check_docstring_kwargs.py --check-baseline scripts/docstring_kwargs_baseline.json
 check $? "no docstring example newly passes a keyword its callee does not have"
-
-# The OTHER half of removal-batch coverage, and it was running only in CI. This gate ran
-# check_internal_deprecation.py in the --self-test loop below and never as the ratchet, so a PR that
-# RETIRES a deprecation passed here by construction and failed on the runner: #2355 removed seven
-# symbols, this gate went GREEN twice, and `deprecation-check.yml` was red with
-# `total: 59 -> 51, type:function: 22 -> 16, type:parameter: 36 -> 34` (#2356).
-#
-# No `--check-baseline` argument: this checker does not have one. It hardcodes the path at
-# check_internal_deprecation.py's `BASELINE = Path(__file__).resolve().parent / "deprecation_baseline.json"`,
-# so the bare invocation IS the ratchet -- the same line deprecation-check.yml runs. check_fail_fast,
-# check_doc_api and check_docstring_kwargs each take a path and this one does not; copying their
-# idiom produces an argparse error, which is why the style neighbour here is the Manifest ratchet --
-# which takes no argument either, so this is now the second of that shape rather than an exception.
-#
-# Unguarded by --fast, like every ratchet outside the two `$FAST -eq 0` blocks -- and note those
-# blocks are not ratchet-free: the first holds the capability matrix's own --check-baseline before
-# the test suite, the second the discrimination report. It also needs the package, which is why the
-# comment above probe_modules names this script as the reason --fast cannot run on a package-less
-# interpreter.
-#
-# The verdict names BOTH things this checker can fail on, because it has two branches and an earlier
-# wording named one. Counts: compared PER KIND over the key union, so a cross-kind swap (retire a
-# function, add a parameter) IS caught -- only a SAME-KIND swap leaves every key equal and passes,
-# which is narrower than "a swap" and is what #2363 records. Identities: `production_uses()` walks
-# the AST for calls to symbols whose `internal_usage` is cleared and returns 1 on any hit -- nothing
-# to do with counts. The checker's own green line says both ("Matches baseline. 0 symbol(s) have
-# internal_usage cleared; no production call sites"), and that branch goes live exactly as #2343's
-# removal batches land. A verdict that names one branch prints a false description when the other
-# fires. Commit `58bb2c59` is the same identities-not-counts fix for citation drift.
-step "Deprecation ratchet"
-"${PYS[@]}" scripts/check_internal_deprecation.py
-check $? "no deprecation count moved, and no cleared symbol is still called in production"
-
-# The user guide to those deprecations is generated from the same decorators, and nothing ran its
-# --check: #2435's first head cleared a removal blocker, six guide rows went stale, and this gate was
-# green -- the independent review caught it (#2436). It imports the package to scan it, and refuses
-# (exit 2) where the package cannot be imported in full rather than comparing a partial guide.
-step "Deprecation guide"
-"${PYS[@]}" scripts/generate_deprecation_guide.py --check
-check $? "docs/user/DEPRECATION_MODERNIZATION_GUIDE.md is the guide the code generates"
 
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
@@ -707,9 +667,10 @@ if [[ $FAST -eq 0 ]]; then
   # everything this gate prints. Without it the whole run is 324 lines / 34,614 bytes, which is
   # 0.53x a 64 KB pipe instead of 12.3x, and #2117's failure mode has nothing to grow into.
   #
-  # It is a REPORT of a backlog, not a signal: 456 of those lines are this repository's own tests
-  # calling its own components= form, `MFGProblem(geometry=, components=, ...)`. Printing the list every
-  # run for a year has not retired one of them; #2119 is where they get counted instead.
+  # It is a REPORT of a backlog, not a signal: when measured, 456 of those lines were this repository's own
+  # tests calling its own components= form, `MFGProblem(geometry=, components=, ...)`, whose warning the
+  # removal before 1.0 deleted. Printing the list every run for a year had not retired one of them; #2119
+  # is where warnings get counted instead.
   # MFGARCHON_WARNING_CENSUS: `tests/conftest.py` writes the identities this run emitted, so the
   # ratchet below costs no second suite run. Measured: the controller's warning stats are complete
   # under `-n auto` and under `--disable-warnings` alike.

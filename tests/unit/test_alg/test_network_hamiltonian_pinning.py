@@ -251,37 +251,8 @@ def test_network_hamiltonian_method_equals_object():
             assert method_val == object_val, f"method != object at node {node} (single-source broken)"
 
 
-def test_network_geometry_alias_equivalence_and_deprecation():
-    """Issue #1472 (deprecation policy): the constructor param is ``geometry`` (aligned with
-    ``MFGProblem``); ``network_geometry`` is a deprecated alias that redirects IDENTICALLY. Proves
-    old == new construction and that the alias warns.
-    """
-    net_new = GridNetwork(width=4, height=1)
-    net_new.create_network()
-    net_old = GridNetwork(width=4, height=1)
-    net_old.create_network()
-
-    prob_new = NetworkMFGProblem(geometry=net_new, T=0.5, Nt=10)
-    with pytest.warns(DeprecationWarning, match="network_geometry"):
-        prob_old = NetworkMFGProblem(network_geometry=net_old, T=0.5, Nt=10)
-
-    # byte-identical construction: same node count, same single-source Hamiltonian, same values
-    assert prob_new.num_nodes == prob_old.num_nodes
-    assert type(prob_new.hamiltonian_class) is type(prob_old.hamiltonian_class)
-    m = np.ones(prob_new.num_nodes) / prob_new.num_nodes
-    p = np.arange(prob_new.num_nodes, dtype=float)
-    for node in range(prob_new.num_nodes):
-        h_new = prob_new.hamiltonian(t=0.1, node=node, neighbors=prob_new.get_node_neighbors(node), p=p, m=m)
-        h_old = prob_old.hamiltonian(t=0.1, node=node, neighbors=prob_old.get_node_neighbors(node), p=p, m=m)
-        assert h_new == h_old, f"alias construction diverged at node {node}"
-
-
-def test_network_geometry_both_or_neither_fail_loud():
-    """Issue #1472: passing both geometry= and network_geometry=, or neither, fails loud."""
-    net = GridNetwork(width=3, height=1)
-    net.create_network()
-    with pytest.raises(ValueError, match="do not pass both"):
-        NetworkMFGProblem(geometry=net, network_geometry=net, T=0.5, Nt=4)
+def test_no_geometry_fails_loud():
+    """Issue #1472: a network problem with no graph geometry fails loud."""
     with pytest.raises(ValueError, match="requires a graph geometry"):
         NetworkMFGProblem(T=0.5, Nt=4)
 

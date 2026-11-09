@@ -40,8 +40,6 @@ from mfgarchon.operators.stencils.finite_difference import (
 from mfgarchon.utils.pde_coefficients import (
     get_spatial_grid,
     resolve_volatility_override,
-    retired_sigma_at_n_keyword,
-    retired_volatility_keywords,
 )
 
 logger = get_logger(__name__)
@@ -821,7 +819,6 @@ def _volatility_at_n(problem: Any, volatility_at_n: float | np.ndarray | None) -
     return sigma
 
 
-@retired_sigma_at_n_keyword
 def compute_hjb_residual(
     U_n_current_newton_iterate: np.ndarray,  # U_kp1_n in notebook's getFnU_withM
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_kp1_np1 in notebook
@@ -1258,7 +1255,6 @@ def _advection_bands(
     return sub, diag, sup, extras
 
 
-@retired_sigma_at_n_keyword
 def compute_hjb_jacobian(
     U_n_current_newton_iterate: np.ndarray,  # U_new_n_tmp in notebook Newton step
     U_k_n_from_prev_picard: np.ndarray,  # U_k_n (or Uoldn) in notebook Jacobian
@@ -1517,7 +1513,6 @@ def hjb_residual_norm(residual: np.ndarray, dx: float) -> float:
     return float(np.linalg.norm(residual) * np.sqrt(dx))
 
 
-@retired_sigma_at_n_keyword
 def newton_hjb_step(
     U_n_current_newton_iterate: np.ndarray,  # U_new_n_tmp in notebook
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_new_np1 in notebook
@@ -1631,7 +1626,6 @@ def newton_hjb_step(
     return U_n_next_newton_iterate, l2_error_of_step, residual_norm
 
 
-@retired_sigma_at_n_keyword
 def solve_hjb_timestep_newton(
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_new[n+1] in notebook
     U_k_n_from_prev_picard: np.ndarray,  # U_k[n] in notebook
@@ -1901,7 +1895,6 @@ def solve_hjb_timestep_newton(
     return U_n_current_newton_iterate
 
 
-@retired_volatility_keywords
 def solve_hjb_system_backward(
     M_density_from_prev_picard: np.ndarray,  # M_k in notebook
     U_final_condition_at_T: np.ndarray,

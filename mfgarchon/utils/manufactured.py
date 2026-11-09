@@ -87,7 +87,6 @@ from mfgarchon.types.callable_protocols import (
 )
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
-    retired_sigma_and_kind_keywords,
     validate_symmetric_psd,
 )
 
@@ -272,7 +271,6 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
 # --------------------------------------------------------------------------------------------
 
 
-@retired_sigma_and_kind_keywords
 def hjb_source(
     pair: ManufacturedPair,
     hamiltonian: HamiltonianBase,
@@ -302,7 +300,6 @@ def hjb_source(
     return source
 
 
-@retired_sigma_and_kind_keywords
 def fp_source(
     pair: ManufacturedPair,
     hamiltonian: HamiltonianBase,
@@ -544,7 +541,7 @@ def pair_for(
     driver, so the figure has not been re-measured since.
 
     ROBIN is refused, and the reason is not in this function. Measured at the time of writing:
-    ``FPFDMSolver``, ``FPFVMSolver``, ``FPGFDMSolver``, ``FPSLSolver`` and ``HJBFDMSolver`` all
+    ``FPFDMSolver``, ``FPFVMSolver``, ``FPSLSolver`` and ``HJBFDMSolver`` all
     raise ``NotImplementedError`` at CONSTRUCTION for a ROBIN segment (``_validate_bc_support``,
     #1456); only ``HJBGFDMSolver`` accepts one, and per ``robin_bc``'s own docstring only for the
     ``Robin(0, 1)`` case (``n . grad u = g``), while the FEM pair reads Robin coefficients but takes
@@ -578,7 +575,7 @@ def pair_for(
     elif key == "robin":
         raise NotImplementedError(
             "pair_for: ROBIN is not generated, and the blocker is downstream of this function. "
-            "FPFDMSolver, FPFVMSolver, FPGFDMSolver, FPSLSolver and HJBFDMSolver each raise "
+            "FPFDMSolver, FPFVMSolver, FPSLSolver and HJBFDMSolver each raise "
             "NotImplementedError for a ROBIN segment at CONSTRUCTION (#1456), so a generated pair "
             "would have no consumer that can run it. See this function's docstring for what the "
             "generator side would need, which is one branch."

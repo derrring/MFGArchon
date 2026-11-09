@@ -119,7 +119,7 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
             excluded_by_name.append(name)
             continue
         # Same class bound twice in its own module (`NetworkFPSolver = FPNetworkSolver`,
-        # fp_network.py:606) yields two rows unless collapsed. The removed conservation lane
+        # fp_network.py:567) yields two rows unless collapsed. The removed conservation lane
         # carried that knowledge; lane 1 inherited the bug when it went.
         if any(r["cls_id"] == id(cls) for r in rows):
             next(r for r in rows if r["cls_id"] == id(cls))["names"].append(name)

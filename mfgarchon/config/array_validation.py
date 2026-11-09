@@ -54,15 +54,6 @@ class MFGGridConfig(BaseConfig):
     T: float = Field(1.0, gt=0.0, le=100.0, description="Final time")
     volatility: float = Field(0.1, gt=0.0, le=10.0, description="SDE volatility sigma (PDE diffusion is D = sigma^2/2)")
 
-    @model_validator(mode="before")
-    @classmethod
-    def _refuse_retired_sigma(cls, data: Any) -> Any:
-        """``sigma=`` is retired (#2378 part 2b). ``extra="forbid"`` already rejects it as an unknown
-        field; this refusal is there so the error names ``volatility=``."""
-        if isinstance(data, dict) and "sigma" in data:
-            raise ValueError("MFGGridConfig(sigma=...) is retired (#2378); pass volatility=, the SDE volatility.")
-        return data
-
     @field_validator("xmax")
     @classmethod
     def validate_domain(cls, v: float, info: Any) -> float:

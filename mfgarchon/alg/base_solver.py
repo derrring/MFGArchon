@@ -10,7 +10,6 @@ BC Integration (Issue #527):
     - Numerical: apply_boundary_conditions() -> field operations
     - Neural: sample_boundary_points(), compute_boundary_loss() -> training
     - RL: _configure_environment_boundaries() -> environment setup
-    - Optimization: get_domain_constraints() -> constraint generation
 """
 
 from __future__ import annotations
@@ -20,8 +19,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-
-from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -430,80 +427,6 @@ class BaseOptimizationSolver(BaseMFGSolver):
     def compute_gradient(self, variables: Any) -> Any:
         """Compute the gradient of the objective function."""
 
-    @deprecated(
-        since="v0.22.0",
-        replacement="BoundaryConditions.segments, read through mfgarchon.geometry.boundary.types.segment_value",
-        reason="it has no caller, and it passes each segment's raw value outward unread (#2512 row B2)",
-    )
-    def get_domain_constraints(self) -> list[dict[str, Any]]:
-        """
-        Generate optimization constraints from boundary conditions.
-
-        Translates BoundaryConditions into constraint dictionaries that can
-        be used by optimization solvers (scipy.optimize, cvxpy, etc.).
-
-        Returns:
-            List of constraint dictionaries with keys:
-            - type: "eq" (equality), "ineq" (inequality), "grad" (gradient)
-            - bc_type: Original BC type (Dirichlet, Neumann, etc.)
-            - region: Boundary region identifier
-            - value: Target value or function
-
-        Example usage with scipy:
-            constraints = solver.get_domain_constraints()
-            for c in constraints:
-                if c["type"] == "eq":
-                    # Add equality constraint u(boundary) = value
-                    scipy_constraints.append({"type": "eq", "fun": ...})
-        """
-        bc = self.get_boundary_conditions()
-        if bc is None:
-            return []
-
-        from mfgarchon.geometry.boundary import BCType
-
-        constraints = []
-
-        # Handle segments if available
-        segments = getattr(bc, "segments", [])
-        for segment in segments:
-            bc_type = segment.bc_type
-            constraint = {
-                "region": getattr(segment, "region", "boundary"),
-                "value": getattr(segment, "value", 0.0),
-                "bc_type": bc_type,
-            }
-
-            if bc_type == BCType.DIRICHLET:
-                constraint["type"] = "eq"  # u(x_b) = g
-            elif bc_type in (BCType.NEUMANN, BCType.NO_FLUX):
-                constraint["type"] = "grad"  # du/dn = g
-            elif bc_type == BCType.ROBIN:
-                constraint["type"] = "mixed"  # alpha*u + beta*du/dn = g
-            else:
-                constraint["type"] = "other"
-
-            constraints.append(constraint)
-
-        # If no segments, create constraint from default BC.
-        # Issue #1100: a unified BoundaryConditions with default_bc unset (None)
-        # is fully unspecified here -> fail loud rather than silently apply a default.
-        if not constraints:
-            from mfgarchon.geometry.boundary import BoundaryConditions
-
-            if isinstance(bc, BoundaryConditions):
-                bc_type = bc._resolve_default_bc("BaseOptimizationSolver.get_domain_constraints")
-                constraint = {
-                    "region": "all",
-                    "value": getattr(bc, "value", 0.0),
-                    "bc_type": bc_type,
-                    "type": "eq" if bc_type == BCType.DIRICHLET else "grad",
-                }
-                constraints.append(constraint)
-            # else: legacy/non-unified BC object carries no default constraint
-
-        return constraints
-
 
 class BaseNeuralSolver(BaseMFGSolver):
     """Base class for neural network methods (PINN, neural operators, etc.)."""
@@ -566,58 +489,6 @@ class BaseNeuralSolver(BaseMFGSolver):
                 boundary_points.append(face_points)
 
         return np.vstack(boundary_points)
-
-    @deprecated(
-        since="v0.22.0",
-        replacement="mfgarchon.geometry.boundary.types.segment_value",
-        reason="it has no caller, and for a BoundaryConditions it always returns None: it reads attributes that "
-        "class does not have (#2512 row B2)",
-    )
-    def get_boundary_target_values(
-        self,
-        boundary_points: NDArray[np.floating],
-        time: float | None = None,
-    ) -> NDArray[np.floating] | None:
-        """
-        Get target BC values at given boundary points.
-
-        Args:
-            boundary_points: Points on domain boundary
-            time: Time for time-dependent BCs
-
-        Returns:
-            Target values at boundary points, or None if BC has no explicit values
-        """
-        bc = self.get_boundary_conditions()
-        if bc is None:
-            return None
-
-        # Try to get values from BoundaryConditions
-        try:
-            return bc.get_value_at_points(boundary_points, time)
-        except (AttributeError, NotImplementedError):
-            pass
-
-        try:
-            value = bc.value
-        except AttributeError:
-            return None
-        # Read through the one owner (#2512 row B2): a callable is g(t, x), time first, one point at a time.
-        from mfgarchon.geometry.boundary.types import boundary_value
-
-        return np.array(
-            [
-                boundary_value(
-                    value,
-                    kind="bc.value",
-                    t=time,
-                    time_keyword="time",
-                    x=np.asarray(p, dtype=float),
-                    where="get_boundary_target_values",
-                )
-                for p in boundary_points
-            ]
-        )
 
 
 class BaseRLSolver(BaseMFGSolver):

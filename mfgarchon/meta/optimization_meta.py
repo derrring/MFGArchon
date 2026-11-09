@@ -13,12 +13,10 @@ from __future__ import annotations
 import functools
 import inspect
 import time
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,21 +28,9 @@ class PerformanceProfile:
 
     problem_size: int
     backend: str
-    target_precision: float | None = NEVER_READ  # refused when passed; never read (#2648)
+    _: KW_ONLY  # the fields below are keyword-only (#2648)
     memory_constraint: int | None = None  # MB
-    time_constraint: float | None = NEVER_READ  # refused when passed; never read (#2648)
     optimization_level: str = "balanced"  # "speed", "balanced", "accuracy"
-
-
-PerformanceProfile.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {
-        "target_precision": "no optimisation decision reads a precision target",
-        "time_constraint": "no optimisation decision reads a time budget",
-    },
-    issue="#2648",
-    since="v0.22.0",
-    never_read=True,
-)(PerformanceProfile.__init__)
 
 
 @dataclass
@@ -57,8 +43,7 @@ class OptimizationHints:
     compute_bound: bool = True
 
     # Loop optimization hints
-    unroll_small_loops: bool = NEVER_READ  # refused when passed; never read (#2648)
-    vectorize_inner_loops: bool = NEVER_READ  # refused when passed; never read (#2648)
+    _: KW_ONLY  # the fields below are keyword-only (#2648)
 
     # Backend-specific hints
     jax_hints: dict[str, Any] | None = None
@@ -69,17 +54,6 @@ class OptimizationHints:
             self.jax_hints = {"jit": True, "static_argnums": ()}
         if self.numba_hints is None:
             self.numba_hints = {"nopython": True, "parallel": False}
-
-
-OptimizationHints.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {
-        "unroll_small_loops": "no compiler step unrolls loops from this hint",
-        "vectorize_inner_loops": "no compiler step vectorises from this hint",
-    },
-    issue="#2648",
-    since="v0.22.0",
-    never_read=True,
-)(OptimizationHints.__init__)
 
 
 class OptimizationCompiler:

@@ -1,7 +1,7 @@
 """A reader that has only where a step ended acts per axis at a corner one of whose faces is periodic, and absorbs
 through the absorbing wall's owner (#2550, C6-1; #2803's shape).
 
-`ParticleApplicator.apply` and ``apply_with_flux_limits`` gave a particle at such a corner one action for every axis:
+`ParticleApplicator.apply` gave a particle at such a corner one action for every axis:
 the corner's segment, chosen by the owner's corner order, wrapped every axis or folded every axis, so a channel corner
 wrapped across its wall or folded across its seam. They now read the end-position rule (CONVENTIONS.md § *Particles at
 a wall*): the segment the end's nearest point of the box takes decides only whether the particle is absorbed, and
@@ -61,19 +61,16 @@ from mfgarchon.geometry.boundary import (
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
 from mfgarchon.geometry.boundary.corner import (
     absorb_at_walls,
-    absorb_positions,
     fold_axis,
     reflect_positions,
     walls_reached,
 )
 from mfgarchon.geometry.boundary.periodic import wrap_axis, wrap_positions
 from mfgarchon.geometry.implicit import Hyperrectangle, Hypersphere
-from mfgarchon.utils.numerical.particle import boundary as deprecated_pair
 from mfgarchon.utils.numerical.particle.sampling import sample_from_scattered_density
 from mfgarchon.utils.particle_utils import apply_boundary_conditions_gpu, apply_boundary_conditions_numpy
 
 P, D, NF = BCType.PERIODIC, BCType.DIRICHLET, BCType.NO_FLUX
-FLUX_WARNING = "apply_with_flux_limits is deprecated"
 
 
 def _bc(d: int, faces: dict[str, tuple[BCType, int]]) -> BoundaryConditions:
@@ -89,14 +86,11 @@ def _bc(d: int, faces: dict[str, tuple[BCType, int]]) -> BoundaryConditions:
     )
 
 
-def _step(method: str, bc: BoundaryConditions, ends, flux_limits=None):
+def _step(method: str, bc: BoundaryConditions, ends):
     applicator = ParticleApplicator()
     ends = np.atleast_2d(np.asarray(ends, dtype=float))
     bounds = [(0.0, 1.0)] * ends.shape[1]
-    if method == "apply":
-        return (*applicator.apply(ends, bc, bounds), None)
-    with pytest.warns(DeprecationWarning, match=FLUX_WARNING):
-        return applicator.apply_with_flux_limits(ends, bc, bounds, flux_limits or {})
+    return applicator.apply(ends, bc, bounds)
 
 
 CHANNEL = {"x_min": (P, 1), "x_max": (P, 1), "y_min": (NF, 0), "y_max": (NF, 0)}
@@ -125,29 +119,17 @@ ROWS = [
 ]
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 @pytest.mark.parametrize(("name", "d", "faces", "end", "expected"), ROWS, ids=[row[0] for row in ROWS])
 def test_a_periodic_corner_acts_per_axis(method, name, d, faces, end, expected):
     """Each face the end is past acts on its own axis; the corner's segment decides only absorption."""
-    remaining, absorbed, exits, _ = _step(method, _bc(d, faces), end)
+    remaining, absorbed, exits = _step(method, _bc(d, faces), end)
     if expected is None:
         assert absorbed.tolist() == [True], f"{name}: kept at {remaining}"
         np.testing.assert_array_equal(exits, [end])
     else:
         assert absorbed.tolist() == [False], f"{name}: absorbed"
         np.testing.assert_allclose(remaining[0], expected, rtol=0, atol=1e-12, err_msg=name)
-
-
-def test_a_full_exit_turns_a_particle_back_per_axis():
-    """A capped exit at a periodic corner, at the periodic faces' priority: the first particle is absorbed
-    (DIRICHLET first), and the second, with the capacity spent, is not, so each face it is past acts on its own axis --
-    the exit's axis folds and the periodic axis wraps."""
-    bc = _bc(2, {**EXIT_BESIDE_PERIODIC_Y, "y_min": (P, 0), "y_max": (P, 0)})
-    remaining, absorbed, exits, counts = _step("flux", bc, [(1.04, 1.02), (1.03, 1.01)], {"x_max": 1})
-    assert absorbed.tolist() == [True, False]
-    np.testing.assert_array_equal(exits, [(1.04, 1.02)])
-    np.testing.assert_allclose(remaining, [(0.97, 0.01)], rtol=0, atol=1e-12)
-    assert counts == {"x_max": 1}
 
 
 def test_the_absorbing_owner_removes_never_moves_and_reads_its_band():
@@ -200,18 +182,6 @@ def test_meshfree_absorbing_reads_the_owner(geometry, rows, kept):
     band, or on the geometry's boundary at the geometry's band (1e-8 for these two). On the disc a particle outside it
     and inside its box is kept, (0.95, 0.95): #2693's shape in this mode, not this PR's (#2573)."""
     np.testing.assert_array_equal(MeshfreeApplicator(geometry).apply_particle_bc(np.array(rows), "absorbing"), kept)
-
-
-def test_the_two_deprecations_warn_and_keep_their_behaviour():
-    """`absorb_positions` is a clamp and stays one while it warns; `apply_with_flux_limits` with no limit is `apply`
-    (the deprecation policy's equivalence test)."""
-    with pytest.warns(DeprecationWarning, match="absorb_positions is deprecated"):
-        clamped = absorb_positions(np.array([[-0.1, 0.5], [1.2, 0.3]]), [(0.0, 1.0), (0.0, 1.0)])
-    np.testing.assert_array_equal(clamped, [[0.0, 0.5], [1.0, 0.3]])
-    bc = _bc(2, EXIT_BESIDE_PERIODIC_Y)
-    ends = [(1.04, 1.02), (0.5, -0.2), (1.01, 0.5), (0.3, 0.4)]
-    for old, new in zip(_step("flux", bc, ends)[:3], _step("apply", bc, ends)[:3], strict=True):
-        np.testing.assert_array_equal(old, new)
 
 
 @pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf], ids=["nan", "inf", "-inf"])
@@ -416,20 +386,6 @@ def test_the_1d_helpers_refuse_dirichlet_and_a_non_finite_position(reader, ends,
         _helper(reader)(ends, 0.0, 1.0, kind)
 
 
-def test_the_deprecated_pair_is_particle_utils():
-    """`utils/numerical/particle/boundary.py`'s pair warns and gives `particle_utils`' values, its refusal of "dirichlet"
-    included (the deprecation policy's equivalence test)."""
-    for kind in ("periodic", "no_flux"):
-        with pytest.warns(DeprecationWarning, match="apply_boundary_conditions_numpy is deprecated"):
-            old = deprecated_pair.apply_boundary_conditions_numpy(ENDS_1D, LO, HI, kind)
-        np.testing.assert_array_equal(old, apply_boundary_conditions_numpy(ENDS_1D, LO, HI, kind))
-    with (
-        pytest.warns(DeprecationWarning, match="apply_boundary_conditions_numpy is deprecated"),
-        pytest.raises(ValueError, match="bc_type 'dirichlet' is refused"),
-    ):
-        deprecated_pair.apply_boundary_conditions_numpy(ENDS_1D, LO, HI, "dirichlet")
-
-
 def test_the_exported_wrap_positions_is_the_periodic_owner():
     """`geometry.boundary.wrap_positions` resolved to the deprecated `corner.wrap_positions`, which is removed; it is
     the periodic owner now, and on the shim's own signature (positions, bounds) it gives the shim's values."""
@@ -461,22 +417,6 @@ def _torch_backend():
     from mfgarchon.backends.torch_backend import TorchBackend
 
     return TorchBackend(device="cpu")
-
-
-def test_the_deprecated_gpu_helper_is_particle_utils():
-    """The deprecated pair's GPU half warns and gives `particle_utils`' values on the torch backend, its refusal of
-    "dirichlet" included (the deprecation policy's equivalence test, the half that runs on a device)."""
-    backend = _torch_backend()
-    for kind in ("periodic", "no_flux"):
-        with pytest.warns(DeprecationWarning, match="apply_boundary_conditions_gpu is deprecated"):
-            old = deprecated_pair.apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, kind, backend)
-        new = apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, kind, backend)
-        np.testing.assert_array_equal(backend.to_numpy(old), backend.to_numpy(new))
-    with (
-        pytest.warns(DeprecationWarning, match="apply_boundary_conditions_gpu is deprecated"),
-        pytest.raises(ValueError, match="bc_type 'dirichlet' is refused"),
-    ):
-        deprecated_pair.apply_boundary_conditions_gpu(backend.from_numpy(ENDS_1D), LO, HI, "dirichlet", backend)
 
 
 def test_the_gpu_helper_does_not_write_its_input():

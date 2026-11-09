@@ -396,18 +396,6 @@ def solver_type(request):
     return request.param
 
 
-@pytest.fixture
-def solver_factory():
-    """Factory function for creating solvers."""
-
-    def _create_solver(problem, config=None):
-        from mfgarchon.factory import create_solver
-
-        return create_solver(problem, config=config)
-
-    return _create_solver
-
-
 # =============================================================================
 # Mathematical Properties Fixtures
 # =============================================================================
@@ -1139,8 +1127,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         # closing it is what the normalisation does. An earlier version of this comment named a
         # second channel -- "the same warning renders with and without a `Reason: ...` suffix
         # between runs" -- and review measured that FALSE: both forms appear in the SAME run from
-        # the same file, because they are two distinct decorated `__init__`s and
-        # `mfgarchon/utils/deprecation.py:94` builds the suffix from decoration-time constants.
+        # the same file, because they were two distinct decorated `__init__`s and the deprecation
+        # decorator, deleted since, built the suffix from decoration-time constants.
         # So the 60-character key's instability channel is still UNEXPLAINED, and 40 characters is
         # justified by eleven agreeing full-suite runs plus the one channel that is understood --
         # not by a complete mechanism. Said plainly because the alternative is what put a

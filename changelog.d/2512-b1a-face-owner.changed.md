@@ -26,8 +26,8 @@
       an operator, the tensor kernels' no-flux test, the particle applicator and `AdvectionOperator`'s periodic
       span. A reader that holds the grid passes it.
     - Every reader in the FDM family asks it: the HJB-FDM ghosts and Dirichlet rows, the 1-D HJB rows, FP-FDM's
-      node classification, the semi-Lagrangian enforcement and per-axis operations, `value_gradient`,
-      `get_ghost_values_nd`, and the tensor-diffusion kernels' no-flux test.
+      node classification, the semi-Lagrangian enforcement and per-axis operations, `value_gradient`, and the
+      tensor-diffusion kernels' no-flux test.
     - Before this, each reader had its own rule, and two of them could disagree inside one solve. #2624: a 1-D
       HJB-FDM wall solved as U(0, 0) = 1.025536, which is neither the Dirichlet 3 nor the Neumann wall it was
       given.

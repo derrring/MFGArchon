@@ -39,7 +39,6 @@ try:
 except ImportError:
     PLOTLY_AVAILABLE = False
 
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -57,38 +56,18 @@ class MFGNotebookReporter:
     LaTeX mathematical expressions, and professional documentation.
     """
 
-    @retired_parameters(
-        {
-            "enable_latex": (
-                "no code reads it; a report's sections come from the method called and what is passed to it "
-                "(the keys of solver_results, custom_sections)"
-            ),
-            "template_style": (
-                "no code reads it; a report's sections come from the method called and what is passed to it "
-                "(the keys of solver_results, custom_sections)"
-            ),
-        },
-        issue="#2648",
-        since="v0.22.0",
-        never_read=True,
-    )
     def __init__(
         self,
         output_dir: str = "reports",
-        enable_latex: bool = NEVER_READ,
+        *,
         plotly_renderer: str = "notebook",
-        template_style: str = NEVER_READ,
     ):
         """
         Initialize the notebook reporting system.
 
         Args:
             output_dir: Directory for generated reports
-            enable_latex: Refused when passed (#2648): no code reads it; a report's sections come from the
-                method called and what is passed to it (the keys of solver_results, custom_sections).
             plotly_renderer: Plotly renderer ('notebook', 'browser', 'json')
-            template_style: Refused when passed (#2648): no code reads it; a report's sections come from the
-                method called and what is passed to it (the keys of solver_results, custom_sections).
         """
         if not NOTEBOOK_AVAILABLE:
             raise NotebookReportError(
@@ -102,9 +81,7 @@ class MFGNotebookReporter:
 
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
-        self.enable_latex = enable_latex
         self.plotly_renderer = plotly_renderer
-        self.template_style = template_style
         self.logger = get_logger(__name__)
 
         # Configure Plotly for notebook rendering

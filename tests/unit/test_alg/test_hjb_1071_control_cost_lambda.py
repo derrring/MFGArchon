@@ -11,7 +11,7 @@ read through ``BaseHJBSolver._control_cost_lambda()`` /
 These tests pin:
 1. The fix: with the Hamiltonian carrying lambda=2 and ``problem.lambda_`` left at its
    default placeholder, the solver now derives lambda=2 (from H), not 1 (the placeholder).
-2. The equivalence (deprecation policy): for the matched lambda=1 case, old and new agree.
+2. The equivalence: for the matched lambda=1 case, old and new agree.
 3. The legacy fallback: with NO Hamiltonian class, ``problem.lambda_`` is the sole source.
 4. Fail-loud: the strict accessor raises when there is no Hamiltonian class.
 """

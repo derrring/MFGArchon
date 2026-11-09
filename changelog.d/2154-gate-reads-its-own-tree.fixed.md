@@ -28,4 +28,5 @@
   scan can see — still read the main checkout when run by hand from a worktree. My first count said
   five and missed exactly the two `AGENTS.md` warns about eight lines above the paragraph this PR
   rewrote.
-  They produce reports rather than verdicts.
+  They produce reports rather than verdicts. Three of the seven, `check_internal_deprecation.py`,
+  `audit_deprecated_symbols.py` and `generate_deprecation_guide.py`, were deleted later in this release.

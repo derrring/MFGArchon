@@ -6,7 +6,6 @@ individual Fokker-Planck equations, including:
 - Finite difference methods (FPFDMSolver)
 - Particle-based methods (FPParticleSolver)
 - Semi-Lagrangian methods (FPSLSolver)
-- GFDM: FPGFDMSolver is withdrawn (#2583), a refusing stub until its rebuild (#2584)
 
 Semi-Lagrangian Variants (Issue #710):
 - FPSLSolver: Forward SL (scatter/splat) - adjoint of HJB SL, RECOMMENDED
@@ -27,7 +26,6 @@ from mfgarchon.alg.numerical.network_solvers import FPNetworkSolver
 from .base_fp import BaseFPSolver
 from .fp_fdm import FPFDMSolver
 from .fp_fvm import FPFVMSolver
-from .fp_gfdm import FPGFDMSolver
 from .fp_particle import FPParticleSolver, KDEMethod, KDENormalization
 
 # FPSLSolver (Forward SL) is the recommended solver - exported from adjoint file
@@ -41,7 +39,6 @@ __all__ = [
     "BaseFPSolver",
     "FPFDMSolver",
     "FPFVMSolver",  # Issue #422 - conservative finite-volume FP solver
-    "FPGFDMSolver",
     "FPNetworkSolver",  # Backward compat - prefer network_solvers import
     "FPParticleSolver",
     "FPSLSolver",  # Forward SL (adjoint of HJB SL) - RECOMMENDED

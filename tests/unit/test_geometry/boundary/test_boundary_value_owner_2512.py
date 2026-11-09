@@ -110,17 +110,12 @@ def _timed_readers():
     """The reachable sites that name their reader's time keyword, one case per branch, each a callable taking the
     reader's keywords. A call with a time of 0.5 returns values holding g(0.5) = 0.75, g(t) = 0.25 + t, or None for the
     ghost fill, which returns nothing to read. Four more sites (D1's segment branch, `BCSegment.get_value`, FEM's and
-    Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests. The implicit applicator's, the n-D ghost
-    values' became reachable when their readers' time defaulted to None (2b-iv). The FDM ghost check
+    Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests. The implicit applicator's became reachable
+    when its reader's time defaulted to None (2b-iv). The FDM ghost check
     (`bc_utils._ghost_effect`) was removed with the refusal it served, by #2512 row B1."""
-    import warnings
-    from types import SimpleNamespace
-
-    from mfgarchon.alg.base_solver import BaseNeuralSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _get_bc_info_1d
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
-    from mfgarchon.geometry.boundary._compat import get_ghost_values_nd
     from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer, dirichlet_wall_rows
     from mfgarchon.geometry.boundary.applicator_implicit import ImplicitApplicator
     from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
@@ -161,22 +156,9 @@ def _timed_readers():
         dimension=2, segments=[face(g, "d", BCType.DIRICHLET, None)], default_bc=BCType.DIRICHLET
     )
     implicit_default = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.DIRICHLET, default_value=g)
-    held = np.full(5, 0.75)  # g(0.5): the field a Dirichlet ghost reproduces, so the ghost holds g(0.5) either way
 
     def implicit(bc, **kw):
         return ImplicitApplicator(geometry=sphere).apply(np.zeros(len(on_sphere)), bc, on_sphere, **kw)
-
-    def ghost_values(bc, **kw):
-        with warnings.catch_warnings():  # deprecated, and still reachable with no time
-            warnings.simplefilter("ignore", DeprecationWarning)
-            ghosts = get_ghost_values_nd(held, bc, (0.25,), **kw)
-        return np.concatenate([np.ravel(v) for v in ghosts.values()])
-
-    def neural(**kw):
-        solver = SimpleNamespace(get_boundary_conditions=lambda: SimpleNamespace(value=g))
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            return BaseNeuralSolver.get_boundary_target_values(solver, np.array([[0.0], [1.0]]), **kw)
 
     return {
         "update_ghosts": lambda **kw: PreallocatedGhostBuffer((5,), uniform, domain_bounds=bounds).update_ghosts(**kw),
@@ -193,12 +175,8 @@ def _timed_readers():
         "MeshfreeApplicator.apply, Robin": lambda **kw: MeshfreeApplicator(grid).apply(
             np.zeros(5), robin_uniform, points, **kw
         ),
-        "get_boundary_target_values": neural,
         "ImplicitApplicator.apply, a uniform segment": lambda **kw: implicit(implicit_uniform, **kw),
         "ImplicitApplicator.apply, the default value": lambda **kw: implicit(implicit_default, **kw),
-        "get_ghost_values_nd, uniform": lambda **kw: ghost_values(uniform, **kw),
-        "get_ghost_values_nd, a face segment": lambda **kw: ghost_values(on_x_min, **kw),
-        "get_ghost_values_nd, the default value": lambda **kw: ghost_values(default_g, **kw),
     }
 
 
@@ -213,12 +191,8 @@ def _timed_readers():
         "get_bc_value_at_boundary, the default value",
         "MeshfreeApplicator.apply, Dirichlet",
         "MeshfreeApplicator.apply, Robin",
-        "get_boundary_target_values",
         "ImplicitApplicator.apply, a uniform segment",
         "ImplicitApplicator.apply, the default value",
-        "get_ghost_values_nd, uniform",
-        "get_ghost_values_nd, a face segment",
-        "get_ghost_values_nd, the default value",
     ],
 )
 def test_a_reader_given_no_time_says_to_pass_its_time(reader):

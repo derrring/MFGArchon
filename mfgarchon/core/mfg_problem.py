@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
@@ -28,7 +27,6 @@ from mfgarchon.types.callable_protocols import (
     bound_attribute,
     refuse_methods_out_of_order,
 )
-from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights
 
 # Use unified nD-capable BoundaryConditions from conditions.py
@@ -42,20 +40,6 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
 
-
-_RETIRED_VOLATILITY_ATTRIBUTE = (
-    "problem.{name} is retired (#2375 ruling 6). The SDE volatility Sigma is problem.volatility, held "
-    "as supplied (scalar, array or callable), and the PDE diffusion A = 1/2 Sigma Sigma^T is "
-    "problem.diffusion. A consumer that needs one scalar calls scalar_volatility(problem.volatility, consumer=...) "
-    "from mfgarchon.utils.pde_coefficients, which refuses an array or a callable rather than "
-    "averaging it (#2376)."
-)
-
-# Set by `MFGProblem._rebuilt` while it replays a components-form record: that problem's own construction already
-# told its caller the form is planned to be replaced, so the replay does not say it again (#2666). A ContextVar, not a
-# warnings filter: `warnings.catch_warnings` resets the once-per-location registry on every rebuild, so a warning raised
-# inside each conditional solve printed once per noise path, and it is process-global, so not thread-safe.
-_REPLAYING_A_RECORD: ContextVar[bool] = ContextVar("mfgproblem_replaying_a_record", default=False)
 
 # What a refusal calls each mode of `_detect_init_mode`.
 _MODE_NAMES = {
@@ -249,7 +233,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Advanced
         components: MFGComponents | None = None,
         suppress_warnings: bool = False,
-        **kwargs: Any,
+        *,
+        source_term_hjb: Callable | None = None,
+        source_term_fp: Callable | None = None,
+        nonlocal_operator: Any | None = None,
+        state_penalty: Callable | None = None,
+        state_penalty_scale: float = 1.0,
     ) -> None:
         """
         Initialize MFG problem with support for all spatial dimensions and domain types.
@@ -305,7 +294,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             suppress_warnings: Skip the computational-feasibility check, which runs only when the library builds the
                 grid itself, from spatial_bounds= or the default domain. True is refused on a geometry or a network,
                 where nothing reads it (#2678).
-            **kwargs: Additional parameters
+            source_term_hjb, source_term_fp: Source terms on the HJB and FP right-hand sides (sign convention below).
+            nonlocal_operator: LinearOperator for integro-differential terms J[v].
+            state_penalty, state_penalty_scale: A cost-signed soft wall and its amplitude, composed into H's potential.
 
         Examples:
             # Mode 1: 1D grid via geometry-first API
@@ -367,28 +358,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """
         import warnings
 
-        if "sigma" in kwargs:
-            raise TypeError(
-                "MFGProblem(sigma=...) is retired (#2375 ruling 6). Pass volatility= -- the SDE "
-                "volatility Sigma, with volatility_kind='field' or 'tensor' for an array -- or "
-                "diffusion= -- the PDE coefficient A = 1/2 Sigma Sigma^T. In the model/domain/conditions form it is "
-                "Model(volatility=...)."
-            )
-        if "gamma" in kwargs:
-            raise TypeError(
-                "MFGProblem(gamma=...) is retired (#2554): it was stored and no solver read it, so it "
-                "changed nothing. A density term in H goes through the Hamiltonian's coupling channel, "
-                "e.g. SeparableHamiltonian(control_cost=..., coupling=lambda m: gamma * m**2, "
-                "coupling_dm=lambda m: 2 * gamma * m); H carries it as -f (cost-signed)."
-            )
-        if "boundary_conditions" in kwargs:
-            raise TypeError(
-                "MFGProblem(boundary_conditions=...) is refused (#2667): nothing read it, in any form, so the "
-                "problem solved on its geometry's boundary conditions whatever it said. Declare them on the "
-                "geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = bc -- "
-                "or, in the components= form on a geometry that holds none, as MFGComponents(boundary_conditions=bc)."
-            )
-
         # =====================================================================
         # The model/domain/conditions form (Issue #875): Model + Domain + Conditions
         # =====================================================================
@@ -443,7 +412,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self._v1_inputs: dict[str, Any] = {
                 "lambda_": lambda_,
                 "coupling_coefficient": coupling_coefficient,
-                **kwargs,
+                "source_term_hjb": source_term_hjb,
+                "source_term_fp": source_term_fp,
+                "nonlocal_operator": nonlocal_operator,
+                "state_penalty": state_penalty,
+                "state_penalty_scale": state_penalty_scale,
             }
 
             # Translate to legacy parameters
@@ -497,20 +470,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "lambda_": lambda_,
                 "components": components,
                 "suppress_warnings": suppress_warnings,
-                **kwargs,
+                "source_term_hjb": source_term_hjb,
+                "source_term_fp": source_term_fp,
+                "nonlocal_operator": nonlocal_operator,
+                "state_penalty": state_penalty,
+                "state_penalty_scale": state_penalty_scale,
             }
-
-            # The components= form is planned to be replaced, and is not deprecated: the model/domain/conditions
-            # form is not fixed yet, so a caller is not told to migrate to it and no removal clock runs (user ruling,
-            # 2026-10-12, #2184 option A). The legacy path is not in the deprecation registry. The form is named
-            # generically: a list of its routes (geometry=, spatial_bounds=, network=) names the wrong one to someone.
-            if not _REPLAYING_A_RECORD.get():
-                warnings.warn(
-                    "The components= form of MFGProblem is planned to be replaced by the model/domain/conditions "
-                    "form, MFGProblem(model=, domain=, conditions=). Nothing needs to change now.",
-                    PendingDeprecationWarning,
-                    stacklevel=2,
-                )
 
         # Normalize parameter aliases
         if time_domain is not None:
@@ -608,8 +573,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # nonlocal_operator: LinearOperator for integro-differential terms J[v]
         # state_penalty: Callable(x) -> array, a COST-signed level-set penalty (soft wall).
         #   Composed into the Hamiltonian's potential, NOT into source_term -- see below.
-        # obstacle: RETIRED (#2002). It named a variational inequality and delivered a
-        #   position penalty; setting it now raises and names both successors.
         #
         # Sign convention (#2375 ruling 3)
         # --------------------------------
@@ -630,13 +593,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # #1285; see coupling/source_composition.compose_hjb_source), not the full
         # (Nt+1, Nx) trajectory. See the MFGProblem class docstring
         # "Sign conventions" note for the unified picture.
-        self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)
-        self.source_term_fp: Callable | None = kwargs.pop("source_term_fp", None)
+        self.source_term_hjb: Callable | None = source_term_hjb
+        self.source_term_fp: Callable | None = source_term_fp
         # Bound at acceptance, so a signature that cannot be matched is refused here (#2375 ruling 8)
         for name in ("source_term_hjb", "source_term_fp"):
             if getattr(self, name) is not None:
                 bound_attribute(self, name, SOURCE_TERM_SLOTS, role=name)
-        self.nonlocal_operator: Any | None = kwargs.pop("nonlocal_operator", None)
+        self.nonlocal_operator: Any | None = nonlocal_operator
         # A soft wall: `state_penalty(x)` is a COST, positive where the region is expensive.
         # It is `alpha`-free and `u`-free, which is what makes it a potential rather than a
         # constraint, and it is composed into H's potential V below. `state_penalty_scale`
@@ -645,27 +608,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         #
         # Both are read ONCE, at construction, by the composition below. Assigning either
         # afterwards does nothing -- the closure has already captured them.
-        self.state_penalty: Callable | None = kwargs.pop("state_penalty", None)
-        self.state_penalty_scale: float = float(kwargs.pop("state_penalty_scale", 1.0))
-
-        if kwargs.pop("obstacle", None) is not None:
-            raise NotImplementedError(
-                "`obstacle` is RETIRED (#2002). It was documented as the variational inequality "
-                "`v >= Psi(x)` and implemented as `max(0, Psi(x))` -- a term with no `v` in it, "
-                "byte-identical at a node satisfying the constraint and one violating it. It "
-                "penalised POSITION, not VIOLATION, and no scaling changed that.\n\n"
-                "It has two successors, because it was conflating two different things:\n"
-                "  * A SOFT WALL -- a cost for being somewhere, `alpha`-free and `u`-free. That is "
-                "a potential, not a constraint. Pass `state_penalty=Psi_cost` (positive where "
-                "expensive); it is composed into the Hamiltonian's potential V, which is cost-signed "
-                "too (#2375 ruling 3).\n"
-                "  * A REAL CONSTRAINT -- the variational inequality. Pass "
-                "`constraint=ObstacleConstraint(psi, 'lower')` to `HJBFDMSolver` (#591). That slot "
-                "is reserved and deliberately unfinished: it projects rather than solving the VI, "
-                "and only that one solver carries it (#2046).\n\n"
-                "Note also that geometric obstacles, regions excluded from the domain, are a "
-                "different thing entirely, and were never related to this one."
-            )
+        self.state_penalty: Callable | None = state_penalty
+        self.state_penalty_scale: float = float(state_penalty_scale)
 
         # Initialize geometry-related attributes explicitly (Issue #543 - fail-fast principle)
         # These may be set by init methods, but should have explicit defaults
@@ -817,21 +761,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.components = components
         self.is_custom = components is not None
 
-        # Merge parameters
         if self.is_custom and self.components is not None:
-            all_params = {**self.components.parameters, **kwargs}
-        else:
-            all_params = kwargs
-
-        # Validate kwargs - fail fast on deprecated/unrecognized parameters (Issue #666)
-        self._validate_kwargs(all_params)
+            self._refuse_retired_parameter_keys(self.components.parameters)
 
         # Initialize arrays (Issue #670: unified naming)
         self.u_terminal: NDArray  # Terminal condition u(T, x)
         self.m_initialial: NDArray  # Initial density m(0, x)
 
         # Initialize functions
-        self._initialize_functions(**all_params)
+        self._initialize_functions()
 
         # A soft wall is a POTENTIAL, so it is composed into H here rather than handed to a
         # solver as a source (#2002). Done after _initialize_functions because that is where the
@@ -1380,28 +1318,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             return diffusion
         return diffusion_from_volatility(volatility, kind=kind)
 
-    @property
-    def sigma(self):
-        raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="sigma"))
-
-    @property
-    def volatility_field(self):
-        raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="volatility_field"))
-
-    @property
-    def diffusion_field(self):
-        raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="diffusion_field"))
-
-    @property
-    def spatial_discretization(self):
-        raise AttributeError(
-            "problem.spatial_discretization is retired (#1889): it held the interval count when the "
-            "problem was built from spatial_bounds= and the point count when it was built from a "
-            "TensorProductGrid passed as geometry=. "
-            "Space is the domain's: problem.geometry.Nx counts intervals and problem.geometry.Nx_points "
-            "counts points, Nx_points = Nx + 1 per axis."
-        )
-
     # =========================================================================
     # Hamiltonian Properties (Issue #673)
     # =========================================================================
@@ -1580,11 +1496,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     def __repr__(self) -> str:
         """
         Return string representation using geometry-first API.
-
-        Avoids accessing deprecated attributes to prevent DeprecationWarning
-        spam in Jupyter notebooks and debuggers.
         """
-        # Use geometry for spatial info, not deprecated attrs
         geom_type = type(self.geometry).__name__ if self.geometry else "None"
         dim = self.dimension
 
@@ -1830,8 +1742,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if additional_recs:
             suggestion += f"\n  Alternative recommendations: {', '.join(additional_recs)}"
 
-        suggestion += "\n  Or use create_fast_solver() for automatic selection"
-
         return suggestion
 
     def get_solver_info(self) -> dict[str, Any]:
@@ -2032,7 +1942,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if getattr(self.components, "hamiltonian", None) is hamiltonian:
             self.components.hamiltonian = composed
 
-    def _initialize_functions(self, **kwargs: Any) -> None:
+    def _initialize_functions(self) -> None:
         """Initialize the initial density and the terminal value function.
 
         Issue #670: u_terminal/m_initial must be provided via MFGComponents.
@@ -2549,11 +2459,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             }
 
     # ============================================================================
-    # Kwargs Validation - Fail Fast on Deprecated/Unrecognized Parameters
+    # components.parameters: the names it no longer carries
     # ============================================================================
 
-    # Retired kwargs, each refused with the API that replaces it (Issue #666, #670, #2554)
-    _DEPRECATED_KWARGS: ClassVar[dict[str, str]] = {
+    #: Names that ``MFGComponents.parameters`` once carried into this constructor and no longer does, each with what
+    #: replaces it (Issue #666, #670, #2554). The dict is free-form -- its readers are ``get_problem_info`` and
+    #: ``StochasticMFGProblem``'s conditional copy -- so it would accept these in silence; they are refused by name
+    #: instead.
+    _RETIRED_PARAMETER_KEYS: ClassVar[dict[str, str]] = {
         "hamiltonian": "Model(hamiltonian=...), or MFGComponents(hamiltonian=...) in the components= form, a Hamiltonian "
         "object such as SeparableHamiltonian(...). Beside components=, put the one you mean there: that is the one read "
         "(#2563)",
@@ -2569,94 +2482,19 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         "m_initial": "MFGComponents.m_initial",
         "u_final": "MFGComponents.u_terminal",
         "initial_density": "MFGComponents.m_initial",
-        # Issue #1363: legacy 1D geometry kwargs removed (deprecated since v0.17.1);
-        # the **kwargs signature would otherwise swallow them silently.
+        # Issue #1363: the legacy 1-D geometry inputs.
         "xmin": "geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])",
         "xmax": "geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])",
         "Nx": "geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])",
         "Lx": "geometry=TensorProductGrid(bounds=[(0.0, Lx)], Nx_points=[Nx + 1])",
     }
 
-    # Legacy 1D geometry kwargs removed in Issue #1363 (subset of _DEPRECATED_KWARGS)
-    _GEOMETRY_KWARGS: ClassVar[set[str]] = {"xmin", "xmax", "Nx", "Lx"}
-
-    # Known valid kwargs that are consumed by _initialize_functions or mixins. boundary_conditions was listed here and
-    # read by nothing; it is refused by name at __init__ (#2667).
-    _RECOGNIZED_KWARGS: ClassVar[set[str]] = set()
-
-    def _validate_kwargs(self, kwargs: dict[str, Any]) -> None:
-        """
-        Validate kwargs - fail fast on deprecated or unrecognized parameters.
-
-        Issue #666: Prevents silent fail where user-provided kwargs are ignored.
-        Uses centralized validate_kwargs utility with MFGProblem-specific guidance.
-
-        Raises:
-            ValueError: If deprecated kwargs are passed (must use MFGComponents)
-            UserWarning: If unrecognized kwargs are passed (probably a typo)
-        """
-        try:
-            validate_kwargs(
-                kwargs=kwargs,
-                deprecated_kwargs=self._DEPRECATED_KWARGS,
-                recognized_kwargs=self._RECOGNIZED_KWARGS,
-                context="MFGProblem",
-                error_on_deprecated=True,
-                warn_on_unrecognized=True,
-            )
-        except ValueError as e:
-            # Enhance error with the relevant MFGProblem-specific migration guide.
-            if self._GEOMETRY_KWARGS & set(kwargs):
-                # Issue #1363: legacy 1D geometry kwargs (xmin/xmax/Nx/Lx) removed.
-                migration_guide = """
-
-The legacy 1D geometry kwargs (xmin/xmax/Nx/Lx) are no longer supported.
-Build the grid and pass it as the domain:
-
-  from mfgarchon import Conditions, MFGProblem, Model
-  from mfgarchon.geometry import TensorProductGrid
-  from mfgarchon.geometry.boundary import no_flux_bc
-
-  geometry = TensorProductGrid(
-      bounds=[(xmin, xmax)],
-      Nx_points=[Nx + 1],  # Nx intervals -> Nx + 1 grid points
-      boundary_conditions=no_flux_bc(dimension=1),
-  )
-  problem = MFGProblem(
-      model=Model(hamiltonian=my_hamiltonian, volatility=sigma),
-      domain=geometry,
-      conditions=Conditions(m_initial=my_m0, u_terminal=my_uT, T=T),
-      Nt=Nt,
-  )
-
-See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
-            elif set(kwargs) & set(self._DEPRECATED_KWARGS) <= {"hamiltonian", "obstacles"}:
-                # The components= form is not told to migrate (user ruling, 2026-10-12), and each row names its own route.
-                migration_guide = ""
-            else:
-                migration_guide = """
-
-The kwargs-based Hamiltonian API is no longer supported.
-Build the Hamiltonian as an object and pass it through Model:
-
-  from mfgarchon import Conditions, MFGProblem, Model
-  from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-
-  hamiltonian = SeparableHamiltonian(
-      control_cost=QuadraticControlCost(control_cost=1.0),
-      potential=my_potential,  # V(t, x), cost-signed
-      coupling=my_coupling,  # f(m)
-      coupling_dm=my_coupling_dm,  # f'(m)
-  )
-  problem = MFGProblem(
-      model=Model(hamiltonian=hamiltonian, volatility=sigma),
-      domain=my_geometry,
-      conditions=Conditions(m_initial=my_m0, u_terminal=my_uT, T=T),
-      Nt=Nt,
-  )
-
-See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
-            raise ValueError(str(e) + migration_guide) from None
+    def _refuse_retired_parameter_keys(self, parameters: dict[str, Any]) -> None:
+        """Refuse a key of ``components.parameters`` that ``_RETIRED_PARAMETER_KEYS`` names, saying what replaces it."""
+        retired = [name for name in parameters if name in self._RETIRED_PARAMETER_KEYS]
+        if retired:
+            lines = "\n".join(f"  - '{name}' -> {self._RETIRED_PARAMETER_KEYS[name]}" for name in retired)
+            raise ValueError(f"MFGComponents.parameters holds names that no longer configure MFGProblem:\n{lines}")
 
     # ============================================================================
     # Solve Method - Primary API for solving MFG problems
@@ -2963,11 +2801,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         that form before they get here.
         """
         if self._v1_model is None:
-            replaying = _REPLAYING_A_RECORD.set(True)  # this problem's construction already warned; see the flag
-            try:
-                return MFGProblem(**{**self._components_inputs, **changes})
-            finally:
-                _REPLAYING_A_RECORD.reset(replaying)
+            return MFGProblem(**{**self._components_inputs, **changes})
         inputs = {"model": self._v1_model, "domain": self.geometry, "conditions": self._v1_conditions, "Nt": self.Nt}
         return MFGProblem(**{**inputs, **self._v1_inputs, **changes})
 

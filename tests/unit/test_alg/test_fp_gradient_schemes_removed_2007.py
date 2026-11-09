@@ -1,16 +1,14 @@
-"""The FP gradient advection schemes are removed, and asking for one names its replacement (#2007).
+"""The FP gradient advection schemes are removed, and asking for one is refused (#2007).
 
 `gradient_upwind` and `gradient_centered` discretized v.grad(m). That drops m*div(v) from div(v*m), so
 with a non-constant drift they solved a different equation, and their wall imposed dm/dn = 0 instead
 of J.n = 0: EOC 0.00 at a drifting wall, and EOC -0.007 with no wall at all, under a periodic
 boundary (test_fp_mms_wall_order_1728.py). The maintainer ruled on 2026-10-04 to remove them rather than repair the wall. Their legacy aliases
-"centered" and "upwind" went with them; "flux" (-> divergence_upwind) is the control that must still
-resolve.
+"centered" and "upwind" went with them, and so did "flux" (the removal before 1.0): each is an unknown scheme now,
+refused with the valid options listed. The two divergence schemes are the control that must still construct.
 """
 
 from __future__ import annotations
-
-import warnings
 
 import pytest
 
@@ -24,12 +22,8 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 NX, NT = 11, 4
-_REMOVED = {
-    "gradient_upwind": "divergence_upwind",
-    "gradient_centered": "divergence_centered",
-    "upwind": "divergence_upwind",
-    "centered": "divergence_centered",
-}
+_REMOVED = ("gradient_upwind", "gradient_centered", "upwind", "centered", "flux")
+_VALID = r"Valid options: \['divergence_centered', 'divergence_upwind'\]"
 
 
 def _problem():
@@ -41,18 +35,15 @@ def _problem():
     )
 
 
-@pytest.mark.parametrize(("name", "replacement"), sorted(_REMOVED.items()))
-def test_a_removed_scheme_is_refused_with_its_replacement(name, replacement):
-    with pytest.raises(ValueError, match=rf"advection_scheme='{name}' was removed .*'{replacement}'"):
+@pytest.mark.parametrize("name", _REMOVED)
+def test_a_removed_scheme_is_refused_with_the_valid_options(name):
+    with pytest.raises(ValueError, match=rf"Unknown advection_scheme '{name}'\. {_VALID}"):
         FPFDMSolver(_problem(), advection_scheme=name)
     # The standalone time-stepping entry validates its own input too.
-    with pytest.raises(ValueError, match=rf"advection_scheme='{name}' was removed"):
+    with pytest.raises(ValueError, match=rf"Unknown advection_scheme '{name}'"):
         solve_fp_nd_full_system(np.ones(NX), np.zeros((NT + 1, NX)), _problem(), advection_scheme=name)
 
 
-def test_the_surviving_alias_still_resolves():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        solver = FPFDMSolver(_problem(), advection_scheme="flux")
-    assert solver.advection_scheme == "divergence_upwind"
-    assert any(issubclass(w.category, DeprecationWarning) and "'flux' is deprecated" in str(w.message) for w in caught)
+@pytest.mark.parametrize("name", ["divergence_upwind", "divergence_centered"])
+def test_the_divergence_schemes_construct(name):
+    assert FPFDMSolver(_problem(), advection_scheme=name).advection_scheme == name

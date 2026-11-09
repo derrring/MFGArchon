@@ -1,12 +1,10 @@
-"""#2648 stage 2: declared inputs that no code reads are refused by name, until v0.25.0 (ruling 3).
+"""#2648: declared inputs that no code read are deleted (the removal before 1.0).
 
-1. Each member is refused when passed, by keyword, and by position where the class takes it positionally. The
-   message names the class or function that refuses it, says the input never had an effect, and gives the reason.
-2. Its default is `NEVER_READ`, which the refusal lets through. So each class still constructs, and
-   `dataclasses.replace`, which passes every field back in, still works.
-3. `SolverResult.ergodic_constant` is removed (#2652): the attribute is gone, and passing the name is refused.
-4. A call that does not bind gets the callable's own `TypeError`, with no binding error chained to it (review 2 of
-   #2650, S2).
+1. Each is gone: passing it by keyword is Python's own `TypeError`, which names it.
+2. A deleted parameter's later parameters are keyword-only, so a positional argument at or past its slot is a
+   `TypeError` too, rather than landing silently on the next parameter. The positional count is pinned per callable.
+3. Each class still constructs, and `dataclasses.replace` still works.
+4. `SolverResult.ergodic_constant` is removed (#2652).
 """
 
 from __future__ import annotations
@@ -17,15 +15,21 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import compute_gfdm_parameters
+from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
+from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.alg.optimization.optimal_transport.wasserstein_solver import WassersteinSolverConfig
 from mfgarchon.alg.optimization.variational_problem import VariationalMFGComponents
+from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.extensions.topology import NetworkMFGComponents
 from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, NodeBC
 from mfgarchon.geometry.graph.maze_hybrid import AlgorithmSpec, HybridMazeConfig, HybridStrategy
 from mfgarchon.hooks.debug import PerformanceHook
-from mfgarchon.utils.deprecation import NEVER_READ
 from mfgarchon.utils.notebooks.reporting import MFGNotebookReporter
 from mfgarchon.utils.numerical.hjb_policy_iteration import LQPolicyIterationHelper, create_lq_policy_problem
 from mfgarchon.utils.numerical.particle.mcmc import MCMCConfig
@@ -40,10 +44,9 @@ def _f(*_args):
 
 _MAZE = {"rows": 10, "cols": 10, "strategy": None, "algorithms": []}
 
-# (callable, its qualified name in the message, positional args, keyword args, the refused name)
+# (callable, its qualified name in the message, positional args, keyword args, the deleted name)
 REFUSED = [
     (MCMCConfig, "MCMCConfig.__init__", (), {"num_chains": 4}, "num_chains"),
-    (MCMCConfig, "MCMCConfig.__init__", (10000, 1000, 4), {}, "num_chains"),
     (MCMCConfig, "MCMCConfig.__init__", (), {"max_tree_depth": 8}, "max_tree_depth"),
     (MCMCConfig, "MCMCConfig.__init__", (), {"max_adapt_iter": 500}, "max_adapt_iter"),
     (MCMCConfig, "MCMCConfig.__init__", (), {"parallel": True}, "parallel"),
@@ -93,7 +96,6 @@ REFUSED = [
     (SweepConfiguration, "SweepConfiguration.__init__", (), {"parameters": {}, "batch_size": 4}, "batch_size"),
     (HJBGFDMSolver, "HJBGFDMSolver.__init__", (None, None), {"qp_usage_target": 0.1}, "qp_usage_target"),
     (PerformanceHook, "PerformanceHook.__init__", (), {"track_detailed_timing": True}, "track_detailed_timing"),
-    (PerformanceHook, "PerformanceHook.__init__", (False, True), {}, "track_detailed_timing"),
     (MFGNotebookReporter, "MFGNotebookReporter.__init__", (), {"enable_latex": False}, "enable_latex"),
     (MFGNotebookReporter, "MFGNotebookReporter.__init__", (), {"template_style": "minimal"}, "template_style"),
     (
@@ -103,38 +105,52 @@ REFUSED = [
         {"potential_func": _f},
         "potential_func",
     ),
-    (create_lq_policy_problem, "create_lq_policy_problem", (object(), _f), {}, "potential_func"),
+    (create_lq_policy_problem, "create_lq_policy_problem", (object(),), {"potential_func": _f}, "potential_func"),
 ]
 
 
 @pytest.mark.parametrize(("target", "qualname", "args", "kwargs", "name"), REFUSED)
-def test_an_input_that_never_had_an_effect_is_refused_by_name(target, qualname, args, kwargs, name):
+def test_a_deleted_input_is_pythons_own_type_error_naming_it(target, qualname, args, kwargs, name):
     with pytest.raises(
-        TypeError,
-        match=rf"^{qualname.replace('.', r'\.')}\(\) refuses {name}=: .+; it never had an effect, and the name goes in v0\.25\.0",
+        TypeError, match=rf"^{qualname.replace('.', r'\.')}\(\) got an unexpected keyword argument '{name}'"
     ):
         target(*args, **kwargs)
 
 
-# (callable, kwargs, phrases reviews 1 and 2 of #2658 found false, which the reason must not carry)
-_SECTIONS = ("always written", "same section structure", "fixed by the report method called")
-FALSE_REMEDIES = [
-    (NetworkMFGComponents, {"trajectory_cost_func": _f}, ("lagrangian_func",)),
-    (NetworkMFGComponents, {"congestion_func": _f}, ("pass hamiltonian_func to change it",)),
-    (NetworkMFGComponents, {"problem_params": {"a": 1}}, ("parameters=",)),
-    (MFGNotebookReporter, {"enable_latex": False}, _SECTIONS),
-    (MFGNotebookReporter, {"template_style": "minimal"}, _SECTIONS),
-    (MCMCConfig, {"effective_sample_size": False}, ("several runs",)),
+# (callable, how many parameters stay positional): every parameter after the first deleted one is keyword-only.
+POSITIONAL = [
+    (MCMCConfig, 2),
+    (MCConfig, 6),
+    (WassersteinSolverConfig, 2),
+    (NetworkMFGComponents, 4),
+    (VariationalMFGComponents, 5),
+    (MultiPopulationProblem, 2),
+    (HybridMazeConfig, 7),
+    (SweepConfiguration, 3),
+    (PerformanceHook, 1),
+    (MFGNotebookReporter, 1),
+    # The removal before 1.0's parameter sites (a deleted parameter, every later one keyword-only). An unbound method
+    # counts `self`. The two iterators' `solve()` sit behind a wrapper that reads the instance first, so their
+    # positional case is in `test_alg/test_retired_solve_keywords_are_refused.py`.
+    (FPFDMSolver.solve_fp_system, 6),
+    (FPSLSolver.solve_fp_system, 6),
+    (FPNetworkSolver.solve_fp_system, 5),
+    (WeakFormFPSolver.solve_fp_system, 4),
+    (compute_gfdm_parameters, 2),
+    (HJBFDMSolver, 9),
+    (HJBGFDMSolver, 14),
+    (MFGProblem.H, 4),
+    (MFGProblem.dH_dm, 4),
+    (SolverResult, 9),
 ]
 
 
-@pytest.mark.parametrize(("target", "kwargs", "false"), FALSE_REMEDIES)
-def test_a_reason_names_no_path_the_code_does_not_take(target, kwargs, false):
-    """Reviews 1 and 2 of #2658: no network solve reads `lagrangian_func` or problem parameters, a report's sections
-    also follow what is passed to the method, and `effective_sample_size` takes one chain's samples."""
-    with pytest.raises(TypeError) as refused:
-        target(**kwargs)
-    assert not [phrase for phrase in false if phrase in str(refused.value)], str(refused.value)
+@pytest.mark.parametrize(("target", "n"), POSITIONAL, ids=[t.__qualname__ for t, _ in POSITIONAL])
+def test_a_positional_argument_past_a_deleted_slot_is_refused(target, n):
+    """The guard a deletion owes its neighbours: without it, the argument meant for the deleted slot binds silently to
+    the next parameter. Every later parameter is keyword-only, so one positional argument too many is a TypeError."""
+    with pytest.raises(TypeError, match=r"takes .* positional argument"):
+        target(*([None] * (n + 1)))
 
 
 #: One graph condition, built once, so a round trip through `GraphBCConfig` can be compared by identity (#2292).
@@ -162,19 +178,16 @@ DATACLASSES = [
 
 
 @pytest.mark.parametrize(("cls", "kwargs", "field", "value"), DATACLASSES)
-def test_each_class_constructs_and_replace_passes_the_never_read_default_back(cls, kwargs, field, value):
+def test_each_class_constructs_and_replace_works(cls, kwargs, field, value):
     obj = cls(**kwargs)
     changed = dataclasses.replace(obj, **{field: value})
     assert getattr(changed, field) is value
-    refused = [f.name for f in dataclasses.fields(cls) if f.default is NEVER_READ]
-    assert refused, f"{cls.__name__} declares no NEVER_READ field"
-    assert all(getattr(changed, name) is NEVER_READ for name in refused)
 
 
-def test_the_callables_that_take_a_refused_parameter_still_run_without_it():
-    """Control: the defaults pass, including the one `create_lq_policy_problem` forwards to its helper."""
+def test_the_callables_that_took_a_deleted_parameter_still_run_without_it():
+    """Control: each still constructs, including `create_lq_policy_problem`, which built its helper with it."""
     assert PerformanceHook(track_memory=True).track_memory is True
-    assert LQPolicyIterationHelper(object()).potential_func is NEVER_READ
+    assert not hasattr(LQPolicyIterationHelper(object()), "potential_func")
     assert create_lq_policy_problem(object()) is not None
     assert MFGNotebookReporter(output_dir="reports").output_dir is not None
 
@@ -184,16 +197,12 @@ def _result(**kwargs):
 
 
 def test_solver_result_has_no_ergodic_constant():
-    """#2652: no solver computed one and there is no stationary mode, so the field is removed and the name refused."""
+    """#2652: no solver computed one and there is no stationary mode, so the field is removed."""
     result = _result()
     assert not hasattr(result, "ergodic_constant")
     assert "ergodic_constant" not in [f.name for f in dataclasses.fields(SolverResult)]
     assert dataclasses.replace(result, solver_name="x").solver_name == "x"
-    with pytest.raises(
-        TypeError,
-        match=r"^SolverResult\.__init__\(\) refuses ergodic_constant=: the field is removed: .+\(#2652\); "
-        r"no library solver ever set it, ",
-    ):
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'ergodic_constant'"):
         _result(ergodic_constant=0.5)
 
 

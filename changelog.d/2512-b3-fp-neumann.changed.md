@@ -5,7 +5,7 @@
   total flux `J.n = 0`, a different condition. `FPGFDMSolver` builds no wall at all; its operator takes no
   boundary argument. Pass `no_flux_bc()` for a reflecting FP wall. A
   `default_bc=NEUMANN`, the fall-through for faces no segment names, is refused too, even where no face
-  reaches it. The deprecated `mixed_bc` sets it unless told otherwise, so pass
+  reaches it. `mixed_bc` sets it unless told otherwise, so pass
   `default_bc=BCType.NO_FLUX`, or build `BoundaryConditions(segments=...)` directly.
 - **One owner reads a shared NEUMANN for every FP solver, and a nonzero value is refused, naming both
   readings** (#2512, row B3). On the problem's shared BC, `NEUMANN(g)` is the HJB's `du/dn = g`. Every FP

@@ -48,7 +48,6 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_volatility_keywords,
     scalar_volatility,
 )
 
@@ -902,7 +901,6 @@ class HJBWENOSolver(BaseHJBSolver):
 
         return max(dt_stable, 1e-10)  # Ensure positive time step
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,

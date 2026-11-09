@@ -60,8 +60,6 @@ _GATED = {
     "HJBFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN"},
     "FPFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "FLUX"},
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
-    # Withdrawn: FP-GFDM built no wall, so it declares nothing and refuses construction (#2583).
-    "FPGFDMSolver": set(),
     "FPParticleSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "REFLECTING"},
     "FPSLSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
@@ -79,7 +77,6 @@ _UNGATED = {
     "FPNetworkSolver",
     "NetworkHJBSolver",
     "NetworkPolicyIterationHJBSolver",
-    "PenaltyHJBSolver",
     "WeakFormFPSolver",
     "WeakFormHJBSolver",
 }
@@ -184,7 +181,6 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         # being dropped.
         "FPFEMSolver",
         "FPFVMSolver",
-        "FPGFDMSolver",
         "FPParticleSolver",
         "FPSLSolver",
         # Issue #1936: the first HJB solver to state it, False. On no path does a Neumann value reach
@@ -229,7 +225,6 @@ def test_no_solver_inherits_its_bc_declaration_from_a_sibling():
         "FPFDMSolver",
         "FPFEMSolver",
         "FPFVMSolver",
-        "FPGFDMSolver",
         "FPParticleSolver",
         "FPSLSolver",
         "HJBFDMSolver",

@@ -12,8 +12,7 @@ the logic in separate, focused modules.
 from __future__ import annotations
 
 import contextlib
-import functools
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -104,7 +103,10 @@ class MFGComponents:
     # Initial and terminal conditions
     m_initial: Callable | NDArray | None = None  # m_0(x): initial density
     u_terminal: Callable | NDArray | None = None  # u_T(x): terminal value function
-    u_final: Callable | NDArray | None = None  # DEPRECATED: use u_terminal instead
+
+    # The fields below are keyword-only: u_final, once the fifth field, is deleted, and a fifth positional argument
+    # must not land in boundary_conditions.
+    _: KW_ONLY
 
     # Boundary conditions
     boundary_conditions: BoundaryConditions | None = None
@@ -120,7 +122,6 @@ class MFGComponents:
 
     def __post_init__(self):
         """Validate and setup Hamiltonian/Lagrangian from class-based specification."""
-        import warnings
 
         from mfgarchon.core.hamiltonian import (
             HamiltonianBase,
@@ -128,17 +129,6 @@ class MFGComponents:
             SeparableHamiltonian,
             SeparableLagrangian,
         )
-
-        # Handle u_final -> u_terminal deprecation
-        if self.u_final is not None:
-            warnings.warn(
-                "u_final is deprecated, use u_terminal instead. u_final will be removed in v1.0.0.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            if self.u_terminal is None:
-                self.u_terminal = self.u_final
-            self.u_final = None  # Clear deprecated field
 
         # Validate Lagrangian if provided
         if self.lagrangian is not None and isinstance(self.lagrangian, LagrangianBase):
@@ -196,32 +186,6 @@ class MFGComponents:
 # ============================================================================
 # Hamiltonian Mixin - H, dH_dm, Jacobian, Coupling
 # ============================================================================
-
-
-# `potential_func` is retired (#2554): it was stored as `problem.f_potential` and no solver added it to H.
-# Refused around the generated __init__, as `Model` refuses `sigma`, so the error names the channel that reaches H.
-_generated_components_init = MFGComponents.__init__
-
-
-@functools.wraps(_generated_components_init)
-def _components_init_refusing_potential_func(self: MFGComponents, *args: Any, **kwargs: Any) -> None:
-    if len(args) > 5:
-        # potential_func was the sixth field; without this, a sixth positional argument would land
-        # silently in boundary_conditions, the field that moved into its slot.
-        raise TypeError(
-            f"MFGComponents takes at most 5 positional arguments, got {len(args)}: its sixth, potential_func, "
-            "is retired (#2554), so pass boundary_conditions and the later fields by keyword."
-        )
-    if "potential_func" in kwargs:
-        raise TypeError(
-            "MFGComponents(potential_func=...) is retired (#2554): it was stored and no solver added it to H, "
-            "so the solve ignored it. Pass the potential to the Hamiltonian, e.g. "
-            "SeparableHamiltonian(control_cost=..., potential=lambda t, x: V(x)); H carries it as -V (cost-signed)."
-        )
-    _generated_components_init(self, *args, **kwargs)
-
-
-MFGComponents.__init__ = _components_init_refusing_potential_func  # type: ignore[method-assign]
 
 
 class HamiltonianMixin:
@@ -295,7 +259,7 @@ class HamiltonianMixin:
         x_idx: int,
         m_at_x: float,
         derivs: dict[tuple, float] | DerivativeTensors | None = None,
-        p_values: dict[str, float] | None = None,
+        *,
         t_idx: int | None = None,
         x_position: float | np.ndarray | None = None,
         current_time: float | None = None,
@@ -309,7 +273,6 @@ class HamiltonianMixin:
             x_idx: Grid index (0 to Nx)
             m_at_x: Density at grid point x_idx
             derivs: Derivatives - DerivativeTensors or tuple-key dict {(1,): du/dx}
-            p_values: DEPRECATED - raises error. Use derivs instead.
             t_idx: Time index (optional)
             x_position: Actual position coordinate (computed from x_idx if not provided)
             current_time: Actual time value (computed from t_idx if not provided)
@@ -317,17 +280,6 @@ class HamiltonianMixin:
         Returns:
             Hamiltonian value H(t, x, p, m)
         """
-        # Issue #673: Error on legacy p_values parameter
-        if p_values is not None:
-            raise ValueError(
-                "p_values parameter is no longer supported.\n\n"
-                "Use derivs with tuple notation instead:\n"
-                "  # Old: p_values={'forward': 0.1, 'backward': 0.1}\n"
-                "  # New: derivs={(1,): 0.1}  # 1D gradient\n\n"
-                "Or use DerivativeTensors:\n"
-                "  derivs = DerivativeTensors.from_gradient(np.array([0.1]))"
-            )
-
         if derivs is None:
             raise ValueError("Must provide 'derivs' to H()")
 
@@ -391,7 +343,7 @@ class HamiltonianMixin:
         x_idx: int,
         m_at_x: float,
         derivs: dict[tuple, float] | DerivativeTensors | None = None,
-        p_values: dict[str, float] | None = None,
+        *,
         t_idx: int | None = None,
         x_position: float | np.ndarray | None = None,
         current_time: float | None = None,
@@ -405,7 +357,6 @@ class HamiltonianMixin:
             x_idx: Grid index (0 to Nx)
             m_at_x: Density at grid point x_idx
             derivs: Derivatives - DerivativeTensors or tuple-key dict {(1,): du/dx}
-            p_values: DEPRECATED - raises error. Use derivs instead.
             t_idx: Time index (optional)
             x_position: Actual position coordinate (computed from x_idx if not provided)
             current_time: Actual time value (computed from t_idx if not provided)
@@ -413,15 +364,6 @@ class HamiltonianMixin:
         Returns:
             Derivative dH/dm at (t, x, p, m)
         """
-        # Issue #673: Error on legacy p_values parameter
-        if p_values is not None:
-            raise ValueError(
-                "p_values parameter is no longer supported.\n\n"
-                "Use derivs with tuple notation instead:\n"
-                "  # Old: p_values={'forward': 0.1, 'backward': 0.1}\n"
-                "  # New: derivs={(1,): 0.1}  # 1D gradient"
-            )
-
         if derivs is None:
             raise ValueError("Must provide 'derivs' to dH_dm()")
 
@@ -721,8 +663,6 @@ class ConditionsMixin:
         - A geometry periodic on every axis, a torus, answers `periodic_bc`.
         - Otherwise no channel declares a BC, and it is refused by name (#2589).
 
-        Reading the components BC warns: that channel is deprecated in favour of the geometry's.
-
         A FLUX in the BC it returns is refused (`refuse_shared_flux`): it is the FP's alone, given to the FP solver as
         its own BC (#2581, user ruling 2026-10-09, B-2).
         """
@@ -738,22 +678,6 @@ class ConditionsMixin:
                 "MFGProblem.get_boundary_conditions: a network's node boundary conditions are declared on its "
                 "graph geometry (#1471), and components.boundary_conditions is not read on a network. Remove it, "
                 "or set the node BCs on the geometry (set_boundary_conditions)."
-            )
-        if declared is not None:
-            import warnings
-
-            warnings.warn(
-                "Specifying boundary conditions via MFGComponents is deprecated. "
-                "Use the geometry-first API instead:\n\n"
-                "  from mfgarchon.geometry import TensorProductGrid\n"
-                "  from mfgarchon.geometry.boundary import BoundaryConditions, BCSegment\n\n"
-                "  bc = BoundaryConditions(segments=[...])\n"
-                "  grid = TensorProductGrid(..., boundary_conditions=bc)\n"
-                "  problem = MFGProblem(geometry=grid, ...)\n\n"
-                "Legacy BC support via components will be removed in v1.0.0. "
-                "See docs/user/GEOMETRY_FIRST_API_GUIDE.md",
-                DeprecationWarning,
-                stacklevel=2,
             )
         if isinstance(geometry, Geometry):
             geometry_declares = geometry.has_explicit_boundary_conditions()

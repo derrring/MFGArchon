@@ -2,7 +2,7 @@
 
 **Feature**: Convenient functions for computing and manipulating signed distance functions
 **Added**: v0.9.0 (Issue #216, Part 2/4)
-**Module**: `mfgarchon.utils.numerical.sdf_utils`
+**Module**: `mfgarchon.geometry.implicit.sdf_utils`
 
 ---
 

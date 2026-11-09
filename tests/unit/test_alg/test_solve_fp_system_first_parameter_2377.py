@@ -2,23 +2,20 @@
 
 The base declared `m_initial_condition`, and so did FPGFDMSolver; WeakFormFPSolver said `m_initial`,
 inherited by FPFEMSolver and MeshlessGalerkinFPSolver; the other six said `M_initial`, the name the
-v0.17.0 rename chose (#1356 removed the old names at v0.20) and FPNetworkSolver still aliases.
+v0.17.0 rename chose (#1356 removed the old names at v0.20).
 Measured at `31de2179` over the ten concrete library solvers: `m_initial_condition=` bound on two
 and raised TypeError on eight, and `M_initial=` raised on four. Positional calls worked everywhere,
 which is why it survived.
 
 `test_every_fp_solver_names_its_first_parameter_M_initial` pins the name on every concrete library
-subclass of `BaseFPSolver`, inherited or not, and requires all nine to be reached; renaming any one of
-them back fails it. The weak form's old spelling stays accepted for the deprecation window (AGENTS.md,
-clause 4), and the policy's clause 2 equivalence tests below hold it to the new one. FP-GFDM's
-`m_initial_condition` row went with the solver, withdrawn in #2583. Its refusing stub's `solve_fp_system`
-keeps the new first parameter, `M_initial`, and takes no `m_initial_condition`.
+subclass of `BaseFPSolver`, inherited or not, and requires all eight to be reached; renaming any one of
+them back fails it. The old spellings, the weak form's `m_initial` and the network solver's
+`m_initial_condition`, were deleted in the removal before 1.0, and FP-GFDM went with its solver (#2583).
 """
 
 from __future__ import annotations
 
 import inspect
-import warnings
 
 import pytest
 
@@ -44,7 +41,6 @@ _N = 11
 _KNOWN = {
     "FPFDMSolver",
     "FPFVMSolver",
-    "FPGFDMSolver",
     "FPParticleSolver",
     "FPSLSolver",
     "FPNetworkSolver",
@@ -124,24 +120,6 @@ def _weak_form():
     solver = FPFEMSolver(problem, order=1)
     x = solver._disc.dof_coordinates[:, 0]
     return solver, 1.0 + 0.5 * np.sin(np.pi * x), {"potential_field": None}
-
-
-@pytest.mark.parametrize(("build", "old"), [(_weak_form, "m_initial")])
-def test_the_deprecated_keyword_warns_and_solves_the_same_problem(build, old):
-    solver, m0, rest = build()
-    new = np.asarray(solver.solve_fp_system(M_initial=m0.copy(), **rest))
-    with pytest.warns(DeprecationWarning, match=old):
-        via_old = np.asarray(solver.solve_fp_system(**{old: m0.copy()}, **rest))
-    np.testing.assert_array_equal(via_old, new)
-
-
-@pytest.mark.parametrize(("build", "old"), [(_weak_form, "m_initial")])
-def test_both_spellings_at_once_are_refused(build, old):
-    solver, m0, rest = build()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        with pytest.raises(ValueError, match="M_initial"):
-            solver.solve_fp_system(M_initial=m0.copy(), **{old: m0.copy()}, **rest)
 
 
 @pytest.mark.parametrize("build", [_weak_form])

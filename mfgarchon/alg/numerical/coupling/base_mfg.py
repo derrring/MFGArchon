@@ -53,6 +53,26 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None
             )
 
 
+#: The keywords a coupling iterator's ``solve()`` no longer takes, with what replaces each. ``FixedPointIterator.solve``
+#: and ``FictitiousPlayIterator.solve`` keep ``**kwargs`` -- ``problem.solve()`` passes ``verbose=`` through the first,
+#: and the second reads ``verbose`` from it -- so these would be accepted in silence; they are refused by name instead.
+RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
+    "return_tuple": "solve() returns a SolverResult",
+    "Niter_max": "pass max_iterations=",
+    "max_picard_iterations": "pass max_iterations=",
+    "l2errBoundPicard": "pass tolerance=",
+    "picard_tolerance": "pass tolerance=",
+}
+
+
+def refuse_retired_solve_keywords(kwargs: dict[str, Any], where: str) -> None:
+    """Refuse a keyword `RETIRED_SOLVE_KEYWORDS` names, saying what replaces it."""
+    retired = [name for name in kwargs if name in RETIRED_SOLVE_KEYWORDS]
+    if retired:
+        name = retired[0]
+        raise TypeError(f"{where}() no longer takes {name}=: {RETIRED_SOLVE_KEYWORDS[name]}.")
+
+
 def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
     """Fail loud if ``problem`` carries a dynamic BC provider this coupling loop cannot resolve.
 

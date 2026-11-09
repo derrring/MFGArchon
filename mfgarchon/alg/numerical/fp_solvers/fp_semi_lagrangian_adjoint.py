@@ -53,7 +53,6 @@ from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
@@ -61,7 +60,6 @@ from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 from .base_fp import BaseFPSolver, DriftConvention
@@ -318,8 +316,6 @@ class FPSLSolver(BaseFPSolver):
         """
         return per_axis_diffusion_types(self._axis_operations())
 
-    @retired_volatility_keywords
-    @deprecated_parameter(param_name="drift_field", since="v0.18.6", replacement="potential_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
@@ -327,8 +323,7 @@ class FPSLSolver(BaseFPSolver):
         volatility: float | np.ndarray | None = None,
         source_term: Callable | None = None,
         show_progress: bool | None = None,
-        # Deprecated parameters
-        drift_field: np.ndarray | None = None,  # Deprecated: renamed to potential_field
+        *,
         volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
@@ -344,7 +339,6 @@ class FPSLSolver(BaseFPSolver):
             potential_field: Value function U from HJB (potential for drift).
                 - np.ndarray: Shape (Nt+1, Nx) - U values at each time step
                   The drift velocity is computed as alpha = -grad(U)
-            drift_field: DEPRECATED. Renamed to potential_field.
             volatility: Optional volatility coefficient σ (SDE noise) override; a scalar only.
             volatility_kind: "field" or "tensor" for an array (#2378); arrays are refused here.
                 Note: Internally converted to diffusion D = σ²/2 for FP equation.
@@ -355,12 +349,6 @@ class FPSLSolver(BaseFPSolver):
         """
         if M_initial is None:
             raise ValueError("M_initial is required")
-
-        # Handle deprecated drift_field -> potential_field (v0.18.6)
-        if drift_field is not None:
-            if potential_field is not None:
-                raise ValueError("Cannot specify both potential_field and drift_field")
-            potential_field = drift_field
 
         if potential_field is None:
             raise ValueError(
@@ -828,7 +816,7 @@ if __name__ == "__main__":
     print(f"   Initial: uniform, peak = {m_uniform.max():.4f}")
     print(f"   Target Gibbs: peak = {m_gibbs.max():.4f}")
 
-    M = solver.solve_fp_system(M_initial=m_uniform.copy(), drift_field=U_well, show_progress=False)
+    M = solver.solve_fp_system(M_initial=m_uniform.copy(), potential_field=U_well, show_progress=False)
 
     # Check evolution
     for t_idx in [0, 100, 500, 1000]:
@@ -926,7 +914,7 @@ if __name__ == "__main__":
     m_2d_initial = np.ones((N2D + 1, N2D + 1)) / domain_volume_2d
 
     # Solve
-    M_2d = solver_2d.solve_fp_system(M_initial=m_2d_initial, drift_field=U_2d, show_progress=False)
+    M_2d = solver_2d.solve_fp_system(M_initial=m_2d_initial, potential_field=U_2d, show_progress=False)
 
     print(f"   Output shape: {M_2d.shape}")
 

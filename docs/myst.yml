@@ -34,7 +34,6 @@ project:
       children:
         - file: user/GEOMETRY_FIRST_API_GUIDE.md
         - file: user/geometry_traits.md
-        - file: user/dual_geometry_usage.md
         - file: user/sdf_utilities.md
         - file: user/guides/boundary_conditions.md
         - file: user/advanced_boundary_conditions.md
@@ -58,12 +57,6 @@ project:
         - file: user/guides/plugin_development.md
         - file: user/guides/phase2_features.md
         - file: user/notebook_execution_guide.md
-
-    - title: Reference
-      children:
-        - file: user/three_mode_api_migration_guide.md
-        - file: user/DEPRECATION_MODERNIZATION_GUIDE.md
-        - file: user/LEGACY_PARAMETERS.md
 
 site:
   title: MFGArchon

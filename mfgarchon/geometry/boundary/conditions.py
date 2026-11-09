@@ -37,7 +37,6 @@ import numpy as np
 
 from mfgarchon.geometry.protocols import SupportsRegionMarking
 from mfgarchon.types.callable_protocols import read_region
-from mfgarchon.utils.deprecation import deprecated
 
 from .tolerances import BOUNDARY_REL_TOL, BOUNDARY_TOL, SDF_BOUNDARY_TOL
 from .types import (
@@ -2432,9 +2431,8 @@ def no_flux_bc(dimension: int | None = None, domain_bounds: np.ndarray | None = 
     Common for Fokker-Planck equations, where it is the correct choice for conserving mass.
 
     .. note::
-       ``NoFluxCalculator`` is a deprecated alias for ``ZeroGradientCalculator`` (``du/dn = 0``)
-       and is **not** the flux condition described here; use ``ZeroFluxCalculator`` if selecting a
-       calculator directly.
+       If selecting a calculator directly, the flux condition described here is ``ZeroFluxCalculator``;
+       ``ZeroGradientCalculator`` is ``du/dn = 0``.
 
     Args:
         dimension: Spatial dimension. If None, dimension will be inferred when
@@ -2599,11 +2597,6 @@ def robin_bc(
     )
 
 
-@deprecated(
-    since="v0.18.0",
-    replacement="Use BoundaryConditions(segments=[...]) directly",
-    reason="Factory is redundant - direct construction is clearer",
-)
 def mixed_bc(
     segments: list[BCSegment],
     dimension: int | None = None,
@@ -2614,14 +2607,10 @@ def mixed_bc(
     corner_strategy: Literal["priority", "average", "mollify"] = "priority",
 ) -> BoundaryConditions:
     """
-    DEPRECATED: Use BoundaryConditions(segments=[...]) directly.
+    Boundary conditions from segments; the same as BoundaryConditions(segments=[...]) with these arguments.
 
-    Migration:
-        # Old
+    Example:
         bc = mixed_bc([seg1, seg2], dimension=2, domain_bounds=bounds)
-
-        # New (preferred)
-        bc = BoundaryConditions(segments=[seg1, seg2], dimension=2, domain_bounds=bounds)
     """
     return BoundaryConditions(
         dimension=dimension,

@@ -39,9 +39,8 @@ import scipy.sparse as sparse
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import resolve_volatility_override, retired_volatility_keywords
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -100,7 +99,7 @@ class BlockIterator(BaseCouplingIterator):
         hjb_solver: HJB solver instance
         fp_solver: FP solver instance
         method: Block iteration method ('jacobi' or 'gauss_seidel')
-        damping_factor: Damping parameter in (0, 1] (default: 1.0 = no damping)
+        relaxation: Under-relaxation factor in (0, 1] (default: 1.0 = no relaxation)
         volatility: Optional volatility override -- the SDE volatility, not a diffusion
         volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
@@ -108,8 +107,6 @@ class BlockIterator(BaseCouplingIterator):
             - "off": Independent matrix construction (default)
             - "jacobian_transpose": FP uses A_Jac^T from linearized HJB operator (Issue #707).
               Correct for arbitrary Hamiltonians. Requires class-based Hamiltonian.
-            "transpose" and "auto" were removed after their deprecation window: they raise, naming
-            "jacobian_transpose".
         adjoint_verify: Enable runtime adjoint verification for debugging.
 
     Example:
@@ -122,9 +119,6 @@ class BlockIterator(BaseCouplingIterator):
         >>> result = solver.solve(max_iterations=100, tolerance=1e-5)
     """
 
-    @retired_volatility_keywords
-    @deprecated_parameter(param_name="damping_factor", since="v0.19.2", replacement="relaxation")
-    @deprecated_parameter(param_name="damping_factor_M", since="v0.19.2", replacement="relaxation_M")
     def __init__(
         self,
         problem: MFGProblem,
@@ -139,9 +133,6 @@ class BlockIterator(BaseCouplingIterator):
         drift_field: NDArray | Any | None = None,
         adjoint_mode: str = "off",
         adjoint_verify: bool = False,
-        # Legacy damping_* kwargs (deprecated since v0.19.2, removal v0.25.0)
-        damping_factor: float | None = None,
-        damping_factor_M: float | None = None,
     ):
         """Initialize block iterator.
 
@@ -151,16 +142,7 @@ class BlockIterator(BaseCouplingIterator):
                 Issue #719: Per-variable relaxation support.
                 Recommended for MFG: relaxation=1.0, relaxation_M=0.2
                 (U adapts fully, M filters particle noise).
-
-            Legacy `damping_factor` / `damping_factor_M` kwargs still accepted with
-            DeprecationWarning.
         """
-        # Redirect legacy kwargs -> canonical (decorator already warned)
-        if damping_factor is not None:
-            relaxation = damping_factor
-        if damping_factor_M is not None:
-            relaxation_M = damping_factor_M
-
         super().__init__(problem)
         assert_bc_providers_resolvable(self.problem, type(self).__name__)
 
@@ -184,16 +166,6 @@ class BlockIterator(BaseCouplingIterator):
         self.drift_field = drift_field
 
         # Issue #622, #704, #707: Adjoint mode
-        if adjoint_mode in ("transpose", "auto"):
-            # Deprecated in v0.17.14 (#476; its warning said "since v0.17.13") and removed once the policy allowed
-            # it (3 minor versions; the warning had said v1.0.0). They built the FP operator from
-            # `build_advection_matrix`, whose transpose is not the HJB linearisation's: on
-            # test_adjoint_verify_runs_2338's _problem(n=40) (engquist_osher, first sweep, interior window)
-            # max|A^T - B| reaches 245 against max|J^T - B| = 2.8e-14, B being the FP solver's own operator.
-            raise ValueError(
-                f"adjoint_mode='{adjoint_mode}' was removed (deprecated in v0.17.14): it did not transpose the "
-                "linearized HJB operator. Use adjoint_mode='jacobian_transpose', which does (Issue #707)."
-            )
         _valid_adjoint_modes = ("off", "jacobian_transpose")
         if adjoint_mode not in _valid_adjoint_modes:
             raise ValueError(f"adjoint_mode must be one of {_valid_adjoint_modes}, got '{adjoint_mode}'")
@@ -232,23 +204,6 @@ class BlockIterator(BaseCouplingIterator):
         # Cache initial/terminal conditions
         self._M_initial: NDArray | None = None
         self._U_terminal: NDArray | None = None
-
-    # ------------------------------------------------------------------
-    # Backward-compat attribute aliases (damping_* -> relaxation_*)
-    # Added in v0.19.2. Silent (no DeprecationWarning on read) to avoid
-    # log flooding in block iteration loops. Removal in v0.25.0;
-    # the ctor kwargs already emit DeprecationWarning via @deprecated_parameter.
-    # ------------------------------------------------------------------
-
-    @property
-    def damping_factor(self) -> float:
-        """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
-        return self.relaxation
-
-    @property
-    def damping_factor_M(self) -> float | None:
-        """Deprecated alias for `relaxation_M` (v0.19.2+). Removal in v0.25.0."""
-        return self.relaxation_M
 
     def _validate_strict_adjoint_capability(self) -> None:
         """Refuse, at construction, a pair the remaining adjoint mode cannot run (Issue #622, #704, #707).
@@ -896,7 +851,6 @@ class BlockJacobiIterator(BlockIterator):
         >>> result = solver.solve(max_iterations=100)
     """
 
-    @deprecated_parameter(param_name="damping_factor", since="v0.19.2", replacement="relaxation")
     def __init__(
         self,
         problem: MFGProblem,
@@ -904,11 +858,8 @@ class BlockJacobiIterator(BlockIterator):
         fp_solver: BaseFPSolver,
         *,
         relaxation: float = 0.5,
-        damping_factor: float | None = None,
         **kwargs: Any,
     ):
-        if damping_factor is not None:
-            relaxation = damping_factor
         super().__init__(
             problem,
             hjb_solver,
@@ -931,7 +882,6 @@ class BlockGaussSeidelIterator(BlockIterator):
         >>> result = solver.solve(max_iterations=50)
     """
 
-    @deprecated_parameter(param_name="damping_factor", since="v0.19.2", replacement="relaxation")
     def __init__(
         self,
         problem: MFGProblem,
@@ -939,11 +889,8 @@ class BlockGaussSeidelIterator(BlockIterator):
         fp_solver: BaseFPSolver,
         *,
         relaxation: float = 0.5,
-        damping_factor: float | None = None,
         **kwargs: Any,
     ):
-        if damping_factor is not None:
-            relaxation = damping_factor
         super().__init__(
             problem,
             hjb_solver,
@@ -989,7 +936,7 @@ if __name__ == "__main__":
 
     # Test Block Jacobi
     print("\nTesting Block Jacobi...")
-    jacobi_solver = BlockJacobiIterator(problem, hjb_solver, fp_solver, damping_factor=0.5)
+    jacobi_solver = BlockJacobiIterator(problem, hjb_solver, fp_solver, relaxation=0.5)
     result_jacobi = jacobi_solver.solve(max_iterations=10, tolerance=1e-4, verbose=True)
     print(f"  Converged: {result_jacobi.converged}, iterations: {result_jacobi.iterations}")
 

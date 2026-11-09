@@ -56,7 +56,6 @@ from scipy.sparse import csr_matrix, diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
-import mfgarchon.utils.deprecation as _deprecation
 from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import cone_policy
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     INNER_FAILURE_POLICIES,
@@ -74,7 +73,6 @@ from mfgarchon.types.callable_protocols import (
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 if TYPE_CHECKING:
@@ -372,7 +370,6 @@ class HJBHowardSolver:
         the provider's BC rows.
     """
 
-    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -480,9 +477,6 @@ class HJBHowardSolver:
                     "M-matrix row (#1689 comment 6246936251).",
                     UserWarning,
                     stacklevel=2,
-                    # The retired-keyword refusal wraps __init__; without this the warning is attributed
-                    # to that wrapper in deprecation.py instead of the caller (#2417).
-                    skip_file_prefixes=_deprecation.WRAPPER_FRAMES,
                 )
 
         self.problem = problem
@@ -834,7 +828,6 @@ class HJBHowardSolver:
 
     # ---- Public solve --------------------------------------------------
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None,

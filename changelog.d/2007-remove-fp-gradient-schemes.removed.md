@@ -1,5 +1,5 @@
 - **The FP-FDM gradient advection schemes `gradient_upwind` and `gradient_centered` are removed, with their legacy aliases `"centered"` and `"upwind"`** (Issue #2007, maintainer ruling 2026-10-04).
-  - Asking for one raises `ValueError`, naming `divergence_upwind` or `divergence_centered` instead. `"flux"` (-> `divergence_upwind`) still resolves.
+  - Asking for one raises `ValueError`, naming `divergence_upwind` or `divergence_centered` instead.
   - The removal is not the HJB-FDM option of the same name: `HJBFDMSolver(advection_scheme="gradient_upwind")` is unchanged.
 - **Why removal and not a fix.** The schemes carried two separate defects:
   - The gradient form discretizes v·∇m, which drops m∇·v from ∇·(vm). With a non-constant drift it solves a different equation. On a source-free instance under a periodic boundary, where no wall handler runs, it does not converge: error 5.811380e-01 / 5.839517e-01, EOC −0.007 (`test_fp_mms_wall_order_1728.py`).

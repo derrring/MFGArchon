@@ -7,7 +7,6 @@ The owners for NON-PERIODIC walls (CONVENTIONS.md § *Particles at a wall*):
 - absorb_at_walls: The absorbing wall, for a reader that has only where a step ended: which particles leave, and where
 - walls_reached: The face of each axis a particle is at or past, the reach `absorb_at_walls` and `ParticleApplicator`
   share
-- absorb_positions: Deprecated. A clamp, not absorption
 
 For PERIODIC boundaries, see: geometry/boundary/periodic.py
 
@@ -31,8 +30,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-
-from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -234,51 +231,11 @@ def absorb_at_walls(
     return leave, positions[leave].copy()
 
 
-@deprecated(
-    since="v0.22.0",
-    replacement="mfgarchon.geometry.boundary.corner.absorb_at_walls for an absorbing wall, or np.clip for a clamp",
-    reason="it clamps a particle to the wall and keeps it, which is not absorption: the mass that reaches an absorbing "
-    "wall leaves through it (#2485, #2550)",
-)
-def absorb_positions(
-    positions: NDArray[np.floating],
-    bounds: list[tuple[float, float]] | NDArray[np.floating],
-) -> NDArray[np.floating]:
-    """
-    Clamp positions to the domain's box (n-D). Deprecated: a clamp keeps every particle, so it is not an absorbing
-    wall, whose owner is `absorb_at_walls`.
-
-    Args:
-        positions: Particle positions, shape (N, d) or (d,) for single point
-        bounds: Domain bounds as [(xmin, xmax), (ymin, ymax), ...] or (d, 2) array
-
-    Returns:
-        Clamped positions, same shape as input
-    """
-    # A (d,) point comes back as (d,), and a (1, d) array as (1, d): the shape the input had, not the row count (#2691).
-    was_1d = np.ndim(positions) == 1
-    positions = np.atleast_2d(positions)
-    result = positions.copy()
-
-    bounds = np.asarray(bounds)
-    if bounds.ndim == 1:
-        bounds = bounds.reshape(1, 2)
-
-    ndim = result.shape[1]
-    for d in range(ndim):
-        result[:, d] = np.clip(result[:, d], bounds[d, 0], bounds[d, 1])
-
-    if was_1d:
-        return result[0]
-    return result
-
-
 __all__ = [
     "reflect_positions",
     "absorb_at_walls",
     "walls_reached",
     "non_finite_refusal",
-    "absorb_positions",
 ]
 
 

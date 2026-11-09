@@ -231,7 +231,7 @@ def ghost_cell_robin(
     #    and `inf <= 1e-12*inf` is True, so a well-conditioned pair raises. Powers of two do not
     #    escape it. Unrepaired -- an overflowing pair has no meaningful ghost either way.
     #
-    # DIRECT CALLERS (`calculators.py`, `_compat.py`, `applicator_fdm.py`, two passing `g != 0`):
+    # DIRECT CALLER (`calculators.py`, whose `g` can be non-zero):
     # #2217 moved this refusal set in BOTH directions for you, not only through the FP wall. The
     # new/old threshold ratio is `S = max(|alpha|/2, |beta|/dx)` -- wider at `S > 1`, narrower at
     # `S < 1`. Exact cancellation still refuses either way.
@@ -249,127 +249,6 @@ def ghost_cell_robin(
         )
 
     return (rhs_value - interior_value * coeff_interior) / coeff_ghost
-
-
-# =============================================================================
-# High-Order Ghost Cell Extrapolation (for WENO and other high-order schemes)
-# =============================================================================
-
-
-def high_order_ghost_dirichlet(
-    interior_values: list[float],
-    boundary_value: float,
-    order: int = 4,
-    grid_type: GridType = GridType.CELL_CENTERED,
-) -> list[float]:
-    """
-    RETIRED (#1936): the cell-centred branches cannot reproduce a constant field.
-
-    For a Dirichlet ghost the prescribed value is itself a value of `u` at the face, so every
-    coefficient must sum to 1 or the formula cannot return `u` for `u` constant. Measured on
-    `u = 1` with `boundary_value = 1`, where both ghosts must be exactly 1.0:
-
-        CELL_CENTERED (the DEFAULT)  order=4  ->  [1.6, 4.0]
-        CELL_CENTERED                order=5  ->  [1.5, 3.3333]  (needs 4 interior values;
-                                                            with 3 it falls to the order=4 row)
-        CELL_CENTERED                order<4  ->  [1.0, 1.0]     (the fallback is fine)
-        VERTEX_CENTERED              all      ->  [1.0, 1.0]     (correct)
-
-    So the default path is wrong from constants onward -- more elementary than the failure that
-    retired `high_order_ghost_neumann` alongside it, whose order=4 branch at least reproduces a
-    constant and only breaks from linear on.
-
-    Nothing called this, in the package or the tests. Retired rather than deleted for the same
-    reason as its neighbour: it shipped in v0.21.0, so the import stays valid.
-
-    Use :func:`ghost_cell_dirichlet`, which returns 1.0 here.
-    """
-    raise NotImplementedError(
-        "high_order_ghost_dirichlet is RETIRED (#1936): its cell-centred branches -- the "
-        "default grid_type -- cannot reproduce a constant field, returning [1.6, 4.0] at "
-        "order=4 and [1.5, 3.3333] at order=5 where u = 1 requires [1.0, 1.0]. "
-        "Use ghost_cell_dirichlet."
-    )
-
-
-def high_order_ghost_neumann(
-    interior_values: list[float],
-    flux_value: float,
-    dx: float,
-    outward_normal_sign: float = 1.0,
-    order: int = 4,
-    grid_type: GridType = GridType.CELL_CENTERED,
-) -> list[float]:
-    """
-    RETIRED (#1936): first-order in the ghost value at the max wall, where the rule it improves
-    on is third. Cell-centred throughout; see defect 3 for the min wall and the other rates.
-
-    Not uniformly wrong, which is why reading it did not settle the question. Measured on
-    `u = x` with the exact face derivative fed in, cell-centred, `dx=1`, ghosts nearest-first:
-
-        max wall (sign=+1, the DEFAULT)   order=4  -0.5909   order=5  -0.4600   exact +0.5
-        min wall (sign=-1)                order=4  -0.5000   order=5  -0.5000   exact -0.5  (exact)
-        max wall                          order<4  +1.5, +2.5   exact +0.5, +1.5
-        min wall                          order<4  +2.5, +5.5   exact -0.5, -1.5
-
-    Three separable defects, and the headline is the third:
-
-    1. `flux_value * outward_normal_sign` is used as the INWARD derivative. At the min wall that
-       coincides with the truth, which is why those two rows are exact; at the max wall it is
-       negated. The whole max-wall error is that one term: order=4 is off by exactly `12*h*g/11`
-       (1.0909) and order=5 by `24*h*g/25` (0.9600).
-
-    2. Both high-order branches impose the derivative constraint at the GHOST CENTRE, not at the
-       face -- `(-11*u_{-1} + 18*u_0 - 9*u_1 + 2*u_2)/(6h)` is `p'` at `u_{-1}`. A linear field has
-       the same derivative everywhere, so this is invisible above and shows only where the flux
-       term cannot mask it: `u = x^2` with `g = 0` gives 0.5455 (order=4) and 0.4800 (order=5).
-
-    3. Defect 1 ALONE costs the order the name promises -- not the pair. On `u = exp(x)`,
-       cell-centred, over h = 0.2 -> 0.025:
-
-           max wall (defect 1 present)   rate 1.04, 1.02, 1.01     -> O(h)
-           min wall (defect 1 absent)    rate 1.94, 1.98, 1.99     -> O(h^2), defect 2 alone
-           `ghost_cell_neumann`          rate 3.00, 3.00, 3.00     -> O(h^3)
-
-       So it is worse than the rule it was written to improve on at BOTH walls, and a derivative
-       built from the max-wall ghost is O(1) wrong.
-
-    The `order<4` fallback is a separate failure of a different kind: `u[0] + 2*dx*g` is the
-    repo's own pre-#1972 formula, `interior + 2*dx*g*sign`, struck in this file on 2026-08-18 --
-    a retired rule that survived in a copy nothing was checking. It is not the only one: the
-    one-cell form survived in several docstrings, corrected across #1936 and #2057.
-
-    NO COUNT IS GIVEN HERE, deliberately. Two revisions of this note carried one, and both were
-    right for a spelling and wrong for the population: `u_ghost = u_interior + 2*dx*g` and
-    `u_g = u_i +- 2*dx*g` are the same claim, and counting the first missed `applicator_fdm`'s own
-    module header, which stated the one-cell form with a two-cell step and was wrong at both walls.
-    An earlier version of this note EXCLUDED that site, asserting the occurrence there was the
-    two-cell `u_next_interior +- 2*dx*g` -- a string that appears zero times in that file. A
-    miscounted exclusion shielded the site the count existed to find, so the count is gone rather
-    than corrected: a tally over a hand-chosen literal cannot audit the predicate that chose it.
-
-    Also, the vertex-centred branch's `if order >= 4` arm and its `else` computed the same
-    expression, so that path advertised fourth order and delivered constant-derivative
-    extrapolation.
-
-    Nothing called this, in the package or the tests, which is why the errors survived to be found
-    by reading rather than by a failure. It raises instead of being deleted because it shipped:
-    added 2025-12-17 by `1a1ebec6`, present and exported in v0.20.0 and every tag since.
-
-    Use :func:`ghost_cell_neumann`. A correct face-constrained 4-point formula is on #1936, derived
-    twice independently during review; it is not implemented here because #1936's own acceptance
-    criterion is that the ghost value gain an owner and the implementation count DROP, and adding
-    a sixth implementation for zero consumers moves that counter the wrong way.
-    """
-    raise NotImplementedError(
-        "high_order_ghost_neumann is RETIRED (#1936). Cell-centred ghost value, u = exp(x): it "
-        "converges at O(h) at the max wall and O(h^2) at the min, where ghost_cell_neumann gives "
-        "O(h^3) -- worse than the rule it was written to improve on, at both walls. It uses the "
-        "flux as the inward derivative, which is why order=4 and order=5 are exact at the min "
-        "wall and negated at the max; its order<4 fallback is the pre-#1972 "
-        "`interior + 2*dx*g*sign` that this file already struck. "
-        "Use ghost_cell_neumann for the Neumann ghost value."
-    )
 
 
 def normal_frame_coefficients(
@@ -733,8 +612,6 @@ __all__ = [
     "ghost_cell_neumann",
     "ghost_cell_robin",
     # High-order ghost cell extrapolation (4th/5th order for WENO)
-    "high_order_ghost_dirichlet",
-    "high_order_ghost_neumann",
     # Physics-aware ghost cell (for advection-diffusion/FP)
     "ghost_cell_fp_no_flux",
     "normal_frame_coefficients",

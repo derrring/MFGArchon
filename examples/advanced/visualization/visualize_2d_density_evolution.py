@@ -112,7 +112,7 @@ def solve_mfg_with_enhancements(use_enhancements=True):
 
     print("\nProblem setup:")
     print("  Domain: [0, 1] × [0, 1]")
-    print(f"  Grid: {problem.geometry.grid.num_points}")
+    print(f"  Grid: {problem.geometry.grid.Nx_points}")
     print(f"  Coupling: {problem.coupling_strength}")
 
     if use_enhancements:
@@ -150,14 +150,14 @@ def solve_mfg_with_enhancements(use_enhancements=True):
     grid = problem.geometry.grid
     ndim = grid.dimension
     Nt = problem.Nt + 1
-    shape = tuple(grid.num_points)
+    shape = tuple(grid.Nx_points)
 
     # Create grid points using meshgrid
     x_vals = []
     for d in range(ndim):
         x_min = grid.bounds[d][0]
         spacing = grid.spacing[d]
-        n_points = grid.num_points[d]
+        n_points = grid.Nx_points[d]
         x_vals.append(x_min + np.arange(n_points) * spacing)
 
     meshgrid_arrays = np.meshgrid(*x_vals, indexing="ij")
@@ -215,7 +215,7 @@ def visualize_density_evolution(U, M, problem):
     print("Creating Density Evolution Visualization")
     print("=" * 80)
 
-    grid_shape = problem.geometry.grid.num_points
+    grid_shape = problem.geometry.grid.Nx_points
     Nt = M.shape[0]
 
     # Select time steps to visualize

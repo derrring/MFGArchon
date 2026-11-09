@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.types.callable_protocols import read_region
-from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1239,22 +1238,9 @@ class UnstructuredMesh(Geometry):
         """
         ...
 
-    @deprecated_parameter(
-        param_name="show_edges",
-        since="v0.17.0",
-        replacement="mode",
-    )
-    @deprecated_parameter(
-        param_name="show_quality",
-        since="v0.17.0",
-        replacement="mode",
-    )
     def visualize_mesh(
         self,
         mode: MeshVisualizationMode | str = MeshVisualizationMode.WITH_EDGES,
-        *,
-        show_edges: bool | None = None,
-        show_quality: bool | None = None,
     ):
         """
         Visualize mesh using PyVista.
@@ -1264,19 +1250,11 @@ class UnstructuredMesh(Geometry):
         mode : MeshVisualizationMode or str, default=WITH_EDGES
             Visualization mode: SURFACE, WITH_EDGES, QUALITY, or QUALITY_WITH_EDGES
             Can pass strings: "surface", "with_edges", "quality", "quality_with_edges"
-        show_edges : bool, optional (deprecated)
-            Deprecated: Use mode parameter instead
-        show_quality : bool, optional (deprecated)
-            Deprecated: Use mode parameter instead
 
         Examples
         --------
-        >>> # New API (recommended)
         >>> geom.visualize_mesh(mode=MeshVisualizationMode.QUALITY_WITH_EDGES)
         >>> geom.visualize_mesh(mode="quality")
-        >>>
-        >>> # Old API (deprecated but still works)
-        >>> geom.visualize_mesh(show_edges=True, show_quality=False)
         """
         if self.mesh_data is None:
             self.generate_mesh()
@@ -1288,20 +1266,6 @@ class UnstructuredMesh(Geometry):
 
         if self.mesh_data is None:
             raise RuntimeError("Mesh data is None")
-
-        # Handle backward compatibility
-        if show_edges is not None or show_quality is not None:
-            # Convert old API to new
-            edges = show_edges if show_edges is not None else True
-            quality = show_quality if show_quality is not None else False
-            if quality and edges:
-                mode = MeshVisualizationMode.QUALITY_WITH_EDGES
-            elif quality:
-                mode = MeshVisualizationMode.QUALITY
-            elif edges:
-                mode = MeshVisualizationMode.WITH_EDGES
-            else:
-                mode = MeshVisualizationMode.SURFACE
 
         # Handle string mode
         if isinstance(mode, str):

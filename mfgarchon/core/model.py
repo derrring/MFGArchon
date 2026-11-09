@@ -13,9 +13,8 @@ Issue: derrring/MFGArchon#875
 
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -109,11 +108,6 @@ class Model:
     coupling_cost: CouplingCost | None = None
     terminal_coupling: CouplingCost | None = None
 
-    @property
-    def sigma(self) -> Any:
-        """Retired (#2375 ruling 6): reading it raises, naming ``volatility``."""
-        raise AttributeError(_RETIRED_SIGMA)
-
     def __post_init__(self) -> None:
         self.refuse_what_is_not_bound()
         has_h = self.hamiltonian is not None
@@ -147,26 +141,6 @@ class Model:
                 "implement the transform for your specific Lagrangian."
             )
         raise ValueError("No hamiltonian or lagrangian defined")
-
-
-# `sigma` is retired on both sides of Model (#2375 ruling 6). Reading it is the raising property above.
-# Passing it is refused here, around the generated __init__, which `dataclasses.replace` also calls --
-# a retired InitVar would instead be read back by `replace` and by any `getattr`, as `None`.
-_RETIRED_SIGMA = (
-    "Model.sigma is retired (#2375 ruling 6): the SDE volatility is Model.volatility -- pass "
-    "volatility=, with volatility_kind='field' or 'tensor' for an array."
-)
-_generated_model_init = Model.__init__
-
-
-@functools.wraps(_generated_model_init)
-def _model_init_refusing_sigma(self: Model, *args: Any, **kwargs: Any) -> None:
-    if "sigma" in kwargs:
-        raise TypeError(_RETIRED_SIGMA.replace("Model.sigma is retired", "Model(sigma=...) is retired", 1))
-    _generated_model_init(self, *args, **kwargs)
-
-
-Model.__init__ = _model_init_refusing_sigma  # type: ignore[method-assign]
 
 
 @dataclass

@@ -27,7 +27,6 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 
 from .base_mfg import (
     assert_bc_providers_resolvable,
@@ -116,7 +115,6 @@ class MFGResidual:
         >>> print(f"Residual norm: {np.linalg.norm(F):.2e}")
     """
 
-    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,

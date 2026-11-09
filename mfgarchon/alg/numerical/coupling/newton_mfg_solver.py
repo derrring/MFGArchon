@@ -33,10 +33,8 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.convergence import sweep_change
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
-from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
@@ -115,10 +113,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
             basin, so a too-short warmup can converge to a spurious near-trivial fixed
             point of the discrete MFG map. For stiff couplings increase this until the
             warmup residual is well past its transient peak (Issue #1233).
-        newton_tolerance: Deprecated (#2565). The outer tolerance is ``solve(tolerance=)`` at both stops. If
-            passed, or assigned to the attribute, it acts as ``solve(absolute_tolerance=)``: an extra bound on
-            the owners' absolute change -- the larger of U's and M's dt-weighted space-time L2 change, not an
-            unscaled 2-norm -- so it can tighten the stop but no longer loosen it. Passing both is refused.
         newton_max_iterations: Maximum Newton iterations (default: 20)
         line_search: Enable backtracking line search (default: True)
         use_jax_autodiff: Use JAX autodiff for the Jacobian (default: False). The MFG
@@ -138,15 +132,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
         >>> print(f"Converged: {info['converged']}, iterations: {info['iterations']}")
     """
 
-    @deprecated_parameter(
-        param_name="newton_tolerance",
-        since="v0.22.0",
-        replacement=(
-            "absolute_tolerance= on solve(), an extra bound beside tolerance= on the larger of U's and M's "
-            "dt-weighted space-time L2 change, not an unscaled 2-norm, so it can no longer loosen the stop"
-        ),
-    )
-    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -155,7 +140,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
         *,
         picard_warmup: int = 3,
         picard_damping: float = 0.5,
-        newton_tolerance: float | None = None,
         newton_max_iterations: int = 20,
         line_search: bool = True,
         use_jax_autodiff: bool | str = False,
@@ -175,8 +159,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self.picard_warmup = picard_warmup
         self.picard_damping = picard_damping
 
-        # Newton parameters. A passed or assigned newton_tolerance is read as solve()'s absolute_tolerance (#2565).
-        self.newton_tolerance = newton_tolerance
+        # Newton parameters
         self.newton_max_iterations = newton_max_iterations
         self.line_search = line_search
         self.use_jax_autodiff = use_jax_autodiff
@@ -299,7 +282,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 at each iterate Newton evaluates before stepping; the iterate returned when Newton's budget
                 runs out is not judged, so it reports not converged.
             absolute_tolerance: Opt-in absolute bound on the same change, as for the other coupling
-                iterators. Refused together with the deprecated ``newton_tolerance``.
+                iterators.
             verbose: Print progress information
             **kwargs: Additional solver parameters
 
@@ -307,14 +290,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
             (U, M, info): Solution and convergence information
         """
         start_time = time.time()
-        if self.newton_tolerance is not None:
-            if absolute_tolerance is not None:
-                raise ValueError(
-                    "NewtonMFGSolver: newton_tolerance (deprecated) and absolute_tolerance were both given. "
-                    "Pass absolute_tolerance to solve() only: it is the same bound, on the larger of U's and M's "
-                    "dt-weighted space-time L2 change (#2565)."
-                )
-            absolute_tolerance = self.newton_tolerance
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
         last_reason = [""]

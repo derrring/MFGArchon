@@ -75,7 +75,7 @@ def test_particle_solver_multi_exit_1d():
         components=_default_components_1d(),
     )
 
-    # Multi-exit BC: two DIRICHLET exits on opposite ends. Built directly: the deprecated mixed_bc sets a
+    # Multi-exit BC: two DIRICHLET exits on opposite ends. Built directly: mixed_bc sets a
     # NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
     bc_multi_exit = BoundaryConditions(
         dimension=1,

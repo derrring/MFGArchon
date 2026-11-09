@@ -80,7 +80,6 @@ from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 if TYPE_CHECKING:
@@ -115,24 +114,6 @@ _BOUNDARY_HANDLERS: dict[str, Any] = {
 _INTERIOR_HANDLERS: dict[str, Any] = {
     "divergence_centered": add_interior_entries_divergence_centered,
     "divergence_upwind": add_interior_entries_divergence_upwind,
-}
-
-# Legacy scheme names -> canonical names (single source for both the outer driver's
-# velocity-support check and the per-timestep assembly).
-_SCHEME_ALIASES = {
-    "flux": "divergence_upwind",
-}
-
-#: The gradient form v.grad(m), removed in #2007 (maintainer ruling 2026-10-04), with the scheme to use
-#: instead. It drops m*div(v) from div(v*m), so with a non-constant drift it discretizes a different
-#: equation, and its wall imposed dm/dn = 0 rather than J.n = 0 (EOC 0.00 at a drifting wall). With no
-#: wall at all, under a periodic boundary, it does not converge either (EOC -0.007,
-#: test_fp_mms_wall_order_1728.py). "centered" and "upwind" were its legacy aliases.
-_REMOVED_SCHEMES = {
-    "gradient_centered": "divergence_centered",
-    "gradient_upwind": "divergence_upwind",
-    "centered": "divergence_centered",
-    "upwind": "divergence_upwind",
 }
 
 _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
@@ -182,22 +163,15 @@ def _why_a_velocity_is_not_consumed(advection_scheme: str, use_tensor_diffusion:
 
 
 def _resolve_and_validate_scheme(advection_scheme: str) -> str:
-    """Resolve a legacy scheme alias and reject an unknown name.
+    """Reject an unknown scheme name.
 
-    One owner for both the alias table and the error string. ``solve_timestep_full_nd`` is a
-    standalone entry point with its own tests, so it validates its own input rather than
-    trusting a caller; this helper is what keeps that from meaning two copies of the message.
+    One owner for the error string. ``solve_timestep_full_nd`` is a standalone entry point with its own
+    tests, so it validates its own input rather than trusting a caller; this helper is what keeps that
+    from meaning two copies of the message.
     """
-    if advection_scheme in _REMOVED_SCHEMES:
-        raise ValueError(
-            f"advection_scheme={advection_scheme!r} was removed (Issue #2007). The gradient form v.grad(m) "
-            "drops m*div(v) from the Fokker-Planck operator, and its wall imposed dm/dn = 0 instead of "
-            f"J.n = 0. Use advection_scheme={_REMOVED_SCHEMES[advection_scheme]!r}."
-        )
-    resolved = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
-    if resolved not in _VALID_SCHEMES:
+    if advection_scheme not in _VALID_SCHEMES:
         raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
-    return resolved
+    return advection_scheme
 
 
 # =============================================================================
@@ -993,7 +967,6 @@ def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
     )
 
 
-@retired_volatility_keywords
 def solve_fp_nd_full_system(
     m_initial_condition: np.ndarray,
     U_solution_for_drift: np.ndarray | None,
@@ -1062,8 +1035,7 @@ def solve_fp_nd_full_system(
           (conservative via telescoping, oscillates for Peclet > 2)
         - "divergence_upwind": Divergence form + upwind fluxes
           (conservative via telescoping, stable, O(dx))
-        Legacy alias: "flux"->"divergence_upwind". The gradient schemes and their aliases
-        "centered" / "upwind" were removed in #2007 and raise.
+        The gradient schemes and their aliases "centered" / "upwind" were removed in #2007 and raise.
     drift_field : Callable | None
         Optional callable drift field (Phase 2 - Issue #487):
         - None: Use U_solution_for_drift to compute drift
@@ -1717,8 +1689,7 @@ def solve_timestep_full_nd(
           (conservative via telescoping, oscillates for Peclet > 2)
         - "divergence_upwind": Divergence form + upwind fluxes
           (conservative via telescoping, stable, O(dx)) [DEFAULT]
-        Legacy alias: "flux"->"divergence_upwind". The gradient schemes and their aliases
-        "centered" / "upwind" were removed in #2007 and raise.
+        The gradient schemes and their aliases "centered" / "upwind" were removed in #2007 and raise.
     outflow : dict[str, float] | None
         When given, each DIRICHLET segment's name gains the mass that left through it over this step, negative where
         mass came in: read off the no-flux row the capped exit uses, at every Dirichlet node (#2581, PR 2a). Internal,
@@ -1729,8 +1700,6 @@ def solve_timestep_full_nd(
     np.ndarray
         Next density field. Shape: (N1, N2, ..., Nd)
     """
-    advection_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
-
     # Validate scheme name (standalone entry point: it does not trust its caller)
     _resolve_and_validate_scheme(advection_scheme)
     # Total number of unknowns

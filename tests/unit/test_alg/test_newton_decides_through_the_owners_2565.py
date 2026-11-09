@@ -4,13 +4,11 @@ Newton stops on the Picard residual Phi(x) - x: ``F_HJB = U_new - U``, ``F_FP = 
 map's output against its input, the quantity C1 governs (docs/user/CONVENTIONS.md § 9). Before #2565 the
 check after the warm-up compared an unscaled 2-norm of it with ``solve(tolerance=)``, and phase 2 stopped
 on the same unscaled norm against the constructor's ``newton_tolerance``, so ``tolerance`` was never read
-there. Both stops now go through `sweep_change` and `check_convergence_criteria`. The deprecated
-``newton_tolerance`` still acts during its window, as ``absolute_tolerance``.
+there. Both stops now go through `sweep_change` and `check_convergence_criteria`. ``newton_tolerance`` is
+deleted (the removal before 1.0); ``solve(absolute_tolerance=)`` is the absolute bound.
 """
 
 from __future__ import annotations
-
-import pytest
 
 import numpy as np
 
@@ -96,40 +94,6 @@ def test_absolute_tolerance_reaches_the_verdict():
     assert relative_only["converged"]
     assert with_absolute["converged"]
     assert with_absolute["newton_iterations"] > relative_only["newton_iterations"]
-
-
-@pytest.mark.parametrize(
-    "bound", [0.5, 0.1, 0.05], ids=["met_at_warm_up", "met_by_absolute_only", "not_met_at_warm_up"]
-)
-def test_the_deprecated_newton_tolerance_acts_as_absolute_tolerance(bound):
-    """The equivalence test of the deprecation policy: newton_tolerance=x solves as absolute_tolerance=x."""
-    with pytest.warns(DeprecationWarning, match=r"dt-weighted space-time L2 change, not an unscaled 2-norm"):
-        U_old, M_old, info_old, _ = _solve(
-            {"tolerance": 0.5}, newton_tolerance=bound, picard_warmup=3, newton_max_iterations=1
-        )
-    U_new, M_new, info_new, _ = _solve(
-        {"tolerance": 0.5, "absolute_tolerance": bound}, picard_warmup=3, newton_max_iterations=1
-    )
-    np.testing.assert_array_equal(U_old, U_new)
-    np.testing.assert_array_equal(M_old, M_new)
-    assert info_old["convergence_reason"] == info_new["convergence_reason"]
-    assert info_old["total_iterations"] == info_new["total_iterations"]
-
-
-def test_an_assigned_newton_tolerance_acts_as_well():
-    """The public attribute is read at solve(), so assigning it is not a silent no-op."""
-    problem = _problem()
-    solver = NewtonMFGSolver(
-        problem, HJBFDMSolver(problem), FPFDMSolver(problem), picard_warmup=3, newton_max_iterations=1
-    )
-    solver.newton_tolerance = 0.05
-    _, _, info = solver.solve(max_iterations=30, tolerance=0.5, verbose=False)
-    assert info["convergence_reason"] != "Converged during Picard warm-up"
-
-
-def test_newton_tolerance_and_absolute_tolerance_together_are_refused():
-    with pytest.warns(DeprecationWarning, match="newton_tolerance"), pytest.raises(ValueError, match="both given"):
-        _solve({"absolute_tolerance": 1e-6}, newton_tolerance=1e-6)
 
 
 def test_a_newton_solver_given_no_verdict_keeps_its_norm_test():

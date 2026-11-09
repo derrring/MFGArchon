@@ -317,7 +317,7 @@ class TestIntegrationWithGrid:
 
         # Simple test: constant source term in interior
         # -Δu = 1 with u(boundary) = 0
-        f = np.ones(grid.num_points)
+        f = np.ones(grid.Nx_points)
         # Set boundary to zero (Dirichlet BC)
         f[0, :] = 0
         f[-1, :] = 0
@@ -328,7 +328,7 @@ class TestIntegrationWithGrid:
         # Solve
         solver = SparseSolver(method="direct", backend="scipy")
         u_flat = solver.solve(-L, f_flat)  # Note: -L for proper Poisson equation
-        u_numerical = u_flat.reshape(grid.num_points)
+        u_numerical = u_flat.reshape(grid.Nx_points)
 
         # Check properties:
         # 1. Boundary conditions

@@ -2,5 +2,5 @@
 removed from its body, while an implementation comment eleven lines below already struck that text.
 The body returns `interior_value + dx * flux_value`. Anyone reading `help()` saw the retired
 formula presented as current, and the correction was visible only to a reader of the source. Fixed
-here because #1936 makes it load-bearing: both retirement messages now send every caller to this
-function.
+here because #1936 makes it load-bearing: every caller of the removed `high_order_ghost_neumann` is sent
+to this function.

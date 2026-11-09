@@ -7,7 +7,7 @@ so `PathFinder` answers first. Twelve of the fifteen `scripts/*.py` invocations 
 worktree: they never import the package, and they find their inputs by flag, by `Path(__file__)`, or
 by the gate's own `cd`. The three that do import -- `check_internal_deprecation.py --self-test`
 under `--fast`, and `capability_matrix.py` twice in the full gate -- resolve through the editable
-finder, which is hard-wired to the original checkout. Measured with a blocking meta-path finder over every step, its control firing on the
+finder, which is hard-wired to the original checkout. (`check_internal_deprecation.py` was deleted later in this release.) Measured with a blocking meta-path finder over every step, its control firing on the
 importer.
 
 [AMENDED by #2154, same release] `PYTHONPATH` is no longer the caller's to set: the gate binds it

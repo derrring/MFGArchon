@@ -39,9 +39,9 @@ assigned directly from a subtraction in the same function or an enclosing one. *
   not a definition of a verdict: it misses ``err < tol * scale``.
 
 **Anywhere under** `mfgarchon/alg/`: a call to a metric that computes a change its own way. Among them are
-the deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error` and `compute_norm`. The three
-checkers `HJBConvergenceChecker`, `FPConvergenceChecker` and `MFGConvergenceChecker`, and their factory
-`create_convergence_checker`, were removed by #2648's ruling 5; they stay on the list as a resurrection guard.
+#2566's `calculate_error` and `compute_norm`. `calculate_l2_convergence_metrics` was removed before 1.0, and the
+three checkers `HJBConvergenceChecker`, `FPConvergenceChecker` and `MFGConvergenceChecker`, and their factory
+`create_convergence_checker`, by #2648's ruling 5; they stay on the list as a resurrection guard.
 
 Every function, method, nested function and lambda is a scope. Other spellings, such as an L1 sum of
 ``abs(d)``, a difference passed through a helper or stored on an attribute first, or a tuple or augmented
@@ -91,7 +91,7 @@ OWNERS = frozenset(
 CHANGE_KEYS = frozenset({"l2distu_rel", "l2distu_abs", "l2distm_rel", "l2distm_abs"})
 _AGGREGATES = frozenset({"max", "min", "amax", "amin", "nanmax", "nanmin"})
 _COMPREHENSIONS = (ast.GeneratorExp, ast.ListComp, ast.SetComp)
-#: Metrics that compute a change their own way: the deprecated wrapper, and #2566's helpers.
+#: Metrics that compute a change their own way: #2566's helpers, and removed ones kept as a resurrection guard.
 RIVAL_METRICS = frozenset(
     {
         "calculate_l2_convergence_metrics",
