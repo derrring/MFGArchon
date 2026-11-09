@@ -396,8 +396,9 @@ A: The legacy 1D geometry surfaces (`xmin`/`xmax`/`Nx`/`Lx` read-properties and
 constructor kwargs, and the `get_u_final`/`get_u_fin` aliases) have been removed
 (Issues #1360, #1363) after their 3-minor-version deprecation window. Code that
 still uses them now raises; migrate to the geometry-first API shown above. The other
-surfaces deprecated with a warning were removed before 1.0 too (the changelog's removal entry lists them), and code
-that passes or reads them raises as well.
+surfaces deprecated with a warning were either removed before 1.0, and code that passes or reads them raises as well,
+or kept without the warning: `TensorProductGrid(dimension=)`, used above, `TensorProductGrid(num_points=)`, `mixed_bc`, the
+components= form and `MFGComponents.boundary_conditions`. The changelog's removal entry lists both.
 
 **Q: Will my old code break?**
 A: Code using the removed 1D geometry kwargs/attributes/aliases will raise. The

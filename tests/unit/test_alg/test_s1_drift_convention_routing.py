@@ -3,7 +3,7 @@
 ``resolve_fp_drift_kwargs`` decides how the value function ``U`` enters the FP solver.
 Before this fix the ``use_velocity`` gate keyed on ``"drift_field" in params``, but
 parameter presence cannot disambiguate the drift convention: some solvers expose
-``drift_field`` as a real VELOCITY channel (fp_fvm / fp_gfdm / FPFDM), while the weak-form
+``drift_field`` as a real VELOCITY channel (fp_fvm / FPFDM), while the weak-form
 family exposed ``drift_field`` as a DEPRECATED ALIAS for ``potential_field=U``
 (``DriftConvention.VALUE_FUNCTION``); that alias was removed before 1.0, and the particle solver
 keeps a live one. For a non-smooth ``H`` + a VALUE_FUNCTION solver the

@@ -46,7 +46,7 @@ def _iterator(cls):
 
 @pytest.mark.parametrize("cls", ITERATORS, ids=[c.__name__ for c in ITERATORS])
 def test_a_fourth_positional_argument_is_refused(cls):
-    with pytest.raises(TypeError, match=r"positional argument"):
+    with pytest.raises(TypeError, match=r"takes .* positional argument"):
         _iterator(cls).solve(None, None, None, True)
 
 

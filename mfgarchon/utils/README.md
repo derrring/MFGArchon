@@ -488,13 +488,6 @@ with solver_progress(max_iterations, "My Solver") as progress:
             break
 ```
 
-### 3. Configuration Management
-```python
-# Good: Use configuration files for reproducibility
-config = load_config_file("experiment_config.yaml")
-result = problem.solve(**config['solver'])
-```
-
 ## 📊 Integration Examples
 
 ### Research Workflow
@@ -532,12 +525,11 @@ def run_experiment(config_file):
 ### Production Pipeline
 ```python
 # Production pipeline with comprehensive monitoring
-def production_solve(problem_spec, solver_config):
+def production_solve(problem_spec):
     """Production solver with full monitoring and validation."""
     
     # Validate inputs
     problem = validation.validate_problem_specification(problem_spec)
-    config = validation.validate_solver_configuration(solver_config)
     
     # Solve with comprehensive error handling
     try:

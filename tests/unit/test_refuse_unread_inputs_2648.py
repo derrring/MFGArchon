@@ -149,7 +149,7 @@ POSITIONAL = [
 def test_a_positional_argument_past_a_deleted_slot_is_refused(target, n):
     """The guard a deletion owes its neighbours: without it, the argument meant for the deleted slot binds silently to
     the next parameter. Every later parameter is keyword-only, so one positional argument too many is a TypeError."""
-    with pytest.raises(TypeError, match=r"positional argument"):
+    with pytest.raises(TypeError, match=r"takes .* positional argument"):
         target(*([None] * (n + 1)))
 
 
