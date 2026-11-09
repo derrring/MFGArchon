@@ -958,37 +958,31 @@ def compute_fp_velocity_field(
 
 
 def _why_an_own_control_is_not_a_velocity_here(
-    problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None, takes_a_velocity: bool
+    problem: Any, fp_solver: Any, M: np.ndarray, takes_a_velocity: bool
 ) -> list[str]:
     """Why ``fp_solver``, which forms its drift from U (``_forms_its_drift_from_u``), cannot take an own optimal control
-    as a velocity here, or ``[]`` where it can (#2900). The set where it can is closed and stated positively: a 1-D grid
-    with NO_FLUX walls, a density trajectory of shape ``(Nt + 1, *grid shape)``, and an advection scheme that reads the
-    velocity, in a multi-population solve too, where the velocity door reads each population at its own density (#2335).
-    Off it, on periodic walls and 2-D and 3-D grids, ``test_fp_velocity_at_the_stencils_faces_2904.py`` measures the
-    velocity route equal to the value-function route (``test_the_velocity_route_carries_the_value_route_drift``), the
-    velocity equal to the closed form at the faces (``test_each_library_control_is_read_at_the_exact_gradient_at_its_face``),
-    and its convergence at second order to the control at the exact face gradient
-    (``test_a_control_that_couples_the_components_converges_at_second_order``); routing those here is #2908. The walls
-    are the ones the solver solves with, its own when it was handed them."""
-    from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import _INTERFACE_VELOCITY_SCHEMES
-    from mfgarchon.geometry.boundary import BCType
-    from mfgarchon.geometry.boundary.types import BoundaryFace
+    as a velocity here, or ``[]`` where it can (#2900, #2908, #2915). The set where it can is closed and stated
+    positively, from what the router itself holds: a solver whose class takes a velocity, a tensor grid, and a
+    density trajectory of shape ``(Nt + 1, *grid shape)``. Whether the solve then reads the velocity is the solve's
+    own decision: FP-FDM's #1632 guard refuses one its step would drop, at the first FP solve (#2915). Three more
+    conditions are enforced before this runs. FP-FDM accepts walls of four kinds only, NO_FLUX, PERIODIC, DIRICHLET and FLUX, a problem's zero NEUMANN
+    reaching it as NO_FLUX (#1456, #2512 row B3), and on each of them the censuses in
+    ``test_fp_velocity_at_the_stencils_faces_2904.py`` and ``test_fp_drift_from_optimal_control_2900.py`` measure the
+    velocity route equal to the value-function route. FP-FDM refuses a boundary condition periodic on some faces
+    only when it is built (#2495). ``MultiPopulationIterator`` refuses a grid that is not 1-D, so several
+    populations reach here in 1-D only (#2330, #2335)."""
+    from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 
     name = type(fp_solver).__name__
     if not takes_a_velocity:
         return [f"{name} takes the value function only"]
     reasons = []
-    if problem.dimension != 1:
-        reasons.append(f"the grid is {problem.dimension}-D")
-    else:
-        bc = fp_solver.boundary_conditions
-        walls = [bc.segment_for_face(BoundaryFace(0, side), problem.geometry).bc_type for side in ("min", "max")]
-        if any(wall != BCType.NO_FLUX for wall in walls):
-            reasons.append(f"its walls are {[wall.name for wall in walls]}")
-    scheme = getattr(fp_solver, "advection_scheme", None)
-    if scheme not in _INTERFACE_VELOCITY_SCHEMES:
-        reasons.append(f"its advection_scheme {scheme!r} does not read a velocity")
-    trajectory = (problem.Nt + 1, *tuple(problem.geometry.get_grid_shape()))
+    geometry = problem.geometry
+    dimension = problem.dimension
+    shape = tuple(int(n) for n in geometry.get_grid_shape())
+    if geometry_grid_axes(geometry) is None:
+        reasons.append(f"the problem is not a tensor grid ({type(geometry).__name__}, {dimension}-D)")
+    trajectory = (problem.Nt + 1, *shape)
     if np.shape(M) != trajectory:
         reasons.append(f"it is handed M of shape {np.shape(M)}, not a density trajectory of shape {trajectory}")
     return reasons
@@ -996,7 +990,8 @@ def _why_an_own_control_is_not_a_velocity_here(
 
 def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None) -> str:
     """What the closed set read, for its refusal to state (#2900): the grid's dimension, whether one population is
-    solved, and for a solver that holds its walls and an advection scheme, those, then the shape of M."""
+    solved, and for a solver that holds its walls, those, then the shape of M. Whether the solve then reads the
+    velocity is the solve's own decision, at FP-FDM's #1632 guard (#2915)."""
     from mfgarchon.geometry.boundary.types import BoundaryFace
 
     read = [
@@ -1007,9 +1002,6 @@ def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_den
     if bc is not None:
         faces = [BoundaryFace(axis, side) for axis in range(problem.dimension) for side in ("min", "max")]
         read.append(f"walls {[bc.segment_for_face(face, problem.geometry).bc_type.name for face in faces]}")
-    scheme = getattr(fp_solver, "advection_scheme", None)
-    if scheme is not None:
-        read.append(f"advection_scheme {scheme!r}")
     read.append(f"M of shape {np.shape(M)}")
     return ", ".join(read)
 
@@ -1044,10 +1036,11 @@ def resolve_fp_drift_kwargs(
         - Smooth separable $H$ for which ``drift_is_the_control_costs`` does not hold (#2900), handed
           to a solver whose class sets ``_forms_its_drift_from_u`` (FP-FDM, FP-SL) → the velocity
           path below, which reads its ``optimal_control``, only where
-          ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: a 1-D grid with
-          ``NO_FLUX`` walls, a density trajectory, and an advection scheme that reads a velocity, for
-          any number of populations (#2335). Anywhere else this refuses, stating what it read and why, and names no other
-          scheme. Every other solver (FVM,
+          ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: a tensor grid whose
+          every face is ``NO_FLUX``, ``PERIODIC``, ``DIRICHLET`` or ``FLUX`` (#2908, #2915), a density
+          trajectory, and one population above 1-D (in 1-D any number, #2335). Anywhere else this refuses,
+          stating what it read and why, and names no other scheme. Where FP-FDM's step then reads no velocity,
+          its #1632 guard refuses at the first FP solve (#2915). Every other solver (FVM,
           particle, the weak-form family) keeps ``potential_field`` and reads ``optimal_control``
           itself. With ``drift_convention=None`` the pre-#1489 gate below decides, and a solver that
           forms $-c\\,\\nabla U$ refuses through ``fp_drift_coefficient``.
@@ -1085,9 +1078,10 @@ def resolve_fp_drift_kwargs(
             the solver only consumes $U$ (its ``drift_field`` is a deprecated alias for
             ``potential_field``), so a non-smooth $H$ raises instead of silently advecting $U$.
             ``None`` (caller did not thread it) => the pre-#1489 param-presence gate, byte-identical.
-        fp_solver: The FP solver the kwargs are for. Its class's ``_forms_its_drift_from_u`` and, for such a
-            solver, its walls and advection scheme decide where an own ``optimal_control`` goes (#2900). ``None``
-            => no solver is known, and such a Hamiltonian keeps ``potential_field``.
+        fp_solver: The FP solver the kwargs are for. Its class's ``_forms_its_drift_from_u`` and drift convention
+            decide where an own ``optimal_control`` goes (#2900); whether its step then reads the velocity is the
+            solve's own decision (#2915). ``None`` => no solver is known, and such a Hamiltonian keeps
+            ``potential_field``.
 
     Returns:
         ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
@@ -1134,7 +1128,7 @@ def resolve_fp_drift_kwargs(
             and not drift_is_the_control_costs(H_class)
         ):
             takes_a_velocity = drift_convention == DriftConvention.VELOCITY and "drift_field" in params
-            reasons = _why_an_own_control_is_not_a_velocity_here(problem, fp_solver, M, cross_density, takes_a_velocity)
+            reasons = _why_an_own_control_is_not_a_velocity_here(problem, fp_solver, M, takes_a_velocity)
             if reasons:
                 name = type(fp_solver).__name__
                 refuse_the_scalar_drift(
@@ -1142,9 +1136,9 @@ def resolve_fp_drift_kwargs(
                     f"{name}.solve_fp_system(potential_field=U)",
                     _what_the_router_read(problem, fp_solver, M, cross_density),
                     (
-                        f"{name} takes its optimal_control as a velocity only on a 1-D grid with "
-                        "NO_FLUX walls, handed the density trajectory, with an advection scheme that reads a velocity "
-                        "(#2900). "
+                        f"{name} takes its optimal_control as a velocity only on a tensor grid whose every face is "
+                        "NO_FLUX, PERIODIC, DIRICHLET or FLUX, handed the density trajectory, one population above "
+                        "1-D (#2900, #2908). "
                         f"Here {'; '.join(reasons)}."
                         if takes_a_velocity
                         else f"{'; '.join(reasons)}."

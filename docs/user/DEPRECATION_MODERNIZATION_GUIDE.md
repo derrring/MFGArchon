@@ -1,8 +1,8 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 126
-**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11
+**Total deprecated items**: 125
+**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.18.6, v0.18.0, v0.17.0, v0.16.11
 
 ---
 
@@ -184,16 +184,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 - **`damping_factor`** in `MultiPopulationIterator.__init__()` — use `relaxation` instead (remove by v0.25.0)
 - **`damping_factor`** in `create_network_mfg_solver()` — use `relaxation` instead (remove by v0.25.0)
 - **`damping`** in `create_simple_network_solver()` — use `relaxation` instead (remove by v0.25.0)
-
----
-
-## Deprecated since v0.19.0
-
-*1 items*
-
-### Functions / Classes
-
-- **`optimal_control_drift()`** — use `use H.optimal_control(t=t, x=x, p=grad_U, m=m) directly, or let FixedPointIterator handle it automatically` instead (remove by v0.25.0)
 
 ---
 

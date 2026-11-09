@@ -107,6 +107,8 @@ def _problem(hamiltonian, dimension, n, walls, volatility=0.3, volatility_kind=N
         (2, "no-flux", 9, True),
         (3, "no-flux", 5, False),
         (3, "periodic", 5, False),
+        (3, "Dirichlet", 5, False),
+        (3, "mixed", 5, False),
         (2, "no-flux", (9, 2), False),
         (2, "Dirichlet", (2, 9), False),
     ],

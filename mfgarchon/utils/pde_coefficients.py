@@ -35,25 +35,30 @@ def has_quadratic_control_cost(hamiltonian: Any) -> bool:
     return isinstance(hamiltonian, SeparableHamiltonian) and isinstance(hamiltonian.control_cost, QuadraticControlCost)
 
 
-def drift_is_the_control_costs(hamiltonian: Any) -> bool:
-    """Whether ``hamiltonian`` is a ``SeparableHamiltonian`` driven by the library's own optimal control (#2900): the
-    method it serves is ``SeparableHamiltonian.optimal_control`` bound to it, which a subclass, an instance attribute
-    or a ``__getattribute__`` would replace, and a quadratic control cost serves ``QuadraticControlCost``'s own
-    ``optimal_control``, which a subclass of it would replace. Only then is ``-c*grad(U)`` its drift. Any other control
-    cost reaches ``assert_quadratic_drift`` as before (#1542)."""
-    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+def why_the_drift_is_not_the_control_costs(hamiltonian: Any) -> str | None:
+    """Why ``-c*grad(U)`` is not known to be ``hamiltonian``'s drift, or ``None`` when it is (#2900, #2914).
 
-    served = getattr(hamiltonian, "optimal_control", None)
-    cost = getattr(hamiltonian, "control_cost", None)
-    return (
-        isinstance(hamiltonian, SeparableHamiltonian)
-        and getattr(served, "__func__", None) is SeparableHamiltonian.optimal_control
-        and getattr(served, "__self__", None) is hamiltonian
-        and (
-            not isinstance(cost, QuadraticControlCost)
-            or type(cost).optimal_control is QuadraticControlCost.optimal_control
-        )
+    It is known only for a Hamiltonian and its cost exactly as the library ships them: the Hamiltonian a
+    ``SeparableHamiltonian`` or ``QuadraticMFGHamiltonian``, the library's classes whose drift is their control cost's
+    (by census, #2915), its cost a ``QuadraticControlCost``, and neither instance holding a family method of its own.
+    Read by the one owner of "as the library ships it", `_why_not_as_it_ships`. The check is by type, so a subclass,
+    a wrapper or an instance entry is not certified whatever it serves, and is read as served instead (#2915)."""
+    from mfgarchon.core.hamiltonian import (
+        QuadraticControlCost,
+        QuadraticMFGHamiltonian,
+        SeparableHamiltonian,
+        _why_not_as_it_ships,
     )
+
+    return _why_not_as_it_ships(
+        hamiltonian, classes=(SeparableHamiltonian, QuadraticMFGHamiltonian), cost=QuadraticControlCost
+    )
+
+
+def drift_is_the_control_costs(hamiltonian: Any) -> bool:
+    """Whether ``-c*grad(U)``, with ``c = 1/lambda_`` from the shipped cost's field, is ``hamiltonian``'s drift: only for
+    a Hamiltonian and its cost exactly as the library ships them (`why_the_drift_is_not_the_control_costs`, #2914)."""
+    return why_the_drift_is_not_the_control_costs(hamiltonian) is None
 
 
 #: Where a refusal of -c*grad(U) points: the one statement of which FP solvers read optimal_control themselves, and of
@@ -66,25 +71,15 @@ WHERE_OWN_CONTROLS_ARE_READ = (
 
 def refuse_the_scalar_drift(hamiltonian: Any, context: str, ran_on: str, why: str = "") -> NoReturn:
     """The refusal of ``-c*grad(U)`` as the drift of a Hamiltonian ``drift_is_the_control_costs`` does not hold for
-    (#2900). It says what was run (``context``) and on what (``ran_on``), which optimal control the Hamiltonian serves,
-    and why the site refuses (``why``, after the reason every such site shares), then points to
-    ``WHERE_OWN_CONTROLS_ARE_READ``. It names no other scheme."""
-    from mfgarchon.core.hamiltonian import QuadraticControlCost
-
+    (#2900). It says what was run (``context``) and on what (``ran_on``), why the Hamiltonian is not as the library
+    ships it (`why_the_drift_is_not_the_control_costs`, the owner's own reason, #2914), and why the site refuses
+    (``why``, after the reason every such site shares), then points to ``WHERE_OWN_CONTROLS_ARE_READ``. It names no
+    other scheme."""
     name = type(hamiltonian).__name__
-    cost = getattr(hamiltonian, "control_cost", None)
-    if "optimal_control" in getattr(hamiltonian, "__dict__", {}):
-        whose = f"this {name} instance serves an optimal_control assigned on it"
-    elif (
-        isinstance(cost, QuadraticControlCost)
-        and type(cost).optimal_control is not QuadraticControlCost.optimal_control
-    ):
-        whose = f"{name}'s control cost, {type(cost).__name__}, serves an optimal_control of its own"
-    else:
-        whose = f"{name} serves an optimal_control of its own"
+    whose = f"{name} is not as the library ships it ({why_the_drift_is_not_the_control_costs(hamiltonian)})"
     raise NotImplementedError(
-        f"{context}, run on {ran_on}: {whose}, so -c*grad(U), the quadratic control cost's drift, is not its drift, "
-        f"and {context} forms the drift from that scalar (#2900)."
+        f"{context}, run on {ran_on}: {whose}, so -c*grad(U), the quadratic control cost's drift, is not known to "
+        f"be its drift, and {context} forms the drift from that scalar (#2900, #2914)."
         + (f" {why}" if why else "")
         + f" {WHERE_OWN_CONTROLS_ARE_READ}"
     )
@@ -189,10 +184,10 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
     h_class = getattr(problem, "hamiltonian_class", None)
-    if isinstance(h_class, SeparableHamiltonian) and not drift_is_the_control_costs(h_class):
-        refuse_the_scalar_drift(h_class, context, f"a {getattr(problem, 'dimension', '?')}-D problem")
-    if isinstance(h_class, SeparableHamiltonian) and isinstance(h_class.control_cost, QuadraticControlCost):
+    if drift_is_the_control_costs(h_class):
         return 1.0 / h_class.control_cost.lambda_
+    if isinstance(h_class, SeparableHamiltonian) and isinstance(h_class.control_cost, QuadraticControlCost):
+        refuse_the_scalar_drift(h_class, context, f"a {getattr(problem, 'dimension', '?')}-D problem")
     # A SeparableHamiltonian that fell past the quadratic branch has a non-quadratic (e.g.
     # regularized) control cost. The scalar drift `-c·∇U` does not represent its
     # optimal control, so fail loud (single-sourced guard) rather than return `coupling_coefficient`
@@ -1266,8 +1261,7 @@ class _DriftDispatcher:
     """
     Internal data dispatcher for drift/velocity in FP equation (Issue #641).
 
-    This is an **internal** class for FP solver plumbing. For user-facing
-    MFG drift computation, use `DriftField` instead.
+    This is an **internal** class for FP solver plumbing.
 
     Handles data dispatch (when/how to get drift values):
     1. Zero drift (None): Pure diffusion, no advection
@@ -1454,133 +1448,3 @@ class _DriftArrayDispatcher(_DriftDispatcher):
 
     def get_U_at(self, timestep_idx: int) -> np.ndarray:
         raise ValueError("_DriftArrayDispatcher provides velocity, not potential U.")
-
-
-class DriftField:
-    """
-    MFG drift field: computes optimal control α* from value function U (Issue #623).
-
-    Encapsulates the complete MFG coupling:
-    1. Extract U slice at timestep
-    2. Compute gradient ∇U using geometry
-    3. Apply optimal control formula via ControlCostBase
-
-    This is the user-facing class for MFG drift computation. Use this when you have:
-    - A value function U from HJB solver
-    - A control cost specification (quadratic, L1, bounded, etc.)
-    - A geometry that provides gradient computation
-
-    Parameters
-    ----------
-    U_solution : ndarray
-        Value function from HJB solver, shape (Nt, *spatial_shape)
-    control_cost : ControlCostBase
-        Control cost specification (determines optimal_control formula)
-    geometry : BaseGeometry
-        Geometry providing gradient computation
-    coupling_coefficient : float, optional
-        Scaling factor for drift (default: 1.0)
-
-    Examples
-    --------
-    Standard MFG coupling:
-    >>> from mfgarchon.core import QuadraticControlCost
-    >>> cost = QuadraticControlCost(control_cost=1.0)
-    >>> drift = DriftField(U_solution, cost, problem.geometry)
-    >>> velocity = drift.get_velocity_at(k, density)
-
-    L1 (bang-bang) control:
-    >>> from mfgarchon.core import L1ControlCost
-    >>> cost = L1ControlCost(control_cost=0.5)
-    >>> drift = DriftField(U_solution, cost, problem.geometry)
-    >>> velocity = drift.get_velocity_at(k, density)  # Returns ±1 or 0
-    """
-
-    def __init__(
-        self,
-        U_solution: np.ndarray,
-        control_cost: Any,  # ControlCostBase, use Any to avoid import cycle
-        geometry: Any,  # BaseGeometry
-        coupling_coefficient: float = 1.0,
-    ):
-        self.U_solution = U_solution
-        self.control_cost = control_cost
-        self.geometry = geometry
-        self.coupling_coefficient = coupling_coefficient
-
-        # Cache dimensions
-        self.Nt = U_solution.shape[0]
-        self.spatial_shape = U_solution.shape[1:]
-
-    def get_U_at(self, timestep_idx: int) -> np.ndarray:
-        """Get value function slice at timestep."""
-        return self.U_solution[timestep_idx]
-
-    def get_gradient_at(self, timestep_idx: int) -> np.ndarray:
-        """
-        Compute gradient ∇U at timestep.
-
-        Uses geometry's gradient computation if available,
-        otherwise falls back to finite differences.
-        """
-        U_k = self.get_U_at(timestep_idx)
-
-        # Try geometry-based gradient
-        if hasattr(self.geometry, "compute_gradient"):
-            return self.geometry.compute_gradient(U_k)
-
-        # Fallback: simple finite differences
-        spacing = self.geometry.get_grid_spacing()
-        ndim = len(self.spatial_shape)
-
-        if ndim == 1:
-            # Central differences for interior, one-sided at boundaries
-            grad = np.zeros_like(U_k)
-            grad[1:-1] = (U_k[2:] - U_k[:-2]) / (2 * spacing[0])
-            grad[0] = (U_k[1] - U_k[0]) / spacing[0]
-            grad[-1] = (U_k[-1] - U_k[-2]) / spacing[0]
-            return grad
-        else:
-            # For nD, return tuple of gradients per dimension
-            grads = []
-            for dim in range(ndim):
-                grad = np.gradient(U_k, spacing[dim], axis=dim)
-                grads.append(grad)
-            return np.stack(grads, axis=0)
-
-    def get_velocity_at(self, timestep_idx: int, density: np.ndarray | None = None) -> np.ndarray:
-        """
-        Compute optimal control velocity α* at timestep.
-
-        This is the primary method for MFG coupling:
-        α* = control_cost.optimal_control(∇U)
-
-        Parameters
-        ----------
-        timestep_idx : int
-            Timestep index
-        density : ndarray | None
-            Current density (for state-dependent control costs)
-            Currently unused, reserved for future extensions
-
-        Returns
-        -------
-        ndarray
-            Optimal control velocity α*
-        """
-        # Get gradient
-        grad_U = self.get_gradient_at(timestep_idx)
-
-        # Apply coupling coefficient
-        momentum = self.coupling_coefficient * grad_U
-
-        # Apply optimal control formula
-        return self.control_cost.optimal_control(momentum)
-
-    def is_callable(self) -> bool:
-        """DriftField is never callable (it's U-based)."""
-        return False
-
-    def is_zero(self) -> bool:
-        """Check if all U values are zero."""
-        return np.allclose(self.U_solution, 0)

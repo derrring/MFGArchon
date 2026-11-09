@@ -149,10 +149,9 @@ _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 # non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
 # quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
 # velocity -- measured, the coupling path raises rather than reaching it. The one exception is a
-# Hamiltonian for which `drift_is_the_control_costs` fails (#2900): the router sends it a velocity only
-# with an advection scheme in this set, on a 1-D grid, where a tensor volatility is refused at construction,
-# and refuses it otherwise.
-# This set is the accept-list the guard tests against, and it still tells the driver which schemes
+# Hamiltonian for which `drift_is_the_control_costs` fails (#2900): the router sends it a velocity, and where
+# `_why_a_velocity_is_not_consumed` finds the step would drop it, the #1632 guard refuses (#2915).
+# This set is the accept-list that decider tests against, and it still tells the driver which schemes
 # leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 
@@ -162,6 +161,24 @@ _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 # branch fails loudly through the per-timestep NaN guard (Issue #881) instead of silently
 # advecting at rate zero.
 _COEFFICIENT_NOT_APPLICABLE = float("nan")
+
+
+def _why_a_velocity_is_not_consumed(advection_scheme: str, use_tensor_diffusion: bool) -> str | None:
+    """Why FP-FDM's step leaves a velocity unread, or None where it reads one: the one decider (#1632, #2915).
+
+    A velocity is consumed only where the assembly it reaches has an ``interface_velocity`` parameter.
+    `solve_timestep_tensor_explicit` has none, so on the tensor-diffusion path no scheme reads it, including
+    ``divergence_upwind``; elsewhere the scheme must be in `_INTERFACE_VELOCITY_SCHEMES`. Its one reader is the
+    #1632 guard in `solve_fp_nd_full_system`, on the scheme and volatility kind the solve resolved (#2915).
+    """
+    if use_tensor_diffusion:
+        return (
+            "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
+            "(solve_timestep_tensor_explicit takes no such parameter), whatever the scheme"
+        )
+    if _resolve_and_validate_scheme(advection_scheme) not in _INTERFACE_VELOCITY_SCHEMES:
+        return f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
+    return None
 
 
 def _resolve_and_validate_scheme(advection_scheme: str) -> str:
@@ -1111,6 +1128,16 @@ def solve_fp_nd_full_system(
             _resolved_coefficient.append(fp_drift_coefficient(problem, context="FPFDMSolver, from potential_field=U"))
         return _resolved_coefficient[0]
 
+    def coefficient_the_step_reads() -> float:
+        """The scalar coefficient the step's handler reads (#1631, #2915). On the velocity route the drift's source
+        is the velocity, so no U-route coefficient is resolved: a consumed velocity carries alpha* per face and gets
+        the NaN marker; an unconsumed one is all zero (the #1632 guard refuses any other), U is the zero-U
+        dispatcher's, and 0.0 gives the drift exactly. Without a velocity the drift comes from U, and c is resolved.
+        """
+        if velocity_field is None:
+            return resolve_coupling_coefficient()
+        return _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else 0.0
+
     # Get grid spacing and geometry
     spacing = problem.geometry.get_grid_spacing()
     grid = problem.geometry  # Geometry IS the grid
@@ -1123,15 +1150,11 @@ def solve_fp_nd_full_system(
     _velocity_array = velocity_field  # Store for per-timestep slicing
     # A misspelled scheme must report itself as such rather than as a velocity-channel problem:
     # the per-timestep assembly validates the name too, but only after this guard would have fired.
-    _resolved_scheme = _resolve_and_validate_scheme(advection_scheme)
-    # A velocity is genuinely consumed only when the assembly it reaches has an
-    # `interface_velocity` parameter. `solve_timestep_tensor_explicit` has none, so on the
-    # tensor-diffusion path NO scheme reads it -- including `divergence_upwind`, the default and
-    # the sole member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone made
-    # the accept-list false exactly where it is most load-bearing.
-    _velocity_is_consumed = (
-        velocity_field is not None and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES and not use_tensor_diffusion
-    )
+    _resolve_and_validate_scheme(advection_scheme)
+    # Whether the velocity is consumed is `_why_a_velocity_is_not_consumed`'s to say (#2915): keying it on the scheme
+    # alone made the accept-list false on the tensor-diffusion path, where no scheme reads it.
+    _unconsumed = _why_a_velocity_is_not_consumed(advection_scheme, use_tensor_diffusion)
+    _velocity_is_consumed = velocity_field is not None and _unconsumed is None
     _refuse_provider_wall_coefficients(boundary_conditions)
     if use_tensor_diffusion:
         _refuse_flux_off_the_implicit_step(boundary_conditions, "explicit tensor-diffusion step")
@@ -1170,22 +1193,17 @@ def solve_fp_nd_full_system(
     # the arms are not interchangeable -- a velocity with fewer time slices than U shortens the
     # solve -- but that is #919's contract for the velocity-only path, not this guard's to enforce.
     if velocity_field is not None and not _velocity_is_consumed and np.any(velocity_field):
-        _where = (
-            "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
-            "(solve_timestep_tensor_explicit takes no such parameter), so the accept-list "
-            "does not apply here"
-            if use_tensor_diffusion
-            else f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
-        )
+        _where = _unconsumed
         raise NotImplementedError(
-            f"A non-zero velocity_field cannot be honoured: {_where}, so it would be dropped and "
-            f"the solve would run at zero drift, returning a pure-diffusion density that looks "
-            f"converged and conserves mass (Issue #1632). Supply the value function instead -- "
-            f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so "
-            f"the drift is derived as -c*grad(U), valid only for a smooth separable Hamiltonian for which "
-            f"drift_is_the_control_costs holds (#2900); "
-            f"or use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with scalar "
-            f"diffusion."
+            f"A non-zero velocity_field cannot be honoured: {_where}, so the step would not read it; a "
+            f"velocity passed by hand would be dropped and the solve would return a pure-diffusion density "
+            f"that looks converged (Issue #1632). The coupling layer hands FP-FDM a velocity for a "
+            f"Hamiltonian whose drift is not known to be -c*grad(U) (drift_is_the_control_costs is false, "
+            f"#2900), so this can arise with no velocity passed by hand. Where drift_is_the_control_costs "
+            f"holds, as for a Hamiltonian as the library ships it, supply the value function instead -- "
+            f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- and the drift "
+            f"is derived as -c*grad(U). Otherwise use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} with a "
+            f"scalar or per-point volatility, whose step reads the velocity."
         )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
@@ -1372,8 +1390,8 @@ def solve_fp_nd_full_system(
                 dt,
                 tensor_base,
                 # The tensor path has no interface_velocity parameter and derives its
-                # advection from U, so it genuinely consumes the coefficient.
-                resolve_coupling_coefficient(),
+                # advection from U; with a velocity handed, U is zero (#2915).
+                coefficient_the_step_reads(),
                 spacing,
                 grid,
                 ndim,
@@ -1415,12 +1433,8 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                # Issue #1631: skip resolving a coefficient the handler will not read. A consumed
-                # velocity carries alpha* per face, so the scalar coefficient is unused; every
-                # other path derives its drift from U and needs it. The else branch is still
-                # reached with a velocity present -- an all-zero one on a non-consuming scheme is
-                # accepted by the #1632 guard and lands here, resolving a real coefficient.
-                _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
+                # Issue #1631: skip resolving a coefficient the handler will not read (#2915).
+                coefficient_the_step_reads(),
                 spacing,
                 grid,
                 ndim,

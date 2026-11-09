@@ -219,8 +219,9 @@ CASES = {
     ),
 }
 
-#: Hamiltonians that serve SeparableHamiltonian.optimal_control with a QuadraticControlCost's, so the predicate holds,
-#: but whose __call__ and dp are not that control's: #2901, out of this fix's scope.
+#: Hamiltonians that serve SeparableHamiltonian.optimal_control with a QuadraticControlCost's, but are not as the
+#: library ships them, so the predicate does not hold. That their __call__ and dp are not that control's is #2901, out
+#: of this fix's scope.
 SERVES_THE_BASE_CONTROL = {"__getattr__": lambda: _steep(_OwnGetattr), "H_redefined_control_inherited": _steep}
 
 NODES = np.linspace(0.0, 1.0, 21)
@@ -283,17 +284,19 @@ def _solve(hamiltonian, *, d=1, walls="no_flux", volatility=0.3, n=None, **solve
 
 @pytest.mark.parametrize("case", sorted(CASES))
 def test_the_predicate_reads_the_optimal_control_the_hamiltonian_serves(case):
-    """drift_is_the_control_costs holds only where the method served is SeparableHamiltonian.optimal_control, bound to
-    the Hamiltonian, and a quadratic control cost serves QuadraticControlCost's own."""
+    """drift_is_the_control_costs holds only for a Hamiltonian and its cost exactly as the library ships them: the class
+    SeparableHamiltonian or QuadraticMFGHamiltonian, a QuadraticControlCost, and no family method on either instance
+    (#2914)."""
     make, _, expected = CASES[case]
     assert drift_is_the_control_costs(make()) is expected
 
 
 @pytest.mark.parametrize("case", sorted(SERVES_THE_BASE_CONTROL))
-def test_a_hamiltonian_serving_the_base_control_keeps_the_value_function_route(case):
-    """These serve the base class's optimal_control, so the predicate holds and -c*grad(U) is the drift of the control
-    they serve. That their __call__ and dp say otherwise is #2901."""
-    assert drift_is_the_control_costs(SERVES_THE_BASE_CONTROL[case]()) is True
+def test_a_hamiltonian_not_as_shipped_is_not_certified_whatever_it_serves(case):
+    """These serve the base class's optimal_control, but are not as the library ships them, so the type rule does not
+    certify -c*grad(U) as their drift and the velocity route reads what they serve (#2914, #2915 review 1). That
+    their __call__ and dp say otherwise is #2901."""
+    assert drift_is_the_control_costs(SERVES_THE_BASE_CONTROL[case]()) is False
 
 
 @pytest.mark.parametrize("case", sorted(name for name, (_, _, holds) in CASES.items() if not holds))
@@ -326,53 +329,53 @@ def _refused_saying(refused, *, site, ran_on, why=""):
 
 ROUTER = "FPFDMSolver.solve_fp_system(potential_field=U)"
 
-#: Where the default scheme's FP-FDM cannot take an own optimal control as a velocity: what the refusal says it read,
-#: and why it refuses.
-OFF_THE_MEASURED_SET = {
-    "1-D periodic": (
-        {"walls": "periodic"},
-        "a 1-D grid, one population, walls ['PERIODIC', 'PERIODIC'], advection_scheme 'divergence_upwind', "
-        "M of shape (11, 21)",
-        "Here its walls are ['PERIODIC', 'PERIODIC'].",
-    ),
-    "2-D no-flux": (
-        {"d": 2, "n": 7},
-        "a 2-D grid, one population, walls ['NO_FLUX', 'NO_FLUX', 'NO_FLUX', 'NO_FLUX'], "
-        "advection_scheme 'divergence_upwind', M of shape (11, 7, 7)",
-        "Here the grid is 2-D.",
-    ),
-    "1-D Dirichlet": (
-        {"walls": "dirichlet"},
-        "a 1-D grid, one population, walls ['DIRICHLET', 'DIRICHLET'], advection_scheme 'divergence_upwind', "
-        "M of shape (11, 21)",
-        "Here its walls are ['DIRICHLET', 'DIRICHLET'].",
-    ),
+#: The cells #2908 and #2915 widen the velocity route to: periodic and Dirichlet walls, 2-D and 3-D grids (#2908,
+#: measured by #2909's census in #2904's test file), and FLUX walls handed to FP-FDM and 4-D grids (#2915). An own
+#: control there solves as the library H it describes. Outside the comparison: FLUX walls in 2-D with a flux of 0.2,
+#: where FP-FDM refuses the library H itself, since the flux's part of a step takes the density negative.
+WIDENED = {
+    "1-D periodic": {"walls": "periodic"},
+    "2-D no-flux": {"d": 2, "n": 7},
+    "1-D Dirichlet": {"walls": "dirichlet"},
+    "3-D Dirichlet": {"d": 3, "n": 3, "walls": "dirichlet"},  # pins the router admitting 3-D; #2904's census, the route
+    "1-D FLUX 0 on both faces": {
+        "fp_solver": functools.partial(FPFDMSolver, boundary_conditions=_faces((BCType.FLUX, 0.0), (BCType.FLUX, 0.0)))
+    },
+    "1-D FLUX 0.2 on x_max": {
+        "fp_solver": functools.partial(
+            FPFDMSolver, boundary_conditions=_faces((BCType.NO_FLUX, 0.0), (BCType.FLUX, 0.2))
+        )
+    },
+    "4-D no-flux, 3 nodes per axis": {"d": 4, "n": 3},
+    "4-D no-flux, 4 nodes per axis": {"d": 4, "n": 4},  # about 110 s, so it runs outside the gate (slow)
 }
 
 
-@pytest.mark.parametrize("where", sorted(OFF_THE_MEASURED_SET))
-def test_off_the_measured_set_the_default_scheme_refuses_stating_what_it_read(where):
-    """Off the closed set, the default scheme refuses an own control, stating what it read and why; routing
-    periodic walls and 2-D grids is #2908. Off in M at 6f02506c, which drove it by -c*grad(U): 1.1121e+00 periodic,
-    2.5675e+00 in 2-D; at 855dcb6e, which routed it through the velocity builder #2904 replaced: 1.7056e-01 and
-    1.4074e+00."""
-    setting, ran_on, why = OFF_THE_MEASURED_SET[where]
-    with pytest.raises(NotImplementedError, match="#2900") as refused:
-        _solve(_steep(_OwnControl), **setting)
-    _refused_saying(refused, site=ROUTER, ran_on=ran_on, why=why)
+@pytest.mark.parametrize(
+    "where",
+    [
+        pytest.param(w, marks=pytest.mark.slow) if w.startswith("4-D") and WIDENED[w]["n"] > 3 else w
+        for w in sorted(WIDENED)
+    ],
+)
+def test_on_the_widened_set_an_own_control_solves_as_the_library_hamiltonian_it_describes(where):
+    """#2908: the default scheme takes the own control as a velocity on these cells too, where it used to refuse (at
+    87b145b1) or drive it by -c*grad(U) (at 6f02506c: 1.1121e+00 periodic, 2.5675e+00 in 2-D)."""
+    _, M_ref = _solve(_library(), **WIDENED[where])
+    _, M = _solve(_steep(_OwnControl), **WIDENED[where])
+    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-10)
 
 
 def test_the_set_reads_the_walls_the_solver_was_handed():
-    """FP-FDM handed Dirichlet walls on a no-flux problem is refused on those walls; handed no-flux walls on a Dirichlet
-    problem it is inside the set, and solves as the library H (review 2 of #2902, W7 and its reverse)."""
-    dirichlet = functools.partial(FPFDMSolver, boundary_conditions=dirichlet_bc(value=0.0, dimension=1))
-    with pytest.raises(NotImplementedError, match="#2900") as refused:
-        _solve(_steep(_OwnControl), fp_solver=dirichlet)
-    assert "walls ['DIRICHLET', 'DIRICHLET']" in str(refused.value)
-    no_flux = functools.partial(FPFDMSolver, boundary_conditions=no_flux_bc(dimension=1))
-    _, M_ref = _solve(_library(), walls="dirichlet", fp_solver=no_flux)
-    _, M = _solve(_steep(_OwnControl), walls="dirichlet", fp_solver=no_flux)
-    np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
+    """FP-FDM handed walls other than the problem's solves an own control on the walls it was handed, as the library
+    H does there (review 2 of #2902, W7 and its reverse; both kinds are in the set since #2908)."""
+    for problem_walls, handed in (
+        ("no_flux", functools.partial(FPFDMSolver, boundary_conditions=dirichlet_bc(value=0.0, dimension=1))),
+        ("dirichlet", functools.partial(FPFDMSolver, boundary_conditions=no_flux_bc(dimension=1))),
+    ):
+        _, M_ref = _solve(_library(), walls=problem_walls, fp_solver=handed)
+        _, M = _solve(_steep(_OwnControl), walls=problem_walls, fp_solver=handed)
+        np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
 
 
 #: The sites that form -c*grad(U) when a solver is called directly, and the context each refusal names.
@@ -418,12 +421,45 @@ def test_a_density_that_is_not_the_trajectory_is_refused_by_name(shape):
 
 
 def test_an_advection_scheme_that_reads_no_velocity_is_refused():
-    """FDM_CENTERED's FP-FDM ignores a velocity (#1632), so it refuses before the velocity is dropped: 5.9844e-01 off in M
-    at 6f02506c, #1632's refusal at 855dcb6e. At sigma = 0.8 the centred scheme solves the library H on this fixture."""
+    """FDM_CENTERED's FP-FDM ignores a velocity, so its #1632 guard refuses the one the router sends, at the first FP
+    solve, before it is dropped: 5.9844e-01 off in M at 6f02506c. At sigma = 0.8 the centred scheme solves the library
+    H on this fixture."""
     with pytest.raises(NotImplementedError, match="#2900") as refused:
         _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
-    assert "Here its advection_scheme 'divergence_centered' does not read a velocity." in str(refused.value)
+    assert "advection_scheme='divergence_centered' does not read 'interface_velocity'" in str(refused.value)
+    assert "Issue #1632" in str(refused.value)
     _solve(_library(), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
+
+
+def test_an_iterators_volatility_override_decides_what_the_solve_reads():
+    """A FixedPointIterator handed volatility=0.3 on a problem whose own volatility is a tensor solves its FP with the
+    scalar it was handed, whose step reads a velocity, so a plain subclass solves as the library H. At c425dae4 the
+    router asked FP-FDM about the problem's tensor instead, and refused it (#2915 review 3, B1)."""
+    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+
+    plain = type("Plain", (SeparableHamiltonian,), {})
+
+    def solve(cls):
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=cls(QuadraticControlCost(control_cost=1 / 3), coupling=_coupling),
+                volatility=0.3 * np.eye(2),
+                volatility_kind="tensor",
+            ),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)] * 2, Nx_points=[7, 7], boundary_conditions=no_flux_bc(dimension=2)
+            ),
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.3 * np.cos(np.pi * x[0]),
+                u_terminal=lambda x: 0.2 * (x[0] - 0.8) ** 2 + 0.1 * x[1],
+                T=0.2,
+            ),
+            Nt=40,
+        )
+        iterator = FixedPointIterator(problem, HJBFDMSolver(problem), FPFDMSolver(problem), volatility=0.3)
+        return np.asarray(_quietly(lambda: iterator.solve(max_iterations=4, tolerance=1e-12, verbose=False)).M)
+
+    np.testing.assert_allclose(solve(plain), solve(SeparableHamiltonian), rtol=0, atol=1e-12)
 
 
 def test_a_solver_that_takes_the_value_function_only_is_refused():
@@ -439,23 +475,36 @@ def test_a_solver_that_takes_the_value_function_only_is_refused():
     )
 
 
+def _plain_with_its_control_assigned():
+    hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
+    hamiltonian.optimal_control = functools.partial(_steep_control, hamiltonian)
+    return hamiltonian
+
+
 @pytest.mark.parametrize(
-    ("make", "names"),
+    ("make", "reason"),
     [
-        (_assigned_on_the_instance, "this _Steep instance serves an optimal_control assigned on it"),
+        (
+            _plain_with_its_control_assigned,
+            "SeparableHamiltonian is not as the library ships it (its instance holds ['optimal_control'] of its own)",
+        ),
         (
             lambda: SeparableHamiltonian(_SteepCost(control_cost=1.0), coupling=_coupling),
-            "SeparableHamiltonian's control cost, _SteepCost, serves an optimal_control of its own",
+            "SeparableHamiltonian is not as the library ships it (its control cost is a _SteepCost, not a "
+            "QuadraticControlCost)",
         ),
-        (lambda: _steep(_OwnControl), "_OwnControl serves an optimal_control of its own"),
+        (lambda: _steep(_OwnControl), "_OwnControl is not as the library ships it (its class is _OwnControl)"),
     ],
 )
-def test_the_refusal_names_whose_optimal_control_is_served(make, names):
-    """The refusal says where the optimal control it will not replace comes from: the instance, the control cost, or
-    the class."""
+def test_the_refusal_names_why_the_hamiltonian_is_not_as_shipped(make, reason):
+    """The refusal names the owner's reason, the instance, the cost's type or the class (#2914), and only it: the
+    second decider that picked a side by the type attribute is gone (#2915 review 1, B2). Pinned on the whole clause."""
     with pytest.raises(NotImplementedError, match="#2900") as refused:
         fp_drift_coefficient(_problem(make()), context="here")
-    assert str(refused.value).startswith(f"here, run on a 1-D problem: {names},")
+    assert str(refused.value).startswith(
+        f"here, run on a 1-D problem: {reason}, so -c*grad(U), the quadratic control cost's drift, is not known to be "
+        "its drift, and here forms the drift from that scalar (#2900, #2914)."
+    )
 
 
 def _multi_population(fp_solver, centres=(0.3, 0.7)):

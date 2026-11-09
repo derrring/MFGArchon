@@ -1146,16 +1146,38 @@ _FAMILY_METHODS = (
 )
 
 
-def _why_not_as_it_ships(hamiltonian: Any) -> str | None:
-    """Why ``hamiltonian`` is not a ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it, or
-    ``None`` if it is one: of one of those two types exactly, compared by identity, with no family method in its own
-    ``__dict__`` (#2335). A library primitive reads its terms at a door's rows for such a Hamiltonian only
-    (`_takes_the_rows_path`)."""
+#: The control cost's family methods, which a cost read as it ships may not hold in its own ``__dict__`` (#2914).
+_COST_FAMILY_METHODS = ("optimal_control", "evaluate", "dp", "lagrangian", "hamiltonian", "proximal")
+
+
+def _why_not_as_it_ships(
+    hamiltonian: Any, classes: tuple[type, ...] | None = None, cost: type | None = None
+) -> str | None:
+    """Why ``hamiltonian`` is not one of ``classes`` as the library ships it, or ``None`` if it is one: the one owner of
+    "as the library ships it" (#2335, #2914).
+
+    A Hamiltonian ships as it is when its type is one of ``classes`` exactly, compared by identity, and its instance
+    holds no family method in its own ``__dict__``. With ``cost``, its control cost must also be of that type exactly,
+    with no family method of its own. ``classes`` defaults to ``SeparableHamiltonian`` and ``CongestionHamiltonian``,
+    the set a library primitive reads its terms at a door's rows for (`_takes_the_rows_path`); `drift_is_the_control_costs`
+    asks it with the classes whose drift is their control cost's. The check is by type, not by what a method reports,
+    so a wrapper or a subclass reads as not shipped whatever it serves (#2915 review 1).
+    """
+    classes = (SeparableHamiltonian, CongestionHamiltonian) if classes is None else classes
     kind = type(hamiltonian)
-    if not (kind is SeparableHamiltonian or kind is CongestionHamiltonian):
+    if not any(kind is shipped for shipped in classes):
         return f"its class is {kind.__name__}"
-    own = [name for name in _FAMILY_METHODS if name in vars(hamiltonian)]
-    return f"its instance holds {own} of its own" if own else None
+    own = [name for name in _FAMILY_METHODS if name in getattr(hamiltonian, "__dict__", {})]
+    if own:
+        return f"its instance holds {own} of its own"
+    if cost is not None:
+        held = getattr(hamiltonian, "control_cost", None)
+        if type(held) is not cost:
+            return f"its control cost is a {type(held).__name__}, not a {cost.__name__}"
+        own = [name for name in _COST_FAMILY_METHODS if name in getattr(held, "__dict__", {})]
+        if own:
+            return f"its control cost's instance holds {own} of its own"
+    return None
 
 
 def _as_it_ships(hamiltonian: Any) -> bool:
