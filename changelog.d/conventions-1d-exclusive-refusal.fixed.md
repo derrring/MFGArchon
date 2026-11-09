@@ -1,1 +1,1 @@
-- **CONVENTIONS states the FP velocity builder's endpoint-exclusive refusal in 1-D only** (#2910). It said the builder refuses an axis whose last node is distinct from node 0 with no dimension; the builder refuses it on a 1-D grid only, where it builds one face fewer than that wrap has.
+- **CONVENTIONS scopes the FP velocity builder's endpoint-exclusive refusal to 1-D** (#2910). It stated the refusal with no dimension; the builder refuses that layout only on a 1-D grid, where it builds one face fewer than the wrap has.
