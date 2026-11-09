@@ -24,36 +24,3 @@ def npart(x: float | np.ndarray) -> float | np.ndarray:
     Works element-wise for NumPy arrays.
     """
     return np.maximum(-x, 0.0)
-
-
-if __name__ == "__main__":
-    # Example usage:
-
-    # Single numeric
-    print(f"ppart(5.0) = {ppart(5.0)}")  # Expected: 5.0
-    print(f"ppart(-3.0) = {ppart(-3.0)}")  # Expected: 0.0
-    print(f"npart(5.0) = {npart(5.0)}")  # Expected: 0.0
-    print(f"npart(-3.0) = {npart(-3.0)}")  # Expected: 3.0
-
-    # NumPy array
-    arr = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
-    print(f"\narr = {arr}")
-    print(f"ppart(arr) = {ppart(arr)}")  # Expected: [0. 0. 0. 1. 2.]
-    print(f"npart(arr) = {npart(arr)}")  # Expected: [2. 1. 0. 0. 0.]
-
-    # Check square equivalence for npart
-    # (x^-)^2
-    x_minus_sq = np.minimum(arr, 0.0) ** 2
-    # (npart(x))^2
-    npart_x_sq = npart(arr) ** 2
-    print(f"(min(arr,0))^2 = {x_minus_sq}")
-    print(f"(npart(arr))^2 = {npart_x_sq}")
-    assert np.allclose(x_minus_sq, npart_x_sq)
-
-    # (x^+)^2
-    x_plus_sq = np.maximum(arr, 0.0) ** 2
-    # (ppart(x))^2
-    ppart_x_sq = ppart(arr) ** 2
-    print(f"(max(arr,0))^2 = {x_plus_sq}")
-    print(f"(ppart(arr))^2 = {ppart_x_sq}")
-    assert np.allclose(x_plus_sq, ppart_x_sq)

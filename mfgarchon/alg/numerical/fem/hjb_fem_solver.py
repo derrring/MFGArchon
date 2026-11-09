@@ -235,18 +235,3 @@ class HJBFEMSolver(WeakFormHJBSolver):
         from .bc_adapter import assemble_robin_terms
 
         return assemble_robin_terms(self._basis, self._bc, D, natural_bc="gradient", lump=self._disc.lumps_mass)
-
-
-if __name__ == "__main__":
-    """Smoke test: assemble on a unit-square mesh and check matrix shapes."""
-    import skfem
-
-    from .assembly import assemble_mass, assemble_stiffness, create_basis
-
-    print("Testing HJBFEMSolver assembly path...")
-    mesh = skfem.MeshTri.init_sqsymmetric().refined(2)
-    basis = create_basis(mesh, order=1)
-    K = assemble_stiffness(basis)
-    M = assemble_mass(basis)
-    print(f"DOFs={basis.N}, K nnz={K.nnz}, M nnz={M.nnz}")
-    print("Smoke test complete.")

@@ -38,7 +38,6 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
-from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 from mfgarchon.utils.solver_result import SolverResult
@@ -899,51 +898,3 @@ class BlockGaussSeidelIterator(BlockIterator):
             relaxation=relaxation,
             **kwargs,
         )
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development.
-
-    Run with: python -m mfgarchon.alg.numerical.coupling.block_iterators
-    Or ensure mfgarchon is installed: pip install -e .
-    """
-    # Issue #757: Removed sys.path manipulation - use proper package installation
-    print("Testing BlockIterator...")
-
-    from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
-    from mfgarchon.alg.numerical.coupling.block_iterators import (
-        BlockGaussSeidelIterator,
-        BlockJacobiIterator,
-    )
-    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-
-    # Create simple 1D problem
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=0.2)
-
-    # Create solvers
-    hjb_solver = HJBFDMSolver(problem)
-    fp_solver = FPFDMSolver(problem)
-
-    # Test Block Gauss-Seidel
-    print("\nTesting Block Gauss-Seidel...")
-    gs_solver = BlockGaussSeidelIterator(problem, hjb_solver, fp_solver, relaxation=0.5)
-    result_gs = gs_solver.solve(max_iterations=10, tolerance=1e-4, verbose=True)
-    print(f"  Converged: {result_gs.converged}, iterations: {result_gs.iterations}")
-
-    # Test Block Jacobi
-    print("\nTesting Block Jacobi...")
-    jacobi_solver = BlockJacobiIterator(problem, hjb_solver, fp_solver, relaxation=0.5)
-    result_jacobi = jacobi_solver.solve(max_iterations=10, tolerance=1e-4, verbose=True)
-    print(f"  Converged: {result_jacobi.converged}, iterations: {result_jacobi.iterations}")
-
-    # Verify shapes
-    assert result_gs.U.shape == (11, 21)
-    assert result_gs.M.shape == (11, 21)
-    assert np.all(np.isfinite(result_gs.U))
-    assert np.all(np.isfinite(result_gs.M))
-
-    print("\nBlockIterator smoke tests passed!")

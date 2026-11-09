@@ -15,12 +15,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy import sparse
 
 if TYPE_CHECKING:
     import skfem
 
     from numpy.typing import NDArray
+    from scipy import sparse
 
 
 def _import_skfem():
@@ -246,39 +246,3 @@ def apply_dirichlet_bc(
     f_int = rhs[interior] - matrix[np.ix_(interior, boundary_dofs)] @ values
 
     return K_int, f_int
-
-
-if __name__ == "__main__":
-    """Smoke test for FEM assembly."""
-    import skfem
-
-    print("Testing FEM assembly...")
-
-    # Create mesh and basis
-    mesh = skfem.MeshTri.init_sqsymmetric()
-    basis = create_basis(mesh, order=1)
-    print(f"Mesh: {mesh.t.shape[1]} elements, {mesh.p.shape[1]} nodes")
-    print(f"DOFs: {basis.N}")
-
-    # Assemble matrices
-    K = assemble_stiffness(basis)
-    M = assemble_mass(basis)
-    print(f"Stiffness K: {K.shape}, nnz={K.nnz}")
-    print(f"Mass M: {M.shape}, nnz={M.nnz}")
-
-    # Verify symmetry
-    assert sparse.linalg.norm(K - K.T) < 1e-12, "K not symmetric"
-    assert sparse.linalg.norm(M - M.T) < 1e-12, "M not symmetric"
-    print("Symmetry: OK")
-
-    # Verify mass matrix row sums (should be total area)
-    total_mass = M.sum()
-    print(f"Mass total: {total_mass:.6f} (expected: 1.0 for unit square)")
-
-    # Test Dirichlet BC
-    boundary = basis.mesh.boundary_nodes()
-    rhs = np.ones(basis.N)
-    K_int, f_int = apply_dirichlet_bc(K, rhs, boundary, values=0.0)
-    print(f"After BC: system size {K_int.shape[0]} (from {K.shape[0]})")
-
-    print("All assembly tests passed.")

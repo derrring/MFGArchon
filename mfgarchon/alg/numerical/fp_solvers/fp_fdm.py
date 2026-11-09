@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 import scipy.sparse as sparse
 
-from mfgarchon.backends.compat import has_nan_or_inf
-from mfgarchon.geometry import BoundaryConditions
 from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
@@ -42,7 +40,8 @@ but only exactly, and only if both sides used the same ``dt``, which the HJB lin
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry import BoundaryConditions
+
 
 # Advection scheme options for FDM: the divergence form div(v*m), centred or upwind. The gradient
 # form v.grad(m) was removed in #2007 (maintainer ruling 2026-10-04): it drops m*div(v) from the
@@ -795,118 +794,3 @@ class FPFDMSolver(BaseFPSolver):
     # It was dead code - never called from solve_fp_system().
     # Callable drift now routes directly to _solve_fp_nd_full_system() which
     # handles all dimensions including 1D.
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing FPFDMSolver...")
-    print("=" * 60)
-
-    from mfgarchon import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-    from mfgarchon.geometry.boundary import no_flux_bc
-
-    # Test 1D problem using geometry-based API (unified nD solver, Issue #641)
-    print("\n1. Testing 1D FDM (advection schemes)...")
-
-    # Create 1D grid with TensorProductGrid
-    Nx = 40  # Number of cells (grid points = Nx + 1)
-    grid_1d = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx + 1])
-    dx_1d = grid_1d.get_grid_spacing()[0]
-
-    problem_1d = MFGProblem(
-        geometry=grid_1d,
-        Nt=25,
-        T=1.0,
-        volatility=0.1,
-        coupling_coefficient=1.0,
-    )
-
-    # Create initial density (Gaussian) and drift field
-    x = np.array(grid_1d.coordinates[0])  # 1D coordinates
-    m_init_1d = np.exp(-((x - 0.5) ** 2) / 0.05)
-    m_init_1d /= m_init_1d.sum() * dx_1d  # Normalize using sum*dx (consistent with 2D)
-
-    # Create drift pushing mass to right (advection test)
-    Nt = problem_1d.Nt + 1
-    U_test_1d = np.zeros((Nt, Nx + 1))
-    for t in range(Nt):
-        U_test_1d[t] = -x  # Drift to the right (alpha = -dU/dx = +1)
-
-    # Test divergence_upwind (divergence form: ∇·(vm))
-    solver_1d_du = FPFDMSolver(
-        problem_1d,
-        boundary_conditions=no_flux_bc(dimension=1),
-        advection_scheme="divergence_upwind",
-    )
-    assert solver_1d_du.advection_scheme == "divergence_upwind"
-
-    M_1d_du = solver_1d_du.solve_fp_system(m_init_1d, U_test_1d, show_progress=False)
-    assert M_1d_du.shape == (Nt, Nx + 1)
-    assert not has_nan_or_inf(M_1d_du)
-
-    # Calculate mass drift (using sum*dx for consistency with 2D)
-    initial_mass_1d = m_init_1d.sum() * dx_1d
-    final_mass_1d_du = M_1d_du[-1].sum() * dx_1d
-    mass_drift_1d_du = abs(final_mass_1d_du - initial_mass_1d) / initial_mass_1d
-
-    print(f"   Initial mass: {initial_mass_1d:.6f}")
-    print(f"   divergence_upwind: final={final_mass_1d_du:.6f}, drift={mass_drift_1d_du:.2%}")
-
-    # Test 2D problem with advection schemes
-    print("\n2. Testing 2D FDM (advection schemes)...")
-
-    # Create 2D problem
-    grid_2d = TensorProductGrid(
-        bounds=[(0.0, 1.0), (0.0, 1.0)],  # [(xmin, xmax), (ymin, ymax)]
-        Nx_points=[11, 11],  # (nx+1, ny+1) grid points
-    )
-    problem_2d = MFGProblem(
-        geometry=grid_2d,
-        Nt=20,
-        T=0.5,
-        volatility=0.2,
-        coupling_coefficient=1.0,
-    )
-
-    # Create Gaussian initial density
-    x, y = grid_2d.coordinates
-    X, Y = np.meshgrid(x, y, indexing="ij")
-    dx, dy = grid_2d.get_grid_spacing()
-    cell_volume = dx * dy
-    m_init_2d = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2) / 0.05)
-    m_init_2d /= m_init_2d.sum() * cell_volume
-
-    # Create a drift field that pushes mass to corner (advection test)
-    Nt = problem_2d.Nt + 1
-    U_drift = np.zeros((Nt, *grid_2d.get_grid_shape()))
-    # Potential U = -x - y (drift to upper-right corner)
-    for t in range(Nt):
-        U_drift[t] = -(X + Y)
-
-    # Test divergence_upwind (conservative)
-    solver_2d_du = FPFDMSolver(
-        problem_2d,
-        boundary_conditions=no_flux_bc(dimension=2),
-        advection_scheme="divergence_upwind",
-    )
-    M_2d_du = solver_2d_du.solve_fp_system(m_init_2d, U_drift, show_progress=False)
-
-    # Calculate mass drift
-    initial_mass_2d = m_init_2d.sum() * cell_volume
-
-    final_mass_du = M_2d_du[-1].sum() * cell_volume
-    mass_drift_du = abs(final_mass_du - initial_mass_2d) / initial_mass_2d
-
-    print(f"   Initial mass: {initial_mass_2d:.6f}")
-    print(f"   divergence_upwind: final={final_mass_du:.6f}, drift={mass_drift_du:.2%}")
-
-    # Verify solutions are valid
-    assert not has_nan_or_inf(M_2d_du), "divergence_upwind solution has NaN/Inf"
-    assert np.all(M_2d_du >= -1e-10), "divergence_upwind: density should be non-negative"
-
-    # Verify advection_scheme is properly set
-    assert solver_2d_du.advection_scheme == "divergence_upwind"
-
-    print("\n" + "=" * 60)
-    print("All smoke tests passed!")

@@ -504,34 +504,3 @@ def generate_discretization(operator: str, order: int, domain_type: str = "inter
 
     else:
         raise ValueError(f"Unsupported operator: {operator}")
-
-
-# Example usage and testing functions
-
-
-def test_code_generation():
-    """Test the code generation framework."""
-    from .mathematical_dsl import quadratic_mfg_system
-
-    # Create mathematical system
-    system = quadratic_mfg_system(control_cost=0.5, state_cost=1.0)
-
-    # Define discretization schemes
-    schemes = {
-        "gradient": generate_discretization("gradient", 2),
-        "laplacian": generate_discretization("laplacian", 2),
-        "divergence": generate_discretization("gradient", 2),  # Divergence uses gradient
-    }
-
-    # Generate solver
-    solver_code = generate_solver_class("TestQuadraticSolver", system, schemes)
-
-    print("Generated Solver Code:")
-    print("=" * 50)
-    print(solver_code)
-
-    return solver_code
-
-
-if __name__ == "__main__":
-    test_code_generation()

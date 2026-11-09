@@ -133,18 +133,3 @@ def create_simple_network_solver(
         fp_solver_type="explicit",  # FP network solver not yet refactored
         relaxation=relaxation,
     )
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing Network MFG Factory Functions...")
-
-    # Test function availability
-    assert create_network_mfg_solver is not None
-    assert create_simple_network_solver is not None
-    print("  Factory functions available")
-
-    # Full smoke test requires NetworkMFGProblem setup
-    # See examples/networks/ for usage examples
-
-    print("Smoke tests passed!")

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # Validated in: mfg-research/experiments/crowd_evacuation_2d/runners/exp14b_fdm_bc_fix_validation.py
 # Issue #638: Import Robin BC ghost cell computation
 # Issue #625: Migrated from tensor_calculus to operators/stencils (tensor_calculus deprecated v0.18.0)
-from mfgarchon.geometry.boundary import no_flux_bc, pad_array_with_ghosts
+from mfgarchon.geometry.boundary import pad_array_with_ghosts
 from mfgarchon.operators.stencils.finite_difference import (
     DEFAULT_NUMERICAL_HAMILTONIAN,
     NumericalHamiltonian,
@@ -2056,34 +2056,3 @@ def solve_hjb_system_backward(
             logger.warning("U_solution became NaN after Newton step for t_idx_n=%d", n_idx_hjb)
 
     return U_solution_this_picard_iter
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing BaseHJBSolver...")
-
-    # Test base class and helper functions availability
-    assert BaseHJBSolver is not None
-    assert compute_hjb_residual is not None
-    assert compute_hjb_jacobian is not None
-    assert newton_hjb_step is not None
-    assert solve_hjb_timestep_newton is not None
-    assert solve_hjb_system_backward is not None
-    print("  Base HJB solver class and helpers available")
-
-    # Test that BaseHJBSolver is abstract
-    from mfgarchon import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=5, volatility=0.1)
-
-    try:
-        base_solver = BaseHJBSolver(problem)
-        # Should fail because solve_hjb_system is abstract
-        base_solver.solve_hjb_system(None, None, None)
-        raise AssertionError("Should have raised NotImplementedError")
-    except (TypeError, NotImplementedError):
-        print("  BaseHJBSolver correctly abstract")
-
-    print("Smoke tests passed!")

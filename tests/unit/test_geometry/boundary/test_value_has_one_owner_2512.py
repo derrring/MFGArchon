@@ -190,14 +190,12 @@ COEFFICIENT_READS_ALLOWED = {
     # Classifiers of a segment, which read no number: validation.
     ("mfgarchon/geometry/boundary/conditions.py", "validate_values"): "a None check",
     # A `ResolvedBC`, which the owner already read (`resolution._resolve_passthrough`).
-    ("mfgarchon/geometry/boundary/resolution.py", "<module>"): "ResolvedBC",
     ("mfgarchon/geometry/boundary/resolution.py", "resolved_bc_to_calculator"): "ResolvedBC",
     ("mfgarchon/geometry/boundary/resolution.py", "to_boundary_conditions"): "ResolvedBC",
     # Attributes named alpha or beta that are not Robin coefficients.
     ("mfgarchon/alg/numerical/adjoint/operators.py", "build_diffusion_matrix_1d"): "a stencil's alpha",
     ("mfgarchon/alg/numerical/coupling/anderson_acceleration.py", "_compute_aa_step_qr"): "Anderson's damping",
     ("mfgarchon/alg/numerical/coupling/anderson_acceleration.py", "update"): "Anderson's damping",
-    ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "<module>"): "a diffusivity",
     ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "__repr__"): "a diffusivity",
     ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "_build_system_matrices"): "a diffusivity",
     ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "get_cfl_number"): "a diffusivity",

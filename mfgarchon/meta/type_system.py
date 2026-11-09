@@ -448,19 +448,3 @@ def dispatch_solver(problem: TypedMFGProblem, method_preference: NumericalMethod
         return compatible_solvers[0]()
 
     raise ValueError(f"No compatible solver found for problem type {problem.mfg_type}")
-
-
-# Example usage
-if __name__ == "__main__":
-    # Create a typed problem
-    from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-    from mfgarchon.geometry.boundary import no_flux_bc
-
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=50)
-    typed_problem = create_typed_problem(problem, QUADRATIC_MFG_TYPE)
-
-    print(f"Problem type: {typed_problem.mfg_type}")
-    print(f"Validation passed: {typed_problem.validate_type_constraints()}")
-    print(f"Compatible methods: {typed_problem.mfg_type.preferred_methods}")
