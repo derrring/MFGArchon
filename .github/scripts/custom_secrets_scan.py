@@ -2,10 +2,16 @@
 """
 Custom secrets scanning script for MFGArchon security pipeline.
 Scans for hardcoded secrets, API keys, and sensitive information.
+
+It reads every file git tracks that holds no NUL byte in its first 8000 bytes, whatever its name or suffix,
+as UTF-8 with any byte that does not decode dropped, as the scan always did, and its reports name the file,
+line and kind of each finding, never the matched text.
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -36,9 +42,6 @@ class CustomSecretsScanner:
         ],
         "private_key": [
             r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
-            r"-----BEGIN RSA PRIVATE KEY-----",
-            r"-----BEGIN DSA PRIVATE KEY-----",
-            r"-----BEGIN EC PRIVATE KEY-----",
         ],
         "database_url": [
             r"(?i)(?:postgres|mysql|mongodb)://[^\s\"']+",
@@ -63,64 +66,11 @@ class CustomSecretsScanner:
             r"(?i)smtp[_-]?password['\"\s]*[:=]['\"\s]*[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]{8,}",
             r"(?i)email[_-]?password['\"\s]*[:=]['\"\s]*[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]{8,}",
         ],
-    }
-
-    # File extensions to scan
-    SCAN_EXTENSIONS: ClassVar[set[str]] = {
-        ".py",
-        ".js",
-        ".ts",
-        ".jsx",
-        ".tsx",
-        ".yaml",
-        ".yml",
-        ".json",
-        ".env",
-        ".sh",
-        ".bash",
-        ".zsh",
-        ".fish",
-        ".toml",
-        ".cfg",
-        ".ini",
-        ".conf",
-        ".config",
-        ".md",
-        ".txt",
-        ".rst",
-        ".ipynb",
-    }
-
-    # Directories to exclude
-    EXCLUDE_DIRS: ClassVar[set[str]] = {
-        ".git",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        "node_modules",
-        ".tox",
-        ".venv",
-        "venv",
-        "env",
-        "build",
-        "dist",
-        ".eggs",
-        "*.egg-info",
-        "archive",
-        ".archive",
-    }
-
-    # Files to exclude
-    EXCLUDE_FILES: ClassVar[set[str]] = {
-        ".gitignore",
-        ".gitmodules",
-        ".gitattributes",
-        "package-lock.json",
-        "yarn.lock",
-        "poetry.lock",
-        "requirements.txt",
-        "setup.py",
-        "setup.cfg",
+        # A key, token or secret name, then = or :, then a quoted run of 32 or more alphanumerics. Either quote
+        # may be backslash-escaped, as it is inside a JSON string. The whitelist reads the value alone.
+        "credential_assignment": [
+            r"""(?i)(?:key|token|secret)[\w.-]{0,64}\\?["']?\s*[:=]\s*\\?["'](?P<value>[A-Za-z0-9]{32,})""",
+        ],
     }
 
     def __init__(self, root_dir: str = "."):
@@ -152,11 +102,12 @@ class CustomSecretsScanner:
             "api_key_var",
             "secret_key_var",
             "token_var",
+            # An expression assigned to a name ending in "token" (mfgarchon/utils/progress.py)
+            "_progress_context",
         }
 
-    def is_whitelisted(self, content: str, match: str) -> bool:
+    def is_whitelisted(self, match: str) -> bool:
         """Check if a match is a known false positive."""
-        content_lower = content.lower()
         match_lower = match.lower()
 
         # Check explicit whitelist
@@ -164,60 +115,42 @@ class CustomSecretsScanner:
             if fp in match_lower:
                 return True
 
-        # Check if it's in comments or documentation
-        if any(marker in content_lower for marker in ["#", "//", "/*", '"""', "'''"]):
-            return True
-
         # Check if it's a template or example
         return bool(any(marker in match_lower for marker in ["example", "demo", "test", "placeholder", "dummy"]))
 
-    def scan_file(self, file_path: Path) -> list[dict]:
-        """Scan a single file for secrets."""
+    def scan_file(self, file_path: Path, content: str) -> list[dict]:
+        """Scan one file's text for secrets."""
         findings = []
 
-        try:
-            with open(file_path, encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+        for secret_type, patterns in self.SECRET_PATTERNS.items():
+            for pattern in patterns:
+                for match in re.finditer(pattern, content, re.MULTILINE):
+                    matched_text = match.group(0)
 
-            lines = content.splitlines()
+                    # Skip if whitelisted
+                    if self.is_whitelisted(match.groupdict().get("value") or matched_text):
+                        continue
 
-            for secret_type, patterns in self.SECRET_PATTERNS.items():
-                for pattern in patterns:
-                    for match in re.finditer(pattern, content, re.MULTILINE):
-                        matched_text = match.group(0)
+                    # Find line number
+                    line_num = content[: match.start()].count("\n") + 1
 
-                        # Skip if whitelisted
-                        if self.is_whitelisted(content, matched_text):
-                            continue
+                    # The reports are uploaded, so a finding records where it is and what kind, not the text.
+                    finding = {
+                        "file": str(file_path.relative_to(self.root_dir)),
+                        "line": line_num,
+                        "type": secret_type,
+                        "pattern": pattern,
+                        "match": "<not recorded>",
+                        "severity": self.get_severity(secret_type),
+                    }
 
-                        # Find line number
-                        line_num = content[: match.start()].count("\n") + 1
-
-                        # Get context
-                        context_start = max(0, line_num - 2)
-                        context_end = min(len(lines), line_num + 1)
-                        context = lines[context_start:context_end]
-
-                        finding = {
-                            "file": str(file_path.relative_to(self.root_dir)),
-                            "line": line_num,
-                            "type": secret_type,
-                            "pattern": pattern,
-                            "match": matched_text[:50] + "..." if len(matched_text) > 50 else matched_text,
-                            "severity": self.get_severity(secret_type),
-                            "context": context,
-                        }
-
-                        findings.append(finding)
-
-        except Exception as e:
-            print(f"Error scanning {file_path}: {e}")
+                    findings.append(finding)
 
         return findings
 
     def get_severity(self, secret_type: str) -> str:
         """Get severity level for secret type."""
-        high_severity = {"private_key", "aws_key", "database_url", "github_token"}
+        high_severity = {"private_key", "aws_key", "database_url", "github_token", "credential_assignment"}
         medium_severity = {"api_key", "secret_key", "token", "jwt_token"}
 
         if secret_type in high_severity:
@@ -227,28 +160,31 @@ class CustomSecretsScanner:
         else:
             return "LOW"
 
-    def should_scan_file(self, file_path: Path) -> bool:
-        """Check if file should be scanned."""
-        # Check file extension
-        if file_path.suffix not in self.SCAN_EXTENSIONS:
-            return False
-
-        # Check if file is excluded
-        if file_path.name in self.EXCLUDE_FILES:
-            return False
-
-        # Check if any parent directory is excluded
-        return all(part not in self.EXCLUDE_DIRS for part in file_path.parts)
-
     def scan_directory(self) -> list[dict]:
-        """Scan entire directory tree for secrets."""
+        """Scan every file git tracks under root_dir that holds no NUL byte in its first 8000 bytes."""
         print(f"🔍 Scanning {self.root_dir} for secrets...")
 
-        for file_path in self.root_dir.rglob("*"):
-            if file_path.is_file() and self.should_scan_file(file_path):
-                file_findings = self.scan_file(file_path)
-                self.findings.extend(file_findings)
+        listed = subprocess.run(
+            ["git", "-C", str(self.root_dir), "ls-files", "-z"], capture_output=True, check=True
+        ).stdout
+        names = [os.fsdecode(name) for name in listed.split(b"\0") if name]
+        scanned, binary, not_regular = 0, 0, 0
+        for name in names:
+            file_path = self.root_dir / name
+            if not file_path.is_file():
+                not_regular += 1
+                continue
+            raw = file_path.read_bytes()
+            if b"\0" in raw[:8000]:
+                binary += 1
+                continue
+            scanned += 1
+            self.findings.extend(self.scan_file(file_path, raw.decode("utf-8", errors="ignore")))
 
+        print(
+            f"Tracked files: {len(names)}; scanned as text: {scanned}; "
+            f"binary (a NUL in the first 8000 bytes): {binary}; not a regular file: {not_regular}"
+        )
         return self.findings
 
     def generate_report(self) -> dict:
