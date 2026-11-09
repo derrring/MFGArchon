@@ -6,7 +6,8 @@ and goes red when that part alone is undone:
 - a suffix no list names: the scan reads every tracked file, not a suffix list;
 - a comment marker elsewhere in the file: no match is skipped because the file holds one;
 - a value inside a JSON string: either quote may be backslash-escaped;
-- a byte that is not UTF-8: the file is still read;
+- a byte that is not UTF-8: the file is still read, and a byte inside a value does not hide it;
+- a NUL past the first 8000 bytes: the file is text, by git's own rule;
 - an identifier holding a whitelisted word: the whitelist reads the value, not the name.
 The reports record no seeded value.
 """
@@ -32,7 +33,7 @@ def _value(n=40):
             return value
 
 
-VALUES = {name: _value() for name in ("suffix", "marker", "json", "encoding", "identifier")}
+VALUES = {name: _value() for name in ("suffix", "marker", "json", "encoding", "late NUL", "identifier")}
 
 #: row -> (file, its bytes). Each must be flagged as credential_assignment.
 SEEDED = {
@@ -42,7 +43,17 @@ SEEDED = {
         f'# settings for the service\nclient_secret = "{VALUES["marker"]}"\n'.encode(),
     ),
     "a value inside a JSON string": ("env.json", f'{{"env": "CLIENT_SECRET=\\"{VALUES["json"]}\\""}}\n'.encode()),
-    "a byte that is not UTF-8": ("deploy.sh", b"caf\xe9\n" + f'export CLIENT_SECRET="{VALUES["encoding"]}"\n'.encode()),
+    "a byte that is not UTF-8": (
+        "deploy.sh",
+        b"caf\xe9\n"
+        + f'export CLIENT_SECRET="{VALUES["encoding"][:20]}'.encode()
+        + b"\xe9"
+        + f'{VALUES["encoding"][20:]}"\n'.encode(),
+    ),
+    "a NUL past the first 8000 bytes": (
+        "run.cfg",
+        f'client_secret = "{VALUES["late NUL"]}"\n'.encode() + b"x" * 8100 + b"\0\n",
+    ),
     "an identifier holding a whitelisted word": ("conf.toml", f'SECRET_LATEST = "{VALUES["identifier"]}"\n'.encode()),
 }
 
@@ -51,7 +62,7 @@ def _repo(root, files):
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     for name, data in files.items():
         (root / name).write_bytes(data)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-f", "--", *files], check=True)
     return root
 
 

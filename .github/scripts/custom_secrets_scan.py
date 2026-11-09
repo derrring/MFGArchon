@@ -4,11 +4,12 @@ Custom secrets scanning script for MFGArchon security pipeline.
 Scans for hardcoded secrets, API keys, and sensitive information.
 
 It reads every file git tracks that holds no NUL byte in its first 8000 bytes, whatever its name or suffix,
-as UTF-8 with any byte that does not decode replaced, and its reports name the file, line and kind of each
-finding, never the matched text.
+as UTF-8 with any byte that does not decode dropped, as the scan always did, and its reports name the file,
+line and kind of each finding, never the matched text.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -165,8 +166,8 @@ class CustomSecretsScanner:
 
         listed = subprocess.run(
             ["git", "-C", str(self.root_dir), "ls-files", "-z"], capture_output=True, check=True
-        ).stdout.decode("utf-8")
-        names = [name for name in listed.split("\0") if name]
+        ).stdout
+        names = [os.fsdecode(name) for name in listed.split(b"\0") if name]
         scanned, binary, not_regular = 0, 0, 0
         for name in names:
             file_path = self.root_dir / name
@@ -178,7 +179,7 @@ class CustomSecretsScanner:
                 binary += 1
                 continue
             scanned += 1
-            self.findings.extend(self.scan_file(file_path, raw.decode("utf-8", errors="replace")))
+            self.findings.extend(self.scan_file(file_path, raw.decode("utf-8", errors="ignore")))
 
         print(
             f"Tracked files: {len(names)}; scanned as text: {scanned}; "
