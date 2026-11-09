@@ -279,9 +279,10 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   convention is `VELOCITY` (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
   `compute_fp_velocity_field` builds it at the faces FP-FDM's divergence-upwind stencil reads
   (#2904): along each axis, the face $(i + 1/2)$ between node $i$ and the node across it, the face
-  across a periodic wrap included, on the walls the FP solver solves with. On a
-  `TensorProductGrid` those walls are read through the grid's check (`bind_periodic_convention`);
-  FP-FDM's own route keeps a contradicting stated convention and solves, which is #2910's. There
+  across a periodic wrap included, on the walls the FP solver solves with. Those walls are read
+  with the grid's layout, from its owner `periodic_axis_spans` (§ 8). FP-FDM's own stencils still read
+  the BC's convention field, which is #2910's stage 2; in 2-D and 3-D FP-FDM asks the owner when it is
+  built, so there a contradicting stated convention is refused. There
   the normal component of $p$ is the stencil's forward difference across the face, each other
   component the mean of the two nodes' centred differences, and $m$ the mean of the two nodes; a
   node a wrapping axis repeats carries its twin's face. Whatever the face values, the flux form
@@ -289,9 +290,10 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   the density non-negative at every Courant number measured, from 0.2 to about 1000 (1-D and 2-D,
   no-flux and periodic walls, quadratic, L1 and congestion controls). What the face values decide is
   consistency: on an axis that does not wrap, the transverse components of $p$ are second-order
-  accurate at the face where the axis has three nodes or more, and first order where it has two. On
-  a `TensorProductGrid` the builder takes a periodic BC's layout from the grid, and refuses a
-  convention that contradicts the grid's coordinates with the grid's message.
+  accurate at the face where the axis has three nodes or more, and first order where it has two. The
+  builder refuses a convention that contradicts the grid, with the grid's message, and a wrapping
+  grid that states no layout. On a 1-D grid it also refuses an axis whose last node is distinct from
+  node 0, whose wrap has one face more than the $n - 1$ it builds, until stage 2 of #2910.
 - **A separable $H$ not as the library ships it** (#2900, #2914; `drift_is_the_control_costs` is
   false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed
@@ -846,6 +848,39 @@ boundary condition as `PeriodicGridConvention.ENDPOINT_INCLUSIVE`.
 A parameter named for one count and holding the other is a defect, not a style choice, and an array
 shape is written with the point count. *Not yet met: several internals bind `Nx` to a point
 count (#2429), and many docstrings write a shape with `Nx` or `Nx+1` where `Nx_points` is meant (#2236).*
+
+### Periodic axes: which wrap, and how many nodes each spans
+
+**Which axes wrap, and with what period, has one owner** (`wrapping_axes` and `periodic_axes` in
+`geometry/boundary/conditions.py`, #2911). An axis wraps if and only if both of its faces are periodic,
+however the boundary condition spells it: a uniform periodic BC, a periodic segment on each face, or a
+periodic `default_bc`. Its period is the span of the bounds. A BC periodic on one face of an axis describes
+no topology, and the owner refuses it with the axis named.
+
+**How many distinct nodes a wrapping axis spans has one owner** (`periodic_axis_spans` in
+`geometry/grids/tensor_grid.py`, #2910): $n - 1$ where the last node repeats node 0 (endpoint-inclusive), and
+$n$ where it is distinct (endpoint-exclusive). It reads each wrapping axis on its own:
+- a `TensorProductGrid` measures each axis's layout from its coordinates, and a convention stated on the BC that
+  contradicts it is refused;
+- any other Cartesian grid states its layout as `periodic_convention`; one that states none takes the
+  convention stated on the BC; where both state one they must agree, and where neither does, the owner refuses
+  rather than choose.
+
+**A periodic boundary condition carries one convention.** A `TensorProductGrid` binds into it the layout of
+the axes it wraps. A grid whose axes differ in layout has no single `periodic_convention`, and asking for one
+is refused. On such a grid the binding reads which axes wrap from the topology owner:
+- a BC that wraps axes of one layout binds that layout;
+- one that wraps none binds nothing;
+- one that wraps axes of two layouts is refused when it is bound;
+- one periodic on one face of an axis is refused there by the topology owner.
+
+*Not yet met:*
+- *the stencils, ghost fills and operators that still read the BC's one convention field, or decide which
+  axes wrap their own way, move to these owners in stage 2 of #2910 and #2911;*
+- *the endpoint-exclusive layout in the FP velocity builder's 1-D route: the builder builds $n - 1$ faces,
+  and that wrap has $n$, so it refuses the layout. Stage 2 of #2910 lifts the refusal. On the torus of
+  `test_one_torus_in_two_layouts_gives_one_density`, FP-FDM's density on an exclusive grid agrees with an
+  inclusive grid's on their shared nodes in 1-D by the value route, and in 2-D and 3-D by both routes.*
 
 ### Spatial parameters are per-axis sequences
 

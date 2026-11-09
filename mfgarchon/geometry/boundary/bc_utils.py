@@ -313,8 +313,9 @@ def with_geometry_periodic_convention(boundary_conditions: Any, geometry: Any) -
 
     A grid binds this when a BC is attached to it, but a BC handed straight to a solver never met the grid, so its
     convention is unstated and would wrap the historical way (all N nodes distinct) on a grid where the two endpoints
-    are one point. (The FP velocity builder binds through the grid's own check, `bind_periodic_convention`, #2904.)
-    Measured on that path: the periodic gradient at the seam came out -1.5 where the grid's own layout gives -1.0.
+    are one point. Measured on that path: the periodic gradient at the seam came out -1.5 where the grid's own layout
+    gives -1.0. On a ``TensorProductGrid`` the completion is the grid's own, `bind_periodic_convention`, which reads
+    the layout of the axes the BC wraps (#2910); another geometry gives its stated ``periodic_convention``.
 
     Only fills a gap; a stated convention is left alone, and the grid refuses one that contradicts it at attachment
     time. The one owner of that completion: ``BaseMFGSolver._with_geometry_periodic_convention`` delegates here.
@@ -325,6 +326,10 @@ def with_geometry_periodic_convention(boundary_conditions: Any, geometry: Any) -
         return boundary_conditions
     if not declares_periodic(boundary_conditions):
         return boundary_conditions
+    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, bind_periodic_convention
+
+    if isinstance(geometry, TensorProductGrid):
+        return bind_periodic_convention(geometry, boundary_conditions)
     measured = getattr(geometry, "periodic_convention", None)
     if measured is None:
         return boundary_conditions
