@@ -49,6 +49,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    import skfem
+
     from mfgarchon.geometry.meshes.mesh_data import MeshData
 
 
@@ -266,29 +268,3 @@ def _apply_boundary_tags(mesh: skfem.Mesh, mesh_data: MeshData) -> None:
 
     for tag in np.unique(tags[tagged]):
         mesh._boundaries[f"region_{tag}"] = np.unique(facet_ids[tags == tag])
-
-
-if __name__ == "__main__":
-    """Smoke test for mesh adapter."""
-    import skfem
-
-    print("Testing mesh adapter...")
-
-    # Create a simple skfem mesh
-    mesh = skfem.MeshTri.init_symmetric()
-    print(f"skfem mesh: {mesh.p.shape[1]} nodes, {mesh.t.shape[1]} elements")
-
-    # Convert to MeshData
-    md = skfem_to_meshdata(mesh)
-    print(f"MeshData: {md.vertices.shape[0]} vertices, {md.elements.shape[0]} elements, type={md.element_type}")
-
-    # Round-trip
-    mesh2 = meshdata_to_skfem(md)
-    print(f"Round-trip: {mesh2.p.shape[1]} nodes, {mesh2.t.shape[1]} elements")
-
-    assert mesh2.p.shape == mesh.p.shape
-    assert mesh2.t.shape == mesh.t.shape
-    assert np.allclose(mesh2.p, mesh.p)
-    assert np.array_equal(mesh2.t, mesh.t)
-
-    print("Round-trip passed.")

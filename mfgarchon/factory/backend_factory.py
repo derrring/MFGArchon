@@ -12,10 +12,9 @@ import numpy as np
 
 if TYPE_CHECKING:
     from mfgarchon.backends.base_backend import BaseBackend
+    from mfgarchon.core.mfg_problem import MFGProblem
 
 from mfgarchon.backends import create_backend, get_available_backends, get_backend_info
-from mfgarchon.core.mfg_problem import MFGProblem
-from mfgarchon.geometry.boundary import no_flux_bc
 
 
 class BackendFactory:
@@ -240,27 +239,3 @@ def print_backend_info() -> None:
             print(f"  GPU available: {jax_info['has_gpu']}")
         else:
             print(f"\nWARNING:  JAX Error: {jax_info['error']}")
-
-
-if __name__ == "__main__":
-    # Demo backend information
-    print_backend_info()
-
-    # Create a test problem
-    from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=50)
-
-    print("\n Backend Recommendations for Test Problem:")
-    recommendations = BackendFactory.get_backend_recommendations(problem)
-
-    print(f"Problem size: {recommendations['problem_size']} ({recommendations['size_category']})")
-    print("Recommendations:")
-    for i, rec in enumerate(recommendations["recommendations"], 1):
-        print(f"  {i}. {rec['backend']} - {rec['reason']}")
-        if "config" in rec:
-            print(f"     Config: {rec['config']}")
-        if "warning" in rec:
-            print(f"     WARNING:  {rec['warning']}")

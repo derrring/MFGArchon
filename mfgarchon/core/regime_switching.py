@@ -132,29 +132,3 @@ class RegimeSwitchingConfig:
             Transition rate Q[from_regime, to_regime].
         """
         return float(self.transition_matrix[from_regime, to_regime])
-
-
-if __name__ == "__main__":
-    """Smoke test for RegimeSwitchingConfig."""
-
-    print("Testing RegimeSwitchingConfig...")
-
-    # Two-state switching
-    Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
-    config = RegimeSwitchingConfig(transition_matrix=Q, regime_names=["high", "low"])
-    config.validate()
-
-    pi = config.stationary_distribution()
-    print(f"  Stationary distribution: {pi}")
-    assert abs(pi[0] - 2 / 3) < 1e-10, f"Expected 2/3, got {pi[0]}"
-    assert abs(pi[1] - 1 / 3) < 1e-10, f"Expected 1/3, got {pi[1]}"
-
-    # Three-state
-    Q3 = np.array([[-0.3, 0.2, 0.1], [0.1, -0.2, 0.1], [0.05, 0.15, -0.2]])
-    config3 = RegimeSwitchingConfig(transition_matrix=Q3)
-    config3.validate()
-    pi3 = config3.stationary_distribution()
-    print(f"  3-state stationary: {pi3}")
-    assert abs(sum(pi3) - 1.0) < 1e-10
-
-    print("All tests passed!")

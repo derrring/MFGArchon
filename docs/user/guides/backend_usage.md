@@ -442,12 +442,6 @@ if backend.name.startswith("jax"):
 - **NVIDIA CUDA**: Install appropriate CUDA toolkit version
 - **CPU Optimization**: Configure OpenMP threads and BLAS libraries
 
-### **Performance Benchmarks**
-```python
-# Run comprehensive benchmarks
-python -m mfgarchon.benchmarks.backend_comparison --all-backends --problem-sizes large
-```
-
 ---
 
 **Quick Reference:**

@@ -222,29 +222,3 @@ def get_schedule(name: str | Callable[[int], float]) -> Callable[[int], float]:
         raise ValueError(f"Unknown learning rate schedule: {name}. Available: {list(LEARNING_RATE_SCHEDULES.keys())}")
 
     return LEARNING_RATE_SCHEDULES[name]
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing learning rate schedules...")
-
-    # Test all schedules
-    for name, fn in LEARNING_RATE_SCHEDULES.items():
-        rates = [fn(k) for k in [0, 1, 4, 9, 29, 99]]
-        print(
-            f"  {name}: k=0:{rates[0]:.3f}, k=1:{rates[1]:.3f}, k=4:{rates[2]:.3f}, "
-            f"k=9:{rates[3]:.3f}, k=29:{rates[4]:.3f}, k=99:{rates[5]:.3f}"
-        )
-
-    # Verify harmonic matches theory
-    assert abs(harmonic_schedule(0) - 1.0) < 1e-10
-    assert abs(harmonic_schedule(1) - 0.5) < 1e-10
-    assert abs(harmonic_schedule(9) - 0.1) < 1e-10
-    print("  Harmonic schedule verified")
-
-    # Test get_schedule
-    assert get_schedule("harmonic")(0) == 1.0
-    assert get_schedule(lambda k: 0.5)(100) == 0.5
-    print("  get_schedule() works")
-
-    print("All smoke tests passed!")

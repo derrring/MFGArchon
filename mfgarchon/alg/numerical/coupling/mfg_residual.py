@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
@@ -476,44 +475,3 @@ class MFGResidual:
     def reset_evaluation_count(self) -> None:
         """Reset residual evaluation counter."""
         self.residual_evaluations = 0
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing MFGResidual...")
-
-    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-
-    # Create simple 1D problem
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=0.1)
-
-    # Create solvers
-    hjb_solver = HJBFDMSolver(problem)
-    fp_solver = FPFDMSolver(problem)
-
-    # Create residual computer
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-
-    print(f"  Solution shape: {residual.solution_shape}")
-    print(f"  State size: {2 * np.prod(residual.solution_shape)}")
-
-    # Get initial guess
-    x0 = residual.get_initial_guess()
-    print(f"  Initial guess shape: {x0.shape}")
-
-    # Compute residual
-    F = residual.residual_function(x0)
-    print(f"  Initial residual norm: {np.linalg.norm(F):.2e}")
-    print(f"  Residual evaluations: {residual.residual_evaluations}")
-
-    # Test pack/unpack
-    U, M = residual.unpack_state(x0)
-    x_repacked = residual.pack_state(U, M)
-    assert np.allclose(x0, x_repacked), "Pack/unpack should be identity"
-    print("  Pack/unpack: OK")
-
-    print("MFGResidual smoke tests passed!")

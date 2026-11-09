@@ -904,17 +904,3 @@ class BaseCouplingIterator(ABC):
     def is_solved(self) -> bool:
         """Check if the solver has computed a solution."""
         return self._solution_computed
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing BaseCouplingIterator...")
-
-    # Test base class availability
-    assert BaseCouplingIterator is not None
-    print("  BaseCouplingIterator class available")
-
-    # Note: BaseCouplingIterator is abstract and requires implementation
-    # See FixedPointMFGSolver for concrete implementation
-
-    print("Smoke tests passed!")

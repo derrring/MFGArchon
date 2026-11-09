@@ -139,7 +139,7 @@ def test_the_set_of_classes_declaring_nothing_is_unchanged(declarations, role):
     An unwritten sibling of the same hole: a declaration set on the INSTANCE
     (`self._SUPPORTED_BC_TYPES = ...` in `__init__`) is invisible here while the runtime gate
     would honour it -- `_validate_bc_support` reads `getattr(self, "supported_bc_types")` and
-    `fp_fdm.py:121` returns `self._SUPPORTED_BC_TYPES`. No class does this today.
+    `base_solver.py:250` returns `self._SUPPORTED_BC_TYPES`. No class does this today.
     """
     got = {r["name"] for r in declarations["rows"] if role in r["roles"] and r["declares_nothing"]}
     want = _DECLARES_NOTHING[role]

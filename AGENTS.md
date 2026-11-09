@@ -238,15 +238,15 @@ never by matching a keyword.
 Cross-project testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
 - **Unit tests (`tests/unit`, `tests/integration`)** — public APIs (`problem.solve()`), core infra (config/problem/result/backend), numerical correctness that must not regress. They run in the local gate on every push, and on GitHub in the smoke subset, `python-compat.yml`, `discrimination.yml`, nightly and release.
-- **Inline smoke tests (`if __name__ == "__main__"`)** — rapidly-changing algorithm implementations; visual verification; low-maintenance; delete naturally on refactor. `python mfgarchon/alg/numerical/hjb_solvers/my_solver.py`.
 - **Examples (`examples/`)** — complete user workflows, not quick algorithm testing.
+- **No `if __name__ == "__main__":` block in a library module.** The CLI entry point `utils/cli.py` is the one exception.
 
-| Code type | Changes often? | Public API? | Test type |
-|:----------|:--------------|:------------|:----------|
-| `problem.solve()`, config system | No | Yes | Unit |
-| New HJB/FP solver | Yes | Maybe/No | Smoke |
-| Visualization | Sometimes | Yes | Smoke |
-| Utility function | No | Internal | Unit or smoke |
+| Code type | Test type |
+|:----------|:----------|
+| `problem.solve()`, config system | Unit |
+| New HJB/FP solver | Unit: one oracle (an exact or manufactured solution) |
+| Visualization | An example in `examples/` |
+| Utility function | Unit |
 
 ### The dimension must be able to express the property under test ⚠️
 

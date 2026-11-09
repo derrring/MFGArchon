@@ -164,34 +164,3 @@ def validate_scheme_pairing(hjb_solver: object, fp_solver: object) -> tuple[bool
 # =============================================================================
 # Smoke Test
 # =============================================================================
-
-if __name__ == "__main__":
-    """Quick validation of protocol definitions."""
-    print("Testing adjoint protocols (DEPRECATED)...")
-    print()
-
-    # Test new validate_scheme_pairing
-    print("Test: validate_scheme_pairing")
-
-    class MockHJBSolver:
-        advection_scheme = "gradient_upwind"
-
-    class MockFPSolverCorrect:
-        advection_scheme = "divergence_upwind"
-
-    class MockFPSolverWrong:
-        advection_scheme = "gradient_upwind"  # Wrong!
-
-    # Valid pairing
-    is_valid, error = validate_scheme_pairing(MockHJBSolver(), MockFPSolverCorrect())
-    assert is_valid, f"Should be valid: {error}"
-    print("  Valid pairing (gradient_upwind + divergence_upwind): PASSED")
-
-    # Invalid pairing
-    is_valid, error = validate_scheme_pairing(MockHJBSolver(), MockFPSolverWrong())
-    assert not is_valid, "Should be invalid"
-    assert "divergence_upwind" in error
-    print("  Invalid pairing detected: PASSED")
-    print()
-
-    print("All tests passed!")

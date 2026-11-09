@@ -940,17 +940,3 @@ class FixedPointIterator(BaseCouplingIterator):
         if self.U is None or self.M is None:
             raise RuntimeError("No solution computed. Call solve() first.")
         return self.U, self.M
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing FixedPointIterator...")
-
-    # Test class availability
-    assert FixedPointIterator is not None
-    print("  FixedPointIterator class available")
-
-    # Full smoke test requires complete solver setup
-    # See examples/basic/ for usage examples
-
-    print("Smoke tests passed!")

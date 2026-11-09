@@ -187,28 +187,3 @@ def clipped_voronoi_cells(
             )
         cells.append(CellGeometry(poly, area, centroid, mids, normals, lengths))
     return cells
-
-
-if __name__ == "__main__":
-    """Smoke test: tiling (sum of cell areas = domain area) + closure invariant."""
-
-    def grid(n):
-        ax = np.linspace(0.0, 1.0, n)
-        return np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
-
-    nodes = grid(15)
-    cells = clipped_voronoi_cells(nodes, [(0.0, 1.0), (0.0, 1.0)])
-    total = sum(c.area for c in cells)
-    max_closure = max(float(np.abs((c.edge_normals * c.edge_lengths[:, None]).sum(axis=0)).max()) for c in cells)
-    print(f"rect 15x15: N={len(cells)} sum(V_a)={total:.6f} (bbox area 1.0)  max_closure={max_closure:.2e}")
-    assert abs(total - 1.0) < 1e-9, "cells must tile the bounding box"
-
-    # disk sdf
-    R = 0.4
-    in_disk = lambda x: np.hypot(x[0] - 0.5, x[1] - 0.5) - R  # noqa: E731
-    dnodes = nodes[in_disk(tuple(nodes.T)) <= 0]
-    dcells = clipped_voronoi_cells(dnodes, [(0.1, 0.9), (0.1, 0.9)], sdf=in_disk)
-    darea = sum(c.area for c in dcells)
-    print(f"disk:      N={len(dcells)} sum(V_a)={darea:.6f} (pi R^2 = {np.pi * R**2:.6f})")
-    assert abs(darea - np.pi * R**2) < 5e-3, "disk cells must tile Omega"
-    print("voronoi_cells smoke test passed.")

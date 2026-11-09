@@ -565,17 +565,3 @@ class FPNetworkSolver(BaseFPSolver):
 
 # Alias for backward compatibility
 NetworkFPSolver = FPNetworkSolver
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing NetworkFPSolver...")
-
-    # Test class availability
-    assert NetworkFPSolver is not None
-    print("  NetworkFPSolver class available")
-
-    # Note: Full smoke test requires NetworkMFGProblem setup
-    # See examples/networks/ for usage examples
-
-    print("Smoke tests passed!")

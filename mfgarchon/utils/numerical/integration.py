@@ -19,27 +19,3 @@ def get_integration_info() -> dict[str, str]:
 
 # Export the main functions
 __all__ = ["get_integration_info", "trapezoid"]
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing integration utilities...")
-
-    import numpy as np
-
-    # Test get_integration_info
-    info = get_integration_info()
-    assert isinstance(info, dict)
-    assert "numpy_version" in info
-    print(f"  NumPy version: {info['numpy_version']}")
-
-    # Test trapezoid integration
-    x = np.linspace(0, 1, 100)
-    y = x**2  # Integral should be 1/3
-    result = trapezoid(y, x)
-    expected = 1 / 3
-    error = abs(result - expected)
-    assert error < 1e-3, f"Integration error {error} too large"
-    print(f"  Trapezoid integration: {result:.6f} (expected {expected:.6f}, error {error:.2e})")
-
-    print("Smoke tests passed!")

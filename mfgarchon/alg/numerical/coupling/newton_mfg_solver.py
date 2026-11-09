@@ -29,13 +29,9 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
-from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
 from .fixed_point_utils import (
@@ -488,60 +484,3 @@ class NewtonMFGSolver(BaseCouplingIterator):
         if self.U is None or self.M is None:
             raise RuntimeError("Solver has not been run yet. Call solve() first.")
         return self.U, self.M
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development.
-
-    Run with: python -m mfgarchon.alg.numerical.coupling.newton_mfg_solver
-    Or ensure mfgarchon is installed: pip install -e .
-    """
-    # Issue #757: Removed sys.path manipulation - use proper package installation
-    print("Testing NewtonMFGSolver...")
-
-    from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry import TensorProductGrid
-    from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
-    from mfgarchon.utils.solver_result import SolverResult  # noqa: F401
-
-    # Create simple 1D problem
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=0.2)
-
-    # Create solvers
-    hjb_solver = HJBFDMSolver(problem)
-    fp_solver = FPFDMSolver(problem)
-
-    # Create Newton MFG solver
-    newton_solver = NewtonMFGSolver(
-        problem,
-        hjb_solver,
-        fp_solver,
-        picard_warmup=2,
-        newton_max_iterations=5,
-        line_search=True,
-    )
-
-    print(f"  Problem shape: {newton_solver.mfg_residual.solution_shape}")
-
-    # Solve
-    U, M, info = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=True)
-
-    print("\nResults:")
-    print(f"  U shape: {U.shape}")
-    print(f"  M shape: {M.shape}")
-    print(f"  Converged: {info['converged']}")
-    print(f"  Total iterations: {info['total_iterations']}")
-    print(f"  Final residual: {info.get('final_residual', 'N/A')}")
-
-    # Verify shapes
-    assert U.shape == newton_solver.mfg_residual.solution_shape
-    assert M.shape == newton_solver.mfg_residual.solution_shape
-    assert np.all(np.isfinite(U)), "U contains inf/nan"
-    assert np.all(np.isfinite(M)), "M contains inf/nan"
-
-    print("\nNewtonMFGSolver smoke tests passed!")

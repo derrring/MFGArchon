@@ -38,9 +38,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inn
 
 # Import shared iteration utilities (Issue #630, migrated #985)
 from mfgarchon.utils.iteration.schedules import (
-    LEARNING_RATE_SCHEDULES,
     get_schedule,
-    harmonic_schedule,
 )
 from mfgarchon.utils.solver_result import SolverResult
 
@@ -544,35 +542,3 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         if self.U is None or self.M is None:
             raise RuntimeError("No solution computed. Call solve() first.")
         return self.U, self.M
-
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    print("Testing FictitiousPlayIterator...")
-
-    # Test class availability
-    assert FictitiousPlayIterator is not None
-    print("  FictitiousPlayIterator class available")
-
-    # Test learning rate schedules
-    print("\n  Learning rate schedules:")
-    for name, fn in LEARNING_RATE_SCHEDULES.items():
-        rates = [fn(k) for k in [0, 1, 4, 9, 29, 99]]
-        print(
-            f"    {name}: k=0:{rates[0]:.3f}, k=1:{rates[1]:.3f}, k=4:{rates[2]:.3f}, "
-            f"k=9:{rates[3]:.3f}, k=29:{rates[4]:.3f}, k=99:{rates[5]:.3f}"
-        )
-
-    # Verify harmonic schedule matches theory
-    alpha_1 = harmonic_schedule(0)  # k=0 -> alpha = 1/(0+1) = 1.0
-    alpha_2 = harmonic_schedule(1)  # k=1 -> alpha = 1/(1+1) = 0.5
-    alpha_10 = harmonic_schedule(9)  # k=9 -> alpha = 1/10 = 0.1
-    alpha_100 = harmonic_schedule(99)  # k=99 -> alpha = 1/100 = 0.01
-
-    assert abs(alpha_1 - 1.0) < 1e-10, f"Expected 1.0, got {alpha_1}"
-    assert abs(alpha_2 - 0.5) < 1e-10, f"Expected 0.5, got {alpha_2}"
-    assert abs(alpha_10 - 0.1) < 1e-10, f"Expected 0.1, got {alpha_10}"
-    assert abs(alpha_100 - 0.01) < 1e-10, f"Expected 0.01, got {alpha_100}"
-    print("  Harmonic schedule verified")
-
-    print("\nSmoke tests passed!")
