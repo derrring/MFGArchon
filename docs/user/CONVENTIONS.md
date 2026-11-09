@@ -292,8 +292,9 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   consistency: on an axis that does not wrap, the transverse components of $p$ are second-order
   accurate at the face where the axis has three nodes or more, and first order where it has two. The
   builder refuses a convention that contradicts the grid, with the grid's message, and a wrapping
-  grid that states no layout. On a 1-D grid it also refuses an axis whose last node is distinct from
-  node 0, whose wrap has one face more than the $n - 1$ it builds, until stage 2 of #2910.
+  grid that states no layout. On a 1-D grid it also refuses a wrapping axis of $n$ nodes whose last
+  node is distinct from node 0: its wrap has $n$ faces, one more than the $n - 1$ it builds, until
+  stage 2 of #2910.
 - **A separable $H$ not as the library ships it** (#2900, #2914; `drift_is_the_control_costs` is
   false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed
