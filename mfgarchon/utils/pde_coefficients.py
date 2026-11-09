@@ -7,7 +7,6 @@ eliminating code duplication across HJB, FP, and coupling solvers.
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
@@ -205,44 +204,6 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     return float(cc)
 
 
-#: The public ``sigma=`` keyword #2378 phase 4 part 2b retired where it carried the volatility
-#: (maintainer ruling 16, 2026-09-28: a hard rename, deprecation clause 4 waived). Read by
-#: ``retired_sigma_keyword``; the manufactured-solution sources retire ``sigma_kind=`` with it.
-RETIRED_SIGMA_KEYWORD: dict[str, str] = {"sigma": "volatility= -- the SDE volatility, under its one name"}
-
-
-def retired_sigma_keyword[F: Callable[..., Any]](func: F) -> F:
-    """Refuse ``sigma=`` on ``func``, naming ``volatility=`` (#2378 part 2b); the refusal goes at v0.25.0.
-
-    Typed as returning ``func``'s own type: an untyped decorator makes mypy read every decorated
-    function as ``Any`` and stop checking its callers.
-    """
-    from mfgarchon.utils.deprecation import retired_parameters
-
-    return retired_parameters(RETIRED_SIGMA_KEYWORD, issue="#2378", since="v0.22.0")(func)
-
-
-#: ``sigma_at_n=`` on the public ``base_hjb`` assembly functions, which carried the volatility at t_n
-#: under a sigma prefix (#2378 phase 4 part 3, maintainer ruling 20, 2026-09-28: a hard rename).
-RETIRED_SIGMA_AT_N_KEYWORD: dict[str, str] = {"sigma_at_n": "volatility_at_n= -- the SDE volatility at t_n"}
-
-
-def retired_sigma_at_n_keyword[F: Callable[..., Any]](func: F) -> F:
-    """Refuse ``sigma_at_n=`` on ``func``, naming ``volatility_at_n=`` (#2378 part 3); goes at v0.25.0."""
-    from mfgarchon.utils.deprecation import retired_parameters
-
-    return retired_parameters(RETIRED_SIGMA_AT_N_KEYWORD, issue="#2378", since="v0.22.0")(func)
-
-
-def retired_sigma_and_kind_keywords[F: Callable[..., Any]](func: F) -> F:
-    """``retired_sigma_keyword`` for a function that also took ``sigma_kind=`` (#2378 part 2b)."""
-    from mfgarchon.utils.deprecation import retired_parameters
-
-    replacements = {**RETIRED_SIGMA_KEYWORD, "sigma_kind": "volatility_kind="}
-    return retired_parameters(replacements, issue="#2378", since="v0.22.0")(func)
-
-
-@retired_sigma_keyword
 def diffusion_from_volatility(
     volatility: float | np.ndarray,
     *,
@@ -421,31 +382,6 @@ def scalar_volatility(volatility: Any, *, consumer: str) -> float:
     )
 
 
-#: The per-solve keywords #2378 phase 4 part 2a retired, and what replaces each (maintainer ruling
-#: 2026-09-28: a hard rename, deprecation clause 4 waived). Read by `retired_volatility_keywords`.
-RETIRED_VOLATILITY_KEYWORDS: dict[str, str] = {
-    "volatility_field": "volatility= (with volatility_kind='field' or 'tensor' for an array)",
-    "volatility_matrix": "volatility= with volatility_kind='tensor'",
-    "tensor_diffusion_field": "volatility= with volatility_kind='tensor'",
-    "diffusion_field": (
-        "volatility= -- the SDE volatility, not a diffusion coefficient -- with "
-        "volatility_kind='field' or 'tensor' for an array"
-    ),
-}
-
-
-def retired_volatility_keywords[F: Callable[..., Any]](func: F) -> F:
-    """Refuse the four retired volatility keywords on ``func``, naming ``volatility=`` (#2378).
-
-    The refusal goes at v0.25.0, three minors after v0.22.0 -- except on a ``func`` taking
-    ``**kwargs``, where the deprecation audit reports it blocked until that ``**kwargs`` stops
-    swallowing unknown names (#2419).
-    """
-    from mfgarchon.utils.deprecation import retired_parameters
-
-    return retired_parameters(RETIRED_VOLATILITY_KEYWORDS, issue="#2378", since="v0.22.0")(func)
-
-
 def resolve_volatility_override(
     volatility: Any, volatility_kind: str | None, *, problem: Any, consumer: str
 ) -> tuple[Any, str | None]:
@@ -504,7 +440,6 @@ def resolve_volatility_override(
     return array, volatility_kind
 
 
-@retired_sigma_keyword
 def diffusion_from_volatility_torch(volatility: Any) -> Any:
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` for torch tensors.
 
@@ -534,14 +469,9 @@ def diffusion_from_volatility_torch(volatility: Any) -> Any:
     return 0.5 * volatility**2
 
 
-_VOLATILITY_LEGACY_KEY_WARNED: set[str] = set()
-
-
 def resolve_volatility(
     problem_params: dict[str, Any],
     *,
-    legacy_key: str | None = None,
-    legacy_is_squared: bool = False,
     default: float,
 ) -> Any:
     r"""Resolve the SDE volatility ``sigma`` from a backend ``problem_params`` dict.
@@ -558,53 +488,29 @@ def resolve_volatility(
 
     1. ``problem_params["sigma"]`` -- the key this resolver treats as canonical; it holds the SDE
        volatility under a name ``docs/user/CONVENTIONS.md`` § Names retires elsewhere. Returned
-       verbatim; the caller computes ``D = sigma**2 / 2``. No warning.
-    2. ``problem_params[legacy_key]`` -- the backend's historical key, when ``legacy_key`` is
-       given and present. ``legacy_is_squared=True`` means the stored value is ``sigma**2``
-       (the numpy/jax ``"sigma_sq"`` key), so ``sqrt`` is applied; ``legacy_is_squared=False``
-       means the stored value is already ``sigma`` (the torch ``"diffusion"`` key). Emits a
-       **one-time** ``DeprecationWarning`` (per legacy key, per process) naming the canonical
-       ``"sigma"`` key.
-    3. ``default`` -- the backend's historical no-key default, so callers that omit the
+       verbatim; the caller computes ``D = sigma**2 / 2``.
+    2. ``default`` -- the backend's historical no-key default, so callers that omit the
        parameter see no behavior change.
 
     Returns ``sigma`` (not ``D``); each backend applies its own ``sigma -> D`` conversion
     (``0.5 * sigma**2`` for numpy/jax/numba, :func:`diffusion_from_volatility_torch` for torch)
-    so the autograd / JIT computation graph is preserved. The square root uses ``value ** 0.5``
-    rather than ``np.sqrt`` so torch tensors and jax tracers pass through their own dispatch
-    unchanged.
+    so the autograd / JIT computation graph is preserved.
 
     Parameters
     ----------
     problem_params : dict
         Backend problem-parameter dict.
-    legacy_key : str | None
-        The backend's historical dict key, or ``None`` (numba, already canonical).
-    legacy_is_squared : bool
-        ``True`` if ``problem_params[legacy_key]`` stores ``sigma**2`` (numpy/jax ``"sigma_sq"``).
     default : float
-        Volatility used when neither the canonical nor the legacy key is present. Required
+        Volatility used when the canonical key is absent. Required
         (keyword-only) so each backend explicitly preserves its prior no-key default.
 
     Returns
     -------
     sigma : float | torch.Tensor | jax.Array
-        The SDE volatility (same type as the stored value on the legacy/canonical path).
+        The SDE volatility (same type as the stored value).
     """
     if "sigma" in problem_params:
         return problem_params["sigma"]
-    if legacy_key is not None and legacy_key in problem_params:
-        if legacy_key not in _VOLATILITY_LEGACY_KEY_WARNED:
-            _VOLATILITY_LEGACY_KEY_WARNED.add(legacy_key)
-            warnings.warn(
-                f"problem_params key {legacy_key!r} is deprecated; use the canonical 'sigma' "
-                f"key holding the SDE volatility (D = sigma**2/2) for cross-backend portability "
-                f"(Issue #1282).",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        value = problem_params[legacy_key]
-        return value**0.5 if legacy_is_squared else value
     return default
 
 
@@ -1122,7 +1028,6 @@ class CoefficientField:
         validate_symmetric_psd(tensor, name=self.name, tolerance=tolerance)
 
 
-@retired_sigma_keyword
 def check_adi_compatibility(
     volatility: float | np.ndarray,
     tolerance: float = 1e-10,

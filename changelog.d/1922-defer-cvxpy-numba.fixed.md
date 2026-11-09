@@ -19,8 +19,7 @@
   package is absent, which is not uniform across runners. Checked at each workflow's pytest
   invocation rather than its `pip` line: the assertion is live on `nightly.yml` and
   `discrimination.yml`, which install `[numerical]` plus numba and collect this file; it skips on
-  `python-compat.yml`; `ci.yml` does not collect it on pull requests at all; and
-  `deprecation-check.yml` installs both packages but never invokes pytest.
+  `python-compat.yml`; and `ci.yml` does not collect it on pull requests at all.
 
   Not addressed here: jax, which reaches `sys.modules` by a different route
   (`utils/acceleration/__init__.py` runs `import jax` to compute `HAS_JAX`) and needs that package's

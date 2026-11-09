@@ -2,8 +2,8 @@
   0.0, so a value that declares `t` is refused when no time is given, not read at t = 0** (#2512, row B2). A
   constant, or `g(x)`, needs no time and reads as before.
   - The public functions are:
-    - `laplacian_with_bc` and `weighted_laplacian_with_bc`, `pad_array_with_ghosts`, `get_ghost_values_nd`;
-    - `tensor_calculus.gradient`, `divergence`, `laplacian`, `hessian`, `diffusion`, `tensor_diffusion` and
+    - `laplacian_with_bc` and `weighted_laplacian_with_bc`, `pad_array_with_ghosts`;
+    - `tensor_calculus.gradient`, `divergence`, `laplacian`, `hessian`, `diffusion` and
       `advection`;
     - `FDMApplicator.apply`, `ImplicitApplicator.apply`, `InterpolationApplicator.enforce_values`, `apply_bc` and
       `BaseNumericalSolver.apply_boundary_conditions`;

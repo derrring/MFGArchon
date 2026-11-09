@@ -4,7 +4,7 @@
 retired (ruling 11). `volatility=` replaces all four; an array declares `volatility_kind="field"`
 or `"tensor"` (ruling 12), and one owner, `resolve_volatility_override`, reads it for every
 solver. The census on #2378 (2026-09-28) found six defects in the old, per-solver reading. Pinned
-here: the refusal (and defect 5), its removal schedule, the owner's own refusals, and defects 1-3.
+here: the refusal (and defect 5), the owner's own refusals, and defects 1-3.
 Defect 4 -- HJB-FDM and FP-FDM reading one array two ways -- is pinned by the d x d grid tests and
 the override-route tests in test_volatility_is_never_collapsed_2376.py.
 """
@@ -21,7 +21,10 @@ import pytest
 import numpy as np
 
 import mfgarchon
-from mfgarchon.utils.pde_coefficients import RETIRED_VOLATILITY_KEYWORDS, resolve_volatility_override
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override
+
+#: The per-solve keywords #2378 phase 4 part 2a retired; `volatility=` with `volatility_kind=` replaces them.
+RETIRED_VOLATILITY_KEYWORDS = ("volatility_field", "volatility_matrix", "tensor_diffusion_field", "diffusion_field")
 
 _ENTRY_POINTS = ("solve_fp_system", "solve_hjb_system", "__init__")
 
@@ -74,13 +77,12 @@ def _override_takers() -> dict[str, tuple[object, bool]]:
 
 
 def test_every_entry_point_taking_the_override_refuses_the_retired_names():
-    """Ruling 11: each retired name raises a TypeError that names what replaces it.
+    """Ruling 11: each retired name raises Python's own TypeError, which names it (the removal before 1.0).
 
-    Python's own "unexpected keyword argument" names no replacement, and a signature with
-    `**kwargs` -- the weak-form pair, the meshless HJB, FixedPointIterator -- accepted the old name
-    and ignored it (#2419). Before part 2a FixedPointIterator took `diffusion_field=` with only a
-    warning (census defect 5). The decorator raises before the arguments bind, so each function is
-    called with a placeholder for `self`.
+    A signature with `**kwargs` -- the weak-form pair, the meshless HJB, FixedPointIterator -- once accepted the
+    old name and ignored it (#2419), and before part 2a FixedPointIterator took `diffusion_field=` with only a warning
+    (census defect 5). No entry point takes `**kwargs` now, so the keyword fails to bind before the body runs; each
+    function is called with a placeholder for `self`.
     """
     takers = _override_takers()
     # Reach control: known members, one per kind of entry point, and a floor on the population.
@@ -101,7 +103,7 @@ def test_every_entry_point_taking_the_override_refuses_the_retired_names():
             try:
                 func(*args, **{name: 0.3})
             except TypeError as exc:
-                if f"no longer takes {name}=; pass volatility=" in str(exc) and "#2378" in str(exc):
+                if f"unexpected keyword argument '{name}'" in str(exc):
                     continue
                 wrong.append(f"{qualname}({name}=): {exc}")
             except Exception as exc:  # any other outcome is the finding
@@ -109,37 +111,6 @@ def test_every_entry_point_taking_the_override_refuses_the_retired_names():
             else:
                 wrong.append(f"{qualname}({name}=): accepted")
     assert not wrong, "entry points that do not refuse a retired name by name:\n" + "\n".join(wrong)
-
-
-def test_the_refusal_is_scheduled_and_the_audit_reads_the_schedule():
-    """The refusal goes at v0.25.0, except where a `**kwargs` would then swallow the name (#2419).
-
-    `retired_parameters` records the date and the blocker, and the deprecation audit reads them,
-    so a v0.25.0 written into a message alone is not what schedules it -- that was #2270, a removal
-    five minors overdue because nothing read its date.
-    """
-    from mfgarchon.utils.deprecation import audit_all_deprecations
-
-    def retired(report, bucket):
-        return {e["name"]: e for e in report[bucket] if e["type"] == "retired_parameters"}
-
-    before = audit_all_deprecations(mfgarchon, current_version="v0.24.0")
-    assert "FPFDMSolver.solve_fp_system" in retired(before, "active")
-    assert not retired(before, "ready")
-    assert not retired(before, "not_ready")
-
-    due = audit_all_deprecations(mfgarchon, current_version="v0.25.0")
-    ready = retired(due, "ready")
-    assert "FPFDMSolver.solve_fp_system" in ready, "a closed signature is removable at v0.25.0"
-    # #2419 closed the weak-form **kwargs, so their refusal is removable on schedule too.
-    assert "WeakFormFPSolver.solve_fp_system" in ready
-    assert "WeakFormHJBSolver.solve_hjb_system" in ready
-    # The blocker is read from the signature, so a function that still takes **kwargs stays blocked.
-    # For FixedPointIterator that is a known false positive: its **kwargs now raises on an unknown
-    # name (#2419) rather than swallowing it. It is held until that **kwargs goes with the damping_*
-    # names it exists to explain, due at the same v0.25.0.
-    blocked = retired(due, "not_ready")
-    assert blocked["FixedPointIterator.__init__"]["remaining_blockers"] == ["var_keyword"]
 
 
 _OWNER_PROBLEM = SimpleNamespace(volatility=0.3, volatility_kind=None, dimension=2)

@@ -3,12 +3,11 @@
 1. The flux that its code generator emits takes D from its one owner, `diffusion_from_volatility`, and does not
    restate `0.5 * sigma**2`. `scripts/single_source_baseline.json` cannot see source held in a string template,
    because the check blanks string tokens, so this test is the pin for that site.
-2. Six inputs that never had an effect are refused when passed, by keyword or by position: five dataclass fields,
-   and `backend=` at the three generator entry points that accept it. The refusal stays until v0.25.0, in ruling
-   16's shape. Each stays in the signature, so the positions of the parameters after it do not shift for a caller
-   passing positionally.
-3. Their default is `NEVER_READ`, which the refusal lets through, so `dataclasses.replace` and the `asdict` /
-   `astuple` round trips -- which pass every field back in -- still work (review 1 of #2650, B1).
+2. Six inputs that never had an effect are deleted (the removal before 1.0): five dataclass fields, and `backend=`
+   at the three generator entry points. Passing one by keyword is Python's own `TypeError`, which names it; a
+   positional argument at or past its slot is a `TypeError` too, because the parameters after it are keyword-only,
+   so it cannot land silently on the next one.
+3. `dataclasses.replace` and the `asdict` / `astuple` round trips still work (review 1 of #2650, B1).
 
 Not pinned: that a generated solver runs. Its source does not compile today, because the template substitution does
 not indent multi-line snippets; repaired by hand, the generated FP solver still raises `NameError` on an undefined
@@ -61,56 +60,51 @@ REFUSED = [
 
 
 @pytest.mark.parametrize(("cls", "args", "kwargs", "name"), REFUSED)
-def test_a_field_that_never_had_an_effect_is_refused_by_name(cls, args, kwargs, name):
-    """The message names the class called, not a base class the call reached through `super()`."""
-    with pytest.raises(
-        TypeError,
-        match=rf"^{cls.__name__}\.__init__\(\) refuses {name}=: .+; it never had an effect, and the name goes in v0\.25\.0",
-    ):
+def test_a_deleted_field_is_refused_by_keyword_and_by_position(cls, args, kwargs, name):
+    """By keyword, Python names the field; by position, the call has one positional argument too many."""
+    with pytest.raises(TypeError, match=rf"unexpected keyword argument '{name}'" if kwargs else r"positional argument"):
         cls(*args, **kwargs)
 
 
-def test_the_solver_generator_refuses_a_backend_and_runs_without_one():
-    """`generate_solver_class` forwards `backend` to `MFGSolverGenerator`, which forwards it to `CodeGenerator`; the
-    default passes the whole chain, and a backend named at the entry point is refused there, by its own name."""
+def test_the_solver_generator_takes_no_backend_and_runs_without_one():
+    """`generate_solver_class` builds `MFGSolverGenerator`, which builds `CodeGenerator`; none takes a backend."""
     system = quadratic_mfg_system(control_cost=0.5, state_cost=1.0)
     schemes = {"gradient": generate_discretization("gradient", 2), "divergence": generate_discretization("gradient", 2)}
     assert "class GeneratedPinned" in generate_solver_class("Pinned", system, schemes)
-    refusal = r"generate_solver_class\(\) refuses backend=: .+; it never had an effect"
-    with pytest.raises(TypeError, match=refusal):
+    with pytest.raises(TypeError, match=r"generate_solver_class\(\) got an unexpected keyword argument 'backend'"):
         generate_solver_class("Pinned", system, schemes, backend="jax")
-    with pytest.raises(TypeError, match=refusal):
+    with pytest.raises(TypeError, match=r"positional argument"):
         generate_solver_class("Pinned", system, schemes, "numpy")
     assert CodeGenerator().templates == {}
     assert MFGSolverGenerator().templates
 
 
 def test_the_other_fields_still_bind_where_they_did():
-    """Control: the refusals take nothing else away, and every field keeps the position it had at cb0724a9."""
-    assert list(inspect.signature(DiscretizationScheme).parameters) == [
-        "operator",
-        "order",
-        "stencil",
-        "coefficients",
-        "boundary_treatment",
+    """Control: the deletions take nothing else away. A field before a deleted one keeps its position; a field after
+    one is keyword-only."""
+
+    def kinds(cls):
+        return [(n, p.kind is inspect.Parameter.KEYWORD_ONLY) for n, p in inspect.signature(cls).parameters.items()]
+
+    assert kinds(DiscretizationScheme) == [
+        ("operator", False),
+        ("order", False),
+        ("stencil", False),
+        ("coefficients", False),
     ]
-    assert list(inspect.signature(PerformanceProfile).parameters) == [
-        "problem_size",
-        "backend",
-        "target_precision",
-        "memory_constraint",
-        "time_constraint",
-        "optimization_level",
+    assert kinds(PerformanceProfile) == [
+        ("problem_size", False),
+        ("backend", False),
+        ("memory_constraint", True),
+        ("optimization_level", True),
     ]
-    assert list(inspect.signature(OptimizationHints).parameters) == [
-        "vectorizable",
-        "parallelizable",
-        "memory_bound",
-        "compute_bound",
-        "unroll_small_loops",
-        "vectorize_inner_loops",
-        "jax_hints",
-        "numba_hints",
+    assert kinds(OptimizationHints) == [
+        ("vectorizable", False),
+        ("parallelizable", False),
+        ("memory_bound", False),
+        ("compute_bound", False),
+        ("jax_hints", True),
+        ("numba_hints", True),
     ]
     assert DiscretizationScheme("gradient", 2, [-1, 1], [-0.5, 0.5]).operator == "gradient"
     profile = PerformanceProfile(100, "numpy", memory_constraint=64, optimization_level="speed")
@@ -119,8 +113,8 @@ def test_the_other_fields_still_bind_where_they_did():
     assert (hints.vectorizable, hints.compute_bound) == (False, False)
 
 
-def test_a_round_trip_passes_the_never_read_default_back():
-    """`replace` and the `asdict` / `astuple` round trips pass every field back in, the refused ones included."""
+def test_a_round_trip_passes_every_field_back():
+    """`replace` and the `asdict` / `astuple` round trips pass every field back in."""
     scheme = DiscretizationScheme("gradient", 2, [-1, 1], [-0.5, 0.5])
     profile = PerformanceProfile(100, "numpy")
     hints = OptimizationHints()
@@ -137,6 +131,6 @@ def test_a_round_trip_passes_the_never_read_default_back():
 
 
 def test_a_call_that_does_not_bind_keeps_the_function_in_its_message():
-    """The refusal binds the call first; a call that does not bind gets the function's own error, which names it."""
+    """A call that does not bind gets the function's own error, which names it."""
     with pytest.raises(TypeError, match=r"OptimizationHints\.__init__\(\) got an unexpected keyword argument 'bogus'"):
         OptimizationHints(bogus=True)

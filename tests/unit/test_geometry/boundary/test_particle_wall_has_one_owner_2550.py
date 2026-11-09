@@ -84,8 +84,6 @@ ALLOWED = {
     ("mfgarchon/geometry/boundary/periodic.py", "wrap_axis"): "the wrap's owner",
     # The path rule's owner, the contact loop (#2733): at a corner it mirrors the step's end about the box's face.
     ("mfgarchon/alg/numerical/fp_solvers/fp_particle_bc.py", "reflect_at_first_contacts"): "the path rule's owner",
-    # The clamp #2810 deprecated; it goes with its deprecation.
-    ("mfgarchon/geometry/boundary/corner/position.py", "absorb_positions"): "deprecated (#2810)",
     # The semi-Lagrangian departure-point folds.
     ("mfgarchon/alg/numerical/hjb_solvers/hjb_sl_characteristics.py", "apply_boundary_conditions_1d"): _SL,
     ("mfgarchon/alg/numerical/hjb_solvers/hjb_sl_characteristics.py", "apply_boundary_conditions_nd"): _SL,

@@ -133,7 +133,7 @@ class SparseMatrixBuilder:
         boundary_conditions: str,
     ) -> sp.spmatrix:
         """Build 1D Laplacian with 3-point stencil."""
-        nx = self.grid.num_points[0]
+        nx = self.grid.Nx_points[0]
         dx = self.grid.spacing[0]
 
         # Create tridiagonal matrix
@@ -166,7 +166,7 @@ class SparseMatrixBuilder:
         boundary_conditions: str,
     ) -> sp.spmatrix:
         """Build 2D Laplacian with 5-point stencil."""
-        nx, ny = self.grid.num_points
+        nx, ny = self.grid.Nx_points
         dx, dy = self.grid.spacing
 
         # Build using LIL format for efficient construction
@@ -205,7 +205,7 @@ class SparseMatrixBuilder:
         boundary_conditions: str,
     ) -> sp.spmatrix:
         """Build 3D Laplacian with 7-point stencil."""
-        nx, ny, nz = self.grid.num_points
+        nx, ny, nz = self.grid.Nx_points
         dx, dy, dz = self.grid.spacing
 
         L = sp.lil_matrix((self.N, self.N), dtype=self.dtype)
@@ -259,7 +259,7 @@ class SparseMatrixBuilder:
             Sparse matrix L of shape (N, N) representing -Laplacian operator
         """
         ndim = self.grid.dimension
-        num_points = self.grid.num_points
+        num_points = self.grid.Nx_points
         spacing = self.grid.spacing
 
         L = sp.lil_matrix((self.N, self.N), dtype=self.dtype)
@@ -326,7 +326,7 @@ class SparseMatrixBuilder:
 
     def _build_gradient_1d(self, order: int) -> sp.spmatrix:
         """Build 1D gradient matrix."""
-        nx = self.grid.num_points[0]
+        nx = self.grid.Nx_points[0]
         dx = self.grid.spacing[0]
 
         if order == 1:
@@ -342,7 +342,7 @@ class SparseMatrixBuilder:
 
     def _build_gradient_2d(self, direction: int, order: int) -> sp.spmatrix:
         """Build 2D gradient matrix along specified direction."""
-        nx, ny = self.grid.num_points
+        nx, ny = self.grid.Nx_points
         dx, dy = self.grid.spacing
 
         G = sp.lil_matrix((self.N, self.N), dtype=self.dtype)
@@ -372,7 +372,7 @@ class SparseMatrixBuilder:
 
     def _build_gradient_3d(self, direction: int, order: int) -> sp.spmatrix:
         """Build 3D gradient matrix along specified direction."""
-        nx, ny, nz = self.grid.num_points
+        nx, ny, nz = self.grid.Nx_points
         dx, dy, dz = self.grid.spacing
 
         G = sp.lil_matrix((self.N, self.N), dtype=self.dtype)
@@ -426,7 +426,7 @@ class SparseMatrixBuilder:
         Returns:
             Sparse matrix G representing d/dx_d operator
         """
-        num_points = self.grid.num_points
+        num_points = self.grid.Nx_points
         spacing = self.grid.spacing
 
         G = sp.lil_matrix((self.N, self.N), dtype=self.dtype)

@@ -1,4 +1,4 @@
-- **`ParticleApplicator.apply`, `apply_with_flux_limits` and `MeshfreeApplicator`'s absorbing mode refuse a non-finite
+- **`ParticleApplicator.apply` and `MeshfreeApplicator`'s absorbing mode refuse a non-finite
   particle position by name** (#2550). No wall rule can place one, since its fold, wrap and exit are undefined.
   `ParticleApplicator` kept it -- a NaN unmoved, an infinite coordinate turned into NaN by its fold or wrap -- or,
   past an absorbing face, counted it as an exit; the absorbing mode dropped it as though absorbed. Now the absorbing

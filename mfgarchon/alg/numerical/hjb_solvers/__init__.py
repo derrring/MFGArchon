@@ -12,8 +12,7 @@ numerical analysis approaches:
   stencils on a stencil_provider HJBGFDMSolver)
 - HJBSemiLagrangianSolver: Semi-Lagrangian approach (characteristic-based, nD)
 - HJBWENOSolver: WENO (Weighted Essentially Non-Oscillatory) method (1D/2D/3D)
-- PenaltyHJBSolver: retired (#2002); construction raises NotImplementedError. Obstacles go
-  through HJBFDMSolver(constraint=ObstacleConstraint(...)) (#591)
+- Obstacles go through HJBFDMSolver(constraint=ObstacleConstraint(...)) (#591)
 
 All solvers inherit from BaseNumericalSolver and follow the new paradigm structure.
 """
@@ -22,7 +21,6 @@ from .base_hjb import BaseHJBSolver
 from .hjb_fdm import ConvergenceError, HJBFDMSolver
 from .hjb_gfdm import HJBGFDMSolver
 from .hjb_howard import HJBHowardSolver
-from .hjb_penalty import PenaltyHJBSolver
 from .hjb_semi_lagrangian import HJBSemiLagrangianSolver
 from .hjb_weno import HJBWENOSolver
 
@@ -34,5 +32,4 @@ __all__ = [
     "HJBHowardSolver",
     "HJBSemiLagrangianSolver",
     "HJBWENOSolver",
-    "PenaltyHJBSolver",
 ]

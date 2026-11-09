@@ -2,7 +2,7 @@
   - It and `mfgarchon.alg.numerical.hjb_solvers.ConvergenceError` are now one class, an `MFGSolverError` and a `RuntimeError`, constructed as `ConvergenceError(solver_type, iterations, residual, message="")`.
   - The old form was `ConvergenceError(iterations_used, max_iterations, final_error, tolerance, solver_name=None, convergence_history=None)`. A positional call in that form is still accepted, and reads wrongly: `ConvergenceError(10, 100, 1e-3, 1e-6)` gives `iterations=100`, `residual=0.001` and the message `'1e-06'`. Pass the new arguments by name.
   - The unused `types.solver_types.ConvergenceError` and `SolverError` are removed.
-- **`HJBFDMSolver(on_newton_failure=...)` is deprecated for `on_inner_failure`**, whose `"fallback"` is the old `"warn_and_fallback"`.
+- **`HJBFDMSolver(on_newton_failure=...)` is replaced by `on_inner_failure`**, whose `"fallback"` is the old `"warn_and_fallback"`. The old name was removed later in this release.
   - HJB-FDM's nD Newton no longer catches a `ConvergenceError` raised inside it as a failure to fall back from.
 - **A solver's inner budget is an integer of at least 1, and anything else is refused by name** (#2644). Before:
   - Howard read a float budget through `int()`, so `max_iter=20.0` ran 20 iterations and `2.5` ran 2.

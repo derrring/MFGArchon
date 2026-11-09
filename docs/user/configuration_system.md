@@ -46,8 +46,7 @@ MFGSolverConfig(tolerance=1e-8)          # raises: tolerance lives under `picard
 MFGSolverConfig(picard={"toleranse": 1})  # raises: extra inputs are not permitted
 ```
 
-Deprecated field names are the one exception and still work, translated with a
-`DeprecationWarning`. `LEGACY_FIELD_ALIASES` in `config/core.py` is the single owner of that list.
+That includes the old `damping_*` field names of `PicardConfig`, removed before 1.0: use the `relaxation_*` fields.
 
 ---
 

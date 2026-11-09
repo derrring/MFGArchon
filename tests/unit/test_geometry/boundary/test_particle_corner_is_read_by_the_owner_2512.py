@@ -1,16 +1,16 @@
 """A particle at or past a corner of the box takes the owner's corner condition (#2512 row B1, stage B1d).
 
-`ParticleApplicator.apply` and ``apply_with_flux_limits`` named the first face they found a particle on, x before y and
+`ParticleApplicator.apply` named the first face they found a particle on, x before y and
 min before max, and asked the owner on that face alone, so the owner's corner rule (`BoundaryConditions._corner_choice`:
 priority, then DIRICHLET before a natural condition) never saw a particle at a corner. With x periodic and an exit on y,
 a particle past a corner the two share was wrapped, where the corner order absorbs it; with y periodic, x's exit was
-already read first. Both methods now read each boundary particle at its nearest point of the step's box through the
+already read first. It now reads each boundary particle at its nearest point of the step's box through the
 contact loop's reader, `segment_at_box_contact` (#2733), at the owner's default tolerance (``SDF_BOUNDARY_TOL``), as
 the first-face read asked the owner.
 
 ``apply`` is public, and the particle solver no longer reaches it: every CPU step ends at its first contacts with the
 particles' boundary, a periodic outer boundary's included (#2704), and `test_particle_periodic_path_2704.py` pins that
-path. ``apply_with_flux_limits`` has no library caller and is deprecated (#2550). Both read one end-position rule, whose
+path. It reads one end-position rule, whose
 per-axis half at a periodic corner `test_particle_wall_owners_2550.py` pins.
 
 Held fixed:
@@ -63,15 +63,11 @@ def _bc(periodic_axis: int, exit_side: str) -> BoundaryConditions:
 def _step(method: str, bc: BoundaryConditions, points, bounds=BOX):
     applicator = ParticleApplicator()
     points = np.array(points, dtype=float)
-    if method == "apply":
-        remaining, absorbed, _ = applicator.apply(points, bc, bounds)
-    else:
-        with pytest.warns(DeprecationWarning, match="apply_with_flux_limits is deprecated"):
-            remaining, absorbed, _, _ = applicator.apply_with_flux_limits(points, bc, bounds, {})
+    remaining, absorbed, _ = applicator.apply(points, bc, bounds)
     return remaining, absorbed
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 @pytest.mark.parametrize("periodic_axis", [0, 1], ids=["periodic_x", "periodic_y"])
 @pytest.mark.parametrize("corner", CORNERS, ids=[f"corner_{int(x)}{int(y)}" for x, y in CORNERS])
 @pytest.mark.parametrize("position", list(POSITIONS))
@@ -86,7 +82,7 @@ def test_a_particle_at_or_past_a_corner_takes_the_exit_the_corner_order_gives(me
     assert absorbed.tolist() == [True], (corner, point.tolist())
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 @pytest.mark.parametrize("strategy", ["average", "mollify"])
 def test_a_blending_corner_strategy_refuses_a_corner_whose_faces_differ(method, strategy):
     """The other side of ``corner_strategy="priority"``: a blending strategy says nothing about which condition a corner
@@ -104,7 +100,7 @@ def test_a_blending_corner_strategy_refuses_a_corner_whose_faces_differ(method, 
     np.testing.assert_allclose(remaining, [[0.95, 0.97]])
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 @pytest.mark.parametrize("periodic_axis", [0, 1], ids=["periodic_x", "periodic_y"])
 def test_a_particle_past_the_middle_of_a_face_takes_that_faces_condition(method, periodic_axis):
     """The control: away from a corner a particle takes its one face's condition, as before -- the exit absorbs, the
@@ -124,7 +120,7 @@ def test_a_particle_past_the_middle_of_a_face_takes_that_faces_condition(method,
     np.testing.assert_allclose(kept[(p, "max")][p], 0.05)  # wrapped
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 def test_a_placement_holds_a_particle_within_the_owners_default_tolerance(method):
     """A ``region`` exit on part of x_max holds a particle past x_max within the owner's default tolerance of its ends,
     1e-8, as the first-face read's query did, and not 2e-8 past them. Read at the applicator's own 1e-10, the particle
@@ -142,7 +138,7 @@ def test_a_placement_holds_a_particle_within_the_owners_default_tolerance(method
     assert absorbed.tolist() == [True, True, True, False, False]
 
 
-@pytest.mark.parametrize("method", ["apply", "apply_with_flux_limits"])
+@pytest.mark.parametrize("method", ["apply"])
 def test_a_one_dimensional_face_named_left_and_right_reads_as_x_min_and_x_max(method):
     """The first-face read named 1-D faces "left" and "right"; the contact reader names them by their axis. A BC written
     either way steps the same particles bit for bit: the exit absorbs, the wall reflects."""

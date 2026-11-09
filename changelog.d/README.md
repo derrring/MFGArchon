@@ -5,7 +5,7 @@ conflict on the shared `### …` sections (batched or not).
 
 **Fragment file**: `changelog.d/<slug>.<category>.md`
 - `<slug>` — the issue/PR number (e.g. `1521`) or a short kebab name.
-- `<category>` — one of `added` / `changed` / `deprecated` / `removed` / `fixed` (Keep a Changelog).
+- `<category>` — one of `added` / `changed` / `removed` / `fixed` (Keep a Changelog).
 - **Content** — the markdown bullet(s) for the change, e.g.
   ```
   - **Short title** (Issue #123). One-sentence what + why.

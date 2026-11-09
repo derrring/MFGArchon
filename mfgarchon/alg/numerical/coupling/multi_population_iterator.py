@@ -19,7 +19,6 @@ import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.core.hamiltonian import _terms_reading_every_population, _why_not_as_it_ships
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
@@ -112,7 +111,7 @@ class MultiPopulationIterator:
         One HJB solver per population.
     fp_solvers : list[BaseFPSolver]
         One FP solver per population.
-    damping_factor : float
+    relaxation : float
         Picard under-relaxation factor in (0, 1]. Default 0.5.
 
     Examples
@@ -127,18 +126,13 @@ class MultiPopulationIterator:
     >>> result.M  # list of K density fields
     """
 
-    @deprecated_parameter(param_name="damping_factor", since="v0.19.2", replacement="relaxation")
     def __init__(
         self,
         multi_problem: MultiPopulationProblem,
         hjb_solvers: list[BaseHJBSolver],
         fp_solvers: list[BaseFPSolver],
         relaxation: float = 0.5,
-        # Legacy kwarg (deprecated since v0.19.2, removal v0.25.0)
-        damping_factor: float | None = None,
     ):
-        if damping_factor is not None:
-            relaxation = damping_factor
         self.multi_problem = multi_problem
         self.hjb_solvers = hjb_solvers
         self.fp_solvers = fp_solvers
@@ -184,11 +178,6 @@ class MultiPopulationIterator:
         self._fp_drift_convention: list[DriftConvention | None] = [
             getattr(fp, "_drift_convention", None) for fp in fp_solvers
         ]
-
-    @property
-    def damping_factor(self) -> float:
-        """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
-        return self.relaxation
 
     @verdict_reads_inner_failures(lambda self: list(self.hjb_solvers), fp_solvers_of=lambda self: list(self.fp_solvers))
     def solve(
@@ -391,7 +380,7 @@ class MultiPopulationIterator:
                 fp_kwargs = fp_solve_kwargs(prob_k, self._fp_sig_params[k], type(fp_k).__name__, M=M[k], U=U[k])
 
                 if getattr(prob_k, "spatial_dimension", None) == 0:
-                    M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False, **fp_kwargs)
+                    M_new_k = fp_k.solve_fp_system(m0_k, potential_field=U[k], show_progress=False, **fp_kwargs)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                         prob_k,

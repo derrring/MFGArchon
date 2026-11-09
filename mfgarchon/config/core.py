@@ -13,7 +13,7 @@ Key Principle
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -30,10 +30,6 @@ class BaseConfig(BaseModel):
     the caller just asked for it, nothing raised. Under ``BaseConfig`` it raises, which is what
     ``test_unknown_fields_are_rejected_1766.py`` pins. Same fail-fast rule as dead solver knobs
     (#1426, #1766).
-
-    Deprecated aliases still work, and the ordering is why: their
-    ``model_validator(mode="before")`` hooks ``pop`` the legacy key before validation runs, so
-    ``extra="forbid"`` never sees it. An alias translated after validation would raise instead.
     """
 
     def _forget_derived(self, *fields: str) -> None:
@@ -152,17 +148,6 @@ class PicardConfig(BaseConfig):
         Anderson acceleration memory depth (0 = disabled, default: 0)
     verbose : bool
         Print iteration progress (default: True)
-
-    Legacy field names
-    ------------------
-    The fields were renamed from `damping_*` to `relaxation_*` in v0.19.1 for
-    naming abstraction (`relaxation` extends cleanly to over-relaxation ω>1 if
-    the range constraint is loosened in future work). Legacy names are still
-    accepted with a `DeprecationWarning` via a `mode="before"` validator.
-
-    Mapping: damping_factor -> relaxation, damping_factor_M -> relaxation_M,
-    damping_schedule -> relaxation_schedule, damping_schedule_M ->
-    relaxation_schedule_M, adaptive_damping -> adaptive_relaxation.
     """
 
     max_iterations: int = Field(default=100, ge=1)
@@ -175,49 +160,6 @@ class PicardConfig(BaseConfig):
     adaptive_relaxation: bool = False
     anderson_memory: int = Field(default=0, ge=0)
     verbose: bool = True
-
-    #: Legacy field names accepted with a DeprecationWarning (v0.19.1), mapped to the canonical
-    #: name. Read by `_translate_legacy_damping_names` below. It was also read by `config.bridge`,
-    #: which had to avoid filtering aliases out before the validator could translate them -- an
-    #: alias is by definition not in `model_fields` (Issue #1766 follow-up). That bridge went with
-    #: the OmegaConf layer in #1687; the constraint is recorded because any future loader that
-    #: filters on `model_fields` reintroduces it.
-    LEGACY_FIELD_ALIASES: ClassVar[dict[str, str]] = {
-        "damping_factor": "relaxation",
-        "damping_factor_M": "relaxation_M",
-        "damping_schedule": "relaxation_schedule",
-        "damping_schedule_M": "relaxation_schedule_M",
-        "adaptive_damping": "adaptive_relaxation",
-    }
-
-    @model_validator(mode="before")
-    @classmethod
-    def _translate_legacy_damping_names(cls, values: Any) -> Any:
-        """Accept legacy `damping_*` field names with DeprecationWarning (v0.19.1).
-
-        Translates old names to canonical `relaxation_*` before Pydantic
-        validation. Users hitting this path are on the deprecated API surface
-        that will be removed per the standard 3-version deprecation window.
-        """
-        import warnings
-
-        if not isinstance(values, dict):
-            return values
-        data = dict(values)
-        for legacy, canonical in cls.LEGACY_FIELD_ALIASES.items():
-            if legacy in data:
-                if canonical in data:
-                    raise ValueError(
-                        f"PicardConfig: received both legacy '{legacy}' and canonical "
-                        f"'{canonical}'. Pass only the canonical name."
-                    )
-                warnings.warn(
-                    f"PicardConfig field '{legacy}' is deprecated since v0.19.1. Use '{canonical}' instead.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-                data[canonical] = data.pop(legacy)
-        return data
 
     @model_validator(mode="after")
     def validate_anderson(self) -> PicardConfig:

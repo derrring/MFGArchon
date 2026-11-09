@@ -34,7 +34,6 @@ from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwi
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
-from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
@@ -768,7 +767,6 @@ RUN_ON_THE_VALUE_FUNCTION = {
 }
 #: FP solvers with no such run, and why.
 NOT_RUN = {
-    "FPGFDMSolver": "withdrawn (#2583): construction raises",
     "FPNetworkSolver": "a network solver: its rates are NetworkHamiltonian.optimal_control's",
     "WeakFormFPSolver": "the weak-form family's base: FPFEMSolver and MeshlessGalerkinFPSolver are run",
 }
@@ -792,8 +790,6 @@ def test_every_fp_solver_is_run_or_named_with_its_reason():
     solvers = _every_fp_solver()
     assert set(solvers) == set(RUN_ON_THE_VALUE_FUNCTION) | set(NOT_RUN)
     assert not any(solvers[name]._forms_its_drift_from_u for name in NOT_RUN)
-    with pytest.raises(NotImplementedError, match="2583"):
-        FPGFDMSolver(_problem(_library()))
 
 
 @pytest.mark.parametrize("name", sorted(RUN_ON_THE_VALUE_FUNCTION))

@@ -200,7 +200,7 @@ def solve_portfolio_mfg_simple(problem):
     sigma = problem["sigma"]
 
     dt = T / Nt
-    NW, Nalpha = grid.num_points
+    NW, Nalpha = grid.Nx_points
 
     # Initialize
     m0 = initial_distribution(grid)
@@ -349,7 +349,7 @@ def visualize_results(solution, problem, output_dir="portfolio_optimization_2d")
 
     # 5. Wealth slice (alpha = 0.6, typical diversified portfolio)
     print("  - Wealth slice plot...")
-    alpha_idx = int(0.6 * grid.num_points[1])  # 60% stocks
+    alpha_idx = int(0.6 * grid.Nx_points[1])  # 60% stocks
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.plot(W[:, alpha_idx], u[-1, :, alpha_idx])
     ax.set_title("Value Function at alpha=0.6 (Diversified Portfolio)")
@@ -404,8 +404,8 @@ def main():
     problem = create_portfolio_problem()
 
     print("Grid Information:")
-    print(f"  - Wealth points: {problem['grid'].num_points[0]}")
-    print(f"  - Allocation points: {problem['grid'].num_points[1]}")
+    print(f"  - Wealth points: {problem['grid'].Nx_points[0]}")
+    print(f"  - Allocation points: {problem['grid'].Nx_points[1]}")
     print(f"  - Temporal steps: {problem['Nt']}")
     print(f"  - Total DOF: {problem['grid'].total_points() * problem['Nt']}")
     print()

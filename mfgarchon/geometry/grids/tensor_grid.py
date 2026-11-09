@@ -44,7 +44,6 @@ from mfgarchon.geometry.protocols import (
     SupportsRegionMarking,
 )
 from mfgarchon.types.callable_protocols import read_region
-from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d, quadrature_weights_nd
 
 if TYPE_CHECKING:
@@ -88,7 +87,6 @@ class TensorProductGrid(
         bounds: List of (min, max) tuples for each dimension
         Nx: Number of intervals along each dimension (list)
         Nx_points: Number of grid points along each dimension (Nx + 1)
-        num_points: Alias for Nx_points (deprecated, use Nx_points instead)
         coordinates: Tuple of 1D coordinate arrays, one per axis, each strictly ascending and read-only
         spacing: Grid spacing along each dimension (if uniform)
         is_uniform: Whether grid has uniform spacing in each dimension
@@ -131,23 +129,13 @@ class TensorProductGrid(
         ... )
     """
 
-    @deprecated_parameter(
-        param_name="num_points",
-        since="v0.17.0",
-        replacement="Nx_points",
-    )
-    @deprecated_parameter(
-        param_name="dimension",
-        since="v0.17.0",
-        replacement="len(bounds) (dimension is inferred from bounds)",
-    )
     def __init__(
         self,
         bounds: Sequence[tuple[float, float]],
         *,
         Nx: Sequence[int] | int | None = None,
         Nx_points: Sequence[int] | int | None = None,
-        num_points: Sequence[int] | None = None,  # Deprecated alias for Nx_points
+        num_points: Sequence[int] | None = None,  # the same as Nx_points
         dimension: int | None = None,  # Optional: inferred from len(bounds) if not provided
         spacing_type: str = "uniform",
         custom_coordinates: Sequence[NDArray] | None = None,
@@ -165,7 +153,7 @@ class TensorProductGrid(
             Nx_points: Number of grid points along each dimension.
                 For 1D: can be a single int (auto-converted to [Nx_points]).
                 For nD: list of ints, e.g., Nx_points=[101, 51] creates 100×50 intervals.
-            num_points: Deprecated alias for Nx_points. Use Nx_points instead.
+            num_points: The same as Nx_points.
             dimension: Optional explicit dimension. If not provided, inferred from len(bounds).
                 If provided, must match len(bounds) (validated for consistency).
                 Note: For d>3, grid requires O(N^d) memory/computation.
@@ -191,8 +179,6 @@ class TensorProductGrid(
             ValueError: If dimension is provided and doesn't match len(bounds)
             ValueError: If none or multiple of Nx/Nx_points/num_points specified
             UserWarning: If dimension > 3 (performance warning)
-            DeprecationWarning: If dimension is provided (redundant, inferred from bounds)
-            DeprecationWarning: If num_points is used (use Nx_points instead)
         """
         # Infer dimension from bounds (SSOT: bounds defines the domain)
         if not bounds:
@@ -206,8 +192,6 @@ class TensorProductGrid(
                     f"dimension={dimension} doesn't match len(bounds)={inferred_dimension}. "
                     f"Dimension is inferred from bounds; remove explicit dimension parameter."
                 )
-            # Issue #674: dimension is deprecated, inferred from bounds
-            # Warning already emitted by @deprecated_parameter decorator
         dimension = inferred_dimension
 
         if dimension < 1:
@@ -227,7 +211,6 @@ class TensorProductGrid(
             Nx_points = [Nx_points]
 
         if num_points is not None:
-            # Warning already emitted by @deprecated_parameter decorator
             Nx_points = num_points
 
         # Convert to internal storage (always store as points)
@@ -396,15 +379,6 @@ class TensorProductGrid(
     @property
     def Nx_points(self) -> list[int]:
         """Number of grid points along each dimension."""
-        return self._Nx_points.copy()
-
-    @property
-    @deprecated(
-        since="v0.17.0",
-        replacement="Use Nx_points instead.",
-    )
-    def num_points(self) -> list[int]:
-        """Deprecated: Use Nx_points instead. Number of grid points along each dimension."""
         return self._Nx_points.copy()
 
     def get_spatial_grid(self) -> NDArray:
@@ -598,7 +572,7 @@ class TensorProductGrid(
         new_Nx_points = [(n - 1) * f + 1 for n, f in zip(self._Nx_points, factors, strict=False)]
 
         return TensorProductGrid(
-            bounds=self.bounds,  # dimension inferred from len(bounds) (#676); do not pass the deprecated kwarg
+            bounds=self.bounds,  # dimension inferred from len(bounds) (#676)
             Nx_points=new_Nx_points,
             spacing_type=self.spacing_type,
             boundary_conditions=self._boundary_conditions,
@@ -623,7 +597,7 @@ class TensorProductGrid(
         new_Nx_points = [(n - 1) // f + 1 for n, f in zip(self._Nx_points, factors, strict=False)]
 
         return TensorProductGrid(
-            bounds=self.bounds,  # dimension inferred from len(bounds) (#676); do not pass the deprecated kwarg
+            bounds=self.bounds,  # dimension inferred from len(bounds) (#676)
             Nx_points=new_Nx_points,
             spacing_type=self.spacing_type,
             boundary_conditions=self._boundary_conditions,
@@ -929,7 +903,7 @@ class TensorProductGrid(
 
         return interpolate_linear
 
-    def get_boundary_handler(self, bc_type: str = "periodic", custom_conditions: dict | None = None):
+    def get_boundary_handler(self, bc_type: str = "periodic"):
         """
         Get or create dimension-agnostic boundary condition handler.
 
@@ -949,9 +923,6 @@ class TensorProductGrid(
                 An unrecognized bc_type raises ValueError (Issue #1558) rather than silently
                 defaulting to periodic (1D) / neumann (nD). Per-axis / mixed BC are NOT created
                 here -- build a BoundaryConditions and store it on the grid (Priority 1) instead.
-            custom_conditions: Refused when the bc_type default is reached. In 1-D it built the legacy class,
-                removed in 0.22.0, for an unrecognized bc_type and was ignored otherwise; in nD it was always
-                ignored. Build a BoundaryConditions and store it instead.
 
         Returns:
             Boundary condition handler appropriate for grid dimension
@@ -975,15 +946,7 @@ class TensorProductGrid(
         if self._boundary_conditions is not None:
             return self._boundary_conditions
 
-        # Priority 2: Create BC from parameters, by one factory for every dimension. 1-D built the legacy fdm_bc_1d
-        # class here, removed in 0.22.0 by user ruling; its "no_flux" was a Neumann wall, and is NO_FLUX now (#2512 B3).
-        if custom_conditions is not None:
-            raise ValueError(
-                "custom_conditions is refused: in 1-D it built the legacy fdm_bc_1d class, which is removed "
-                "(deprecated since 0.14.0, #869; removed in 0.22.0 by user ruling), and otherwise it was ignored. "
-                "Build a BoundaryConditions with periodic_bc, dirichlet_bc, neumann_bc, no_flux_bc or robin_bc, or "
-                "from one BCSegment per face, and store it on the grid."
-            )
+        # Priority 2: Create BC from parameters, by one factory for every dimension; "no_flux" is NO_FLUX (#2512 B3).
         return self._create_bc_nd(bc_type)
 
     def _create_bc_nd(self, bc_type: str):

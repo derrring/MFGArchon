@@ -1,11 +1,13 @@
-"""FP-GFDM is withdrawn: it refuses construction, and the alternative its refusal names holds a wall (#2583).
+"""FP-GFDM is withdrawn: NumericalScheme.GFDM is refused with the reason, and the alternatives the refusal names hold
+a wall (#2583).
 
 FP-GFDM built no wall: no flux or ghost row, and an operator with no boundary-condition argument, so on a bounded
 domain the drift's flux crossed the boundary. What that did to mass depended on the drift (it stayed at 1 under a
 uniform drift and moved to 0.599 or 1.629 under others), so a mass check could not be relied on to see it. Every
 domain it accepted was bounded (grids, which always carry a BC, and implicit domains, which carry none) or periodic
-without being wrapped, so the refusal is unconditional at construction (user ruling 2026-10-09). The rebuild is
-#2584.
+without being wrapped, so it was refused unconditionally at construction (user ruling 2026-10-09). The removal before
+1.0 deleted the refusing `FPGFDMSolver` class; the scheme's refusal in `create_paired_solvers` carries the reason.
+The rebuild is #2584.
 
 The alternative is pinned by a property of its result, not by completion: completion alone passed FP-GFDM's own
 wall-less solve.
@@ -19,16 +21,15 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical import FPFDMSolver, HJBGFDMSolver
-from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.implicit import Hyperrectangle
 from mfgarchon.types import NumericalScheme
 
 N = 21
 POINTS = np.linspace(0.0, 1.0, N).reshape(-1, 1)
-REFUSAL = r"FPGFDMSolver is withdrawn: FP-GFDM built no wall.*#2583.*#2584"
+REFUSAL = r"NumericalScheme.GFDM has no FP half: FP-GFDM is withdrawn. It built no wall.*#2583.*#2584"
 
 
 def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float)) -> MFGProblem:
@@ -44,22 +45,6 @@ def _problem(domain, u_terminal=lambda x: 0.0 * np.asarray(x[0], dtype=float)) -
 
 def _grid(bc):
     return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=bc)
-
-
-@pytest.mark.parametrize(
-    "domain",
-    [
-        lambda: _grid(no_flux_bc(dimension=1)),
-        lambda: _grid(neumann_bc(dimension=1)),
-        lambda: Hyperrectangle(np.array([[0.0, 1.0]])),
-    ],
-    ids=["grid-no_flux", "grid-neumann", "implicit-no_bc"],
-)
-def test_construction_is_refused_with_the_reason(domain):
-    """The two grid cases were #1822's strict-xfail rows while FP-GFDM declared them; the implicit domain
-    carries no BC and used to solve wall-less too."""
-    with pytest.raises(NotImplementedError, match=REFUSAL):
-        FPGFDMSolver(_problem(domain()), collocation_points=POINTS)
 
 
 @pytest.mark.parametrize("hjb_config", [{"collocation_points": POINTS}, None], ids=["with-points", "no-points"])

@@ -31,7 +31,6 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_volatility_keywords,
     scalar_volatility,
 )
 
@@ -389,7 +388,6 @@ class WeakFormHJBSolver(BaseHJBSolver):
             )
         return super().solve()
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: NDArray | None = None,

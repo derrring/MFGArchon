@@ -10,15 +10,12 @@ from mfgarchon.geometry import BoundaryConditions
 from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
-    retired_sigma_keyword,
-    retired_volatility_keywords,
 )
 
 from .base_fp import BaseFPSolver
@@ -53,8 +50,6 @@ if TYPE_CHECKING:
 AdvectionScheme = Literal[
     "divergence_centered",  # Conservative (telescoping flux), oscillates for Peclet > 2
     "divergence_upwind",  # Conservative (telescoping flux), stable [factory DEFAULT for FDM]
-    # Legacy alias (DEPRECATED, will be removed in v1.0.0)
-    "flux",  # -> divergence_upwind
 ]
 
 
@@ -83,9 +78,6 @@ class FPFDMSolver(BaseFPSolver):
         **divergence_upwind** [default]: Conservative form with upwind flux selection.
             Mass-conservative via flux telescoping. Stable, first-order.
             Best choice for MFG: handles boundary fluxes correctly.
-
-    Legacy Alias (DEPRECATED, will be removed in v1.0.0):
-        - "flux" -> "divergence_upwind"
 
     Numerical Scheme:
         - Implicit timestepping for stability
@@ -152,29 +144,17 @@ class FPFDMSolver(BaseFPSolver):
             - "divergence_centered": div(v*m), centered flux. Mass-conservative (telescoping).
             - "divergence_upwind": div(v*m), upwind flux. Mass-conservative (telescoping). [DEFAULT]
 
-            Legacy name (DEPRECATED, will be removed in v1.0.0):
-            - "flux" -> divergence_upwind
-
             "gradient_centered", "gradient_upwind" and their aliases "centered" / "upwind" were
             removed in #2007 and raise.
         """
-        import warnings
 
         super().__init__(problem)
         self.fp_method_name = "FDM"
 
-        # One owner for the alias table, the removed names (#2007) and the error strings: the
-        # time-stepping module's resolver, which the per-step assembly calls too.
-        from .fp_fdm_time_stepping import _SCHEME_ALIASES, _resolve_and_validate_scheme
+        # One owner for the error string: the time-stepping module's validator, which the per-step
+        # assembly calls too.
+        from .fp_fdm_time_stepping import _resolve_and_validate_scheme
 
-        if advection_scheme in _SCHEME_ALIASES:
-            warnings.warn(
-                f"advection_scheme='{advection_scheme}' is deprecated. "
-                f"Use advection_scheme='{_SCHEME_ALIASES[advection_scheme]}' instead. "
-                f"Legacy aliases will be removed in v1.0.0.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.advection_scheme = _resolve_and_validate_scheme(advection_scheme)
 
         # Detect problem dimension first (inherited from BaseNumericalSolver, Issue #633)
@@ -362,8 +342,6 @@ class FPFDMSolver(BaseFPSolver):
             )  # fmt: skip
         return sparse.coo_matrix((values, (rows, cols)), shape=(total, total)).tocsr()
 
-    @retired_volatility_keywords
-    @deprecated_parameter(param_name="velocity_field", since="v0.18.6", replacement="drift_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
@@ -371,8 +349,7 @@ class FPFDMSolver(BaseFPSolver):
         volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
-        # Deprecated: velocity_field renamed to drift_field (v0.18.6)
-        velocity_field: np.ndarray | None = None,
+        *,
         # Live second channel: value function U (solver forms alpha = -c*grad(U) internally).
         # v0.18.6 (#919) swapped the names -- U moved here from drift_field, which now means
         # the velocity alpha*. This is the rename's destination, not a legacy alias.
@@ -412,8 +389,7 @@ class FPFDMSolver(BaseFPSolver):
             - array, volatility_kind="tensor": a (d, k) Σ → D = ΣΣᵀ/2, constant or (*grid, d, k)
             - Callable: σ(t, x, m) read per point; with volatility_kind="tensor", Σ(t, x, m)
             An array without a kind is refused; a per-axis (σ₀, σ₁) is np.diag of it, as a tensor.
-            The retired keywords volatility_field, tensor_diffusion_field and volatility_matrix
-            raise TypeError naming volatility=. Default: None
+            Default: None
         volatility_kind : str, optional
             "field" or "tensor" for an array volatility; "tensor" for a tensor-valued callable.
         show_progress : bool
@@ -510,15 +486,6 @@ class FPFDMSolver(BaseFPSolver):
         volatility, volatility_kind = resolve_volatility_override(
             volatility, volatility_kind, problem=self.problem, consumer="FPFDMSolver.solve_fp_system"
         )
-
-        # Handle deprecated velocity_field -> drift_field (v0.18.6)
-        if velocity_field is not None:
-            if drift_field is not None:
-                raise ValueError(
-                    "Cannot specify both drift_field and velocity_field. "
-                    "Use drift_field (velocity_field is deprecated)."
-                )
-            drift_field = velocity_field
 
         # Two live channels, not an alias pair: drift_field carries the velocity alpha*,
         # potential_field carries the value function U (this solver forms alpha = -c*grad(U)
@@ -635,7 +602,6 @@ class FPFDMSolver(BaseFPSolver):
     # Strict Adjoint Mode (Issue #622)
     # =========================================================================
 
-    @retired_sigma_keyword
     def solve_fp_step_adjoint_mode(
         self,
         M_current: np.ndarray,

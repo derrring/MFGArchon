@@ -129,7 +129,7 @@ def test_an_input_nothing_reads_is_refused_by_name(form, keyword):
     0."""
     name = next(iter(keyword))
     if form == "model":
-        with pytest.raises((TypeError, ValueError), match=rf"{name}=.*refused.*#2667"):
+        with pytest.raises(TypeError, match=rf"unexpected keyword argument '{name}'"):
             _problem(**keyword)
         return
     components = MFGComponents(
@@ -137,7 +137,7 @@ def test_an_input_nothing_reads_is_refused_by_name(form, keyword):
         u_terminal=lambda x: 0.0,
         m_initial=lambda x: 1.0,
     )
-    with pytest.raises(TypeError, match=rf"{name}=.*refused.*#2667"):
+    with pytest.raises(TypeError, match=rf"unexpected keyword argument '{name}'"):
         MFGProblem(geometry=_grid(), T=1.0, Nt=10, volatility=0.3, components=components, **keyword)
 
 

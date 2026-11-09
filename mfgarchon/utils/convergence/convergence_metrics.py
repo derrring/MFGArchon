@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import deprecated
-
 # =============================================================================
 # DISTRIBUTION COMPARISON UTILITIES
 # =============================================================================
@@ -439,31 +437,6 @@ def worst_sweep_change(per_field: Sequence[Mapping[str, float]], field: str) -> 
     for k, change in enumerate(per_field):
         refuse_non_finite_change(change, f"{field} k={k}")
     return {key: max(change[key] for change in per_field) for key in per_field[0]}
-
-
-@deprecated(
-    since="v0.22.0",
-    replacement=(
-        "sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt) from "
-        "mfgarchon.utils.convergence, which measures the change in the problem's own measure rather than "
-        "with one scalar spacing (#2555)."
-    ),
-    removal_blockers=["migration_docs"],
-)
-def calculate_l2_convergence_metrics(
-    U_new: np.ndarray,
-    U_old: np.ndarray,
-    M_new: np.ndarray,
-    M_old: np.ndarray,
-    Dx: float,
-    Dt: float,
-) -> dict[str, float]:
-    """Deprecated: :func:`sweep_change` on the uniform measure of one scalar spacing ``Dx``.
-
-    Every entry weighs ``Dx``, over all axes at once, so the values are the pre-#2555
-    ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio, equal to rounding, for real arrays of any shape.
-    """
-    return sweep_change(U_new, U_old, M_new, M_old, lambda f: np.sum(f) * Dx, Dt)
 
 
 # =============================================================================

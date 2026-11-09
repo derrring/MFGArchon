@@ -125,7 +125,7 @@ def main():
     )
 
     print("  Domain: [0,1] × [0,1]")
-    print(f"  Grid: {problem.geometry.grid.num_points[0] - 1} × {problem.geometry.grid.num_points[1] - 1}")
+    print(f"  Grid: {problem.geometry.grid.Nx_points[0] - 1} × {problem.geometry.grid.Nx_points[1] - 1}")
     print(f"  Timesteps: {problem.Nt + 1}")
     print(f"  Start: {problem.start}")
     print(f"  Goal: {problem.goal}")

@@ -143,24 +143,6 @@ class TestFPNetworkSolverInitialization:
         assert solver.max_iterations == 1000
         assert solver.tolerance == 1e-6
 
-    def test_mass_conservation_flag(self):
-        """Test mass conservation enforcement flag."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=1.0,
-            Nt=10,
-        )
-
-        # Issue #1683: the flag was removed. BOTH values raise -- a user who passed False was
-        # asking for the honest behaviour, which is now the only behaviour, and silently
-        # accepting either would hide that the semantics moved.
-        for value in (True, False):
-            with pytest.raises(NotImplementedError, match="enforce_mass_conservation"):
-                FPNetworkSolver(problem, enforce_mass_conservation=value)
-
     def test_network_properties_extracted(self):
         """Test that network properties are properly extracted."""
         network = GridNetwork(width=4, height=4)

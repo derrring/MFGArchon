@@ -202,7 +202,6 @@ def test_every_fp_solver_reads_the_shared_bc_through_its_owner():
     solvers = {
         "fp_fdm.py",
         "fp_fvm.py",
-        "fp_gfdm.py",
         "fp_particle.py",
         "fp_semi_lagrangian_adjoint.py",
         "fp_fem_solver.py",

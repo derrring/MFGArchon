@@ -1514,7 +1514,7 @@ class LocalRBFOperator(DifferentialOperator):
     - Flyer, N., et al. (2016). "On the role of polynomials in RBF-FD"
 
     Example:
-        >>> op = LocalRBFOperator(points, phs_order=3, poly_degree=2)
+        >>> op = LocalRBFOperator(points, kernel="phs3", poly_degree=2)
         >>> grad = op.gradient(u)
         >>> lap = op.laplacian(u)
     """
@@ -1527,7 +1527,6 @@ class LocalRBFOperator(DifferentialOperator):
         poly_degree: int = 2,
         k_neighbors: int | None = None,
         neighborhood_mode: str = "hybrid",
-        phs_order: int | None = None,  # Deprecated, use kernel="phs3" etc.
     ):
         """
         Initialize local RBF-FD operator.
@@ -1544,24 +1543,12 @@ class LocalRBFOperator(DifferentialOperator):
                          optional but recommended for others)
             k_neighbors: Number of neighbors (auto-computed if None)
             neighborhood_mode: "radius", "knn", or "hybrid"
-            phs_order: DEPRECATED - use kernel="phs3" instead
         """
         self._points = np.asarray(points)
         self._n_points, self._dimension = self._points.shape
         self.delta = delta
         self.poly_degree = poly_degree
         self.neighborhood_mode = neighborhood_mode
-
-        # Handle deprecated phs_order parameter
-        if phs_order is not None:
-            import warnings
-
-            warnings.warn(
-                "phs_order is deprecated, use kernel='phs3' instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            kernel = f"phs{phs_order}"
 
         self.kernel_name = kernel
 
@@ -2510,7 +2497,7 @@ def wendland_c2_effective_ratio(dimension: int) -> float:
 def compute_gfdm_parameters(
     points: np.ndarray,
     taylor_order: int = 2,
-    overdetermination: float | None = None,
+    *,
     effective_overdetermination: float = 1.5,
     safety_factor: float = 1.2,
     fill_distance: float | None = None,
@@ -2527,8 +2514,6 @@ def compute_gfdm_parameters(
     Args:
         points: Collocation points, shape (n_points, dimension)
         taylor_order: Order of Taylor expansion (default 2)
-        overdetermination: DEPRECATED. Use effective_overdetermination instead.
-            If provided, this is treated as nominal rho (old behavior).
         effective_overdetermination: Target EFFECTIVE overdetermination ratio.
             This is the ratio of effective weighted neighbors to unknowns.
             Default 1.5 (validated stable for MFG problems).
@@ -2570,7 +2555,6 @@ def compute_gfdm_parameters(
     Note: k-NN fallback provides additional safety for boundary/corner points
     where the delta-ball extends outside the domain.
     """
-    import warnings
     from math import ceil, comb, gamma, pi
 
     points = np.asarray(points)
@@ -2595,23 +2579,9 @@ def compute_gfdm_parameters(
     # Dimension-aware k computation using Wendland effective weight ratio
     eta = wendland_c2_effective_ratio(dimension)
 
-    if overdetermination is not None:
-        # Legacy mode: user specified nominal overdetermination directly
-        warnings.warn(
-            "overdetermination parameter is deprecated. "
-            "Use effective_overdetermination instead for dimension-aware design.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        nominal_overdetermination = overdetermination
-        k_neighbors = int(nominal_overdetermination * n_derivatives)
-        # Back-compute effective overdetermination for reporting
-        effective_overdetermination = nominal_overdetermination * eta
-    else:
-        # New dimension-aware mode: compute nominal k from effective target
-        # k_nominal = effective_overdetermination × n_derivatives / eta(d)
-        k_neighbors = ceil(effective_overdetermination * n_derivatives / eta)
-        nominal_overdetermination = k_neighbors / n_derivatives
+    # k_nominal = effective_overdetermination × n_derivatives / eta(d)
+    k_neighbors = ceil(effective_overdetermination * n_derivatives / eta)
+    nominal_overdetermination = k_neighbors / n_derivatives
 
     # Compute delta so that a ball of radius delta contains ~k neighbors
     # Volume of unit ball in d dimensions: V_d = pi^(d/2) / Gamma(d/2 + 1)
@@ -2632,8 +2602,6 @@ def compute_gfdm_parameters(
         "nominal_overdetermination": nominal_overdetermination,
         "wendland_effective_ratio": eta,
         "safety_factor": safety_factor,
-        # Legacy alias
-        "overdetermination": nominal_overdetermination,
     }
 
 
@@ -2715,10 +2683,6 @@ def create_operator(
         # Extract RBF-specific kwargs
         kernel = kwargs.pop("kernel", "phs3")
         poly_degree = kwargs.pop("poly_degree", 2)
-        # Handle deprecated phs_order
-        if "phs_order" in kwargs:
-            phs_order = kwargs.pop("phs_order")
-            kernel = f"phs{phs_order}"
         return LocalRBFOperator(
             points,
             delta=delta,

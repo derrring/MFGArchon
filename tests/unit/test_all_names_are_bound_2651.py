@@ -7,9 +7,10 @@ variational factories it never imports, in the branch it takes when the optional
 is absent.
 
 1. The star import of the package, in a fresh interpreter.
-2. Every `__all__` entry of every module resolves. The walk runs in a child interpreter: importing every module in
-   the test process would pre-import the renamed shim modules for every later test on the same xdist worker, and the
-   warning census would lose their DeprecationWarnings (review 1 of #2653; `test_hl_convention.py` found it first).
+2. Every `__all__` entry of every module resolves. The walk runs in a child interpreter, so the test process imports
+   nothing it would not otherwise. It was moved there when the walk pre-imported the renamed shim modules for every
+   later test on the same xdist worker, and the warning census lost their DeprecationWarnings (review 1 of #2653;
+   `test_hl_convention.py` found it first); the removal before 1.0 deleted those modules.
    The helper is checked on a planted module, and the walk is checked against the files on disk, since a module it
    skips is a module this test does not check.
 3. `mfgarchon.alg.optimization` in both states of the optional dependency, forced in a subprocess. The environment
@@ -49,12 +50,9 @@ def test_the_star_import_of_the_package_succeeds():
         "import warnings; warnings.simplefilter('ignore')\n"
         "import mfgarchon; print(mfgarchon.__file__)\n"
         "from mfgarchon import *\n"
-        "try:\n"
-        "    create_general_mfg_problem()\n"
-        "except NotImplementedError as exc:\n"
-        "    print('refused', '#1920' in str(exc))\n"
+        "print('bound', MFGProblem.__module__)\n"
     )
-    assert _run(code) == [CARRIER, "refused True"]
+    assert _run(code) == [CARRIER, "bound mfgarchon.core.mfg_problem"]
 
 
 # Run in a CHILD interpreter by `test_every_name_in_every_all_is_bound`; see item 2 of the module docstring for why.

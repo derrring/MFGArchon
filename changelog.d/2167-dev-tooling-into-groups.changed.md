@@ -6,7 +6,8 @@
   `core`) stay in `[project.optional-dependencies]`, because a user must be able to ask for them by
   name from a published wheel. Getting the two backwards makes the backends uninstallable.
 - **Fourteen call sites changed**, from `pip install -e .[dev]` to `pip install -e . --group dev`:
-  `ci.yml` ×3, `security.yml` ×3, `nightly.yml` ×2, `deprecation-check.yml`, `discrimination.yml`,
+  `ci.yml` ×3, `security.yml` ×3, `nightly.yml` ×2, `deprecation-check.yml` (deleted later in this release),
+  `discrimination.yml`,
   `python-compat.yml`, `Makefile`, `setup_development.sh` ×2. Verified end to end against pip 26.2.1
   before any of them were touched: `--group` composes with `-e .`, resolves `include-group`
   transitively, can be combined with an extra in one command, and errors on a name that does not

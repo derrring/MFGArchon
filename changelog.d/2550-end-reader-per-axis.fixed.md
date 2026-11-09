@@ -3,8 +3,7 @@
   wrapped every axis or folded every axis, so an end past a channel's corner wrapped across its wall or folded across
   its seam. Now the corner's segment decides only whether the particle is absorbed, and otherwise each face the end is
   at or past acts on its own axis by its own segment: a periodic face wraps it, any other folds it (CONVENTIONS.md
-  § *Particles at a wall*). `apply_with_flux_limits` reads the same rule, and a particle a full exit turns back is
-  returned by the faces it reached, each on its own axis.
+  § *Particles at a wall*).
 - **`MeshfreeApplicator`'s absorbing mode reads the absorbing wall's owner** (`corner.absorb_at_walls`). On a geometry
   that is not a box, a particle exactly on its bounding box's face and off the geometry now leaves; it was kept. On a
   box nothing changes.

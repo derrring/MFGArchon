@@ -1,4 +1,4 @@
-- **BREAKING. `FPGFDMSolver` is withdrawn: construction raises `NotImplementedError` with the reason and an
+- **BREAKING. FP-GFDM is withdrawn: its scheme raises `NotImplementedError` with the reason and an
   alternative** (#2583). FP-GFDM built no wall. Its operator, a `TaylorOperator` over scattered collocation
   points, took no boundary-condition argument and no flux or ghost row was ever built, so a declared NO_FLUX
   wall was accepted and read by nothing and the drift's flux crossed the boundary. What that did to mass
@@ -19,8 +19,8 @@
   The GFDM pair's own coupled solve, which routes the drift from the value function, did not run. It raised
   #1420's auto-route error under a smooth separable Hamiltonian, and a drift-shape `ValueError` under a
   bounded or L1 control cost.
-- **Three routes raise, with the same message:** `FPGFDMSolver(problem, ...)`,
-  `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` and `problem.solve(scheme=NumericalScheme.GFDM)`.
+- **Two routes raise, with the same message:** `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` and
+  `problem.solve(scheme=NumericalScheme.GFDM)`.
   The pair now refuses before it builds the GFDM HJB. `problem.solve(scheme=GFDM)` used to raise
   `HJBGFDMSolver`'s `TypeError` for the missing `collocation_points` instead, and it reaches the reason now.
 - **What to use instead, on a grid without obstacles:** a scheme with a dual FP, e.g.
@@ -30,8 +30,8 @@
 - **On an implicit domain or a grid with obstacles, neither of those runs:** `FDM_UPWIND` and `FPFDMSolver`
   refuse the problem. The rebuild, as the discrete adjoint of the GFDM generator that the HJB side already
   assembles, is #2584.
-- **The class stays, as a stub.** `from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver` still
-  succeeds, and construction fails with the reason; the import does not fail with an `ImportError`.
+- **The class is removed.** It stayed as a refusing stub until the removal before 1.0, later in this release, deleted
+  it; importing `FPGFDMSolver` raises `ImportError`.
   - The strong-form solve body is deleted.
   - With it go FP-GFDM's mass gate (the clip gate and the mass-drift warning added for #1683 and #1752) and
     their tests.

@@ -32,7 +32,6 @@ import numpy as np
 import scipy.sparse as sparse
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
@@ -144,15 +143,12 @@ class FixedPointSolver(NonlinearSolver):
         - Use Anderson acceleration for faster convergence
     """
 
-    @deprecated_parameter(param_name="damping_factor", since="v0.19.2", replacement="relaxation")
     def __init__(
         self,
         relaxation: float = 1.0,
         max_iterations: int = 100,
         tolerance: float = 1e-6,
         norm_type: Literal["relative", "absolute"] = "relative",
-        # Legacy kwarg (deprecated since v0.19.2, removal v0.25.0)
-        damping_factor: float | None = None,
     ):
         """
         Initialize fixed-point solver.
@@ -163,11 +159,7 @@ class FixedPointSolver(NonlinearSolver):
             max_iterations: Maximum iterations
             tolerance: Convergence tolerance
             norm_type: 'relative' or 'absolute' residual norm
-
-            Legacy `damping_factor` kwarg still accepted with DeprecationWarning.
         """
-        if damping_factor is not None:
-            relaxation = damping_factor
         if not 0 < relaxation <= 1.0:
             raise ValueError(f"relaxation must be in (0,1], got {relaxation}")
         if max_iterations < 1:
@@ -179,11 +171,6 @@ class FixedPointSolver(NonlinearSolver):
         self.max_iterations = max_iterations
         self.tolerance = tolerance
         self.norm_type = norm_type
-
-    @property
-    def damping_factor(self) -> float:
-        """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
-        return self.relaxation
 
     def solve(  # type: ignore[override]
         self,

@@ -160,7 +160,7 @@ def solve_traffic_mfg_simple(problem):
     gamma = problem["gamma"]
 
     dt = T / Nt
-    Nx, Ny = grid.num_points
+    Nx, Ny = grid.Nx_points
 
     # Initialize
     m0 = initial_density(grid)
@@ -361,7 +361,7 @@ def main():
     problem = create_traffic_problem()
 
     print("Grid Information:")
-    print(f"  - Spatial: {problem['grid'].num_points[0]}×{problem['grid'].num_points[1]} points")
+    print(f"  - Spatial: {problem['grid'].Nx_points[0]}×{problem['grid'].Nx_points[1]} points")
     print(f"  - Temporal: {problem['Nt']} time steps")
     print(f"  - Total DOF: {problem['grid'].total_points() * problem['Nt']}")
     print()

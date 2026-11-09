@@ -732,7 +732,7 @@ class TestFPFDMSolverProblemVolatility:
         mean scalar.
         """
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        Nx = domain.num_points[0]
+        Nx = domain.Nx_points[0]
         sigma_arr = np.linspace(0.1, 0.5, Nx)  # low-left, high-right per-point volatility
         problem = MFGProblem(
             geometry=domain,
@@ -775,7 +775,7 @@ class TestFPFDMSolverTensorDiffusion:
         boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
         Nt = problem.Nt + 1
 
         # Diagonal tensor: fast horizontal, slow vertical
@@ -816,7 +816,7 @@ class TestFPFDMSolverTensorDiffusion:
         solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=2))
 
         Nt = problem.Nt + 1
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
         x_coords, y_coords = domain.coordinates
         X, Y = np.meshgrid(x_coords, y_coords, indexing="ij")
         m0 = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2) / (2 * 0.1**2))
@@ -846,7 +846,7 @@ class TestFPFDMSolverTensorDiffusion:
         boundary_conditions = periodic_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
         Nt = problem.Nt + 1
 
         # Full tensor with cross-diffusion
@@ -878,7 +878,7 @@ class TestFPFDMSolverTensorDiffusion:
         boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
         Nt = problem.Nt + 1
 
         # Spatially-varying tensor: orientation changes with position
@@ -916,7 +916,7 @@ class TestFPFDMSolverTensorDiffusion:
         boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
 
         # State-dependent tensor: anisotropy increases with mean density
         def crowd_anisotropic(t, x, m):
@@ -979,7 +979,7 @@ class TestFPFDMSolverTensorDiffusion:
 
         solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=2))
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
         Nt = problem.Nt + 1
 
         # Diagonal tensor
@@ -1032,7 +1032,7 @@ class TestFPFDMSolverTensorDiffusion:
         boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        Nx, Ny = domain.Nx_points[0], domain.Nx_points[1]
 
         # Non-PSD tensor (negative eigenvalue)
         Sigma_bad = np.array([[0.2, 0.3], [0.3, -0.1]])  # Has negative eigenvalue

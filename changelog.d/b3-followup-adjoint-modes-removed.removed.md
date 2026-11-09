@@ -27,6 +27,5 @@
   - **An HJB solver without `build_linearized_operator`** is refused at construction with the message the per-step check gave. In-tree, every such HJB class was already refused at construction, by the deprecated check's `TypeError` with a different message. Only an HJB with `build_advection_matrix` and no linearisation, of which there are none in-tree, used to reach the first step.
   - **Changed exception, which callers catch:** an HJB solver lacking `build_linearized_operator` and an FP solver lacking `solve_fp_step_adjoint_mode` now raise `NotImplementedError` at construction (was `TypeError`), like every other capability refusal on this path.
   - **Unchanged:**
-    - `validate_adjoint_capability`, deprecated since v0.17.0 with removal by v0.25.0, now has no in-tree caller;
     - the `AdjointCapableHJBSolver` export is deprecated in its docstring only;
     - `HJBFDMSolver.build_advection_matrix` is a public method, not deprecated, that still has callers (ledger #2573).

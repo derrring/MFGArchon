@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.config import MFGSolverConfig
-from mfgarchon.utils.deprecation import deprecated
 from mfgarchon.utils.mfg_logging.logger import get_logger
 
 logger = get_logger(__name__)
@@ -79,22 +78,13 @@ class SolverFactory:
         valid_types = ["fixed_point"]
         if solver_type not in valid_types:
             suggestions = "\n".join([f"  • {t}" for t in valid_types])
-            raise ValueError(
-                f"Unknown solver type: '{solver_type}'\n\n"
-                f"Valid solver types are:\n{suggestions}\n\n"
-                f"Note: 'particle_collocation' has been removed from core package.\n"
-                f"Example: create_fast_solver(problem, solver_type='fixed_point')"
-            )
+            raise ValueError(f"Unknown solver type: '{solver_type}'\n\nValid solver types are:\n{suggestions}")
 
         # Create base solver based on type
         if solver_type == "fixed_point":
             base_solver = SolverFactory._create_fixed_point_solver(problem, config, hjb_solver, fp_solver, **kwargs)
         else:
-            raise ValueError(
-                f"Unsupported solver type: {solver_type}. "
-                "Note: 'particle_collocation' has been removed from core package. "
-                f"Available types: ['fixed_point']"
-            )
+            raise ValueError(f"Unsupported solver type: {solver_type}. Available types: ['fixed_point']")
 
         return base_solver
 
@@ -179,115 +169,3 @@ class SolverFactory:
             config=config,
             **constructor_kwargs,
         )
-
-    # Note: _create_particle_collocation_solver, _create_monitored_particle_solver,
-    # and _create_adaptive_particle_solver methods have been removed.
-    # Particle-collocation methods have been removed from core package.
-
-
-# Convenience function
-
-
-@deprecated(
-    since="v0.17.0",
-    replacement=(
-        "Use the new three-mode solving API instead (Issue #580):\n"
-        "  - Safe Mode: problem.solve(scheme=NumericalScheme.FDM_UPWIND)\n"
-        "  - Expert Mode: problem.solve(hjb_solver=hjb, fp_solver=fp)\n"
-        "  - Auto Mode: problem.solve()\n"
-        "See examples/basic/three_mode_api_demo.py for details."
-    ),
-)
-def create_solver(
-    problem: MFGProblem,
-    hjb_solver: BaseHJBSolver | None = None,
-    fp_solver: BaseFPSolver | None = None,
-    config: MFGSolverConfig | None = None,
-    **kwargs: Any,
-) -> FixedPointIterator:
-    """
-    Create an MFG solver.
-
-    .. deprecated:: 0.17.0
-        Use the new three-mode solving API instead (Issue #580):
-
-        - Safe Mode: ``problem.solve(scheme=NumericalScheme.FDM_UPWIND)``
-        - Expert Mode: ``problem.solve(hjb_solver=hjb, fp_solver=fp)``
-        - Auto Mode: ``problem.solve()``
-
-        The new API ensures adjoint duality between HJB and FP solvers.
-        See examples/basic/three_mode_api_demo.py for details.
-
-    Args:
-        problem: MFG problem to solve
-        hjb_solver: HJB solver instance
-        fp_solver: FP solver instance
-        config: Solver configuration (uses defaults if None)
-        **kwargs: Additional parameters
-
-    Returns:
-        Configured solver instance
-
-    Example:
-        >>> from mfgarchon import MFGProblem
-        >>> from mfgarchon.geometry import TensorProductGrid
-        >>> from mfgarchon.types import NumericalScheme
-        >>> grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51])
-        >>> problem = MFGProblem(geometry=grid, Nt=20, T=1.0)
-        >>> result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)  # Preferred
-
-    Note:
-        Prefer problem.solve() which handles solver creation and duality validation.
-    """
-    return SolverFactory.create_solver(
-        problem=problem,
-        hjb_solver=hjb_solver,
-        fp_solver=fp_solver,
-        config=config,
-        **kwargs,
-    )
-
-
-# =============================================================================
-# REMOVED FUNCTIONS - Use problem.solve() or create_solver() instead
-# =============================================================================
-
-
-def _removed_function_error(name: str) -> None:
-    """Raise informative error for removed functions."""
-    raise NotImplementedError(f"{name}() has been removed. Use create_solver() or problem.solve() instead.")
-
-
-def create_basic_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_basic_solver")
-
-
-def create_standard_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_standard_solver")
-
-
-def create_fast_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_fast_solver")
-
-
-def create_accurate_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_accurate_solver")
-
-
-def create_research_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_research_solver")
-
-
-def create_semi_lagrangian_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_semi_lagrangian_solver")
-
-
-def create_amr_solver(*args: Any, **kwargs: Any) -> Any:
-    """Removed: Use problem.solve()."""
-    _removed_function_error("create_amr_solver")

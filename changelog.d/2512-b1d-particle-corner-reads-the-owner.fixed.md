@@ -28,5 +28,5 @@
     ROBIN one beside a face no segment covers. The solver hands the applicator its grid-bound BC.
   - Every query reads on the step's box, as the contact loop does. A BC that carries its own `domain_bounds` was read
     on those; it is now read on the box the step was taken in.
-  - Row B1 is met, with one listed exception: the deprecated `BaseOptimizationSolver.get_domain_constraints`, which has
-    no library caller and is removed by v0.25.0.
+  - Row B1 is met. Its one listed exception, `BaseOptimizationSolver.get_domain_constraints`, had no library caller
+    and was removed later in this release.

@@ -19,8 +19,8 @@ The variational formulation provides:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn
+from dataclasses import KW_ONLY, dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -30,9 +30,7 @@ from mfgarchon.types.callable_protocols import (
     BoundCallable,
     bound_attribute,
 )
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
 
 if TYPE_CHECKING:
     # For type checking only - these imports may not be available at runtime
@@ -91,11 +89,7 @@ class VariationalMFGComponents:
 
     # Terminal cost
     terminal_cost_func: Callable | None = None  # g(x) -> float
-    terminal_cost_dx_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
-
-    # Running potential (time-varying external forces)
-    potential_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
-    potential_dx_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
+    _: KW_ONLY  # the fields below are keyword-only (#2648)
 
     # Initial conditions
     m_initial: Callable | None = None  # m₀(x) -> float
@@ -113,20 +107,6 @@ class VariationalMFGComponents:
 
     # Metadata
     description: str = "Lagrangian MFG Problem"
-    problem_type: str = NEVER_READ  # refused when passed; never read (#2648)
-
-
-VariationalMFGComponents.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {
-        "terminal_cost_dx_func": "the variational solvers read terminal_cost_func only",
-        "potential_func": "the variational solvers read no separate potential; include V in lagrangian_func (#2558)",
-        "potential_dx_func": "the variational solvers read no separate potential; include V in lagrangian_func (#2558)",
-        "problem_type": "nothing reads it; omit it",
-    },
-    issue="#2648",
-    since="v0.22.0",
-    never_read=True,
-)(VariationalMFGComponents.__init__)
 
 
 class VariationalMFGProblem:
@@ -143,7 +123,6 @@ class VariationalMFGProblem:
     - Conversion to/from Hamiltonian formulation
     """
 
-    @retired_sigma_keyword
     def __init__(
         self,
         # Domain parameters
@@ -156,7 +135,6 @@ class VariationalMFGProblem:
         components: VariationalMFGComponents | None = None,
         # Standard MFG parameters (for compatibility)
         volatility: float = 1.0,
-        **kwargs: Any,
     ):
         """
         Initialize Lagrangian MFG problem.
@@ -166,7 +144,6 @@ class VariationalMFGProblem:
             T, Nt: Time domain discretization
             components: Lagrangian problem specification
             volatility: Noise intensity, the SDE volatility σ (the PDE diffusion is σ²/2)
-            **kwargs: Additional parameters
         """
         # Domain setup
         self.xmin = xmin
@@ -190,9 +167,6 @@ class VariationalMFGProblem:
         # Lagrangian components
         self.components = components or self._create_default_components()
 
-        # Additional parameters
-        self.parameters = kwargs
-
         # Setup JAX functions if available
         self.use_jax = JAX_AVAILABLE
         if self.use_jax:
@@ -200,13 +174,6 @@ class VariationalMFGProblem:
 
         logger.info(f"Created Lagrangian MFG problem: domain=[{xmin},{xmax}], T={T}")
         logger.info(f"  Grid: Nx={Nx}, Nt={Nt}, σ={volatility}")
-
-    @property
-    def sigma(self) -> NoReturn:
-        raise AttributeError(
-            "VariationalMFGProblem.sigma is retired (#2378 part 2b); the SDE volatility it held is "
-            "VariationalMFGProblem.volatility."
-        )
 
     def _create_default_components(self) -> VariationalMFGComponents:
         """Create default Lagrangian components for standard MFG problem."""
@@ -605,7 +572,6 @@ class VariationalMFGProblem:
 # Utility functions for common Lagrangian formulations
 
 
-@retired_sigma_keyword
 def create_quadratic_variational_mfg(
     xmin: float = 0.0,
     xmax: float = 1.0,
@@ -657,7 +623,6 @@ def create_quadratic_variational_mfg(
     return VariationalMFGProblem(xmin=xmin, xmax=xmax, Nx=Nx, T=T, Nt=Nt, volatility=volatility, components=components)
 
 
-@retired_sigma_keyword
 def create_obstacle_variational_mfg(
     xmin: float = 0.0,
     xmax: float = 1.0,

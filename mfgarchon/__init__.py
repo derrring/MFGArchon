@@ -47,8 +47,6 @@ from .extensions.topology import (  # noqa: E402
 )
 from .factory import (  # noqa: E402
     SolverFactory,
-    create_general_mfg_problem,
-    create_solver,
 )
 from .geometry import (  # noqa: E402
     BoundaryConditions,
@@ -84,7 +82,6 @@ except ImportError:
 
 # High-dimensional MFG capabilities - REMOVED in v0.14.0
 # Use MFGProblem directly with spatial_bounds and spatial_discretization parameters
-# See: docs/migration/DEPRECATION_MODERNIZATION_GUIDE.md
 HIGHDIM_MFG_AVAILABLE = False
 
 # Interactive research reporting (optional dependency)
@@ -167,12 +164,10 @@ __all__ = [
     "VariationalMFGComponents",
     "VariationalMFGProblem",
     "compute_network_statistics",
-    "create_general_mfg_problem",
     "create_grid_mfg_problem",
     "create_network",
     "create_random_mfg_problem",
     "create_scale_free_mfg_problem",
-    "create_solver",
     "get_backend_manager",
     "set_preferred_backend",
     "show_optional_features",

@@ -240,7 +240,7 @@ class CommonNoiseMFGSolver:
             num_noise_samples: Number of noise paths K to sample
             conditional_solver_factory: Factory function to create conditional MFG solver
                                        Signature: factory(problem) -> solver
-                                       Default: Uses create_solver from factory module
+                                       Default: the conditional problem's own solve()
             variance_reduction: Use quasi-Monte Carlo and variance reduction
             parallel: Solve noise realizations in parallel
             num_workers: Number of parallel workers (default: CPU count)

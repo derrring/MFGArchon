@@ -52,7 +52,6 @@ from .convergence_metrics import (
     MomentConvergenceMonitor,
     RollingConvergenceMonitor,
     calculate_error,
-    calculate_l2_convergence_metrics,
     # Factory
     create_moment_monitor,
     create_rolling_monitor,
@@ -89,7 +88,6 @@ __all__ = [
     "MomentConvergenceMonitor",
     "RollingConvergenceMonitor",
     "calculate_error",
-    "calculate_l2_convergence_metrics",
     "l2_change",
     "refuse_non_finite_change",
     "sweep_change",

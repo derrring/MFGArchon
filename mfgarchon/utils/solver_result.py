@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -73,16 +71,6 @@ class SolverResult:
     policy: Any | None = None
     mass_conservation_error: float | None = None
 
-    @retired_parameters(
-        {
-            "ergodic_constant": "the field is removed: there is no stationary (ergodic) mode, and it comes back with "
-            "one (#2652)"
-        },
-        issue="#2648",
-        since="v0.22.0",
-        never_read=True,
-        effect="no library solver ever set it",
-    )
     def __init__(
         self,
         U: NDArray[np.floating],
@@ -94,7 +82,7 @@ class SolverResult:
         converged: bool = False,
         execution_time: float | None = None,
         metadata: dict[str, Any] | None = None,
-        ergodic_constant: float | None = NEVER_READ,
+        *,
         policy: Any | None = None,
         mass_conservation_error: float | None = None,
     ):
@@ -111,8 +99,6 @@ class SolverResult:
             converged: Whether convergence was achieved
             execution_time: Total solve time in seconds
             metadata: Additional solver-specific information
-            ergodic_constant: Refused when passed (#2652): the field is removed, since there is no
-                stationary mode and no library solver ever set it; the name goes in v0.25.0.
             policy: Optimal control policy alpha*(t, x) as callable
             mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
             initial mass, not the deviation from 1.0 (Issue #875, #1672), or None. The functional

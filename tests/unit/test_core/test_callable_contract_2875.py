@@ -612,18 +612,6 @@ def test_the_diffusion_source_reads_one_point_as_a_tuple():
         resolve_diffusion_source(lambda point: point[0], index=0, points=points)
 
 
-def test_a_dict_bcs_callable_reaches_the_door_of_a_boundary_value():
-    from mfgarchon.geometry.boundary.types import boundary_value
-
-    def read(values):
-        bc = HJBGFDMSolver._boundary_conditions_from_dict({"type": "dirichlet", "values": values}, dimension=1)
-        return boundary_value(bc.segments[0].value, kind="dirichlet", t=0.0, x=np.array([0.5]), where="the row")
-
-    assert float(read(lambda x: x[0] + 1.0)) == pytest.approx(1.5)
-    with pytest.raises(TypeError, match=r"names no slot"):
-        read(lambda point: point[0])
-
-
 def test_a_refinement_function_reads_a_coordinate_tuple():
     from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 

@@ -70,7 +70,7 @@ class NeighborhoodBuilder:
     multi_indices : list[tuple[int, ...]]
         Multi-indices for Taylor expansion
     gfdm_operator : Any
-        GFDMOperator instance for base neighborhoods
+        GFDM operator instance for base neighborhoods
     use_local_coordinate_rotation : bool
         Whether LCR is enabled (affects Taylor matrix construction)
     boundary_handler : BoundaryHandler | None
@@ -240,7 +240,7 @@ class NeighborhoodBuilder:
         """
         Build delta-neighborhood structure for all collocation points.
 
-        Uses GFDMOperator's neighborhoods (without ghost particles - pure one-sided stencils)
+        Uses the GFDM operator's neighborhoods (without ghost particles - pure one-sided stencils)
         and only extends for points needing adaptive delta enlargement.
 
         For boundary points, also ensures sufficient "deep" neighbors exist
@@ -268,7 +268,7 @@ class NeighborhoodBuilder:
         visibility_stats = {"n_filtered": 0, "total_removed": 0}
 
         for i in range(self.n_points):
-            # Start with GFDMOperator's neighborhood (pure one-sided stencils, no ghost particles)
+            # Start with the GFDM operator's neighborhood (pure one-sided stencils, no ghost particles)
             base_neighborhood = self._gfdm_operator.get_neighborhood(i)
 
             # Visibility filtering: remove neighbors whose line of sight crosses an obstacle
@@ -404,11 +404,8 @@ class NeighborhoodBuilder:
                         }
                     )
 
-                # Warn if still insufficient neighbors or depth. Past `deprecated_value`'s wrapper: HJBGFDMSolver's
-                # __init__ calls this directly, and its wrapper is a frame of its own (#2579, #2597).
+                # Warn if still insufficient neighbors or depth.
                 import warnings as _warnings
-
-                from mfgarchon.utils.deprecation import WRAPPER_FRAMES
 
                 if real_neighbor_count < self.k_min:
                     _warnings.warn(
@@ -417,7 +414,6 @@ class NeighborhoodBuilder:
                         f"Only found {real_neighbor_count} neighbors. GFDM approximation may be poor.",
                         UserWarning,
                         stacklevel=3,
-                        skip_file_prefixes=WRAPPER_FRAMES,
                     )
                 elif is_boundary and deep_count < k_deep:
                     _warnings.warn(
@@ -427,7 +423,6 @@ class NeighborhoodBuilder:
                         f"Normal derivative approximation may be inaccurate.",
                         UserWarning,
                         stacklevel=3,
-                        skip_file_prefixes=WRAPPER_FRAMES,
                     )
 
                 # Store adapted neighborhood
@@ -443,7 +438,7 @@ class NeighborhoodBuilder:
                     "adapted": True,
                 }
             else:
-                # Use GFDMOperator's neighborhood directly (no adaptation needed)
+                # Use the GFDM operator's neighborhood directly (no adaptation needed)
                 self.neighborhoods[i] = {
                     "indices": base_neighborhood["indices"],
                     "points": base_neighborhood["points"],
@@ -610,7 +605,7 @@ class NeighborhoodBuilder:
         """
         Pre-compute Taylor expansion matrices A for all collocation points.
 
-        Uses GFDMOperator's Taylor matrices when the neighborhood wasn't adapted,
+        Uses the GFDM operator's Taylor matrices when the neighborhood wasn't adapted,
         only rebuilds for points that needed adaptive delta enlargement.
         """
         self.taylor_matrices = {}
@@ -624,7 +619,7 @@ class NeighborhoodBuilder:
                 self.taylor_matrices[i] = None
                 continue
 
-            # Check if we can reuse GFDMOperator's Taylor matrices.
+            # Check if we can reuse the GFDM operator's Taylor matrices.
             # Requires: (1) neighborhood not adapted by delta enlargement,
             # (2) no LCR rotation, and (3) neighbor count matches operator's
             # original (may differ if visibility filtering removed neighbors).
@@ -641,7 +636,7 @@ class NeighborhoodBuilder:
                     else:
                         cond_num = np.inf
 
-                    # Wrap GFDMOperator's format to HJBGFDMSolver's expected format
+                    # Wrap the GFDM operator's format to HJBGFDMSolver's expected format
                     self.taylor_matrices[i] = {
                         "A": base_taylor["A"],
                         "W": base_taylor["W"],
@@ -818,7 +813,7 @@ class NeighborhoodBuilder:
         Compute derivative weights from Taylor matrices for a single point.
 
         Used for LCR boundary points where we need weights computed from
-        LCR-rotated Taylor matrices rather than from GFDMOperator.
+        LCR-rotated Taylor matrices rather than from the GFDM operator.
 
         Parameters
         ----------

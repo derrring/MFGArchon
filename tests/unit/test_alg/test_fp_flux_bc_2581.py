@@ -722,9 +722,8 @@ def test_fp_fem_refuses_a_flux_on_its_adjoint_step():
 def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
     """A ghost layer, a ghost calculator and a geometric fold read a condition on the field; FLUX is on the total flux.
     On arrival the ghost layer wrote a reflection (mixed) or zeros (uniform), the calculator route a zero gradient, the
-    fold a clamp, the legacy ghost values a mirror and the nD tensor diffusion a zero wall value (review 1 of #2840);
+    fold a clamp and the nD tensor diffusion a zero wall value (review 1 of #2840);
     each now refuses by name (#2581), as the particle action does, saying what FLUX is."""
-    from mfgarchon.geometry.boundary._compat import get_ghost_values_nd
     from mfgarchon.geometry.boundary.applicator_fdm import bc_to_topology_calculator
     from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type
     from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
@@ -738,12 +737,6 @@ def test_the_fdm_readers_that_cannot_impose_a_flux_refuse_it():
         bc_to_topology_calculator(bc, (11,))
     with pytest.raises(NotImplementedError, match=r"FLUX boundary .* has no geometric operation"):
         bc_type_to_geometric_operation("flux")
-    # the legacy ghost values are deprecated, and warn so before they refuse
-    with (
-        pytest.deprecated_call(),
-        pytest.raises(NotImplementedError, match=r"A ghost value has no reading of BCType\.FLUX"),
-    ):
-        get_ghost_values_nd(np.ones(11), bc, spacing=(0.1,))
     tensor = DiffusionOperator(coefficient=0.1 * np.eye(3), spacings=[0.2] * 3, field_shape=(6, 6, 6), bc=flux_bc(0.3))
     with pytest.raises(
         NotImplementedError, match=r"nD tensor diffusion's ghost padding has no reading of BCType\.FLUX"

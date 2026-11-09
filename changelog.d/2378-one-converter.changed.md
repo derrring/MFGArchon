@@ -17,7 +17,7 @@
   - **Renamed, with a refusal:**
     - `sigma_at_n=` is now `volatility_at_n=` on `compute_hjb_residual`, `compute_hjb_jacobian`, `newton_hjb_step` and `solve_hjb_timestep_newton`.
     - `MonotonicityEnforcer(sigma_function=)` is now `volatility_function=`.
-    - The old keyword raises a `TypeError` naming the new one until v0.25.0, and the deprecation audit lists it.
+    - The old keyword raises a `TypeError`.
   - **Renamed privately:**
     - `HJBGFDMSolver._get_sigma_value` is now `_get_volatility_value`. It returns the effective volatility, σ_eff, when the LLF augmentation is on.
     - HJB-FDM's `sigma_at_n` and `Sigma_at_n` plumbing is now `volatility_at_n` and `volatility_tensor_at_n`. Its docstrings had called the tensor a diffusion coefficient.

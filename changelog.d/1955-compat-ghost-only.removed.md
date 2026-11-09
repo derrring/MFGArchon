@@ -1,14 +1,11 @@
-`geometry.boundary._compat` keeps only its ghost-value entry point. The array-padding
+`geometry.boundary._compat`'s array-padding
 functions `apply_boundary_conditions_1d/2d/3d/nd` and `create_boundary_mask_2d`, with their
 twelve private helpers, are deleted -- 1453 of the module's 1856 lines. Their public export
 had already been withdrawn (#577 Phase 3); no library module imported them, and the only
 remaining importer was one test file, `tests/unit/test_geometry/test_bc_applicator.py`,
 reaching into the private module by name in 5 places.
 
-`get_ghost_values_nd` is unchanged and stays until its declared v0.25.0 removal. It is the
-one name still reachable as an attribute of `mfgarchon.geometry.boundary`, so it keeps the
-deprecation contract the module published. Its output is pinned byte-identical across this
-change over five cases (uniform Dirichlet / Neumann / periodic, a mixed BC, and 1D).
+Its ghost-value entry point, `get_ghost_values_nd`, and with it the module, were removed later in this release.
 
 This removes **six of the package's nineteen `BCType` dispatch chains** (19 -> 13). Fourteen of
 the nineteen end in a silent `else` or no `else` at all, so an unhandled BC type produces a

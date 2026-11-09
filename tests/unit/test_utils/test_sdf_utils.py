@@ -13,7 +13,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.utils.numerical.sdf_utils import (
+from mfgarchon.geometry.implicit.sdf_utils import (
     sdf_box,
     sdf_complement,
     sdf_difference,

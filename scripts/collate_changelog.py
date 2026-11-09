@@ -2,7 +2,7 @@
 """Collate changelog.d/ fragments into a Keep-a-Changelog section (Issue #1521).
 
 Each fragment is ``changelog.d/<slug>.<category>.md`` where <category> is one of
-added/changed/deprecated/removed/fixed; the file holds the markdown bullet(s) for that change.
+added/changed/removed/fixed; the file holds the markdown bullet(s) for that change.
 Every PR adds its OWN fragment file, so there is no append-only merge conflict on CHANGELOG.md.
 
 Usage:
@@ -17,11 +17,10 @@ import argparse
 import sys
 from pathlib import Path
 
-CATEGORIES = ["added", "changed", "deprecated", "removed", "fixed"]
+CATEGORIES = ["added", "changed", "removed", "fixed"]
 HEADINGS = {
     "added": "Added",
     "changed": "Changed",
-    "deprecated": "Deprecated",
     "removed": "Removed (BREAKING)",
     "fixed": "Fixed",
 }

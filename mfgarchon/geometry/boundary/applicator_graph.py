@@ -50,8 +50,6 @@ from mfgarchon.types.callable_protocols import (
 )
 
 # Import base class for inheritance
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
-
 from .applicator_base import BaseGraphApplicator
 
 if TYPE_CHECKING:
@@ -423,7 +421,6 @@ class GraphBCConfig:
 
     node_bcs: tuple[NodeBC, ...] = ()
     edge_bcs: tuple[EdgeBC, ...] = ()
-    default_bc_type: GraphBCType = NEVER_READ  # refused when passed; never read (#2648)
 
     def __post_init__(self) -> None:
         # The tuple first: an iterator is consumed by the check below, and would be stored empty (#2292).
@@ -437,16 +434,6 @@ class GraphBCConfig:
                 )
         if self.edge_bcs:
             raise NotImplementedError(f"GraphBCConfig: edge_bcs is not empty, and {_EDGES_NOT_APPLIED}")
-
-
-GraphBCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {
-        "default_bc_type": "a node without a NodeBC gets no condition; give each node that needs one a NodeBC (#2493)",
-    },
-    issue="#2648",
-    since="v0.22.0",
-    never_read=True,
-)(GraphBCConfig.__init__)
 
 
 class GraphApplicator(BaseGraphApplicator):

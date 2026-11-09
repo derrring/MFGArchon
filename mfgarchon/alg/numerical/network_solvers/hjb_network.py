@@ -32,7 +32,6 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSol
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 if TYPE_CHECKING:
@@ -166,7 +165,6 @@ class NetworkHJBSolver(BaseHJBSolver):
         for i in range(self.num_nodes):
             self.gradient_ops[i] = self.network_problem.get_node_neighbors(i)
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
@@ -358,7 +356,6 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         # single dominant action — finite-state control is a full rate row over neighbors.
         self.current_rates: dict[int, np.ndarray] = {}
 
-    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,

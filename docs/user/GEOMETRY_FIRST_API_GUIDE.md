@@ -61,7 +61,7 @@ geometry = TensorProductGrid(
 problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
-**Old API** (like every route of the components= form, it emits a `PendingDeprecationWarning`; nothing needs to change now -- #2184):
+**Old API** (a route of the components= form, which still works and emits no warning -- #2184):
 ```python
 problem = MFGProblem(
     spatial_bounds=[(0.0, 10.0), (0.0, 5.0)],
@@ -255,7 +255,7 @@ grid = problem.xSpace     # Use problem.geometry.get_spatial_grid() instead
 - Keep old API examples in `examples/legacy/` for reference
 
 ### Phase 2: Both APIs supported (v0.10.x onward)
-- Old API emits a `PendingDeprecationWarning`, as every route of the components= form does: the model/domain/conditions form is planned to replace them, and nothing needs to change now (#2184)
+- Old API, a route of the components= form, still works and emits no warning (#2184)
 - Both APIs fully functional
 - Update documentation to show new API first
 
@@ -395,8 +395,8 @@ domain2 = Hypersphere(center=[2, 0], radius=0.5)
 A: The legacy 1D geometry surfaces (`xmin`/`xmax`/`Nx`/`Lx` read-properties and
 constructor kwargs, and the `get_u_final`/`get_u_fin` aliases) have been removed
 (Issues #1360, #1363) after their 3-minor-version deprecation window. Code that
-still uses them now raises; migrate to the geometry-first API shown above. Other
-deprecated surfaces continue to emit `DeprecationWarning`.
+still uses them now raises; migrate to the geometry-first API shown above. The other
+deprecated surfaces were removed before 1.0 too, and code that uses them raises as well.
 
 **Q: Will my old code break?**
 A: Code using the removed 1D geometry kwargs/attributes/aliases will raise. The

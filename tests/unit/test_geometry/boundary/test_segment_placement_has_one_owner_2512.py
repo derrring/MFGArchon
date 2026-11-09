@@ -13,12 +13,8 @@ with the field-level tests in `types.py` (plan: #2512 comment 6124387645).
 
 **Allowed, each by file and function, with its site count**, so a moved line does not reopen the question and a new
 rival inside an allowed function still fails. An allowance that covers no site fails, so a function moved onto the
-owner cannot leave its name behind. Two kinds:
-- one listed exception, a reader that copies a placement outward and decides nothing: the deprecated
-  `BaseOptimizationSolver.get_domain_constraints`, which has no library caller and is removed by v0.25.0 (audit
-  session ruling, 2026-10-25, as row B2 was met with #2612's five);
-- a site that matches a rival form and reads no segment: another object's ``region`` mask, a table of region or
-  index names, a metric's column name.
+owner cannot leave its name behind. Each is a site that matches a rival form and reads no segment: another object's
+``region`` mask, a table of region or index names, a metric's column name.
 Every other reader asks the owner: the particle applicator's last face namer went in B1d's final stage.
 
 **Known blind spots**, as the other structural guards state theirs:
@@ -49,7 +45,6 @@ FACE_NAME = re.compile(r"\}_(min|max)\b|_\{(side|lo|hi|s|end)\}")
 _NOT_A_SEGMENT = "matches a rival form and reads no segment"
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
-    ("mfgarchon/alg/base_solver.py", "get_domain_constraints"): (1, "deprecated, remove by v0.25.0; no library caller"),
     ("mfgarchon/alg/numerical/adjoint/diagnostics.py", "_get_boundary_indices"): (4, f"{_NOT_A_SEGMENT}: index keys"),
     ("mfgarchon/alg/numerical/adjoint/operators.py", "get_boundary_indices_from_geometry"): (
         4,
@@ -180,15 +175,15 @@ def test_a_planted_rival_is_found(package_copy, form):
 
 
 def test_a_new_rival_inside_an_allowed_function_is_found(package_copy):
-    """The allowance pins its site count, so a second rival in the listed exception's function fails too."""
-    rel = "mfgarchon/alg/base_solver.py"
+    """The allowance pins its site count, so a further rival in an allowed function fails too."""
+    rel = "mfgarchon/geometry/boundary/constraints.py"
     target = package_copy / rel
     original = target.read_text()
-    anchor = "        # Handle segments if available\n"
+    anchor = "            u_proj = np.maximum(u, self.obstacle)\n"
     assert original.count(anchor) == 1
     try:
-        target.write_text(original.replace(anchor, anchor + "        _ = [seg.priority for seg in ()]\n"))
+        target.write_text(original.replace(anchor, anchor + "            _ = [seg.priority for seg in ()]\n"))
         violations = _violations(scan(package_copy))
     finally:
         target.write_text(original)
-    assert any("get_domain_constraints" in v for v in violations), violations
+    assert any("constraints.py', 'project')" in v for v in violations), violations

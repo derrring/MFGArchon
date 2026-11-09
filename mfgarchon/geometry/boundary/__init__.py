@@ -210,16 +210,12 @@ def __getattr__(name: str):
         "ZeroFluxCalculator": ("calculators", "ZeroFluxCalculator"),
         "LinearExtrapolationCalculator": ("calculators", "LinearExtrapolationCalculator"),
         "QuadraticExtrapolationCalculator": ("calculators", "QuadraticExtrapolationCalculator"),
-        "NoFluxCalculator": ("calculators", "NoFluxCalculator"),
-        "FPNoFluxCalculator": ("calculators", "FPNoFluxCalculator"),
         "PeriodicTopology": ("calculators", "PeriodicTopology"),
         "BoundedTopology": ("calculators", "BoundedTopology"),
         # Ghost cell formulas
         "ghost_cell_dirichlet": ("ghost_cells", "ghost_cell_dirichlet"),
         "ghost_cell_neumann": ("ghost_cells", "ghost_cell_neumann"),
         "ghost_cell_robin": ("ghost_cells", "ghost_cell_robin"),
-        "high_order_ghost_dirichlet": ("ghost_cells", "high_order_ghost_dirichlet"),
-        "high_order_ghost_neumann": ("ghost_cells", "high_order_ghost_neumann"),
         "ghost_cell_fp_no_flux": ("ghost_cells", "ghost_cell_fp_no_flux"),
         "normal_frame_coefficients": ("ghost_cells", "normal_frame_coefficients"),
         "ghost_cell_advection_diffusion_no_flux": ("ghost_cells", "ghost_cell_advection_diffusion_no_flux"),
@@ -235,7 +231,6 @@ def __getattr__(name: str):
         "get_bc_type_string": ("bc_utils", "get_bc_type_string"),
         # Corner handling
         "reflect_positions": ("corner", "reflect_positions"),
-        "absorb_positions": ("corner", "absorb_positions"),
         "reflect_velocity": ("corner", "reflect_velocity"),
         "reflect_velocity_with_normal": ("corner", "reflect_velocity_with_normal"),
         "CornerStrategy": ("corner", "CornerStrategy"),
@@ -263,18 +258,5 @@ def __getattr__(name: str):
 
         mod = importlib.import_module(f".{module_name}", __name__)
         return getattr(mod, attr_name)
-
-    if name in ("BoundaryConditions1DFDM", "LegacyBoundaryConditions1D"):
-        raise AttributeError(
-            f"{name}, the legacy 1-D FDM boundary-condition class (fdm_bc_1d), is removed (deprecated since 0.14.0, "
-            "#869; removed in 0.22.0 by user ruling, ahead of the v1.0.0 its docstring promised). Use "
-            "mfgarchon.geometry.boundary.BoundaryConditions: periodic_bc, dirichlet_bc, neumann_bc, no_flux_bc or "
-            "robin_bc build one condition on every wall, and one BCSegment per face (boundary='x_min', 'x_max') "
-            "gives each wall its own value, as left_value and right_value did."
-        )
-    if name == "get_ghost_values_nd":
-        from ._compat import get_ghost_values_nd
-
-        return get_ghost_values_nd
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 
 # Import shared iteration utilities (Issue #630, migrated #985)
 from mfgarchon.utils.iteration.schedules import (
@@ -42,7 +42,6 @@ from mfgarchon.utils.iteration.schedules import (
     get_schedule,
     harmonic_schedule,
 )
-from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -52,6 +51,7 @@ from .base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     refuse_a_capped_exit_in_a_coupled_solve,
+    refuse_retired_solve_keywords,
     resolve_backend,
 )
 from .fixed_point_utils import (
@@ -133,7 +133,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         >>> result = solver.solve(max_iterations=100, tolerance=1e-4)
     """
 
-    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -240,11 +239,11 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         config: MFGSolverConfig | None = None,
         max_iterations: int | None = None,
         tolerance: float | None = None,
-        return_tuple: bool = False,
+        *,
         iteration_callback: Callable[[int, np.ndarray, np.ndarray, float, float], bool | None] | None = None,
         absolute_tolerance: float | None = None,
         **kwargs: Any,
-    ) -> SolverResult | tuple[np.ndarray, np.ndarray, int, np.ndarray, np.ndarray]:
+    ) -> SolverResult:
         """
         Solve coupled MFG system using Fictitious Play.
 
@@ -252,16 +251,17 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             config: Solver configuration (overrides instance config)
             max_iterations: Maximum iterations (legacy parameter)
             tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
-            return_tuple: Return legacy tuple format instead of SolverResult
             iteration_callback: Optional callback for custom logging per iteration.
                 Signature: (iteration, U, M, error_U, error_M) -> bool | None
                 Return True to stop early, None/False to continue.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: Additional parameters for backward compatibility
+            **kwargs: ``verbose`` (default True). A keyword this method no longer takes (``RETIRED_SOLVE_KEYWORDS``)
+                is refused by name.
 
         Returns:
-            SolverResult object (or tuple if return_tuple=True)
+            SolverResult object
         """
+        refuse_retired_solve_keywords(kwargs, "FictitiousPlayIterator.solve")
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FictitiousPlayIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
@@ -273,10 +273,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             final_absolute_tolerance = solve_config.picard.absolute_tolerance
             verbose = solve_config.picard.verbose
         else:
-            final_max_iterations = (
-                max_iterations or kwargs.get("max_picard_iterations") or kwargs.get("Niter_max") or 100
-            )
-            final_tolerance = tolerance or kwargs.get("picard_tolerance") or kwargs.get("l2errBoundPicard") or 1e-6
+            final_max_iterations = max_iterations or 100
+            final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
             verbose = kwargs.get("verbose", True)
 
@@ -500,25 +498,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             },
         )
 
-        if return_tuple:
-            import warnings
-
-            warnings.warn(
-                "return_tuple=True is deprecated since v0.17.13. "
-                "Use SolverResult object instead (the default). "
-                "Will be removed in v1.0.0.",
-                DeprecationWarning,
-                stacklevel=SOLVE_CALLER_STACKLEVEL,
-            )
-            return (
-                self.U,
-                self.M,
-                self.iterations_run,
-                self.l2distu_rel[: self.iterations_run],
-                self.l2distm_rel[: self.iterations_run],
-            )
-        else:
-            return result
+        return result
 
     @property
     def name(self) -> str:

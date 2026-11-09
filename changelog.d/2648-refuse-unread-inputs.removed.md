@@ -1,10 +1,6 @@
-- **Inputs that never had an effect are refused when passed, by name, until v0.25.0** (#2648, stage 2; rulings 3 and
-  7). Breaking (pre-1.0). Each refusal names the class or function that refuses it, says the input never had an
-  effect, and says what the code does instead. Each input keeps its place in the signature, and its default is
-  `NEVER_READ`. So the classes still construct, `dataclasses.replace` still works, and reading one of these
-  attributes gives `NEVER_READ`. `NEVER_READ` is not JSON-serializable, so `json.dumps(dataclasses.asdict(cfg))` on a
-  dataclass with a refused field raises `TypeError` (on `MCMCConfig()` and `MCConfig()` it worked before): drop the
-  refused fields before serializing.
+- **Inputs that never had an effect are removed** (#2648, stage 2; rulings 3 and 7, and the removal before 1.0).
+  Breaking (pre-1.0). Passing one raises `TypeError`, and a field or parameter after a removed one is keyword-only,
+  so a positional argument past it raises rather than shifting onto the next. What to do instead:
   - `MCMCConfig`: `num_chains`, `max_tree_depth`, `max_adapt_iter`, `parallel`, `compute_rhat`,
     `effective_sample_size`. Every sampler runs one chain; `compute_rhat(chains)` is a function to call on samples
     from several runs, and `effective_sample_size(chains)` one to call on the samples.
@@ -22,6 +18,4 @@
     `MFGNotebookReporter(enable_latex=, template_style=)`, and `potential_func=` in `LQPolicyIterationHelper` and
     `create_lq_policy_problem`.
 - **`SolverResult.ergodic_constant` is removed** (#2652). No solver computed one, and there is no stationary mode, so
-  reading it now raises `AttributeError` where it gave `None`, and passing `ergodic_constant=` is refused by name.
-- **A call that does not bind** a constructor refusing an input like these now gets the constructor's own
-  `TypeError`, with no binding error chained to it.
+  reading it now raises `AttributeError` where it gave `None`, and passing `ergodic_constant=` raises `TypeError`.

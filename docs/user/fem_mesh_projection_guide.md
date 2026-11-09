@@ -16,8 +16,6 @@ re-exported as `mfgarchon.geometry.GeometryProjector`); Issue #1765
 > from mfgarchon.geometry import GeometryProjector
 > projector = GeometryProjector(hjb_geometry=grid, fp_geometry=mesh)
 > ```
->
-> See also `docs/user/dual_geometry_usage.md`, superseded in full for the same reason.
 
 ## Quick Answer
 
@@ -369,4 +367,4 @@ problem = MFGProblem(hjb_geometry=grid3d, fp_geometry=mesh3d, ...)
 ---
 
 **Document Version**: 1.0
-**Related**: `docs/user_guide/dual_geometry_usage.md`, `examples/advanced/dual_geometry_fem_mesh.py`
+**Related**: `examples/advanced/dual_geometry_fem_mesh.py`

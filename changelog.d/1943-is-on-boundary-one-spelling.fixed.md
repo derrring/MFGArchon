@@ -13,8 +13,7 @@ Hyperrectangle.is_on_boundary(pts, tolerance=0.03)  -> TypeError
 this family, calling it in the spelling this family did not accept.
 
 The issue counts seven diverging classes; measured, six of them **inherit** the method, so there was
-one definition to change. `tol=` remains as a deprecated alias, and passing both raises rather than
-picking a winner — accepting both would introduce the class of defect this removes.
+one definition to change. `tol=` was kept as a deprecated alias and removed later in this release.
 
 The census is **behavioural rather than a name count**: it asserts every implementer *accepts*
 `tolerance`, walking `mfgarchon.geometry` so a new geometry joins by existing, and it skips classes

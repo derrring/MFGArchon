@@ -92,7 +92,6 @@ _SEARCHED = (
     "mfgarchon.alg.numerical.hjb_solvers.hjb_fdm",
     "mfgarchon.alg.numerical.fp_solvers.fp_fdm",
     "mfgarchon.alg.numerical.fp_solvers.fp_fvm",
-    "mfgarchon.alg.numerical.fp_solvers.fp_gfdm",
     "mfgarchon.alg.numerical.fp_solvers.fp_particle",
     "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint",
 )
@@ -537,8 +536,7 @@ SURFACE_NOT_HONOURED = {
     # 2026-10-27, #2556, at the C3-1 change], so the PERIODIC row is judged on a five-seed mean
     # (SEED_AVERAGED) rather than listed here.
     # FPGFDMSolver under NEUMANN and NO_FLUX were listed here and left the declared surface in #2583:
-    # FP-GFDM built no wall, so it is withdrawn, declares nothing and refuses construction. Its refusal
-    # is pinned in tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py.
+    # FP-GFDM built no wall, so it was withdrawn, and its class is now deleted.
     # FPSLSolver / FPSLAdjointSolver under NEUMANN and NO_FLUX were listed here as
     # "#1822 Nx=81 solve raises" and were REMOVED by #2243, which switched their diffusion wall to
     # the mirror stencil. Read what that did and did not do, because the two are easy to swap:

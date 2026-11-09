@@ -845,14 +845,6 @@
       "quadrature_wall_node_counting_measure",
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-l1]": [
-      "quadrature_wall_node_counting_measure",
-      "fp_initial_condition_written_at_final_index"
-    ],
-    "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-quadratic]": [
-      "quadrature_wall_node_counting_measure",
-      "fp_initial_condition_written_at_final_index"
-    ],
     "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]": [
       "diffusion_scalar_2x",
       "optimal_control_sign"
@@ -2603,9 +2595,6 @@
       "picard_criterion_reads_as_or",
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/unit/test_alg/test_newton_decides_through_the_owners_2565.py::test_an_assigned_newton_tolerance_acts_as_well": [
-      "picard_criterion_reads_as_or"
-    ],
     "tests/unit/test_alg/test_newton_decides_through_the_owners_2565.py::test_the_outer_tolerance_decides_newtons_own_iterations": [
       "picard_criterion_reads_as_or",
       "fp_initial_condition_written_at_final_index"
@@ -4049,34 +4038,34 @@
     "tests/unit/test_geometry/test_sparse_operations.py::TestSparseSolver::test_direct_solver_1d": [
       "grid_spacing_uses_point_count"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx-[100, 50]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx-[100, 50]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx_points-[101, 51]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101, 51]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[588-grid.refine(2).Nx-[20, 20]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx-[20, 20]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[588-grid.refine(2).Nx_points-[21, 21]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx_points-[21, 21]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1524-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1487-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1576-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1539-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1635-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1598-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1673-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1636-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1721-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1684-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1767-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1730-]": [
       "grid_interval_count_reads_as_points"
     ],
     "tests/unit/test_geometry/test_tensor_operators.py::TestBoundaryConditions::test_no_flux_bc": [
@@ -5009,7 +4998,7 @@
       "verify": "float(upwind_momentum(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[0]) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 208,
+      "kill_count": 206,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -5118,8 +5107,6 @@
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_u_channel_unchanged_for_minimize",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[divergence_upwind-l1]",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[divergence_upwind-quadratic]",
-        "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-l1]",
-        "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-quadratic]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_dirichlet_face_beside_a_flux_face_takes_nothing_from_it[fdm]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]",
@@ -5432,16 +5419,16 @@
         "tests/unit/test_geometry/level_set/test_level_set_core.py::TestLevelSetFunction::test_normal_field_1d",
         "tests/unit/test_geometry/level_set/test_reinitialization.py::TestReinitializationEdgeCases::test_handles_sign_zero",
         "tests/unit/test_geometry/level_set/test_subcell_interface.py::TestSubcellInterface1D::test_accuracy_vs_argmin",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx-[100, 50]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[106-grid.Nx_points-[101, 51]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[588-grid.refine(2).Nx-[20, 20]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[588-grid.refine(2).Nx_points-[21, 21]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1524-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1576-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1635-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1673-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1721-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1767-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx-[100, 50]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101, 51]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx-[20, 20]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx_points-[21, 21]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1487-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1539-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1598-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1636-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1684-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1730-]",
         "tests/unit/test_operators/test_interface_jump.py::TestInterfaceJumpOperator1D::test_1d_gradient_jump",
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
@@ -5917,7 +5904,7 @@
         "tests/unit/test_fp_fvm.py::test_gate1_mass_conservation_periodic",
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
-      "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:370), and so do `bind_periodic_convention` and `periodic_axis_spans`, the layout owner (#2910). The property docstring states why it is derived rather than asserted: \"Derive",
+      "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:354), and so do `bind_periodic_convention` and `periodic_axis_spans`, the layout owner (#2910). The property docstring states why it is derived rather than asserted: \"Derive",
       "seconds": 263.6,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
@@ -5996,7 +5983,7 @@
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1, spacing=1.0)[0] == 2.0"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 91,
+      "kill_count": 90,
       "killed": [
         "tests/integration/test_block_iterators.py::TestBlockIteratorBasic::test_jacobi_executes",
         "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_population_solves_with_its_own_source[source_term_fp]",
@@ -6066,7 +6053,6 @@
         "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty",
         "tests/unit/test_alg/test_meshless_galerkin_declares_bcs.py::test_a_coupled_exit_cost_runs_through_the_factory",
         "tests/unit/test_alg/test_newton_decides_through_the_owners_2565.py::test_absolute_tolerance_reaches_the_verdict",
-        "tests/unit/test_alg/test_newton_decides_through_the_owners_2565.py::test_an_assigned_newton_tolerance_acts_as_well",
         "tests/unit/test_alg/test_newton_decides_through_the_owners_2565.py::test_the_outer_tolerance_decides_newtons_own_iterations",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_converged_result_satisfies_the_discrete_hjb_at_every_step",
         "tests/unit/test_alg/test_sl_diffusion_monotone_2463.py::test_the_clip_names_a_theta_that_lets_the_solve_through",
@@ -6096,7 +6082,7 @@
       "verify": "check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, 1e-6)[0]"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 185,
+      "kill_count": 183,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -6142,8 +6128,6 @@
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_u_channel_unchanged_for_minimize",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[divergence_upwind-l1]",
         "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[divergence_upwind-quadratic]",
-        "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-l1]",
-        "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-quadratic]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-1]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_uniform_flux_bc_takes_q_through_every_face[fdm-2]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_b3_lets_an_upwind_inflow_into_an_empty_domain_solve[0.0]",

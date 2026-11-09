@@ -93,7 +93,6 @@ from mfgarchon.utils.pde_coefficients import (
     assert_quadratic_drift,
     diffusion_from_volatility,
     resolve_volatility_override,
-    retired_volatility_keywords,
 )
 
 if TYPE_CHECKING:
@@ -454,7 +453,6 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     # Main solve
     # ------------------------------------------------------------------
-    @retired_volatility_keywords
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,

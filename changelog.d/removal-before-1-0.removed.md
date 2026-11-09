@@ -1,0 +1,53 @@
+- **Nothing is deprecated before 1.0: every deprecated, retired or withdrawn name is deleted, with the machinery that kept them.** A name the library no longer wants now raises Python's own `TypeError`, `AttributeError` or `ImportError`. It is no longer kept behind a warning, an alias, a redirect or a stub that raises. What replaces each:
+  - **Coupling iterators and solvers.**
+    - `damping_factor=` and `damping_factor_M=` on `BlockIterator`, `BlockJacobiIterator`, `BlockGaussSeidelIterator`, `MultiPopulationIterator`, `FixedPointSolver`, `create_network_mfg_solver` and `HJBFDMSolver`, `damping=` on `create_simple_network_solver`, and the `damping_factor`/`damping_factor_M` attributes: use `relaxation`/`relaxation_M`.
+    - `PicardConfig`'s `damping_factor`, `damping_factor_M`, `damping_schedule`, `damping_schedule_M` and `adaptive_damping`: use the `relaxation_*` fields.
+    - `HJBFDMSolver(on_newton_failure=)` and its attribute: use `on_inner_failure`.
+    - `NewtonMFGSolver(newton_tolerance=)`: use `solve(absolute_tolerance=)`.
+    - `FixedPointIterator.solve` and `FictitiousPlayIterator.solve`: `return_tuple=` (a `SolverResult` is returned), `Niter_max=` and `max_picard_iterations=` (use `max_iterations=`), and `l2errBoundPicard=` and `picard_tolerance=` (use `tolerance=`). These five are refused by name, because both methods keep `**kwargs`.
+    - `BlockIterator(adjoint_mode="transpose" | "auto")`: use `"jacobian_transpose"`.
+  - **FP solvers.**
+    - `FPFDMSolver.solve_fp_system(velocity_field=)`: use `drift_field=`.
+    - `FPFDMSolver(advection_scheme="flux")`: use `"divergence_upwind"`.
+    - `drift_field=` on the semi-Lagrangian FP solver, the network FP solver and the weak-form family (FEM, meshless): use `potential_field=`.
+    - `m_initial_condition=` on the network FP solver and `m_initial=` on the weak-form family: use `M_initial=`.
+    - `FPNetworkSolver(enforce_mass_conservation=)`: removed with no replacement (#1683).
+    - `FPGFDMSolver`, withdrawn (#2583). `create_paired_solvers(..., NumericalScheme.GFDM)` and `problem.solve(scheme=NumericalScheme.GFDM)` still refuse with the reason until the rebuild (#2584).
+  - **HJB solvers.**
+    - `PenaltyHJBSolver` (#2002): use `HJBFDMSolver(constraint=ObstacleConstraint(...))`.
+    - `HJBGFDMSolver`: `qp_usage_target=`, `use_new_infrastructure=`, and a `dict` for `boundary_conditions=` (use a `BoundaryConditions`).
+  - **Problems and components.**
+    - `MFGProblem` no longer takes `**kwargs`. `source_term_hjb`, `source_term_fp`, `nonlocal_operator`, `state_penalty` and `state_penalty_scale` are named keyword-only parameters. `sigma=`, `gamma=`, `obstacle=`, `boundary_conditions=` and every other keyword it never read are Python `TypeError`s.
+    - `problem.sigma`, `problem.volatility_field` and `problem.diffusion_field`: use `problem.volatility` and `problem.diffusion`. `problem.spatial_discretization`: use `problem.geometry.Nx` or `Nx_points`.
+    - `MFGComponents(u_final=)`: use `u_terminal=`. `MFGComponents(potential_func=)`: use the Hamiltonian's `potential=`. `MFGComponents.H` and `dH_dm`'s `p_values=`: use `derivs=`.
+    - `Model.sigma`, `Model(sigma=)` and `MFGGridConfig(sigma=)`: use `volatility`.
+    - `NetworkMFGProblem(network_geometry=)`: use `geometry=`.
+    - `VariationalMFGProblem.sigma`: use `volatility`. `VariationalMFGProblem` no longer takes `**kwargs`, and its `parameters` attribute is gone.
+    - `HamiltonianValues.sigma`: use `volatility`.
+    - `ControlCostBase.control_cost`: use `lambda_`. `ControlCostBase.hamiltonian()`: use `evaluate()`.
+  - **Never-read inputs (#2648)**, which were refused by name, are removed. The #2648 entries list them, with what to do instead.
+  - **Geometry and boundary conditions.**
+    - `TensorProductGrid.num_points`: use `Nx_points`. The `num_points=` and `dimension=` constructor arguments stay, without a warning.
+    - `TensorProductGrid.get_boundary_handler(custom_conditions=)`: store a `BoundaryConditions` on the grid.
+    - `ImplicitDomain.is_on_boundary(tol=)`: use `tolerance=`.
+    - `NoFluxCalculator` and `FPNoFluxCalculator`: use `ZeroGradientCalculator` and `ZeroFluxCalculator`.
+    - `get_ghost_values_nd`: use `pad_array_with_ghosts()` or `PreallocatedGhostBuffer`. `high_order_ghost_dirichlet` and `high_order_ghost_neumann` (#1936): use `ghost_cell_dirichlet` and `ghost_cell_neumann`.
+    - `absorb_positions`: use `absorb_at_walls` for an absorbing wall, or `np.clip` for a clamp. `ParticleApplicator.apply_with_flux_limits`: use `apply`; a capacity-limited exit has no particle replacement.
+    - The fdm_bc_1d names `BoundaryConditions1DFDM` and `LegacyBoundaryConditions1D`.
+    - `mixed_bc` stays, without a warning.
+  - **Factories.**
+    - `create_solver`, `create_basic_solver`, `create_standard_solver`, `create_fast_solver`, `create_accurate_solver`, `create_research_solver`, `create_semi_lagrangian_solver` and `create_amr_solver`: use `problem.solve()`.
+    - `create_mfg_problem`, `create_general_mfg_problem`, `create_standard_problem`, `create_network_problem`, `create_variational_problem`, `create_stochastic_problem`, `create_highdim_problem`, `create_lq_problem` and `create_crowd_problem` (#1920): build the problem directly.
+  - **Modules and utilities.**
+    - Modules: `mfgarchon.operators.nonlocal_ops` (use `mfgarchon.operators.integro_diff`), `mfgarchon.utils.numerical.sdf_utils` (use `mfgarchon.geometry.implicit.sdf_utils`), `mfgarchon.utils.numerical.gfdm_operators` with `GFDMOperator` (use `TaylorOperator`), `mfgarchon.utils.numerical.particle.boundary` (use `mfgarchon.utils.particle_utils`) and `mfgarchon.utils.parameter_migration`.
+    - The type aliases `SpatialCoordinates`, `TemporalCoordinates` and `LegacySolverReturn`: use `SpatialGrid`, `TimeGrid` and `SolverReturnTuple`.
+    - `tensor_diffusion`: use `diffusion`.
+    - `validate_u_final`: use `validate_u_terminal`.
+    - `validate_adjoint_capability`: use `validate_scheme_pairing`.
+    - `calculate_l2_convergence_metrics`: use `sweep_change`.
+    - `LocalRBFOperator(phs_order=)`: use `kernel="phs3"`. `compute_gfdm_parameters(overdetermination=)`: use `effective_overdetermination=`; its result's `overdetermination` key is gone, use `nominal_overdetermination`.
+    - `resolve_volatility`'s `legacy_key=` and `legacy_is_squared=`.
+    - `BaseOptimizationSolver.get_domain_constraints` and `BaseNeuralSolver.get_boundary_target_values`: read `BoundaryConditions.segments` through `segment_value`.
+  - **The machinery.** `mfgarchon/utils/deprecation.py` (`deprecated`, `deprecated_parameter`, `deprecated_value`, `retired_parameters`, `NEVER_READ`, `validate_kwargs` and the registry scan); the retired-keyword refusals in `mfgarchon/utils/pde_coefficients.py`, so `sigma=`, `sigma_kind=`, `sigma_at_n=`, `sigma_function=` and the per-solve `volatility_field=`, `volatility_matrix=`, `diffusion_field=` and `tensor_diffusion_field=` now get Python's own `TypeError`; the deprecation ratchet and guide (`scripts/check_internal_deprecation.py`, `scripts/generate_deprecation_guide.py`, `scripts/audit_deprecated_symbols.py`, `scripts/pre-commit-deprecation-check.sh`, `scripts/deprecation_baseline.json`, `.github/workflows/deprecation-check.yml`); and the warnings themselves, among them the components= form's `PendingDeprecationWarning` (#2184) and the components BC's `DeprecationWarning`. `MFGComponents.boundary_conditions` stays, without a warning.
+  - **Documents.** `docs/user/DEPRECATION_MODERNIZATION_GUIDE.md` and `docs/user/LEGACY_PARAMETERS.md`, and the documents whose subject is a removed API or a past release's migration: `docs/user/three_mode_api_migration_guide.md`, `docs/user/migration_v0.19.md` and `docs/user/dual_geometry_usage.md`. Git history keeps them.
+  - **A deleted positional parameter makes every later parameter keyword-only.** That covers never-read inputs, deprecated parameters and `MFGComponents`' fields after `u_terminal`. A positional caller past that point gets Python's `TypeError` instead of having its arguments shifted onto the next parameter.

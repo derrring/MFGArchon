@@ -31,7 +31,7 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -100,9 +100,6 @@ def create_paired_solvers(
     elif scheme in (NumericalScheme.SL_LINEAR, NumericalScheme.SL_CUBIC):
         hjb_solver, fp_solver = _create_sl_pair(problem, scheme, hjb_config, fp_config)
 
-    elif scheme == NumericalScheme.GFDM:
-        hjb_solver, fp_solver = _create_gfdm_pair(problem, hjb_config, fp_config)
-
     elif scheme in (NumericalScheme.FEM_P1, NumericalScheme.FEM_P2):
         hjb_solver, fp_solver = _create_fem_pair(problem, scheme, hjb_config, fp_config)
 
@@ -112,10 +109,24 @@ def create_paired_solvers(
     elif scheme in (NumericalScheme.FVM_UPWIND, NumericalScheme.FVM_MUSCL):
         hjb_solver, fp_solver = _create_fvm_pair(problem, scheme, hjb_config, fp_config)
 
+    elif scheme == NumericalScheme.GFDM:
+        # Refused before either half is built: building the HJB first cost a stencil assembly, and without
+        # `collocation_points` its TypeError pre-empted the reason (review 1 of #2585).
+        raise NotImplementedError(
+            "NumericalScheme.GFDM has no FP half: FP-GFDM is withdrawn. It built no wall (no flux or ghost row; its "
+            "operator took no boundary-condition argument), so on every bounded domain it accepted the drift's flux "
+            "crossed the boundary (#2583). Its rebuild, as the discrete adjoint of the GFDM generator, is #2584. On a "
+            "grid without obstacles, use a scheme with a dual FP, e.g. problem.solve(scheme=NumericalScheme.FDM_UPWIND), "
+            "or, to keep the GFDM HJB, pair it with an FP solver that builds walls: "
+            "problem.solve(hjb_solver=HJBGFDMSolver(problem, collocation_points=...), fp_solver=FPFDMSolver(problem)), "
+            "a non-dual pair that Expert Mode warns about. On an implicit domain or a grid with obstacles neither runs: "
+            "FDM_UPWIND and FPFDMSolver refuse it."
+        )
+
     else:
         raise NotImplementedError(
             f"Scheme {scheme.value} is defined but not yet implemented in factory. "
-            f"Available schemes: FDM_UPWIND, FDM_CENTERED, SL_LINEAR, SL_CUBIC, GFDM, "
+            f"Available schemes: FDM_UPWIND, FDM_CENTERED, SL_LINEAR, SL_CUBIC, "
             f"FEM_P1, FEM_P2, MESHLESS_GALERKIN, FVM_UPWIND, FVM_MUSCL"
         )
 
@@ -295,22 +306,6 @@ def _create_sl_pair(
     fp_solver = FPSLSolver(problem, **fp_config)
 
     return hjb_solver, fp_solver
-
-
-def _create_gfdm_pair(
-    problem: MFGProblem,
-    hjb_config: dict[str, Any],
-    fp_config: dict[str, Any],
-) -> NoReturn:
-    """GFDM pair: refused, because its FP half is withdrawn (#2583) until it is rebuilt (#2584).
-
-    Refuses before building the HJB half, so the reason is the first thing raised. Building it first cost a
-    stencil assembly and its warnings, and without ``collocation_points`` the HJB's ``TypeError`` pre-empted the
-    reason (review 1 of #2585).
-    """
-    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import WITHDRAWN
-
-    raise NotImplementedError(WITHDRAWN)
 
 
 def _create_meshless_galerkin_pair(

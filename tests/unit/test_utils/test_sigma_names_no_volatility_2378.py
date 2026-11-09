@@ -2,8 +2,8 @@
 
 Ruling 16 (maintainer, 2026-09-28) hard-renamed every public `sigma=` that carried the agents' SDE
 volatility; ruling 17 put the internal sites and their docs in the same part. What remains named
-`sigma` is a different quantity, listed below with what it is. The retired spellings are refused by
-name, so an old call fails where it is written rather than solving with a default.
+`sigma` is a different quantity, listed below with what it is. The retired spellings are deleted (the removal
+before 1.0): an old call is Python's own TypeError, which names the keyword, where it is written.
 """
 
 from __future__ import annotations
@@ -102,15 +102,15 @@ def _renamed_public_api():
 
 
 def test_the_renamed_public_api_refuses_sigma_by_name():
-    """Ruling 16: each public function part 2b renamed raises a TypeError naming `volatility=`. The
-    refusal runs before the arguments bind, so a placeholder stands in for `self`. The manufactured
-    sources also refuse their old `sigma_kind=`."""
+    """Ruling 16: each public function part 2b renamed refuses `sigma=` with Python's own TypeError, which names it.
+    The keyword fails to bind before the body runs, so a placeholder stands in for `self`. The manufactured sources
+    refuse their old `sigma_kind=` the same way."""
     wrong = []
     for func, args in _renamed_public_api():
         try:
             func(*args, sigma=0.3)
         except TypeError as exc:
-            if "no longer takes sigma=; pass volatility=" in str(exc):
+            if "unexpected keyword argument 'sigma'" in str(exc):
                 continue
             wrong.append(f"{func.__qualname__}: {exc}")
         except Exception as exc:  # any other outcome is the finding
@@ -122,7 +122,7 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
     from mfgarchon.utils.manufactured import fp_source, hjb_source
 
     for func in (hjb_source, fp_source):
-        with pytest.raises(TypeError, match=r"no longer takes sigma_kind=; pass volatility_kind="):
+        with pytest.raises(TypeError, match=r"unexpected keyword argument 'sigma_kind'"):
             func(sigma_kind="tensor")
 
 
@@ -136,25 +136,24 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
     ],
 )
 def test_the_part3_renames_refuse_the_old_keyword_by_name(owner, old, new):
-    """Ruling 20 (2026-09-28): the volatility's sigma-prefixed public keywords are renamed, and the old
-    spelling raises a TypeError naming the new one rather than failing on an unexpected keyword."""
+    """Ruling 20 (2026-09-28): the volatility's sigma-prefixed public keywords are renamed, and the old spelling is
+    Python's own TypeError, which names it."""
     module, name = owner.split(":")
     func = getattr(importlib.import_module(module), name)
-    with pytest.raises(TypeError, match=rf"no longer takes {old}=; pass {new}="):
+    with pytest.raises(TypeError, match=rf"unexpected keyword argument '{old}'"):
         func(**{old: 0.3})
 
 
-def test_the_grid_config_refusal_names_volatility():
-    """`extra="forbid"` already rejects `sigma=` as an unknown field; the refusal makes the error name
-    `volatility=`."""
+def test_the_grid_config_refuses_sigma():
+    """`extra="forbid"` rejects `sigma=` as an unknown field, naming it."""
     from mfgarchon.config.array_validation import MFGGridConfig
 
     assert MFGGridConfig(Nx=100, Nt=1000, volatility=0.3).volatility == 0.3
-    with pytest.raises(ValueError, match=r"MFGGridConfig\(sigma=\.\.\.\) is retired .*pass volatility="):
+    with pytest.raises(ValueError, match=r"sigma\n\s+Extra inputs are not permitted"):
         MFGGridConfig(Nx=100, Nt=1000, sigma=0.3)
 
 
-def test_the_retired_attributes_name_the_replacement():
+def test_the_retired_attributes_are_gone():
     from mfgarchon.alg.optimization.variational_problem import VariationalMFGProblem
     from mfgarchon.core.hamiltonian import HamiltonianValues
 
@@ -162,7 +161,7 @@ def test_the_retired_attributes_name_the_replacement():
     problem = VariationalMFGProblem(volatility=0.2)
     assert problem.volatility == 0.2
     for owner in (values, problem):
-        with pytest.raises(AttributeError, match=r"\.sigma is retired .*\.volatility"):
+        with pytest.raises(AttributeError, match=r"has no attribute 'sigma'"):
             _ = owner.sigma
 
 

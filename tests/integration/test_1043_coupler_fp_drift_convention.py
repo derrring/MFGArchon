@@ -43,8 +43,7 @@ from mfgarchon.alg.numerical.coupling import (
     FictitiousPlayIterator,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import resolve_fp_drift_kwargs
-from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPGFDMSolver
-from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -520,7 +519,7 @@ class TestBlockIteratorFPDriftConvention:
 
 class TestFPNetworkSolverPotentialFieldRename:
     """Issue #1043 Phase 2: FPNetworkSolver.solve_fp_system() exposes
-    potential_field (renamed from drift_field); drift_field is a deprecated alias."""
+    potential_field (renamed from drift_field); the drift_field alias is deleted."""
 
     @pytest.fixture
     def network_problem(self):
@@ -567,38 +566,6 @@ class TestFPNetworkSolverPotentialFieldRename:
         assert M.shape == (Nt, num_nodes)
         assert np.all(np.isfinite(M))
 
-    def test_deprecated_drift_field_kwarg_warns(self, network_problem):
-        """drift_field=U keyword must emit DeprecationWarning and still produce correct result."""
-        from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
-
-        solver = FPNetworkSolver(network_problem)
-        Nt = network_problem.Nt + 1
-        num_nodes = network_problem.num_nodes
-        m0 = np.ones(num_nodes) / num_nodes
-        U = np.zeros((Nt, num_nodes))
-
-        with pytest.warns(DeprecationWarning, match="drift_field"):
-            M_old = solver.solve_fp_system(m0, drift_field=U)
-
-        # Results must be identical to the new API
-        M_new = solver.solve_fp_system(m0, potential_field=U)
-        np.testing.assert_array_equal(M_old, M_new)
-
-    def test_both_potential_and_drift_raises(self, network_problem):
-        """Specifying both potential_field and drift_field must raise ValueError."""
-        from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
-
-        solver = FPNetworkSolver(network_problem)
-        Nt = network_problem.Nt + 1
-        num_nodes = network_problem.num_nodes
-        m0 = np.ones(num_nodes) / num_nodes
-        U = np.zeros((Nt, num_nodes))
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            with pytest.raises(ValueError, match=r"potential_field.*drift_field"):
-                solver.solve_fp_system(m0, potential_field=U, drift_field=U)
-
     def test_signature_has_potential_field(self, network_problem):
         """After rename, inspect.signature must expose potential_field.
 
@@ -613,8 +580,7 @@ class TestFPNetworkSolverPotentialFieldRename:
             "FPNetworkSolver.solve_fp_system must expose potential_field so that "
             "resolve_fp_drift_kwargs routes U correctly."
         )
-        # drift_field still present as deprecated alias (not removed until v0.25.0)
-        assert "drift_field" in params, "drift_field must remain as a deprecated alias until v0.25.0 removal."
+        assert "drift_field" not in params, "the drift_field alias is deleted: a caller passing it gets a TypeError."
 
 
 class TestVelocityOnlySolverFailLoud:
@@ -633,15 +599,11 @@ class TestVelocityOnlySolverFailLoud:
         x = np.linspace(0.0, 1.0, nx)
         U = np.tile((x - 0.8) ** 2, (nt, 1))
         M = np.tile(np.exp(-10 * (x - 0.5) ** 2), (nt, 1))
-        # FPGFDMSolver's real signature: drift_field present, potential_field absent (the V2 trigger).
-        gfdm_params = set(inspect.signature(FPGFDMSolver.solve_fp_system).parameters)
-        assert "drift_field" in gfdm_params
-        assert "potential_field" not in gfdm_params
+        # A velocity-only signature, as the withdrawn FPGFDMSolver's was: drift_field present, potential_field
+        # absent (the V2 trigger).
+        gfdm_params = {"self", "M_initial", "drift_field"}
         with pytest.raises(ValueError, match="Cannot auto-route the value function"):
             resolve_fp_drift_kwargs(problem, gfdm_params, None, U, M)
-
-    def test_fp_gfdm_declares_velocity_convention(self):
-        assert FPGFDMSolver._drift_convention == DriftConvention.VELOCITY
 
 
 if __name__ == "__main__":

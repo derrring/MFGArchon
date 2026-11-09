@@ -364,11 +364,9 @@ _UNCOVERED: dict[str, str] = {
     "NetworkPolicyIterationHJBSolver": "needs a network problem; reads problem.num_nodes unguarded "
     "and raises AttributeError on a grid",
     "FPNetworkSolver": "needs a network problem",
-    "FPGFDMSolver": "withdrawn (#2583): construction refuses; the rebuild is #2584",
     "WeakFormHJBSolver": "intended-abstract base -- constructs given a discretization, then its BC "
     "hooks raise NotImplementedError; the concrete subclasses are the FEM rows above",
     "WeakFormFPSolver": "intended-abstract base -- same",
-    "PenaltyHJBSolver": "retired (#2002): construction refuses",
 }
 
 
@@ -424,11 +422,12 @@ def test_every_concrete_solver_is_covered_or_named():
         f"Add a row if the fixture can drive it, or name the reason it cannot."
     )
 
-    # 20 since #1756 removed `FPSLJacobianSolver` (21 since #2343 removed the `FPSLAdjointSolver`
-    # alias, which was a concrete subclass and so counted here). The number is a function of the
+    # 18 since the removal before 1.0 deleted `FPGFDMSolver` and `PenaltyHJBSolver` (20 since #1756
+    # removed `FPSLJacobianSolver`, 21 since #2343 removed the `FPSLAdjointSolver` alias, which was a
+    # concrete subclass and so counted here). The number is a function of the
     # package, not of this file: it moves whenever a concrete solver is added or removed, and the
     # assertion above says which.
-    assert len(population) == 20, sorted(population)
+    assert len(population) == 18, sorted(population)
     assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
     stale = set(_UNCOVERED) - population

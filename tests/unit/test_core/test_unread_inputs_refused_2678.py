@@ -7,8 +7,8 @@ compatible solvers, and two that are read on one route and dropped on another: `
 built from ``spatial_bounds=``, and ``lambda_=`` on a grid. ``coupling_coefficient``, and ``lambda_`` where it is kept,
 are read by another Hamiltonian, and stay with #2681.
 
-``hamiltonian=`` and ``obstacles=`` are no longer parameters, and the retired-keyword table is all that refuses them:
-without a row the keyword warns as unrecognized and is dropped, which is #2563 again.
+``hamiltonian=`` and ``obstacles=`` are no longer parameters, and ``MFGProblem`` takes no ``**kwargs`` (the removal
+before 1.0), so either is Python's own ``TypeError``, which names it; it cannot be dropped in silence (#2563).
 
 The refusal of a drift names routes, so each route has a row that follows it. Its bodies read both ``t`` and ``x``,
 since a constant reads the same in either order (#2864).
@@ -269,19 +269,16 @@ def test_an_empty_spatial_discretization_is_refused_off_its_grid():
 @pytest.mark.filterwarnings("ignore:No spatial domain specified")
 @pytest.mark.parametrize("value", [[object()], [], None], ids=["an obstacle", "empty", "None"])
 @pytest.mark.parametrize("route", ["a geometry", "spatial_bounds", "the default domain"])
-def test_obstacles_are_refused_on_every_route_by_the_table(route, value):
+def test_obstacles_are_refused_on_every_route(route, value):
     """No solver read them: ``sl_linear`` moved by 0.0, and particles entered the region as if nothing had been passed."""
-    with pytest.raises(
-        ValueError, match=r"FPParticleSolver\(implicit_domain=DifferenceDomain.*value function"
-    ) as refused:
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'obstacles'"):
         _on(route, obstacles=value)
-    assert "kwargs-based Hamiltonian API" not in str(refused.value)
 
 
 @pytest.mark.unit
-def test_obstacles_are_refused_on_a_network_by_the_table():
+def test_obstacles_are_refused_on_a_network():
     network = types.SimpleNamespace(nodes=list(range(5)), adjacency_matrix=np.eye(5))
-    with pytest.raises(ValueError, match=r"FPParticleSolver\(implicit_domain=DifferenceDomain"):
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'obstacles'"):
         MFGProblem(network=network, components=_components(), T=0.5, Nt=10, volatility=0.4, obstacles=[object()])
 
 
@@ -357,7 +354,7 @@ def test_suppress_warnings_is_read_where_the_library_builds_the_grid(suppress, w
     assert any("HIGH DIMENSION WARNING" in str(w.message) for w in caught) is warned
 
 
-_HAMILTONIAN_ROW = r"'hamiltonian' -> Model\(hamiltonian=\.\.\.\), or MFGComponents\(hamiltonian=\.\.\.\).*#2563"
+_HAMILTONIAN_ROW = r"unexpected keyword argument 'hamiltonian'"
 
 
 class _ProblemWithItsOwnFunctions(MFGProblem):
@@ -373,31 +370,29 @@ class _ProblemWithItsOwnFunctions(MFGProblem):
     [_hamiltonian(3.0), lambda t, x, p, m: 0.0, None],
     ids=["a Hamiltonian", "a callable", "None"],
 )
-def test_a_hamiltonian_beside_components_is_refused_and_names_both_routes(hamiltonian):
-    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW) as refused:
+def test_a_hamiltonian_beside_components_is_refused(hamiltonian):
+    with pytest.raises(TypeError, match=_HAMILTONIAN_ROW):
         _components_form(hamiltonian=hamiltonian)
-    assert "Beside components=, put the one you mean there" in str(refused.value)
-    assert "pass it through Model" not in str(refused.value), "a components= caller is not told to migrate"
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "hamiltonian", [_hamiltonian(3.0), lambda t, x, p, m: 0.0], ids=["a Hamiltonian", "a callable"]
 )
-def test_a_hamiltonian_with_no_components_is_refused_by_the_same_row(hamiltonian):
-    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+def test_a_hamiltonian_with_no_components_is_refused(hamiltonian):
+    with pytest.raises(TypeError, match=_HAMILTONIAN_ROW):
         MFGProblem(geometry=_grid(), T=0.5, Nt=10, volatility=0.4, hamiltonian=hamiltonian)
 
 
 @pytest.mark.unit
-def test_a_hamiltonian_beside_a_model_is_refused_by_the_same_row():
-    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+def test_a_hamiltonian_beside_a_model_is_refused():
+    with pytest.raises(TypeError, match=_HAMILTONIAN_ROW):
         _model_form(hamiltonian=_hamiltonian(3.0))
 
 
 @pytest.mark.unit
-def test_a_subclass_with_its_own_functions_is_refused_by_the_same_row():
-    with pytest.raises(ValueError, match=_HAMILTONIAN_ROW):
+def test_a_subclass_with_its_own_functions_is_refused():
+    with pytest.raises(TypeError, match=_HAMILTONIAN_ROW):
         _ProblemWithItsOwnFunctions(geometry=_grid(), T=0.5, Nt=10, volatility=0.4, hamiltonian=_hamiltonian())
 
 

@@ -48,7 +48,6 @@ _DECLARES_NOTHING = {
         "FPNetworkSolver",
         "NetworkHJBSolver",
         "NetworkPolicyIterationHJBSolver",
-        "PenaltyHJBSolver",
         "PrimalDualMFGSolver",
         "SinkhornMFGSolver",
         "VariationalMFGSolver",
@@ -94,7 +93,6 @@ _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     # now honours it.
     "FPFEMSolver": "False",
     "FPFVMSolver": "False",
-    "FPGFDMSolver": "False",
     "FPParticleSolver": "False",
     "FPSLSolver": "False",
     # Joined 2026-10-01 (#1936), the first HJB solver to. On no path does a Neumann value reach every
@@ -211,11 +209,13 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
     # 7 since #1756 removed FPSLJacobianSolver, an own-False owner (8 since #1936 moved
     # HJBSemiLagrangianSolver from inherited-True to own-False, 7 since #2294 moved FPFEMSolver); see
     # the comment on _HONORS_INHOMOGENEOUS_NEUMANN_OWN above, which is where the reasons live.
-    # 9 since #2512 S4 moved the meshless Galerkin pair from inherited-True to own-False.
-    assert len(owners) == 9, f"solvers stating it themselves: {sorted(owners)}"
-    # 14, the exact complement of the 9 above: each solver left the inherited set in the same change
-    # that added it to the owned one (#2294, #1936, #2512 S4). These two counts must move together.
-    assert len(from_base) == 14, f"solvers claiming True by the permissive default: {sorted(from_base)}"
+    # 9 since #2512 S4 moved the meshless Galerkin pair from inherited-True to own-False; 8 since the
+    # removal before 1.0 deleted FPGFDMSolver, an own-False owner.
+    assert len(owners) == 8, f"solvers stating it themselves: {sorted(owners)}"
+    # 13, the exact complement of the 8 above: each solver left the inherited set in the same change
+    # that added it to the owned one (#2294, #1936, #2512 S4). These two counts must move together. The
+    # removal before 1.0 deleted one solver from each: FPGFDMSolver owned it, PenaltyHJBSolver inherited it.
+    assert len(from_base) == 13, f"solvers claiming True by the permissive default: {sorted(from_base)}"
     assert set(from_base.values()) == {"True"}
     assert from_sibling == {}, (
         f"a solver now inherits {field} from a non-base parent: {from_sibling}. That is the second "

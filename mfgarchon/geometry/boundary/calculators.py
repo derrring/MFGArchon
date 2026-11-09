@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mfgarchon.utils.deprecation import deprecated
-
 from .ghost_cells import (
     ghost_cell_dirichlet,
     ghost_cell_fp_no_flux,
@@ -317,24 +315,6 @@ class ZeroGradientCalculator:
         return "ZeroGradientCalculator()"
 
 
-# Backward compatibility alias (with deprecation warning)
-class NoFluxCalculator(ZeroGradientCalculator):
-    """
-    Deprecated alias for ZeroGradientCalculator.
-
-    .. deprecated:: 0.16.11
-        Use :class:`ZeroGradientCalculator` instead for du/dn = 0.
-        For mass-conserving flux BC (J*n = 0), use :class:`ZeroFluxCalculator`.
-    """
-
-    @deprecated(
-        since="v0.16.11",
-        replacement="Use ZeroGradientCalculator for du/dn = 0, or ZeroFluxCalculator for J*n = 0.",
-    )
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
 class LinearExtrapolationCalculator:
     """
     Calculator for linear extrapolation boundary conditions.
@@ -518,23 +498,6 @@ class ZeroFluxCalculator:
         return f"ZeroFluxCalculator(drift={self._drift}, D={self._diffusion})"
 
 
-# Backward compatibility alias (with deprecation warning)
-class FPNoFluxCalculator(ZeroFluxCalculator):
-    """
-    Deprecated alias for ZeroFluxCalculator.
-
-    .. deprecated:: 0.16.11
-        Use :class:`ZeroFluxCalculator` instead for J*n = 0 (mass conservation).
-    """
-
-    @deprecated(
-        since="v0.16.11",
-        replacement="Use ZeroFluxCalculator instead for J*n = 0 (mass conservation).",
-    )
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
 # =============================================================================
 # LinearConstraint: Bridge between Ghost Cells and Matrix Assembly
 # =============================================================================
@@ -604,9 +567,6 @@ __all__ = [
     "ZeroFluxCalculator",  # J*n = 0 (mass conservation)
     "LinearExtrapolationCalculator",
     "QuadraticExtrapolationCalculator",
-    # Backward compatibility aliases
-    "NoFluxCalculator",  # -> ZeroGradientCalculator
-    "FPNoFluxCalculator",  # -> ZeroFluxCalculator
     # Matrix assembly support (Tier-Based Coefficient Folding)
     "LinearConstraint",
 ]

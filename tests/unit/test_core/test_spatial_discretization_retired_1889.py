@@ -59,9 +59,9 @@ def _via_geometry():
 
 
 @pytest.mark.parametrize("build", [_via_bounds, _via_geometry], ids=["spatial_bounds", "geometry"])
-def test_the_attribute_is_refused_naming_both_counts(build):
+def test_the_attribute_is_gone(build):
     problem = build()
     assert problem.geometry.Nx == [10, 10]
     assert problem.geometry.Nx_points == [11, 11]
-    with pytest.raises(AttributeError, match=r"retired \(#1889\).*geometry\.Nx counts intervals.*geometry\.Nx_points"):
+    with pytest.raises(AttributeError, match=r"has no attribute 'spatial_discretization'"):
         _ = problem.spatial_discretization

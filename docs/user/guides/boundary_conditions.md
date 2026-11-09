@@ -69,7 +69,6 @@ The calculator classes name this distinction explicitly:
 |---|---|
 | `ZeroGradientCalculator` | `du/dn = 0` |
 | `ZeroFluxCalculator` | `J.n = 0` (mass conservation) |
-| `NoFluxCalculator` | **deprecated since v0.16.11** — an alias for `ZeroGradientCalculator`. Pick one of the two above explicitly |
 
 > **Note on `NEUMANN` on the FP side.** On the problem's shared BC, `neumann_bc(value=g)` is the HJB's
 > `du/dn = g`. Every FP solver reads `neumann_bc()` (`g = 0`) as zero flux `J.n = 0`, and refuses a

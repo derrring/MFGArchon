@@ -34,48 +34,12 @@ define their own local functions of the same names.
 
 from __future__ import annotations
 
-from typing import Any, NoReturn
-
 __all__ = [
     # Classic LQ-MFG conditions (#670). Kept: these are reusable problem DATA -- a terminal cost
     # and an initial density -- not construction, so the defect above does not touch them.
     "lq_mfg_initial_density",
     "lq_mfg_terminal_cost",
-    "create_crowd_problem",
-    "create_general_mfg_problem",
-    "create_highdim_problem",
-    "create_lq_problem",
-    "create_mfg_problem",
-    "create_network_problem",
-    "create_standard_problem",
-    "create_stochastic_problem",
-    "create_variational_problem",
 ]
-
-_MESSAGE = (
-    "mfgarchon.factory problem construction is not built (#1920). Given a legacy 1-D domain, the general "
-    "factory built the grid with a hardcoded no-flux wall while the caller's boundary went only into the "
-    "components, and the problem factories were removed with it rather than left to answer wrongly. Build "
-    "the problem directly -- MFGProblem(geometry=..., components=...), or NetworkMFGProblem for a network -- "
-    "which puts you in front of the same choices "
-    "without pretending they are handled. See this module's docstring for what a rebuilt factory "
-    "must guarantee before it is worth using."
-)
-
-
-def _unbuilt(*_args: Any, **_kwargs: Any) -> NoReturn:
-    raise NotImplementedError(_MESSAGE)
-
-
-create_crowd_problem = _unbuilt
-create_general_mfg_problem = _unbuilt
-create_highdim_problem = _unbuilt
-create_lq_problem = _unbuilt
-create_mfg_problem = _unbuilt
-create_network_problem = _unbuilt
-create_standard_problem = _unbuilt
-create_stochastic_problem = _unbuilt
-create_variational_problem = _unbuilt
 
 
 def lq_mfg_terminal_cost(Lx: float = 1.0):

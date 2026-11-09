@@ -97,7 +97,7 @@ def _velocity(vx: float = 0.0, vy: float = 0.0) -> np.ndarray:
     [None, "l1"],
     ids=["quadratic", "l1"],
 )
-@pytest.mark.parametrize("scheme", ["divergence_upwind", "flux"])
+@pytest.mark.parametrize("scheme", ["divergence_upwind"])
 def test_velocity_channel_runs_for_costs_the_u_channel_refuses(cost, scheme):
     """DEFECT 1 of #1528: the coefficient must not be resolved where it is not consumed.
 

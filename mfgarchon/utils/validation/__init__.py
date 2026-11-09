@@ -46,7 +46,6 @@ from mfgarchon.utils.validation.components import (
     validate_components,
     validate_m_initial,
     validate_mass_normalization,
-    validate_u_final,  # Deprecated: use validate_u_terminal
     validate_u_terminal,
 )
 
@@ -84,7 +83,6 @@ __all__ = [
     "validate_components",
     "validate_m_initial",
     "validate_u_terminal",
-    "validate_u_final",  # Deprecated alias
     "validate_mass_normalization",
     "validate_boundary_conditions",
     # Functions

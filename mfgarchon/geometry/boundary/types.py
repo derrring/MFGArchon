@@ -21,7 +21,6 @@ import numpy as np
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, read_region
-from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,11 +33,6 @@ if TYPE_CHECKING:
     from .providers import BCValueProvider
 
 
-@deprecated(
-    since="v0.18.0",
-    replacement="use mfgarchon.operators.differential.function_gradient() instead",
-    reason="Issue #662: Consolidated 3 duplicate SDF gradient implementations",
-)
 def _compute_sdf_gradient(
     point: np.ndarray,
     sdf_func: Callable[..., float],
@@ -47,9 +41,7 @@ def _compute_sdf_gradient(
     """
     Compute SDF gradient using central finite differences.
 
-    .. deprecated::
-        Use ``mfgarchon.operators.differential.function_gradient`` instead.
-        This function delegates to the canonical implementation in operators/.
+    It delegates to ``mfgarchon.operators.differential.function_gradient``, after refusing a non-finite point.
 
     Args:
         point: Point at which to evaluate gradient (1D array)

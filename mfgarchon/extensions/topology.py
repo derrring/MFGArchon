@@ -19,8 +19,7 @@ Key differences from continuous MFG:
 
 from __future__ import annotations
 
-import warnings
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
@@ -40,7 +39,6 @@ from mfgarchon.types.callable_protocols import (
     _remembered,
     bound_attribute,
 )
-from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -319,22 +317,19 @@ class NetworkMFGComponents(MFGComponents):
     Provide the callables to override (see ``NetworkHamiltonian``).
     """
 
+    # Every field here is keyword-only: MFGComponents' fields after u_terminal are, and these would otherwise take
+    # the positional slots its deleted u_final and its keyword-only fields held (#2648).
+    _: KW_ONLY
+
     # Network-specific Hamiltonian (depends on node states and edge flows)
     hamiltonian_func: Callable | None = None  # H(t, node, neighbors, p, m)
     hamiltonian_dm_func: Callable | None = None  # dH/dm(t, node, neighbors, p, m) at nodes
 
     # Lagrangian formulation support (based on ArXiv 2207.10908v3)
     lagrangian_func: Callable | None = None  # L(t, node, velocity, m)
-    velocity_space_dim: int = NEVER_READ  # refused when passed; never read (#2648)
-    trajectory_cost_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
-    relaxed_control: bool = NEVER_READ  # refused when passed; never read (#2648)
 
     # Node-based potential function
     node_potential_func: Callable | None = None  # V(t, node)
-
-    # Edge-based costs/rewards
-    edge_cost_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
-    congestion_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
 
     # Initial and terminal conditions on network
     initial_node_density_func: Callable | None = None  # m_0(node)
@@ -346,10 +341,6 @@ class NetworkMFGComponents(MFGComponents):
 
     # Network-specific coupling
     node_interaction_func: Callable | None = None  # Local node interactions
-    edge_interaction_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
-
-    # Problem parameters
-    problem_params: dict[str, Any] = NEVER_READ  # refused when passed; never read (#2648)
 
     def __post_init__(self) -> None:
         # Issue #1470 (Problem/Components unification, Layer Ψ): NetworkMFGComponents IS-A
@@ -361,31 +352,6 @@ class NetworkMFGComponents(MFGComponents):
         # structure and is bound by NetworkMFGProblem, not the components. The init=False
         # ``_hamiltonian_class`` / ``_lagrangian_class`` fields default to None regardless.
         pass
-
-
-NetworkMFGComponents.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {
-        "velocity_space_dim": "no network solver works in a velocity space (#1470)",
-        "trajectory_cost_func": (
-            "no network solver reads a trajectory cost; running costs enter the network Hamiltonian as "
-            "node_potential_func (V) and node_interaction_func (f), and a custom hamiltonian_func carries any "
-            "other, which only NetworkHJBSolver honours"
-        ),
-        "relaxed_control": "no network solver computes relaxed equilibria (#1470)",
-        "edge_cost_func": (
-            "no network solver reads an edge cost; put it in a custom hamiltonian_func, which only NetworkHJBSolver honours"
-        ),
-        "congestion_func": (
-            "congestion enters through node_interaction_func, f(t, node, m), which replaces the default "
-            "0.5 * m^2 node term in both network HJB solvers"
-        ),
-        "edge_interaction_func": "no network solver reads edge interactions; node_interaction_func is the coupling it reads",
-        "problem_params": "no network solve reads problem parameters; close over the values in your callables",
-    },
-    issue="#2648",
-    since="v0.22.0",
-    never_read=True,
-)(NetworkMFGComponents.__init__)
 
 
 class NetworkMFGProblem(MFGProblem):
@@ -431,8 +397,6 @@ class NetworkMFGProblem(MFGProblem):
         Nt: int = 100,
         components: NetworkMFGComponents | None = None,
         problem_name: str = "NetworkMFG",
-        *,
-        network_geometry: BaseNetworkGeometry | None = None,
     ):
         """
         Initialize network MFG problem.
@@ -444,23 +408,8 @@ class NetworkMFGProblem(MFGProblem):
             Nt: Number of time steps
             components: Network MFG components (optional)
             problem_name: Problem identifier
-            network_geometry: Deprecated alias for ``geometry`` (Issue #1472); redirects identically.
         """
-        # Issue #1472: the canonical constructor param is `geometry` (aligned with MFGProblem, toward
-        # the Problem/Components unification). `network_geometry=` is a deprecated alias that redirects
-        # identically (equivalence-tested); it will be removed after the deprecation window.
-        if network_geometry is not None:
-            if geometry is not None:
-                raise ValueError(
-                    "Pass the graph geometry via geometry=; network_geometry= is a deprecated alias — do not pass both."
-                )
-            warnings.warn(
-                "NetworkMFGProblem(network_geometry=...) is deprecated (Issue #1472); use geometry=. "
-                "The alias redirects identically and is removed after the deprecation window.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            geometry = network_geometry
+        # Issue #1472: the constructor param is `geometry`, aligned with MFGProblem.
         if geometry is None:
             raise ValueError("NetworkMFGProblem requires a graph geometry (pass geometry=...).")
         network_geometry = geometry  # local name; the remainder of __init__ uses network_geometry

@@ -36,8 +36,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
-from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -150,7 +148,6 @@ class DiffusionOperator(LinearOperator):
         super().__init__(shape=(N, N), dtype=np.float64)
 
     @classmethod
-    @retired_sigma_keyword
     def from_volatility(
         cls,
         volatility: float | NDArray,

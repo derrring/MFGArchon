@@ -1,11 +1,10 @@
-- **Six readers' time defaults to `None`, not 0.0, so a value that declares `t` is refused when no time is given,
-  not read at t = 0** (#2512, row B2). A constant, or `g(x)`, needs no time and reads as before. The six are:
+- **Five readers' time defaults to `None`, not 0.0, so a value that declares `t` is refused when no time is given,
+  not read at t = 0** (#2512, row B2). A constant, or `g(x)`, needs no time and reads as before. The five are:
   - `PreallocatedGhostBuffer.update_ghosts`, which HJB-WENO relied on (#2605);
   - `FDMApplicator.enforce_values`;
   - `MeshfreeApplicator.apply`;
   - `applicator_fdm.dirichlet_wall_rows`;
-  - `base_hjb._get_bc_info_1d`;
-  - the deprecated `BaseNeuralSolver.get_boundary_target_values`.
+  - `base_hjb._get_bc_info_1d`.
 - **A reader that takes a time but was given none now says to pass it, by its own parameter name, when it refuses a
   value that declares `t`** (#2512, row B2). For example: "… declares t, but … was given no time. A caller that has one
   passes it as time=; a solver that reaches … without one does not yet support a time-dependent value there (#2615)".

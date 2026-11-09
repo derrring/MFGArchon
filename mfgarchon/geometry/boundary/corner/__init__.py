@@ -32,7 +32,7 @@ Detection:
 Module Structure:
     corner/
     ├── __init__.py      # This file - unified exports
-    ├── position.py      # reflect_positions, absorb_at_walls, walls_reached; absorb_positions (deprecated)
+    ├── position.py      # reflect_positions, absorb_at_walls, walls_reached
     ├── velocity.py      # reflect_velocity, reflect_velocity_with_normal
     └── strategies.py    # CornerStrategy enum, validation
 
@@ -52,7 +52,6 @@ See Also:
 # =============================================================================
 from .position import (
     absorb_at_walls,
-    absorb_positions,  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
     fold_axis,
     non_finite_refusal,
     reflect_positions,
@@ -82,7 +81,6 @@ __all__ = [
     "absorb_at_walls",
     "walls_reached",
     "non_finite_refusal",
-    "absorb_positions",  # Deprecated - a clamp; use absorb_at_walls for an absorbing wall
     # Velocity-based (Billiard dynamics)
     "reflect_velocity",
     "reflect_velocity_with_normal",
