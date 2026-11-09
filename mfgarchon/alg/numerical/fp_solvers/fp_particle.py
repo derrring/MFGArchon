@@ -28,7 +28,6 @@ from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.types.callable_protocols import (
     COEFFICIENT_SLOTS,
     VOLATILITY_SLOTS,
-    _held_by_the_library,
     _remembered,
     coordinate_tuple,
 )
@@ -1070,7 +1069,7 @@ class FPParticleSolver(BaseFPSolver):
             # its cell (#2733: the contact loop starts every step inside it).
             # The domain's own method, which takes points as an array by the geometry's contract, on a subclass the user
             # wrote too: a closure the library wrote, and not a callable the user handed (#2875).
-            navigable=_held_by_the_library(lambda points, domain=self._particle_domain(): domain.contains(points)),
+            navigable=lambda points, domain=self._particle_domain(): domain.contains(points),
         )
 
     def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:

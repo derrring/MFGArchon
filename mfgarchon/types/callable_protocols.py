@@ -363,20 +363,11 @@ def _forget_source(key: tuple[int, Slots], dead: weakref.ref) -> None:
         del _SOURCE_PLANS[key]
 
 
-def _held_by_the_library(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Mark ``fn``, a closure the library composes and calls itself, as the library's whichever module it runs in: a
-    library module run as a script (``python -m``) runs as ``__main__``, where the module test below cannot see it."""
-    fn._held_by_the_library = True  # type: ignore[attr-defined]
-    return fn
-
-
 def _defined_by_the_library(fn: Any) -> bool:
     """Whether ``fn`` is a closure the library composed. It is not a user input: what it wraps has its own door, and the
-    couplers build one per Picard iteration (#2875). The test is the module that defined it, or the library's mark."""
+    couplers build one per Picard iteration (#2875). The test is the module that defined it."""
     while isinstance(fn, functools.partial):
         fn = fn.func
-    if getattr(fn, "_held_by_the_library", False) is True:  # a mock answers every attribute
-        return True
     return (getattr(fn, "__module__", None) or "").partition(".")[0] == "mfgarchon"
 
 

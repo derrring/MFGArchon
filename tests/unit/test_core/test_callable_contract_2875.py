@@ -424,19 +424,6 @@ def test_a_library_closure_is_handed_x_as_it_is_and_read_once():
     assert calls == [(7, 1)]
 
 
-def test_a_closure_the_library_marks_is_the_librarys_in_a_module_run_as_a_script():
-    """``python -m`` runs a library module as ``__main__``, so the particle solver's ``navigable`` closure, whose module was
-    then ``__main__``, was refused as a user's in its own ``__main__`` block. The library marks the closure it calls itself;
-    a body written in that block, as a user writes one, is still a user's and is handed the tuple."""
-
-    def made_in_main(body):
-        body.__module__ = "__main__"
-        return body
-
-    assert cp._defined_by_the_library(cp._held_by_the_library(made_in_main(lambda points: points)))
-    assert not cp._defined_by_the_library(made_in_main(lambda x: x[0]))
-
-
 def test_a_users_source_is_read_as_a_tuple_and_refused_at_its_own_door():
     points = np.linspace(0.0, 1.0, 7).reshape(-1, 1)
     np.testing.assert_allclose(
@@ -1179,37 +1166,6 @@ def test_the_comparison_copies_an_array_as_the_type_it_was_handed():
 
     read = FunctionalMeasureField(masked_count).evaluate(0.0, _BATCH, held)
     np.testing.assert_allclose(np.ravel(read), _BATCH[:, 0] + 1.0, rtol=0, atol=1e-15)
-
-
-def test_a_mock_does_not_pass_for_a_closure_the_library_marked():
-    from unittest.mock import MagicMock
-
-    assert not cp._defined_by_the_library(MagicMock())
-
-
-class _HandedError(Exception):
-    pass
-
-
-def test_the_particle_solvers_navigable_is_the_librarys_in_a_module_run_as_a_script(monkeypatch):
-    """``python -m`` runs fp_particle as ``__main__``, where its ``navigable`` closure, read as a user's, was refused in its
-    own ``__main__`` block: the solver marks the closure it hands its sampler, and the mark holds whatever its module."""
-    import mfgarchon.alg.numerical.fp_solvers.fp_particle as fp_particle_module
-
-    handed = {}
-
-    def capture(**kwargs):
-        handed.update(kwargs)
-        raise _HandedError
-
-    monkeypatch.setattr(fp_particle_module, "sample_from_density", capture)
-    with pytest.raises(_HandedError):
-        FPParticleSolver(_problem(dimension=2, n=5), num_particles=10, seed=0).solve_fp_system(
-            np.ones((5, 5)) / 25, drift_field=lambda t, x, m: 0.0, show_progress=False
-        )
-    navigable = handed["navigable"]
-    navigable.__module__ = "__main__"
-    assert cp._defined_by_the_library(navigable)
 
 
 # ------------------------------------------------------------------- the doors that read one point, recorded at d = 1
