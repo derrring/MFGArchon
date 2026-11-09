@@ -190,8 +190,3 @@ def generate_brownian_increment(
         return volatility * rng.normal(0, np.sqrt(dt), num_particles)
 
     return volatility * rng.normal(0, np.sqrt(dt), (num_particles, dimension))
-
-
-# =============================================================================
-# Smoke Tests
-# =============================================================================

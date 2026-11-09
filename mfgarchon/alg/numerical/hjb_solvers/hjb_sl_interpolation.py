@@ -327,8 +327,3 @@ def interpolate_nearest_neighbor(
         return float(U_values[flat_idx])
     else:
         return float(U_values[tuple(multi_idx)])
-
-
-# =============================================================================
-# Smoke Tests
-# =============================================================================

@@ -832,8 +832,3 @@ def verify_operator_splitting_adjoint(
         "diffusion_error": diff_err,
         "overall_adjoint": adv_ok and diff_ok,
     }
-
-
-# =============================================================================
-# Smoke Test
-# =============================================================================

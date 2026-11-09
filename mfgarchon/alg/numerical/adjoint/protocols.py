@@ -159,8 +159,3 @@ def validate_scheme_pairing(hjb_solver: object, fp_solver: object) -> tuple[bool
         )
 
     return True, None
-
-
-# =============================================================================
-# Smoke Test
-# =============================================================================

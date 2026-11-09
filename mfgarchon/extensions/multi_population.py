@@ -517,8 +517,3 @@ class MultiPopulationMFGProblem(MFGProblem):
             raise ValueError(f"Population index k={k} out of range [0, {self.num_populations})")
 
         return self.volatility_vec[k]
-
-
-# ============================================================================
-# Smoke Tests
-# ============================================================================

@@ -511,8 +511,3 @@ def to_boundary_conditions(
     # segments do not cover (matches the empty-resolved no_flux_bc default above);
     # avoids the removed implicit PERIODIC default.
     return BoundaryConditions(segments=segments, dimension=dimension, default_bc=BCType.NO_FLUX)
-
-
-# =============================================================================
-# Smoke test
-# =============================================================================

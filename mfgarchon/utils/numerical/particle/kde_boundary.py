@@ -566,8 +566,3 @@ def reflection_kde_nd(
 ) -> NDArray[np.floating]:
     """Legacy nD alias. Use reflection_kde() instead."""
     return reflection_kde(particles, grid_points, bandwidth, bounds, n_bandwidths)
-
-
-# =============================================================================
-# Smoke Test
-# =============================================================================

@@ -265,8 +265,3 @@ def compute_adjoint_error_profile(
     diff = A_fp - A_hjb.T
     row_errors = np.linalg.norm(diff, axis=1)
     return row_errors
-
-
-# =============================================================================
-# Smoke Test
-# =============================================================================

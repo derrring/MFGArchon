@@ -503,6 +503,3 @@ def adaptive_backend(backends: list[str] | None = None):
         return wrapper
 
     return decorator
-
-
-# Example usage and testing

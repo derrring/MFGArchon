@@ -400,8 +400,3 @@ def _generate_recommendations(
         recs.append(f"WARNING: Error is high ({total_error:.2e}). MFG convergence may be compromised.")
 
     return recs
-
-
-# =============================================================================
-# Smoke Test
-# =============================================================================

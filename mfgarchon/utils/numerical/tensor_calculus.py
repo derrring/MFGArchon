@@ -1177,8 +1177,3 @@ def _tensor_diffusion_nd(
         result += (F_i[tuple(slice_plus_i)] - F_i[tuple(slice_minus_i)]) * coeff.reshape(broadcast)
 
     return result
-
-
-# =============================================================================
-# Smoke Tests
-# =============================================================================

@@ -504,6 +504,3 @@ def generate_discretization(operator: str, order: int, domain_type: str = "inter
 
     else:
         raise ValueError(f"Unsupported operator: {operator}")
-
-
-# Example usage and testing functions

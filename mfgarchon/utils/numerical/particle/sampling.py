@@ -1339,8 +1339,3 @@ def _redraw_until_navigable(
             f"{_MAX_REDRAW_ROUNDS} redraws -- the first at {particles[pending[0]]}. The navigable part there is too "
             "small to sample by rejection (#2688)."
         )
-
-
-# =============================================================================
-# SMOKE TEST
-# =============================================================================

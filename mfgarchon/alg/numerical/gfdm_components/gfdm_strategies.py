@@ -2721,8 +2721,3 @@ def create_bc_handler(
 
     else:
         raise ValueError(f"Unknown BC method: {method}. Use 'direct' or 'ghost'.")
-
-
-# =============================================================================
-# Smoke Tests
-# =============================================================================
