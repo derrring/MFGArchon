@@ -295,14 +295,17 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
 - **A separable $H$ not as the library ships it** (#2900, #2914; `drift_is_the_control_costs` is
   false) is not driven by $-c\,\nabla u$. A solver that reads `optimal_control` gets it as $u$, as
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed
-  set: a 1-, 2- or 3-D tensor grid whose every face is `NO_FLUX`, `PERIODIC` or `DIRICHLET`,
-  periodic on every face or none, handed the density trajectory of shape `(Nt + 1, *grid shape)`,
-  one population in 2-D and 3-D, with an advection scheme that reads a velocity. In 1-D a
-  multi-population solve reads each population at its own density (#2335). #2904's census measures
-  FP-FDM's velocity route equal to its value-function route on each of those wall kinds (#2908).
+  set: a tensor grid whose every face is `NO_FLUX`, `PERIODIC`, `DIRICHLET` or `FLUX`, periodic on
+  every face or none, handed the density trajectory of shape `(Nt + 1, *grid shape)`, one
+  population above 1-D, where the solver reads the velocity by its own answer
+  (`FPFDMSolver.why_it_reads_no_velocity`; FP-FDM reads none on the tensor-diffusion path of a
+  tensor volatility). In 1-D a multi-population solve reads each population at its own density
+  (#2335). #2904's and #2915's censuses measure FP-FDM's velocity route equal to its value-function
+  route on each of those wall kinds (#2908, #2915).
   Anywhere else it is refused, as it is by every consumer that takes the value function only and
   forms $-c\,\nabla u$ itself: the semi-Lagrangian solver, FP-FDM handed `potential_field=U`
-  directly, `FPFDMSolver.build_advection_operator`, `HJBFDMSolver.build_advection_matrix`, and
+  directly, `FPFDMSolver.build_advection_operator` (which `BlockIterator(adjoint_verify=True)`
+  checks against), `HJBFDMSolver.build_advection_matrix`, and
   the meshless Galerkin HJB solver's streamline diffusion when `streamline_diffusion_scale > 0`.
   A plain subclass of a shipped class is refused there too, though it serves the library's
   control: the rule checks types (#2914). A refusal states what was run and on what, and why

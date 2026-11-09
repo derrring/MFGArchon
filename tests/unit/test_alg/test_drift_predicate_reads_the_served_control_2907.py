@@ -189,6 +189,18 @@ def test_a_hamiltonian_not_as_shipped_is_read_as_it_serves(form, monkeypatch):
         _fp_sl(hamiltonian)
 
 
+def test_a_cost_instance_holding_only_its_optimal_control_is_read_as_it_serves():
+    """A QuadraticControlCost whose instance holds only an optimal_control, another cost's, is not as the library ships
+    it (#2914), so the control it serves drives the FP. It solves as the same methods served from a cost class does
+    (#2915 review 2, S1)."""
+    cost = QuadraticControlCost(control_cost=1.0)
+    cost.optimal_control = STEEP.optimal_control
+    by_instance = SeparableHamiltonian(cost, coupling=_coupling)
+    own = type("OwnControl", (QuadraticControlCost,), {"optimal_control": lambda self, p: STEEP.optimal_control(p)})
+    by_class = SeparableHamiltonian(own(control_cost=1.0), coupling=_coupling)
+    np.testing.assert_allclose(_default(by_instance), _default(by_class), rtol=0, atol=1e-12)
+
+
 def test_the_shipped_hamiltonian_is_certified_and_fp_sl_takes_it():
     """The library H itself, and a deep copy of it, are certified, and FP-SL, which forms -c*grad(U), solves the copy
     as it solves the library H."""

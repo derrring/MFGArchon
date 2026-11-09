@@ -26,6 +26,7 @@ from .fp_fdm_time_stepping import (
     _refuse_a_cap_off_upwind,
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
+    _why_a_velocity_is_not_consumed,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -270,6 +271,16 @@ class FPFDMSolver(BaseFPSolver):
                 self._cfl_logged = True
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
+
+    def why_it_reads_no_velocity(self) -> str | None:
+        """Why `solve_fp_system` would leave a velocity handed as ``drift_field`` unread here, or None where it reads
+        it: on this solver's advection scheme and the problem's own volatility kind, through the step's one decider,
+        `_why_a_velocity_is_not_consumed` (#1632, #2915). The FP drift router asks it before it hands this solver an
+        own optimal control."""
+        _, volatility_kind = resolve_volatility_override(
+            None, None, problem=self.problem, consumer="FPFDMSolver.why_it_reads_no_velocity"
+        )
+        return _why_a_velocity_is_not_consumed(self.advection_scheme, volatility_kind == "tensor")
 
     def build_advection_operator(self, U: np.ndarray, coupling_coefficient: float | None = None) -> sparse.csr_matrix:
         """This solver's own advection operator at ``U``, for checking it against the HJB linearisation (#2338).

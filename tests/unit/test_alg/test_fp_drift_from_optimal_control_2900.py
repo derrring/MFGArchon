@@ -219,8 +219,9 @@ CASES = {
     ),
 }
 
-#: Hamiltonians that serve SeparableHamiltonian.optimal_control with a QuadraticControlCost's, so the predicate holds,
-#: but whose __call__ and dp are not that control's: #2901, out of this fix's scope.
+#: Hamiltonians that serve SeparableHamiltonian.optimal_control with a QuadraticControlCost's, but are not as the
+#: library ships them, so the predicate does not hold. That their __call__ and dp are not that control's is #2901, out
+#: of this fix's scope.
 SERVES_THE_BASE_CONTROL = {"__getattr__": lambda: _steep(_OwnGetattr), "H_redefined_control_inherited": _steep}
 
 NODES = np.linspace(0.0, 1.0, 21)
@@ -328,17 +329,35 @@ def _refused_saying(refused, *, site, ran_on, why=""):
 
 ROUTER = "FPFDMSolver.solve_fp_system(potential_field=U)"
 
-#: The cells #2908 widens the velocity route to, each measured by #2909's census (#2904's test file) equal to the value
-#: route: periodic and Dirichlet walls in 1-D, and a 2-D grid. An own control there solves as the library H it describes.
+#: The cells #2908 and #2915 widen the velocity route to: periodic and Dirichlet walls, 2-D and 3-D grids (#2908,
+#: measured by #2909's census in #2904's test file), and FLUX walls handed to FP-FDM and 4-D grids (#2915). An own
+#: control there solves as the library H it describes. Outside the comparison: FLUX walls in 2-D with a flux of 0.2,
+#: where FP-FDM refuses the library H itself, since the flux's part of a step takes the density negative.
 WIDENED = {
     "1-D periodic": {"walls": "periodic"},
     "2-D no-flux": {"d": 2, "n": 7},
     "1-D Dirichlet": {"walls": "dirichlet"},
     "3-D Dirichlet": {"d": 3, "n": 3, "walls": "dirichlet"},  # pins the router admitting 3-D; #2904's census, the route
+    "1-D FLUX 0 on both faces": {
+        "fp_solver": functools.partial(FPFDMSolver, boundary_conditions=_faces((BCType.FLUX, 0.0), (BCType.FLUX, 0.0)))
+    },
+    "1-D FLUX 0.2 on x_max": {
+        "fp_solver": functools.partial(
+            FPFDMSolver, boundary_conditions=_faces((BCType.NO_FLUX, 0.0), (BCType.FLUX, 0.2))
+        )
+    },
+    "4-D no-flux, 3 nodes per axis": {"d": 4, "n": 3},
+    "4-D no-flux, 4 nodes per axis": {"d": 4, "n": 4},  # about 110 s, so it runs outside the gate (slow)
 }
 
 
-@pytest.mark.parametrize("where", sorted(WIDENED))
+@pytest.mark.parametrize(
+    "where",
+    [
+        pytest.param(w, marks=pytest.mark.slow) if w.startswith("4-D") and WIDENED[w]["n"] > 3 else w
+        for w in sorted(WIDENED)
+    ],
+)
 def test_on_the_widened_set_an_own_control_solves_as_the_library_hamiltonian_it_describes(where):
     """#2908: the default scheme takes the own control as a velocity on these cells too, where it used to refuse (at
     87b145b1) or drive it by -c*grad(U) (at 6f02506c: 1.1121e+00 periodic, 2.5675e+00 in 2-D)."""
@@ -357,16 +376,6 @@ def test_the_set_reads_the_walls_the_solver_was_handed():
         _, M_ref = _solve(_library(), walls=problem_walls, fp_solver=handed)
         _, M = _solve(_steep(_OwnControl), walls=problem_walls, fp_solver=handed)
         np.testing.assert_allclose(M, M_ref, rtol=0, atol=1e-12)
-
-
-def test_a_wall_kind_the_census_has_not_measured_is_refused_by_name():
-    """FP-FDM accepts FLUX walls handed to it, and #2904's census has no row for them, so the own control is refused,
-    naming the walls, rather than taken as a velocity (#2908's stated limit)."""
-    flux = functools.partial(FPFDMSolver, boundary_conditions=_faces((BCType.FLUX, 0.0), (BCType.FLUX, 0.0)))
-    with pytest.raises(
-        NotImplementedError, match=r"its walls include \['FLUX'\], on which the velocity route has not been measured"
-    ):
-        _solve(_steep(_OwnControl), fp_solver=flux)
 
 
 #: The sites that form -c*grad(U) when a solver is called directly, and the context each refusal names.
@@ -416,7 +425,10 @@ def test_an_advection_scheme_that_reads_no_velocity_is_refused():
     at 6f02506c, #1632's refusal at 855dcb6e. At sigma = 0.8 the centred scheme solves the library H on this fixture."""
     with pytest.raises(NotImplementedError, match="#2900") as refused:
         _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
-    assert "Here its advection_scheme 'divergence_centered' does not read a velocity." in str(refused.value)
+    assert (
+        "Here it reads no velocity: advection_scheme='divergence_centered' does not read 'interface_velocity'."
+        in str(refused.value)
+    )
     _solve(_library(), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
 
 
