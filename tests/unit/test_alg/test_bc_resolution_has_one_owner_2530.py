@@ -72,7 +72,6 @@ ALLOWED = {
     ("mfgarchon/geometry/level_set/core.py", "get_normal"): (1, _PHI),
     ("mfgarchon/geometry/level_set/curvature.py", "compute_curvature"): (1, _PHI),
     ("mfgarchon/geometry/level_set/reinitialization.py", "_godunov_gradient_magnitude"): (1, _PHI),
-    ("mfgarchon/geometry/level_set/reinitialization.py", "<module>"): (2, "the module's __main__ demonstration"),
 }
 
 
