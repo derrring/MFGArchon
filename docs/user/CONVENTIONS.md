@@ -311,8 +311,9 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   checks against), `HJBFDMSolver.build_advection_matrix`, and
   the meshless Galerkin HJB solver's streamline diffusion when `streamline_diffusion_scale > 0`.
   A plain subclass of a shipped class is refused there too, though it serves the library's
-  control: the rule checks types (#2914). A refusal states what was run and on what, and why
-  it refuses; it names no other scheme.
+  control: the rule checks types (#2914). Each of these refusals states what was run and on
+  what, and why it refuses, and names no other scheme. FP-FDM's #1632 guard, which refuses a
+  velocity its step would not read, names the scheme that reads one.
 - **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
   refusals state it:
   - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$. It refuses

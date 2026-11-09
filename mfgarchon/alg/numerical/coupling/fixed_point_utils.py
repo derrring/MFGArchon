@@ -990,8 +990,8 @@ def _why_an_own_control_is_not_a_velocity_here(
 
 def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_density: np.ndarray | None) -> str:
     """What the closed set read, for its refusal to state (#2900): the grid's dimension, whether one population is
-    solved, and for a solver that holds its walls, those, then the shape of M. Whether the solver reads a velocity
-    is its own answer, which the reasons carry (#2915)."""
+    solved, and for a solver that holds its walls, those, then the shape of M. Whether the solve then reads the
+    velocity is the solve's own decision, at FP-FDM's #1632 guard (#2915)."""
     from mfgarchon.geometry.boundary.types import BoundaryFace
 
     read = [
@@ -1038,9 +1038,9 @@ def resolve_fp_drift_kwargs(
           path below, which reads its ``optimal_control``, only where
           ``_why_an_own_control_is_not_a_velocity_here`` finds no reason against it: a tensor grid whose
           every face is ``NO_FLUX``, ``PERIODIC``, ``DIRICHLET`` or ``FLUX`` (#2908, #2915), a density
-          trajectory, a solver that reads the velocity there by its own answer, and one population above
-          1-D (in 1-D any number, #2335). Anywhere else this refuses, stating what it read and why, and names no other
-          scheme. Every other solver (FVM,
+          trajectory, and one population above 1-D (in 1-D any number, #2335). Anywhere else this refuses,
+          stating what it read and why, and names no other scheme. Where FP-FDM's step then reads no velocity,
+          its #1632 guard refuses at the first FP solve (#2915). Every other solver (FVM,
           particle, the weak-form family) keeps ``potential_field`` and reads ``optimal_control``
           itself. With ``drift_convention=None`` the pre-#1489 gate below decides, and a solver that
           forms $-c\\,\\nabla U$ refuses through ``fp_drift_coefficient``.

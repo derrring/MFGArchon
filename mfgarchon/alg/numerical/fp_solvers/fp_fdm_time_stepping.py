@@ -1128,6 +1128,16 @@ def solve_fp_nd_full_system(
             _resolved_coefficient.append(fp_drift_coefficient(problem, context="FPFDMSolver, from potential_field=U"))
         return _resolved_coefficient[0]
 
+    def coefficient_the_step_reads() -> float:
+        """The scalar coefficient the step's handler reads (#1631, #2915). On the velocity route the drift's source
+        is the velocity, so no U-route coefficient is resolved: a consumed velocity carries alpha* per face and gets
+        the NaN marker; an unconsumed one is all zero (the #1632 guard refuses any other), U is the zero-U
+        dispatcher's, and 0.0 gives the drift exactly. Without a velocity the drift comes from U, and c is resolved.
+        """
+        if velocity_field is None:
+            return resolve_coupling_coefficient()
+        return _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else 0.0
+
     # Get grid spacing and geometry
     spacing = problem.geometry.get_grid_spacing()
     grid = problem.geometry  # Geometry IS the grid
@@ -1185,15 +1195,15 @@ def solve_fp_nd_full_system(
     if velocity_field is not None and not _velocity_is_consumed and np.any(velocity_field):
         _where = _unconsumed
         raise NotImplementedError(
-            f"A non-zero velocity_field cannot be honoured: {_where}, so it would be dropped and "
-            f"the solve would run at zero drift, returning a pure-diffusion density that looks "
-            f"converged and conserves mass (Issue #1632). The coupling layer hands FP-FDM a velocity for a "
-            f"Hamiltonian whose drift is not -c*grad(U) (drift_is_the_control_costs is false, #2900), so this "
-            f"can arise with no velocity passed by hand. Where drift_is_the_control_costs holds, supply the "
-            f"value function instead -- 'potential_field' on FPFDMSolver.solve_fp_system, "
-            f"'U_solution_for_drift' here -- and the drift is derived as -c*grad(U). Otherwise use one of "
-            f"{sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with a scalar or per-point volatility, "
-            f"whose step reads the velocity."
+            f"A non-zero velocity_field cannot be honoured: {_where}, so the step would not read it; a "
+            f"velocity passed by hand would be dropped and the solve would return a pure-diffusion density "
+            f"that looks converged (Issue #1632). The coupling layer hands FP-FDM a velocity for a "
+            f"Hamiltonian whose drift is not known to be -c*grad(U) (drift_is_the_control_costs is false, "
+            f"#2900), so this can arise with no velocity passed by hand. Where drift_is_the_control_costs "
+            f"holds, as for a Hamiltonian as the library ships it, supply the value function instead -- "
+            f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- and the drift "
+            f"is derived as -c*grad(U). Otherwise use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} with a "
+            f"scalar or per-point volatility, whose step reads the velocity."
         )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
@@ -1380,8 +1390,8 @@ def solve_fp_nd_full_system(
                 dt,
                 tensor_base,
                 # The tensor path has no interface_velocity parameter and derives its
-                # advection from U, so it genuinely consumes the coefficient.
-                resolve_coupling_coefficient(),
+                # advection from U; with a velocity handed, U is zero (#2915).
+                coefficient_the_step_reads(),
                 spacing,
                 grid,
                 ndim,
@@ -1423,12 +1433,8 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                # Issue #1631: skip resolving a coefficient the handler will not read. A consumed
-                # velocity carries alpha* per face, so the scalar coefficient is unused; every
-                # other path derives its drift from U and needs it. The else branch is still
-                # reached with a velocity present -- an all-zero one on a non-consuming scheme is
-                # accepted by the #1632 guard and lands here, resolving a real coefficient.
-                _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
+                # Issue #1631: skip resolving a coefficient the handler will not read (#2915).
+                coefficient_the_step_reads(),
                 spacing,
                 grid,
                 ndim,
