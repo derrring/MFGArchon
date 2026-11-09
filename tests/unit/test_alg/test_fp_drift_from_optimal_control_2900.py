@@ -421,15 +421,45 @@ def test_a_density_that_is_not_the_trajectory_is_refused_by_name(shape):
 
 
 def test_an_advection_scheme_that_reads_no_velocity_is_refused():
-    """FDM_CENTERED's FP-FDM ignores a velocity (#1632), so it refuses before the velocity is dropped: 5.9844e-01 off in M
-    at 6f02506c, #1632's refusal at 855dcb6e. At sigma = 0.8 the centred scheme solves the library H on this fixture."""
+    """FDM_CENTERED's FP-FDM ignores a velocity, so its #1632 guard refuses the one the router sends, at the first FP
+    solve, before it is dropped: 5.9844e-01 off in M at 6f02506c. At sigma = 0.8 the centred scheme solves the library
+    H on this fixture."""
     with pytest.raises(NotImplementedError, match="#2900") as refused:
         _solve(_steep(_OwnControl), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
-    assert (
-        "Here it reads no velocity: advection_scheme='divergence_centered' does not read 'interface_velocity'."
-        in str(refused.value)
-    )
+    assert "advection_scheme='divergence_centered' does not read 'interface_velocity'" in str(refused.value)
+    assert "Issue #1632" in str(refused.value)
     _solve(_library(), volatility=0.8, scheme=NumericalScheme.FDM_CENTERED)
+
+
+def test_an_iterators_volatility_override_decides_what_the_solve_reads():
+    """A FixedPointIterator handed volatility=0.3 on a problem whose own volatility is a tensor solves its FP with the
+    scalar it was handed, whose step reads a velocity, so a plain subclass solves as the library H. At c425dae4 the
+    router asked FP-FDM about the problem's tensor instead, and refused it (#2915 review 3, B1)."""
+    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+
+    plain = type("Plain", (SeparableHamiltonian,), {})
+
+    def solve(cls):
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=cls(QuadraticControlCost(control_cost=1 / 3), coupling=_coupling),
+                volatility=0.3 * np.eye(2),
+                volatility_kind="tensor",
+            ),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)] * 2, Nx_points=[7, 7], boundary_conditions=no_flux_bc(dimension=2)
+            ),
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.3 * np.cos(np.pi * x[0]),
+                u_terminal=lambda x: 0.2 * (x[0] - 0.8) ** 2 + 0.1 * x[1],
+                T=0.2,
+            ),
+            Nt=40,
+        )
+        iterator = FixedPointIterator(problem, HJBFDMSolver(problem), FPFDMSolver(problem), volatility=0.3)
+        return np.asarray(_quietly(lambda: iterator.solve(max_iterations=4, tolerance=1e-12, verbose=False)).M)
+
+    np.testing.assert_allclose(solve(plain), solve(SeparableHamiltonian), rtol=0, atol=1e-12)
 
 
 def test_a_solver_that_takes_the_value_function_only_is_refused():

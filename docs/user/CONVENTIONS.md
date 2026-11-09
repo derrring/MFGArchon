@@ -299,10 +299,10 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   any separable $H$. A solver that forms $-c\,\nabla u$ gets it as a velocity only on a closed
   set: a tensor grid whose every face is `NO_FLUX`, `PERIODIC`, `DIRICHLET` or `FLUX`, periodic on
   every face or none, handed the density trajectory of shape `(Nt + 1, *grid shape)`, one
-  population above 1-D, where the solver reads the velocity by its own answer
-  (`FPFDMSolver.why_it_reads_no_velocity`; FP-FDM reads none on the tensor-diffusion path of a
-  tensor volatility). In 1-D a multi-population solve reads each population at its own density
-  (#2335). #2904's and #2915's censuses measure FP-FDM's velocity route equal to its value-function
+  population above 1-D. Where FP-FDM's step reads no velocity (the tensor-diffusion path of a
+  tensor volatility, or a scheme other than `divergence_upwind`), its #1632 guard refuses the
+  velocity at the first FP solve, after one HJB solve, naming why. In 1-D a multi-population solve
+  reads each population at its own density (#2335). #2904's and #2915's censuses measure FP-FDM's velocity route equal to its value-function
   route on each of those wall kinds (#2908, #2915).
   Anywhere else it is refused, as it is by every consumer that takes the value function only and
   forms $-c\,\nabla u$ itself: the semi-Lagrangian solver, FP-FDM handed `potential_field=U`

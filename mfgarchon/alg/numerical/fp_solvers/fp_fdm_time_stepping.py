@@ -149,8 +149,8 @@ _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 # non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
 # quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
 # velocity -- measured, the coupling path raises rather than reaching it. The one exception is a
-# Hamiltonian for which `drift_is_the_control_costs` fails (#2900): the router sends it a velocity only where
-# `_why_a_velocity_is_not_consumed` finds the step reads one, and refuses it otherwise (#2915).
+# Hamiltonian for which `drift_is_the_control_costs` fails (#2900): the router sends it a velocity, and where
+# `_why_a_velocity_is_not_consumed` finds the step would drop it, the #1632 guard refuses (#2915).
 # This set is the accept-list that decider tests against, and it still tells the driver which schemes
 # leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
@@ -168,9 +168,8 @@ def _why_a_velocity_is_not_consumed(advection_scheme: str, use_tensor_diffusion:
 
     A velocity is consumed only where the assembly it reaches has an ``interface_velocity`` parameter.
     `solve_timestep_tensor_explicit` has none, so on the tensor-diffusion path no scheme reads it, including
-    ``divergence_upwind``; elsewhere the scheme must be in `_INTERFACE_VELOCITY_SCHEMES`. The #1632 guard in
-    `solve_fp_nd_full_system` reads it, and so does the FP drift router, through
-    `FPFDMSolver.why_it_reads_no_velocity`.
+    ``divergence_upwind``; elsewhere the scheme must be in `_INTERFACE_VELOCITY_SCHEMES`. Its one reader is the
+    #1632 guard in `solve_fp_nd_full_system`, on the scheme and volatility kind the solve resolved (#2915).
     """
     if use_tensor_diffusion:
         return (
@@ -1188,12 +1187,13 @@ def solve_fp_nd_full_system(
         raise NotImplementedError(
             f"A non-zero velocity_field cannot be honoured: {_where}, so it would be dropped and "
             f"the solve would run at zero drift, returning a pure-diffusion density that looks "
-            f"converged and conserves mass (Issue #1632). Supply the value function instead -- "
-            f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so "
-            f"the drift is derived as -c*grad(U), valid only for a smooth separable Hamiltonian for which "
-            f"drift_is_the_control_costs holds (#2900); "
-            f"or use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with scalar "
-            f"diffusion."
+            f"converged and conserves mass (Issue #1632). The coupling layer hands FP-FDM a velocity for a "
+            f"Hamiltonian whose drift is not -c*grad(U) (drift_is_the_control_costs is false, #2900), so this "
+            f"can arise with no velocity passed by hand. Where drift_is_the_control_costs holds, supply the "
+            f"value function instead -- 'potential_field' on FPFDMSolver.solve_fp_system, "
+            f"'U_solution_for_drift' here -- and the drift is derived as -c*grad(U). Otherwise use one of "
+            f"{sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with a scalar or per-point volatility, "
+            f"whose step reads the velocity."
         )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
