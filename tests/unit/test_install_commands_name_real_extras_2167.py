@@ -42,7 +42,7 @@ GROUPS = re.compile(r"--(?:only-|no-)?group[= ]+(?:[^\s:]*:)?([A-Za-z0-9_.\-]+)"
 #: form above reads a regex character class -- `[0-9]*.[0-9]*` in a comment about version matching --
 #: as the extra `0-9`, and reads prose ABOUT a historical command as the command. Comment lines are
 #: NOT skipped: `pyproject.toml` documents its own install commands in comments, and a documented
-#: command naming an extra that does not exist is the #2170 class exactly.
+#: command naming an extra that does not exist is the #2267 class exactly (#2170, folded into it).
 INSTALL = re.compile(r"\b(?:pip\s+install|uv\s+(?:pip\s+install|sync|run|add|export|tool\s+install))\b")
 
 #: Where an install command can live. Extension-free entries are deliberate: `Makefile` has no
@@ -217,7 +217,7 @@ def test_every_job_that_installs_a_group_upgrades_pip_first():
 #: a new one fails immediately and fixing one requires deleting its entry. These are user-facing
 #: `install_cmd` strings printed when an optional dependency is missing -- `pip install
 #: mfgarchon[neural]` warns and exits zero, so the user follows the advice, sees success, and still
-#: cannot import torch. Tracked in #2170, which decides between declaring the extras and pointing at
+#: cannot import torch. Tracked in #2267 (#2170 folded into it), which decides between declaring the extras and pointing at
 #: the ones that exist.
 #:
 #: Keyed by (file, name) and not by line: a line number in a durable artifact expires on the next
@@ -244,7 +244,7 @@ def _undeclared() -> list[tuple[str, int, str, str]]:
 
 
 def test_the_known_set_is_exact():
-    """A ratchet, not a floor. Fixing one of #2170's sites must delete its entry here.
+    """A ratchet, not a floor. Fixing one of #2267's sites must delete its entry here.
 
     Asserted as equality in both directions: a floor would let the set rot into a list of things
     that were fixed years ago, and nothing would say so.

@@ -1,0 +1,2 @@
+- **`import mfgarchon` no longer binds `mfgarchon.visualization`** (#2088). It was bound as a side effect of a deleted guard in `mfgarchon.utils.experiment_manager`, which imported from it. Import it where you use it: `import mfgarchon.visualization`, or `from mfgarchon.visualization import …`.
+- **`mfgarchon.utils.acceleration.TORCH_UTILS_AVAILABLE` no longer reads `False` when `torch_utils` itself fails to import** (#2088): that failure is a defect in the library, and it now propagates. Without torch, the flag still reads `False`, from `torch_utils.HAS_TORCH`.

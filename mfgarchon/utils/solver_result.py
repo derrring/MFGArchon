@@ -797,7 +797,7 @@ comparison = result.compare_to(other_result)
             Dictionary with 'notebook' and optionally 'html' keys containing file paths
 
         Raises:
-            ImportError: If required dependencies (plotly, nbformat, jupyter) unavailable
+            NotebookReportError: If plotly or nbformat is unavailable, or the HTML export fails
 
         Example:
             >>> result = solver.solve()

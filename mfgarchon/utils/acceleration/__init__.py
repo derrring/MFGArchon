@@ -144,15 +144,11 @@ def __getattr__(name: str):
     if name in _LAZY_TORCH:
         from importlib import import_module
 
-        try:
-            module = import_module(f".{_LAZY_TORCH[name]}", __name__)
-        except ImportError:
-            if name == "TORCH_UTILS_AVAILABLE":
-                globals()[name] = False
-                return False
-            raise
+        # torch_utils imports without torch, and reports torch in HAS_TORCH (#2088): a failure here is a defect in
+        # the library, not an absent dependency, so it propagates.
+        module = import_module(f".{_LAZY_TORCH[name]}", __name__)
         if name == "TORCH_UTILS_AVAILABLE":
-            value = bool(getattr(module, "HAS_TORCH", False))
+            value = bool(module.HAS_TORCH)
             globals()[name] = value
             return value
         attr = "tridiagonal_solve" if name == "torch_tridiagonal_solve" else name
