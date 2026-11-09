@@ -23,7 +23,7 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",
-    damping_factor=0.7  # 0.5-0.8 recommended
+    relaxation=0.7  # 0.5-0.8 recommended
 )
 ```
 
@@ -78,7 +78,7 @@ Based on comprehensive benchmarks (`benchmarks/hjb_solver_comparison.py`):
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",
-    damping_factor=0.7,          # ω ∈ (0,1], recommend 0.5-0.8
+    relaxation=0.7,          # ω ∈ (0,1], recommend 0.5-0.8
     max_newton_iterations=100,   # More iterations than Newton
     newton_tolerance=1e-6,
 )
@@ -93,7 +93,7 @@ solver = HJBFDMSolver(
 - ✅ When you don't have analytical Jacobian
 
 **Tuning Parameters**:
-- **damping_factor** (ω):
+- **relaxation** (ω):
   - 1.0 = no damping (fastest but may oscillate)
   - 0.7-0.8 = good balance (recommended)
   - 0.5 = heavy damping (stable but slower)
@@ -155,7 +155,7 @@ solver = HJBFDMSolver(problem, solver_type="newton")
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",
-    damping_factor=0.7
+    relaxation=0.7
 )
 ```
 
@@ -170,7 +170,7 @@ solver = HJBFDMSolver(
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",
-    damping_factor=0.6  # More stable for 3D
+    relaxation=0.6  # More stable for 3D
 )
 ```
 
@@ -204,7 +204,7 @@ Examples: LQ games, quadratic Hamiltonians
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",
-    damping_factor=0.8  # Can use higher ω
+    relaxation=0.8  # Can use higher ω
 )
 ```
 
@@ -222,7 +222,7 @@ solver_1d = HJBFDMSolver(problem_1d, solver_type="newton")
 solver_2d = HJBFDMSolver(
     problem_2d,
     solver_type="fixed_point",
-    damping_factor=0.5  # Lower ω for stability
+    relaxation=0.5  # Lower ω for stability
 )
 ```
 
@@ -235,7 +235,7 @@ Examples: Obstacles, state constraints, discontinuous Hamiltonians
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",
-    damping_factor=0.6  # Conservative
+    relaxation=0.6  # Conservative
 )
 ```
 
@@ -256,7 +256,7 @@ mfg_solver = FixedPointIterator(
     problem, hjb_solver, fp_solver,
     use_anderson=True,      # Enable Anderson acceleration
     anderson_depth=5,       # Memory depth (3-10 typical)
-    damping_factor=0.5,     # Still damp M for positivity
+    relaxation=0.5,     # Still damp M for positivity
 )
 ```
 
@@ -430,7 +430,7 @@ problem = My2DProblem()
 solver = HJBFDMSolver(
     problem,
     solver_type="fixed_point",  # Much faster for 2D!
-    damping_factor=0.7,
+    relaxation=0.7,
     max_newton_iterations=100,
     newton_tolerance=1e-6,
 )
@@ -500,12 +500,12 @@ Start aggressive, then conservative:
 
 ```python
 # First attempt
-solver1 = HJBFDMSolver(problem, solver_type="fixed_point", damping_factor=0.8)
+solver1 = HJBFDMSolver(problem, solver_type="fixed_point", relaxation=0.8)
 try:
     U1 = solver1.solve_hjb_system(M, U_term, U_guess)
 except:
     # If diverges, retry with conservative damping
-    solver2 = HJBFDMSolver(problem, solver_type="fixed_point", damping_factor=0.5)
+    solver2 = HJBFDMSolver(problem, solver_type="fixed_point", relaxation=0.5)
     U2 = solver2.solve_hjb_system(M, U_term, U_guess)
 ```
 

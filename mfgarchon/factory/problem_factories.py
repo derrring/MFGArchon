@@ -53,9 +53,10 @@ def lq_mfg_terminal_cost(Lx: float = 1.0):
 
     Example:
         >>> problem = MFGProblem(
-        ...     geometry=grid,
-        ...     u_terminal=lq_mfg_terminal_cost(Lx=1.0),
-        ...     m_initial=lq_mfg_initial_density(),
+        ...     model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))),
+        ...     domain=grid,
+        ...     conditions=Conditions(u_terminal=lq_mfg_terminal_cost(Lx=1.0), m_initial=lq_mfg_initial_density(), T=1.0),
+        ...     Nt=50,
         ... )
     """
     import numpy as np
@@ -83,9 +84,10 @@ def lq_mfg_initial_density():
 
     Example:
         >>> problem = MFGProblem(
-        ...     geometry=grid,
-        ...     u_terminal=lq_mfg_terminal_cost(),
-        ...     m_initial=lq_mfg_initial_density(),
+        ...     model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))),
+        ...     domain=grid,
+        ...     conditions=Conditions(u_terminal=lq_mfg_terminal_cost(Lx=1.0), m_initial=lq_mfg_initial_density(), T=1.0),
+        ...     Nt=50,
         ... )
     """
     import numpy as np

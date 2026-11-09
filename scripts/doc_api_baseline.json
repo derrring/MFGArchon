@@ -1,6 +1,6 @@
 {
-  "bad_imports": 72,
+  "bad_imports": 68,
   "unknown_calls": 77,
-  "bad_kwargs": 37,
+  "bad_kwargs": 43,
   "drifted_sketches": 3
 }
