@@ -368,6 +368,7 @@ def _planted_reports(m):
             "all_findings": [{"file": "deploy.sh", "line": 2, "type": "private_key", "severity": "HIGH", "match": m}],
         },
         "trivy": {
+            "SchemaVersion": 2,
             "ArtifactName": m,
             "Results": [
                 {
@@ -809,12 +810,54 @@ def test_the_base_image_arm_reads_trivy_vulnerabilities_and_hadolint_only(tmp_pa
     assert summary["critical_issues"] == []
 
 
-def test_a_findings_file_that_omits_a_tool_reads_incomplete(tmp_path):
+#: A report of the wrong top-level shape, which a tool that exits the same on findings and on failure leaves.
+WRONG_SHAPE = {
+    "hadolint, an object": ("./hadolint", "{}", 1),
+    "hadolint, a string": ("./hadolint", '""', 1),
+    "trivy, no SchemaVersion": ("trivy", "{}", 0),
+}
+
+
+@pytest.mark.parametrize("case", list(WRONG_SHAPE))
+def test_a_report_of_the_wrong_shape_leaves_the_run_incomplete(complete, case):
+    run, _ = complete
+    tool, text, code = WRONG_SHAPE[case]
+    (name,) = [name for name in SCAN_JOBS if any(t == tool for t, _ in _scanner_lines(run.jobs[name]))]
+    workspace, result = run.scan_job(name, override=(tool, text, code))
+    findings = json.loads((workspace / f"{SCAN_JOBS[name]}-findings.json").read_text(encoding="utf-8"))
+    assert findings["tools"][tool.lstrip("./")] == {"status": "unreadable", "error": "TypeError"}
+    assert result.returncode == 1
+
+
+def _secrets_status(case):
+    """The secrets job's tool statuses, made malformed as `case` says."""
+    status = {"detect-secrets": {"status": "read", "findings": 0}, "trufflehog": {"status": "read", "findings": 0}}
+    status["custom_secrets_scan"] = {"status": "read", "findings": 0}
+    if case == "a tool omitted":
+        del status["trufflehog"]
+    elif case == "a tool not in JOBS":
+        status["gitleaks"] = {"status": "read", "findings": 0}
+    elif case == "a status without its status":
+        status["trufflehog"] = {"findings": 0}
+    return status
+
+
+@pytest.mark.parametrize("case", ["a tool omitted", "a tool not in JOBS", "a status without its status"])
+def test_a_malformed_findings_file_reads_incomplete_and_the_check_blocks(tmp_path, monkeypatch, case):
     findings = _load("security_findings.py")
     for job, tools in findings.JOBS.items():
-        kept = list(tools)[1:] if job == "secrets" else list(tools)
-        status = {tool: {"status": "read", "findings": 0} for tool in kept}
+        status = (
+            _secrets_status(case) if job == "secrets" else {tool: {"status": "read", "findings": 0} for tool in tools}
+        )
         (tmp_path / f"{job}-findings.json").write_text(json.dumps({"tools": status, "findings": []}), encoding="utf-8")
-    collected = findings.collect(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert findings.main(["collect", str(tmp_path)]) == 1
+    collected = json.loads((tmp_path / "security-findings.json").read_text(encoding="utf-8"))
     assert (collected["summary"]["overall_status"], collected["summary"]["scans_failed"]) == ("INCOMPLETE", ["secrets"])
-    assert collected["jobs"]["secrets"]["tools"][next(iter(findings.JOBS["secrets"]))] == {"status": "missing"}
+    expected = "missing" if case == "a tool omitted" else "unreadable"
+    secrets = collected["jobs"]["secrets"]
+    assert secrets.get("tools", {}).get("trufflehog", {}).get("status", secrets["status"]) == expected
+    summary = _load("check_critical_issues.py").CriticalIssuesChecker().check_all_results()
+    assert [issue["message"] for issue in summary["blocking_issues"]] == [
+        "secrets results incomplete: trufflehog" if case == "a tool omitted" else "secrets results not found"
+    ]

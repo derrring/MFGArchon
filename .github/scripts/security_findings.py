@@ -82,9 +82,15 @@ def _finding(**fields):
 _STATUS_FIELDS = {"status": str, "findings": int, "error": str, "scanned": int, "errors": int}
 
 
+#: The statuses a tool can have in a findings file.
+_STATUSES = ("read", "missing", "unreadable", "failed")
+
+
 def _tool_status(job, tool, status):
     if tool not in JOBS[job]:
         raise KeyError("tool")
+    if status.get("status") not in _STATUSES:
+        raise ValueError("status")
     for key, value in status.items():
         if not isinstance(value, _STATUS_FIELDS[key]) or isinstance(value, bool):
             raise TypeError(f"{key} is a {type(value).__name__}")
@@ -171,6 +177,9 @@ def _custom_secrets_scan(report):
 
 
 def _trivy(report):
+    # pkg/report/writer.go: every report trivy writes carries SchemaVersion 2; Results is omitted when empty.
+    if not isinstance(report, dict) or "SchemaVersion" not in report:
+        raise TypeError("not a trivy report")
     for result in report.get("Results", []):
         for vuln in result.get("Vulnerabilities") or []:
             # These fields are omitted from the JSON when empty.
@@ -194,6 +203,9 @@ class _ToolFailedError(Exception):
 
 
 def _hadolint(report):
+    # hadolint exits 1 on findings and on failure alike, so the report's shape must say it finished: a JSON list.
+    if not isinstance(report, list):
+        raise TypeError("not a hadolint report")
     # DL1000 is hadolint's report of a Dockerfile it could not parse: nothing was linted.
     if any(issue["code"] == "DL1000" for issue in report):
         raise _ToolFailedError("DL1000")
