@@ -3,14 +3,16 @@
 
 Each member is driven so that its own call fails, through a cost, Lagrangian or Hamiltonian a user can write:
 - the bounded scalar searches (rows 17 and 19) spend their evaluation budget on a V-shaped L over a box of +-1e150;
-- Brent's search in the Moreau-Yosida prox (row 16) finds no bracket for the first of two momenta, under a cost that is
-  NaN below -1; the second momentum's search succeeds, so a check of the last search alone would not raise;
+- Brent's search in the Moreau-Yosida prox (row 16) finds no bracket for the middle of three momenta, [2, 0, 2], under a
+  cost that is NaN below -1; the searches before and after it succeed, so a check of only the first search, or of only
+  the last, would not raise;
 - each L-BFGS-B search (rows 18 and 20-24) starts where a barrier L or H is NaN, and stops ABNORMAL.
 
 The message is the failure's own, compared field by field: the library's parts (the member, its input, the routine,
 the counts) literally, and scipy's message as the member's own call returned it, captured through a pass-through
-wrapper, so that no scipy wording is written here. For rows 17 and 19 the value is checked against the member's
-objective, recomputed here; for the others, the point is the NaN start (or NaN) and the value NaN.
+wrapper, so that no scipy wording is written here. For rows 17 and 19 the fun scipy reported is checked against the
+member's objective at its x, recomputed here; for the others, x is the NaN start (or NaN) and fun NaN. Each failure is
+raised in the owner's frame, `report_inner_failure`.
 
 Exhaustion, the fact the plan names, has its own pins for the members whose routine is Brent or L-BFGS-B. No input
 was found that makes either spend its default budget, so the test caps it: the member's own call goes to scipy with
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+import traceback
 
 import pytest
 
@@ -36,6 +39,7 @@ from mfgarchon.core.hamiltonian import (
     SeparableHamiltonian,
     SeparableLagrangian,
 )
+from mfgarchon.utils import exceptions
 from mfgarchon.utils.exceptions import ConvergenceError
 
 EPS = 0.5
@@ -144,7 +148,7 @@ def _vee_value(x):
 #: gives, how scipy stops, and the point and value it stopped at, checked against the member's objective).
 MEMBERS = {
     "row 16 _MoreauYosidaControlCost._prox_h": (
-        lambda: HalfLineCost(lambda_=1.0).regularize(EPS).dp(np.array([0.0, 2.0])),
+        lambda: HalfLineCost(lambda_=1.0).regularize(EPS).dp(np.array([2.0, 0.0, 2.0])),
         ("minimize_scalar", "minimize_scalar (Brent)"),
         "_MoreauYosidaControlCost._prox_h at p=0.0",
         lambda res: res.nit == 0,  # Brent found no bracket
@@ -210,8 +214,8 @@ MEMBERS = {
 
 MESSAGE = re.compile(
     r"(?P<where>.+) stopped without success after (?P<nit>\d+) iterations and (?P<nfev>\d+) evaluations "
-    r"\((?P<why>.*)\)\. The point it stopped at, x=\[(?P<x>[^\]]*)\] with value (?P<value>\S+), is not known to be "
-    r"the optimum \(#2644\)\.",
+    r"\((?P<why>.*)\)\. scipy reported x=\[(?P<x>[^\]]*)\] and fun=(?P<fun>\S+); that x is not known to be the optimum, "
+    r"and fun is scipy's, not known to be the objective at x \(#2644\)\.",
     re.S,
 )
 
@@ -251,12 +255,14 @@ def test_a_failed_search_is_raised_by_the_owner_with_its_own_message(member, mon
     with pytest.raises(ConvergenceError) as raised, np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         call()
     error = raised.value
+    frames = traceback.extract_tb(error.__traceback__)
+    assert (frames[-1].name, frames[-1].filename) == ("report_inner_failure", exceptions.__file__), frames
     failed = results[-1]  # the search the owner refused; nothing runs after it
     assert not failed.success
     assert stops(failed), failed
     fields = _carries(str(error), where, routine, failed)
     x = [float(v) for v in fields["x"].split(", ")]
-    assert stopped_at(x, float(fields["value"])), str(error)
+    assert stopped_at(x, float(fields["fun"])), str(error)
     assert error.solver_type == where.split(" at ")[0]
     assert error.iterations == failed.nit
     assert math.isnan(error.residual)
@@ -361,17 +367,28 @@ def test_a_search_that_spends_its_budget_is_raised_by_the_owner(member, monkeypa
 def test_a_non_smooth_lagrangian_in_2d_is_refused_at_p_0_until_stage_2(monkeypatch):
     """What #2939 ships for a Lagrangian that is not differentiable, in 2-D: the library's L1 cost through
     DualHamiltonian, at p = 0. The maximiser is alpha = 0, where L-BFGS-B starts, and its line search stops ABNORMAL at
-    the kink there, so the search is refused, although the point it stopped at is the maximiser. A solve over such a
-    Lagrangian stops at its first evaluation of p = 0.
+    the kink there, so the search is refused, although the point it stopped at is the maximiser. With the kink at
+    alpha = 0, every evaluation of this H at p = 0 is refused.
 
     This holds until #2644 stage 2 changes the method for rows 18 and 20-24 to one whose verdict means something for a
-    non-smooth objective. This test goes red then, and is retired."""
+    non-smooth objective. This test fails then with RETIRE in its output, and is retired as RETIRE says."""
     H = DualHamiltonian(SeparableLagrangian(L1ControlCost(lambda_=1.0)))
     results = _spy(monkeypatch, "minimize")
-    with pytest.raises(ConvergenceError) as raised:
+    try:
         H(t=0.0, x=(0.5, 0.5), p=np.zeros(2), m=1.0)
-    assert len(results) == 1, results
-    assert not results[0].success
-    assert _abnormal(results[0])
-    assert np.array_equal(np.abs(results[0].x), np.zeros(2))  # the point it stopped at is the maximiser
-    _carries(str(raised.value), "DualHamiltonian.__call__ at p=[0.0, 0.0]", "minimize (L-BFGS-B)", results[0])
+    except ConvergenceError as error:
+        assert len(results) == 1, results
+        assert not results[0].success
+        assert _abnormal(results[0])
+        assert np.array_equal(np.abs(results[0].x), np.zeros(2))  # the point it stopped at is the maximiser
+        _carries(str(error), "DualHamiltonian.__call__ at p=[0.0, 0.0]", "minimize (L-BFGS-B)", results[0])
+    else:
+        pytest.fail(RETIRE)
+
+
+#: What the non-smooth pin prints when the search at p = 0 stops being refused.
+RETIRE = (
+    "#2644 stage 2 changed the method for rows 18 and 20-24, so this pin is retired: delete "
+    "test_a_non_smooth_lagrangian_in_2d_is_refused_at_p_0_until_stage_2, and replace it with stage 2's pin of the value "
+    "at p = 0 against the exact maximum."
+)

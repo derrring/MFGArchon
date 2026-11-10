@@ -100,9 +100,9 @@ def _check_minimiser(res: OptimizeResult, where: str, routine: str, at: str) -> 
         report_inner_failure(
             res,
             f"{where} at {at}: scipy's {routine} stopped without success after {res.nit} iterations and {res.nfev} "
-            f"evaluations ({' '.join(str(res.message).split())}). The point it stopped at, "
-            f"x={np.atleast_1d(res.x).tolist()} with value {float(res.fun)!r}, is not known to be the optimum "
-            "(#2644).",
+            f"evaluations ({' '.join(str(res.message).split())}). scipy reported x={np.atleast_1d(res.x).tolist()} "
+            f"and fun={float(res.fun)!r}; that x is not known to be the optimum, and fun is scipy's, not known to be "
+            "the objective at x (#2644).",
             solver=where,
             steps=int(res.nit),
             residual=float("nan"),
