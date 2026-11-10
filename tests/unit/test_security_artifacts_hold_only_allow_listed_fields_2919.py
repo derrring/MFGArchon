@@ -7,17 +7,17 @@ found something.
 - The workflow census:
   - each scan job uploads one `<job>-findings.json`, the five names distinct, and the summary job its three reports;
   - every scanner line sends stdout and stderr to a file under `$RUNNER_TEMP`, and no other line reads that directory;
-  - every tool that can call out on its own runs with that turned off;
+  - every call-out a flag turns off is off;
   - no job can be skipped, the steps that must run after a failure carry `if: always()`, the actions are a fixed set,
     and no other workflow starts a scanner.
-- The fault injection: a marker is planted in every string field of each tool's report that the allow-list does not
-  carry. Each scan job's own scanner steps run with the stubs; our scanners' reports are planted under the names they
+- The fault injection: a marker is planted in every string field the allow-list does not carry, in each of the twelve
+  report shapes as modelled here. Each scan job's own scanner steps run with the stubs; our scanners' reports are planted under the names they
   write, and the job's boundary step runs. The uploaded files merge into one directory, as the download step lays
   them out, and the summary job's steps run there. The marker must reach no uploaded file and no line our scripts
   print, and every planted finding must arrive.
-- A tool that never ran, or that stopped on a fatal error but still wrote a well-formed report: its job and the
-  summary read INCOMPLETE and the check blocks. A summary
-  over an empty download does the same.
+- A tool that never ran, stopped on a fatal error but still wrote a well-formed report, wrote a report of the wrong
+  shape, or scanned nothing: its job and the summary read INCOMPLETE and the check blocks. So do a summary over an
+  empty download and a malformed findings file.
 - Our scanners' own reports name a finding's file and line, never the text there.
 
 What this rests on, and does not test: download-artifact's layout, from its `src/download-artifact.ts` at v8; and the
@@ -262,7 +262,7 @@ def _planted_reports(m):
                     "version": "2.0.0",
                     "vulns": [{"id": "PYSEC-2023-74", "fix_versions": [m], "aliases": [m], "description": m}],
                 },
-                {"name": "mfgarchon", "skip_reason": m},
+                {"name": m, "skip_reason": m},
             ],
             "fixes": [],
         },
@@ -318,6 +318,8 @@ def _planted_reports(m):
                 }
             ],
             "recommendations": [m],
+            # Three files read, one of them unreadable.
+            "summary": {"files_scanned": 3, "files_unreadable": 1, "note": m},
         },
         "detect-secrets": {
             "version": m,
@@ -363,17 +365,23 @@ def _planted_reports(m):
                 "Raw": m,
             },
         ],
+        # TruffleHog's log on stderr: its final summary, after a line the boundary must not read.
+        "trufflehog.log": [
+            {"level": "info-0", "logger": "trufflehog", "msg": "running source", "source_name": m},
+            {"level": "info-0", "msg": "finished scanning", "chunks": 10, "bytes": 2048, "trufflehog_version": m},
+        ],
         "custom_secrets_scan": {
-            "summary": {"secret_types_found": [m]},
+            "summary": {"secret_types_found": [m], "tracked_files": 6, "text_files_scanned": 5},
             "all_findings": [{"file": "deploy.sh", "line": 2, "type": "private_key", "severity": "HIGH", "match": m}],
         },
         "trivy": {
             "SchemaVersion": 2,
             "ArtifactName": m,
             "Results": [
+                {"Target": m, "Class": "os-pkgs", "Type": m},
                 {
                     "Target": "app/settings.py",
-                    "Class": m,
+                    "Class": "secret",
                     "Secrets": [
                         {
                             "RuleID": "aws-access-key-id",
@@ -389,7 +397,7 @@ def _planted_reports(m):
                 },
                 {
                     "Target": m,
-                    "Class": m,
+                    "Class": "lang-pkgs",
                     "Vulnerabilities": [
                         {
                             "VulnerabilityID": "CVE-2024-0001",
@@ -479,6 +487,10 @@ COUNTED = {
     "safety": {"scanned": 2},
     "container_security_check": {"scanned": 1, "errors": 0},
     "license_compliance_check": {"scanned": 3},
+    "trivy": {"scanned": 2},
+    "trufflehog": {"scanned": 10},
+    "custom_secrets_scan": {"scanned": 5},
+    "custom_security_checks": {"scanned": 3, "errors": 1},
 }
 
 
@@ -498,6 +510,8 @@ for i, arg in enumerate(args):
         elif arg.startswith(flag + "="):
             out = arg.split("=", 1)[1]
 text = open({report!r}, encoding="utf-8").read()
+if {log!r}:
+    sys.stderr.write(open({log!r}, encoding="utf-8").read())
 if out:
     open(out, "w", encoding="utf-8").write(text)
 else:
@@ -547,14 +561,18 @@ class _Run:
         path = self.root / "planted" / tool
         path.parent.mkdir(exist_ok=True)
         report = self.reports[tool]
-        text = "\n".join(json.dumps(line) for line in report) if tool == "trufflehog" else json.dumps(report)
+        lines = tool in ("trufflehog", "trufflehog.log")
+        text = "\n".join(json.dumps(line) for line in report) if lines else json.dumps(report)
         path.write_text(text, encoding="utf-8")
         return path
 
     def scan_job(self, name, absent=(), override=None):
-        """`override`, a (tool, report text, exit code): that tool's report is the text, and its stub exits with the
-        code; for one of our scanners, the text is planted under the name it writes."""
-        """Run a scan job's scanner steps and boundary step; return (workspace, the boundary's result)."""
+        """Run a scan job's scanner steps and boundary step; return (workspace, the boundary's result).
+
+        `override`, a (tool, report text, exit code[, log text]): that tool's report is the text, its stub exits with
+        the code and writes the log text to stderr; for one of our scanners, the text is planted under the name it
+        writes.
+        """
         job, key = self.jobs[name], SCAN_JOBS[name]
         label = "-".join(absent) or (f"override-{override[0]}" if override else "all")
         workspace = self._workspace(self.root / "jobs" / f"{len(self.printed)}-{name}-{label}".replace("./", ""))
@@ -571,10 +589,14 @@ class _Run:
                     continue
                 stub = workspace / "hadolint" if tool == "./hadolint" else stubs / tool
                 report, code = self._report_file(tool.lstrip("./")), FINDING_EXIT[tool]
+                log = self._report_file(f"{tool}.log") if f"{tool}.log" in self.reports else ""
                 if override and override[0] == tool:
                     report, code = self.root / "planted" / f"override-{tool.lstrip('./')}", override[2]
                     report.write_text(override[1], encoding="utf-8")
-                stub.write_text(_STUB.format(python=sys.executable, report=str(report), code=code))
+                    if len(override) > 3:
+                        log = self.root / "planted" / f"override-{tool}.log"
+                        log.write_text(override[3], encoding="utf-8")
+                stub.write_text(_STUB.format(python=sys.executable, report=str(report), code=code, log=str(log)))
                 stub.chmod(0o755)
             result = self._bash(step["run"], workspace, env)
             assert result.returncode == 0, (step["name"], result.stdout + result.stderr)
@@ -728,6 +750,11 @@ NOTHING_SCANNED = {
         "unknown": [],
         "summary": {"total_packages": 0},
     },
+    # No report lines, and a final summary that scanned no bytes.
+    "trufflehog": ("", json.dumps({"level": "info-0", "msg": "finished scanning", "chunks": 0, "bytes": 0})),
+    "trivy": {"SchemaVersion": 2},
+    "custom_secrets_scan": {"summary": {"tracked_files": 3, "text_files_scanned": 0}, "all_findings": []},
+    "custom_security_checks": {"summary": {"files_scanned": 2, "files_unreadable": 2}, "findings": []},
 }
 
 
@@ -735,9 +762,9 @@ NOTHING_SCANNED = {
 def test_a_tool_that_scanned_nothing_leaves_the_run_incomplete(complete, tool):
     run, done = complete
     (name,) = [name for name, key in SCAN_JOBS.items() if tool in _boundary_inputs(_boundary(run.jobs[name], key))]
-    workspace, result = run.scan_job(
-        name, override=(tool, json.dumps(NOTHING_SCANNED[tool]), FINDING_EXIT.get(tool, 0))
-    )
+    planted = NOTHING_SCANNED[tool]
+    text, *log = planted if isinstance(planted, tuple) else (json.dumps(planted),)
+    workspace, result = run.scan_job(name, override=(tool, text, FINDING_EXIT.get(tool, 0), *log))
     key = SCAN_JOBS[name]
     findings = json.loads((workspace / f"{key}-findings.json").read_text(encoding="utf-8"))
     assert (findings["tools"][tool]["status"], findings["tools"][tool].get("error")) == ("failed", "nothing scanned")
@@ -784,8 +811,11 @@ def test_our_scanners_report_the_file_and_line_not_the_text(tmp_path):
     (tmp_path / "pkg" / "service_config.py").write_text(f'\n\napi_key = "{MARKER}"\n', encoding="utf-8")
     checks = _load("custom_security_checks.py").CustomSecurityChecker()
     checks.package_root = tmp_path / "pkg"
+    (tmp_path / "pkg" / "broken_config.py").write_bytes(b"caf\xe9\n")
     checks.check_configuration_security()
     assert {(f["type"], f["line"]) for f in checks.findings} == {("config_security", 3)}
+    summary = checks._generate_summary()
+    assert (summary["files_scanned"], summary["files_unreadable"]) == (2, 1)
 
     assert MARKER not in json.dumps(dockerfile) + json.dumps(checks.findings)
 

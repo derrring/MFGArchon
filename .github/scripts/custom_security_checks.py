@@ -22,6 +22,8 @@ class CustomSecurityChecker:
 
     def __init__(self):
         self.findings = []
+        self.files_read = set()
+        self.files_unreadable = set()
         self.package_root = Path("mfgarchon")
         self.test_root = Path("tests")
 
@@ -71,7 +73,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in dangerous_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -102,7 +104,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
 
                 # Check for large array allocations without bounds checking
                 large_array_pattern = r"np\.(zeros|ones|empty|full)\(\s*\([^)]*\d{6,}[^)]*\)"
@@ -144,7 +146,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 tree = ast.parse(content)
 
                 for node in ast.walk(tree):
@@ -167,7 +169,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in dangerous_subprocess_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -205,7 +207,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in pickle_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -244,7 +246,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in file_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -270,7 +272,7 @@ class CustomSecurityChecker:
 
         for config_file in config_files:
             try:
-                content = config_file.read_text()
+                content = self._read(config_file)
 
                 # Check for hardcoded credentials or sensitive data
                 sensitive_patterns = [
@@ -306,7 +308,7 @@ class CustomSecurityChecker:
 
         for plugin_file in plugin_files:
             try:
-                content = plugin_file.read_text()
+                content = self._read(plugin_file)
 
                 # Check for dynamic imports without validation
                 dynamic_import_patterns = [
@@ -352,7 +354,7 @@ class CustomSecurityChecker:
 
         for test_file in self.test_root.rglob("*.py"):
             try:
-                content = test_file.read_text()
+                content = self._read(test_file)
 
                 # Check for hardcoded sensitive data in tests
                 test_security_patterns = [
@@ -414,6 +416,16 @@ class CustomSecurityChecker:
                     }
                 )
 
+    def _read(self, path: Path) -> str:
+        """Read a file a check scans, counting it as read or unreadable."""
+        try:
+            text = path.read_text()
+        except Exception:
+            self.files_unreadable.add(str(path))
+            raise
+        self.files_read.add(str(path))
+        return text
+
     def _get_surrounding_context(self, content: str, line_num: int, context: int = 5) -> str:
         """Get surrounding context around a line."""
         lines = content.split("\n")
@@ -434,6 +446,8 @@ class CustomSecurityChecker:
             "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
             "by_type": {},
             "files_with_issues": len({f["file"] for f in self.findings}),
+            "files_scanned": len(self.files_read | self.files_unreadable),
+            "files_unreadable": len(self.files_unreadable),
         }
 
         for finding in self.findings:

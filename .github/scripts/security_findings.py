@@ -3,9 +3,9 @@
 
 Each scan job in `.github/workflows/security.yml` runs its tools, then runs this script on their reports:
 
-    security_findings.py <job> <tool>=<report> ...
+    security_findings.py <job> <tool>=<report> ... [trufflehog.log=<log>]
 
-It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that file alone. A
+From TruffleHog's log it reads only the two integers its final "finished scanning" line carries. It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that file alone. A
 tool's matched text, code lines, messages, descriptions and every other field of its report stay on the runner. It
 prints each report's status and the number of findings it read, never a value read from a report. It exits 1 when a
 report is missing, cannot be read, or says its tool did not finish, after writing the file.
@@ -283,6 +283,37 @@ def _container_security_check_counts(report):
     return int(summary["dockerfile_exists"]) + len(summary["compose_files_found"]), errors
 
 
+def _trivy_counts(report):
+    # pkg/scan/ospkg/scan.go returns a result for a detected OS whether or not it has vulnerabilities, the language
+    # scanner one per application, and pkg/report/json.go keeps every result that names a target.
+    return sum(result.get("Class") in ("os-pkgs", "lang-pkgs") for result in report.get("Results", [])), None
+
+
+def _custom_secrets_scan_counts(report):
+    # It reads every tracked file; one it cannot read stops the scan, which then writes no report.
+    return report["summary"]["text_files_scanned"], None
+
+
+def _custom_security_checks_counts(report):
+    return report["summary"]["files_scanned"], report["summary"]["files_unreadable"]
+
+
+def _trufflehog_log_counts(lines):
+    # main.go: with --json the log is JSON on stderr, and a scan that finishes logs "finished scanning" with the
+    # chunks and bytes it scanned. Only those two integers are read from the log.
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("msg") == "finished scanning":
+            chunks, scanned_bytes = entry["chunks"], entry["bytes"]
+            if not isinstance(chunks, int) or not isinstance(scanned_bytes, int):
+                raise TypeError("counts")
+            return (chunks if scanned_bytes else 0), None
+    return 0, None
+
+
 def _license_compliance_check_counts(report):
     # It records no package it failed on; a pip-licenses failure leaves the total at 0.
     return report["summary"]["total_packages"], None
@@ -297,7 +328,13 @@ _COUNTS = {
     "safety": _safety_counts,
     "container_security_check": _container_security_check_counts,
     "license_compliance_check": _license_compliance_check_counts,
+    "trivy": _trivy_counts,
+    "custom_secrets_scan": _custom_secrets_scan_counts,
+    "custom_security_checks": _custom_security_checks_counts,
 }
+
+#: Tools whose counts come from their log, given as `<tool>.log=<path>`, not from their report.
+_LOG_COUNTS = {"trufflehog": _trufflehog_log_counts}
 
 #: Reports with one JSON document per line.
 _JSON_LINES = {"trufflehog"}
@@ -318,8 +355,10 @@ def _counts(findings):
 def findings_for(job, reports):
     """Read each tool's report for `job` and keep FIELDS. `reports` maps every tool of the job to its report path."""
     tools = JOBS[job]
-    if set(reports) != set(tools):
-        raise SystemExit(f"{job} takes exactly these tools: {', '.join(tools)}; given: {', '.join(reports)}")
+    logs = {f"{tool}.log" for tool in tools if tool in _LOG_COUNTS}
+    if set(reports) != set(tools) | logs:
+        expected = ", ".join([*tools, *sorted(logs)])
+        raise SystemExit(f"{job} takes exactly these inputs: {expected}; given: {', '.join(reports)}")
     status, findings = {}, []
     for tool, read in tools.items():
         path = Path(reports[tool])
@@ -330,8 +369,13 @@ def findings_for(job, reports):
             report = _load(tool, path)
             read_now = [_finding(tool=tool, **fields) for fields in read(report)]
             counts = {}
-            if tool in _COUNTS:
-                scanned, errors = _COUNTS[tool](report)
+            if tool in _COUNTS or tool in _LOG_COUNTS:
+                if tool in _LOG_COUNTS:
+                    log = Path(reports[f"{tool}.log"])
+                    lines = log.read_text(encoding="utf-8", errors="replace").splitlines() if log.is_file() else []
+                    scanned, errors = _LOG_COUNTS[tool](lines)
+                else:
+                    scanned, errors = _COUNTS[tool](report)
                 counts = {"scanned": scanned, **({"errors": errors} if errors is not None else {})}
                 # A tool that scanned nothing, or could scan none of what it found, did not run a scan.
                 if scanned == 0 or (errors is not None and errors >= scanned):

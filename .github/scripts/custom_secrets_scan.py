@@ -76,6 +76,8 @@ class CustomSecretsScanner:
     def __init__(self, root_dir: str = "."):
         self.root_dir = Path(root_dir)
         self.findings = []
+        self.tracked_files = 0
+        self.text_files_scanned = 0
         self.false_positives = set()
         self.load_whitelist()
 
@@ -181,6 +183,7 @@ class CustomSecretsScanner:
             scanned += 1
             self.findings.extend(self.scan_file(file_path, raw.decode("utf-8", errors="ignore")))
 
+        self.tracked_files, self.text_files_scanned = len(names), scanned
         print(
             f"Tracked files: {len(names)}; scanned as text: {scanned}; "
             f"binary (a NUL in the first 8000 bytes): {binary}; not a regular file: {not_regular}"
@@ -209,7 +212,9 @@ class CustomSecretsScanner:
                 "high_severity": len(by_severity["HIGH"]),
                 "medium_severity": len(by_severity["MEDIUM"]),
                 "low_severity": len(by_severity["LOW"]),
-                "files_scanned": len({f["file"] for f in self.findings}),
+                "files_with_findings": len({f["file"] for f in self.findings}),
+                "tracked_files": self.tracked_files,
+                "text_files_scanned": self.text_files_scanned,
                 "secret_types_found": list(by_type.keys()),
             },
             "findings_by_severity": by_severity,
@@ -255,7 +260,8 @@ class CustomSecretsScanner:
         lines.append(f"- **High Severity**: {summary['high_severity']}")
         lines.append(f"- **Medium Severity**: {summary['medium_severity']}")
         lines.append(f"- **Low Severity**: {summary['low_severity']}")
-        lines.append(f"- **Files Scanned**: {summary['files_scanned']}")
+        lines.append(f"- **Text Files Scanned**: {summary['text_files_scanned']} of {summary['tracked_files']} tracked")
+        lines.append(f"- **Files With Findings**: {summary['files_with_findings']}")
         lines.append("")
 
         if summary["high_severity"] > 0:

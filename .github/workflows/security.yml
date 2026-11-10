@@ -11,10 +11,11 @@ name: Security Scanning Pipeline
 # What leaves the runner: each scan job uploads one file, <job>-findings.json, which
 # .github/scripts/security_findings.py writes from its allow-list of fields, FIELDS. Every scanner's
 # stdout and stderr go to a file under $RUNNER_TEMP, and its report to $RUNNER_TEMP or the workspace;
-# neither reaches the job log or an upload. Tools that can call out on their own run with that turned
-# off: TruffleHog's verification and update check, detect-secrets' verification, Semgrep's metrics and
-# version check, Trivy's telemetry and version check, Safety's optional telemetry and its upload of
-# results. A scan that did not run leaves no report, so the summary reads INCOMPLETE, never PASS.
+# neither reaches the job log or an upload. Every call-out a flag turns off is off: TruffleHog's
+# verification and update check, detect-secrets' verification, Semgrep's metrics and version check,
+# Trivy's telemetry and version check, Safety's optional telemetry and its upload of results. Safety's
+# announcements request has no flag; it sends Safety's version and source. A scan that did not run,
+# did not finish or scanned nothing is not read as a clean one: the summary reads INCOMPLETE.
 
 on:
   workflow_dispatch:  # Manual trigger only to reduce costs
@@ -174,7 +175,7 @@ jobs:
     - name: Keep the allow-listed fields
       if: always()
       run: |
-        python .github/scripts/security_findings.py secrets detect-secrets="$RUNNER_TEMP/detect-secrets.json" trufflehog="$RUNNER_TEMP/trufflehog.json" custom_secrets_scan=custom-secrets-report.json
+        python .github/scripts/security_findings.py secrets detect-secrets="$RUNNER_TEMP/detect-secrets.json" trufflehog="$RUNNER_TEMP/trufflehog.json" trufflehog.log="$RUNNER_TEMP/trufflehog.log" custom_secrets_scan=custom-secrets-report.json
 
     - name: Upload secrets findings
       uses: actions/upload-artifact@v7
@@ -354,9 +355,7 @@ jobs:
         echo "🔍 Checking for critical security issues..."
         python .github/scripts/check_critical_issues.py
 
-        # This script will exit with non-zero code if critical issues are found
-        # Critical issues include:
-        # - High/Critical severity vulnerabilities in dependencies
-        # - Hardcoded secrets or credentials
-        # - Critical security anti-patterns in code
-        # - License compliance violations for production dependencies
+        # It exits non-zero when a scan job's results are missing or incomplete, or when the findings
+        # cross its thresholds: dependency vulnerabilities, static analysis, detect-secrets and TruffleHog,
+        # trivy's vulnerabilities and hadolint, and licenses. The custom secrets scan and the container
+        # configuration check fail their own jobs instead.
