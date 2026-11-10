@@ -1,0 +1,12 @@
+- **A Legendre or proximal search in `core/hamiltonian.py` that stops without success raises `ConvergenceError`, instead of returning the point it stopped at as the answer** (Issue #2644, B2 stage 1).
+  - **The calls:**
+    - `LagrangianBase.conjugate_argmax`, which `optimal_control` and `evaluate_hamiltonian` read, and `LagrangianBase.proximal`, each in 1-D and in n-D;
+    - the n-D searches of `DualHamiltonian` (its value and `dp`) and of `DualLagrangian` (its value and `d_alpha`);
+    - the Moreau-Yosida prox of a control cost that has no closed form.
+  - **What was returned:** each read scipy's `x` or `fun` whatever scipy reported. For example, a bounded search that spent its 500 evaluations, an L-BFGS-B search that stopped ABNORMAL, and a Brent search that found no bracket all handed back a point.
+  - **The message** names the method and its input, the routine, scipy's own message, and the point and value the search stopped at.
+  - **What does not change:** a search that succeeds returns what it returned before, and the 1-D grid searches of `DualHamiltonian` and `DualLagrangian` are unchanged.
+- **The inner-failure owner moves to `utils/`, beside `ConvergenceError`:** `mfgarchon.utils.exceptions.report_inner_failure`.
+  - It raises by default, or records and warns under `"record"`.
+  - `core/` and `geometry/` can reach it, which they could not while it lived under `alg/`.
+  - The HJB solvers' `base_hjb.report_inner_solve_failure` is now one caller of it. Its messages, its `on_inner_failure` values and the frame its warning names are unchanged.
