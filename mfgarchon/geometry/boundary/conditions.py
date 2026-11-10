@@ -2911,8 +2911,8 @@ def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray, tolerance
     if not isinstance(geometry, CartesianGrid):
         raise ValueError(
             f"{region}, and {type(geometry).__name__} is not a CartesianGrid, the type that declares node coordinates "
-            f"and their order, so its mask is not read at the point {point.tolist()} (#2490). Read the region on a "
-            "TensorProductGrid, or place the segment by sdf_region=... or boundary=..."
+            f"and their order, so its mask is not read at the point {point.tolist()} (#2490). "
+            + _placement_advice(geometry, segment.region_name)
         )
     coordinates = geometry.coordinates
     if len(coordinates) != point.size:
@@ -2936,9 +2936,42 @@ def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray, tolerance
     return int(np.ravel_multi_index(tuple(index), tuple(len(nodes) for nodes in coordinates)))
 
 
+def _placement_advice(geometry: Any, name: str) -> str:
+    """How to place a ``region_name`` segment so that it is read, for the kind of ``geometry`` a refusal names: the one
+    owner of the placement routes a boundary refusal advises (#2920). Each route says which readers read it, as #2920's
+    census measured on each kind: a point reader (`BoundaryConditions.segment_for_point`), and a face-level reader,
+    which imposes one condition per face (`segment_for_face`)."""
+    from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+    if geometry is None:
+        return (
+            "Build the BC with mixed_bc_from_regions(grid, ...) on the grid that marks the region: a region that is a "
+            "whole face then becomes that face, which a reader without a geometry reads. A region that covers part of "
+            "a face stays a region_name, read only by a reader given that grid; or place it by region=... (axis "
+            "ranges) or sdf_region=... (a signed distance), which are read at points without one. A region that is a "
+            "whole face can also be named with BCSegment(boundary=...) (#2920)."
+        )
+    if isinstance(geometry, CartesianGrid) and isinstance(geometry, SupportsRegionMarking):
+        return (
+            f"Mark the region on the grid first, mark_region({name!r}, ...), then attach this BC with "
+            "set_boundary_conditions. A TensorProductGrid whose axes differ in node layout reads a periodic BC's "
+            "faces when it is built, before any region can be marked, so build it with a BC that names no unmarked "
+            "region. Once attached, a region that covers part of a face is read at points, and a face-level reader "
+            "refuses it where it imposes another condition than the rest of that face. A region that is a whole face "
+            "can instead be named with BCSegment(boundary=...) (#2920)."
+        )
+    return (
+        "Off a grid, place the segment by sdf_region=..., a signed distance read at points, which a face-level reader "
+        "refuses; or by region=..., axis ranges read at points, and by a face-level reader where they cover a whole "
+        "face of a box domain. On a box domain, a region that is a whole face can be named with "
+        "BCSegment(boundary=...); on a domain without faces, boundary=... selects the boundary points that the SDF "
+        "assigns to that face, by its gradient's dominant axis (#2920)."
+    )
+
+
 def _region_name_refusal(segment: BCSegment, geometry: Any, what: str) -> str:
     """Why a ``region_name`` segment cannot be read: no grid the owner reads marks its region, and its name is no face
-    label. The one message of the face rule and the point rule."""
+    label. The one message of the face rule and the point rule; the routes it advises are `_placement_advice`'s."""
     name = segment.region_name
     head = f"BC segment {segment.name!r} is restricted to the marked region {name!r}"
     get_region_names = getattr(geometry, "get_region_names", None)
@@ -2946,8 +2979,8 @@ def _region_name_refusal(segment: BCSegment, geometry: Any, what: str) -> str:
         return (
             f"{head}, and {type(geometry).__name__} marks a region of that name, but the boundary owner reads a "
             f"region by its mask on a grid's nodes, and {type(geometry).__name__} is no such grid (it does not "
-            f"implement SupportsRegionMarking), so it cannot tell whether the segment {what} (#2490). Place the "
-            "segment by sdf_region=..., a signed distance the owner reads at any point, or by boundary=..."
+            f"implement SupportsRegionMarking), so it cannot tell whether the segment {what} (#2490). "
+            + _placement_advice(geometry, name)
         )
     return (
         f"{head}, and which locations a region covers is known only to the geometry that marked it. "
@@ -2956,9 +2989,8 @@ def _region_name_refusal(segment: BCSegment, geometry: Any, what: str) -> str:
             if geometry is None
             else f"{type(geometry).__name__} defines no region of that name"
         )
-        + f", so it cannot tell whether the segment {what}. Build the BC with mixed_bc_from_regions(geometry, "
-        "...), which resolves a whole-face region to its faces, or name the face with BCSegment(boundary=...) "
-        "(Issue #2472)."
+        + f", so it cannot tell whether the segment {what}. "
+        + _placement_advice(geometry, name)
     )
 
 
