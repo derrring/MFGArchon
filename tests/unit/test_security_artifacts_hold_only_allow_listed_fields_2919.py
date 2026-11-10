@@ -243,6 +243,7 @@ def _planted_reports(m):
     return {
         "safety": {
             "report_meta": {"note": m},
+            "scanned_packages": {"jinja2": {"note": m}, "numpy": {"note": m}},
             "vulnerabilities": [
                 {
                     "vulnerability_id": "70612",
@@ -266,7 +267,9 @@ def _planted_reports(m):
             "fixes": [],
         },
         "bandit": {
-            "errors": [{"reason": m}],
+            # One of the two files it read could not be parsed.
+            "errors": [{"filename": "mfgarchon/z.py", "reason": m}],
+            "metrics": {"mfgarchon/a.py": {"loc": 20}, "mfgarchon/z.py": {"loc": 0}, "_totals": {"loc": 20}},
             "results": [
                 {
                     "code": f"12 api_key = '{m}'\n",
@@ -283,7 +286,9 @@ def _planted_reports(m):
             ],
         },
         "semgrep": {
-            "errors": [{"message": m}],
+            # One of the two targets could not be parsed.
+            "errors": [{"code": 3, "level": "warn", "type": "Syntax error", "message": m, "path": "mfgarchon/y.py"}],
+            "paths": {"scanned": ["mfgarchon/b.py", "mfgarchon/y.py"]},
             "results": [
                 {
                     "check_id": "python.lang.security.audit.eval-detected",
@@ -405,6 +410,7 @@ def _planted_reports(m):
             {"code": "DL3008", "column": 1, "file": "Dockerfile", "level": "warning", "line": 6, "message": m}
         ],
         "container_security_check": {
+            "summary": {"dockerfile_exists": True, "compose_files_found": [], "note": m},
             "all_findings": [
                 {
                     "type": m,
@@ -422,14 +428,14 @@ def _planted_reports(m):
                     "description": m,
                     "recommendation": m,
                 },
-            ]
+            ],
         },
         "license_compliance_check": {
             "approved": [{"name": m, "version": m, "license": m, "category": m}],
             "review_required": [{"name": "gplpkg", "version": "1.0", "license": "GPL-3.0", "category": m}],
             "prohibited": [],
             "unknown": [{"name": "mystery", "version": "0.1", "license": "UNKNOWN", "category": m}],
-            "summary": {"note": m},
+            "summary": {"note": m, "total_packages": 3},
         },
     }
 
@@ -460,6 +466,18 @@ ARRIVES = {
         ("license_compliance_check", "gplpkg", "1.0", "medium"),
         ("license_compliance_check", "mystery", "0.1", "low"),
     },
+}
+
+
+#: Each tool whose report says how much it scanned, with what the planted report gives: a partial error each where
+#: the tool reports one, which must read as read.
+COUNTED = {
+    "bandit": {"scanned": 2, "errors": 1},
+    "semgrep": {"scanned": 2, "errors": 1},
+    "pip-audit": {"scanned": 2, "errors": 1},
+    "safety": {"scanned": 2},
+    "container_security_check": {"scanned": 1, "errors": 0},
+    "license_compliance_check": {"scanned": 3},
 }
 
 
@@ -532,12 +550,13 @@ class _Run:
         path.write_text(text, encoding="utf-8")
         return path
 
-    def scan_job(self, name, absent=(), fatal=None):
-        """`fatal`, a (tool, report text, exit code): that tool's stub writes the text and exits with the code."""
+    def scan_job(self, name, absent=(), override=None):
+        """`override`, a (tool, report text, exit code): that tool's report is the text, and its stub exits with the
+        code; for one of our scanners, the text is planted under the name it writes."""
         """Run a scan job's scanner steps and boundary step; return (workspace, the boundary's result)."""
         job, key = self.jobs[name], SCAN_JOBS[name]
-        label = "-".join(absent) or (f"fatal-{fatal[0]}" if fatal else "all")
-        workspace = self._workspace(self.root / "jobs" / f"{name}-{label}".replace("./", ""))
+        label = "-".join(absent) or (f"override-{override[0]}" if override else "all")
+        workspace = self._workspace(self.root / "jobs" / f"{len(self.printed)}-{name}-{label}".replace("./", ""))
         stubs = workspace / ".stubs"
         stubs.mkdir()
         env = self._env(workspace)
@@ -551,9 +570,9 @@ class _Run:
                     continue
                 stub = workspace / "hadolint" if tool == "./hadolint" else stubs / tool
                 report, code = self._report_file(tool.lstrip("./")), FINDING_EXIT[tool]
-                if fatal and fatal[0] == tool:
-                    report, code = self.root / "planted" / f"fatal-{tool.lstrip('./')}", fatal[2]
-                    report.write_text(fatal[1], encoding="utf-8")
+                if override and override[0] == tool:
+                    report, code = self.root / "planted" / f"override-{tool.lstrip('./')}", override[2]
+                    report.write_text(override[1], encoding="utf-8")
                 stub.write_text(_STUB.format(python=sys.executable, report=str(report), code=code))
                 stub.chmod(0o755)
             result = self._bash(step["run"], workspace, env)
@@ -562,7 +581,8 @@ class _Run:
         # Our scanners' reports, under the names they write.
         for tool, path in _boundary_inputs(boundary).items():
             if not path.startswith("$RUNNER_TEMP"):
-                (workspace / path).write_text(json.dumps(self.reports[tool]), encoding="utf-8")
+                text = override[1] if override and override[0] == tool else json.dumps(self.reports[tool])
+                (workspace / path).write_text(text, encoding="utf-8")
         result = self._bash(boundary, workspace, env)
         self.printed.append(result.stdout + result.stderr)
         return workspace, result
@@ -609,6 +629,8 @@ def test_a_planted_marker_reaches_no_upload_and_no_log_line_and_every_finding_ar
             {arrived[0] for arrived in ARRIVES[SCAN_JOBS[name]]}, "read"
         )
         assert {_arrived(f) for f in findings["findings"]} == ARRIVES[SCAN_JOBS[name]]
+        for tool, status in findings["tools"].items():
+            assert {k: status[k] for k in ("scanned", "errors") if k in status} == COUNTED.get(tool, {}), tool
 
     workspace, results = run.summary(uploaded)
     assert [r.returncode for r in results] == [0, 0, 0], [r.stdout + r.stderr for r in results]
@@ -619,6 +641,9 @@ def test_a_planted_marker_reaches_no_upload_and_no_log_line_and_every_finding_ar
     for job_key, arrives in ARRIVES.items():
         assert {_arrived(f) for f in collected["jobs"][job_key]["findings"]} == arrives
     assert collected["summary"]["overall_status"] == "HIGH"
+    summary_md = (workspace / "security-summary.md").read_text(encoding="utf-8")
+    assert "| static | bandit | read | 1 | 2 | 1 |" in summary_md
+    assert "| dependency | safety | read | 1 | 2 |  |" in summary_md
 
     sent = [path for _, path in uploaded] + [workspace / path for path in sorted(SUMMARY_OUTPUTS)]
     assert [path.name for path in sent if MARKER in path.read_text(encoding="utf-8")] == []
@@ -664,7 +689,7 @@ def test_a_tool_that_stops_on_a_fatal_error_leaves_the_run_incomplete(complete, 
     run, done = complete
     (name,) = [name for name in SCAN_JOBS if any(t == tool for t, _ in _scanner_lines(run.jobs[name]))]
     text, code = FATAL[tool]
-    workspace, result = run.scan_job(name, fatal=(tool, text, code))
+    workspace, result = run.scan_job(name, override=(tool, text, code))
     key, tool_key = SCAN_JOBS[name], tool.lstrip("./")
     findings = json.loads((workspace / f"{key}-findings.json").read_text(encoding="utf-8"))
     assert findings["tools"][tool_key]["status"] != "read"
@@ -677,6 +702,54 @@ def test_a_tool_that_stops_on_a_fatal_error_leaves_the_run_incomplete(complete, 
     assert f"results incomplete: {tool_key}" in results[-1].stdout
 
 
+#: A run that scanned nothing, or could scan none of what it found, as each tool's report records it.
+NOTHING_SCANNED = {
+    "bandit": {
+        "errors": [{"filename": "mfgarchon/a.py", "reason": "syntax error while parsing AST from file"}],
+        "metrics": {"mfgarchon/a.py": {"loc": 0}, "_totals": {"loc": 0}},
+        "results": [],
+    },
+    "semgrep": {
+        "errors": [{"code": 3, "level": "warn", "type": "Syntax error", "path": "mfgarchon/b.py"}],
+        "paths": {"scanned": ["mfgarchon/b.py"]},
+        "results": [],
+    },
+    "pip-audit": {"dependencies": [{"name": "mfgarchon", "skip_reason": "not on PyPI"}], "fixes": []},
+    "safety": {"scanned_packages": {}, "vulnerabilities": []},
+    "container_security_check": {
+        "summary": {"dockerfile_exists": True, "compose_files_found": []},
+        "all_findings": [{"type": "error", "severity": "medium", "issue": "Failed to read Dockerfile: OSError"}],
+    },
+    "license_compliance_check": {
+        "approved": [],
+        "review_required": [],
+        "prohibited": [],
+        "unknown": [],
+        "summary": {"total_packages": 0},
+    },
+}
+
+
+@pytest.mark.parametrize("tool", list(NOTHING_SCANNED))
+def test_a_tool_that_scanned_nothing_leaves_the_run_incomplete(complete, tool):
+    run, done = complete
+    (name,) = [name for name, key in SCAN_JOBS.items() if tool in _boundary_inputs(_boundary(run.jobs[name], key))]
+    workspace, result = run.scan_job(
+        name, override=(tool, json.dumps(NOTHING_SCANNED[tool]), FINDING_EXIT.get(tool, 0))
+    )
+    key = SCAN_JOBS[name]
+    findings = json.loads((workspace / f"{key}-findings.json").read_text(encoding="utf-8"))
+    assert (findings["tools"][tool]["status"], findings["tools"][tool].get("error")) == ("failed", "nothing scanned")
+    assert result.returncode == 1
+
+    uploaded = [item for other, (ws, _) in done.items() if other != name for item in run.uploads(other, ws)]
+    summary, results = run.summary(uploaded + run.uploads(name, workspace))
+    collected = json.loads((summary / "security-findings.json").read_text(encoding="utf-8"))
+    assert (collected["summary"]["overall_status"], collected["summary"]["scans_failed"]) == ("INCOMPLETE", [key])
+    assert f"{key} results incomplete: {tool}" in results[-1].stdout
+    assert results[-1].returncode != 0
+
+
 def test_a_summary_over_an_empty_download_is_incomplete(complete):
     run, _ = complete
     summary, results = run.summary([])
@@ -685,7 +758,7 @@ def test_a_summary_over_an_empty_download_is_incomplete(complete):
     assert collected["summary"]["scans_failed"] == list(ARRIVES)
     assert results[0].returncode == 1
     assert results[-1].returncode != 0
-    assert results[-1].stdout.count("results not found") == 6
+    assert results[-1].stdout.count("results not found") == 5
 
 
 def _load(script):
@@ -734,3 +807,14 @@ def test_the_base_image_arm_reads_trivy_vulnerabilities_and_hadolint_only(tmp_pa
     summary = _load("check_critical_issues.py").CriticalIssuesChecker().check_all_results()
     assert summary["blocking_issues"] == []
     assert summary["critical_issues"] == []
+
+
+def test_a_findings_file_that_omits_a_tool_reads_incomplete(tmp_path):
+    findings = _load("security_findings.py")
+    for job, tools in findings.JOBS.items():
+        kept = list(tools)[1:] if job == "secrets" else list(tools)
+        status = {tool: {"status": "read", "findings": 0} for tool in kept}
+        (tmp_path / f"{job}-findings.json").write_text(json.dumps({"tools": status, "findings": []}), encoding="utf-8")
+    collected = findings.collect(tmp_path)
+    assert (collected["summary"]["overall_status"], collected["summary"]["scans_failed"]) == ("INCOMPLETE", ["secrets"])
+    assert collected["jobs"]["secrets"]["tools"][next(iter(findings.JOBS["secrets"]))] == {"status": "missing"}

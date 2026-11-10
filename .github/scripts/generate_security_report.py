@@ -130,6 +130,21 @@ class SecurityReportGenerator:
             lines.append(f"- **Failed**: {', '.join(self.summary['scans_failed'])}")
         lines.append("")
 
+        lines.append("## Tools")
+        lines.append("| job | tool | status | findings | scanned | could not scan |")
+        lines.append("|---|---|---|---|---|---|")
+        for row in self.summary["tools"]:
+            cells = [
+                row["job"],
+                row["tool"],
+                row["status"],
+                row.get("findings", ""),
+                row.get("scanned", ""),
+                row.get("errors", ""),
+            ]
+            lines.append("| " + " | ".join(str(cell) for cell in cells) + " |")
+        lines.append("")
+
         return "\n".join(lines)
 
     def save_reports(self):

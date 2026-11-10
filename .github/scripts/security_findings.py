@@ -79,7 +79,7 @@ def _finding(**fields):
 
 
 #: The keys of a tool's status in a findings file, and the type of each value.
-_STATUS_FIELDS = {"status": str, "findings": int, "error": str}
+_STATUS_FIELDS = {"status": str, "findings": int, "error": str, "scanned": int, "errors": int}
 
 
 def _tool_status(job, tool, status):
@@ -241,6 +241,52 @@ JOBS = {
     "license": {"license_compliance_check": _license_compliance_check},
 }
 
+
+def _bandit_counts(report):
+    # bandit/core/manager.py: metrics.begin(name) runs before a file is parsed, and a file it cannot open, parse or
+    # scan goes to `skipped`; bandit/formatters/json.py writes `skipped` as `errors` and the metrics, keyed by file
+    # with a `_totals` entry, as `metrics`.
+    failed = {error["filename"] for error in report["errors"]}
+    return len((set(report["metrics"]) - {"_totals"}) | failed), len(failed)
+
+
+def _semgrep_counts(report):
+    # semgrep_output_v1.atd: `paths.scanned` lists every target, and a `cli_error` may carry the `path` it is about.
+    return len(report["paths"]["scanned"]), len({error["path"] for error in report["errors"] if error.get("path")})
+
+
+def _pip_audit_counts(report):
+    # pip_audit/_format/json.py: a dependency it could not audit is written with a `skip_reason`.
+    return len(report["dependencies"]), sum("skip_reason" in dependency for dependency in report["dependencies"])
+
+
+def _safety_counts(report):
+    # safety/formatters/json.py: `scanned_packages`; the report records no package it failed on.
+    return len(report["scanned_packages"]), None
+
+
+def _container_security_check_counts(report):
+    summary = report["summary"]
+    errors = sum(finding.get("type") == "error" for finding in report["all_findings"])
+    return int(summary["dockerfile_exists"]) + len(summary["compose_files_found"]), errors
+
+
+def _license_compliance_check_counts(report):
+    # It records no package it failed on; a pip-licenses failure leaves the total at 0.
+    return report["summary"]["total_packages"], None
+
+
+#: For each tool whose report says so, (how many files or packages it scanned, how many of them it could not); None
+#: where the report does not say. The other tools' reports give neither.
+_COUNTS = {
+    "bandit": _bandit_counts,
+    "semgrep": _semgrep_counts,
+    "pip-audit": _pip_audit_counts,
+    "safety": _safety_counts,
+    "container_security_check": _container_security_check_counts,
+    "license_compliance_check": _license_compliance_check_counts,
+}
+
 #: Reports with one JSON document per line.
 _JSON_LINES = {"trufflehog"}
 
@@ -269,7 +315,16 @@ def findings_for(job, reports):
             status[tool] = {"status": "missing"}
             continue
         try:
-            read_now = [_finding(tool=tool, **fields) for fields in read(_load(tool, path))]
+            report = _load(tool, path)
+            read_now = [_finding(tool=tool, **fields) for fields in read(report)]
+            counts = {}
+            if tool in _COUNTS:
+                scanned, errors = _COUNTS[tool](report)
+                counts = {"scanned": scanned, **({"errors": errors} if errors is not None else {})}
+                # A tool that scanned nothing, or could scan none of what it found, did not run a scan.
+                if scanned == 0 or (errors is not None and errors >= scanned):
+                    status[tool] = {"status": "failed", "error": "nothing scanned", **counts}
+                    continue
         except _ToolFailedError as failure:
             status[tool] = {"status": "failed", "error": str(failure)}
             continue
@@ -277,7 +332,7 @@ def findings_for(job, reports):
             # The class only: a message can quote the report.
             status[tool] = {"status": "unreadable", "error": type(error).__name__}
             continue
-        status[tool] = {"status": "read", "findings": len(read_now)}
+        status[tool] = {"status": "read", "findings": len(read_now), **counts}
         findings.extend(read_now)
     return {"job": job, "tools": status, "counts": _counts(findings), "findings": findings}
 
@@ -294,10 +349,11 @@ def collect(root):
             data = json.loads(path.read_text(encoding="utf-8"))
             findings = [_finding(**finding) for finding in data["findings"]]
             tools = {tool: _tool_status(job, tool, status) for tool, status in data["tools"].items()}
+            tools = {tool: tools.get(tool, {"status": "missing"}) for tool in JOBS[job]}
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             jobs[job] = {"status": "unreadable", "error": type(error).__name__}
             continue
-        complete = set(tools) == set(JOBS[job]) and all(status["status"] == "read" for status in tools.values())
+        complete = all(status["status"] == "read" for status in tools.values())
         jobs[job] = {
             "status": "read" if complete else "incomplete",
             "tools": tools,
@@ -319,6 +375,12 @@ def collect(root):
         "scans_completed": [job for job in jobs if job not in failed],
         "scans_failed": failed,
         "overall_status": overall,
+        # Each tool's status beside its findings, with what it could not scan.
+        "tools": [
+            {"job": job, "tool": tool, **status}
+            for job, data in jobs.items()
+            for tool, status in data.get("tools", {}).items()
+        ],
     }
     return {"summary": summary, "jobs": jobs}
 
@@ -329,6 +391,8 @@ def main(argv):
         Path("security-findings.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         for job, data in result["jobs"].items():
             print(f"{job}: {data['status']}" + (f", {data['counts']}" if "counts" in data else ""))
+            for tool, status in data.get("tools", {}).items():
+                print(f"  {tool}: " + ", ".join(f"{key} {value}" for key, value in status.items()))
         print(f"overall status: {result['summary']['overall_status']}")
         return 1 if result["summary"]["scans_failed"] else 0
     if not argv or argv[0] not in JOBS or not all("=" in arg for arg in argv[1:]):

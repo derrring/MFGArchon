@@ -50,6 +50,7 @@ class CriticalIssuesChecker:
         print("🔍 Checking for critical security issues...")
 
         # Check each type of scan result
+        self._check_completeness()
         self._check_dependency_results()
         self._check_static_analysis_results()
         self._check_secrets_results()
@@ -76,26 +77,27 @@ class CriticalIssuesChecker:
 
         return summary
 
-    def _findings(self, job: str, label: str, tools: tuple[str, ...]) -> list[dict[str, Any]] | None:
-        """The job's findings from `tools`.
+    def _check_completeness(self):
+        """A scan that did not run, or did not finish, is not a scan that found nothing: each such job blocks."""
+        for job, data in self.jobs.items():
+            if data["status"] in ("missing", "unreadable"):
+                self.blocking_issues.append({"type": job, "severity": "high", "message": f"{job} results not found"})
+            elif data["status"] != "read":
+                unread = sorted(tool for tool, status in data["tools"].items() if status["status"] != "read")
+                self.blocking_issues.append(
+                    {"type": job, "severity": "high", "message": f"{job} results incomplete: {', '.join(unread)}"}
+                )
 
-        A job whose findings file was not read gives None; one with a tool whose report was not read gives what was
-        read. Either is a blocking issue: a scan that did not run is not a scan that found nothing.
-        """
+    def _findings(self, job: str, tools: tuple[str, ...]) -> list[dict[str, Any]] | None:
+        """The job's findings from `tools`, or None when its findings file was not read."""
         data = self.jobs[job]
         if data["status"] in ("missing", "unreadable"):
-            self.blocking_issues.append({"type": job, "severity": "high", "message": f"{label} results not found"})
             return None
-        unread = sorted(tool for tool in tools if data["tools"].get(tool, {}).get("status") != "read")
-        if unread:
-            self.blocking_issues.append(
-                {"type": job, "severity": "high", "message": f"{label} results incomplete: {', '.join(unread)}"}
-            )
         return [f for f in data["findings"] if f["tool"] in tools]
 
     def _check_dependency_results(self):
         """Check dependency scan results for critical issues."""
-        findings = self._findings("dependency", "Dependency scan", ("safety", "pip-audit"))
+        findings = self._findings("dependency", ("safety", "pip-audit"))
         if findings is None:
             return
 
@@ -139,7 +141,7 @@ class CriticalIssuesChecker:
 
     def _check_static_analysis_results(self):
         """Check static analysis results for critical issues."""
-        findings = self._findings("static", "Static analysis", ("bandit", "semgrep"))
+        findings = self._findings("static", ("bandit", "semgrep"))
         if findings is None:
             return
 
@@ -182,7 +184,7 @@ class CriticalIssuesChecker:
 
     def _check_secrets_results(self):
         """Check secrets scan results for critical issues."""
-        findings = self._findings("secrets", "Secrets scan", ("detect-secrets", "trufflehog"))
+        findings = self._findings("secrets", ("detect-secrets", "trufflehog"))
         if findings is None:
             return
 
@@ -213,7 +215,7 @@ class CriticalIssuesChecker:
 
     def _check_container_results(self):
         """Check container scan results for critical issues."""
-        findings = self._findings("container", "Container scan", ("trivy", "hadolint"))
+        findings = self._findings("container", ("trivy", "hadolint"))
         if findings is None:
             return
 
@@ -256,7 +258,7 @@ class CriticalIssuesChecker:
 
     def _check_license_results(self):
         """Check license compliance results for critical issues."""
-        findings = self._findings("license", "License compliance", ("license_compliance_check",))
+        findings = self._findings("license", ("license_compliance_check",))
         if findings is None:
             return
 
@@ -292,7 +294,7 @@ class CriticalIssuesChecker:
 
     def _check_custom_security_results(self):
         """Check custom security scan results for critical issues."""
-        findings = self._findings("static", "Custom security", ("custom_security_checks",))
+        findings = self._findings("static", ("custom_security_checks",))
         if findings is None:
             return
 
