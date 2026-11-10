@@ -13,8 +13,10 @@ This file holds the layer table (``LAYERS``) and the exception lists (``EDGE_EXC
 ``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). One slice of the rule has a second owner until the check enters
 the gate (below). A PR that removes an edge removes its line in the same diff.
 
-**It does not simulate the interpreter** (#2938). It resolves a closed list of binding forms, and anything else
-that can bind a name makes that name ambiguous: reported unless listed. It may over-report; it does not miss.
+**It does not simulate the interpreter** (#2938). It resolves a closed list of module-level binding forms, and any
+other module-level statement that binds a name in its syntax makes that name ambiguous: reported unless listed. It
+may over-report. Within its scope it does not miss: module-level statements outside ``def`` and ``class`` bodies, for
+the forms on the closed list, apart from the forms stated as not read with that list (#2945).
 
 **What is counted:**
 
@@ -40,11 +42,28 @@ that can bind a name makes that name ambiguous: reported unless listed. It may o
   - ``from M import *``;
   - ``__all__``, assigned or annotated, as a list or tuple of string literals.
   - The body of ``if TYPE_CHECKING:`` binds nothing at run time, and its ``else`` binds as its parent does.
-- **Everything else is ambiguous.** Any other module-level statement or expression that can bind a name gives
-  that name a conditional binding: a tuple, list or starred target, an augmented assignment, a walrus anywhere
+- **Everything else is ambiguous.** Any other module-level statement or expression that binds a name in its
+  syntax gives that name a conditional binding: a tuple, list or starred target, an augmented assignment, a walrus
   (in a lambda or a comprehension too), ``del``, ``for``, ``while`` and ``match`` with everything inside them,
-  ``with ... as`` and ``except ... as``, and a ``def``'s defaults or decorators. Any other statement that mentions
-  ``__all__`` makes the star exports ambiguous.
+  ``with ... as`` and ``except ... as``, and a ``def``'s or ``class``'s decorators, defaults, annotations and
+  bases. Any other module-level statement that mentions ``__all__``, other than a ``def`` or ``class`` statement,
+  makes the star exports ambiguous.
+- **Not read** (#2945). A name bound in one of these ways keeps a wrong owner, so an upward edge through it is
+  missed:
+  - a ``def`` or ``class`` statement that mentions ``__all__``, as the export decorator
+    ``def export(fn): __all__.append(fn.__name__); return fn`` does; and the annotation of an annotated
+    assignment, which Python evaluates, so ``X: (direct := f) = 1`` binds ``direct``;
+  - ``global``: a ``def`` or ``class`` body that declares a name ``global`` and binds it, as
+    ``def _load(): global direct; from pk.high.impl import direct`` does when the module calls ``_load()``. On main
+    bfe6de4d, 9 names in 6 modules are declared ``global``, and no import in the package can bind one; #2945 has
+    the command;
+  - a submodule load: the first load of ``P.x``, from any module, sets ``P``'s name ``x`` to the submodule, while
+    the check keeps ``P``'s own binding, such as ``def leaf()`` in ``P/__init__.py`` beside ``P/leaf.py``;
+  - two forms on the list: an ``__all__`` bound in a chained assignment and changed through its other name,
+    ``__all__ = _names = []`` and then ``_names.append("x")``; and ``from . import x`` in ``P/__init__.py`` after
+    ``P`` bound ``x``, which the check takes for the submodule while Python keeps the earlier binding;
+  - a binding that is not syntax, such as ``globals()["x"] = ...``, and the loaders named under *What a static
+    check cannot follow*.
 - **Owners.** The last binding of a name wins, and a conditional last binding is ambiguous. An attribute or
   subscript target binds no name. A binding that leads back into a re-export ring is skipped for the binding
   before it; a ring no binding ends is ambiguous, and so is a ring of star imports. ``from x import *`` exports
@@ -67,12 +86,14 @@ It exits 1 if it reports anything.
 
 **What a static check cannot follow.** It recognises, widely, the places a module could import by a computed
 name: any name, attribute, import alias or string constant equal to ``import_module`` or ``__import__``, which
-includes a stored reference, ``getattr(importlib, "import_module")`` and a method that happens to share the
-name; and any module-level binding of ``__getattr__`` by any form, outside the bodies of defs and classes. Their
-sites are listed in ``DYNAMIC_SITES`` by module and mechanism: a mechanism new to a module is reported, a further
-site of a listed mechanism in that module is not, and no site's imports are followed. Two more loaders are not
-detected, ``entry_point.load()`` and ``spec_from_file_location`` with ``exec_module``, both in
-``core/plugin_system.py``: they load plugin code from outside the package, and #2938's stage 4 deletes that module.
+includes a stored reference, ``getattr(importlib, "import_module")`` and an attribute that shares the name, such as
+a call of a method named ``import_module``; and any module-level binding of ``__getattr__`` in syntax, outside the
+bodies of defs and classes. Their sites are listed in ``DYNAMIC_SITES`` by module and mechanism: a mechanism new to a
+module is reported, a further site of a listed mechanism in that module is not, and no site's imports are followed.
+Other loaders are not detected (#2945), such as ``pkgutil.resolve_name``, ``runpy``, ``exec`` of import text, or a
+``__getattr__`` bound through ``globals()``. The package's own code uses two of them, ``entry_point.load()`` and
+``spec_from_file_location`` with ``exec_module``, both in ``core/plugin_system.py``: they load plugin code from
+outside the package, and #2938's stage 4 deletes that module.
 
 **Limits.** A ``type``-position import of a name its source binds only under ``TYPE_CHECKING`` is reported as
 unresolved (not found), not followed to the type binding. A symlinked directory under the package is not walked.
@@ -85,8 +106,9 @@ the seven ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer: the f
 ``alg`` because it sits in ``utils/``; this check allows it, by what the module is. Today one edge falls there,
 ``utils/adjoint_validation.py`` -> ``alg.base_solver``, which the test counts as the last violation. The ratchet
 is deleted in the PR that puts this check into the gate (#2938); from then on the gate does not forbid those
-seven a module-level ``alg`` import, and ``utils.cli`` and ``utils.experiment_manager`` load with
-``mfgarchon.utils`` through its re-exports until #2938's stage 2a.
+seven a module-level ``alg`` import, and six of the seven, all but ``utils.solver_decorators``, load with
+``mfgarchon.utils`` through its re-exports until #2938's stage 2a; ``utils.adjoint_validation`` already loads
+``alg.base_solver`` that way.
 """
 
 from __future__ import annotations
@@ -396,8 +418,9 @@ class Tree:
         an annotated assignment with a value to a name (`NAME: T` alone binds nothing); `type NAME = ...`; `import`;
         `from M import n`; and `from M import *`. Each is unconditional at module level and conditional inside `if`,
         `try` or `with`. The body of `if TYPE_CHECKING:` binds nothing at run time, and its `else` runs as its parent
-        does. Any other statement or expression that can bind a name gives that name a conditional binding, which
-        resolves as ambiguous; and any other statement that mentions `__all__` makes the star exports ambiguous."""
+        does. Any other statement or expression that binds a name in its syntax gives that name a conditional
+        binding, which resolves as ambiguous; and any other statement that mentions `__all__`, other than a `def` or
+        `class` statement, makes the star exports ambiguous. The forms #2945 lists are not read."""
         if module in self.event_cache:
             return self.event_cache[module]
         tree, is_package = self.parsed(module)
@@ -515,7 +538,7 @@ class Tree:
             return module + "." + name
         hits = []
         for e in events:
-            if e[0] == name:
+            if e[0] == name and e[1] != "allmut":  # a mention of `__all__` binds nothing
                 hits.append(e)
             elif e[1] == "star":
                 exported = self.star_exports(e[2])
@@ -586,7 +609,7 @@ DYNAMIC_NAMES = ("import_module", "__import__")
 def dynamic_sites(tree: ast.Module) -> Iterator[tuple[str, int]]:
     """(mechanism, line) for every place a module could import by a computed name, matched widely rather than by
     following aliases: any name, attribute, import alias or string constant equal to `import_module` or
-    `__import__`; and any module-level binding of `__getattr__` by any form, outside the bodies of defs and
+    `__import__`; and any module-level binding of `__getattr__` in syntax, outside the bodies of defs and
     classes."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -930,6 +953,16 @@ PARSER_FILES: dict[str, str] = {
     "pk/low/bv_trystartc.py": "from pk.high.trystartc import direct\n",
     "pk/high/excas.py": "from pk.high.impl import direct\ntry:\n    pass\nexcept Exception as direct:\n    pass\n",
     "pk/low/ap_excas.py": "from pk.high.excas import direct\n",
+    "pk/high/sortall.py": "__all__ = ['direct']\nfrom pk.high.impl import direct\n__all__ = sorted(__all__)\n",
+    "pk/low/bw_sortall.py": "from pk.high.sortall import __all__\n",
+    "pk/high/assertall.py": "__all__ = ['direct']\nfrom pk.high.impl import direct\nassert __all__\n",
+    "pk/low/bx_assertall.py": "from pk.high.assertall import __all__\n",
+    "pk/low/asfrom.py": "def renamed():\n    pass\nfrom pk.high.impl import direct as renamed\n",
+    "pk/low/by_asfrom.py": "from pk.low.asfrom import renamed\n",
+    "pk/low/asimport.py": "def hi():\n    pass\nimport pk.high.impl as hi\n",
+    "pk/low/bz_asimport.py": "from pk.low.asimport import hi\n",
+    "pk/low/finally_.py": "def direct():\n    pass\ntry:\n    pass\nfinally:\n    from pk.high.impl import direct\n",
+    "pk/low/ca_finally.py": "from pk.low.finally_ import direct\n",
 }  # fmt: skip
 PK_TABLE = {"low": 0, "high": 1, "(root)": 0}
 # (importing module, name) -> (expected owner, position). An unresolved owner is "ambiguous" or "not found".
@@ -1014,6 +1047,11 @@ PARSER_CASES = {
         "pk.high.trystartc",
         "module",
     ),  # TYPE_CHECKING inside `try ... except*` binds nothing
+    ("pk.low.bw_sortall", "__all__"): ("pk.high.sortall", "module"),  # `__all__` imported from a module that reads it
+    ("pk.low.bx_assertall", "__all__"): ("pk.high.assertall", "module"),  # ... in a statement that binds nothing
+    ("pk.low.by_asfrom", "renamed"): ("pk.high.impl", "module"),  # `from M import n as x` binds x
+    ("pk.low.bz_asimport", "hi"): ("pk.high.impl", "module"),  # `import a.b as x` binds x to a.b
+    ("pk.low.ca_finally", "direct"): ("ambiguous", "module"),  # bound in a `finally`
 }
 
 # The fourteen statement shapes of tests/unit/test_utils_does_not_import_alg.py, then further ones, with the
@@ -1057,7 +1095,7 @@ STATEMENT_SHAPES = (
 )
 
 # (importing module, is a package, level, module named, expected absolute module): the relative cases of
-# tests/unit/test_utils_does_not_import_alg.py, checked there against importlib.util.resolve_name, and one beyond
+# tests/unit/test_utils_does_not_import_alg.py, checked there against importlib.util.resolve_name, and two beyond
 # the top-level package, which Python refuses.
 RELATIVE_CASES = (
     ("mfgarchon.utils.numerical", True, 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
