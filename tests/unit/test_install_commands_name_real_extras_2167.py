@@ -153,7 +153,7 @@ def test_every_job_that_runs_the_suite_installs_the_pinned_ruff():
 
     Not "installs ruff" but "installs the PINNED ruff": a bare `pip install ruff` takes whatever is
     newest, which is the drift the comment in `ci.yml`'s quick-checks job records having already happened once. Reading
-    `--print-current` is why five call sites are not five pins — they all read one owner.
+    `--print-current` is why no call site is a pin of its own — they all read one owner.
     """
     import yaml
 

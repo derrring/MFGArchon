@@ -7,7 +7,7 @@ name: Unified Quality Assurance
 #
 # Duplicate checks removed (now in ci.yml):
 #   - Ruff formatting and linting (covered by ci.yml quick-checks)
-#   - Security scanning (covered by ci.yml security-scan job)
+#   - Security scanning (covered by security.yml)
 #
 # PHASE 1 CI CONSOLIDATION: Added workflow_run dependency on ci.yml
 # This workflow now waits for CI/CD Pipeline to complete before running

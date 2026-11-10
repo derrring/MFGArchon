@@ -2,6 +2,9 @@
 """
 Container security configuration checking script for MFGArchon.
 Checks Docker configuration for security best practices.
+
+Its reports name the file and line of each finding, never the line's text, and a read failure by its exception's
+class, whose message can quote the file.
 """
 
 import json
@@ -48,7 +51,7 @@ class ContainerSecurityChecker:
                 {
                     "type": "error",
                     "severity": "medium",
-                    "issue": f"Failed to read Dockerfile: {e}",
+                    "issue": f"Failed to read Dockerfile: {type(e).__name__}",
                     "description": "Could not analyze Dockerfile for security issues",
                     "recommendation": "Ensure Dockerfile is readable and properly formatted",
                 }
@@ -79,7 +82,8 @@ class ContainerSecurityChecker:
                         "severity": "medium",
                         "line": line_num,
                         "issue": "Using latest tag",
-                        "description": f"Line {line_num}: {line}",
+                        "file": str(self.dockerfile_path),
+                        "description": f"Line {line_num}",
                         "recommendation": "Use specific version tags instead of 'latest'",
                     }
                 )
@@ -103,7 +107,8 @@ class ContainerSecurityChecker:
                         "severity": "low",
                         "line": line_num,
                         "issue": "Using ADD instead of COPY",
-                        "description": f"Line {line_num}: {line}",
+                        "file": str(self.dockerfile_path),
+                        "description": f"Line {line_num}",
                         "recommendation": "Use COPY instead of ADD unless auto-extraction is needed",
                     }
                 )
@@ -116,7 +121,8 @@ class ContainerSecurityChecker:
                         "severity": "high",
                         "line": line_num,
                         "issue": "Privileged operations in RUN",
-                        "description": f"Line {line_num}: {line}",
+                        "file": str(self.dockerfile_path),
+                        "description": f"Line {line_num}",
                         "recommendation": "Avoid sudo/su operations in containers",
                     }
                 )
@@ -131,7 +137,8 @@ class ContainerSecurityChecker:
                         "severity": "high",
                         "line": line_num,
                         "issue": "Potential secret in ENV",
-                        "description": f"Line {line_num}: {line}",
+                        "file": str(self.dockerfile_path),
+                        "description": f"Line {line_num}",
                         "recommendation": "Use Docker secrets or runtime environment variables",
                     }
                 )
@@ -215,7 +222,8 @@ class ContainerSecurityChecker:
                             "severity": "high",
                             "line": line_num,
                             "issue": "Privileged mode enabled",
-                            "description": f"Line {line_num} in {compose_file}: {line}",
+                            "file": compose_file,
+                            "description": f"Line {line_num} in {compose_file}",
                             "recommendation": "Avoid privileged mode unless absolutely necessary",
                         }
                     )
@@ -228,7 +236,8 @@ class ContainerSecurityChecker:
                             "severity": "medium",
                             "line": line_num,
                             "issue": "Host network mode",
-                            "description": f"Line {line_num} in {compose_file}: {line}",
+                            "file": compose_file,
+                            "description": f"Line {line_num} in {compose_file}",
                             "recommendation": "Use bridge network mode for better isolation",
                         }
                     )
@@ -241,7 +250,8 @@ class ContainerSecurityChecker:
                             "severity": "medium",
                             "line": line_num,
                             "issue": "Potentially dangerous volume mount",
-                            "description": f"Line {line_num} in {compose_file}: {line}",
+                            "file": compose_file,
+                            "description": f"Line {line_num} in {compose_file}",
                             "recommendation": "Limit volume mounts and use read-only when possible",
                         }
                     )
@@ -251,7 +261,7 @@ class ContainerSecurityChecker:
                 {
                     "type": "error",
                     "severity": "medium",
-                    "issue": f"Failed to read {compose_file}: {e}",
+                    "issue": f"Failed to read {compose_file}: {type(e).__name__}",
                     "description": "Could not analyze docker-compose file",
                     "recommendation": "Ensure file is readable and properly formatted",
                 }

@@ -5,6 +5,8 @@ Custom security checks for MFGArchon scientific computing package.
 This script performs domain-specific security checks that are relevant
 for scientific computing packages but may not be covered by general
 security scanning tools.
+
+Its report names the file and line of each finding, never the source around it.
 """
 
 import ast
@@ -20,6 +22,8 @@ class CustomSecurityChecker:
 
     def __init__(self):
         self.findings = []
+        self.files_read = set()
+        self.files_unreadable = set()
         self.package_root = Path("mfgarchon")
         self.test_root = Path("tests")
 
@@ -69,7 +73,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in dangerous_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -82,7 +86,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": message,
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -101,7 +104,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
 
                 # Check for large array allocations without bounds checking
                 large_array_pattern = r"np\.(zeros|ones|empty|full)\(\s*\([^)]*\d{6,}[^)]*\)"
@@ -115,7 +118,6 @@ class CustomSecurityChecker:
                             "file": str(py_file),
                             "line": line_num,
                             "message": "Large array allocation without size validation",
-                            "code_snippet": self._get_code_snippet(content, line_num),
                         }
                     )
 
@@ -132,7 +134,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": message,
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -145,8 +146,8 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
-                tree = ast.parse(content)
+                content = self._read(py_file)
+                tree = self._parse(py_file, content)
 
                 for node in ast.walk(tree):
                     if isinstance(node, ast.FunctionDef):
@@ -168,7 +169,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in dangerous_subprocess_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -188,7 +189,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"Potentially unsafe {message}",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -207,7 +207,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in pickle_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -229,7 +229,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} - ensure source is trusted",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -247,7 +246,7 @@ class CustomSecurityChecker:
 
         for py_file in self.package_root.rglob("*.py"):
             try:
-                content = py_file.read_text()
+                content = self._read(py_file)
                 for pattern, message in file_patterns:
                     matches = re.finditer(pattern, content)
                     for match in matches:
@@ -260,7 +259,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": message,
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -274,7 +272,7 @@ class CustomSecurityChecker:
 
         for config_file in config_files:
             try:
-                content = config_file.read_text()
+                content = self._read(config_file)
 
                 # Check for hardcoded credentials or sensitive data
                 sensitive_patterns = [
@@ -296,7 +294,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} in configuration file",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -311,7 +308,7 @@ class CustomSecurityChecker:
 
         for plugin_file in plugin_files:
             try:
-                content = plugin_file.read_text()
+                content = self._read(plugin_file)
 
                 # Check for dynamic imports without validation
                 dynamic_import_patterns = [
@@ -342,7 +339,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} - ensure proper validation",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -358,7 +354,7 @@ class CustomSecurityChecker:
 
         for test_file in self.test_root.rglob("*.py"):
             try:
-                content = test_file.read_text()
+                content = self._read(test_file)
 
                 # Check for hardcoded sensitive data in tests
                 test_security_patterns = [
@@ -380,7 +376,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} - use fixtures or environment variables",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -418,22 +413,26 @@ class CustomSecurityChecker:
                         "line": node.lineno,
                         "function": node.name,
                         "message": f"Function {node.name} may lack input validation for numerical parameters",
-                        "code_snippet": function_code[:200] + "..." if len(function_code) > 200 else function_code,
                     }
                 )
 
-    def _get_code_snippet(self, content: str, line_num: int, context: int = 2) -> str:
-        """Get code snippet around a specific line."""
-        lines = content.split("\n")
-        start = max(0, line_num - context - 1)
-        end = min(len(lines), line_num + context)
+    def _read(self, path: Path) -> str:
+        """Read a file a check scans, counting it as read or unreadable."""
+        try:
+            text = path.read_text()
+        except Exception:
+            self.files_unreadable.add(str(path))
+            raise
+        self.files_read.add(str(path))
+        return text
 
-        snippet_lines = []
-        for i in range(start, end):
-            marker = ">>>" if i == line_num - 1 else "   "
-            snippet_lines.append(f"{marker} {i + 1:3d}: {lines[i]}")
-
-        return "\n".join(snippet_lines)
+    def _parse(self, path: Path, content: str) -> ast.Module:
+        """Parse a file the input-validation check scans; one it cannot parse counts as unreadable."""
+        try:
+            return ast.parse(content)
+        except Exception:
+            self.files_unreadable.add(str(path))
+            raise
 
     def _get_surrounding_context(self, content: str, line_num: int, context: int = 5) -> str:
         """Get surrounding context around a line."""
@@ -455,6 +454,8 @@ class CustomSecurityChecker:
             "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
             "by_type": {},
             "files_with_issues": len({f["file"] for f in self.findings}),
+            "files_scanned": len(self.files_read | self.files_unreadable),
+            "files_unreadable": len(self.files_unreadable),
         }
 
         for finding in self.findings:

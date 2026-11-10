@@ -7,6 +7,24 @@ name: Security Scanning Pipeline
 # 2. Click "Run workflow" → Select branch → Run
 #
 # Automatically runs on releases for security validation
+#
+# What leaves the runner: each scan job uploads one file, <job>-findings.json, which
+# .github/scripts/security_findings.py writes from its allow-list of fields, FIELDS. Every scanner's
+# stdout and stderr go to a file under $RUNNER_TEMP, and its report to $RUNNER_TEMP or the workspace;
+# neither reaches the job log or an upload. Every call-out a flag turns off on a fresh runner is off:
+# TruffleHog's verification and update check, detect-secrets' verification, Semgrep's metrics and
+# version check, Trivy's telemetry, version check and dependency lookups, Safety's optional telemetry
+# and its upload of results, and pip-audit's lookup of the project itself, installed editable. Still
+# on: the database downloads of Trivy (--skip-db-update and --skip-java-db-update fail on a first run)
+# and Safety (--db needs a local database), Safety's announcements request, pip-audit's lookups of the
+# other installed packages, and Semgrep's rule fetch. Safety's requests carry a client id naming its
+# install source, and a User-Agent with the OS, architecture and Python version; none of it is
+# repository text.
+#
+# A scan that did not run, did not finish or scanned nothing is not read as a clean one: the summary
+# reads INCOMPLETE. Four cases are not caught: a detect-secrets scan of nothing, and the files that
+# detect-secrets, TruffleHog or Trivy could not scan. Each tool records them only in log lines, not in
+# an integer field. detect-secrets logs them only with -v, and Trivy only with --debug.
 
 on:
   workflow_dispatch:  # Manual trigger only to reduce costs
@@ -49,30 +67,26 @@ jobs:
     - name: Run Safety (dependency vulnerability scan)
       run: |
         echo "🔍 Scanning dependencies for known vulnerabilities..."
-        safety check --json --output safety-report.json || true
-        safety check --short-report
+        safety --disable-optional-telemetry check --disable-audit-and-monitor --save-json "$RUNNER_TEMP/safety.json" > "$RUNNER_TEMP/safety.log" 2>&1 || true
       continue-on-error: true
 
     - name: Run pip-audit (comprehensive dependency audit)
       run: |
         echo "🔍 Running comprehensive dependency audit..."
-        pip-audit --format=json --output=pip-audit-report.json || true
-        pip-audit --desc
+        pip-audit --skip-editable --format=json --output="$RUNNER_TEMP/pip-audit.json" > "$RUNNER_TEMP/pip-audit.log" 2>&1 || true
       continue-on-error: true
 
-    - name: Parse dependency scan results
+    - name: Keep the allow-listed fields
+      if: always()
       run: |
-        python .github/scripts/parse_security_results.py dependency
+        python .github/scripts/security_findings.py dependency safety="$RUNNER_TEMP/safety.json" pip-audit="$RUNNER_TEMP/pip-audit.json"
 
-    - name: Upload dependency scan results
+    - name: Upload dependency findings
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: dependency-scan-results
-        path: |
-          safety-report.json
-          pip-audit-report.json
-          dependency-summary.md
+        path: dependency-findings.json
         retention-days: 30
 
   static-code-analysis:
@@ -97,36 +111,34 @@ jobs:
     - name: Run Bandit (Python security linter)
       run: |
         echo "🔍 Running Bandit security analysis..."
-        bandit -r mfgarchon/ -f json -o bandit-report.json || true
-        bandit -r mfgarchon/ -f txt
+        bandit -r mfgarchon/ -f json -o "$RUNNER_TEMP/bandit.json" > "$RUNNER_TEMP/bandit.log" 2>&1 || true
       continue-on-error: true
 
     - name: Run Semgrep (multi-language static analysis)
       run: |
         echo "🔍 Running Semgrep security analysis..."
-        semgrep --config=auto --json --output=semgrep-report.json mfgarchon/ || true
-        semgrep --config=auto --text mfgarchon/
+        # A named rule pack: Semgrep refuses --config=auto with metrics off. Semgrep writes its report even
+        # when a fatal error stops it, so the report keeps its name only on exit 0: without --error, Semgrep
+        # exits 0 with or without findings.
+        if semgrep --config=p/python --metrics=off --disable-version-check --json --output="$RUNNER_TEMP/semgrep.part" mfgarchon/ > "$RUNNER_TEMP/semgrep.log" 2>&1; then mv "$RUNNER_TEMP/semgrep.part" "$RUNNER_TEMP/semgrep.json"; fi
       continue-on-error: true
 
     - name: Custom security checks
       run: |
         echo "🔍 Running custom security checks..."
-        python .github/scripts/custom_security_checks.py
+        python .github/scripts/custom_security_checks.py > "$RUNNER_TEMP/custom_security_checks.log" 2>&1
 
-    - name: Parse static analysis results
+    - name: Keep the allow-listed fields
+      if: always()
       run: |
-        python .github/scripts/parse_security_results.py static
+        python .github/scripts/security_findings.py static bandit="$RUNNER_TEMP/bandit.json" semgrep="$RUNNER_TEMP/semgrep.json" custom_security_checks=custom-security-report.json
 
-    - name: Upload static analysis results
+    - name: Upload static analysis findings
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: static-analysis-results
-        path: |
-          bandit-report.json
-          semgrep-report.json
-          custom-security-report.json
-          static-analysis-summary.md
+        path: static-findings.json
         retention-days: 30
 
   secrets-scanning:
@@ -153,40 +165,38 @@ jobs:
     - name: Run detect-secrets
       run: |
         echo "🔍 Scanning for secrets with detect-secrets..."
-        detect-secrets scan --all-files --baseline .secrets.baseline mfgarchon/ || true
-        detect-secrets audit .secrets.baseline || true
+        # The report keeps its name only if the scan finished: detect-secrets exits 0 with or without findings.
+        cp .secrets.baseline "$RUNNER_TEMP/detect-secrets.part"
+        if detect-secrets scan --all-files --no-verify --baseline "$RUNNER_TEMP/detect-secrets.part" mfgarchon/ > "$RUNNER_TEMP/detect-secrets.log" 2>&1; then mv "$RUNNER_TEMP/detect-secrets.part" "$RUNNER_TEMP/detect-secrets.json"; fi
 
     - name: Run TruffleHog
       run: |
         echo "🔍 Scanning for secrets with TruffleHog..."
-        trufflehog git file://. --json > trufflehog-report.json || true
+        # The report keeps its name only if the scan finished: without --fail, TruffleHog exits 0 with or without findings.
+        if trufflehog git file://. --json --no-verification --no-update > "$RUNNER_TEMP/trufflehog.part" 2> "$RUNNER_TEMP/trufflehog.log"; then mv "$RUNNER_TEMP/trufflehog.part" "$RUNNER_TEMP/trufflehog.json"; fi
         echo "TruffleHog scan completed"
 
     - name: Custom secrets scan
       run: |
         echo "🔍 Running custom secrets detection..."
-        python .github/scripts/custom_secrets_scan.py
+        python .github/scripts/custom_secrets_scan.py > "$RUNNER_TEMP/custom_secrets_scan.log" 2>&1
 
-    - name: Parse secrets scan results
+    - name: Keep the allow-listed fields
+      if: always()
       run: |
-        python .github/scripts/parse_security_results.py secrets
+        python .github/scripts/security_findings.py secrets detect-secrets="$RUNNER_TEMP/detect-secrets.json" trufflehog="$RUNNER_TEMP/trufflehog.json" trufflehog.log="$RUNNER_TEMP/trufflehog.log" custom_secrets_scan=custom-secrets-report.json
 
-    - name: Upload secrets scan results
+    - name: Upload secrets findings
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: secrets-scan-results
-        path: |
-          .secrets.baseline
-          trufflehog-report.json
-          custom-secrets-report.json
-          secrets-summary.md
+        path: secrets-findings.json
         retention-days: 30
 
   container-security:
     name: Container Security Scan
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
     - name: Checkout code
@@ -212,36 +222,37 @@ jobs:
     - name: Run Trivy vulnerability scan
       run: |
         echo "🔍 Scanning container for vulnerabilities..."
-        trivy image --format json --output trivy-report.json mfgarchon-security-scan:latest || true
-        trivy image --format table mfgarchon-security-scan:latest
+        trivy image --disable-telemetry --skip-version-check --offline-scan --format json --output "$RUNNER_TEMP/trivy.json" mfgarchon-security-scan:latest > "$RUNNER_TEMP/trivy.log" 2>&1 || true
 
-    - name: Install and run Hadolint (Dockerfile linter)
+    - name: Install Hadolint
       run: |
-        echo "🔍 Linting Dockerfile with Hadolint..."
         wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
         chmod +x hadolint
-        ./hadolint Dockerfile > hadolint-report.txt || true
-        cat hadolint-report.txt
+
+    - name: Run Hadolint (Dockerfile linter)
+      run: |
+        echo "🔍 Linting Dockerfile with Hadolint..."
+        # hadolint exits 1 on findings and on failure alike. A run that did not finish leaves its JSON empty
+        # or cut short, and a Dockerfile it cannot parse is reported as DL1000; the boundary reads neither
+        # as a finished scan.
+        ./hadolint --format json Dockerfile > "$RUNNER_TEMP/hadolint.json" 2> "$RUNNER_TEMP/hadolint.log" || true
 
     - name: Container configuration security check
       run: |
         echo "🔍 Checking container configuration security..."
-        python .github/scripts/container_security_check.py
+        python .github/scripts/container_security_check.py > "$RUNNER_TEMP/container_security_check.log" 2>&1
 
-    - name: Parse container scan results
+    - name: Keep the allow-listed fields
+      if: always()
       run: |
-        python .github/scripts/parse_security_results.py container
+        python .github/scripts/security_findings.py container trivy="$RUNNER_TEMP/trivy.json" hadolint="$RUNNER_TEMP/hadolint.json" container_security_check=container-security-report.json
 
-    - name: Upload container scan results
+    - name: Upload container findings
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: container-scan-results
-        path: |
-          trivy-report.json
-          hadolint-report.txt
-          container-security-report.json
-          container-summary.md
+        path: container-findings.json
         retention-days: 30
 
   license-compliance:
@@ -263,30 +274,22 @@ jobs:
         pip install pip-licenses licensecheck
         pip install -e . --group dev
 
-    - name: Run license compliance check
-      run: |
-        echo "📋 Checking license compliance..."
-        pip-licenses --format=json --output-file=license-report.json || true
-        pip-licenses --format=plain-vertical
-
     - name: Custom license compliance check
       run: |
         echo "📋 Running custom license compliance checks..."
-        python .github/scripts/license_compliance_check.py
+        python .github/scripts/license_compliance_check.py > "$RUNNER_TEMP/license_compliance_check.log" 2>&1
 
-    - name: Parse license results
+    - name: Keep the allow-listed fields
+      if: always()
       run: |
-        python .github/scripts/parse_security_results.py license
+        python .github/scripts/security_findings.py license license_compliance_check=license-compliance-report.json
 
-    - name: Upload license compliance results
+    - name: Upload license compliance findings
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: license-compliance-results
-        path: |
-          license-report.json
-          license-compliance-report.json
-          license-summary.md
+        path: license-findings.json
         retention-days: 30
 
   security-summary:
@@ -304,16 +307,30 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    # One directory for any number of artifacts: download-artifact extracts a lone artifact at the
+    # path's root and several into one directory each, unless merge-multiple is set. The five file
+    # names are unique, so they merge without collision.
     - name: Download all scan results
       uses: actions/download-artifact@v8
+      with:
+        pattern: '*-results'
+        merge-multiple: true
+        path: findings
+
+    - name: Collect the five findings files
+      if: always()
+      run: |
+        python .github/scripts/security_findings.py collect findings
 
     - name: Generate comprehensive security report
+      if: always()
       run: |
         echo "📊 Generating comprehensive security report..."
         python .github/scripts/generate_security_report.py
 
     - name: Upload comprehensive security report
       uses: actions/upload-artifact@v7
+      if: always()
       with:
         name: comprehensive-security-report
         path: |
@@ -342,13 +359,12 @@ jobs:
           }
 
     - name: Fail job if critical vulnerabilities found
+      if: always()
       run: |
         echo "🔍 Checking for critical security issues..."
         python .github/scripts/check_critical_issues.py
 
-        # This script will exit with non-zero code if critical issues are found
-        # Critical issues include:
-        # - High/Critical severity vulnerabilities in dependencies
-        # - Hardcoded secrets or credentials
-        # - Critical security anti-patterns in code
-        # - License compliance violations for production dependencies
+        # It exits non-zero when a scan job's results are missing or incomplete, or when the findings
+        # cross its thresholds: dependency vulnerabilities, Bandit and Semgrep, the custom security checks,
+        # detect-secrets and TruffleHog, trivy's vulnerabilities and hadolint, and licenses. The custom
+        # secrets scan and the container configuration check fail their own jobs instead.
