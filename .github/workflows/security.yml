@@ -12,8 +12,9 @@ name: Security Scanning Pipeline
 # .github/scripts/security_findings.py writes from its allow-list of fields, FIELDS. Every scanner's
 # stdout and stderr go to a file under $RUNNER_TEMP, and its report to $RUNNER_TEMP or the workspace;
 # neither reaches the job log or an upload. Tools that can call out on their own run with that turned
-# off: TruffleHog's verification and update check, detect-secrets' verification, Semgrep's metrics,
-# Trivy's telemetry and version check, Safety's optional telemetry and its upload of results.
+# off: TruffleHog's verification and update check, detect-secrets' verification, Semgrep's metrics and
+# version check, Trivy's telemetry and version check, Safety's optional telemetry and its upload of
+# results. A scan that did not run leaves no report, so the summary reads INCOMPLETE, never PASS.
 
 on:
   workflow_dispatch:  # Manual trigger only to reduce costs
@@ -107,7 +108,7 @@ jobs:
       run: |
         echo "🔍 Running Semgrep security analysis..."
         # A named rule pack: Semgrep refuses --config=auto with metrics off.
-        semgrep --config=p/python --metrics=off --json --output="$RUNNER_TEMP/semgrep.json" mfgarchon/ > "$RUNNER_TEMP/semgrep.log" 2>&1 || true
+        semgrep --config=p/python --metrics=off --disable-version-check --json --output="$RUNNER_TEMP/semgrep.json" mfgarchon/ > "$RUNNER_TEMP/semgrep.log" 2>&1 || true
       continue-on-error: true
 
     - name: Custom security checks
@@ -152,13 +153,15 @@ jobs:
     - name: Run detect-secrets
       run: |
         echo "🔍 Scanning for secrets with detect-secrets..."
-        cp .secrets.baseline "$RUNNER_TEMP/detect-secrets.json"
-        detect-secrets scan --all-files --no-verify --baseline "$RUNNER_TEMP/detect-secrets.json" mfgarchon/ > "$RUNNER_TEMP/detect-secrets.log" 2>&1 || true
+        # The report keeps its name only if the scan finished: detect-secrets exits 0 with or without findings.
+        cp .secrets.baseline "$RUNNER_TEMP/detect-secrets.part"
+        if detect-secrets scan --all-files --no-verify --baseline "$RUNNER_TEMP/detect-secrets.part" mfgarchon/ > "$RUNNER_TEMP/detect-secrets.log" 2>&1; then mv "$RUNNER_TEMP/detect-secrets.part" "$RUNNER_TEMP/detect-secrets.json"; fi
 
     - name: Run TruffleHog
       run: |
         echo "🔍 Scanning for secrets with TruffleHog..."
-        trufflehog git file://. --json --no-verification --no-update > "$RUNNER_TEMP/trufflehog.json" 2> "$RUNNER_TEMP/trufflehog.log" || true
+        # The report keeps its name only if the scan finished: without --fail, TruffleHog exits 0 with or without findings.
+        if trufflehog git file://. --json --no-verification --no-update > "$RUNNER_TEMP/trufflehog.part" 2> "$RUNNER_TEMP/trufflehog.log"; then mv "$RUNNER_TEMP/trufflehog.part" "$RUNNER_TEMP/trufflehog.json"; fi
         echo "TruffleHog scan completed"
 
     - name: Custom secrets scan
@@ -182,7 +185,6 @@ jobs:
   container-security:
     name: Container Security Scan
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
     - name: Checkout code
@@ -210,11 +212,16 @@ jobs:
         echo "🔍 Scanning container for vulnerabilities..."
         trivy image --disable-telemetry --skip-version-check --format json --output "$RUNNER_TEMP/trivy.json" mfgarchon-security-scan:latest > "$RUNNER_TEMP/trivy.log" 2>&1 || true
 
-    - name: Install and run Hadolint (Dockerfile linter)
+    - name: Install Hadolint
       run: |
-        echo "🔍 Linting Dockerfile with Hadolint..."
         wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
         chmod +x hadolint
+
+    - name: Run Hadolint (Dockerfile linter)
+      run: |
+        echo "🔍 Linting Dockerfile with Hadolint..."
+        # hadolint exits 1 on findings and on failure alike; a run that did not finish leaves its JSON empty
+        # or cut short, which security_findings.py cannot read.
         ./hadolint --format json Dockerfile > "$RUNNER_TEMP/hadolint.json" 2> "$RUNNER_TEMP/hadolint.log" || true
 
     - name: Container configuration security check
@@ -287,21 +294,30 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    # One directory for any number of artifacts: download-artifact extracts a lone artifact at the
+    # path's root and several into one directory each, unless merge-multiple is set. The five file
+    # names are unique, so they merge without collision.
     - name: Download all scan results
       uses: actions/download-artifact@v8
+      with:
+        pattern: '*-results'
+        merge-multiple: true
+        path: findings
 
-    # download-artifact puts each artifact in a directory named after it.
     - name: Collect the five findings files
+      if: always()
       run: |
-        python .github/scripts/security_findings.py collect .
+        python .github/scripts/security_findings.py collect findings
 
     - name: Generate comprehensive security report
+      if: always()
       run: |
         echo "📊 Generating comprehensive security report..."
         python .github/scripts/generate_security_report.py
 
     - name: Upload comprehensive security report
       uses: actions/upload-artifact@v7
+      if: always()
       with:
         name: comprehensive-security-report
         path: |
@@ -330,6 +346,7 @@ jobs:
           }
 
     - name: Fail job if critical vulnerabilities found
+      if: always()
       run: |
         echo "🔍 Checking for critical security issues..."
         python .github/scripts/check_critical_issues.py

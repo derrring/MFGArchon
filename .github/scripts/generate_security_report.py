@@ -35,6 +35,8 @@ class SecurityReportGenerator:
         .status-medium {{ background: #fd7e14; }}
         .status-high {{ background: #dc3545; }}
         .status-critical {{ background: #6f42c1; }}
+        .status-unknown {{ background: #6c757d; }}
+        .status-incomplete {{ background: #343a40; }}
         .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }}
         .summary-card {{ background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #007bff; }}
         .scan-results {{ margin: 20px 0; }}
@@ -67,6 +69,14 @@ class SecurityReportGenerator:
             <div class="summary-card">
                 <h3>Medium Issues</h3>
                 <p style="font-size: 2em; margin: 0; color: #fd7e14;">{self.summary["medium_issues"]}</p>
+            </div>
+            <div class="summary-card">
+                <h3>Low Issues</h3>
+                <p style="font-size: 2em; margin: 0;">{self.summary["low_issues"]}</p>
+            </div>
+            <div class="summary-card">
+                <h3>No Severity Given</h3>
+                <p style="font-size: 2em; margin: 0; color: #6c757d;">{self.summary["unknown_issues"]}</p>
             </div>
         </div>
 

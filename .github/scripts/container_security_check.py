@@ -3,7 +3,8 @@
 Container security configuration checking script for MFGArchon.
 Checks Docker configuration for security best practices.
 
-Its reports name the file and line of each finding, never the line's text.
+Its reports name the file and line of each finding, never the line's text, and a read failure by its exception's
+class, whose message can quote the file.
 """
 
 import json
@@ -50,7 +51,7 @@ class ContainerSecurityChecker:
                 {
                     "type": "error",
                     "severity": "medium",
-                    "issue": f"Failed to read Dockerfile: {e}",
+                    "issue": f"Failed to read Dockerfile: {type(e).__name__}",
                     "description": "Could not analyze Dockerfile for security issues",
                     "recommendation": "Ensure Dockerfile is readable and properly formatted",
                 }
@@ -260,7 +261,7 @@ class ContainerSecurityChecker:
                 {
                     "type": "error",
                     "severity": "medium",
-                    "issue": f"Failed to read {compose_file}: {e}",
+                    "issue": f"Failed to read {compose_file}: {type(e).__name__}",
                     "description": "Could not analyze docker-compose file",
                     "recommendation": "Ensure file is readable and properly formatted",
                 }

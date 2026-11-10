@@ -10,12 +10,13 @@ tool's matched text, code lines, messages, descriptions and every other field of
 prints each report's status and the number of findings it read, never a value read from a report. It exits 1 when a
 report is missing or cannot be read, after writing the file.
 
-The summary job downloads the five artifacts, each into a directory named after it, and runs
+The summary job downloads the five per-job files into one directory, which their unique names allow, and runs
 
     security_findings.py collect <download directory>
 
-which reads `<artifact>/<job>-findings.json` for each job, keeps the same keys, and writes `security-findings.json`.
-`generate_security_report.py` and `check_critical_issues.py` read that file.
+which reads `<job>-findings.json` for each job, keeps the same keys, and writes `security-findings.json`. A job counts as
+completed only when its file was read and so was each of its tools' reports; otherwise the overall status is INCOMPLETE
+and it exits 1, after writing the file. `generate_security_report.py` and `check_critical_issues.py` read that file.
 """
 
 import json
@@ -82,7 +83,7 @@ _STATUS_FIELDS = {"status": str, "findings": int, "error": str}
 
 
 def _tool_status(job, tool, status):
-    if tool not in JOBS[job]["tools"]:
+    if tool not in JOBS[job]:
         raise KeyError("tool")
     for key, value in status.items():
         if not isinstance(value, _STATUS_FIELDS[key]) or isinstance(value, bool):
@@ -149,8 +150,14 @@ def _detect_secrets(report):
 
 def _trufflehog(report):
     for result in report:
+        # Every Git field is omitted from the JSON when empty: a match in a binary file has no line.
         git = result["SourceMetadata"]["Data"]["Git"]
-        yield {"rule": result["DetectorName"], "file": git["file"], "line": git["line"], "commit": git["commit"]}
+        yield {
+            "rule": result["DetectorName"],
+            "file": git.get("file"),
+            "line": git.get("line"),
+            "commit": git.get("commit"),
+        }
 
 
 def _custom_secrets_scan(report):
@@ -166,11 +173,12 @@ def _custom_secrets_scan(report):
 def _trivy(report):
     for result in report.get("Results", []):
         for vuln in result.get("Vulnerabilities") or []:
+            # These fields are omitted from the JSON when empty.
             yield {
-                "package": vuln["PkgName"],
-                "version": vuln["InstalledVersion"],
-                "advisory": vuln["VulnerabilityID"],
-                "severity": _severity(vuln["Severity"]),
+                "package": vuln.get("PkgName"),
+                "version": vuln.get("InstalledVersion"),
+                "advisory": vuln.get("VulnerabilityID"),
+                "severity": _severity(vuln.get("Severity")),
             }
         for secret in result.get("Secrets") or []:
             yield {
@@ -213,29 +221,17 @@ def _license_compliance_check(report):
             }
 
 
-#: Each job: the artifact its upload step names, and its tools with the reader of each report.
+#: Each job's tools, with the reader of each report.
 JOBS = {
-    "dependency": {"artifact": "dependency-scan-results", "tools": {"safety": _safety, "pip-audit": _pip_audit}},
-    "static": {
-        "artifact": "static-analysis-results",
-        "tools": {"bandit": _bandit, "semgrep": _semgrep, "custom_security_checks": _custom_security_checks},
-    },
+    "dependency": {"safety": _safety, "pip-audit": _pip_audit},
+    "static": {"bandit": _bandit, "semgrep": _semgrep, "custom_security_checks": _custom_security_checks},
     "secrets": {
-        "artifact": "secrets-scan-results",
-        "tools": {
-            "detect-secrets": _detect_secrets,
-            "trufflehog": _trufflehog,
-            "custom_secrets_scan": _custom_secrets_scan,
-        },
+        "detect-secrets": _detect_secrets,
+        "trufflehog": _trufflehog,
+        "custom_secrets_scan": _custom_secrets_scan,
     },
-    "container": {
-        "artifact": "container-scan-results",
-        "tools": {"trivy": _trivy, "hadolint": _hadolint, "container_security_check": _container_security_check},
-    },
-    "license": {
-        "artifact": "license-compliance-results",
-        "tools": {"license_compliance_check": _license_compliance_check},
-    },
+    "container": {"trivy": _trivy, "hadolint": _hadolint, "container_security_check": _container_security_check},
+    "license": {"license_compliance_check": _license_compliance_check},
 }
 
 #: Reports with one JSON document per line.
@@ -256,7 +252,7 @@ def _counts(findings):
 
 def findings_for(job, reports):
     """Read each tool's report for `job` and keep FIELDS. `reports` maps every tool of the job to its report path."""
-    tools = JOBS[job]["tools"]
+    tools = JOBS[job]
     if set(reports) != set(tools):
         raise SystemExit(f"{job} takes exactly these tools: {', '.join(tools)}; given: {', '.join(reports)}")
     status, findings = {}, []
@@ -277,10 +273,10 @@ def findings_for(job, reports):
 
 
 def collect(root):
-    """Read the five `<artifact>/<job>-findings.json` under `root`, keep FIELDS, and add the summary."""
+    """Read the five `<job>-findings.json` in `root`, keep FIELDS, and add the summary."""
     jobs = {}
-    for job, spec in JOBS.items():
-        path = Path(root) / spec["artifact"] / f"{job}-findings.json"
+    for job in JOBS:
+        path = Path(root) / f"{job}-findings.json"
         if not path.is_file():
             jobs[job] = {"status": "missing"}
             continue
@@ -291,20 +287,27 @@ def collect(root):
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             jobs[job] = {"status": "unreadable", "error": type(error).__name__}
             continue
-        jobs[job] = {"status": "read", "tools": tools, "counts": _counts(findings), "findings": findings}
+        complete = set(tools) == set(JOBS[job]) and all(status["status"] == "read" for status in tools.values())
+        jobs[job] = {
+            "status": "read" if complete else "incomplete",
+            "tools": tools,
+            "counts": _counts(findings),
+            "findings": findings,
+        }
 
     totals = Counter()
     for job in STATUS_JOBS:
         totals.update(jobs[job].get("counts", {}))
+    failed = [job for job, data in jobs.items() if data["status"] != "read"]
     # A finding its tool gives no severity for ranks below high and above medium.
     ranked = ("critical", "high", "unknown", "medium", "low")
-    overall = next((severity.upper() for severity in ranked if totals[severity]), "PASS")
+    overall = "INCOMPLETE" if failed else next((s.upper() for s in ranked if totals[s]), "PASS")
     summary = {
         "timestamp": datetime.now(UTC).isoformat(),
         "total_issues": sum(totals.values()),
         **{f"{severity}_issues": totals[severity] for severity in SEVERITIES},
-        "scans_completed": [job for job, data in jobs.items() if data["status"] == "read"],
-        "scans_failed": [job for job, data in jobs.items() if data["status"] != "read"],
+        "scans_completed": [job for job in jobs if job not in failed],
+        "scans_failed": failed,
         "overall_status": overall,
     }
     return {"summary": summary, "jobs": jobs}
@@ -317,7 +320,7 @@ def main(argv):
         for job, data in result["jobs"].items():
             print(f"{job}: {data['status']}" + (f", {data['counts']}" if "counts" in data else ""))
         print(f"overall status: {result['summary']['overall_status']}")
-        return 0
+        return 1 if result["summary"]["scans_failed"] else 0
     if not argv or argv[0] not in JOBS or not all("=" in arg for arg in argv[1:]):
         raise SystemExit(__doc__)
     job = argv[0]

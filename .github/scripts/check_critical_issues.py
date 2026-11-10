@@ -77,11 +77,21 @@ class CriticalIssuesChecker:
         return summary
 
     def _findings(self, job: str, label: str, tools: tuple[str, ...]) -> list[dict[str, Any]] | None:
-        """The job's findings from `tools`, or None, with a warning, when the job's findings file was not read."""
-        if self.jobs[job]["status"] != "read":
-            self.warnings.append(f"{label} results not found")
+        """The job's findings from `tools`.
+
+        A job whose findings file was not read gives None; one with a tool whose report was not read gives what was
+        read. Either is a blocking issue: a scan that did not run is not a scan that found nothing.
+        """
+        data = self.jobs[job]
+        if data["status"] in ("missing", "unreadable"):
+            self.blocking_issues.append({"type": job, "severity": "high", "message": f"{label} results not found"})
             return None
-        return [f for f in self.jobs[job]["findings"] if f["tool"] in tools]
+        unread = sorted(tool for tool in tools if data["tools"].get(tool, {}).get("status") != "read")
+        if unread:
+            self.blocking_issues.append(
+                {"type": job, "severity": "high", "message": f"{label} results incomplete: {', '.join(unread)}"}
+            )
+        return [f for f in data["findings"] if f["tool"] in tools]
 
     def _check_dependency_results(self):
         """Check dependency scan results for critical issues."""
@@ -231,8 +241,9 @@ class CriticalIssuesChecker:
                 }
             )
 
-        # Check for base image issues
-        base_image_issues = [f for f in findings if "base" in f.get("file", "").lower()]
+        # Check for base image issues, over trivy's vulnerabilities and hadolint, as the deleted parser read them
+        dockerfile_issues = [f for f in findings if f["tool"] == "hadolint"]
+        base_image_issues = [f for f in vulnerabilities + dockerfile_issues if "base" in f.get("file", "").lower()]
         if len(base_image_issues) > 5:
             self.blocking_issues.append(
                 {
