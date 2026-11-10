@@ -163,6 +163,6 @@ When the notebook executes successfully, you should see:
 If you still can't execute the notebook:
 1. Check the Python script version works: `python working_demo/MFG_Working_Demo.py`
 2. Verify Jupyter installation: `jupyter --version`
-3. Reinstall: `pip install mfgarchon jupyter`
+3. Install again: `pip install mfgarchon jupyter`
 
 The notebook is designed to be **foolproof** with comprehensive error handling and fallbacks. It should work in any standard Python environment with basic scientific packages.

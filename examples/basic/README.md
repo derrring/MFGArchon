@@ -97,7 +97,7 @@ Tools for analysis, I/O, and post-processing.
 
 ## Dependencies
 
-**Core** (always available):
+**Install**:
 ```bash
 pip install mfgarchon       # every package in pyproject.toml's [project].dependencies
 ```

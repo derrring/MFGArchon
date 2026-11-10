@@ -136,7 +136,7 @@ Advanced plotting and animation.
 
 ### Software Requirements
 
-**Core**:
+**Install**:
 ```bash
 pip install mfgarchon           # every package in pyproject.toml's [project].dependencies
 ```
