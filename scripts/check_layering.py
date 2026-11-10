@@ -198,10 +198,10 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.operators.interaction.coupling_costs", "mfgarchon.core.model", "type", "#2938 stage 2d", "coupling_costs is the model's cost specification"),
     ("mfgarchon.utils.numerical.implicit_diffusion", "mfgarchon.utils.pde_coefficients", "module", "#2938 stage 2d", "the implicit diffusion step reads model-layer coefficient helpers"),
     # model -> solve
-    ("mfgarchon.core.measure", "mfgarchon.utils.numerical.mass_fabrication_gate", "module", "#2938 stage 4", "the measure clips through the solve-layer mass gate"),
+    ("mfgarchon.core.measure", "mfgarchon.utils.numerical.mass_fabrication_gate", "module", "#2938 stage 2c", "the measure clips through mass_fabrication_gate, which imports only numpy and utils.numerical.quadrature and is read from layers 1, 4 and 5: its place in the table is the question"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.fixed_point_iterator", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
-    ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.source_composition", "type", "#2938 stage 4", "an annotation names CouplingBinding"),
+    ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.source_composition", "type", "#2938 stage 2c", "an annotation names CouplingBinding: which side owns the type it needs is the question (rule 3)"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.utils.adjoint_validation", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     # model -> entry
     ("mfgarchon.core.mfg_problem", "mfgarchon.factory", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
