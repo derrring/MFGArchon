@@ -9,4 +9,5 @@
 - **The inner-failure owner moves to `utils/`, beside `ConvergenceError`:** `mfgarchon.utils.exceptions.report_inner_failure`.
   - It raises by default, or records and warns under `"record"`.
   - `core/` and `geometry/` can reach it, which they could not while it lived under `alg/`.
-  - The HJB solvers' `base_hjb.report_inner_solve_failure` is now one caller of it. Its messages, its `on_inner_failure` values and the frame its warning names are unchanged.
+  - The HJB solvers' `base_hjb.report_inner_solve_failure` is now one caller of it. Its `on_inner_failure` values, its raise and record messages and the frame its warning names are unchanged.
+  - A failure under `"record"` or `"fallback"` with no record begun is refused in the owner's words, which no longer name the policy.
