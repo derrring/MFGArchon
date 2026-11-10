@@ -3,59 +3,78 @@
 
 Usage:
     python scripts/check_layering.py [--root TREE]   # check TREE/mfgarchon (default: this repository)
-    python scripts/check_layering.py --self-test     # the parser and mechanism cases, on temporary packages
+    python scripts/check_layering.py --self-test     # its own cases, on temporary packages
 
 **It observes.** Neither CI nor the pre-push gate runs the check of the package. The gate runs only
 ``--self-test``, in ``scripts/local_ci.sh``'s self-test loop: that guards the parser and enforces nothing
 about the package. When the check itself enters CI is the user's call (#2938).
 
-This file is the one owner of the layer table (``LAYERS``) and of the exception lists (``EDGE_EXCEPTIONS``,
-``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). A PR that removes an edge removes its line in the same diff.
+This file holds the layer table (``LAYERS``) and the exception lists (``EDGE_EXCEPTIONS``,
+``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). One slice of the rule has a second owner until the check enters
+the gate (below). A PR that removes an edge removes its line in the same diff.
 
 **What is counted** (#2938, "What is counted"):
 
 - An edge is (importing module, upper target module, position). Position is one of:
   - ``module``: the import stands outside any function, including the ``else`` of ``if TYPE_CHECKING:``,
     the body of ``if not TYPE_CHECKING:``, ``if __name__ == "__main__":``, class bodies, ``try``/``except``,
-    ``with`` and ``match``. The body of ``if False:`` counts here too: the rule is about the direction of
-    source dependencies, not about what runs when a module is loaded.
-  - ``function``: inside a ``def`` or a ``lambda``;
-  - ``type``: the body of ``if TYPE_CHECKING:``.
+    ``with``, ``for``, ``while`` and ``match``. The body of ``if False:`` counts here too: the rule is about the
+    direction of source dependencies, not about what runs when a module is loaded.
+  - ``function``: inside a ``def`` or an ``async def``;
+  - ``type``: the body of an ``if`` that is true only under a type checker (``TYPE_CHECKING``, an alias of it,
+    ``typing.TYPE_CHECKING``, ``TYPE_CHECKING and ...``, ``TYPE_CHECKING is True``), and the ``else`` of
+    ``if not TYPE_CHECKING:``.
 - An import has two targets, the module on its path and the owner of each name it binds. Either one in an
-  upper layer is an edge, so a re-export of an upper name is an edge.
+  upper layer is an edge, so a re-export of an upper name is an edge. The path of ``from P import ...`` is not
+  an edge when every name it binds is a submodule of ``P``: that is the dependency ``import P.name`` makes, and
+  loading a parent package's ``__init__`` is outside the rule (#2938, ruling of 2026-11-11). The path of a star
+  import is always an edge, whatever the names expand to.
 - Owners are followed in a static scope only:
   - module-level statements are followed, not function or class bodies;
-  - the last module-level binding of a name wins;
-  - a last binding inside ``if``, ``try`` or ``with`` is decided at run time and is unresolved (ambiguous);
-  - ``from x import *`` exports ``x``'s static ``__all__`` (unconditional, a list or tuple of string
-    literals), or, without one, the names with no leading underscore;
-  - an ``__all__`` changed under a condition or by a method call is ambiguous;
+  - the last module-level binding of a name wins. A binding is a ``def``, a ``class``, an import, an
+    assignment to the name (alone or in a tuple, list or starred target), an annotated or augmented
+    assignment, a walrus, and the target of a ``for``, a ``with ... as`` or an ``except ... as``. An attribute
+    or subscript target binds no name;
+  - a last binding inside ``if``, ``try``, ``with``, ``for``, ``while`` or ``match`` is decided at run time and
+    is unresolved (ambiguous). The other branch of an ``if`` on ``TYPE_CHECKING`` runs whenever its parent does;
+  - a binding that leads back into a re-export ring is skipped for the binding before it, and a ring no binding
+    ends is ambiguous;
+  - ``from x import *`` exports ``x``'s static ``__all__`` (unconditional, assigned or annotated, a list or tuple
+    of string literals), or, without one, the names with no leading underscore;
+  - an ``__all__`` changed under a condition, by a method call or by ``+=`` is ambiguous;
   - a name whose binding is not found is unresolved (not found);
   - an unresolved owner is never taken to be the importing module.
-- The path of a star import is an edge of its own, whatever the names expand to.
 
 **What it reports.** Each report names a location, and none prints a total:
 
 - an upward edge outside ``EDGE_EXCEPTIONS``, at the importer's file and line;
-- a line of ``EDGE_EXCEPTIONS`` whose edge no longer exists;
+- a line of ``EDGE_EXCEPTIONS`` whose edge the scan no longer finds;
 - an unresolved owner outside ``UNRESOLVED_EXCEPTIONS``, at the importer's file and line;
-- a line of ``UNRESOLVED_EXCEPTIONS`` whose import no longer exists;
-- a dynamic import site outside ``DYNAMIC_SITES``, at its file and line;
-- a line of ``DYNAMIC_SITES`` whose site no longer exists;
+- a line of ``UNRESOLVED_EXCEPTIONS`` that the scan no longer finds unresolved;
+- a dynamic import mechanism in a module where ``DYNAMIC_SITES`` does not list it, at its file and line;
+- a line of ``DYNAMIC_SITES`` whose mechanism the module no longer uses;
 - a ``LAYERS`` prefix that matches no module;
 - a module that no ``LAYERS`` prefix places.
 
 It exits 1 if it reports anything.
 
-**What a static check cannot see:** ``importlib.import_module``, ``__import__`` and a module-level
-``def __getattr__``. Their sites are listed in ``DYNAMIC_SITES``, so a new one is reported, but the
-imports they make are not followed.
+**What a static check cannot see.** ``importlib.import_module`` under any name, ``__import__``, and a
+module-level ``__getattr__``, whether defined or assigned, at module level or inside a module-level block. Their
+sites are listed in ``DYNAMIC_SITES`` by module and mechanism: a mechanism new to a module is reported, a further
+site of a listed mechanism in that module is not, and no site's imports are followed. Two more loaders are
+neither listed nor detected, ``entry_point.load()`` and ``spec_from_file_location`` with ``exec_module``, both in
+``core/plugin_system.py``: they load plugin code from outside the package, and #2938's stage 4 deletes that module.
+
+**Limits.** A ``type``-position import of a name its source binds only under ``TYPE_CHECKING`` is reported as
+unresolved (not found), not followed to the type binding. A symlinked directory under the package is not walked.
+A ``foo.py`` beside ``foo/__init__.py`` is scanned under the package's name.
 
 **A second owner of one slice.** ``tests/unit/test_utils_does_not_import_alg.py`` ratchets the module-level
-imports of ``mfgarchon.alg`` from ``mfgarchon/utils/`` and runs in the gate. The two disagree on one edge.
-That test counts ``utils/adjoint_validation.py`` -> ``alg.base_solver`` as the last violation, because the
-file sits in ``utils/``. ``LAYERS`` places ``utils.adjoint_validation`` in the solve layer, beside ``alg``,
-because of what it is. The ratchet is deleted in the PR that puts this check into the gate (#2938).
+imports of ``mfgarchon.alg`` from ``mfgarchon/utils/`` and runs in the gate. The two disagree on the five
+``utils`` modules ``LAYERS`` places in the solve layer, beside ``alg``, by what they are: the test forbids them a
+module-level import of ``alg`` because they sit in ``utils/``, and this check allows it. Today one edge falls
+there, ``utils/adjoint_validation.py`` -> ``alg.base_solver``, which the test counts as the last violation. The
+ratchet is deleted in the PR that puts this check into the gate (#2938).
 """
 
 from __future__ import annotations
@@ -126,7 +145,7 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.backends.jax_backend", "mfgarchon.utils.acceleration.jax_precision", "function", "#2938 stage 2b", "the jax backend sets the x64 policy through an acceleration helper"),
     ("mfgarchon.backends.numpy_backend", "mfgarchon.utils.numerical.integration", "module", "#2938 stage 2b", "imports trapezoid through a layer-1 path; its owner is utils.numpy_compat"),
     ("mfgarchon.config.array_validation", "mfgarchon.utils.numerical.integration", "module", "#2938 stage 2b", "imports trapezoid through a layer-1 path; its owner is utils.numpy_compat"),
-    ("mfgarchon.utils.solver_result", "mfgarchon.utils.io.hdf5_utils", "function", "#2938 stage 2b", "the result's save method calls the HDF5 writer"),
+    ("mfgarchon.utils.solver_result", "mfgarchon.utils.io.hdf5_utils", "function", "#2938 stage 2b", "the result's save_hdf5 and load_hdf5 call the HDF5 writer and reader"),
     ("mfgarchon.utils.solver_result", "mfgarchon.utils.notebooks.reporting", "function", "#2938 stage 2b", "the result's report method calls the notebook reporter"),
     # numerics -> geometry
     ("mfgarchon.utils", "mfgarchon.geometry.implicit.hyperrectangle", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
@@ -136,7 +155,7 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.utils", "mfgarchon.utils.geometry", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
     ("mfgarchon.utils.numerical", "mfgarchon.geometry.implicit.sdf_utils", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a geometry name"),
     ("mfgarchon.utils.numerical", "mfgarchon.geometry.meshes.mesh_distances", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils.numerical.particle.sampling", "mfgarchon.geometry.boundary.periodic", "function", "#2938 stage 2a", "sampling wraps positions with the periodic boundary's helpers"),
+    ("mfgarchon.utils.numerical.particle.sampling", "mfgarchon.geometry.boundary.periodic", "function", "#2938 stage 2a", "sampling builds periodic ghost points and wraps positions with the periodic boundary's helpers"),
     ("mfgarchon.utils.sparse_operations", "mfgarchon.geometry.grids.tensor_grid", "type", "#2938 stage 2a", "an annotation names TensorProductGrid"),
     # numerics -> model
     ("mfgarchon.utils", "mfgarchon.utils.drift_helpers", "module", "#2938 stage 2a", "utils/__init__ re-exports a model-layer name"),
@@ -146,7 +165,7 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.utils.numerical", "mfgarchon.utils.numerical.flux_diagnostics", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a solve-layer name"),
     ("mfgarchon.utils.numerical", "mfgarchon.utils.numerical.hjb_policy_iteration", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a solve-layer name"),
     ("mfgarchon.utils.numerical", "mfgarchon.utils.numerical.mass_fabrication_gate", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a solve-layer name"),
-    ("mfgarchon.utils.numerical.particle.sampling", "mfgarchon.utils.numerical.mass_fabrication_gate", "function", "#2938 stage 2a", "sampling refuses a fabricated mass through the solve-layer gate"),
+    ("mfgarchon.utils.numerical.particle.sampling", "mfgarchon.utils.numerical.mass_fabrication_gate", "function", "#2938 stage 2a", "sampling leaves out, or refuses, the mass of cells with no navigable point through the gate's leave_out_or_raise"),
     # numerics -> entry
     ("mfgarchon.utils", "mfgarchon.utils.cli", "module", "#2938 stage 2a", "utils/__init__ re-exports an entry-layer name"),
     ("mfgarchon.utils", "mfgarchon.utils.experiment_manager", "module", "#2938 stage 2a", "utils/__init__ re-exports an entry-layer name"),
@@ -154,7 +173,7 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     # geometry -> operators
     ("mfgarchon.geometry", "mfgarchon.operators", "module", "#2938 stage 3", "geometry/__init__ re-exports GeometryProjector and ProjectionRegistry"),
     ("mfgarchon.geometry", "mfgarchon.operators.interpolation.projection", "module", "#2938 stage 3", "geometry/__init__ re-exports GeometryProjector and ProjectionRegistry"),
-    ("mfgarchon.geometry.boundary.types", "mfgarchon.operators.differential.function_gradient", "function", "#2938 stage 3", "a boundary type differentiates a function with an operator"),
+    ("mfgarchon.geometry.boundary.types", "mfgarchon.operators.differential.function_gradient", "function", "#2938 stage 3", "the module-level _compute_sdf_gradient differentiates a function with an operator"),
     ("mfgarchon.geometry.collocation", "mfgarchon.operators.differential.function_gradient", "function", "#2938 stage 3", "collocation differentiates a function with an operator"),
     ("mfgarchon.geometry.grids.tensor_grid", "mfgarchon.operators", "function", "#2938 stage 3", "the grid builds its own operators"),
     ("mfgarchon.geometry.grids.tensor_grid", "mfgarchon.operators.differential.advection", "function", "#2938 stage 3", "the grid builds its own operators"),
@@ -163,7 +182,7 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.geometry.grids.tensor_grid", "mfgarchon.operators.differential.laplacian", "function", "#2938 stage 3", "the grid builds its own operators"),
     ("mfgarchon.geometry.grids.tensor_grid", "mfgarchon.operators.interpolation.interpolation", "function", "#2938 stage 3", "the grid builds its own operators"),
     ("mfgarchon.geometry.implicit.implicit_domain", "mfgarchon.operators.differential.function_gradient", "function", "#2938 stage 3", "an implicit domain differentiates its level-set function with an operator"),
-    ("mfgarchon.geometry.level_set.core", "mfgarchon.operators.reconstruction.weno", "function", "#2938 stage 3", "level-set evolution uses an operator-layer stencil"),
+    ("mfgarchon.geometry.level_set.core", "mfgarchon.operators.reconstruction.weno", "function", "#2938 stage 3", "level-set evolution uses an operator-layer WENO5 reconstruction"),
     ("mfgarchon.geometry.level_set.core", "mfgarchon.operators.stencils.finite_difference", "function", "#2938 stage 3", "level-set evolution uses an operator-layer stencil"),
     ("mfgarchon.geometry.level_set.reinitialization", "mfgarchon.operators.stencils.finite_difference", "function", "#2938 stage 3", "reinitialisation uses an operator-layer stencil"),
     # geometry -> solve
@@ -207,7 +226,7 @@ UNRESOLVED_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.utils.acceleration.jax_utils", "mfgarchon.utils.acceleration", "DEFAULT_DEVICE", "module", "bound in utils/acceleration/__init__'s try on importing jax"),
     ("mfgarchon.utils.acceleration.jax_utils", "mfgarchon.utils.acceleration", "HAS_GPU", "module", "bound in utils/acceleration/__init__'s try on importing jax"),
     ("mfgarchon.utils.acceleration.jax_utils", "mfgarchon.utils.acceleration", "HAS_JAX", "module", "bound in utils/acceleration/__init__'s try on importing jax"),
-    ("mfgarchon.utils.acceleration.jax_utils", "mfgarchon.types.solver_types", "JAXArray", "type", "bound in solver_types' try on importing jax"),
+    ("mfgarchon.utils.acceleration.jax_utils", "mfgarchon.types.solver_types", "JAXArray", "type", "bound in solver_types' try, whose body imports jax only under TYPE_CHECKING: at run time both arms bind Any"),
     ("mfgarchon.utils.numerical.nonlinear_solvers", "mfgarchon.utils.acceleration", "HAS_JAX", "module", "bound in utils/acceleration/__init__'s try on importing jax"),
     ("mfgarchon.utils.io", "mfgarchon.utils.io.hdf5_utils", "HDF5_AVAILABLE", "module", "bound in a try on importing h5py, a required package (#2930)"),
     ("mfgarchon.utils.data.recorder", "mfgarchon", "__version__", "function", "bound in a try on the installed metadata"),
@@ -227,7 +246,9 @@ UNRESOLVED_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.alg.optimization", "mfgarchon.alg.optimization.optimal_transport", "WassersteinSolverResult", "module", "bound under `if SCIPY_AVAILABLE and POT_AVAILABLE`"),
 )  # fmt: skip
 
-# (module, mechanism): the sites whose imports a static check cannot follow, by module.
+# (module, mechanism): the sites whose imports a static check cannot follow. Keyed by module and mechanism, with no
+# line and no count (#2938): a mechanism new to a module is reported, but a further site of a listed mechanism in the
+# same module is not, and no site's imports are followed.
 DYNAMIC_SITES: tuple[tuple[str, str], ...] = (
     ("mfgarchon.core.plugin_system", "import_module"),
     ("mfgarchon.geometry", "__import__"),
@@ -238,8 +259,6 @@ DYNAMIC_SITES: tuple[tuple[str, str], ...] = (
     ("mfgarchon.utils.acceleration", "import_module"),
     ("mfgarchon.utils.dependencies", "__import__"),
 )  # fmt: skip
-
-POSITIONS = ("module", "function", "type")
 
 
 def make_layer_of(table: dict[str, int], package: str) -> Callable[[str], int | None]:
@@ -261,20 +280,63 @@ def make_layer_of(table: dict[str, int], package: str) -> Callable[[str], int | 
     return layer_of
 
 
-def is_type_checking(test: ast.expr) -> bool:
-    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
-        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
-    )
+def type_checking_names(tree: ast.Module) -> frozenset[str]:
+    """The names this module binds to `typing.TYPE_CHECKING`: always `TYPE_CHECKING`, and any alias it imports."""
+    names = {"TYPE_CHECKING"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in ("typing", "typing_extensions"):
+            names.update(a.asname or a.name for a in node.names if a.name == "TYPE_CHECKING")
+    return frozenset(names)
 
 
-def position_of(stack: list[tuple[ast.AST, str]]) -> str:
+def is_type_checking(test: ast.expr, names: frozenset[str] = frozenset({"TYPE_CHECKING"})) -> bool:
+    """Whether `test` is true only under a type checker: `TYPE_CHECKING` (or an alias, or `typing.TYPE_CHECKING`),
+    `TYPE_CHECKING and ...`, or `TYPE_CHECKING is True` / `== True`."""
+    if isinstance(test, ast.Name):
+        return test.id in names
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        return any(is_type_checking(v, names) for v in test.values)
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Is | ast.Eq):
+        right = test.comparators[0]
+        return is_type_checking(test.left, names) and isinstance(right, ast.Constant) and right.value is True
+    return False
+
+
+def is_not_type_checking(test: ast.expr, names: frozenset[str] = frozenset({"TYPE_CHECKING"})) -> bool:
+    """Whether `test` is `not TYPE_CHECKING`, whose `else` runs only under a type checker."""
+    return isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not) and is_type_checking(test.operand, names)
+
+
+def position_of(stack: list[tuple[ast.AST, str]], names: frozenset[str] = frozenset({"TYPE_CHECKING"})) -> str:
     """Position of an import, given the (parent node, field) pairs from the module down to it."""
     for node, fieldname in stack:
-        if isinstance(node, ast.If) and fieldname == "body" and is_type_checking(node.test):
+        if isinstance(node, ast.If) and (
+            (fieldname == "body" and is_type_checking(node.test, names))
+            or (fieldname == "orelse" and is_not_type_checking(node.test, names))
+        ):
             return "type"
-    if any(isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) for node, _ in stack):
+    if any(isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) for node, _ in stack):
         return "function"
     return "module"
+
+
+def bound_names(target: ast.expr) -> list[str]:
+    """The names an assignment target binds: a Name, or the Names inside a Tuple, List or Starred. An attribute
+    or a subscript binds no name: `REG.x = 1` and `TABLE[key] = 1` leave `REG`, `TABLE` and `key` as they were."""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Starred):
+        return bound_names(target.value)
+    if isinstance(target, ast.Tuple | ast.List):
+        return [n for elt in target.elts for n in bound_names(elt)]
+    return []
+
+
+def read_source(path: Path) -> ast.Module:
+    """Parse from bytes, so that a BOM or a coding cookie is honoured as Python honours it."""
+    return ast.parse(path.read_bytes(), filename=str(path))
 
 
 AMBIGUOUS = object()
@@ -301,7 +363,7 @@ class Tree:
     def parsed(self, module: str) -> tuple[ast.Module | None, bool]:
         if module not in self.cache:
             path, is_package = self.path_of(module)
-            tree = ast.parse(Path(path).read_text(encoding="utf-8")) if path else None
+            tree = read_source(Path(path)) if path else None
             self.cache[module] = (tree, is_package)
         return self.cache[module]
 
@@ -311,40 +373,91 @@ class Tree:
         if not node.level:
             return node.module or ""
         base = module.split(".") if is_package else module.split(".")[:-1]
+        if node.level - 1 >= len(base):
+            return ""  # beyond the top-level package: Python refuses it, and there is no module to name
         base = base[: len(base) - (node.level - 1)]
         return ".".join(base + ([node.module] if node.module else []))
 
     def events(self, module: str) -> list[tuple[str, str, object, bool]]:
         """Module-level binding events in source order: (name, kind, payload, conditional).
 
-        The body of `if TYPE_CHECKING:` binds nothing at run time and is skipped. Any other if/try/with marks
-        a binding conditional. Function and class bodies are not entered."""
+        The body of `if TYPE_CHECKING:` (and the `else` of `if not TYPE_CHECKING:`) binds nothing at run time and
+        is skipped; the other branch of such an `if` runs whenever its parent does. Any other `if`, and every
+        `try`, `with`, `for`, `while` and `match`, marks the bindings inside it conditional, including the names
+        its own targets bind. Function and class bodies are not entered."""
         if module in self.event_cache:
             return self.event_cache[module]
         tree, is_package = self.parsed(module)
+        names = type_checking_names(tree) if tree is not None else frozenset({"TYPE_CHECKING"})
         out: list[tuple[str, str, object, bool]] = []
+
+        def walrus(nodes: list[ast.AST], conditional: bool, runtime: bool) -> None:
+            if runtime:
+                for node in nodes:
+                    for x in ast.walk(node):
+                        if isinstance(x, ast.NamedExpr):
+                            out.append((x.target.id, "def", x, conditional))
 
         def walk(body: list[ast.stmt], conditional: bool, runtime: bool) -> None:
             for n in body:
                 if isinstance(n, ast.If):
-                    walk(n.body, True, runtime and not is_type_checking(n.test))
+                    walrus([n.test], conditional, runtime)
+                    if is_type_checking(n.test, names):
+                        walk(n.body, True, False)
+                        walk(n.orelse, conditional, runtime)
+                    elif is_not_type_checking(n.test, names):
+                        walk(n.body, conditional, runtime)
+                        walk(n.orelse, True, False)
+                    else:
+                        walk(n.body, True, runtime)
+                        walk(n.orelse, True, runtime)
+                    continue
+                if isinstance(n, ast.Try | ast.TryStar):
+                    for name in ("body", "orelse", "finalbody"):
+                        walk(getattr(n, name), True, runtime)
+                    for handler in n.handlers:
+                        if handler.name and runtime:
+                            out.append((handler.name, "def", handler, True))
+                        walk(handler.body, True, runtime)
+                    continue
+                if isinstance(n, ast.With | ast.AsyncWith):
+                    for item in n.items:
+                        walrus([item.context_expr], conditional, runtime)
+                        if item.optional_vars is not None and runtime:
+                            out.extend((x, "def", n, True) for x in bound_names(item.optional_vars))
+                    walk(n.body, True, runtime)
+                    continue
+                if isinstance(n, ast.For | ast.AsyncFor | ast.While):
+                    if isinstance(n, ast.While):
+                        walrus([n.test], True, runtime)
+                    else:
+                        walrus([n.iter], conditional, runtime)
+                        if runtime:
+                            out.extend((x, "def", n, True) for x in bound_names(n.target))
+                    walk(n.body, True, runtime)
                     walk(n.orelse, True, runtime)
                     continue
-                if isinstance(n, ast.Try | ast.TryStar | ast.With):
-                    for name in ("body", "orelse", "finalbody"):
-                        walk(getattr(n, name, []) or [], True, runtime)
-                    for handler in getattr(n, "handlers", []):
-                        walk(handler.body, True, runtime)
+                if isinstance(n, ast.Match):
+                    walrus([n.subject], conditional, runtime)
+                    for case in n.cases:
+                        if runtime:
+                            for x in ast.walk(case.pattern):
+                                bound = getattr(x, "name", None) or getattr(x, "rest", None)
+                                if isinstance(bound, str):
+                                    out.append((bound, "def", case, True))
+                        walk(case.body, True, runtime)
                     continue
                 if not runtime:
                     continue
+                if not isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                    walrus([n], conditional, runtime)
                 if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                     out.append((n.name, "def", None, conditional))
                 elif isinstance(n, ast.Assign):
                     for target in n.targets:
-                        for x in ast.walk(target):
-                            if isinstance(x, ast.Name):
-                                out.append((x.id, "def", n, conditional))
+                        out.extend((x, "def", n, conditional) for x in bound_names(target))
+                elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == "__all__":
+                    out.append(("__all__", "allmut", n, conditional))
                 elif isinstance(n, ast.AnnAssign | ast.AugAssign) and isinstance(n.target, ast.Name):
                     if not (isinstance(n, ast.AnnAssign) and n.value is None):
                         out.append((n.target.id, "def", n, conditional))
@@ -387,7 +500,7 @@ class Tree:
                 return None
             node = alls[-1][2]
             value = getattr(node, "value", None)
-            if not isinstance(node, ast.Assign) or not isinstance(value, ast.List | ast.Tuple):
+            if not isinstance(node, ast.Assign | ast.AnnAssign) or not isinstance(value, ast.List | ast.Tuple):
                 return None
             if not all(isinstance(x, ast.Constant) and isinstance(x.value, str) for x in value.elts):
                 return None
@@ -487,6 +600,56 @@ def scan(root: str, package: str, layer_of: Callable[[str], int | None]) -> Scan
     return result
 
 
+def module_getattr_lines(body: list[ast.stmt]) -> list[int]:
+    """Lines where the module binds `__getattr__` (PEP 562): a `def` or an assignment, at module level or inside a
+    module-level `if`, `try`, `with`, `for`, `while` or `match`."""
+    lines = []
+    for n in body:
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef):
+            binds = n.name == "__getattr__"
+        elif isinstance(n, ast.Assign):
+            binds = any("__getattr__" in bound_names(t) for t in n.targets)
+        else:
+            binds = isinstance(n, ast.AnnAssign | ast.AugAssign) and getattr(n.target, "id", None) == "__getattr__"
+        if binds:
+            lines.append(n.lineno)
+        for fieldname in ("body", "orelse", "finalbody"):
+            if not isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                lines.extend(module_getattr_lines(getattr(n, fieldname, None) or []))
+        for handler in getattr(n, "handlers", None) or []:
+            lines.extend(module_getattr_lines(handler.body))
+        for case in getattr(n, "cases", None) or []:
+            lines.extend(module_getattr_lines(case.body))
+    return lines
+
+
+def importlib_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """(names bound to the `importlib` module, names bound to `importlib.import_module`) anywhere in the file."""
+    modules, functions = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "importlib" or (alias.name.startswith("importlib.") and not alias.asname):
+                    modules.add(alias.asname or "importlib")
+        elif isinstance(node, ast.ImportFrom) and node.module == "importlib" and not node.level:
+            functions.update(a.asname or a.name for a in node.names if a.name == "import_module")
+    return modules, functions
+
+
+def dynamic_call(call: ast.Call, importlib_names: set[str], import_module_names: set[str]) -> str | None:
+    """`import_module` for a call of `importlib.import_module` (under any name), `__import__` for the builtin."""
+    func = call.func
+    if isinstance(func, ast.Name):
+        if func.id == "__import__":
+            return "__import__"
+        if func.id in import_module_names:
+            return "import_module"
+    elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in importlib_names:
+        if func.attr in ("import_module", "__import__"):
+            return func.attr
+    return None
+
+
 def scan_module(
     tree: Tree, result: Scan, layer_of: Callable[[str], int | None], module: str, rel: str, is_package: bool
 ) -> None:
@@ -494,10 +657,11 @@ def scan_module(
     package = tree.package
     result.modules[module] = rel
     source_layer = layer_of(module)
-    parsed = ast.parse(Path(tree.root, rel).read_text(encoding="utf-8"))
-    for n in parsed.body:
-        if isinstance(n, ast.FunctionDef) and n.name == "__getattr__":
-            result.dynamic.setdefault((module, "__getattr__"), []).append((rel, n.lineno))
+    parsed = read_source(Path(tree.root, rel))
+    names = type_checking_names(parsed)
+    for line in module_getattr_lines(parsed.body):
+        result.dynamic.setdefault((module, "__getattr__"), []).append((rel, line))
+    importlib_names, import_module_names = importlib_bindings(parsed)
 
     def add_edge(target: str, position: str, line: int) -> None:
         if source_layer is None:
@@ -510,7 +674,14 @@ def scan_module(
         source = Tree.absolute(module, is_package, node)
         if not (source == package or source.startswith(package + ".")):
             return
-        add_edge(source, position, node.lineno)  # the path is a dependency of its own
+        submodules_only = all(
+            alias.name != "*" and tree.owner(source, alias.name) == f"{source}.{alias.name}" for alias in node.names
+        )
+        if not submodules_only:
+            # The path is a dependency of its own, unless every name is a submodule of it: then the import is
+            # `import source.name`, and loading a parent package's __init__ is outside the rule (#2938, ruling
+            # 2026-11-11).
+            add_edge(source, position, node.lineno)
         for alias in node.names:
             if alias.name == "*":
                 exported = tree.star_exports(source)
@@ -537,16 +708,15 @@ def scan_module(
                     continue
                 here = [*stack, (node, fieldname)]
                 if isinstance(child, ast.Call):
-                    func = child.func
-                    called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                    if called in ("import_module", "__import__"):
-                        result.dynamic.setdefault((module, called), []).append((rel, child.lineno))
+                    mechanism = dynamic_call(child, importlib_names, import_module_names)
+                    if mechanism:
+                        result.dynamic.setdefault((module, mechanism), []).append((rel, child.lineno))
                 if isinstance(child, ast.Import):
                     for alias in child.names:
                         if alias.name == package or alias.name.startswith(package + "."):
-                            add_edge(alias.name, position_of(here), child.lineno)
+                            add_edge(alias.name, position_of(here, names), child.lineno)
                 elif isinstance(child, ast.ImportFrom):
-                    add_from(child, position_of(here))
+                    add_from(child, position_of(here, names))
                 visit(child, here)
 
     visit(parsed, [])
@@ -572,7 +742,7 @@ def check(
     for key, sites in sorted(found.edges.items()):
         if key not in listed_edges:
             importer, target, position = key
-            where = ", ".join(f"{f}:{ln}" for f, ln in sites)
+            where = ", ".join(f"{f}:{ln}" for f, ln in sorted(set(sites)))
             reports.append(
                 (
                     "edge",
@@ -591,7 +761,7 @@ def check(
     for key, sites in sorted(found.unresolved.items()):
         if key not in listed_unresolved:
             importer, source, imported, position = key
-            where = ", ".join(f"{f}:{ln} ({kind})" for f, ln, kind in sites)
+            where = ", ".join(f"{f}:{ln} ({kind})" for f, ln, kind in sorted(set(sites)))
             reports.append(
                 (
                     "unresolved",
@@ -609,7 +779,7 @@ def check(
     listed_dynamic = set(dynamic_sites)
     for key, sites in sorted(found.dynamic.items()):
         if key not in listed_dynamic:
-            where = ", ".join(f"{f}:{ln}" for f, ln in sites)
+            where = ", ".join(f"{f}:{ln}" for f, ln in sorted(set(sites)))
             reports.append(
                 (
                     "dynamic",
@@ -634,12 +804,12 @@ def check(
 
 # --------------------------------------------------------------------------------------------- self-test
 
-# owners7's seventeen parser cases (#2938, stage 1), and an eighteenth, on a package `pk` with `pk.low` below `pk.high`.
-PARSER_FILES = {
+# #2938's seventeen parser cases and further ones, on a package `pk` with `pk.low` below `pk.high`.
+PARSER_FILES: dict[str, str] = {
     "pk/__init__.py": "",
     "pk/low/__init__.py": "",
     "pk/high/__init__.py": "",
-    "pk/high/impl.py": "def direct():\n    pass\ndef starred():\n    pass\n",
+    "pk/high/impl.py": "def direct():\n    pass\ndef starred():\n    pass\nclass Klass:\n    pass\nTABLE = {}\ndef _private():\n    pass\n",
     "pk/high/facade.py": "from pk.high.impl import *\n",
     "pk/high/lazy.py": "def f():\n    from pk.high.impl import direct\n",
     "pk/low/a_direct.py": "from pk.high.impl import direct\n",
@@ -651,9 +821,9 @@ PARSER_FILES = {
     "pk/high/empty_all.py": "__all__ = []\ndef hidden():\n    pass\n",
     "pk/high/facade_empty.py": "from pk.high.empty_all import *\n",
     "pk/low/g_emptyall.py": "from pk.high.facade_empty import hidden\n",
-    "pk/high/listed_all.py": "__all__ = ['shown']\ndef shown():\n    pass\n",
+    "pk/high/listed_all.py": "__all__ = ['shown']\ndef shown():\n    pass\ndef unlisted():\n    pass\n",
     "pk/high/facade_listed.py": "from pk.high.listed_all import *\n",
-    "pk/low/h_listed.py": "from pk.high.facade_listed import shown\n",
+    "pk/low/h_listed.py": "from pk.high.facade_listed import shown, unlisted\n",
     "pk/high/rebind.py": "from pk.high.impl import direct\ndef direct():\n    pass\n",
     "pk/low/i_rebind.py": "from pk.high.rebind import direct\n",
     "pk/high/condbind.py": "try:\n    from pk.high.impl import direct\nexcept ImportError:\n    direct = None\n",
@@ -677,7 +847,63 @@ PARSER_FILES = {
     "pk/low/q_ring_def.py": "from pk.high.ring2.part import FLAG\n",
     "pk/high/typeonly.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from pk.high.impl import direct\n",
     "pk/low/r_typeonly.py": "from pk.high.typeonly import direct\n",
-}
+    "pk/low/s_private.py": "from pk.high.facade import _private\n",
+    "pk/low/t_class.py": "from pk.high.impl import Klass\n",
+    "pk/high/ifbind.py": "import sys\nif sys.platform:\n    def direct():\n        pass\n",
+    "pk/low/u_ifbind.py": "from pk.high.ifbind import direct\n",
+    "pk/high/elsebind.py": "import sys\nif sys.platform:\n    pass\nelse:\n    def direct():\n        pass\n",
+    "pk/low/v_elsebind.py": "from pk.high.elsebind import direct\n",
+    "pk/high/trybind.py": "try:\n    from pk.high.impl import direct\nexcept ImportError:\n    pass\n",
+    "pk/low/w_trybind.py": "from pk.high.trybind import direct\n",
+    "pk/high/withbind.py": "import contextlib\nwith contextlib.suppress(ImportError):\n    from pk.high.impl import direct\n",
+    "pk/low/x_withbind.py": "from pk.high.withbind import direct\n",
+    "pk/high/badall.py": "NAME = 'other'\n__all__ = ['direct', NAME]\ndef direct():\n    pass\n",
+    "pk/high/facade_badall.py": "from pk.high.badall import *\n",
+    "pk/low/y_badall.py": "from pk.high.facade_badall import direct\n",
+    "pk/low/y2_starbad.py": "from pk.high.badall import *\n",
+    "pk/high/condall.py": "import sys\nif sys.platform:\n    __all__ = ['direct']\ndef direct():\n    pass\n",
+    "pk/high/facade_condall.py": "from pk.high.condall import *\n",
+    "pk/low/z_condall.py": "from pk.high.facade_condall import direct\n",
+    "pk/high/sub2/__init__.py": "",
+    "pk/high/sub2/leaf2.py": "",
+    "pk/low/aa_unbound_sub.py": "from pk.high.sub2 import leaf2\n",
+    "pk/high/ext.py": "from os import path\n",
+    "pk/low/ab_ext.py": "from pk.high.ext import path\n",
+    "pk/high/dotted.py": "import os.path\n",
+    "pk/low/ac_dotted.py": "from pk.high.dotted import os\n",
+    "pk/high/sr_a.py": "from pk.high.sr_b import *\n",
+    "pk/high/sr_b.py": "from pk.high.sr_a import *\n",
+    "pk/low/ad_starring.py": "from pk.high.sr_a import spin\n",
+    "pk/high/attr.py": "from pk.high.impl import Klass\nKlass.extra = None\n",
+    "pk/low/ae_attr.py": "from pk.high.attr import Klass\n",
+    "pk/high/subs.py": "from pk.high.impl import TABLE, direct\nTABLE[direct] = 1\n",
+    "pk/low/af_subs.py": "from pk.high.subs import TABLE, direct\n",
+    "pk/high/forbody.py": "def direct():\n    pass\nfor _ in (1,):\n    from pk.high.impl import direct\n",
+    "pk/low/ag_for.py": "from pk.high.forbody import direct\n",
+    "pk/high/whilebody.py": "def direct():\n    pass\nwhile False:\n    from pk.high.impl import direct\n",
+    "pk/low/ah_while.py": "from pk.high.whilebody import direct\n",
+    "pk/high/matchbody.py": "def direct():\n    pass\nmatch 1:\n    case 1:\n        from pk.high.impl import direct\n",
+    "pk/low/ai_match.py": "from pk.high.matchbody import direct\n",
+    "pk/high/withas.py": "import contextlib\nfrom pk.high.impl import direct\nwith contextlib.nullcontext() as direct:\n    pass\n",
+    "pk/low/aj_withas.py": "from pk.high.withas import direct\n",
+    "pk/high/walrus.py": "from pk.high.impl import direct\n(direct := 1)\n",
+    "pk/low/ak_walrus.py": "from pk.high.walrus import direct\n",
+    "pk/high/fortarget.py": "from pk.high.impl import direct\nfor direct in (1,):\n    pass\n",
+    "pk/low/al_fortarget.py": "from pk.high.fortarget import direct\n",
+    "pk/high/tcelse.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n    def direct():\n        pass\n",
+    "pk/low/am_tcelse.py": "from pk.high.tcelse import direct\n",
+    "pk/high/annall.py": "__all__: list[str] = ['shown2']\ndef shown2():\n    pass\ndef other2():\n    pass\n",
+    "pk/high/facade_annall.py": "from pk.high.annall import *\n",
+    "pk/low/an_annall.py": "from pk.high.facade_annall import shown2, other2\n",
+    "pk/high/augall.py": "__all__ = ['a1']\n__all__ += ['a2']\ndef a1():\n    pass\ndef a2():\n    pass\n",
+    "pk/high/facade_augall.py": "from pk.high.augall import *\n",
+    "pk/low/ao_augall.py": "from pk.high.facade_augall import a1\n",
+    "pk/high/augall2.py": "__all__ = ['a1']\n__all__ += ['a2']\n__all__ = ['a1']\ndef a1():\n    pass\n",
+    "pk/high/facade_augall2.py": "from pk.high.augall2 import *\n",
+    "pk/low/ao2_augall.py": "from pk.high.facade_augall2 import a1\n",
+    "pk/high/excas.py": "from pk.high.impl import direct\ntry:\n    pass\nexcept Exception as direct:\n    pass\n",
+    "pk/low/ap_excas.py": "from pk.high.excas import direct\n",
+}  # fmt: skip
 PK_TABLE = {"low": 0, "high": 1, "(root)": 0}
 # (importing module, name) -> (expected owner, position). An unresolved owner is "ambiguous" or "not found".
 PARSER_CASES = {
@@ -688,7 +914,8 @@ PARSER_CASES = {
     ("pk.low.e_not", "direct"): ("pk.high.impl", "module"),  # 5: `if not TYPE_CHECKING:` runs
     ("pk.low.f_type", "direct"): ("pk.high.impl", "type"),  # 6: the body of TYPE_CHECKING
     ("pk.low.g_emptyall", "hidden"): ("not found", "module"),  # 7: a star-imported module with `__all__ = []`
-    ("pk.low.h_listed", "shown"): ("pk.high.listed_all", "module"),  # 8: a name in a static __all__
+    ("pk.low.h_listed", "shown"): ("pk.high.listed_all", "module"),  # 8: a name in a static __all__ ...
+    ("pk.low.h_listed", "unlisted"): ("not found", "module"),  # ... and a public name outside it is not exported
     ("pk.low.i_rebind", "direct"): ("pk.high.rebind", "module"),  # 9: imported and then redefined
     ("pk.low.j_cond", "direct"): ("ambiguous", "module"),  # 10: a conditional binding in try
     ("pk.low.k_consumer_star", "direct"): ("pk.high.impl", "module"),  # 11: a star import of a re-exporting module
@@ -698,51 +925,124 @@ PARSER_CASES = {
     ("pk.low.o_ring_part", "FLAG"): ("ambiguous", "module"),  # 15: the same ring, submodule side
     ("pk.low.p_pure_loop", "spin"): ("ambiguous", "module"),  # 16: a ring no binding ends; it terminates
     ("pk.low.q_ring_def", "FLAG"): ("pk.high.ring2", "module"),  # 17: a ring ended by an unconditional definition
-    ("pk.low.r_typeonly", "direct"): ("not found", "module"),  # 18: bound only under TYPE_CHECKING: never at run time
+    ("pk.low.r_typeonly", "direct"): ("not found", "module"),  # bound only under TYPE_CHECKING: never at run time
+    ("pk.low.s_private", "_private"): ("not found", "module"),  # an underscore name is not star-exported
+    ("pk.low.t_class", "Klass"): ("pk.high.impl", "module"),  # a class binds its name
+    ("pk.low.u_ifbind", "direct"): ("ambiguous", "module"),  # bound only in an `if` body
+    ("pk.low.v_elsebind", "direct"): ("ambiguous", "module"),  # bound only in an `else`
+    ("pk.low.w_trybind", "direct"): ("ambiguous", "module"),  # bound only in a `try` body
+    ("pk.low.x_withbind", "direct"): ("ambiguous", "module"),  # bound only in a `with` body
+    ("pk.low.y_badall", "direct"): ("ambiguous", "module"),  # an `__all__` that is not all string literals
+    ("pk.low.z_condall", "direct"): ("ambiguous", "module"),  # an `__all__` bound under a condition
+    ("pk.low.aa_unbound_sub", "leaf2"): ("pk.high.sub2.leaf2", "module"),  # a submodule its package never binds
+    ("pk.low.ab_ext", "path"): ("os", "module"),  # an owner outside the package is not followed
+    ("pk.low.ac_dotted", "os"): ("os", "module"),  # `import os.path` binds `os`
+    ("pk.low.ad_starring", "spin"): ("ambiguous", "module"),  # a ring of star imports terminates
+    ("pk.low.ae_attr", "Klass"): ("pk.high.impl", "module"),  # an attribute target binds no name
+    ("pk.low.af_subs", "TABLE"): ("pk.high.impl", "module"),  # a subscript target binds no name ...
+    ("pk.low.af_subs", "direct"): ("pk.high.impl", "module"),  # ... and neither does a name read in its slice
+    ("pk.low.ag_for", "direct"): ("ambiguous", "module"),  # bound in the body of a module-level `for`
+    ("pk.low.ah_while", "direct"): ("ambiguous", "module"),  # ... of a `while`
+    ("pk.low.ai_match", "direct"): ("ambiguous", "module"),  # ... of a `match` case
+    ("pk.low.aj_withas", "direct"): ("ambiguous", "module"),  # rebound by `with ... as`
+    ("pk.low.ak_walrus", "direct"): ("pk.high.walrus", "module"),  # rebound by a walrus at module level
+    ("pk.low.al_fortarget", "direct"): ("ambiguous", "module"),  # rebound by a `for` target
+    ("pk.low.am_tcelse", "direct"): ("pk.high.tcelse", "module"),  # the else of TYPE_CHECKING always runs
+    ("pk.low.an_annall", "shown2"): ("pk.high.annall", "module"),  # an annotated static `__all__` is read ...
+    ("pk.low.an_annall", "other2"): ("not found", "module"),  # ... and limits the export
+    ("pk.low.ao_augall", "a1"): ("ambiguous", "module"),  # `__all__ +=` changes it: ambiguous
+    ("pk.low.ap_excas", "direct"): ("ambiguous", "module"),  # rebound by `except ... as`
+    ("pk.low.ao2_augall", "a1"): ("ambiguous", "module"),  # ... even when a plain assignment follows, as for `.extend`
 }
 
-# The statement shapes of tests/unit/test_utils_does_not_import_alg.py, with the position this check gives each.
-# One differs from that test: it calls the body of `if False:` dead, while this check measures the direction of
-# source dependencies, not loading, so the import counts at module level.
+# The fourteen statement shapes of tests/unit/test_utils_does_not_import_alg.py, then further ones, with the
+# position this check gives each. One differs from that test: it calls the body of `if False:` dead, while this
+# check measures the direction of source dependencies, not loading, so the import counts at module level.
 _I = "from pk.high.impl import direct"
+_TC = "from typing import TYPE_CHECKING\n"
 STATEMENT_SHAPES = (
     ("try body", f"try:\n    {_I}\nexcept ImportError:\n    pass\n", "module"),
     ("except handler", f"try:\n    pass\nexcept ImportError:\n    {_I}\n", "module"),
     ("try finally", f"try:\n    pass\nfinally:\n    {_I}\n", "module"),
     ("with", f"import contextlib\nwith contextlib.suppress(ImportError):\n    {_I}\n", "module"),
     ("module-level for", f"for _ in (1,):\n    {_I}\n", "module"),
-    ("if not TYPE_CHECKING", f"from typing import TYPE_CHECKING\nif not TYPE_CHECKING:\n    {_I}\n", "module"),
+    ("if not TYPE_CHECKING", f"{_TC}if not TYPE_CHECKING:\n    {_I}\n", "module"),
     ("version guard", f"import sys\nif sys.version_info >= (3, 12):\n    {_I}\n", "module"),
     ("match case", f"match 1:\n    case 1:\n        {_I}\n", "module"),
-    (
-        "else of TYPE_CHECKING",
-        f"from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n    {_I}\n",
-        "module",
-    ),
+    ("else of TYPE_CHECKING", f"{_TC}if TYPE_CHECKING:\n    pass\nelse:\n    {_I}\n", "module"),
     ("class body", f"class C:\n    {_I}\n", "module"),
-    ("__main__ block", f"if __name__ == '__main__':\n    {_I}\n", "module"),
-    ("if TYPE_CHECKING", f"from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    {_I}\n", "type"),
+    ("if TYPE_CHECKING", f"{_TC}if TYPE_CHECKING:\n    {_I}\n", "type"),
     ("function body", f"def f():\n    {_I}\n", "function"),
     ("if False", f"if False:\n    {_I}\n", "module"),  # the old test: dead
     ("else of if False", f"if False:\n    pass\nelse:\n    {_I}\n", "module"),
+    ("__main__ block", f"if __name__ == '__main__':\n    {_I}\n", "module"),
+    ("an import statement in a function", "def f():\n    import pk.high.impl\n", "function"),
+    ("async def body", f"async def f():\n    {_I}\n", "function"),
+    ("TYPE_CHECKING inside a function", f"def f():\n    {_TC.strip()}\n    if TYPE_CHECKING:\n        {_I}\n", "type"),
+    ("typing.TYPE_CHECKING", f"import typing\nif typing.TYPE_CHECKING:\n    {_I}\n", "type"),
+    ("TYPE_CHECKING and X", f"{_TC}X = 1\nif TYPE_CHECKING and X:\n    {_I}\n", "type"),
+    ("TYPE_CHECKING is True", f"{_TC}if TYPE_CHECKING is True:\n    {_I}\n", "type"),
+    ("an aliased TYPE_CHECKING", f"from typing import TYPE_CHECKING as TC\nif TC:\n    {_I}\n", "type"),
+    ("else of if not TYPE_CHECKING", f"{_TC}if not TYPE_CHECKING:\n    pass\nelse:\n    {_I}\n", "type"),
 )
 
 # (importing module, is a package, level, module named, expected absolute module): the relative cases of
-# tests/unit/test_utils_does_not_import_alg.py, checked there against importlib.util.resolve_name.
+# tests/unit/test_utils_does_not_import_alg.py, checked there against importlib.util.resolve_name, and one beyond
+# the top-level package, which Python refuses.
 RELATIVE_CASES = (
     ("mfgarchon.utils.numerical", True, 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.adjoint_validation", False, 2, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.convergence.convergence_monitors", False, 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.numerical.particle.sampling", False, 4, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.numerical", True, 1, "particle", "mfgarchon.utils.numerical.particle"),
+    ("pk.low.deep", False, 4, None, ""),
 )
 
+# The longest prefix wins, on dotted boundaries.
+NESTED_TABLE = {"low": 0, "low.cli": 1, "high": 1, "(root)": 0}
+LAYER_CASES = (
+    ("pk.low.cli", 1),
+    ("pk.low.cli.sub", 1),
+    ("pk.low.client", 0),
+    ("pk.low", 0),
+    ("pk", 0),
+    ("pk.other", None),
+    ("pkx.low", None),
+)
 
-def write_package(root: str, files: dict[str, str]) -> None:
-    for rel, text in files.items():
+# The path of `from P import ...` is not an edge when every name is a submodule of P (#2938, ruling 2026-11-11).
+PATH_FILES = {
+    "pk/__init__.py": "",
+    "pk/low/__init__.py": "",
+    "pk/high/__init__.py": "from .impl import direct\n",
+    "pk/high/impl.py": "def direct():\n    pass\n",
+    "pk/high/lowsub.py": "",
+    "pk/high/rb/__init__.py": "leafx = 1\n",
+    "pk/high/rb/leafx.py": "",
+    "pk/low/p1.py": "from pk.high import lowsub\n",
+    "pk/low/p2.py": "from pk.high import lowsub, direct\n",
+    "pk/low/p3.py": "from pk.high.rb import leafx\n",
+    "pk/low/p4.py": "from pk.high import *\n",
+    "pk/low/p5.py": "from pk.high import impl\n",
+}
+PATH_TABLE = {"low": 0, "high": 1, "high.lowsub": 0, "(root)": 0}
+PATH_CASES = {
+    "pk.low.p1": set(),  # every name a lower-layer submodule: no edge
+    "pk.low.p2": {"pk.high", "pk.high.impl"},  # one name P binds itself: the path edge, and the owner edge
+    "pk.low.p3": {"pk.high.rb"},  # P rebinds the submodule's name: the path edge
+    "pk.low.p4": {"pk.high", "pk.high.impl"},  # a star import: the path edge
+    "pk.low.p5": {"pk.high.impl"},  # an upper submodule: its own edge, and no path edge
+}
+
+
+def write_package(root: str, files: dict[str, str | bytes]) -> None:
+    for rel, content in files.items():
         path = Path(root, rel)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
 
 
 def report(label: str, ok: bool, detail: str = "") -> bool:
@@ -757,7 +1057,10 @@ def self_test() -> bool:
     print("parser cases:")
     with tempfile.TemporaryDirectory() as root:
         write_package(root, PARSER_FILES)
-        found = scan(root, "pk", layer_of)
+        try:
+            found = scan(root, "pk", layer_of)
+        except Exception as exc:  # a crash is a failed case, reported as one
+            return report("the parser cases' scan", False, f"crashed: {exc!r}")
         for (importer, name), (owner, position) in PARSER_CASES.items():
             got_owner, got_position = found.owners.get((importer, name), ("<no row>", "<no row>"))
             got_owner = "ambiguous" if got_owner is AMBIGUOUS else "not found" if got_owner is None else got_owner
@@ -774,10 +1077,14 @@ def self_test() -> bool:
             "pk.low.k_consumer_star: the star-expanded name is an edge to pk.high.impl",
             ("pk.low.k_consumer_star", "pk.high.impl", "module") in found.edges,
         )
+        ok &= report(
+            "pk.low.y2_starbad: a star import whose __all__ cannot be read is an unresolved owner",
+            ("pk.low.y2_starbad", "pk.high.badall", "*", "module") in found.unresolved,
+        )
 
     print("statement shapes:")
     with tempfile.TemporaryDirectory() as root:
-        files = {
+        files: dict[str, str | bytes] = {
             "pk/__init__.py": "",
             "pk/low/__init__.py": "",
             "pk/high/__init__.py": "",
@@ -795,10 +1102,23 @@ def self_test() -> bool:
     for importer, is_package, level, named, expected in RELATIVE_CASES:
         node = ast.ImportFrom(module=named, names=[ast.alias(name="X")], level=level)
         got = Tree.absolute(importer, is_package, node)
-        ok &= report(f"{importer} level {level} {named}", got == expected, f"got {got}")
+        ok &= report(f"{importer} level {level} {named}", got == expected, f"got {got!r}")
+
+    print("layer table:")
+    nested = make_layer_of(NESTED_TABLE, "pk")
+    for module, expected in LAYER_CASES:
+        ok &= report(f"{module} -> {expected}", nested(module) == expected, f"got {nested(module)}")
+
+    print("path of a from-import:")
+    with tempfile.TemporaryDirectory() as root:
+        write_package(root, PATH_FILES)
+        found = scan(root, "pk", make_layer_of(PATH_TABLE, "pk"))
+        for importer, targets in PATH_CASES.items():
+            got = {k[1] for k in found.edges if k[0] == importer}
+            ok &= report(f"{importer} -> {sorted(targets)}", got == targets, f"got {sorted(got)}")
 
     print("mechanism cases:")
-    base = {
+    base: dict[str, str | bytes] = {
         "pk/__init__.py": "",
         "pk/low/__init__.py": "",
         "pk/low/listed.py": "from pk.high.impl import direct\n",
@@ -812,21 +1132,31 @@ def self_test() -> bool:
     unresolved = (("pk.low.flagged", "pk.low.cond", "FLAG", "module", "condition"),)
     dynamic = (("pk.low.dyn", "import_module"),)
 
-    def run(changes: dict[str, str], table: dict[str, int]) -> list[tuple[str, tuple[str, ...], str]]:
+    def run(changes: dict[str, str | bytes], table: dict[str, int]) -> list[tuple[str, tuple[str, ...], str]]:
         with tempfile.TemporaryDirectory() as root:
             write_package(root, {**base, **changes})
             return check(root, "pk", table, edges, unresolved, dynamic)
 
-    # (label, files changed, table, expected (kind, key) reports, the location the one report must name)
+    planted = "from pk.high.impl import direct\n"
+    getattr_def = "def __getattr__(name):\n    raise AttributeError(name)\n"
+    # (label, files changed, table, expected (kind, key) reports, the location the last report must name)
     cases = (
         ("everything listed: nothing reported (the control)", {}, PK_TABLE, [], None),
         (
-            "a planted upward import is reported",
-            {"pk/low/planted.py": "from pk.high.impl import direct\n"},
+            "a planted upward import is reported, its location once",
+            {"pk/low/planted.py": planted},
+            PK_TABLE,
+            [("edge", ("pk.low.planted", "pk.high.impl", "module"))],
+            "pk/low/planted.py:1:",
+        ),
+        (
+            "an `import` statement is reported",
+            {"pk/low/planted.py": "import pk.high.impl\n"},
             PK_TABLE,
             [("edge", ("pk.low.planted", "pk.high.impl", "module"))],
             "pk/low/planted.py:1",
         ),
+        ("a downward import is not reported", {"pk/high/down.py": "import pk.low.cond\n"}, PK_TABLE, [], None),
         (
             "a listed edge whose import is deleted is reported stale",
             {"pk/low/listed.py": ""},
@@ -842,6 +1172,13 @@ def self_test() -> bool:
             "pk/low/planted.py:2",
         ),
         (
+            "an unresolved owner listed only at another position is reported",
+            {"pk/low/flagged.py": "from pk.low.cond import FLAG\ndef f():\n    from pk.low.cond import FLAG\n"},
+            PK_TABLE,
+            [("unresolved", ("pk.low.flagged", "pk.low.cond", "FLAG", "function"))],
+            "pk/low/flagged.py:3",
+        ),
+        (
             "a listed unresolved owner whose import is deleted is reported stale",
             {"pk/low/flagged.py": ""},
             PK_TABLE,
@@ -849,11 +1186,59 @@ def self_test() -> bool:
             "UNRESOLVED_EXCEPTIONS",
         ),
         (
-            "a dynamic site outside the list is reported",
-            {"pk/low/lazy.py": "def __getattr__(name):\n    raise AttributeError(name)\n"},
+            "a module-level __getattr__ outside the list is reported",
+            {"pk/low/lazy.py": getattr_def},
             PK_TABLE,
             [("dynamic", ("pk.low.lazy", "__getattr__"))],
             "pk/low/lazy.py:1",
+        ),
+        (
+            "a __getattr__ under a module-level `if` is reported",
+            {"pk/low/lazy.py": "import sys\nif sys.platform:\n    " + getattr_def.replace("\n    ", "\n        ")},
+            PK_TABLE,
+            [("dynamic", ("pk.low.lazy", "__getattr__"))],
+            "pk/low/lazy.py:3",
+        ),
+        (
+            "a __getattr__ under a module-level `try` is reported",
+            {
+                "pk/low/lazy.py": "try:\n    "
+                + getattr_def.replace("\n    ", "\n        ")
+                + "except Exception:\n    pass\n"
+            },
+            PK_TABLE,
+            [("dynamic", ("pk.low.lazy", "__getattr__"))],
+            "pk/low/lazy.py:2",
+        ),
+        (
+            "a __getattr__ bound by assignment is reported",
+            {"pk/low/lazy.py": "def _lazy(name):\n    raise AttributeError(name)\n__getattr__ = _lazy\n"},
+            PK_TABLE,
+            [("dynamic", ("pk.low.lazy", "__getattr__"))],
+            "pk/low/lazy.py:3",
+        ),
+        (
+            "an `__import__` call is reported",
+            {"pk/low/dunder.py": "x = __import__('pk.high.impl')\n"},
+            PK_TABLE,
+            [("dynamic", ("pk.low.dunder", "__import__"))],
+            "pk/low/dunder.py:1",
+        ),
+        (
+            "an aliased import_module is reported",
+            {"pk/low/alias.py": "from importlib import import_module as im\nim('pk.high.impl')\n"},
+            PK_TABLE,
+            [("dynamic", ("pk.low.alias", "import_module"))],
+            "pk/low/alias.py:2",
+        ),
+        (
+            "a method named import_module is not reported",
+            {
+                "pk/low/method.py": "class L:\n    def import_module(self, n):\n        return n\nL().import_module('x')\n"
+            },
+            PK_TABLE,
+            [],
+            None,
         ),
         (
             "a listed dynamic site that is deleted is reported stale",
@@ -863,10 +1248,31 @@ def self_test() -> bool:
             "DYNAMIC_SITES",
         ),
         (
+            "a file with a BOM is read",
+            {"pk/low/bom.py": "\ufeff" + planted},
+            PK_TABLE,
+            [("edge", ("pk.low.bom", "pk.high.impl", "module"))],
+            "pk/low/bom.py:1",
+        ),
+        (
+            "a file with a latin-1 coding cookie is read",
+            {"pk/low/latin.py": ("# -*- coding: latin-1 -*-\nNAME = '\xe9'\n" + planted).encode("latin-1")},
+            PK_TABLE,
+            [("edge", ("pk.low.latin", "pk.high.impl", "module"))],
+            "pk/low/latin.py:3",
+        ),
+        (
             "a layer-table prefix that matches no module is reported",
             {},
             {**PK_TABLE, "gone": 1},
             [("stale prefix", ("gone",))],
+            "LAYERS",
+        ),
+        (
+            "a prefix kept alive only by a longer name is reported, on a dotted boundary",
+            {"pk/low/client.py": ""},
+            NESTED_TABLE,
+            [("stale prefix", ("low.cli",))],
             "LAYERS",
         ),
         (
@@ -878,9 +1284,13 @@ def self_test() -> bool:
         ),
     )
     for label, changes, table, expected, location in cases:
-        got = run(changes, table)
+        try:
+            got = run(changes, table)
+        except Exception as exc:  # a crash is a failed case, reported as one
+            ok &= report(label, False, f"crashed: {exc!r}")
+            continue
         kinds = [(kind, key) for kind, key, _ in got]
-        named = location is None or (bool(got) and location in got[-1][2])
+        named = location is None or (bool(got) and got[-1][2].count(location) == 1)
         ok &= report(label, kinds == expected and named, f"expected {expected} naming {location}, got {got}")
     return ok
 
