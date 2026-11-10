@@ -14,15 +14,17 @@ name: Security Scanning Pipeline
 # neither reaches the job log or an upload. Every call-out a flag turns off on a fresh runner is off:
 # TruffleHog's verification and update check, detect-secrets' verification, Semgrep's metrics and
 # version check, Trivy's telemetry, version check and dependency lookups, Safety's optional telemetry
-# and its upload of results. Still on: the database downloads of Trivy (--skip-db-update and
-# --skip-java-db-update fail on a first run) and Safety (--db needs a local database), Safety's
-# announcements request, pip-audit's lookups and Semgrep's rule fetch. Safety's requests carry a client
-# id and a User-Agent with the OS, architecture and Python version; none of it is repository text.
+# and its upload of results, and pip-audit's lookup of the project itself, installed editable. Still
+# on: the database downloads of Trivy (--skip-db-update and --skip-java-db-update fail on a first run)
+# and Safety (--db needs a local database), Safety's announcements request, pip-audit's lookups of the
+# other installed packages, and Semgrep's rule fetch. Safety's requests carry a client id naming its
+# install source, and a User-Agent with the OS, architecture and Python version; none of it is
+# repository text.
 #
 # A scan that did not run, did not finish or scanned nothing is not read as a clean one: the summary
 # reads INCOMPLETE. Four cases are not caught: a detect-secrets scan of nothing, and the files that
 # detect-secrets, TruffleHog or Trivy could not scan. Each tool records them only in log lines, not in
-# an integer field; detect-secrets logs them only with -v, and Trivy only with --debug.
+# an integer field. detect-secrets logs them only with -v, and Trivy only with --debug.
 
 on:
   workflow_dispatch:  # Manual trigger only to reduce costs
@@ -71,7 +73,7 @@ jobs:
     - name: Run pip-audit (comprehensive dependency audit)
       run: |
         echo "🔍 Running comprehensive dependency audit..."
-        pip-audit --format=json --output="$RUNNER_TEMP/pip-audit.json" > "$RUNNER_TEMP/pip-audit.log" 2>&1 || true
+        pip-audit --skip-editable --format=json --output="$RUNNER_TEMP/pip-audit.json" > "$RUNNER_TEMP/pip-audit.log" 2>&1 || true
       continue-on-error: true
 
     - name: Keep the allow-listed fields

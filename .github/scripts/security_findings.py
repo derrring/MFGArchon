@@ -5,8 +5,8 @@ Each scan job in `.github/workflows/security.yml` runs its tools, then runs this
 
     security_findings.py <job> <tool>=<report> ... [trufflehog.log=<log>]
 
-It parses each line of TruffleHog's log for its message, and carries only the two integers of the final "finished
-scanning" line. It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that
+It parses each line of TruffleHog's log for its message, and carries one integer from the final "finished scanning"
+line: its chunks, read as 0 unless its bytes are above 0. It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that
 file alone. A tool's matched text, code lines, messages, descriptions and every other field of its report stay on the
 runner. It prints each report's status, the number of findings it read and how much the tool scanned, which must be
 integers of 0 or more, never a string from a report. It exits 1 when a report is missing, cannot be read, says its tool
@@ -96,6 +96,8 @@ def _tool_status(job, tool, status):
     for key, value in status.items():
         if not isinstance(value, _STATUS_FIELDS[key]) or isinstance(value, bool):
             raise TypeError(f"{key} is a {type(value).__name__}")
+        if _STATUS_FIELDS[key] is int and value < 0:
+            raise ValueError(key)
     return status
 
 
@@ -299,12 +301,16 @@ def _custom_secrets_scan_counts(report):
 
 
 def _custom_security_checks_counts(report):
-    return report["summary"]["files_scanned"], report["summary"]["files_unreadable"]
+    # It always writes both counts, so a null `files_unreadable` is not a report that does not say.
+    summary = report["summary"]
+    if summary["files_unreadable"] is None:
+        raise TypeError("files_unreadable")
+    return summary["files_scanned"], summary["files_unreadable"]
 
 
 def _trufflehog_log_counts(lines):
     # main.go: with --json the log is JSON on stderr, and a scan that finishes logs "finished scanning" with the
-    # chunks and bytes it scanned. Each line is parsed for its message; only those two integers are carried.
+    # chunks and bytes it scanned. Each line is parsed for its message; the chunks are carried, and the bytes gate them.
     for line in lines:
         try:
             entry = json.loads(line)

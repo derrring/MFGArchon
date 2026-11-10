@@ -7,7 +7,7 @@ found something.
 - The workflow census:
   - each scan job uploads one `<job>-findings.json`, the five names distinct, and the summary job its three reports;
   - every scanner line sends stdout and stderr to a file under `$RUNNER_TEMP`, and no other line reads that directory;
-  - every call-out a flag turns off is off;
+  - every call-out a flag turns off on a fresh runner is off: each tool's line carries the flags in TOOLS;
   - no job can be skipped, the steps that must run after a failure carry `if: always()`, the actions are a fixed set,
     and no other workflow starts a scanner.
 - The fault injection: a marker is planted in every string field that the allow-list does not carry and no count reads,
@@ -69,7 +69,7 @@ ACTIONS = {
 #: Each tool's command word, and the flags that turn off what it would otherwise send or fetch on its own.
 TOOLS = {
     "safety": ("--disable-optional-telemetry", "--disable-audit-and-monitor"),
-    "pip-audit": (),
+    "pip-audit": ("--skip-editable",),
     "bandit": (),
     "semgrep": ("--metrics=off", "--disable-version-check"),
     "detect-secrets": ("--no-verify",),
@@ -240,7 +240,8 @@ MARKER = f"planted_{uuid.uuid4().hex}"
 
 
 def _planted_reports(m):
-    """Each tool's report, in the shape the tool writes, with `m` in every string field the allow-list does not carry."""
+    """Each tool's report, in the shape the tool writes, with `m` in every string field that the allow-list does not carry
+    and no count reads."""
     return {
         "safety": {
             "report_meta": {"note": m},
@@ -774,6 +775,11 @@ NOTHING_SCANNED = {
         "",
         json.dumps({"level": "info-0", "msg": "finished scanning", "chunks": 4, "bytes": 0}),
     ),
+    # A final summary with negative bytes.
+    "trufflehog, negative bytes": (
+        "",
+        json.dumps({"level": "info-0", "msg": "finished scanning", "chunks": 4, "bytes": -1}),
+    ),
     "trivy": {"SchemaVersion": 2},
     "custom_secrets_scan": {"summary": {"tracked_files": 3, "text_files_scanned": 0}, "all_findings": []},
     "custom_security_checks": {"summary": {"files_scanned": 2, "files_unreadable": 2}, "findings": []},
@@ -895,10 +901,14 @@ def _secrets_status(case):
         status["gitleaks"] = {"status": "read", "findings": 0}
     elif case == "a status without its status":
         status["trufflehog"] = {"findings": 0}
+    elif case == "a negative count":
+        status["trufflehog"] = {"status": "read", "findings": 0, "scanned": -5}
     return status
 
 
-@pytest.mark.parametrize("case", ["a tool omitted", "a tool not in JOBS", "a status without its status"])
+@pytest.mark.parametrize(
+    "case", ["a tool omitted", "a tool not in JOBS", "a status without its status", "a negative count"]
+)
 def test_a_malformed_findings_file_reads_incomplete_and_the_check_blocks(tmp_path, monkeypatch, case):
     findings = _load("security_findings.py")
     for job, tools in findings.JOBS.items():
@@ -961,10 +971,30 @@ BAD_COUNTS = {
         None,
         "ValueError",
     ),
+    "a float zero": (
+        "license_compliance_check",
+        json.dumps(
+            {
+                "approved": [],
+                "review_required": [],
+                "prohibited": [],
+                "unknown": [],
+                "summary": {"total_packages": 0.0},
+            }
+        ),
+        None,
+        "ValueError",
+    ),
+    "a null errors": (
+        "custom_security_checks",
+        json.dumps({"summary": {"files_scanned": 5, "files_unreadable": None}, "findings": []}),
+        None,
+        "TypeError",
+    ),
     "a boolean in TruffleHog's log": (
         "trufflehog",
         "",
-        json.dumps({"level": "info-0", "msg": "finished scanning", "chunks": True, "bytes": 2048}),
+        json.dumps({"level": "info-0", "msg": "finished scanning", "chunks": 10, "bytes": True}),
         "TypeError",
     ),
 }

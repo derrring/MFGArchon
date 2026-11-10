@@ -110,7 +110,8 @@ def test_a_clean_tree_comes_back_clean(tmp_path, capsys):
     assert scanner.findings == []
     assert "scanned as text: 4; binary (a NUL in the first 8000 bytes): 1" in capsys.readouterr().out
     summary = scanner.generate_report()["summary"]
-    assert (summary["tracked_files"], summary["text_files_scanned"], summary["files_with_findings"]) == (5, 4, 0)
+    counts = (summary.get("tracked_files"), summary.get("text_files_scanned"), summary.get("files_with_findings"))
+    assert counts == (5, 4, 0)
 
 
 def _key_header(*kind):
