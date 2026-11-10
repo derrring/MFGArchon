@@ -162,13 +162,10 @@ validation_results = run_standardized_comparison(new_solver_class)
 ## 🔧 **Dependencies**
 
 ### Required
-- `numpy`, `matplotlib`, `psutil` - Scientific computing and system monitoring
-- `mfgarchon` - Core MFG solving capabilities
+- `mfgarchon` - Core MFG solving capabilities, with every package in `pyproject.toml`'s `[project].dependencies`
 
 ### Optional (Enhanced Features)
 - `jax` - GPU acceleration and AMR profiling
-- `plotly` - Interactive visualization
-- `scipy` - Advanced numerical methods
 
 ## 🚨 **Common Issues & Solutions**
 

@@ -138,7 +138,7 @@ Advanced plotting and animation.
 
 **Core**:
 ```bash
-pip install numpy scipy matplotlib
+pip install mfgarchon           # every package in pyproject.toml's [project].dependencies
 ```
 
 **Advanced features**:
@@ -146,7 +146,6 @@ pip install numpy scipy matplotlib
 pip install jax jaxlib          # GPU acceleration
 pip install torch               # Neural networks
 pip install gymnasium stable-baselines3  # Reinforcement learning
-pip install plotly              # Interactive visualization
 pip install networkx            # Network MFG
 ```
 

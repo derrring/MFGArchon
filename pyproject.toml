@@ -42,7 +42,6 @@ dependencies = [
     # Progress and utilities
     "rich>=13.0",              # Progress bars (required by all solvers)
     "pydantic>=2.12.5,<3.0",     # Config validation
-    "typing-inspection",       # Runtime type inspection
 
     # Data processing and I/O
     "pandas>=2.1",             # Data utilities
@@ -78,10 +77,9 @@ dependencies = [
 ]
 
 # ==================== OPTIONAL DEPENDENCY TIERS ====================
-# Four user-facing tiers (Issue #978). Development tooling is NOT among them --
+# Three user-facing tiers (Issue #978). Development tooling is NOT among them --
 #
 #   pip install mfgarchon          -> default (batteries included)
-#   pip install mfgarchon[core]    -> minimal (CI, Docker, embedding)
 #   pip install mfgarchon[nn]      -> + PyTorch (live), gymnasium/SB3 (frozen RL only)
 #   pip install mfgarchon[all]     -> + JAX, performance, everything
 #
@@ -90,20 +88,6 @@ dependencies = [
 #   pip install -e . --group docs  -> documentation build
 
 [project.optional-dependencies]
-
-# Minimal install: only numpy/scipy/matplotlib/rich/pydantic
-# Use for CI pipelines, Docker images, or embedding in other packages.
-# Note: pip doesn't support "fewer than default" extras directly.
-# To get a minimal install, use: pip install mfgarchon --no-deps
-# then: pip install numpy scipy matplotlib rich pydantic typing-inspection
-core = [
-    "numpy>=2.0",
-    "scipy>=1.13",
-    "matplotlib>=3.8",
-    "rich>=13.0",
-    "pydantic>=2.12.5,<3.0",
-    "typing-inspection",
-]
 
 # torch is live -- it backs mfgarchon.backends and utils/acceleration. gymnasium,
 # stable-baselines3 and tensorboard served only alg/reinforcement and were dropped with it.

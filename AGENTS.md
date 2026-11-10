@@ -561,7 +561,7 @@ Log incrementally, summarize at milestones only. During work: technical notes + 
 ---
 
 ## 📊 Package management
-Core: numpy, scipy, matplotlib. Interactive: plotly, jupyter, nbformat (with fallbacks). Progress: rich. Optional: psutil. Support dev (`pip install -e .`) and user installs.
+**Dependencies.** `[project].dependencies` in `pyproject.toml` is the one list of what an install guarantees, and there is one install. A package on it is imported plainly: no code, test or document decides what happens without it, and a missing one is Python's own `ModuleNotFoundError`. Only a package of an optional extra may be guarded. Support dev (`pip install -e .`) and user installs.
 
 ---
 

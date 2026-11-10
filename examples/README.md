@@ -145,14 +145,14 @@ Generated outputs and visualizations (gitignored, auto-regenerated).
 
 ## Requirements
 
-**Minimal** (core examples):
+**Core**:
 ```bash
-pip install numpy scipy matplotlib
+pip install mfgarchon   # every package in pyproject.toml's [project].dependencies
 ```
 
 **Full** (all features):
 ```bash
-pip install numpy scipy matplotlib plotly jupyter
+pip install jupyter
 pip install jax jaxlib  # Optional: GPU acceleration
 pip install torch       # Optional: Neural network solvers
 ```

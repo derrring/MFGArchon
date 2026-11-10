@@ -211,14 +211,10 @@ def performance_logged(
             memory_before = 0.0
             process = None
             if memory_enabled:
-                try:
-                    import psutil
+                import psutil
 
-                    process = psutil.Process()
-                    memory_before = process.memory_info().rss / 1024 / 1024  # MB
-                except ImportError:
-                    memory_enabled = False
-                    logger.warning("psutil not available for memory tracking")
+                process = psutil.Process()
+                memory_before = process.memory_info().rss / 1024 / 1024  # MB
 
             # Execute with timing
             start_time = time.time()
