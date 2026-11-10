@@ -2949,6 +2949,21 @@ def _region_name_refusal(segment: BCSegment, geometry: Any, what: str) -> str:
             f"implement SupportsRegionMarking), so it cannot tell whether the segment {what} (#2490). Place the "
             "segment by sdf_region=..., a signed distance the owner reads at any point, or by boundary=..."
         )
+    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid  # local: the grids package imports this one
+
+    # The one class whose regions the owner reads (a CartesianGrid that is SupportsRegionMarking: `_marks_region`,
+    # `_region_mask_on_grid`) and that has set_boundary_conditions. Its refusal names the order the user ruled
+    # supported (#2920); every other geometry keeps the text below.
+    if isinstance(geometry, TensorProductGrid):
+        return (
+            f"{head}, and which locations a region covers is known only to the geometry that marked it. "
+            f"{type(geometry).__name__} defines no region of that name, so it cannot tell whether the segment {what}. "
+            f"Mark the region on the grid first, mark_region({name!r}, ...), then attach this BC with "
+            "set_boundary_conditions and read it back with get_boundary_conditions(). A TensorProductGrid whose axes "
+            "differ in node layout reads a periodic BC's faces when it is built, before any region can be marked, so "
+            "build it with a BC that names no unmarked region. Attaching checks the BC against the grid, and can "
+            "refuse it for a reason of its own (#2920)."
+        )
     return (
         f"{head}, and which locations a region covers is known only to the geometry that marked it. "
         + (
