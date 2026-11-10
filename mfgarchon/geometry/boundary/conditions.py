@@ -2938,9 +2938,10 @@ def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray, tolerance
 
 def _placement_advice(geometry: Any, name: str) -> str:
     """How to place a ``region_name`` segment so that it is read, for the kind of ``geometry`` a refusal names: the one
-    owner of the placement routes a boundary refusal advises (#2920). Each route says which readers read it, as #2920's
-    census measured on each kind: a point reader (`BoundaryConditions.segment_for_point`), and a face-level reader,
-    which imposes one condition per face (`segment_for_face`)."""
+    owner of the placement routes a refusal of a ``region_name`` segment advises (#2920). The kinds are no geometry, a
+    grid that marks no regions, a grid that marks regions, and a geometry that is no grid. Each route says which readers
+    read it, as #2920's census measured on each kind: a point reader (`BoundaryConditions.segment_for_point`), and a
+    face-level reader, which imposes one condition per face (`segment_for_face`)."""
     from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
 
     if geometry is None:
@@ -2951,7 +2952,13 @@ def _placement_advice(geometry: Any, name: str) -> str:
             "ranges) or sdf_region=... (a signed distance), which are read at points without one. A region that is a "
             "whole face can also be named with BCSegment(boundary=...) (#2920)."
         )
-    if isinstance(geometry, CartesianGrid) and isinstance(geometry, SupportsRegionMarking):
+    if isinstance(geometry, CartesianGrid) and not isinstance(geometry, SupportsRegionMarking):
+        return (
+            "On a grid that marks no regions, place the segment by sdf_region=... (a signed distance) or region=... "
+            "(axis ranges): each is read at points, and by a face-level reader where it covers a whole face. A region "
+            "that is a whole face can also be named with BCSegment(boundary=...) (#2920)."
+        )
+    if isinstance(geometry, CartesianGrid):
         return (
             f"Mark the region on the grid first, mark_region({name!r}, ...), then attach this BC with "
             "set_boundary_conditions. A TensorProductGrid whose axes differ in node layout reads a periodic BC's "

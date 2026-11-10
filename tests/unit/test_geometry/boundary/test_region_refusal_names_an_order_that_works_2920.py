@@ -1,7 +1,7 @@
 """A refusal of a ``region_name`` segment names placement routes that are read as it says (#2920).
 
 `_placement_advice` owns the routes, one text for each kind of geometry a refusal names: a grid that marks regions, a
-geometry that is no grid, and no geometry. `_region_name_refusal` (the face rule and the point rule) and
+grid that marks none, a geometry that is no grid, and no geometry. `_region_name_refusal` (the face rule and the point rule) and
 `_region_node`'s refusal read it. For each text, one test reads the refusal, and one runs the routes it names, through
 the readers it says read them: a point reader (`segment_for_point`) and a face-level reader (`segment_for_face`).
 """
@@ -11,6 +11,7 @@ import pytest
 import numpy as np
 
 from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, mixed_bc_from_regions, no_flux_bc
 from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
@@ -27,6 +28,9 @@ GRID_ADVICE = (
 )
 OFF_GRID_ADVICE = "Off a grid, place the segment by sdf_region=..., a signed distance read at points"
 NO_GEOMETRY_ADVICE = "Build the BC with mixed_bc_from_regions(grid, ...) on the grid that marks the region"
+PLAIN_GRID_ADVICE = (
+    "On a grid that marks no regions, place the segment by sdf_region=... (a signed distance) or region=..."
+)
 
 
 def _inlet(**placement):
@@ -207,3 +211,47 @@ def test_the_no_geometry_advice_run_as_written_is_read():
             "default",
         )
     assert _bc(_inlet(boundary="x_min")).segment_for_face("x_min").name == "inlet"
+
+
+def _plain_grid():
+    """A CartesianGrid that marks no regions, as a user's own subclass may be: every abstract member answered by an
+    11 x 11 TensorProductGrid, and no `mark_region`."""
+    inner = _grid()
+    members = {}
+    for name in set(CartesianGrid.__abstractmethods__) | {"coordinates", "get_grid_shape", "bounds", "Nx_points"}:
+        if isinstance(getattr(type(inner), name, None), property):
+            members[name] = property(lambda self, name=name: getattr(inner, name))
+        else:
+            members[name] = lambda self, *a, name=name, **k: getattr(inner, name)(*a, **k)
+    return type("PlainGrid", (CartesianGrid,), members)()
+
+
+@pytest.mark.parametrize("rule", ["face", "point"])
+def test_a_grid_that_marks_no_regions_advises_routes_read_on_a_grid(rule):
+    grid = _plain_grid()
+    assert not hasattr(grid, "mark_region")
+    bc = _bc(_inlet(region_name="inlet"))
+    with pytest.raises(ValueError, match="PlainGrid defines no region of that name") as refused:
+        bc.segment_for_face("x_min", geometry=grid) if rule == "face" else bc.segment_for_point(
+            IN, face="x_min", geometry=grid
+        )
+    message = str(refused.value)
+    assert PLAIN_GRID_ADVICE in message
+    assert "mark_region" not in message
+    assert "mixed_bc_from_regions" not in message
+
+
+def test_the_plain_grid_advice_run_as_written_is_read():
+    """On a grid that marks no regions, sdf_region= and region= are read at points, and by the face-level reader where
+    they cover a whole face; boundary= names a whole face."""
+    grid = _plain_grid()
+    whole_sdf = _inlet(sdf_region=lambda x: np.asarray(x)[..., 0] - 0.05)
+    part_sdf = _inlet(sdf_region=lambda x: np.maximum(np.asarray(x)[..., 0] - 0.05, np.asarray(x)[..., 1] - 0.5))
+    for whole, part in ((whole_sdf, part_sdf), (_inlet(region=WHOLE["region"]), _inlet(region=PART["region"]))):
+        assert _bc(whole).segment_for_face("x_min", geometry=grid).name == "inlet"
+        bc = _bc(part)
+        assert (
+            bc.segment_for_point(IN, face="x_min", geometry=grid).name,
+            bc.segment_for_point(OUT, face="x_min", geometry=grid).name,
+        ) == ("inlet", "default")
+    assert _bc(_inlet(boundary="x_min")).segment_for_face("x_min", geometry=grid).name == "inlet"
