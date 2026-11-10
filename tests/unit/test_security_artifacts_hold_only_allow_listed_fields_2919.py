@@ -15,7 +15,8 @@ found something.
   write, and the job's boundary step runs. The uploaded files merge into one directory, as the download step lays
   them out, and the summary job's steps run there. The marker must reach no uploaded file and no line our scripts
   print, and every planted finding must arrive.
-- A tool that never ran: with its stub absent, its job and the summary read INCOMPLETE and the check blocks. A summary
+- A tool that never ran, or that stopped on a fatal error but still wrote a well-formed report: its job and the
+  summary read INCOMPLETE and the check blocks. A summary
   over an empty download does the same.
 - Our scanners' own reports name a finding's file and line, never the text there.
 
@@ -531,10 +532,12 @@ class _Run:
         path.write_text(text, encoding="utf-8")
         return path
 
-    def scan_job(self, name, absent=()):
+    def scan_job(self, name, absent=(), fatal=None):
+        """`fatal`, a (tool, report text, exit code): that tool's stub writes the text and exits with the code."""
         """Run a scan job's scanner steps and boundary step; return (workspace, the boundary's result)."""
         job, key = self.jobs[name], SCAN_JOBS[name]
-        workspace = self._workspace(self.root / "jobs" / f"{name}-{'-'.join(absent) or 'all'}".replace("./", ""))
+        label = "-".join(absent) or (f"fatal-{fatal[0]}" if fatal else "all")
+        workspace = self._workspace(self.root / "jobs" / f"{name}-{label}".replace("./", ""))
         stubs = workspace / ".stubs"
         stubs.mkdir()
         env = self._env(workspace)
@@ -547,8 +550,11 @@ class _Run:
                     assert shutil.which(tool.lstrip("./"), path=env["PATH"]) is None
                     continue
                 stub = workspace / "hadolint" if tool == "./hadolint" else stubs / tool
-                report = self._report_file(tool.lstrip("./"))
-                stub.write_text(_STUB.format(python=sys.executable, report=str(report), code=FINDING_EXIT[tool]))
+                report, code = self._report_file(tool.lstrip("./")), FINDING_EXIT[tool]
+                if fatal and fatal[0] == tool:
+                    report, code = self.root / "planted" / f"fatal-{tool.lstrip('./')}", fatal[2]
+                    report.write_text(fatal[1], encoding="utf-8")
+                stub.write_text(_STUB.format(python=sys.executable, report=str(report), code=code))
                 stub.chmod(0o755)
             result = self._bash(step["run"], workspace, env)
             assert result.returncode == 0, (step["name"], result.stdout + result.stderr)
@@ -635,6 +641,39 @@ def test_a_tool_that_never_ran_leaves_the_run_incomplete(complete, tool):
     assert (collected["summary"]["overall_status"], collected["summary"]["scans_failed"]) == ("INCOMPLETE", [key])
     assert results[0].returncode == 1
     assert results[-1].returncode != 0
+    assert f"results incomplete: {tool_key}" in results[-1].stdout
+
+
+#: A tool that stops on a fatal error, with the report it still leaves and its exit code, as its source has them.
+FATAL = {
+    # cli/src/semgrep/output.py saves the report before _final_raise; error.py: FATAL_EXIT_CODE = 2.
+    "semgrep": (json.dumps({"results": [], "errors": [{"code": 2, "level": "error", "type": "SemgrepError"}]}), 2),
+    # src/Hadolint/Formatter/Json.hs renders a Dockerfile it cannot parse as DL1000; app/Main.hs exits 1.
+    "./hadolint": (
+        json.dumps([{"code": "DL1000", "column": 1, "file": "Dockerfile", "level": "error", "line": 1, "message": ""}]),
+        1,
+    ),
+    # The control: bandit's -o is argparse.FileType("w"), created empty before a fatal exit 2, which the boundary
+    # already could not read.
+    "bandit": ("", 2),
+}
+
+
+@pytest.mark.parametrize("tool", list(FATAL))
+def test_a_tool_that_stops_on_a_fatal_error_leaves_the_run_incomplete(complete, tool):
+    run, done = complete
+    (name,) = [name for name in SCAN_JOBS if any(t == tool for t, _ in _scanner_lines(run.jobs[name]))]
+    text, code = FATAL[tool]
+    workspace, result = run.scan_job(name, fatal=(tool, text, code))
+    key, tool_key = SCAN_JOBS[name], tool.lstrip("./")
+    findings = json.loads((workspace / f"{key}-findings.json").read_text(encoding="utf-8"))
+    assert findings["tools"][tool_key]["status"] != "read"
+    assert result.returncode == 1
+
+    uploaded = [item for other, (ws, _) in done.items() if other != name for item in run.uploads(other, ws)]
+    summary, results = run.summary(uploaded + run.uploads(name, workspace))
+    collected = json.loads((summary / "security-findings.json").read_text(encoding="utf-8"))
+    assert (collected["summary"]["overall_status"], collected["summary"]["scans_failed"]) == ("INCOMPLETE", [key])
     assert f"results incomplete: {tool_key}" in results[-1].stdout
 
 

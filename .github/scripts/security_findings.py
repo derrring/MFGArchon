@@ -8,7 +8,7 @@ Each scan job in `.github/workflows/security.yml` runs its tools, then runs this
 It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that file alone. A
 tool's matched text, code lines, messages, descriptions and every other field of its report stay on the runner. It
 prints each report's status and the number of findings it read, never a value read from a report. It exits 1 when a
-report is missing or cannot be read, after writing the file.
+report is missing, cannot be read, or says its tool did not finish, after writing the file.
 
 The summary job downloads the five per-job files into one directory, which their unique names allow, and runs
 
@@ -189,7 +189,14 @@ def _trivy(report):
             }
 
 
+class _ToolFailedError(Exception):
+    """A report that says its own tool did not finish. The message is ours, never the report's."""
+
+
 def _hadolint(report):
+    # DL1000 is hadolint's report of a Dockerfile it could not parse: nothing was linted.
+    if any(issue["code"] == "DL1000" for issue in report):
+        raise _ToolFailedError("DL1000")
     for issue in report:
         yield {
             "rule": issue["code"],
@@ -263,6 +270,9 @@ def findings_for(job, reports):
             continue
         try:
             read_now = [_finding(tool=tool, **fields) for fields in read(_load(tool, path))]
+        except _ToolFailedError as failure:
+            status[tool] = {"status": "failed", "error": str(failure)}
+            continue
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             # The class only: a message can quote the report.
             status[tool] = {"status": "unreadable", "error": type(error).__name__}

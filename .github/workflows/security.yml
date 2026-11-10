@@ -107,8 +107,10 @@ jobs:
     - name: Run Semgrep (multi-language static analysis)
       run: |
         echo "🔍 Running Semgrep security analysis..."
-        # A named rule pack: Semgrep refuses --config=auto with metrics off.
-        semgrep --config=p/python --metrics=off --disable-version-check --json --output="$RUNNER_TEMP/semgrep.json" mfgarchon/ > "$RUNNER_TEMP/semgrep.log" 2>&1 || true
+        # A named rule pack: Semgrep refuses --config=auto with metrics off. Semgrep writes its report even
+        # when a fatal error stops it, so the report keeps its name only on exit 0: without --error, Semgrep
+        # exits 0 with or without findings.
+        if semgrep --config=p/python --metrics=off --disable-version-check --json --output="$RUNNER_TEMP/semgrep.part" mfgarchon/ > "$RUNNER_TEMP/semgrep.log" 2>&1; then mv "$RUNNER_TEMP/semgrep.part" "$RUNNER_TEMP/semgrep.json"; fi
       continue-on-error: true
 
     - name: Custom security checks
@@ -220,8 +222,9 @@ jobs:
     - name: Run Hadolint (Dockerfile linter)
       run: |
         echo "🔍 Linting Dockerfile with Hadolint..."
-        # hadolint exits 1 on findings and on failure alike; a run that did not finish leaves its JSON empty
-        # or cut short, which security_findings.py cannot read.
+        # hadolint exits 1 on findings and on failure alike. A run that did not finish leaves its JSON empty
+        # or cut short, and a Dockerfile it cannot parse is reported as DL1000; the boundary reads neither
+        # as a finished scan.
         ./hadolint --format json Dockerfile > "$RUNNER_TEMP/hadolint.json" 2> "$RUNNER_TEMP/hadolint.log" || true
 
     - name: Container configuration security check
