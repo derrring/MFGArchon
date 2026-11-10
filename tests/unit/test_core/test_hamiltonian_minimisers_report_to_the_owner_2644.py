@@ -9,6 +9,10 @@ Each member is driven so that its own call fails, through a cost, Lagrangian or 
 
 The message is the failure's own, compared field by field: the member, its input, the routine and scipy's message;
 the point and the value are checked against the member's objective, recomputed here.
+
+Exhaustion, the fact the plan names, has its own pins for the members whose routine is Brent or L-BFGS-B. No input
+was found that makes either spend its default budget, so the test caps it: the member's own call goes to scipy with
+its own objective, start and bounds, and with maxiter=1 added to its options. Without the cap the same call succeeds.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import re
 import pytest
 
 import numpy as np
+import scipy.optimize
 
 from mfgarchon.core.hamiltonian import (
     ControlCostBase,
@@ -199,3 +204,111 @@ def test_a_failed_search_is_raised_by_the_owner_with_its_own_message(member):
     assert error.solver_type == where.split(" at ")[0]
     assert error.iterations == int(fields["nit"])
     assert math.isnan(error.residual)
+
+
+class QuarticCost(ControlCostBase):
+    """H(p) = |p|^4 / 4, declared not smooth, so ``regularize`` builds its Moreau-Yosida envelope. Not quadratic, so
+    L-BFGS-B over it takes more than one iteration."""
+
+    def evaluate(self, p):
+        return np.sum(np.asarray(p, dtype=float) ** 4, axis=-1) / 4
+
+    def dp(self, p):
+        return np.asarray(p, dtype=float) ** 3
+
+    def optimal_control(self, p):
+        return -self.dp(p)
+
+    def lagrangian(self, alpha):
+        return np.zeros(np.shape(alpha)[:-1])
+
+    def is_smooth(self):
+        return False
+
+
+class SmoothLagrangian(LagrangianBase):
+    """L(alpha) = |alpha|^2 / 2 + |alpha|^4 / 4 on a box of [-5, 5]."""
+
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, t, x, alpha, m):
+        a2 = float(np.sum(np.asarray(alpha, dtype=float) ** 2))
+        return a2 / 2 + a2**2 / 4
+
+    def control_bounds(self):
+        return (-5.0, 5.0)
+
+
+P = np.array([0.7, -0.4])
+BRENT_SPENT = ("minimize_scalar", "minimize_scalar (Brent)", "Maximum number of iterations exceeded")
+LBFGSB_SPENT = ("minimize", "minimize (L-BFGS-B)", "STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT")
+
+#: member -> (a call whose search succeeds at scipy's default budget, the name and input its message gives, and
+#: (the scipy.optimize name it calls, the routine its message names, scipy's message once maxiter is 1)).
+CAPPED = {
+    "row 16 _MoreauYosidaControlCost._prox_h": (
+        lambda: QuarticCost(lambda_=1.0).regularize(EPS).dp(np.array([1.3])),
+        "_MoreauYosidaControlCost._prox_h at p=1.3",
+        BRENT_SPENT,
+    ),
+    "row 18 LagrangianBase.conjugate_argmax, n-D": (
+        lambda: SmoothLagrangian().conjugate_argmax(t=0.0, x=X2, p=P, m=1.0),
+        "SmoothLagrangian.conjugate_argmax at p=[0.7, -0.4]",
+        LBFGSB_SPENT,
+    ),
+    "row 20 LagrangianBase.proximal, n-D": (
+        lambda: SmoothLagrangian().proximal(1.0, P, x=X2),
+        "SmoothLagrangian.proximal at z=[0.7, -0.4], tau=1.0",
+        LBFGSB_SPENT,
+    ),
+    "row 21 DualHamiltonian.__call__": (
+        lambda: DualHamiltonian(SmoothLagrangian(), alpha_bounds=(-5.0, 5.0))(t=0.0, x=X2, p=P, m=1.0),
+        "DualHamiltonian.__call__ at p=[0.7, -0.4]",
+        LBFGSB_SPENT,
+    ),
+    "row 22 DualHamiltonian._find_optimal_alpha": (
+        lambda: DualHamiltonian(SmoothLagrangian(), alpha_bounds=(-5.0, 5.0)).dp(t=0.0, x=X2, p=P, m=1.0),
+        "DualHamiltonian._find_optimal_alpha at p=[0.7, -0.4]",
+        LBFGSB_SPENT,
+    ),
+    "row 23 DualLagrangian.__call__": (
+        lambda: DualLagrangian(SeparableHamiltonian(QuarticCost(lambda_=1.0)), p_bounds=(-5.0, 5.0))(
+            t=0.0, x=X2, alpha=P, m=1.0
+        ),
+        "DualLagrangian.__call__ at alpha=[0.7, -0.4]",
+        LBFGSB_SPENT,
+    ),
+    "row 24 DualLagrangian._find_optimal_p": (
+        lambda: DualLagrangian(SeparableHamiltonian(QuarticCost(lambda_=1.0)), p_bounds=(-5.0, 5.0)).d_alpha(
+            t=0.0, x=X2, alpha=P, m=1.0
+        ),
+        "DualLagrangian._find_optimal_p at alpha=[0.7, -0.4]",
+        LBFGSB_SPENT,
+    ),
+}
+
+
+@pytest.mark.parametrize("member", list(CAPPED))
+def test_a_search_that_spends_its_budget_is_raised_by_the_owner(member, monkeypatch):
+    call, where, (name, routine, why) = CAPPED[member]
+    call()  # the control: at scipy's default budget the search succeeds, and the member returns
+    real = getattr(scipy.optimize, name)
+    results = []
+
+    def capped(*args, **kwargs):
+        kwargs["options"] = {**(kwargs.get("options") or {}), "maxiter": 1}
+        results.append(real(*args, **kwargs))
+        return results[-1]
+
+    # hamiltonian.py imports the routine from scipy.optimize when it calls it, so it finds the capped one.
+    monkeypatch.setattr(scipy.optimize, name, capped)
+    with pytest.raises(ConvergenceError) as raised:
+        call()
+    assert len(results) == 1, results  # the member's own call, capped
+    assert not results[0].success, results
+    fields = MESSAGE.fullmatch(str(raised.value))
+    assert fields is not None, str(raised.value)
+    assert fields["where"] == f"{where}: scipy's {routine}"
+    assert fields["why"] == why
+    assert int(fields["nit"]) == raised.value.iterations == 1
