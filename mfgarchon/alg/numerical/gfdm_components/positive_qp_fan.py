@@ -108,8 +108,9 @@ class GuardedFanParameters:
         Empty: such a node is refused.
     thin_deg : float
         Smallest angular gap between adjacent rays, in degrees. Default 25. Supported: above 0, below
-        ``theta0_deg`` and below 120, since a fan has at least three gaps summing to 360. With the widest gap's, its
-        sine bounds a control's sector coordinates: the smaller of the two enters the scheme's constant.
+        ``theta0_deg`` and below 120, since a fan has at least three gaps summing to 360. No guarantee uses it: a
+        control's length-weighted sector coordinates are bounded through the widest gap alone, by twice the
+        control's norm when that gap is at most 90 degrees and by twice the norm over the gap's sine above.
     radius_factor : float
         A fan's rays first reach ``radius_factor * h6``, ``h6`` the node's mean distance to its six nearest
         nodes. Default 2. Supported: above 0.
