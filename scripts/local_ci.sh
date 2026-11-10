@@ -540,7 +540,7 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
 # written and this gate never invoked either. ~4.1 s for the first ten in the loop (three runs: 4.1 / 4.1 / 4.1),
-# of which check_manifests is 2.0 s; check_layering, the eleventh, adds 0.1 s (three runs: 0.11 / 0.07 / 0.07).
+# of which check_manifests is 2.0 s; check_layering, the eleventh, adds 0.14 s (three runs: 0.14 / 0.14 / 0.14).
 # check_layering is not a ratchet: only its self-test runs here. The gate does not run its check of the
 # package, which observes until the user puts it into CI (#2938).
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
