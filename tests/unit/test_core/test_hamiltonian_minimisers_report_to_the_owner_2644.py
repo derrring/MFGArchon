@@ -145,7 +145,8 @@ def _vee_value(x):
 
 
 #: member -> (its call, (the scipy.optimize name it calls, the routine its message names), the name and input its message
-#: gives, how scipy stops, and the point and value it stopped at, checked against the member's objective).
+#: gives, how scipy stops, and a check of the x and fun scipy reported: against the member's objective for rows 17 and
+#: 19, and for the NaN start, or NaN, for the others).
 MEMBERS = {
     "row 16 _MoreauYosidaControlCost._prox_h": (
         lambda: HalfLineCost(lambda_=1.0).regularize(EPS).dp(np.array([2.0, 0.0, 2.0])),
@@ -236,6 +237,12 @@ def _spy(monkeypatch, name, maxiter=None):
     return results
 
 
+def _raised_by_the_owner(error):
+    """The failure was raised in the one owner's frame, `report_inner_failure`, not by its caller."""
+    frames = traceback.extract_tb(error.__traceback__)
+    assert (frames[-1].name, frames[-1].filename) == ("report_inner_failure", exceptions.__file__), frames
+
+
 def _carries(message, where, routine, res):
     """The library's message names ``where`` and ``routine`` literally, scipy's own message as ``res`` holds it, and
     ``res``'s counts."""
@@ -255,8 +262,7 @@ def test_a_failed_search_is_raised_by_the_owner_with_its_own_message(member, mon
     with pytest.raises(ConvergenceError) as raised, np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         call()
     error = raised.value
-    frames = traceback.extract_tb(error.__traceback__)
-    assert (frames[-1].name, frames[-1].filename) == ("report_inner_failure", exceptions.__file__), frames
+    _raised_by_the_owner(error)
     failed = results[-1]  # the search the owner refused; nothing runs after it
     assert not failed.success
     assert stops(failed), failed
@@ -360,6 +366,7 @@ def test_a_search_that_spends_its_budget_is_raised_by_the_owner(member, monkeypa
         call()
     assert len(results) == 1, results  # the member's own call, capped
     assert not results[0].success, results
+    _raised_by_the_owner(raised.value)
     _carries(str(raised.value), where, routine, results[0])
     assert results[0].nit == raised.value.iterations == 1
 
@@ -367,11 +374,11 @@ def test_a_search_that_spends_its_budget_is_raised_by_the_owner(member, monkeypa
 def test_a_non_smooth_lagrangian_in_2d_is_refused_at_p_0_until_stage_2(monkeypatch):
     """What #2939 ships for a Lagrangian that is not differentiable, in 2-D: the library's L1 cost through
     DualHamiltonian, at p = 0. The maximiser is alpha = 0, where L-BFGS-B starts, and its line search stops ABNORMAL at
-    the kink there, so the search is refused, although the point it stopped at is the maximiser. With the kink at
-    alpha = 0, every evaluation of this H at p = 0 is refused.
+    the kink there, so the search is refused, although the point it stopped at is the maximiser. L is minimised on its
+    kink at alpha = 0, where the search starts for p = 0, so every evaluation of this H at p = 0 is refused.
 
     This holds until #2644 stage 2 changes the method for rows 18 and 20-24 to one whose verdict means something for a
-    non-smooth objective. This test fails then with RETIRE in its output, and is retired as RETIRE says."""
+    non-smooth objective. If H at p = 0 returns, this test fails with RETIRE in its output, which says what to check."""
     H = DualHamiltonian(SeparableLagrangian(L1ControlCost(lambda_=1.0)))
     results = _spy(monkeypatch, "minimize")
     try:
@@ -381,14 +388,16 @@ def test_a_non_smooth_lagrangian_in_2d_is_refused_at_p_0_until_stage_2(monkeypat
         assert not results[0].success
         assert _abnormal(results[0])
         assert np.array_equal(np.abs(results[0].x), np.zeros(2))  # the point it stopped at is the maximiser
+        _raised_by_the_owner(error)
         _carries(str(error), "DualHamiltonian.__call__ at p=[0.0, 0.0]", "minimize (L-BFGS-B)", results[0])
     else:
         pytest.fail(RETIRE)
 
 
-#: What the non-smooth pin prints when the search at p = 0 stops being refused.
+#: What the non-smooth pin prints when H at p = 0 returns.
 RETIRE = (
-    "#2644 stage 2 changed the method for rows 18 and 20-24, so this pin is retired: delete "
-    "test_a_non_smooth_lagrangian_in_2d_is_refused_at_p_0_until_stage_2, and replace it with stage 2's pin of the value "
-    "at p = 0 against the exact maximum."
+    "H at p = 0 returned with no ConvergenceError. If #2644 stage 2 has changed the method for rows 18 and 20-24, this "
+    "pin is retired: delete test_a_non_smooth_lagrangian_in_2d_is_refused_at_p_0_until_stage_2, and replace it with "
+    "stage 2's pin of the value at p = 0 against the exact maximum. If it has not, read row 21's own pins in this file, "
+    "the failure pin and the exhaustion pin of DualHamiltonian.__call__: red there means row 21's check is gone."
 )
