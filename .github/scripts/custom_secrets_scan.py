@@ -41,7 +41,7 @@ class CustomSecretsScanner:
             r"(?i)auth[_-]?token['\"\s]*[:=]['\"\s]*[a-zA-Z0-9._\-]{20,}",
         ],
         "private_key": [
-            r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
         ],
         "database_url": [
             r"(?i)(?:postgres|mysql|mongodb)://[^\s\"']+",

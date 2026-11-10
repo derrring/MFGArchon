@@ -1,6 +1,6 @@
 name: CI/CD Pipeline
 #
-# Consolidated workflow combining quality, security, and performance checks
+# Consolidated workflow combining quality and performance checks
 # Smart triggering: lightweight on PRs, comprehensive on releases
 # Optimized for cost efficiency with manual fallback options
 #
@@ -27,11 +27,6 @@ on:
   # Manual trigger for full validation
   workflow_dispatch:
     inputs:
-      run_security_scan:
-        description: 'Run comprehensive security scanning'
-        required: false
-        default: 'false'
-        type: boolean
       run_performance_tests:
         description: 'Run performance regression tests'
         required: false
@@ -151,7 +146,7 @@ jobs:
         pip install -e . --group dev
         # 16 test files invoke `scripts/local_ci.sh`, which needs ruff; ruff is not in the dev
         # group because its version has one owner read at runtime (#2172). Same shape as
-        # ci.yml's quick-checks job. Reading the owner is why five call sites are not five pins.
+        # ci.yml's quick-checks job. Reading the owner is why no call site is a pin of its own.
         RUFF_PIN=$(python scripts/update_ruff_version.py --print-current) || RUFF_PIN=""
         if [ -z "$RUFF_PIN" ]; then echo "::error::could not read the ruff pin"; exit 1; fi
         pip install "ruff==$RUFF_PIN"
@@ -200,7 +195,7 @@ jobs:
         pip install -e . --group dev
         # 16 test files invoke `scripts/local_ci.sh`, which needs ruff; ruff is not in the dev
         # group because its version has one owner read at runtime (#2172). Same shape as
-        # ci.yml's quick-checks job. Reading the owner is why five call sites are not five pins.
+        # ci.yml's quick-checks job. Reading the owner is why no call site is a pin of its own.
         RUFF_PIN=$(python scripts/update_ruff_version.py --print-current) || RUFF_PIN=""
         if [ -z "$RUFF_PIN" ]; then echo "::error::could not read the ruff pin"; exit 1; fi
         pip install "ruff==$RUFF_PIN"
@@ -347,68 +342,6 @@ jobs:
         else:
             print(f'✅ Memory usage efficient: {memory_used:.1f} MB')
         "
-
-  # === PHASE 3: Security Scanning (Conditional) ===
-  security-scan:
-    name: Security Analysis
-    runs-on: ubuntu-latest
-    needs: import-validation
-    timeout-minutes: 10  # Timeout for security scans
-    if: ${{ github.event_name == 'release' || github.event.inputs.run_security_scan == 'true' || github.event_name == 'workflow_dispatch' }}
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
-
-    - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v7
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
-
-    - name: Install security tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install bandit safety pip-audit
-        pip install -e . --group dev
-        # 16 test files invoke `scripts/local_ci.sh`, which needs ruff; ruff is not in the dev
-        # group because its version has one owner read at runtime (#2172). Same shape as
-        # ci.yml's quick-checks job. Reading the owner is why five call sites are not five pins.
-        RUFF_PIN=$(python scripts/update_ruff_version.py --print-current) || RUFF_PIN=""
-        if [ -z "$RUFF_PIN" ]; then echo "::error::could not read the ruff pin"; exit 1; fi
-        pip install "ruff==$RUFF_PIN"
-
-    - name: Bandit security scan
-      run: |
-        echo "🔒 Running Bandit security analysis..."
-        bandit -r mfgarchon/ -f json -o bandit-report.json || true
-        bandit -r mfgarchon/ --severity-level medium --confidence-level medium
-      continue-on-error: true
-
-    - name: Dependency vulnerability check
-      run: |
-        echo "🔒 Checking dependencies for vulnerabilities..."
-        safety check --json --output safety-report.json || true
-        safety check --short-report
-      continue-on-error: true
-
-    - name: Comprehensive dependency audit
-      run: |
-        echo "🔒 Running comprehensive dependency audit..."
-        pip-audit --format=json --output=pip-audit-report.json || true
-        pip-audit --desc
-      continue-on-error: true
-
-    - name: Upload security reports
-      uses: actions/upload-artifact@v7
-      if: always()
-      with:
-        name: security-reports
-        path: |
-          bandit-report.json
-          safety-report.json
-          pip-audit-report.json
-        retention-days: 30
 
   # === PHASE 4: Integration Tests (Release Only) ===
   integration-tests:

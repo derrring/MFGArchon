@@ -5,6 +5,8 @@ Custom security checks for MFGArchon scientific computing package.
 This script performs domain-specific security checks that are relevant
 for scientific computing packages but may not be covered by general
 security scanning tools.
+
+Its report names the file and line of each finding, never the source around it.
 """
 
 import ast
@@ -82,7 +84,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": message,
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -115,7 +116,6 @@ class CustomSecurityChecker:
                             "file": str(py_file),
                             "line": line_num,
                             "message": "Large array allocation without size validation",
-                            "code_snippet": self._get_code_snippet(content, line_num),
                         }
                     )
 
@@ -132,7 +132,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": message,
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -188,7 +187,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"Potentially unsafe {message}",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -229,7 +227,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} - ensure source is trusted",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -260,7 +257,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": message,
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
             except Exception as e:
@@ -296,7 +292,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} in configuration file",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -342,7 +337,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} - ensure proper validation",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -380,7 +374,6 @@ class CustomSecurityChecker:
                                 "line": line_num,
                                 "pattern": pattern,
                                 "message": f"{message} - use fixtures or environment variables",
-                                "code_snippet": self._get_code_snippet(content, line_num),
                             }
                         )
 
@@ -418,22 +411,8 @@ class CustomSecurityChecker:
                         "line": node.lineno,
                         "function": node.name,
                         "message": f"Function {node.name} may lack input validation for numerical parameters",
-                        "code_snippet": function_code[:200] + "..." if len(function_code) > 200 else function_code,
                     }
                 )
-
-    def _get_code_snippet(self, content: str, line_num: int, context: int = 2) -> str:
-        """Get code snippet around a specific line."""
-        lines = content.split("\n")
-        start = max(0, line_num - context - 1)
-        end = min(len(lines), line_num + context)
-
-        snippet_lines = []
-        for i in range(start, end):
-            marker = ">>>" if i == line_num - 1 else "   "
-            snippet_lines.append(f"{marker} {i + 1:3d}: {lines[i]}")
-
-        return "\n".join(snippet_lines)
 
     def _get_surrounding_context(self, content: str, line_num: int, context: int = 5) -> str:
         """Get surrounding context around a line."""

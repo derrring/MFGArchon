@@ -2,8 +2,9 @@
 """
 Critical security issues checker for MFGArchon CI/CD pipeline.
 
-This script analyzes all security scan results and determines if there are
-any critical issues that should fail the CI/CD pipeline.
+This script reads security-findings.json, which `security_findings.py collect` builds from the five
+scan jobs' findings files, and determines if there are any critical issues that should fail the CI/CD
+pipeline.
 """
 
 import json
@@ -15,7 +16,8 @@ from typing import Any
 class CriticalIssuesChecker:
     """Check for critical security issues across all scan results."""
 
-    def __init__(self):
+    def __init__(self, findings_path: str = "security-findings.json"):
+        self.jobs = json.loads(Path(findings_path).read_text(encoding="utf-8"))["jobs"]
         self.critical_issues = []
         self.blocking_issues = []
         self.warnings = []
@@ -32,7 +34,6 @@ class CriticalIssuesChecker:
                 "total_high_confidence": 15,  # Max 15 high confidence issues
             },
             "secrets": {
-                "verified_secrets": 0,  # No verified secrets allowed
                 "total_secrets": 5,  # Max 5 potential secrets (scientific code may have examples)
             },
             "container": {
@@ -75,344 +76,252 @@ class CriticalIssuesChecker:
 
         return summary
 
+    def _findings(self, job: str, label: str, tools: tuple[str, ...]) -> list[dict[str, Any]] | None:
+        """The job's findings from `tools`, or None, with a warning, when the job's findings file was not read."""
+        if self.jobs[job]["status"] != "read":
+            self.warnings.append(f"{label} results not found")
+            return None
+        return [f for f in self.jobs[job]["findings"] if f["tool"] in tools]
+
     def _check_dependency_results(self):
         """Check dependency scan results for critical issues."""
-        result_file = Path("dependency-scan-results/dependency-security-report.json")
-        if not result_file.exists():
-            self.warnings.append("Dependency scan results not found")
+        findings = self._findings("dependency", "Dependency scan", ("safety", "pip-audit"))
+        if findings is None:
             return
 
-        try:
-            with open(result_file) as f:
-                data = json.load(f)
+        critical = [f for f in findings if f["severity"] == "critical"]
+        high = [f for f in findings if f["severity"] == "high"]
 
-            summary = data.get("summary", {})
-            findings = data.get("findings", [])
+        if len(critical) > self.critical_criteria["dependency"]["critical_vulns"]:
+            self.critical_issues.append(
+                {
+                    "type": "dependency",
+                    "severity": "critical",
+                    "message": f"Found {len(critical)} critical dependency vulnerabilities",
+                    "details": critical[:3],  # Top 3
+                }
+            )
 
-            # Check critical vulnerabilities
-            critical_count = summary.get("critical_count", 0)
-            high_count = summary.get("high_count", 0)
+        if len(high) > self.critical_criteria["dependency"]["high_vulns"]:
+            self.blocking_issues.append(
+                {
+                    "type": "dependency",
+                    "severity": "high",
+                    "message": f"Found {len(high)} high severity vulnerabilities (max allowed: {self.critical_criteria['dependency']['high_vulns']})",
+                    "details": high[:5],  # Top 5
+                }
+            )
 
-            if critical_count > self.critical_criteria["dependency"]["critical_vulns"]:
-                self.critical_issues.append(
-                    {
-                        "type": "dependency",
-                        "severity": "critical",
-                        "message": f"Found {critical_count} critical dependency vulnerabilities",
-                        "details": [f for f in findings if f.get("severity") == "critical"][:3],  # Top 3
-                    }
-                )
-
-            if high_count > self.critical_criteria["dependency"]["high_vulns"]:
-                self.blocking_issues.append(
-                    {
-                        "type": "dependency",
-                        "severity": "high",
-                        "message": f"Found {high_count} high severity vulnerabilities (max allowed: {self.critical_criteria['dependency']['high_vulns']})",
-                        "details": [f for f in findings if f.get("severity") == "high"][:5],  # Top 5
-                    }
-                )
-
-            # Check for specific high-risk packages
-            high_risk_packages = ["pickle", "yaml", "requests"]
-            for finding in findings:
-                package = finding.get("package", "").lower()
-                if any(risk_pkg in package for risk_pkg in high_risk_packages):
-                    if finding.get("severity") in ["critical", "high"]:
-                        self.critical_issues.append(
-                            {
-                                "type": "dependency",
-                                "severity": "critical",
-                                "message": f"High-risk package {package} has {finding.get('severity')} vulnerability",
-                                "details": [finding],
-                            }
-                        )
-
-        except Exception as e:
-            self.warnings.append(f"Error reading dependency results: {e}")
+        # Check for specific high-risk packages
+        high_risk_packages = ["pickle", "yaml", "requests"]
+        for finding in findings:
+            package = finding.get("package", "").lower()
+            if any(risk_pkg in package for risk_pkg in high_risk_packages):
+                if finding["severity"] in ["critical", "high"]:
+                    self.critical_issues.append(
+                        {
+                            "type": "dependency",
+                            "severity": "critical",
+                            "message": f"High-risk package {package} has {finding['severity']} vulnerability",
+                            "details": [finding],
+                        }
+                    )
 
     def _check_static_analysis_results(self):
         """Check static analysis results for critical issues."""
-        result_file = Path("static-analysis-results/static-analysis-security-report.json")
-        if not result_file.exists():
-            self.warnings.append("Static analysis results not found")
+        findings = self._findings("static", "Static analysis", ("bandit", "semgrep"))
+        if findings is None:
             return
 
-        try:
-            with open(result_file) as f:
-                data = json.load(f)
+        high_confidence_issues = [f for f in findings if f.get("confidence") == "high"]
+        high_conf_high_sev = [f for f in high_confidence_issues if f["severity"] in ["high", "critical"]]
 
-            findings = data.get("findings", [])
+        if len(high_conf_high_sev) > self.critical_criteria["static_analysis"]["high_confidence_high_severity"]:
+            self.critical_issues.append(
+                {
+                    "type": "static_analysis",
+                    "severity": "critical",
+                    "message": f"Found {len(high_conf_high_sev)} high confidence + high severity static analysis issues",
+                    "details": high_conf_high_sev,
+                }
+            )
 
-            # Count high confidence + high severity issues
-            high_conf_high_sev = 0
-            high_confidence_issues = []
+        if len(high_confidence_issues) > self.critical_criteria["static_analysis"]["total_high_confidence"]:
+            self.blocking_issues.append(
+                {
+                    "type": "static_analysis",
+                    "severity": "high",
+                    "message": f"Found {len(high_confidence_issues)} high confidence issues (max allowed: {self.critical_criteria['static_analysis']['total_high_confidence']})",
+                    "details": high_confidence_issues[:5],  # Top 5
+                }
+            )
 
-            for finding in findings:
-                confidence = finding.get("confidence", "").lower()
-                severity = finding.get("severity", "").lower()
-
-                if confidence == "high":
-                    high_confidence_issues.append(finding)
-                    if severity in ["high", "critical"]:
-                        high_conf_high_sev += 1
-
-            if high_conf_high_sev > self.critical_criteria["static_analysis"]["high_confidence_high_severity"]:
+        # Check for specific dangerous patterns
+        dangerous_patterns = ["sql_injection", "command_injection", "hardcoded_password", "weak_crypto"]
+        for finding in findings:
+            rule = finding.get("rule", "").lower()
+            if any(pattern in rule for pattern in dangerous_patterns):
                 self.critical_issues.append(
                     {
                         "type": "static_analysis",
                         "severity": "critical",
-                        "message": f"Found {high_conf_high_sev} high confidence + high severity static analysis issues",
-                        "details": [
-                            f
-                            for f in findings
-                            if f.get("confidence") == "high" and f.get("severity") in ["high", "critical"]
-                        ],
+                        "message": f"Dangerous security pattern detected: {rule}",
+                        "details": [finding],
                     }
                 )
-
-            if len(high_confidence_issues) > self.critical_criteria["static_analysis"]["total_high_confidence"]:
-                self.blocking_issues.append(
-                    {
-                        "type": "static_analysis",
-                        "severity": "high",
-                        "message": f"Found {len(high_confidence_issues)} high confidence issues (max allowed: {self.critical_criteria['static_analysis']['total_high_confidence']})",
-                        "details": high_confidence_issues[:5],  # Top 5
-                    }
-                )
-
-            # Check for specific dangerous patterns
-            dangerous_patterns = ["sql_injection", "command_injection", "hardcoded_password", "weak_crypto"]
-            for finding in findings:
-                rule_id = finding.get("rule_id", "").lower()
-                if any(pattern in rule_id for pattern in dangerous_patterns):
-                    self.critical_issues.append(
-                        {
-                            "type": "static_analysis",
-                            "severity": "critical",
-                            "message": f"Dangerous security pattern detected: {rule_id}",
-                            "details": [finding],
-                        }
-                    )
-
-        except Exception as e:
-            self.warnings.append(f"Error reading static analysis results: {e}")
 
     def _check_secrets_results(self):
         """Check secrets scan results for critical issues."""
-        result_file = Path("secrets-scan-results/secrets-security-report.json")
-        if not result_file.exists():
-            self.warnings.append("Secrets scan results not found")
+        findings = self._findings("secrets", "Secrets scan", ("detect-secrets", "trufflehog"))
+        if findings is None:
             return
 
-        try:
-            with open(result_file) as f:
-                data = json.load(f)
+        # Check total secrets count
+        if len(findings) > self.critical_criteria["secrets"]["total_secrets"]:
+            self.blocking_issues.append(
+                {
+                    "type": "secrets",
+                    "severity": "high",
+                    "message": f"Found {len(findings)} potential secrets (max allowed: {self.critical_criteria['secrets']['total_secrets']})",
+                    "details": findings[:3],  # Top 3
+                }
+            )
 
-            summary = data.get("summary", {})
-            findings = data.get("findings", [])
-
-            # Check for verified secrets
-            verified_secrets = [f for f in findings if f.get("verified", False)]
-            if len(verified_secrets) > self.critical_criteria["secrets"]["verified_secrets"]:
+        # Check for specific secret types
+        high_risk_secret_types = ["private_key", "api_key", "password", "token"]
+        for finding in findings:
+            rule = finding.get("rule", "").lower()
+            if any(risk_type in rule for risk_type in high_risk_secret_types):
                 self.critical_issues.append(
                     {
                         "type": "secrets",
                         "severity": "critical",
-                        "message": f"Found {len(verified_secrets)} verified secrets",
-                        "details": verified_secrets,
+                        "message": f"High-risk secret type detected: {rule}",
+                        "details": [finding],
                     }
                 )
-
-            # Check total secrets count
-            total_secrets = summary.get("total_secrets", 0)
-            if total_secrets > self.critical_criteria["secrets"]["total_secrets"]:
-                self.blocking_issues.append(
-                    {
-                        "type": "secrets",
-                        "severity": "high",
-                        "message": f"Found {total_secrets} potential secrets (max allowed: {self.critical_criteria['secrets']['total_secrets']})",
-                        "details": findings[:3],  # Top 3
-                    }
-                )
-
-            # Check for specific secret types
-            high_risk_secret_types = ["private_key", "api_key", "password", "token"]
-            for finding in findings:
-                secret_type = finding.get("secret_type", "").lower()
-                detector_name = finding.get("detector_name", "").lower()
-
-                if any(risk_type in secret_type or risk_type in detector_name for risk_type in high_risk_secret_types):
-                    self.critical_issues.append(
-                        {
-                            "type": "secrets",
-                            "severity": "critical",
-                            "message": f"High-risk secret type detected: {secret_type or detector_name}",
-                            "details": [finding],
-                        }
-                    )
-
-        except Exception as e:
-            self.warnings.append(f"Error reading secrets results: {e}")
 
     def _check_container_results(self):
         """Check container scan results for critical issues."""
-        result_file = Path("container-scan-results/container-security-report.json")
-        if not result_file.exists():
-            self.warnings.append("Container scan results not found")
+        findings = self._findings("container", "Container scan", ("trivy", "hadolint"))
+        if findings is None:
             return
 
-        try:
-            with open(result_file) as f:
-                data = json.load(f)
+        vulnerabilities = [f for f in findings if f["tool"] == "trivy" and "advisory" in f]
+        critical = [f for f in vulnerabilities if f["severity"] == "critical"]
+        high = [f for f in vulnerabilities if f["severity"] == "high"]
 
-            summary = data.get("summary", {})
-            findings = data.get("findings", [])
+        if len(critical) > self.critical_criteria["container"]["critical_vulns"]:
+            self.critical_issues.append(
+                {
+                    "type": "container",
+                    "severity": "critical",
+                    "message": f"Found {len(critical)} critical container vulnerabilities",
+                    "details": critical[:3],
+                }
+            )
 
-            # Check critical container vulnerabilities
-            critical_count = summary.get("critical_count", 0)
-            high_count = summary.get("high_count", 0)
+        if len(high) > self.critical_criteria["container"]["high_vulns"]:
+            self.blocking_issues.append(
+                {
+                    "type": "container",
+                    "severity": "high",
+                    "message": f"Found {len(high)} high severity container vulnerabilities (max allowed: {self.critical_criteria['container']['high_vulns']})",
+                    "details": high[:3],
+                }
+            )
 
-            if critical_count > self.critical_criteria["container"]["critical_vulns"]:
-                self.critical_issues.append(
-                    {
-                        "type": "container",
-                        "severity": "critical",
-                        "message": f"Found {critical_count} critical container vulnerabilities",
-                        "details": [f for f in findings if f.get("severity") == "critical"][:3],
-                    }
-                )
-
-            if high_count > self.critical_criteria["container"]["high_vulns"]:
-                self.blocking_issues.append(
-                    {
-                        "type": "container",
-                        "severity": "high",
-                        "message": f"Found {high_count} high severity container vulnerabilities (max allowed: {self.critical_criteria['container']['high_vulns']})",
-                        "details": [f for f in findings if f.get("severity") == "high"][:3],
-                    }
-                )
-
-            # Check for base image issues
-            base_image_issues = [f for f in findings if "base" in f.get("file", "").lower()]
-            if len(base_image_issues) > 5:
-                self.blocking_issues.append(
-                    {
-                        "type": "container",
-                        "severity": "high",
-                        "message": f"Base image has {len(base_image_issues)} security issues",
-                        "details": base_image_issues[:3],
-                    }
-                )
-
-        except Exception as e:
-            self.warnings.append(f"Error reading container results: {e}")
+        # Check for base image issues
+        base_image_issues = [f for f in findings if "base" in f.get("file", "").lower()]
+        if len(base_image_issues) > 5:
+            self.blocking_issues.append(
+                {
+                    "type": "container",
+                    "severity": "high",
+                    "message": f"Base image has {len(base_image_issues)} security issues",
+                    "details": base_image_issues[:3],
+                }
+            )
 
     def _check_license_results(self):
         """Check license compliance results for critical issues."""
-        result_file = Path("license-compliance-results/license-security-report.json")
-        if not result_file.exists():
-            self.warnings.append("License compliance results not found")
+        findings = self._findings("license", "License compliance", ("license_compliance_check",))
+        if findings is None:
             return
 
-        try:
-            with open(result_file) as f:
-                data = json.load(f)
-
-            summary = data.get("summary", {})
-            findings = data.get("findings", [])
-
-            # Check for non-compliant licenses
-            non_compliant_count = summary.get("non_compliant_licenses", 0)
-            if non_compliant_count > self.critical_criteria["license"]["non_compliant"]:
-                non_compliant_packages = [f for f in findings if f.get("compliance_status") == "non_compliant"]
-
-                # Check if these are production dependencies (not dev/test dependencies)
-                production_non_compliant = []
-                for package in non_compliant_packages:
-                    pkg_name = package.get("package", "").lower()
-                    # Skip development/testing packages
-                    if not any(dev_keyword in pkg_name for dev_keyword in ["test", "dev", "mock", "debug"]):
-                        production_non_compliant.append(package)
-
-                if production_non_compliant:
-                    self.critical_issues.append(
-                        {
-                            "type": "license",
-                            "severity": "critical",
-                            "message": f"Found {len(production_non_compliant)} non-compliant licenses in production dependencies",
-                            "details": production_non_compliant,
-                        }
-                    )
-
-            # Check for unknown licenses in critical packages
-            unknown_licenses = [f for f in findings if f.get("compliance_status") == "unknown"]
-            critical_packages = ["numpy", "scipy", "matplotlib"]  # Core scientific packages
-
-            for package in unknown_licenses:
+        # Check for non-compliant licenses
+        non_compliant_packages = [f for f in findings if f["status"] in ["review_required", "prohibited"]]
+        if len(non_compliant_packages) > self.critical_criteria["license"]["non_compliant"]:
+            # Check if these are production dependencies (not dev/test dependencies)
+            production_non_compliant = []
+            for package in non_compliant_packages:
                 pkg_name = package.get("package", "").lower()
-                if any(critical_pkg in pkg_name for critical_pkg in critical_packages):
-                    self.warnings.append(f"Unknown license for critical package: {pkg_name}")
+                # Skip development/testing packages
+                if not any(dev_keyword in pkg_name for dev_keyword in ["test", "dev", "mock", "debug"]):
+                    production_non_compliant.append(package)
 
-        except Exception as e:
-            self.warnings.append(f"Error reading license results: {e}")
+            if production_non_compliant:
+                self.critical_issues.append(
+                    {
+                        "type": "license",
+                        "severity": "critical",
+                        "message": f"Found {len(production_non_compliant)} non-compliant licenses in production dependencies",
+                        "details": production_non_compliant,
+                    }
+                )
+
+        # Check for unknown licenses in critical packages
+        unknown_licenses = [f for f in findings if f["status"] == "unknown"]
+        critical_packages = ["numpy", "scipy", "matplotlib"]  # Core scientific packages
+
+        for package in unknown_licenses:
+            pkg_name = package.get("package", "").lower()
+            if any(critical_pkg in pkg_name for critical_pkg in critical_packages):
+                self.warnings.append(f"Unknown license for critical package: {pkg_name}")
 
     def _check_custom_security_results(self):
         """Check custom security scan results for critical issues."""
-        result_file = Path("custom-security-report.json")
-        if not result_file.exists():
-            self.warnings.append("Custom security results not found")
+        findings = self._findings("static", "Custom security", ("custom_security_checks",))
+        if findings is None:
             return
 
-        try:
-            with open(result_file) as f:
-                data = json.load(f)
+        # Check for high severity custom issues
+        critical_findings = [f for f in findings if f["severity"] == "critical"]
+        high_findings = [f for f in findings if f["severity"] == "high"]
 
-            summary = data.get("summary", {})
-            findings = data.get("findings", [])
+        if critical_findings:
+            self.critical_issues.append(
+                {
+                    "type": "custom_security",
+                    "severity": "critical",
+                    "message": f"Found {len(critical_findings)} critical custom security issues",
+                    "details": critical_findings,
+                }
+            )
 
-            # Check for high severity custom issues
-            high_severity_count = summary.get("by_severity", {}).get("high", 0)
-            critical_severity_count = summary.get("by_severity", {}).get("critical", 0)
+        if len(high_findings) > 5:  # Increased threshold for research projects
+            self.blocking_issues.append(
+                {
+                    "type": "custom_security",
+                    "severity": "high",
+                    "message": f"Found {len(high_findings)} high severity custom security issues",
+                    "details": high_findings[:3],
+                }
+            )
 
-            if critical_severity_count > 0:
-                critical_findings = [f for f in findings if f.get("severity") == "critical"]
+        # Check for specific dangerous patterns
+        dangerous_types = ["subprocess_security", "pickle_security", "plugin_security"]
+        for finding in findings:
+            finding_type = finding.get("rule", "")
+            if finding_type in dangerous_types and finding["severity"] in ["high", "critical"]:
                 self.critical_issues.append(
                     {
                         "type": "custom_security",
                         "severity": "critical",
-                        "message": f"Found {critical_severity_count} critical custom security issues",
-                        "details": critical_findings,
+                        "message": f"Dangerous security pattern: {finding_type}",
+                        "details": [finding],
                     }
                 )
-
-            if high_severity_count > 5:  # Increased threshold for research projects
-                high_findings = [f for f in findings if f.get("severity") == "high"]
-                self.blocking_issues.append(
-                    {
-                        "type": "custom_security",
-                        "severity": "high",
-                        "message": f"Found {high_severity_count} high severity custom security issues",
-                        "details": high_findings[:3],
-                    }
-                )
-
-            # Check for specific dangerous patterns
-            dangerous_types = ["subprocess_security", "pickle_security", "plugin_security"]
-            for finding in findings:
-                finding_type = finding.get("type", "")
-                if finding_type in dangerous_types and finding.get("severity") in ["high", "critical"]:
-                    self.critical_issues.append(
-                        {
-                            "type": "custom_security",
-                            "severity": "critical",
-                            "message": f"Dangerous security pattern: {finding_type}",
-                            "details": [finding],
-                        }
-                    )
-
-        except Exception as e:
-            self.warnings.append(f"Error reading custom security results: {e}")
 
     def _get_recommendation(self) -> str:
         """Get recommendation based on findings."""

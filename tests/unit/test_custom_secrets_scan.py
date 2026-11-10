@@ -10,11 +10,15 @@ and goes red when that part alone is undone:
 - a NUL past the first 8000 bytes: the file is text, by git's own rule;
 - an identifier holding a whitelisted word: the whitelist reads the value, not the name.
 The reports record no seeded value.
+
+A private-key header is found with or without a word between `BEGIN` and `PRIVATE`, the PKCS#8 form having none
+(#2919). The headers are put together at runtime, and no tracked file holds one.
 """
 
 import importlib.util
 import json
 import random
+import re
 import string
 import subprocess
 from pathlib import Path
@@ -105,3 +109,37 @@ def test_a_clean_tree_comes_back_clean(tmp_path, capsys):
     scanner = _scan(_repo(tmp_path, files))
     assert scanner.findings == []
     assert "scanned as text: 4; binary (a NUL in the first 8000 bytes): 1" in capsys.readouterr().out
+
+
+def _key_header(*kind):
+    """A private-key header, put together here so that no tracked file holds one (#2919)."""
+    return " ".join(["-----BEGIN", *kind, "PRIVATE", "KEY-----"])
+
+
+@pytest.mark.parametrize("kind", [(), ("RSA",), ("ENCRYPTED",)], ids=["PKCS#8", "RSA", "encrypted PKCS#8"])
+def test_a_private_key_header_is_found(tmp_path, kind):
+    rng = random.Random(2919)
+    body = "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(64))
+    header = _key_header(*kind)
+    pem = f"{header}\n{body}\n{header.replace('BEGIN', 'END')}\n"
+    scanner = _scan(_repo(tmp_path, {"id.pem": pem.encode()}))
+    assert [(f["type"], f["severity"], f["line"]) for f in scanner.findings if f["type"] == "private_key"] == [
+        ("private_key", "HIGH", 1)
+    ]
+
+
+def test_no_tracked_file_holds_a_private_key_header():
+    spec = importlib.util.spec_from_file_location("custom_secrets_scan", SCANNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (pattern,) = module.CustomSecretsScanner.SECRET_PATTERNS["private_key"]
+    repo = SCANNER.parents[2]
+    listed = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"], capture_output=True, check=True).stdout
+    names = [name.decode() for name in listed.split(b"\0") if name]
+    assert "tests/unit/test_custom_secrets_scan.py" in names
+    held = [
+        name
+        for name in names
+        if (repo / name).is_file() and re.search(pattern, (repo / name).read_bytes().decode("utf-8", errors="ignore"))
+    ]
+    assert held == []

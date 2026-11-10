@@ -1,271 +1,20 @@
 #!/usr/bin/env python3
 """
 Security report generation script for MFGArchon security pipeline.
-Aggregates all security scan results into comprehensive reports.
+
+Renders security-dashboard.html and security-summary.md from security-findings.json, which
+`security_findings.py collect` builds from the five scan jobs' findings files.
 """
 
 import json
-import os
-from datetime import datetime
+from pathlib import Path
 
 
 class SecurityReportGenerator:
-    """Generate comprehensive security reports from scan results."""
+    """Generate the dashboard and the markdown summary from security-findings.json."""
 
-    def __init__(self):
-        self.scan_results = {}
-        self.summary = {
-            "timestamp": datetime.now().isoformat(),
-            "total_issues": 0,
-            "critical_issues": 0,
-            "high_issues": 0,
-            "medium_issues": 0,
-            "low_issues": 0,
-            "scans_completed": [],
-            "scans_failed": [],
-            "overall_status": "UNKNOWN",
-        }
-
-    def load_scan_results(self):
-        """Load all available scan result files."""
-        result_files = {
-            "dependency": {
-                "files": ["safety-report.json", "pip-audit-report.json"],
-                "summary": "dependency-summary.md",
-            },
-            "static_analysis": {
-                "files": ["bandit-report.json", "semgrep-report.json", "custom-security-report.json"],
-                "summary": "static-analysis-summary.md",
-            },
-            "secrets": {
-                "files": ["trufflehog-report.json", "custom-secrets-report.json"],
-                "summary": "secrets-summary.md",
-            },
-            "container": {
-                "files": ["trivy-report.json", "container-security-report.json"],
-                "summary": "container-summary.md",
-            },
-            "license": {
-                "files": ["license-report.json", "license-compliance-report.json"],
-                "summary": "license-summary.md",
-            },
-        }
-
-        for scan_type, config in result_files.items():
-            self.scan_results[scan_type] = {"data": [], "summary_exists": False, "files_found": []}
-
-            # Load JSON data files
-            for filename in config["files"]:
-                if os.path.exists(filename):
-                    try:
-                        with open(filename) as f:
-                            data = json.load(f)
-                            self.scan_results[scan_type]["data"].append({"source": filename, "data": data})
-                            self.scan_results[scan_type]["files_found"].append(filename)
-                    except Exception as e:
-                        print(f"Warning: Could not load {filename}: {e}")
-
-            # Check for summary file
-            if os.path.exists(config["summary"]):
-                self.scan_results[scan_type]["summary_exists"] = True
-
-            # Mark scan as completed if any files found
-            if self.scan_results[scan_type]["files_found"]:
-                self.summary["scans_completed"].append(scan_type)
-            else:
-                self.summary["scans_failed"].append(scan_type)
-
-    def analyze_dependency_results(self) -> dict:
-        """Analyze dependency scan results."""
-        analysis = {
-            "vulnerabilities": [],
-            "total_packages": 0,
-            "vulnerable_packages": 0,
-            "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-        }
-
-        for result in self.scan_results["dependency"]["data"]:
-            source = result["source"]
-            data = result["data"]
-
-            if source == "safety-report.json" and isinstance(data, list):
-                for vuln in data:
-                    severity = self.map_severity(vuln.get("vulnerability_id", ""), "dependency")
-                    analysis["vulnerabilities"].append(
-                        {
-                            "source": "safety",
-                            "package": vuln.get("package_name", "Unknown"),
-                            "vulnerability_id": vuln.get("vulnerability_id", ""),
-                            "severity": severity,
-                            "description": vuln.get("advisory", ""),
-                        }
-                    )
-                    analysis["severity_counts"][severity] += 1
-
-            elif source == "pip-audit-report.json" and isinstance(data, dict):
-                vulns = data.get("vulnerabilities", [])
-                for vuln in vulns:
-                    severity = self.map_severity(vuln.get("id", ""), "dependency")
-                    analysis["vulnerabilities"].append(
-                        {
-                            "source": "pip-audit",
-                            "package": vuln.get("package", "Unknown"),
-                            "vulnerability_id": vuln.get("id", ""),
-                            "severity": severity,
-                            "description": vuln.get("description", ""),
-                        }
-                    )
-                    analysis["severity_counts"][severity] += 1
-
-        analysis["vulnerable_packages"] = len({v["package"] for v in analysis["vulnerabilities"]})
-        return analysis
-
-    def analyze_static_analysis_results(self) -> dict:
-        """Analyze static analysis results."""
-        analysis = {
-            "issues": [],
-            "total_issues": 0,
-            "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-        }
-
-        for result in self.scan_results["static_analysis"]["data"]:
-            source = result["source"]
-            data = result["data"]
-
-            if source == "bandit-report.json":
-                results = data.get("results", [])
-                for issue in results:
-                    severity = self.map_bandit_severity(issue.get("issue_severity", "LOW"))
-                    analysis["issues"].append(
-                        {
-                            "source": "bandit",
-                            "file": issue.get("filename", "Unknown"),
-                            "line": issue.get("line_number", 0),
-                            "severity": severity,
-                            "type": issue.get("test_name", ""),
-                            "description": issue.get("issue_text", ""),
-                        }
-                    )
-                    analysis["severity_counts"][severity] += 1
-
-            elif source == "semgrep-report.json":
-                results = data.get("results", [])
-                for issue in results:
-                    severity = self.map_semgrep_severity(issue.get("extra", {}).get("severity", "INFO"))
-                    analysis["issues"].append(
-                        {
-                            "source": "semgrep",
-                            "file": issue.get("path", "Unknown"),
-                            "line": issue.get("start", {}).get("line", 0),
-                            "severity": severity,
-                            "type": issue.get("check_id", ""),
-                            "description": issue.get("extra", {}).get("message", ""),
-                        }
-                    )
-                    analysis["severity_counts"][severity] += 1
-
-            elif source == "custom-security-report.json":
-                issues = data.get("issues", [])
-                for issue in issues:
-                    severity = issue.get("severity", "low").lower()
-                    analysis["issues"].append(
-                        {
-                            "source": "custom",
-                            "file": issue.get("file", "Unknown"),
-                            "line": issue.get("line", 0),
-                            "severity": severity,
-                            "type": issue.get("type", ""),
-                            "description": issue.get("description", ""),
-                        }
-                    )
-                    analysis["severity_counts"][severity] += 1
-
-        analysis["total_issues"] = len(analysis["issues"])
-        return analysis
-
-    def analyze_secrets_results(self) -> dict:
-        """Analyze secrets scan results."""
-        analysis = {
-            "secrets": [],
-            "total_secrets": 0,
-            "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-        }
-
-        for result in self.scan_results["secrets"]["data"]:
-            source = result["source"]
-            data = result["data"]
-
-            if source == "custom-secrets-report.json":
-                findings = data.get("all_findings", [])
-                for finding in findings:
-                    severity = finding.get("severity", "LOW").lower()
-                    analysis["secrets"].append(
-                        {
-                            "source": "custom",
-                            "file": finding.get("file", "Unknown"),
-                            "line": finding.get("line", 0),
-                            "severity": severity,
-                            "type": finding.get("type", ""),
-                            "match": finding.get("match", ""),
-                        }
-                    )
-                    analysis["severity_counts"][severity] += 1
-
-        analysis["total_secrets"] = len(analysis["secrets"])
-        return analysis
-
-    def map_severity(self, vuln_id: str, scan_type: str) -> str:
-        """Map vulnerability severity based on ID and type."""
-        # Simple heuristic mapping - in practice, use CVE scores
-        if any(indicator in vuln_id.upper() for indicator in ["CVE-", "CRITICAL", "HIGH"]):
-            return "high"
-        elif any(indicator in vuln_id.upper() for indicator in ["MEDIUM", "MODERATE"]):
-            return "medium"
-        else:
-            return "low"
-
-    def map_bandit_severity(self, severity: str) -> str:
-        """Map Bandit severity to standard levels."""
-        mapping = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
-        return mapping.get(severity.upper(), "low")
-
-    def map_semgrep_severity(self, severity: str) -> str:
-        """Map Semgrep severity to standard levels."""
-        mapping = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
-        return mapping.get(severity.upper(), "low")
-
-    def calculate_overall_summary(self):
-        """Calculate overall security summary."""
-        dependency_analysis = self.analyze_dependency_results()
-        static_analysis = self.analyze_static_analysis_results()
-        secrets_analysis = self.analyze_secrets_results()
-
-        # Aggregate counts
-        self.summary["total_issues"] = (
-            len(dependency_analysis["vulnerabilities"])
-            + static_analysis["total_issues"]
-            + secrets_analysis["total_secrets"]
-        )
-
-        # Aggregate severity counts
-        for analysis in [dependency_analysis, static_analysis, secrets_analysis]:
-            severity_counts = analysis.get("severity_counts", {})
-            self.summary["critical_issues"] += severity_counts.get("critical", 0)
-            self.summary["high_issues"] += severity_counts.get("high", 0)
-            self.summary["medium_issues"] += severity_counts.get("medium", 0)
-            self.summary["low_issues"] += severity_counts.get("low", 0)
-
-        # Determine overall status
-        if self.summary["critical_issues"] > 0:
-            self.summary["overall_status"] = "CRITICAL"
-        elif self.summary["high_issues"] > 0:
-            self.summary["overall_status"] = "HIGH"
-        elif self.summary["medium_issues"] > 0:
-            self.summary["overall_status"] = "MEDIUM"
-        elif self.summary["low_issues"] > 0:
-            self.summary["overall_status"] = "LOW"
-        else:
-            self.summary["overall_status"] = "PASS"
+    def __init__(self, findings_path: str = "security-findings.json"):
+        self.summary = json.loads(Path(findings_path).read_text(encoding="utf-8"))["summary"]
 
     def generate_html_dashboard(self) -> str:
         """Generate HTML security dashboard."""
@@ -362,6 +111,7 @@ class SecurityReportGenerator:
         lines.append(f"- **High**: {self.summary['high_issues']}")
         lines.append(f"- **Medium**: {self.summary['medium_issues']}")
         lines.append(f"- **Low**: {self.summary['low_issues']}")
+        lines.append(f"- **No severity given by the tool**: {self.summary['unknown_issues']}")
         lines.append("")
 
         lines.append("## Scan Status")
@@ -373,31 +123,14 @@ class SecurityReportGenerator:
         return "\n".join(lines)
 
     def save_reports(self):
-        """Save all security reports."""
-        # Generate comprehensive findings JSON
-        findings = {
-            "summary": self.summary,
-            "dependency_analysis": self.analyze_dependency_results(),
-            "static_analysis": self.analyze_static_analysis_results(),
-            "secrets_analysis": self.analyze_secrets_results(),
-            "scan_results": self.scan_results,
-        }
-
-        with open("security-findings.json", "w") as f:
-            json.dump(findings, f, indent=2)
-
-        # Generate HTML dashboard
-        html_dashboard = self.generate_html_dashboard()
+        """Save the dashboard and the markdown summary."""
         with open("security-dashboard.html", "w") as f:
-            f.write(html_dashboard)
+            f.write(self.generate_html_dashboard())
 
-        # Generate markdown summary
-        markdown_summary = self.generate_markdown_summary()
         with open("security-summary.md", "w") as f:
-            f.write(markdown_summary)
+            f.write(self.generate_markdown_summary())
 
         print("📊 Security reports generated:")
-        print("  - security-findings.json")
         print("  - security-dashboard.html")
         print("  - security-summary.md")
 
@@ -409,18 +142,11 @@ class SecurityReportGenerator:
                 f"⚠️ Found {self.summary['critical_issues']} critical and {self.summary['high_issues']} high severity issues!"
             )
 
-    def run(self):
-        """Run the complete report generation process."""
-        print("📊 Generating comprehensive security report...")
-        self.load_scan_results()
-        self.calculate_overall_summary()
-        self.save_reports()
-
 
 def main():
     """Main entry point."""
-    generator = SecurityReportGenerator()
-    generator.run()
+    print("📊 Generating comprehensive security report...")
+    SecurityReportGenerator().save_reports()
 
 
 if __name__ == "__main__":
