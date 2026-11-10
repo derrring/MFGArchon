@@ -207,10 +207,8 @@ def performance_logged(
             op_name = operation_name or func.__name__
 
             # Memory tracking (if requested)
-            memory_enabled = include_memory  # Capture closure variable
             memory_before = 0.0
-            process = None
-            if memory_enabled:
+            if include_memory:
                 import psutil
 
                 process = psutil.Process()
@@ -223,7 +221,7 @@ def performance_logged(
 
             # Collect metrics
             metrics = {}
-            if memory_enabled and process is not None:
+            if include_memory:
                 memory_after = process.memory_info().rss / 1024 / 1024  # MB
                 metrics["memory_delta"] = f"{memory_after - memory_before:.1f}MB"
                 metrics["memory_peak"] = f"{memory_after:.1f}MB"

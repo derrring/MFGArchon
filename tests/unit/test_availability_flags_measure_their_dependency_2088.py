@@ -2,8 +2,8 @@
 
 polars: `mfgarchon.utils.POLARS_AVAILABLE` and `mfgarchon.utils.data.POLARS_AVAILABLE` were set `True` by a guard around
 `utils.data.polars_integration`, which imports without polars, so they read `True` without it. They now re-export that
-module's own flag. psutil's two flags were deleted when psutil became a plain import (#2930): a required package has no
-availability flag.
+module's own flag. psutil's two flags were deleted when psutil became a plain import (#2930): a required package is to
+have no availability flag, which #2930's later stages complete for the others.
 
 Every case runs in a fresh interpreter pointed at this tree explicitly, because under `PYTHONSAFEPATH=1` it would
 resolve `mfgarchon` from the editable install instead (see `test_utils_does_not_import_alg.py`). The case refuses the

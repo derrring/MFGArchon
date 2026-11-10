@@ -1,10 +1,11 @@
-- **There is one install, and every package in `[project].dependencies` is required** (#2930). A missing one is Python's own `ModuleNotFoundError`.
-  - **The `core` extra is deleted, with its comments.** It documented a minimal install of five packages under which `import mfgarchon` failed. So is `typing-inspection` from the dependencies: nothing imports it, and pydantic still installs it.
-  - **psutil is a plain import.** `mfgarchon.utils.MEMORY_MANAGEMENT_AVAILABLE` and `PERFORMANCE_MONITORING_AVAILABLE` are deleted, and `mfgarchon.utils` always exports the memory-management and performance-monitoring names.
-  - **Six fallbacks that ran without psutil are deleted:**
+- **There is one base install, and every package in `[project].dependencies` is required** (#2930). For psutil, a missing one is now Python's own `ModuleNotFoundError`; #2930's later stages extend that to the other required packages.
+  - **The `core` extra is deleted, with its comments.** It documented a minimal install of six packages under which `import mfgarchon` failed. So is `typing-inspection` from the dependencies: nothing imports it, and pydantic still installs it.
+  - **psutil is a plain import at its six guarded sites, and its fallbacks are deleted:**
+    - `mfgarchon.utils` loses `MEMORY_MANAGEMENT_AVAILABLE` and `PERFORMANCE_MONITORING_AVAILABLE`, and always exports the memory-management and performance-monitoring names;
     - `NumPyBackend.memory_usage()` now always returns a dict;
     - `WatchdogHook`'s memory limit is now measured rather than read as 0.0;
     - `PerformanceHook` loses `psutil_available` and `psutil`;
     - `performance_logged(include_memory=True)` no longer turns tracking off with a warning;
     - `log_memory_usage` no longer logs the peak alone.
-  - **Documents that called a required package optional now point at the owner.** These are README.md's list (pinned equal to it), the benchmark and example READMEs, the notebook execution guide's install section, the hooks guide's `PerformanceHook` example, and AGENTS.md.
+  - **README.md's default-install list loses typing-inspection** and is pinned equal to `[project].dependencies`.
+  - **Documents now point at the owner.** The benchmark, example and `mfgarchon/utils` READMEs, and the notebook execution guide's install steps, called a required package optional or offered a smaller install. AGENTS.md's package line is the user's rule. The hooks guide's `PerformanceHook` example imports psutil plainly.

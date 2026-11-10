@@ -145,12 +145,12 @@ Generated outputs and visualizations (gitignored, auto-regenerated).
 
 ## Requirements
 
-**Core**:
+**Install**:
 ```bash
 pip install mfgarchon   # every package in pyproject.toml's [project].dependencies
 ```
 
-**Full** (all features):
+**Notebooks and accelerators**:
 ```bash
 pip install jupyter
 pip install jax jaxlib  # Optional: GPU acceleration

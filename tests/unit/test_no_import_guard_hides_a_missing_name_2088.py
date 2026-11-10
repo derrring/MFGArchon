@@ -26,8 +26,8 @@ import function reached through `getattr`; `runpy`; loading by path (`importlib.
 source text (`exec`, `compile`); and a guard around a call into a helper that imports. A census reports only what its
 predicate reaches, and #2088's own census first missed a guarded `import_module` for exactly that reason.
 
-An allowed guard catches an absent package of an optional extra and nothing else, and carries its reason. A package in
-`[project].dependencies` is never one (#2930). This test checks only that each allowance still covers a guard; an
+An allowed guard catches an absent package outside `[project].dependencies` (#2930) and nothing else, and carries its
+reason. This test checks only that each allowance still covers a guard; an
 allowance that covers none fails, so a guard that is removed takes its allowance with it. None is allowed today.
 """
 
@@ -99,8 +99,8 @@ def test_no_guard_hides_an_internal_import():
     assert unexplained == [], (
         "An `except ImportError` guards an import from the library itself. If a name it imports does not exist, the "
         "guard turns that into a silent fallback (#2088). Let the import fail, or narrow the handler to the absent "
-        "package of an optional extra, never one in [project].dependencies (#2930), and add it to ALLOWED with its "
-        f"reason:\n{unexplained}"
+        "package outside [project].dependencies (#2930), and add it to ALLOWED with its reason:\n"
+        f"{unexplained}"
     )
     stale = sorted(set(ALLOWED) - {(hit[0], hit[2]) for hit in found})
     assert stale == [], f"An allowance covers no guard any more; delete it: {stale}"
