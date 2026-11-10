@@ -5,10 +5,12 @@ Each scan job in `.github/workflows/security.yml` runs its tools, then runs this
 
     security_findings.py <job> <tool>=<report> ... [trufflehog.log=<log>]
 
-From TruffleHog's log it reads only the two integers its final "finished scanning" line carries. It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that file alone. A
-tool's matched text, code lines, messages, descriptions and every other field of its report stay on the runner. It
-prints each report's status and the number of findings it read, never a value read from a report. It exits 1 when a
-report is missing, cannot be read, or says its tool did not finish, after writing the file.
+It parses each line of TruffleHog's log for its message, and carries only the two integers of the final "finished
+scanning" line. It writes `<job>-findings.json`, whose findings hold only the keys in FIELDS, and the job uploads that
+file alone. A tool's matched text, code lines, messages, descriptions and every other field of its report stay on the
+runner. It prints each report's status, the number of findings it read and how much the tool scanned, which must be
+integers of 0 or more, never a string from a report. It exits 1 when a report is missing, cannot be read, says its tool
+did not finish, or shows that it scanned nothing, after writing the file.
 
 The summary job downloads the five per-job files into one directory, which their unique names allow, and runs
 
@@ -177,7 +179,8 @@ def _custom_secrets_scan(report):
 
 
 def _trivy(report):
-    # pkg/report/writer.go: every report trivy writes carries SchemaVersion 2; Results is omitted when empty.
+    # pkg/report/writer.go defines SchemaVersion 2 and pkg/scan/service.go sets it on every report trivy writes;
+    # Results is omitted when empty.
     if not isinstance(report, dict) or "SchemaVersion" not in report:
         raise TypeError("not a trivy report")
     for result in report.get("Results", []):
@@ -284,13 +287,14 @@ def _container_security_check_counts(report):
 
 
 def _trivy_counts(report):
-    # pkg/scan/ospkg/scan.go returns a result for a detected OS whether or not it has vulnerabilities, the language
-    # scanner one per application, and pkg/report/json.go keeps every result that names a target.
+    # pkg/scan/ospkg/scan.go returns a result for a detected OS family that has OS packages, whether or not they have
+    # vulnerabilities; pkg/scan/langpkg/scan.go one per application that has packages; and pkg/report/json.go keeps
+    # every result that names a target. Where trivy writes no result, the count is lower, never higher.
     return sum(result.get("Class") in ("os-pkgs", "lang-pkgs") for result in report.get("Results", [])), None
 
 
 def _custom_secrets_scan_counts(report):
-    # It reads every tracked file; one it cannot read stops the scan, which then writes no report.
+    # It reads every tracked regular file; one it cannot read stops the scan, which then writes no report.
     return report["summary"]["text_files_scanned"], None
 
 
@@ -300,7 +304,7 @@ def _custom_security_checks_counts(report):
 
 def _trufflehog_log_counts(lines):
     # main.go: with --json the log is JSON on stderr, and a scan that finishes logs "finished scanning" with the
-    # chunks and bytes it scanned. Only those two integers are read from the log.
+    # chunks and bytes it scanned. Each line is parsed for its message; only those two integers are carried.
     for line in lines:
         try:
             entry = json.loads(line)
@@ -308,9 +312,10 @@ def _trufflehog_log_counts(lines):
             continue
         if isinstance(entry, dict) and entry.get("msg") == "finished scanning":
             chunks, scanned_bytes = entry["chunks"], entry["bytes"]
-            if not isinstance(chunks, int) or not isinstance(scanned_bytes, int):
+            if type(chunks) is not int or type(scanned_bytes) is not int:
                 raise TypeError("counts")
-            return (chunks if scanned_bytes else 0), None
+            return (chunks if scanned_bytes > 0 else 0), None
+    # No such line: the scan did not finish. TruffleHog exits 0 on a signal (main.go), so its exit code cannot say so.
     return 0, None
 
 
@@ -376,6 +381,11 @@ def findings_for(job, reports):
                     scanned, errors = _LOG_COUNTS[tool](lines)
                 else:
                     scanned, errors = _COUNTS[tool](report)
+                # A count is an integer of 0 or more: it is written to the upload and printed. Only `errors` may be
+                # None, where the report does not say.
+                counted = [scanned] if errors is None else [scanned, errors]
+                if any(type(count) is not int or count < 0 for count in counted):
+                    raise ValueError("counts")
                 counts = {"scanned": scanned, **({"errors": errors} if errors is not None else {})}
                 # A tool that scanned nothing, or could scan none of what it found, did not run a scan.
                 if scanned == 0 or (errors is not None and errors >= scanned):

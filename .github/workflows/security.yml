@@ -11,11 +11,18 @@ name: Security Scanning Pipeline
 # What leaves the runner: each scan job uploads one file, <job>-findings.json, which
 # .github/scripts/security_findings.py writes from its allow-list of fields, FIELDS. Every scanner's
 # stdout and stderr go to a file under $RUNNER_TEMP, and its report to $RUNNER_TEMP or the workspace;
-# neither reaches the job log or an upload. Every call-out a flag turns off is off: TruffleHog's
-# verification and update check, detect-secrets' verification, Semgrep's metrics and version check,
-# Trivy's telemetry and version check, Safety's optional telemetry and its upload of results. Safety's
-# announcements request has no flag; it sends Safety's version and source. A scan that did not run,
-# did not finish or scanned nothing is not read as a clean one: the summary reads INCOMPLETE.
+# neither reaches the job log or an upload. Every call-out a flag turns off on a fresh runner is off:
+# TruffleHog's verification and update check, detect-secrets' verification, Semgrep's metrics and
+# version check, Trivy's telemetry, version check and dependency lookups, Safety's optional telemetry
+# and its upload of results. Still on: the database downloads of Trivy (--skip-db-update and
+# --skip-java-db-update fail on a first run) and Safety (--db needs a local database), Safety's
+# announcements request, pip-audit's lookups and Semgrep's rule fetch. Safety's requests carry a client
+# id and a User-Agent with the OS, architecture and Python version; none of it is repository text.
+#
+# A scan that did not run, did not finish or scanned nothing is not read as a clean one: the summary
+# reads INCOMPLETE. Four cases are not caught: a detect-secrets scan of nothing, and the files that
+# detect-secrets, TruffleHog or Trivy could not scan. Each tool records them only in log lines, not in
+# an integer field; detect-secrets logs them only with -v, and Trivy only with --debug.
 
 on:
   workflow_dispatch:  # Manual trigger only to reduce costs
@@ -213,7 +220,7 @@ jobs:
     - name: Run Trivy vulnerability scan
       run: |
         echo "🔍 Scanning container for vulnerabilities..."
-        trivy image --disable-telemetry --skip-version-check --format json --output "$RUNNER_TEMP/trivy.json" mfgarchon-security-scan:latest > "$RUNNER_TEMP/trivy.log" 2>&1 || true
+        trivy image --disable-telemetry --skip-version-check --offline-scan --format json --output "$RUNNER_TEMP/trivy.json" mfgarchon-security-scan:latest > "$RUNNER_TEMP/trivy.log" 2>&1 || true
 
     - name: Install Hadolint
       run: |
@@ -356,6 +363,6 @@ jobs:
         python .github/scripts/check_critical_issues.py
 
         # It exits non-zero when a scan job's results are missing or incomplete, or when the findings
-        # cross its thresholds: dependency vulnerabilities, static analysis, detect-secrets and TruffleHog,
-        # trivy's vulnerabilities and hadolint, and licenses. The custom secrets scan and the container
-        # configuration check fail their own jobs instead.
+        # cross its thresholds: dependency vulnerabilities, Bandit and Semgrep, the custom security checks,
+        # detect-secrets and TruffleHog, trivy's vulnerabilities and hadolint, and licenses. The custom
+        # secrets scan and the container configuration check fail their own jobs instead.

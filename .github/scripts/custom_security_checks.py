@@ -147,7 +147,7 @@ class CustomSecurityChecker:
         for py_file in self.package_root.rglob("*.py"):
             try:
                 content = self._read(py_file)
-                tree = ast.parse(content)
+                tree = self._parse(py_file, content)
 
                 for node in ast.walk(tree):
                     if isinstance(node, ast.FunctionDef):
@@ -425,6 +425,14 @@ class CustomSecurityChecker:
             raise
         self.files_read.add(str(path))
         return text
+
+    def _parse(self, path: Path, content: str) -> ast.Module:
+        """Parse a file the input-validation check scans; one it cannot parse counts as unreadable."""
+        try:
+            return ast.parse(content)
+        except Exception:
+            self.files_unreadable.add(str(path))
+            raise
 
     def _get_surrounding_context(self, content: str, line_num: int, context: int = 5) -> str:
         """Get surrounding context around a line."""
