@@ -8,7 +8,7 @@
   - **What does not change:** a search that succeeds returns what it returned before, and the 1-D grid searches of `DualHamiltonian` and `DualLagrangian` are unchanged.
   - **A Lagrangian or Hamiltonian with a kink, through the numerical members, can now raise at points where the value returned was right.**
     - Where: the n-D `conjugate_argmax` and `proximal`, `DualHamiltonian` (its value and `dp`) and `DualLagrangian` (its value and `d_alpha`).
-    - Why: L-BFGS-B's line search stops ABNORMAL where the optimum sits on a kink, and the point it stopped at can be the optimum. That is p = 0 when the kink is at alpha = 0, as for an L1 cost.
+    - Why: L-BFGS-B's line search can stop ABNORMAL where the optimum sits on a kink, and the point it stopped at can be the optimum. At p = 0 the search starts at alpha = 0, so it is refused when L is minimised on a kink there, as the L1 cost is.
     - Some wrong values still return, because scipy reports success there.
     - A method whose verdict means something for such an objective is #2644's stage 2. #2939 holds the measurement.
 - **The inner-failure owner moves to `utils/`, beside `ConvergenceError`:** `mfgarchon.utils.exceptions.report_inner_failure`.
