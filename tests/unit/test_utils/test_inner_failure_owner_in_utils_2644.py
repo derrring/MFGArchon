@@ -75,11 +75,25 @@ def test_the_hjb_wrapper_hands_its_failure_to_the_owner():
         report_inner_solve_failure(_hjb_failure(), policy="raise", record=None, solver="AMember")
     frames = [(frame.name, frame.filename) for frame in traceback.extract_tb(raised.value.__traceback__)]
     assert frames[-1] == ("report_inner_failure", exceptions.__file__), frames
+    assert (raised.value.solver_type, raised.value.iterations, raised.value.residual) == ("AMember", 4, 2.0)
     assert str(raised.value) == (
         "AMember did not converge at t_idx=7: budget exhausted after 4 step(s), residual 2.000e+00 against a tolerance "
         "of 1.000e-06 (m). The iterate for this time step is not a root of the discrete HJB (#2644). To keep the "
         "iterate, set on_inner_failure='record' and read inner_solve_failures()."
     )
+
+
+def test_the_hjb_wrapper_refuses_a_policy_it_does_not_take():
+    """The owner records any failure B1 does not raise, so B1's own check is what refuses a policy outside its three:
+    without it, ``on_inner_failure="warn"`` would be recorded and warned."""
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import report_inner_solve_failure
+
+    record: list = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError, match="not one of 'raise', 'record' or 'fallback'"):
+            report_inner_solve_failure(_hjb_failure(), policy="warn", record=record, solver="AMember")
+    assert (record, caught) == ([], [])
 
 
 def _hjb_member(record, policy):

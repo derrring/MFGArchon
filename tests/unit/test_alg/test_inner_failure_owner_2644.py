@@ -1,6 +1,7 @@
 """An inner nonlinear iteration that exhausts its budget hands its failure to one owner (#2644).
 
-The owner, `base_hjb.report_inner_solve_failure`, raises a `ConvergenceError` by default; under
+The HJB wrapper, `base_hjb.report_inner_solve_failure`, hands the failure to the one owner,
+`mfgarchon.utils.exceptions.report_inner_failure`, which raises a `ConvergenceError` by default; under
 `on_inner_failure="record"` it keeps the iterate, records the step for `inner_solve_failures()`, and warns. A coupled
 solve records for its sweeps and reads the record at its verdict (#1878). Before, the members said nothing, or wrote a
 log line no caller could see, and the record had one producer and one reader, so a `BlockIterator` over failed inner

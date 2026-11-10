@@ -3,11 +3,21 @@
     - `LagrangianBase.conjugate_argmax`, which `optimal_control` and `evaluate_hamiltonian` read, and `LagrangianBase.proximal`, each in 1-D and in n-D;
     - the n-D searches of `DualHamiltonian` (its value and `dp`) and of `DualLagrangian` (its value and `d_alpha`);
     - the Moreau-Yosida prox of a control cost that has no closed form.
-  - **What was returned:** each read scipy's `x` or `fun` whatever scipy reported. For example, a bounded search that spent its 500 evaluations, an L-BFGS-B search that stopped ABNORMAL, and a Brent search that found no bracket all handed back a point.
+  - **What was returned:** each read scipy's `x` or `fun` whatever scipy reported. For example, a bounded search that spent its 500 evaluations, an L-BFGS-B search that stopped ABNORMAL, and a Brent search that found no bracket all handed back what they stopped at, a point or NaN, as the answer.
   - **The message** names the method and its input, the routine, scipy's own message, and the point and value the search stopped at.
   - **What does not change:** a search that succeeds returns what it returned before, and the 1-D grid searches of `DualHamiltonian` and `DualLagrangian` are unchanged.
+  - **A Lagrangian or Hamiltonian that is not differentiable, in 2-D or more, can now raise where the returned value was right.** L-BFGS-B's line search stops ABNORMAL at a kink, even on the maximiser.
+    - Measured on the library's `L1ControlCost` (lambda 1) over 49 momenta in 2-D:
+      - `DualHamiltonian`, its value and `dp`, raises at 18, p = 0 among them, where the point it stopped at is the maximiser;
+      - the n-D `conjugate_argmax` raises at 30, p = 0 among them;
+      - `DualLagrangian` over the L1 Hamiltonian raises at 6;
+      - `proximal` raises at none.
+    - So a solve that evaluates such an H through `DualHamiltonian` or `conjugate_argmax` stops at its first evaluation of p = 0.
+    - Before, `DualHamiltonian` returned values that were wrong at about a third of those momenta, with no error.
+    - scipy's success does not certify the point: some wrong values still report success and are returned.
+    - A method whose verdict means something for a non-smooth objective is #2644's stage 2.
 - **The inner-failure owner moves to `utils/`, beside `ConvergenceError`:** `mfgarchon.utils.exceptions.report_inner_failure`.
   - It raises by default, or records and warns under `"record"`.
-  - `core/` and `geometry/` can reach it, which they could not while it lived under `alg/`.
+  - `core/` and `geometry/` reach it without importing from `alg/`, which the layering rule says they should not (#2938).
   - The HJB solvers' `base_hjb.report_inner_solve_failure` is now one caller of it. Its `on_inner_failure` values, its raise and record messages and the frame its warning names are unchanged.
   - A failure under `"record"` or `"fallback"` with no record begun is refused in the owner's words, which no longer name the policy.
