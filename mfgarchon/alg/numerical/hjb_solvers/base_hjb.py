@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numbers
-import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -109,43 +108,37 @@ def report_inner_solve_failure(
     solver: str,
     steps_unit: str = "step(s)",
 ) -> None:
-    """The one owner of an inner nonlinear solve that stopped without a root (#2644).
+    """An HJB inner nonlinear solve that stopped without a root, in the HJB's words, handed to the one owner,
+    ``mfgarchon.utils.exceptions.report_inner_failure`` (#2644).
 
-    Every inner iteration that can exhaust its budget hands its failure here and says nothing itself, so the
+    Every HJB inner iteration that can exhaust its budget hands its failure here and says nothing itself, so the
     caller gets one answer in one channel: a ``ConvergenceError`` under "raise", or a record and one
     ``RuntimeWarning`` under "record". A ``logger.warning`` was the channel before, and no warning filter and no
     result could see it.
     """
-    from mfgarchon.utils.exceptions import ConvergenceError
+    from mfgarchon.utils.exceptions import report_inner_failure
 
+    if policy not in ("raise", "record", "fallback"):
+        raise ValueError(
+            f"{solver}: on_inner_failure is {policy!r}, not one of 'raise', 'record' or 'fallback' (#2644)."
+        )
     message = (
         f"{solver} did not converge at t_idx={failure.t_idx}: {failure.reason} after {failure.steps} {steps_unit}, "
         f"residual {failure.residual:.3e} against a tolerance of {failure.tolerance:.3e} ({failure.measure}). The "
         "iterate for this time "
         "step is not a root of the discrete HJB (#2644)."
     )
-    if policy == "raise":
-        raise ConvergenceError(
-            solver,
-            failure.steps,
-            failure.residual,
-            message + " To keep the iterate, set on_inner_failure='record' and read inner_solve_failures().",
-        )
-    if policy not in ("record", "fallback"):
-        raise ValueError(
-            f"{solver}: on_inner_failure is {policy!r}, not one of 'raise', 'record' or 'fallback' (#2644)."
-        )
-    if record is None:
-        # Dropping it would leave the solve's record empty, so a coupler reading it would certify over this step
-        # (#2644 review 1, S9).
-        raise RuntimeError(
-            f"{solver}: an inner failure under on_inner_failure={policy!r} has no record to go to, because this solve "
-            "began none. A solver whose inner solve iterates begins one on entry (#2644)."
-        )
-    record.append(failure)
-    warnings.warn(
-        message + " A coupled solve reads inner_solve_failures() and does not report convergence over it (#1878).",
-        RuntimeWarning,
+    report_inner_failure(
+        failure,
+        message,
+        solver=solver,
+        steps=failure.steps,
+        residual=failure.residual,
+        # "fallback" has already retried when a failure reaches here, and records as "record" does.
+        policy="raise" if policy == "raise" else "record",
+        record=record,
+        on_raise=" To keep the iterate, set on_inner_failure='record' and read inner_solve_failures().",
+        on_record=" A coupled solve reads inner_solve_failures() and does not report convergence over it (#1878).",
         stacklevel=3,
     )
 

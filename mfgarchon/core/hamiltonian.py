@@ -83,11 +83,30 @@ from mfgarchon.types.callable_protocols import (
     refuse_overridden,
     spread_samples,
 )
+from mfgarchon.utils.exceptions import report_inner_failure
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from numpy.typing import NDArray
+    from scipy.optimize import OptimizeResult
+
+
+def _check_minimiser(res: OptimizeResult, where: str, routine: str, at: str) -> None:
+    """Hand scipy's result to the one owner unless ``routine`` reports success; the owner raises (#2644 B2). A
+    minimiser that stopped without success hands back a point that is not known to be the optimum, and the value or
+    the argmax read off it was returned as if it were."""
+    if not res.success:
+        report_inner_failure(
+            res,
+            f"{where} at {at}: scipy's {routine} stopped without success after {res.nit} iterations and {res.nfev} "
+            f"evaluations ({' '.join(str(res.message).split())}). scipy reported x={np.atleast_1d(res.x).tolist()} "
+            f"and fun={float(res.fun)!r}; that x is not known to be the optimum, and fun is scipy's, not known to be "
+            "the objective at x (#2644).",
+            solver=where,
+            steps=int(res.nit),
+            residual=float("nan"),
+        )
 
 
 def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: float) -> NDArray | float:
@@ -663,6 +682,7 @@ class _MoreauYosidaControlCost(ControlCostBase):
                 res = minimize_scalar(
                     lambda q, _pi=pi: float(self.base.evaluate(np.array([q]))) + (_pi - q) ** 2 / (2 * self.epsilon)
                 )
+                _check_minimiser(res, f"{type(self).__name__}._prox_h", "minimize_scalar (Brent)", f"p={pi!r}")
                 result.flat[i] = res.x
             return result
 
@@ -1959,6 +1979,9 @@ class LagrangianBase(MFGOperatorBase):
                 return -(-p_val * a - float(self(x=x, alpha=alpha, m=m, t=t)))
 
             res = minimize_scalar(neg_objective, bounds=bounds, method="bounded")
+            _check_minimiser(
+                res, f"{type(self).__name__}.conjugate_argmax", "minimize_scalar (bounded)", f"p={p_val!r}"
+            )
             argmax = np.array([res.x])
             self._reject_fallback_truncation(argmax, used_fallback, "conjugate_argmax")
             return -argmax
@@ -1971,6 +1994,9 @@ class LagrangianBase(MFGOperatorBase):
 
         x0 = np.clip(-p_arr.ravel(), bounds[0], bounds[1])
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
+        _check_minimiser(
+            res, f"{type(self).__name__}.conjugate_argmax", "minimize (L-BFGS-B)", f"p={p_arr.ravel().tolist()}"
+        )
         self._reject_fallback_truncation(res.x, used_fallback, "conjugate_argmax")
         return -res.x
 
@@ -2077,6 +2103,9 @@ class LagrangianBase(MFGOperatorBase):
                 return float(self(x=x, alpha=alpha, m=m, t=t)) + (a - z_val) ** 2 / (2 * tau)
 
             res = minimize_scalar(objective, bounds=bounds, method="bounded")
+            _check_minimiser(
+                res, f"{type(self).__name__}.proximal", "minimize_scalar (bounded)", f"z={z_val!r}, tau={tau!r}"
+            )
             prox = np.array([res.x])
             self._reject_fallback_truncation(prox, used_fallback, "proximal")
             return prox
@@ -2088,6 +2117,9 @@ class LagrangianBase(MFGOperatorBase):
 
         x0 = np.clip(z_arr, bounds[0], bounds[1])
         res = scipy_minimize(objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
+        _check_minimiser(
+            res, f"{type(self).__name__}.proximal", "minimize (L-BFGS-B)", f"z={z_arr.tolist()}, tau={tau!r}"
+        )
         self._reject_fallback_truncation(res.x, used_fallback, "proximal")
         return res.x
 
@@ -2298,6 +2330,7 @@ class DualHamiltonian(HamiltonianBase):
             bounds = [self.alpha_bounds] * d
 
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
+            _check_minimiser(result, f"{type(self).__name__}.__call__", "minimize (L-BFGS-B)", f"p={p_flat.tolist()}")
             return float(-result.fun)
 
         except ImportError:
@@ -2368,6 +2401,9 @@ class DualHamiltonian(HamiltonianBase):
             x0 = np.clip(-p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
             bounds = [self.alpha_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
+            _check_minimiser(
+                result, f"{type(self).__name__}._find_optimal_alpha", "minimize (L-BFGS-B)", f"p={p_flat.tolist()}"
+            )
             return -result.x
 
         except ImportError:
@@ -2465,6 +2501,9 @@ class DualLagrangian(LagrangianBase):
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
+            _check_minimiser(
+                result, f"{type(self).__name__}.__call__", "minimize (L-BFGS-B)", f"alpha={alpha_flat.tolist()}"
+            )
             return float(-result.fun)
 
         except ImportError:
@@ -2543,6 +2582,9 @@ class DualLagrangian(LagrangianBase):
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
+            _check_minimiser(
+                result, f"{type(self).__name__}._find_optimal_p", "minimize (L-BFGS-B)", f"alpha={alpha_flat.tolist()}"
+            )
             return -result.x
 
         except ImportError:

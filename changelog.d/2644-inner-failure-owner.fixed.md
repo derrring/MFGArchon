@@ -1,5 +1,5 @@
 - **An inner nonlinear iteration that exhausts its budget no longer hands back its last iterate as the answer** (Issue #2644, #2673).
-  - **One owner:** `base_hjb.report_inner_solve_failure`. Every member hands its failure there:
+  - **One owner:** `mfgarchon.utils.exceptions.report_inner_failure`, which the HJB solvers reach through `base_hjb.report_inner_solve_failure`. Every member hands its failure there:
     - HJB-FDM's 1-D Newton, its nD Newton and value iteration;
     - the weak-form Newton (HJB-FEM, meshless Galerkin);
     - HJB-GFDM's Newton;

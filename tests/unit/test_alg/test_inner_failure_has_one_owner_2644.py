@@ -1,5 +1,6 @@
 """The structural guard for #2644: an inner iteration under `alg/` that can stop without converging hands its failure to
-one owner, `base_hjb.report_inner_solve_failure` (directly, or through `BaseHJBSolver._inner_solve_failed`).
+the one owner, `mfgarchon.utils.exceptions.report_inner_failure`: directly, through the HJB wrapper
+`base_hjb.report_inner_solve_failure`, or through `BaseHJBSolver._inner_solve_failed`.
 
 **Population**, by structure and never by what a loop does on exhaustion: plan_B's two census predicates, ported
 here.
@@ -20,7 +21,8 @@ Each member's loop count is pinned, so a second loop inside a member fails even 
 
 **Known blind spots**, as plan_B's census states them: tolerances under other names; fixed-count iterations with no
 test; recursion; iterations inside third-party code and callables passed in; anything outside `mfgarchon/alg/` (the
-geometry projections and `core/` minimisers are #2644's B2 rows); and a member that calls the owner on one path and
+geometry projections are #2644's B2 rows; `core/hamiltonian.py`'s minimisers report to the owner since B2 stage 1, held by
+`tests/unit/test_core/test_hamiltonian_minimisers_report_to_the_owner_2644.py`); and a member that calls the owner on one path and
 returns its iterate in silence on another. Also: a function built at run time (``exec``, ``types.FunctionType``), and
 an iteration written as a comprehension, which has no early exit to read.
 """
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
 TOL = re.compile(r"(tol|eps|threshold|thresh|atol|rtol|tolerance|criterion)", re.I)
 CONV = re.compile(r"converg", re.I)
 BUDGET = re.compile(r"(max|iter|budget|sweep|n_steps|num_steps|maxit|limit|n_sub|substep|n_corr|attempt)", re.I)
-OWNER = {"_inner_solve_failed", "report_inner_solve_failure"}
+OWNER = {"_inner_solve_failed", "report_inner_solve_failure", "report_inner_failure"}
 LOOPS = (ast.For, ast.While, ast.AsyncFor)
 SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
@@ -406,3 +408,24 @@ def test_a_planted_rival_is_found(package_copy, form):
         target.write_text(original)
     stem = rel.split("/alg/")[1]
     assert any(stem in v for v in violations), (form, violations)
+
+
+def test_a_loop_that_calls_the_owner_in_utils_directly_is_read_as_calling_the_owner(package_copy):
+    """A later B2 member under `alg/` may call `report_inner_failure` itself, as `core/hamiltonian.py` does. The guard
+    reads that as calling the owner: such a function is reported as a member to count, never as a loop that stops
+    without the owner."""
+    target = package_copy / "mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py"
+    original = target.read_text()
+    planted = (
+        "\n\ndef _member_calling_the_owner(u, f, max_iterations, tolerance, report_inner_failure):\n"
+        "    for _ in range(max_iterations):\n        step = f(u)\n        u = u - step\n"
+        "        if abs(step) < tolerance:\n            return u\n"
+        "    report_inner_failure(u, 'stopped', solver='S', steps=max_iterations, residual=1.0)\n"
+    )
+    try:
+        target.write_text(original + planted)
+        violations = [v for v in _violations(scan(package_copy)) if "_member_calling_the_owner" in v]
+    finally:
+        target.write_text(original)
+    assert len(violations) == 1, violations
+    assert "routes through the owner but is not a member" in violations[0], violations

@@ -1,6 +1,7 @@
 """An inner nonlinear iteration that exhausts its budget hands its failure to one owner (#2644).
 
-The owner, `base_hjb.report_inner_solve_failure`, raises a `ConvergenceError` by default; under
+The HJB wrapper, `base_hjb.report_inner_solve_failure`, hands the failure to the one owner,
+`mfgarchon.utils.exceptions.report_inner_failure`, which raises a `ConvergenceError` by default; under
 `on_inner_failure="record"` it keeps the iterate, records the step for `inner_solve_failures()`, and warns. A coupled
 solve records for its sweeps and reads the record at its verdict (#1878). Before, the members said nothing, or wrote a
 log line no caller could see, and the record had one producer and one reader, so a `BlockIterator` over failed inner
@@ -11,6 +12,7 @@ Each test is an oracle: a verdict, an identity, or a residual recomputed outside
 
 from __future__ import annotations
 
+import traceback
 import warnings
 
 import pytest
@@ -26,6 +28,7 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import InnerSolveFailure
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
+from mfgarchon.utils import exceptions
 
 
 def _problem(n=41, nt=40, dimension=1):
@@ -277,7 +280,8 @@ def test_an_owner_raise_inside_the_nd_newton_reaches_the_caller_as_itself(monkey
 
 def test_network_policy_iteration_refuses_an_exhausted_budget_and_records_it_when_asked():
     """It returned its last iterate in silence. A one-iteration budget exhausts every step of this fixture, the default
-    none (measured at ee0879d0: 20 of 20, and 0 of 20)."""
+    none (measured at ee0879d0: 20 of 20, and 0 of 20). The failure goes through `BaseHJBSolver._inner_solve_failed` and
+    is raised in the one owner's frame, `report_inner_failure`."""
     from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkPolicyIterationHJBSolver
     from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
     from mfgarchon.geometry.graph.network_geometry import GridNetwork
@@ -289,8 +293,11 @@ def test_network_policy_iteration_refuses_an_exhausted_budget_and_records_it_whe
         warnings.simplefilter("ignore")
         problem = NetworkMFGProblem(geometry=net, T=0.5, Nt=20, components=comps)
     m, g = np.ones((21, 5)) / 5, np.array([0.0, 0.0, 0.0, 0.0, 10.0])
-    with pytest.raises(ConvergenceError, match="policy iteration budget exhausted"):
+    with pytest.raises(ConvergenceError, match="policy iteration budget exhausted") as raised:
         NetworkPolicyIterationHJBSolver(problem, max_policy_iterations=1).solve_hjb_system(M_density=m, U_terminal=g)
+    frames = [(frame.name, frame.filename) for frame in traceback.extract_tb(raised.value.__traceback__)]
+    assert frames[-1] == ("report_inner_failure", exceptions.__file__), frames
+    assert "_inner_solve_failed" in [name for name, _ in frames], frames
     recording = NetworkPolicyIterationHJBSolver(problem, max_policy_iterations=1, on_inner_failure="record")
     with pytest.warns(RuntimeWarning, match="policy iteration budget exhausted"):
         recording.solve_hjb_system(M_density=m, U_terminal=g)

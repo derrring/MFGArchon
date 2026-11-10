@@ -1,0 +1,18 @@
+- **A Legendre or proximal search in `core/hamiltonian.py` that stops without success raises `ConvergenceError`, instead of returning the point it stopped at as the answer** (Issue #2644, B2 stage 1).
+  - **The calls:**
+    - `LagrangianBase.conjugate_argmax`, which `optimal_control` and `evaluate_hamiltonian` read, and `LagrangianBase.proximal`, each in 1-D and in n-D;
+    - the n-D searches of `DualHamiltonian` (its value and `dp`) and of `DualLagrangian` (its value and `d_alpha`);
+    - the Moreau-Yosida prox of a control cost that has no closed form.
+  - **What was returned:** each read scipy's `x` or `fun` whatever scipy reported. For example, a bounded search that spent its evaluation budget, an L-BFGS-B search that stopped ABNORMAL, and a Brent search that found no bracket all handed back what they stopped at, a point or NaN, as the answer.
+  - **The message** names the method and its input, the routine, scipy's own message, and the x and fun scipy reported, as scipy's.
+  - **What does not change:** a search that succeeds returns what it returned before, and the 1-D grid searches of `DualHamiltonian` and `DualLagrangian` are unchanged.
+  - **A Lagrangian or Hamiltonian with a kink, through the numerical members, can now raise at points where the value returned was right.**
+    - Where: the n-D `conjugate_argmax` and `proximal`, `DualHamiltonian` (its value and `dp`) and `DualLagrangian` (its value and `d_alpha`).
+    - Why: L-BFGS-B's line search can stop ABNORMAL where the optimum sits on a kink, and the point it stopped at can be the optimum. At p = 0 the search starts at alpha = 0, so it is refused when L is minimised on a kink there, as the L1 cost is.
+    - Some wrong values still return, because scipy reports success there.
+    - A method whose verdict means something for such an objective is #2644's stage 2. #2939 holds the measurement.
+- **The inner-failure owner moves to `utils/`, beside `ConvergenceError`:** `mfgarchon.utils.exceptions.report_inner_failure`.
+  - It raises by default, or records and warns under `"record"`.
+  - `core/` and `geometry/` reach it without importing from `alg/`, which the layering rule says they should not (#2938).
+  - The HJB solvers' `base_hjb.report_inner_solve_failure` is now one caller of it. Its `on_inner_failure` values, its raise and record messages and the frame its warning names are unchanged.
+  - A failure under `"record"` or `"fallback"` with no record begun is refused in the owner's words, which no longer name the policy.

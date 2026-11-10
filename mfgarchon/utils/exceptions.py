@@ -7,6 +7,7 @@ actionable error messages with suggested solutions.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -89,6 +90,46 @@ class ConvergenceError(MFGSolverError, RuntimeError):
             message
             or f"{solver_type} solver failed to converge after {iterations} iterations (residual: {residual:.2e})",
         )
+
+
+def report_inner_failure(
+    failure: object,
+    message: str,
+    *,
+    solver: str,
+    steps: int,
+    residual: float,
+    policy: str = "raise",
+    record: list | None = None,
+    on_raise: str = "",
+    on_record: str = "",
+    stacklevel: int = 2,
+) -> None:
+    """The one owner of an inner iteration that stopped without converging (#2644).
+
+    A member hands its failure here and says nothing itself. The failure carries its own ``message``, and the owner
+    decides by ``policy``:
+    - "raise", the default: a ``ConvergenceError`` whose text is ``message`` and ``on_raise``, carrying ``solver``,
+      ``steps`` and ``residual``;
+    - "record": ``failure`` is appended to ``record``, a list its caller reads, and one ``RuntimeWarning`` says
+      ``message`` and ``on_record``.
+
+    ``residual`` is in the member's own measure, NaN for one that has none. ``stacklevel`` is ``warnings.warn``'s,
+    counted from the caller of this function.
+    """
+    if policy == "raise":
+        raise ConvergenceError(solver, steps, residual, message + on_raise)
+    if policy != "record":
+        raise ValueError(f"{solver}: an inner failure's policy is {policy!r}; it is 'raise' or 'record' (#2644).")
+    if record is None:
+        # Dropping it would leave the solve's record empty, so a coupler reading it would certify over this step
+        # (#2644 review 1, S9).
+        raise RuntimeError(
+            f"{solver}: an inner failure to be recorded has no record to go to, because this solve began none. A "
+            "solver whose inner solve iterates begins one on entry (#2644)."
+        )
+    record.append(failure)
+    warnings.warn(message + on_record, RuntimeWarning, stacklevel=stacklevel + 1)
 
 
 class ConfigurationError(MFGSolverError):
