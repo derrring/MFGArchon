@@ -44,28 +44,23 @@ the forms on the closed list, apart from the forms stated as not read with that 
   - ``import a.b`` (binds ``a``) and ``import a.b as x``;
   - ``from M import n [as x]``;
   - ``from M import *``;
-  - ``__all__``, assigned or annotated, as a list or tuple of string literals.
+  - ``__all__``, assigned or annotated, as a list or tuple of string literals, read only when that single-target
+    assignment is the module's only mention of the name ``__all__``, at any depth (``Tree.star_exports``).
   - The body of ``if TYPE_CHECKING:`` binds nothing at run time, and its ``else`` binds as its parent does.
-- **Everything else is ambiguous.** Any other module-level statement or expression that binds a name in its
-  syntax gives that name a conditional binding: a tuple, list or starred target, an augmented assignment, a walrus
-  (in a lambda or a comprehension too), ``del``, ``for``, ``while`` and ``match`` with everything inside them,
-  ``with ... as`` and ``except ... as``, and a ``def``'s or ``class``'s decorators, defaults, annotations and
-  bases. Any other module-level statement that mentions ``__all__``, other than a ``def`` or ``class`` statement,
-  makes the star exports ambiguous.
+- **Everything else is ambiguous.** A form on the list resolves only its target; every other field it holds, such
+  as an assignment's value, an annotation or a type alias's parameters, is read as any other syntax. Any other
+  module-level statement or expression that binds a name in its syntax gives that name a conditional binding: a
+  tuple, list or starred target, an augmented assignment, a walrus (in a lambda, a comprehension or an annotation
+  too), ``del``, ``for``, ``while`` and ``match`` with everything inside them, ``with ... as`` and ``except ... as``,
+  a ``def``'s or ``class``'s decorators, defaults, annotations and bases, and a name any ``def`` or ``class`` body, at
+  any depth, declares ``global``. Any other mention of the name ``__all__``, at any depth, makes the star exports
+  ambiguous: an export decorator, ``__all__ +=``, ``.extend`` and a second name for the list all mention it.
 - **Not read** (#2945). A name bound in one of these ways keeps a wrong owner, so an upward edge through it is
   missed:
-  - a ``def`` or ``class`` statement that mentions ``__all__``, as the export decorator
-    ``def export(fn): __all__.append(fn.__name__); return fn`` does; and the annotation of an annotated
-    assignment, which Python evaluates, so ``X: (direct := f) = 1`` binds ``direct``;
-  - ``global``: a ``def`` or ``class`` body that declares a name ``global`` and binds it, as
-    ``def _load(): global direct; from pk.high.impl import direct`` does when the module calls ``_load()``. On main
-    bfe6de4d, 9 names in 6 modules are declared ``global``, and no import in the package can bind one; #2945 has
-    the command;
   - a submodule load: the first load of ``P.x``, from any module, sets ``P``'s name ``x`` to the submodule, while
     the check keeps ``P``'s own binding, such as ``def leaf()`` in ``P/__init__.py`` beside ``P/leaf.py``;
-  - two forms on the list: an ``__all__`` bound in a chained assignment and changed through its other name,
-    ``__all__ = _names = []`` and then ``_names.append("x")``; and ``from . import x`` in ``P/__init__.py`` after
-    ``P`` bound ``x``, which the check takes for the submodule while Python keeps the earlier binding;
+  - ``from . import x`` in ``P/__init__.py`` after ``P`` bound ``x``, which ``Tree.owner`` takes for the submodule
+    while Python keeps the earlier binding (``Tree.binds_submodule`` answers False there);
   - a binding that is not syntax, such as ``globals()["x"] = ...``, and the loaders named under *What a static
     check cannot follow*.
 - **Owners.** The last binding of a name wins, and a conditional last binding is ambiguous. An attribute or
@@ -390,6 +385,7 @@ class Tree:
         self.root = root
         self.package = package
         self.event_cache: dict[str, list[tuple[str, str, object, bool]]] = {}
+        self.mention_cache: dict[str, int] = {}
 
     def path_of(self, module: str) -> tuple[str | None, bool]:
         base = os.path.join(self.root, *module.split("."))
@@ -421,10 +417,11 @@ class Tree:
         The closed list of resolved forms: `def`, `async def` and `class`; an assignment whose targets are all names;
         an annotated assignment with a value to a name (`NAME: T` alone binds nothing); `type NAME = ...`; `import`;
         `from M import n`; and `from M import *`. Each is unconditional at module level and conditional inside `if`,
-        `try` or `with`. The body of `if TYPE_CHECKING:` binds nothing at run time, and its `else` runs as its parent
-        does. Any other statement or expression that binds a name in its syntax gives that name a conditional
-        binding, which resolves as ambiguous; and any other statement that mentions `__all__`, other than a `def` or
-        `class` statement, makes the star exports ambiguous. The forms #2945 lists are not read."""
+        `try` or `with`. A resolved form resolves only its target; its other fields are read as any other syntax. The
+        body of `if TYPE_CHECKING:` binds nothing at run time, and its `else` runs as its parent does. Any other
+        statement or expression that binds a name in its syntax gives that name a conditional binding, which resolves
+        as ambiguous, and so does a name a `def` or `class` body declares `global`. The mentions of `__all__` are
+        `star_exports`'s to count. The forms #2945 lists are not read."""
         if module in self.event_cache:
             return self.event_cache[module]
         tree, is_package = self.parsed(module)
@@ -436,8 +433,14 @@ class Tree:
                     out.append(("*", "star", self.absolute(module, is_package, binder), True))
                 else:
                     out.append((name, "def", binder, True))
-            if any(isinstance(x, ast.Name) and x.id == "__all__" for x in ast.walk(node)):
-                out.append(("__all__", "allmut", node, conditional))
+
+        def read_the_rest(n: ast.AST, target: str, conditional: bool) -> None:
+            """A resolved form resolves only its target: each other field is read as any other syntax (#2955)."""
+            for fieldname, value in ast.iter_fields(n):
+                if fieldname != target:
+                    for v in value if isinstance(value, list) else [value]:
+                        if isinstance(v, ast.AST):
+                            ambiguous(v, conditional)
 
         def walk(body: list[ast.stmt], conditional: bool) -> None:
             for n in body:
@@ -463,18 +466,23 @@ class Tree:
                     walk(n.body, True)
                 elif isinstance(n, SCOPES):
                     out.append((n.name, "def", None, conditional))
+                    # A name a body declares `global` is the module's when that body runs and binds it: ambiguous.
+                    for g in ast.walk(n):
+                        if isinstance(g, ast.Global):
+                            out.extend((name, "def", g, True) for name in g.names)
                     for name, binder in binders(n, into_scopes=False):
                         if binder is not n:
                             out.append((name, "def", binder, True))
                 elif isinstance(n, ast.Assign) and all(isinstance(t, ast.Name) for t in n.targets):
                     out.extend((t.id, "def", n, conditional) for t in n.targets)
-                    ambiguous(n.value, conditional)
+                    read_the_rest(n, "targets", conditional)
                 elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
                     if n.value is not None:
                         out.append((n.target.id, "def", n, conditional))
-                        ambiguous(n.value, conditional)
+                    read_the_rest(n, "target", conditional)
                 elif isinstance(n, ast.TypeAlias):
                     out.append((n.name.id, "def", None, conditional))
+                    read_the_rest(n, "name", conditional)
                 elif isinstance(n, ast.ImportFrom):
                     source = self.absolute(module, is_package, n)
                     for alias in n.names:
@@ -497,18 +505,19 @@ class Tree:
 
     def star_exports(self, module: str, seen: tuple[str, ...] = ()) -> set[str] | None:
         """The names `from module import *` binds, or None when that cannot be decided statically: a module with no file
-        in the tree (`os.path`, whose exports the check does not read), a non-literal `__all__`, or a ring of star
-        imports among them."""
+        in the tree (`os.path`, whose exports the check does not read), an `__all__` that cannot be read, or a ring of
+        star imports among them. A literal `__all__` is read only when its single-target, unconditional assignment is
+        the module's only mention of the name `__all__`, at any depth (#2955): any other mention may change it, as an
+        export decorator, `__all__ +=`, `.extend` or a second name for the list does."""
         if module in seen or not self.path_of(module)[0]:
             return None
         events = self.events(module)
-        alls = [e for e in events if e[0] == "__all__"]
-        if alls:
-            if any(e[3] for e in alls) or any(e[1] == "allmut" for e in alls):
-                return None
-            node = alls[-1][2]
+        if self.all_mentions(module):
+            alls = [e for e in events if e[0] == "__all__"]
+            node = alls[0][2] if len(alls) == 1 and not alls[0][3] else None
+            single = (isinstance(node, ast.Assign) and len(node.targets) == 1) or isinstance(node, ast.AnnAssign)
             value = getattr(node, "value", None)
-            if not isinstance(node, ast.Assign | ast.AnnAssign) or not isinstance(value, ast.List | ast.Tuple):
+            if self.all_mentions(module) != 1 or not single or not isinstance(value, ast.List | ast.Tuple):
                 return None
             if not all(isinstance(x, ast.Constant) and isinstance(x.value, str) for x in value.elts):
                 return None
@@ -521,6 +530,15 @@ class Tree:
                     return None
                 names |= sub
         return names
+
+    def all_mentions(self, module: str) -> int:
+        """How many times the name `__all__` occurs in the module, at any depth: every `Name` node with that id."""
+        if module not in self.mention_cache:
+            tree, _is_package = self.parsed(module)
+            self.mention_cache[module] = (
+                0 if tree is None else sum(isinstance(x, ast.Name) and x.id == "__all__" for x in ast.walk(tree))
+            )
+        return self.mention_cache[module]
 
     def binds_submodule(self, package: str, name: str) -> object:
         """Whether `from package import name` binds the submodule object `package.name`: True, False or AMBIGUOUS
@@ -556,7 +574,7 @@ class Tree:
                     return AMBIGUOUS
                 if name in exported:
                     return False
-        hits = [e for e in events if e[0] == name and e[1] != "allmut"]
+        hits = [e for e in events if e[0] == name]
         if not hits:
             return True
         if any(e[3] for e in hits):
@@ -584,7 +602,7 @@ class Tree:
             return module + "." + name
         hits = []
         for e in events:
-            if e[0] == name and e[1] != "allmut":  # a mention of `__all__` binds nothing
+            if e[0] == name:
                 hits.append(e)
             elif e[1] == "star":
                 exported = self.star_exports(e[2])
@@ -844,6 +862,9 @@ PARSER_FILES: dict[str, str] = {
     "pk/high/facade.py": "from pk.high.impl import *\n",
     "pk/high/lazy.py": "def f():\n    from pk.high.impl import direct\n",
     "pk/low/a_direct.py": "from pk.high.impl import direct\n",
+    "pk/low/extpkg/__init__.py": "from os.path import *\n",
+    "pk/low/extpkg/join.py": "",
+    "pk/low/use_extpkg.py": "from pk.low.extpkg import join\n",
     "pk/low/b_star.py": "from pk.high.facade import starred\n",
     "pk/low/c_funcimport.py": "from pk.high.lazy import direct\n",
     "pk/low/d_else.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n    from pk.high.impl import direct\n",
@@ -1018,6 +1039,8 @@ PK_TABLE = {"low": 0, "high": 1, "(root)": 0}
 # (importing module, name) -> (expected owner, position). An unresolved owner is "ambiguous" or "not found".
 PARSER_CASES = {
     ("pk.low.a_direct", "direct"): ("pk.high.impl", "module"),  # 1: a direct definition (the positive control)
+    # A name a star from outside the tree may bind is ambiguous, not the in-tree submodule (#2945's N4, #2955).
+    ("pk.low.use_extpkg", "join"): ("ambiguous", "module"),
     ("pk.low.b_star", "starred"): ("pk.high.impl", "module"),  # 2: a star re-export, followed to the definer
     ("pk.low.c_funcimport", "direct"): ("not found", "module"),  # 3: a name imported only inside a function
     ("pk.low.d_else", "direct"): ("pk.high.impl", "module"),  # 4: the else of TYPE_CHECKING runs
@@ -1334,6 +1357,20 @@ PATH_FILES: dict[str, str] = {
     "pt/high/p26/lazy.py": "def __getattr__(name):\n    return 42\n",
     "pt/high/p26/sub.py": "",
     "pt/low/xxvi_getattr_try.py": "from pt.high.p26 import sub\n",
+    "pt/high/p27/__init__.py": "def _load():\n    global sub\n    sub = 1\n_load()\n",
+    "pt/high/p27/sub.py": "",
+    "pt/low/xxvii_global.py": "from pt.high.p27 import sub\n",
+    "pt/high/p28/__init__.py": "X: (sub := 1) = 2\n",
+    "pt/high/p28/sub.py": "",
+    "pt/low/xxviii_annotation.py": "from pt.high.p28 import sub\n",
+    "pt/high/p29/__init__.py": "from .m import *\n",
+    "pt/high/p29/m.py": "__all__ = []\ndef export(f):\n    __all__.append(f.__name__)\n    return f\n@export\ndef sub():\n    pass\n",
+    "pt/high/p29/sub.py": "",
+    "pt/low/xxix_export_decorator.py": "from pt.high.p29 import sub\n",
+    "pt/high/p30/__init__.py": "from .m import *\n",
+    "pt/high/p30/m.py": "__all__ = _names = []\n_names.append('sub')\nsub = 1\n",
+    "pt/high/p30/sub.py": "",
+    "pt/low/xxx_chained_all.py": "from pt.high.p30 import sub\n",
 }  # fmt: skip
 # (importer, package on its path, whether the path is an edge, the row)
 PATH_CASES = [
@@ -1363,6 +1400,20 @@ PATH_CASES = [
     ("pt.low.xxiv_import_as", "pt.high.p24", True, "(xxiv) `import os as sub` in the __init__"),
     ("pt.low.xxv_cond_outside", "pt.high.p25", True, "(xxv) a conditional star from outside the tree: ambiguous"),
     ("pt.low.xxvi_getattr_try", "pt.high.p26", True, "(xxvi) a __getattr__ imported in a `try`: ambiguous"),
+    ("pt.low.xxvii_global", "pt.high.p27", True, "(xxvii) a name a function declares `global` and binds: ambiguous"),
+    ("pt.low.xxviii_annotation", "pt.high.p28", True, "(xxviii) a walrus in an annotation: ambiguous"),
+    (
+        "pt.low.xxix_export_decorator",
+        "pt.high.p29",
+        True,
+        "(xxix) a star of a module with an export decorator: ambiguous",
+    ),
+    (
+        "pt.low.xxx_chained_all",
+        "pt.high.p30",
+        True,
+        "(xxx) a star of a module whose __all__ has a second name: ambiguous",
+    ),
 ]
 # (package, name, what `Tree.binds_submodule` answers), one per name of each row: the three-way answer itself, which
 # the edge alone cannot tell apart, since a False and an AMBIGUOUS name both keep the path edge.
@@ -1395,6 +1446,10 @@ BINDS_CASES = [
     ("pt.high.p24", "sub", False, "(xxiv)"),
     ("pt.high.p25", "join", "ambiguous", "(xxv)"),
     ("pt.high.p26", "sub", "ambiguous", "(xxvi)"),
+    ("pt.high.p27", "sub", "ambiguous", "(xxvii)"),
+    ("pt.high.p28", "sub", "ambiguous", "(xxviii)"),
+    ("pt.high.p29", "sub", "ambiguous", "(xxix)"),
+    ("pt.high.p30", "sub", "ambiguous", "(xxx)"),
     ("pt", "__init__", False, "a dunder name is never the submodule"),
 ]
 
