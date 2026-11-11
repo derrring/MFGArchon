@@ -264,6 +264,20 @@ on their own basis.
 `coupling_coefficient` is **not** an alternative spelling of the control cost and must never be set
 to stand in for one.
 
+### What optimal_control returns
+
+A control has $p$'s shape: `HamiltonianBase.optimal_control` and `ControlCostBase.optimal_control`
+both say "same shape as p". Every library read of a control passes what came back through one owner,
+`checked_control` in `core/hamiltonian.py`, which refuses another shape. The refusal names the reader,
+the shapes of $p$ and $m$ it handed, and the shape that came back (#2875). No reader reshapes,
+broadcasts or indexes a return into the shape it wants. A control of another shape that once read
+right by accident is refused too: $(N,)$ for $p$ of shape $(N, 1)$, or $(1, N)$ for $(N,)$.
+
+*Not yet met (#2875): the form of $p$.* Until #2875's stage 3 sets it, FVM's 1-D wrap face hands a
+0-d $p$, and the library's own control answers it with shape $(1,)$, since it hands
+`np.atleast_1d(p)` to the cost. `checked_control` admits that return and gives it back 0-d. When
+stage 3 lands, no read hands a 0-d $p$, and the admission goes.
+
 ### What the Fokker–Planck solver receives
 
 Two channels, and each FP solver declares which one it reads (`_drift_convention`):

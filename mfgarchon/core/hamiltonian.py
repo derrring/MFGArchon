@@ -1239,6 +1239,33 @@ class Regularizer(Protocol):
         ...
 
 
+def checked_control(alpha: Any, p: Any, *, reader: str, source: Any, m: Any = None) -> NDArray:
+    """The control ``source.optimal_control`` returned for ``p``, read only if it has p's shape (#2875).
+
+    ``HamiltonianBase.optimal_control`` and ``ControlCostBase.optimal_control`` return a control of p's shape. Every
+    library read of a control passes what came back through here, so no reader takes another shape by reshaping,
+    broadcasting or indexing it. Another shape is refused, naming the reader, the source, the shapes it was handed
+    and the shape that came back (docs/user/CONVENTIONS.md, "What optimal_control returns").
+
+    *Not yet met (#2875): the form of p.* Until #2875's stage 3 sets it, FVM's 1-D wrap face hands a 0-d p, and the
+    library's own control answers with shape ``(1,)``, since it hands ``np.atleast_1d(p)`` to the cost. That return
+    is admitted and given back 0-d. When stage 3 lands, no read hands a 0-d p and this admission goes.
+    """
+    got = np.asarray(alpha)
+    wanted = np.shape(p)
+    if got.shape == wanted:
+        return got
+    if wanted == () and got.shape == (1,):
+        return got.reshape(())
+    handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
+    raise ValueError(
+        f"{reader}: {type(source).__name__}.optimal_control was handed p of shape {wanted} and {handed_m}, and "
+        f"returned shape {got.shape}. The library reads a control of p's shape, as HamiltonianBase.optimal_control "
+        f'and ControlCostBase.optimal_control document (docs/user/CONVENTIONS.md, "What optimal_control returns"; '
+        f"#2875)."
+    )
+
+
 class HamiltonianBase(MFGOperatorBase):
     """
     Abstract base for full MFG Hamiltonians H(t, x, p, m).

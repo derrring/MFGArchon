@@ -621,7 +621,9 @@ def cone_policy(u: np.ndarray, sectors: dict, control_cost: QuadraticControlCost
     z0, z1, zi = sectors["z0"], sectors["z1"], sectors["zinv"]
     du0, du1 = u[j0] - u[node], u[j1] - u[node]
     g = np.stack([zi[:, 0, 0] * du0 + zi[:, 1, 0] * du1, zi[:, 0, 1] * du0 + zi[:, 1, 1] * du1], axis=1)
-    target = control_cost.optimal_control(g)
+    from mfgarchon.core.hamiltonian import checked_control
+
+    target = checked_control(control_cost.optimal_control(g), g, reader="cone_policy", source=control_cost)
     lam0 = zi[:, 0, 0] * target[:, 0] + zi[:, 0, 1] * target[:, 1]
     lam1 = zi[:, 1, 0] * target[:, 0] + zi[:, 1, 1] * target[:, 1]
     outside = (lam0 < 0.0) | (lam1 < 0.0)
