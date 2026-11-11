@@ -136,27 +136,17 @@ print(f"Max gradient: {np.max(np.gradient(u, axis=1)):.3f}")
 ## 🐛 Still Having Issues?
 
 ### Check System Requirements
-1. **Python**: 3.7+
-2. **Required packages**: `numpy`, `matplotlib`
-3. **Optional packages**: `plotly`, `nbformat`
-4. **Jupyter**: Latest version recommended
+1. **Python and packages**: as `pyproject.toml` declares them; `pip install mfgarchon` installs every package in its `[project].dependencies`, plotly and nbformat among them
+2. **Jupyter**: Latest version recommended; it is not a dependency of mfgarchon
 
-### Minimal Installation
+### Installation
 ```bash
-pip install jupyter numpy matplotlib
-# This is sufficient to run the notebook
-```
-
-### Full Installation (Recommended)
-```bash
-pip install jupyter numpy matplotlib plotly nbformat
-# Enables all features including interactive plots
+pip install mfgarchon jupyter
 ```
 
 ### Verify Installation
 ```bash
-python -c "import numpy, matplotlib.pyplot; print('✅ Core packages OK')"
-python -c "import plotly; print('✅ Plotly OK')" 2>/dev/null || echo "⚠️ Plotly missing (fallback available)"
+python -c "import mfgarchon, plotly, nbformat; print('✅ Packages OK')"
 ```
 
 ## 🎯 Expected Output
@@ -173,6 +163,6 @@ When the notebook executes successfully, you should see:
 If you still can't execute the notebook:
 1. Check the Python script version works: `python working_demo/MFG_Working_Demo.py`
 2. Verify Jupyter installation: `jupyter --version`
-3. Try the minimal dependencies: `pip install jupyter numpy matplotlib`
+3. Install again: `pip install mfgarchon jupyter`
 
 The notebook is designed to be **foolproof** with comprehensive error handling and fallbacks. It should work in any standard Python environment with basic scientific packages.

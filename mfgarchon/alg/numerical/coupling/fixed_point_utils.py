@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import HEvalState, _population_rows
+from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
@@ -801,8 +801,9 @@ def compute_fp_velocity_field(
     Raises:
         ValueError: when the geometry's `get_grid_spacing` refuses a grid that is not uniform; when U's shape has
             no tensor grid of the problem's geometry to sit on (#2756); when a stated periodic convention contradicts
-            the grid's layout, or neither the grid nor the BC states a layout (#2910); and in nD, when ``optimal_control`` does not return
-            shape ``(N, d)``.
+            the grid's layout, or neither the grid nor the BC states a layout (#2910); and when
+            ``evaluate_optimal_control`` does not return p's shape, ``(N, 1)`` in 1-D and ``(N, d)`` in nD
+            (`checked_control`, #2875).
         NotImplementedError: handed no BC, when the problem's shared BC has a Neumann value that is not zero or a
             Robin condition; when the BC is periodic on some faces only; on a 1-D grid that wraps with its last node
             distinct from node 0, whose wrap face this does not build yet (#2910); and in nD, when
@@ -874,7 +875,16 @@ def compute_fp_velocity_field(
             cross_n = None if cross_density is None else cross_faces[min(n, cross_faces.shape[0] - 1)]
             p_n = p_faces[n].reshape(-1, 1)
             state = HEvalState(t=n * dt, x=x_arr, p=p_n, m=m_n, cross_density=cross_n)
-            alpha_faces[n] = np.ravel(H_class.evaluate_optimal_control(state))
+            alpha_faces[n] = np.ravel(
+                checked_control(
+                    H_class.evaluate_optimal_control(state),
+                    p_n,
+                    reader="compute_fp_velocity_field",
+                    method="evaluate_optimal_control",
+                    source=H_class,
+                    m=m_n,
+                )
+            )
 
         return alpha_faces
     else:
@@ -924,22 +934,18 @@ def compute_fp_velocity_field(
                 m_face = 0.5 * (np.take(m_nodes, own, axis=d) + np.take(m_nodes, across, axis=d))
                 face_shape = x_face.shape[:-1]
                 n_faces = int(np.prod(face_shape))
-                alpha_n = np.asarray(
+                p_batch = p_face.reshape(n_faces, ndim)
+                m_batch = m_face.reshape(n_faces)
+                alpha_n = checked_control(
                     H_class.evaluate_optimal_control(
-                        HEvalState(
-                            t=n * dt,
-                            x=x_face.reshape(n_faces, ndim),
-                            p=p_face.reshape(n_faces, ndim),
-                            m=m_face.reshape(n_faces),
-                        )
-                    )
+                        HEvalState(t=n * dt, x=x_face.reshape(n_faces, ndim), p=p_batch, m=m_batch)
+                    ),
+                    p_batch,
+                    reader="compute_fp_velocity_field",
+                    method="evaluate_optimal_control",
+                    source=H_class,
+                    m=m_batch,
                 )
-                if alpha_n.shape != (n_faces, ndim):
-                    raise ValueError(
-                        f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "
-                        f"{n_faces} points in {ndim}-D; it must return one control vector per point, shape "
-                        f"({n_faces}, {ndim}) (#2330)."
-                    )
                 # The last node of an axis that does not wrap has no face along it and keeps 0; a node a wrapping
                 # axis repeats takes its twin's face, the same face.
                 component = np.zeros(spatial_shape)

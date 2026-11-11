@@ -539,8 +539,10 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
-# written and this gate never invoked either. ~4.1 s for the ten in the loop (three runs: 4.1 / 4.1 / 4.1),
-# of which check_manifests is 2.0 s.
+# written and this gate never invoked either. ~4.1 s for the first ten in the loop (three runs: 4.1 / 4.1 / 4.1),
+# of which check_manifests is 2.0 s; check_layering, the eleventh, adds 0.14 s (three runs: 0.14 / 0.14 / 0.14).
+# check_layering is not a ratchet: only its self-test runs here. The gate does not run its check of the
+# package, which observes until the user puts it into CI (#2938).
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
@@ -550,7 +552,7 @@ step "Ratchet self-tests (the instruments, before their numbers)"
 # arm runs in `.github/workflows/family-emptied.yml`, which has a token anyway. Proven rather than
 # assumed: with a `gh` on PATH that exits 127 and says so, `--self-test` passes and
 # `--self-test --online` fails, so the offline pass is not an artefact of the stub being missed.
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue check_oracle_pins; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue check_oracle_pins check_layering; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"

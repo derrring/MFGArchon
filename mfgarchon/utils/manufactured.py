@@ -78,7 +78,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian
+from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian, checked_control
 from mfgarchon.types.callable_protocols import (
     EXACT_SOLUTION_SLOTS,
     BoundCallable,
@@ -247,14 +247,17 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
             f"source from a drift the solver does not use."
         )
     probes = _drift_probes(dim)
+    m_probe = np.ones(len(probes))
     alpha = np.asarray(
-        hamiltonian.optimal_control(
-            x=coordinate_tuple(np.zeros_like(probes), dim), m=np.ones(len(probes)), p=probes, t=0.0
+        checked_control(
+            hamiltonian.optimal_control(x=coordinate_tuple(np.zeros_like(probes), dim), m=m_probe, p=probes, t=0.0),
+            probes,
+            reader="manufactured._drift_coefficient",
+            source=hamiltonian,
+            m=m_probe,
         ),
         dtype=float,
     )
-    if alpha.shape != probes.shape:
-        raise NotImplementedError(f"optimal_control returned shape {alpha.shape} for probes {probes.shape}.")
     coefficient = float(alpha.flat[0] / probes.flat[0])
     if not np.allclose(alpha, coefficient * probes, rtol=1e-12, atol=1e-14):
         raise NotImplementedError(
@@ -329,11 +332,15 @@ def fp_source(
         coefficient = _drift_coefficient(hamiltonian, dim)
         grad_u = _gradient(pair.at("grad_u", t, pts), n, dim, "grad_u")
         m = _scalar(pair.at("m", t, pts), n, "m")
-        alpha = _gradient(
-            np.asarray(hamiltonian.optimal_control(x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t), dtype=float),
-            n,
-            dim,
-            "optimal_control",
+        alpha = np.asarray(
+            checked_control(
+                hamiltonian.optimal_control(x=coordinate_tuple(pts, dim), m=m, p=grad_u, t=t),
+                grad_u,
+                reader="manufactured.fp_source",
+                source=hamiltonian,
+                m=m,
+            ),
+            dtype=float,
         )
         hess_u = _hessian(pair.at("hess_u", t, pts), n, dim, "hess_u")
         grad_m = _gradient(pair.at("grad_m", t, pts), n, dim, "grad_m")

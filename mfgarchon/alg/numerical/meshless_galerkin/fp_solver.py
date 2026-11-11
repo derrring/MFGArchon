@@ -204,7 +204,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
         # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a non-quadratic Separable still
         # hits the #1542 guard below.
-        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, checked_control
 
         if not isinstance(H, SeparableHamiltonian):
             raise NotImplementedError(
@@ -225,8 +225,17 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # time. A subclass's own optimal_control may read them (#2903; docs/user/CONVENTIONS.md, "What the
         # Fokker–Planck solver receives"). Feed the IDENTICAL grad_U the solver already recovered -- that is what
         # preserves byte-identity for the library's own control.
-        velocity = H.optimal_control(
-            x=coordinate_tuple(self._disc.dof_coordinates, self._disc.dof_coordinates.shape[1]), m=m_n, p=grad_U, t=t
+        velocity = checked_control(
+            H.optimal_control(
+                x=coordinate_tuple(self._disc.dof_coordinates, self._disc.dof_coordinates.shape[1]),
+                m=m_n,
+                p=grad_U,
+                t=t,
+            ),
+            grad_U,
+            reader="MeshlessGalerkinFPSolver",
+            source=H,
+            m=m_n,
         ).T  # (dim, N): alpha* = -grad(U)/lambda
         # FP weak form (Neumann, integrate by parts): the advection contributes
         # -C_b^T to the implicit operator (M/dt + D K - C_b^T), where

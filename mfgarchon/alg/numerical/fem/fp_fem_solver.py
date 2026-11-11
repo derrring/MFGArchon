@@ -208,7 +208,7 @@ class FPFEMSolver(WeakFormFPSolver):
         # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
         # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a non-quadratic Separable still
         # hits the #1542 guard below.
-        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, checked_control
 
         if not isinstance(H, SeparableHamiltonian):
             raise NotImplementedError(
@@ -229,7 +229,9 @@ class FPFEMSolver(WeakFormFPSolver):
         # are handed (#2903; docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives").
         x_qp = self._basis.global_coordinates().value
         m_qp = self._basis.interpolate(m_n).value
-        alpha = H.optimal_control(x=tuple(x_qp), m=m_qp, p=du.grad, t=t)
+        alpha = checked_control(
+            H.optimal_control(x=tuple(x_qp), m=m_qp, p=du.grad, t=t), du.grad, reader="FPFEMSolver", source=H, m=m_qp
+        )
 
         @BilinearForm
         def advection_form(u, v, w):

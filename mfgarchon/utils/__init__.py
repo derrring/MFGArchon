@@ -138,6 +138,12 @@ from .geometry import (
     create_rectangle_obstacle,
     create_sphere_obstacle,
 )
+from .memory_management import (  # noqa: F401
+    MemoryMonitor,
+    check_system_memory_availability,
+    estimate_problem_memory_requirements,
+    memory_usage_report,
+)
 
 # =============================================================================
 # Logging utilities - DEPRECATED at this level (Issue #620 Phase 2)
@@ -180,6 +186,12 @@ from .numerical.particle.interpolation import (
 
 # PDE coefficient handling
 from .pde_coefficients import CoefficientField, check_adi_compatibility, get_spatial_grid
+from .performance.monitoring import (  # noqa: F401
+    PerformanceMonitor,
+    benchmark_solver,
+    get_performance_report,
+    performance_tracked,
+)
 from .solver_result import ConvergenceResult, MFGSolverResult, SolverResult, create_solver_result
 from .sparse_operations import (
     SparseMatrixBuilder,
@@ -188,43 +200,10 @@ from .sparse_operations import (
     sparse_matmul,
 )
 
-# memory_management and performance.monitoring import psutil at module top, and AGENTS.md calls psutil optional
-# (#2930). Only psutil's absence is caught: any other failure of these imports is a defect and propagates.
-try:
-    from .memory_management import (  # noqa: F401
-        MemoryMonitor,
-        check_system_memory_availability,
-        estimate_problem_memory_requirements,
-        memory_usage_report,
-    )
-
-    MEMORY_MANAGEMENT_AVAILABLE = True
-except ModuleNotFoundError as err:
-    if err.name != "psutil":
-        raise
-    MEMORY_MANAGEMENT_AVAILABLE = False
-
-try:
-    from .performance.monitoring import (  # noqa: F401
-        PerformanceMonitor,
-        benchmark_solver,
-        get_performance_report,
-        performance_tracked,
-    )
-
-    PERFORMANCE_MONITORING_AVAILABLE = True
-except ModuleNotFoundError as err:
-    if err.name != "psutil":
-        raise
-    PERFORMANCE_MONITORING_AVAILABLE = False
-
 # Public API - Core utilities always available
 # Keep organized with comments, don't auto-sort
 __all__ = [
-    # Availability flags: whether polars is installed (re-exported from data.polars_integration), and whether the
-    # two psutil-backed modules imported
-    "MEMORY_MANAGEMENT_AVAILABLE",
-    "PERFORMANCE_MONITORING_AVAILABLE",
+    # Availability flag: whether polars is installed (re-exported from data.polars_integration)
     "POLARS_AVAILABLE",
     # Adjoint duality validation (Issue #580)
     "DualityStatus",
@@ -380,25 +359,23 @@ __all__.extend(
     ]
 )
 
-if MEMORY_MANAGEMENT_AVAILABLE:
-    __all__.extend(
-        [
-            "MemoryMonitor",
-            "check_system_memory_availability",
-            "estimate_problem_memory_requirements",
-            "memory_usage_report",
-        ]
-    )
+__all__.extend(
+    [
+        "MemoryMonitor",
+        "check_system_memory_availability",
+        "estimate_problem_memory_requirements",
+        "memory_usage_report",
+    ]
+)
 
-if PERFORMANCE_MONITORING_AVAILABLE:
-    __all__.extend(
-        [
-            "PerformanceMonitor",
-            "benchmark_solver",
-            "get_performance_report",
-            "performance_tracked",
-        ]
-    )
+__all__.extend(
+    [
+        "PerformanceMonitor",
+        "benchmark_solver",
+        "get_performance_report",
+        "performance_tracked",
+    ]
+)
 
 __all__.extend(
     [

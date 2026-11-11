@@ -503,6 +503,8 @@ class FPNetworkSolver(BaseFPSolver):
         Issue #913: Uses H.optimal_control() when available.
         Returns dict mapping node i -> {j: alpha_ij} for all neighbors j.
         """
+        from mfgarchon.core.hamiltonian import checked_control
+
         H_class = self.network_problem.hamiltonian_class
         rates = {}
         for i in range(self.num_nodes):
@@ -517,7 +519,13 @@ class FPNetworkSolver(BaseFPSolver):
                     "must come from the single-source NetworkHamiltonian.optimal_control (Issue #1474). "
                     "Ensure the NetworkMFGProblem wired its Hamiltonian."
                 )
-            alpha = H_class.optimal_control(x=np.array([i]), m=m, p=u, t=t)
+            alpha = checked_control(
+                H_class.optimal_control(x=np.array([i]), m=m, p=u, t=t),
+                u,
+                reader="FPNetworkSolver",
+                source=H_class,
+                m=m,
+            )
             rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 

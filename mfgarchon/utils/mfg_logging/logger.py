@@ -439,22 +439,18 @@ def log_performance_metric(
 
 def log_memory_usage(logger: logging.Logger, operation: str, peak_memory_mb: float | None = None):
     """Log memory usage information."""
-    try:
-        import os
+    import os
 
-        import psutil
+    import psutil
 
-        process = psutil.Process(os.getpid())
-        memory_info = process.memory_info()
-        current_mb = memory_info.rss / 1024 / 1024
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    current_mb = memory_info.rss / 1024 / 1024
 
-        msg = f"Memory - {operation}: {current_mb:.1f} MB"
-        if peak_memory_mb:
-            msg += f" (peak: {peak_memory_mb:.1f} MB)"
-        logger.debug(msg)
-    except ImportError:
-        if peak_memory_mb:
-            logger.debug(f"Memory - {operation}: peak {peak_memory_mb:.1f} MB")
+    msg = f"Memory - {operation}: {current_mb:.1f} MB"
+    if peak_memory_mb:
+        msg += f" (peak: {peak_memory_mb:.1f} MB)"
+    logger.debug(msg)
 
 
 def log_solver_configuration(

@@ -143,23 +143,11 @@ class PerformanceHook(SolverHooks):
         self.peak_memory_mb = 0.0
         self.convergence_rate_history: list[float] = []
 
-        # Try to import performance monitoring tools
-        self.psutil_available = False
-        if track_memory:
-            try:
-                import psutil
-
-                self.psutil = psutil
-                self.psutil_available = True
-            except ImportError:
-                print("Warning: psutil not available for memory tracking")
-
     def _get_memory_usage_mb(self) -> float:
         """Get current memory usage in MB."""
-        if self.psutil_available:
-            process = self.psutil.Process()
-            return process.memory_info().rss / (1024 * 1024)
-        return 0.0
+        import psutil
+
+        return psutil.Process().memory_info().rss / (1024 * 1024)
 
     def on_solve_start(self, initial_state: SpatialTemporalState) -> None:
         """Start performance monitoring."""

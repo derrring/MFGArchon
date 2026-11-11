@@ -264,6 +264,27 @@ on their own basis.
 `coupling_coefficient` is **not** an alternative spelling of the control cost and must never be set
 to stand in for one.
 
+### What optimal_control returns
+
+A control has $p$'s shape: `HamiltonianBase.optimal_control` and `ControlCostBase.optimal_control`
+both say "same shape as p". Every library read of what `optimal_control` or
+`evaluate_optimal_control` returns passes it through one owner, `checked_control` in
+`core/hamiltonian.py`, which refuses another shape. The refusal names the reader, the source and its
+method, the shapes of $p$ and $m$ it handed, and the shape that came back (#2875). No reader takes a
+return of another shape by reshaping, broadcasting or indexing it; a reader may still reshape what
+the owner has checked, as the 1-D velocity route ravels its $(N, 1)$. Refused with it are the
+returns of another shape that once read right by accident: on FEM a transposed one; $(N,)$ for $p$
+of shape $(N, 1)$; $(1, N)$ for $p$ of shape $(N,)$ or $(N, 1)$; and on the network solvers a longer
+return, of which they read the first entries. So are those that were silently wrong: on FEM a return
+of another size, on meshless Galerkin a transposed one, and on the network policy-iteration HJB a
+shorter one. What `dp` returns, which HJB-SL and HJB-GFDM read, is outside this owner; it is the
+second slice of #2875's stage 3.
+
+*Not yet met (#2875): the form of $p$.* Until #2875's stage 3 sets it, FVM's 1-D wrap face hands a
+0-d $p$, and the library's own control answers it with shape $(1,)$, since it hands
+`np.atleast_1d(p)` to the cost. `checked_control` admits that return and gives it back 0-d. When
+stage 3 lands, no read hands a 0-d $p$, and the admission goes.
+
 ### What the Fokker–Planck solver receives
 
 Two channels, and each FP solver declares which one it reads (`_drift_convention`):
@@ -343,7 +364,8 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   | network | the node's index | $u$ at every node, $(n,)$ | $(n,)$ |
 
   *Not yet met (#2875): one form for `x`, `p` and `m` across these solvers.* A control written for
-  one solver's shapes can broadcast against another's and read the wrong values; #2875 tracks it.
+  one solver's shapes can read the wrong values on another's. A return of another shape is refused
+  (§ "What optimal_control returns"); a return of $p$'s shape is taken as it comes. #2875 tracks it.
 
   The velocity route, `compute_fp_velocity_field`, reads it at $t_n$ too. The density it hands is
   the coupling iterate's at step $n$, since it is built before the FP solve, where the solvers above

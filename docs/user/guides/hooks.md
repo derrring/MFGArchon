@@ -227,26 +227,21 @@ class PerformanceHook(SolverHooks):
     """Monitor memory and CPU usage."""
 
     def __init__(self):
-        try:
-            import psutil
-            self.psutil = psutil
-            self.process = psutil.Process()
-        except ImportError:
-            self.psutil = None
+        import psutil
 
+        self.process = psutil.Process()
         self.memory_usage = []
         self.cpu_times = []
 
     def on_iteration_end(self, state: SpatialTemporalState) -> Optional[str]:
-        if self.psutil:
-            memory_mb = self.process.memory_info().rss / 1024 / 1024
-            cpu_percent = self.process.cpu_percent()
+        memory_mb = self.process.memory_info().rss / 1024 / 1024
+        cpu_percent = self.process.cpu_percent()
 
-            self.memory_usage.append(memory_mb)
-            self.cpu_times.append(cpu_percent)
+        self.memory_usage.append(memory_mb)
+        self.cpu_times.append(cpu_percent)
 
-            if state.iteration % 10 == 0:
-                print(f"Memory: {memory_mb:.1f}MB, CPU: {cpu_percent:.1f}%")
+        if state.iteration % 10 == 0:
+            print(f"Memory: {memory_mb:.1f}MB, CPU: {cpu_percent:.1f}%")
 
         return None
 ```

@@ -97,16 +97,14 @@ Tools for analysis, I/O, and post-processing.
 
 ## Dependencies
 
-**Core** (always available):
+**Install**:
 ```bash
-pip install numpy scipy matplotlib
+pip install mfgarchon       # every package in pyproject.toml's [project].dependencies
 ```
 
 **Optional** (for specific examples):
 ```bash
 pip install jax jaxlib      # Acceleration
-pip install h5py            # HDF5 I/O
-pip install plotly          # Interactive plots
 ```
 
 ---

@@ -7,8 +7,8 @@ block imported three names that never existed. At #2088's base, the other guards
   every optional dependency unimportable;
 - one more around names that never existed (`mfgarchon/__init__.py`'s geometry block);
 - three that fired when a dependency was absent: POT's, now an `if` on `OT_IMPORTS_AVAILABLE` (`SCIPY_AVAILABLE and
-  POT_AVAILABLE`, both reported by its subpackage), and psutil's two, allowed below. psutil is optional by AGENTS.md
-  and required by pyproject (#2930).
+  POT_AVAILABLE`, both reported by its subpackage), and psutil's two, which went when psutil became a plain import
+  (#2930).
 
 What the census sees, and nothing else: a `try` whose handlers name `ImportError` or `ModuleNotFoundError` as a bare
 name, alone or in a flat literal tuple, with, anywhere in its body, one of
@@ -26,11 +26,9 @@ import function reached through `getattr`; `runpy`; loading by path (`importlib.
 source text (`exec`, `compile`); and a guard around a call into a helper that imports. A census reports only what its
 predicate reaches, and #2088's own census first missed a guarded `import_module` for exactly that reason.
 
-An allowed guard catches an absent third-party dependency and nothing else, and carries its reason. This test checks
-only that each allowance still covers a guard; an allowance that covers none fails, so a guard that is removed takes its
-allowance with it. `test_availability_flags_measure_their_dependency_2088.py` pins one input class of the psutil
-guards' narrowing: a `ModuleNotFoundError` that names another module propagates. It does not pin the handler's
-exception type.
+An allowed guard catches an absent package outside `[project].dependencies` (#2930) and nothing else, and carries its
+reason. This test checks only that each allowance still covers a guard; an
+allowance that covers none fails, so a guard that is removed takes its allowance with it. None is allowed today.
 """
 
 from __future__ import annotations
@@ -43,16 +41,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 
 #: (file, import target as written) -> why the guard stays.
-ALLOWED = {
-    (
-        "mfgarchon/utils/__init__.py",
-        ".memory_management",
-    ): "imports psutil at module top; catches only psutil's ModuleNotFoundError, since AGENTS.md calls psutil optional (#2930)",
-    (
-        "mfgarchon/utils/__init__.py",
-        ".performance.monitoring",
-    ): "imports psutil at module top; catches only psutil's ModuleNotFoundError, since AGENTS.md calls psutil optional (#2930)",
-}
+ALLOWED: dict[tuple[str, str], str] = {}
 
 _IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
 
@@ -110,7 +99,8 @@ def test_no_guard_hides_an_internal_import():
     assert unexplained == [], (
         "An `except ImportError` guards an import from the library itself. If a name it imports does not exist, the "
         "guard turns that into a silent fallback (#2088). Let the import fail, or narrow the handler to the absent "
-        f"third-party dependency and add it to ALLOWED with its reason:\n{unexplained}"
+        "package outside [project].dependencies (#2930), and add it to ALLOWED with its reason:\n"
+        f"{unexplained}"
     )
     stale = sorted(set(ALLOWED) - {(hit[0], hit[2]) for hit in found})
     assert stale == [], f"An allowance covers no guard any more; delete it: {stale}"
