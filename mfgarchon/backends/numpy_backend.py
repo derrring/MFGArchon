@@ -119,17 +119,14 @@ class NumPyBackend(BaseBackend):
             "numpy_version": np.__version__,
         }
 
-    def memory_usage(self) -> dict | None:
+    def memory_usage(self) -> dict:
         """Get memory usage information."""
-        try:
-            import psutil
+        import psutil
 
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            return {
-                "rss": memory_info.rss,  # Resident Set Size
-                "vms": memory_info.vms,  # Virtual Memory Size
-                "percent": process.memory_percent(),
-            }
-        except ImportError:
-            return None
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        return {
+            "rss": memory_info.rss,  # Resident Set Size
+            "vms": memory_info.vms,  # Virtual Memory Size
+            "percent": process.memory_percent(),
+        }

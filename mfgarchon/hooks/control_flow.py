@@ -243,13 +243,9 @@ class WatchdogHook(SolverHooks):
 
     def _check_memory_usage(self) -> float:
         """Check current memory usage in GB."""
-        try:
-            import psutil
+        import psutil
 
-            process = psutil.Process()
-            return process.memory_info().rss / (1024**3)  # Convert to GB
-        except ImportError:
-            return 0.0  # Can't check without psutil
+        return psutil.Process().memory_info().rss / (1024**3)  # Convert to GB
 
     def on_iteration_end(self, state: SpatialTemporalState) -> str | None:
         """Monitor for problematic behavior."""

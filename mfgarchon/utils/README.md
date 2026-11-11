@@ -420,29 +420,16 @@ python -m mfgarchon.utils.cli solve \
 
 ## 🔧 Installation Requirements
 
-### Core Dependencies
+### Dependencies
 ```bash
-# Essential (already included in MFGArchon)
-numpy>=1.19.0
-scipy>=1.7.0
+# Installs every package in pyproject.toml's [project].dependencies, numpy, scipy, PyYAML and rich among them
+pip install mfgarchon
 ```
 
 ### Optional Enhancements
 ```bash
-# For YAML configuration support
-pip install PyYAML
-
 # For colored terminal output
 pip install colorlog
-```
-
-### Required Dependencies
-```bash
-# Rich is required for progress bars (v0.16.15+)
-pip install rich
-
-# For full feature set
-pip install PyYAML rich colorlog
 ```
 
 ## 📈 Performance Impact
