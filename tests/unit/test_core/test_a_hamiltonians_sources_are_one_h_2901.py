@@ -7,7 +7,10 @@ subclass whose `optimal_control` was another H's was solved as a mixture with no
 2026-11-11: refuse it at construction. The cost stands for H only as the library ships it (#2914's owner).
 
 - **The control against -dp** (a mutation-verified pin). `Mix` and the issue's reproduction are refused at
-  construction, and the message names the pair that disagrees and the probe where it does.
+  construction, and the message names the pair that disagrees and the probe (t, x, m, p) where it does.
+- **The probes vary t and x** (a mutation-verified pin). A control that departs from -dp only after t = 0, and one that
+  departs only away from the domain's middle, are refused: the probes run at t = 0, T/2 and T, and at the middle node and
+  each axis's two end nodes.
 - **A door against its method** (a mutation-verified pin). A subclass whose `evaluate_optimal_control` returns another
   control than its `optimal_control` is refused.
 - **A network Hamiltonian's rates against its dp** (a mutation-verified pin). The network's own identity, at node
@@ -54,6 +57,21 @@ class _Mix(_OneHalfQuadratic):
 
     def optimal_control(self, t, x, p, m):
         return -2.0 * np.asarray(p, dtype=float)
+
+
+class _TimeScaled(hm.SeparableHamiltonian):
+    """The library's H and dp, and its control times 1 + 4t: they agree at t = 0 and not after."""
+
+    def optimal_control(self, t, x, p, m):
+        return (1.0 + 4.0 * t) * np.asarray(super().optimal_control(t=t, x=x, p=p, m=m), dtype=float)
+
+
+class _AwayFromTheMiddle(hm.SeparableHamiltonian):
+    """The library's H and dp, and its control times 1 + 3(x - 0.5)^2: they agree at x = 0.5 and not elsewhere."""
+
+    def optimal_control(self, t, x, p, m):
+        control = np.asarray(super().optimal_control(t=t, x=x, p=p, m=m), dtype=float)
+        return (1.0 + 3.0 * (np.asarray(x[0], dtype=float) - 0.5) ** 2) * control
 
 
 class _DoorDisagrees(hm.SeparableHamiltonian):
@@ -124,15 +142,35 @@ def test_a_control_that_is_not_minus_dp_is_refused_at_construction(make, control
     probe = "[0.5]" if dim == 1 else "[0.5 0.5]"
     momentum = "[0.4157]" if dim == 1 else "[0.4157 0.4157]"
     message = (
-        rf"optimal_control disagrees with dp and with H at x={re.escape(probe)}, m=0\.5, p={re.escape(momentum)}: "
+        rf"optimal_control disagrees with dp and with H at t=0, x={re.escape(probe)}, m=0\.5, p={re.escape(momentum)}: "
         rf"-optimal_control\[0\]={control}, dp\[0\]=1\.2471, and the central difference of H is 1\.2471"
     )
     with pytest.raises(ValidationError, match=message):
         _quiet(lambda: _problem(make(), dim))
 
 
+@pytest.mark.parametrize("dim", [1, 2])
+@pytest.mark.parametrize(
+    ("make", "t", "x"),
+    [(_TimeScaled, "0.25", lambda dim: [0.5] * dim), (_AwayFromTheMiddle, "0", lambda dim: [0.0] + [0.5] * (dim - 1))],
+    ids=["after t = 0", "away from the middle"],
+)
+def test_a_control_that_departs_from_minus_dp_off_one_point_and_time_is_refused(make, t, x, dim):
+    """T = 0.5, so T/2 = 0.25; along axis 0 the first end node is x = 0, the others at the middle."""
+    probe = np.array2string(np.array(x(dim), dtype=float), precision=4)
+    momentum = np.array2string(np.full(dim, 0.4157), precision=4)
+    message = (
+        rf"optimal_control disagrees with dp and with H at t={re.escape(t)}, x={re.escape(probe)}, m=0\.5, "
+        rf"p={re.escape(momentum)}: "
+    )
+    with pytest.raises(ValidationError, match=message):
+        _quiet(lambda: _problem(make(_quadratic(), coupling=f), dim))
+
+
 def test_a_door_that_disagrees_with_its_method_is_refused_at_construction():
-    with pytest.raises(ValidationError, match=r"evaluate_optimal_control and optimal_control disagree at x=\[0\.5\]"):
+    with pytest.raises(
+        ValidationError, match=r"evaluate_optimal_control and optimal_control disagree at t=0, x=\[0\.5\]"
+    ):
         _quiet(lambda: _problem(_DoorDisagrees(_quadratic(), coupling=f)))
 
 
@@ -163,7 +201,7 @@ def test_a_network_hamiltonian_whose_rates_are_not_its_dp_is_refused():
     )
     assert accepted.is_valid, [str(i) for i in accepted.issues]
     assert not refused.is_valid
-    assert any("optimal_control and dp disagree on the network at node" in str(i) for i in refused.issues)
+    assert any("optimal_control and dp disagree on the network at t=0, node" in str(i) for i in refused.issues)
 
 
 @pytest.mark.parametrize(

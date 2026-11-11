@@ -1981,6 +1981,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     dH_dp=h_class.dp,
                     geometry=self.geometry,
                     optimal_control=h_class.optimal_control,
+                    times=(0.0, 0.5 * float(self.T), float(self.T)),
                 )
                 if not func_result.is_valid:
                     raise ValidationError(func_result)

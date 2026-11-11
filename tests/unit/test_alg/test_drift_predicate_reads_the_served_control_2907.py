@@ -201,7 +201,7 @@ def test_a_cost_serving_another_costs_control_alone_is_refused_at_construction(h
     else:
         own = type("OwnControl", (QuadraticControlCost,), {"optimal_control": lambda self, p: STEEP.optimal_control(p)})
         cost = own(control_cost=1.0)
-    with pytest.raises(ValidationError, match=r"optimal_control disagrees with dp and with H at x="):
+    with pytest.raises(ValidationError, match=r"optimal_control disagrees with dp and with H at t="):
         _problem(SeparableHamiltonian(cost, coupling=_coupling))
 
 

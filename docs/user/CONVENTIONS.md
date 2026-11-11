@@ -290,10 +290,14 @@ sources: `__call__` in the HJB residual, `dp` in its Jacobian, `optimal_control`
 drift, and the doors over them (`evaluate_H`, `evaluate_dp`, `evaluate_optimal_control`, `dH_dm`). A
 problem refuses, at construction, a Hamiltonian whose sources disagree (#1642, #2901): `dp` and `dm`
 that are not the derivatives of `__call__`, an `optimal_control` that is not $-\partial_p H$ where
-$H$ is smooth, and a door that returns another value than its method. It compares them at a few
-probes, so it proves a disagreement and cannot prove an agreement off them; a non-smooth cost is
-compared only where $H$ is smooth at the probe. On a network the control is a rate per edge, and the
-comparison is the network's own identity between the rates and `dp`. A control cost stands for its
+$H$ is smooth, and a door that returns another value than its method. It compares them at every
+$(t, x, m, p)$ of: $t$ at $0$, $T/2$ and $T$; $x$ at the domain's middle node and, along each axis,
+its two end nodes nearest the middle; $m$ at $0.5$ and $1$; and $|p|$ at $0$, $0.4157$ and $1.3691$
+per component. A disagreement that falls between those probes is not seen: the check proves a
+disagreement where it finds one, and an agreement only at the probes. A non-smooth cost is compared
+only where $H$ is smooth at the probe. On a network the control is a rate per edge, and the
+comparison is the network's own identity between the rates and `dp`, at every node and the same
+times. A control cost stands for its
 Hamiltonian only where the library ships both (`why_the_drift_is_not_the_control_costs`, #2914):
 HJB-SL's `canonical_cs` reads the cost's `lambda_` there only.
 

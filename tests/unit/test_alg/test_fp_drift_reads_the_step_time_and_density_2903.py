@@ -79,6 +79,17 @@ class _Separable(_Control, SeparableHamiltonian):
     def optimal_control(self, t, x, p, m):
         return self._shaped(t, x, p, m, super().optimal_control)
 
+    # A "time" control is the library's H scaled by 1 + 4t, so its H and dp scale with it: a problem refuses a control
+    # that is not -dp at its probes, which run at t = 0, T/2 and T (#2901). The FP rows read only the control.
+    def __call__(self, t, x, p, m):
+        return self._time_factor(t) * super().__call__(t=t, x=x, p=p, m=m)
+
+    def dp(self, t, x, p, m):
+        return self._time_factor(t) * np.asarray(super().dp(t=t, x=x, p=p, m=m), dtype=float)
+
+    def _time_factor(self, t):
+        return 1.0 + 4.0 * t if self.kind == "time" else 1.0
+
 
 class _NetworkControl(_Control):
     """The network solver reads its problem's own NetworkHamiltonian, so the control wraps it."""
