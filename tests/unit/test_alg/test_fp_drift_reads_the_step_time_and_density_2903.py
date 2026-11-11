@@ -24,8 +24,8 @@ convention already, and are the controls here.
   every read there carries a density. A factory that routes a 1-D mesh away from FEM_P1 fails it alone. It does not
   check which density; the which-density test does.
 
-The density-dependent control is written to broadcast in each solver's own layout (`to_p` below, #2875); no layout is
-pinned.
+Each fixture notes the layouts of p and m it hands, as CONVENTIONS' table states them; no layout is pinned. A problem
+reads the control at its own probes when it is built (#2901); those reads are not the solver's, and are dropped.
 """
 
 from __future__ import annotations
@@ -56,9 +56,8 @@ WRITE_FLOOR = 0.6
 
 
 class _Control:
-    """``kind``: "record" (the library's control), "time" ((1 + 4 t) times it), "density" (it over 1 + 0.2 m), "write"
-    (the library's control, after flooring the density it was handed at WRITE_FLOOR in place). Every read's (t, x, m) is
-    kept."""
+    """``kind``: "record" (the library's control), "time" ((1 + 4 t) times it), "write" (the library's control, after
+    flooring the density it was handed at WRITE_FLOOR in place). Every read's (t, x, m) is kept."""
 
     def _shaped(self, t, x, p, m, base):
         self.reads.append(
@@ -69,15 +68,13 @@ class _Control:
         alpha = np.asarray(base(t=t, x=x, p=p, m=m), dtype=float)
         if self.kind == "time":
             return (1.0 + 4.0 * t) * alpha
-        if self.kind == "density":
-            return alpha / (1.0 + 0.2 * self.to_p(np.asarray(m, dtype=float), alpha))
         return alpha
 
 
 class _Separable(_Control, SeparableHamiltonian):
-    def __init__(self, kind, to_p):
+    def __init__(self, kind):
         super().__init__(control_cost=QuadraticControlCost(control_cost=1.0))
-        self.kind, self.to_p, self.reads = kind, to_p, []
+        self.kind, self.reads = kind, []
 
     def optimal_control(self, t, x, p, m):
         return self._shaped(t, x, p, m, super().optimal_control)
@@ -86,8 +83,8 @@ class _Separable(_Control, SeparableHamiltonian):
 class _NetworkControl(_Control):
     """The network solver reads its problem's own NetworkHamiltonian, so the control wraps it."""
 
-    def __init__(self, inner, kind, to_p):
-        self.inner, self.kind, self.to_p, self.reads = inner, kind, to_p, []
+    def __init__(self, inner, kind):
+        self.inner, self.kind, self.reads = inner, kind, []
 
     def optimal_control(self, x, m, p, t):
         return self._shaped(t, x, p, m, self.inner.optimal_control)
@@ -111,7 +108,9 @@ def _grid_problem(h, n, dim=1):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=no_flux_bc(dimension=dim)
     )
-    return MFGProblem(geometry=grid, T=T, Nt=NT, volatility=SIGMA, components=_components(h, dim))
+    problem = MFGProblem(geometry=grid, T=T, Nt=NT, volatility=SIGMA, components=_components(h, dim))
+    h.reads.clear()  # construction's probe reads (#2901) are not the solver's
+    return problem
 
 
 def _mesh_problem(h):
@@ -119,7 +118,9 @@ def _mesh_problem(h):
     mesh.generate_mesh()
     mesh.boundary_conditions = no_flux_bc(dimension=1)
     # A 1-D mesh is measured on uniform cells, one per node: 15 cells of width 1/14, so mass 1 is the level 14/15.
-    return MFGProblem(geometry=mesh, T=T, Nt=NT, volatility=SIGMA, components=_components(h, level=14 / 15))
+    problem = MFGProblem(geometry=mesh, T=T, Nt=NT, volatility=SIGMA, components=_components(h, level=14 / 15))
+    h.reads.clear()  # construction's probe reads (#2901) are not the solver's
+    return problem
 
 
 def _scale(time_scaled):
@@ -148,7 +149,7 @@ def _quiet(fn):
 def _fem(kind, time_scaled=False):
     from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 
-    h = _Separable(kind, to_p=lambda m, p: m[None])  # p is (d, elements, points); m is (elements, points)
+    h = _Separable(kind)  # p is (d, elements, points); m is (elements, points)
     solver = FPFEMSolver(_mesh_problem(h), order=1)
     x = solver._disc.dof_coordinates[:, 0]
     M = _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled)))
@@ -158,7 +159,7 @@ def _fem(kind, time_scaled=False):
 def _meshless(kind, time_scaled=False):
     from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
 
-    h = _Separable(kind, to_p=lambda m, p: m[:, None])  # p is (nodes, d); m is (nodes,)
+    h = _Separable(kind)  # p is (nodes, d); m is (nodes,)
     x = np.linspace(0.0, 1.0, 15)
     solver = MeshlessGalerkinFPSolver(_grid_problem(h, 15), collocation_points=x[:, None], delta=3.5 / 14)
     M = _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled)))
@@ -168,7 +169,7 @@ def _meshless(kind, time_scaled=False):
 def _particle_1d(kind, time_scaled=False):
     from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 
-    h = _Separable(kind, to_p=lambda m, p: m)  # p and m are (particles,)
+    h = _Separable(kind)  # p and m are (particles,)
     x = np.linspace(0.0, 1.0, 15)
     solver = FPParticleSolver(_grid_problem(h, 15), num_particles=2000, seed=2)
     M = np.asarray(
@@ -181,7 +182,7 @@ def _particle_1d(kind, time_scaled=False):
 def _particle_2d(kind, time_scaled=False):
     from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 
-    h = _Separable(kind, to_p=lambda m, p: m[:, None])  # p is (particles, 2); m is (particles,)
+    h = _Separable(kind)  # p is (particles, 2); m is (particles,)
     x = np.linspace(0.0, 1.0, 9)
     X, Y = np.meshgrid(x, x, indexing="ij")
     U = np.stack(
@@ -210,7 +211,7 @@ def _particle_gpu_loop(kind, time_scaled=False):
     torch = pytest.importorskip("torch")
     from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 
-    h = _Separable(kind, to_p=lambda m, p: m)  # p and m are (particles,)
+    h = _Separable(kind)  # p and m are (particles,)
     x = np.linspace(0.0, 1.0, 41)
     np.random.seed(12345)
     torch.manual_seed(12345)  # this loop samples with torch's generator and steps with numpy's global stream
@@ -226,7 +227,7 @@ def _particle_gpu_loop(kind, time_scaled=False):
 def _fvm(kind, time_scaled=False):
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
 
-    h = _Separable(kind, to_p=lambda m, p: m)  # p and m are one value per face
+    h = _Separable(kind)  # p and m are one value per face
     x = np.linspace(0.0, 1.0, 15)
     problem = _grid_problem(h, 15)
     solver = FPFVMSolver(problem)
@@ -245,7 +246,7 @@ def _network(kind, time_scaled=False):
     net = GridNetwork(width=4, height=4)
     net.create_network()
     problem = NetworkMFGProblem(geometry=net, T=T, Nt=NT)
-    h = _NetworkControl(problem.hamiltonian_class, kind, to_p=lambda m, p: m)  # a node's control is one value per node
+    h = _NetworkControl(problem.hamiltonian_class, kind)  # a node's control is one value per node
     problem.components._hamiltonian_class = h  # the backing field of MFGProblem.hamiltonian_class
     assert problem.hamiltonian_class is h
     n = problem.num_nodes
@@ -313,7 +314,7 @@ def test_a_control_that_writes_the_density_it_is_handed_leaves_the_returned_hist
 def test_the_default_solve_on_a_mesh_hands_the_control_a_density():
     """`problem.solve()` on a 1-D mesh picks FEM_P1 (the factory's scheme for an unstructured mesh). The reads come
     from FEM's quadrature points, two-dimensional per coordinate, and every one carries a density."""
-    h = _Separable("density", to_p=lambda m, p: m[None])
+    h = _Separable("record")
     result = _quiet(lambda: _mesh_problem(h).solve())
     assert h.reads, "the solve read optimal_control nowhere"
     assert all(read[1][0].ndim == 2 for read in h.reads), "a read did not come from FEM's quadrature points"

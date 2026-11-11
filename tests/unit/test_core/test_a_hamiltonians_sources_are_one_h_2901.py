@@ -14,6 +14,7 @@ subclass whose `optimal_control` was another H's was solved as a mixture with no
   probes, refuses a subclass whose rates are not dp's.
 - **`canonical_cs` reads the cost only as shipped** (a mutation-verified pin). It refuses a subclass, and a
   `QuadraticControlCost` subclass, that change nothing, as FP-FDM does since #2915, and says what was run and on what.
+  `BaseHJBSolver._control_cost_lambda`, which reads the cost's `lambda_`, refuses the same, naming the owner's reason.
 - **The control every reader must accept** (a necessary oracle). Every library Hamiltonian is accepted.
 """
 
@@ -186,6 +187,17 @@ def test_canonical_cs_reads_the_cost_only_as_the_library_ships_it(make, reason):
     )
     with pytest.raises(NotImplementedError, match=message):
         HJBSemiLagrangianSolver(problem, diffusion_method="canonical_cs")
+
+
+def test_the_control_cost_lambda_is_read_only_as_the_library_ships_it():
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    solver = HJBFDMSolver(_quiet(lambda: _problem(_Plain(_quadratic(), coupling=f))))
+    with pytest.raises(
+        NotImplementedError,
+        match=r"^HJBFDMSolver reads the control cost's lambda_ .* this problem's _Plain is not \(its class is _Plain\)",
+    ):
+        solver._control_cost_lambda()
 
 
 @pytest.mark.parametrize("dim", [1, 2])

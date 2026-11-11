@@ -34,6 +34,7 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.validation import ValidationError
 
 COST_METHODS = ("evaluate", "dp", "optimal_control")
 H_METHODS = ("__call__", "dp", "optimal_control")
@@ -189,16 +190,19 @@ def test_a_hamiltonian_not_as_shipped_is_read_as_it_serves(form, monkeypatch):
         _fp_sl(hamiltonian)
 
 
-def test_a_cost_instance_holding_only_its_optimal_control_is_read_as_it_serves():
-    """A QuadraticControlCost whose instance holds only an optimal_control, another cost's, is not as the library ships
-    it (#2914), so the control it serves drives the FP. It solves as the same methods served from a cost class does
-    (#2915 review 2, S1)."""
-    cost = QuadraticControlCost(control_cost=1.0)
-    cost.optimal_control = STEEP.optimal_control
-    by_instance = SeparableHamiltonian(cost, coupling=_coupling)
-    own = type("OwnControl", (QuadraticControlCost,), {"optimal_control": lambda self, p: STEEP.optimal_control(p)})
-    by_class = SeparableHamiltonian(own(control_cost=1.0), coupling=_coupling)
-    np.testing.assert_allclose(_default(by_instance), _default(by_class), rtol=0, atol=1e-12)
+@pytest.mark.parametrize("held_by", ["instance", "class"])
+def test_a_cost_serving_another_costs_control_alone_is_refused_at_construction(held_by):
+    """A QuadraticControlCost whose instance, or whose class, holds only an optimal_control, another cost's, is not as the
+    library ships it (#2914), and its control is not its own value's -dp: the problem refuses it when it is built,
+    naming the pair (#2901). Before #2901 it solved, with the control from one cost and the value from another."""
+    if held_by == "instance":
+        cost = QuadraticControlCost(control_cost=1.0)
+        cost.optimal_control = STEEP.optimal_control
+    else:
+        own = type("OwnControl", (QuadraticControlCost,), {"optimal_control": lambda self, p: STEEP.optimal_control(p)})
+        cost = own(control_cost=1.0)
+    with pytest.raises(ValidationError, match=r"optimal_control disagrees with dp and with H at x="):
+        _problem(SeparableHamiltonian(cost, coupling=_coupling))
 
 
 def test_the_shipped_hamiltonian_is_certified_and_fp_sl_takes_it():

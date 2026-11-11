@@ -686,21 +686,23 @@ def test_at_two_populations_a_term_declaring_the_slot_takes_a_library_class_as_i
         _solve([make(k) for k in range(2)], [0.25, 0.75])
 
 
-class _DoubledControl(CongestionHamiltonian):
-    """The library's `optimal_control`, doubled, in its class body."""
+def _recording(control, reads):
+    """The control it wraps, recording the density each read hands it."""
 
-    def optimal_control(self, t, x, p, m):
-        return 2.0 * np.asarray(super().optimal_control(t=t, x=x, p=p, m=m), dtype=float)
+    def read(t, x, p, m):
+        reads.append(np.shape(m))
+        return control(t=t, x=x, p=p, m=m)
+
+    return read
 
 
-def _doubled(control):
-    return lambda t, x, p, m: 2.0 * np.asarray(control(t=t, x=x, p=p, m=m), dtype=float)
+def test_at_two_populations_an_optimal_control_assigned_on_the_instance_is_what_the_velocity_door_reads():
+    """Over a congestion factor that does not declare the slot, each of two populations holds an `optimal_control`
+    assigned on its instance: the velocity door reads the assignment at two populations too, not the rows path.
 
-
-def test_at_two_populations_an_optimal_control_assigned_on_the_instance_solves_as_the_subclass_defining_it():
-    """Over a congestion factor that does not declare the slot, two populations whose `optimal_control`, the library's
-    doubled, is assigned on each instance solve bit for bit as `_DoubledControl`, which defines it in its class body,
-    and apart from the run with the library's: the velocity door reads the assignment at two populations too."""
+    The assignment returns the library's control and records each read. Since #2901 a control that is not -dp is refused
+    at construction, which reads it at its probes with a scalar density; the solve's reads hand the density as an array,
+    and those are what is counted."""
 
     def factor(m):
         return 1.0 + 0.5 * m
@@ -710,18 +712,13 @@ def test_at_two_populations_an_optimal_control_assigned_on_the_instance_solves_a
 
     cost = QuadraticControlCost(control_cost=1.0)
     assigned = [CongestionHamiltonian(cost, congestion_factor=factor, potential=potential) for _ in range(2)]
-    for hamiltonian in assigned:
-        hamiltonian.optimal_control = _doubled(hamiltonian.optimal_control)
-    centres = [0.25, 0.75]
-    solved = _solve(assigned, centres)
-    subclass = _solve([_DoubledControl(cost, congestion_factor=factor, potential=potential) for _ in range(2)], centres)
-    library = _solve(
-        [CongestionHamiltonian(cost, congestion_factor=factor, potential=potential) for _ in range(2)], centres
-    )
+    reads: list[list[tuple[int, ...]]] = [[], []]
+    for hamiltonian, record in zip(assigned, reads, strict=True):
+        hamiltonian.optimal_control = _recording(hamiltonian.optimal_control, record)
+    solved = _solve(assigned, [0.25, 0.75])
     for k in range(2):
-        np.testing.assert_array_equal(solved[k][0], subclass[k][0], err_msg=f"U of population {k}")
-        np.testing.assert_array_equal(solved[k][1], subclass[k][1], err_msg=f"M of population {k}")
-        assert np.abs(solved[k][1] - library[k][1]).max() > 1e-2, f"population {k} read the library's optimal_control"
+        assert any(len(shape) >= 1 for shape in reads[k]), f"population {k}'s assigned optimal_control was not read"
+        assert np.all(np.isfinite(solved[k][1])), f"population {k}"
 
 
 def _lagrangian_problem(operator, centre):

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.utils.exceptions import MFGSolverError
 from mfgarchon.utils.validation.protocol import ValidationResult
 
 if TYPE_CHECKING:
@@ -48,6 +49,21 @@ _WITNESS_NOISE_SAFETY = 1e4
 # Above this relative disagreement the derivative does not exist at the probe, so
 # no witness can be exhibited there (L1 and bounded control costs both have kinks).
 _SMOOTHNESS_RTOL = 1e-3
+
+#: What a Hamiltonian, a method or a door raises when it cannot be evaluated at a probe: a wrong shape or call, a kink
+#: its own minimiser refuses (#2644's ConvergenceError is a RuntimeError), a value out of its domain. A comparison that
+#: meets one is warned about and never gates (#2901); anything else is a bug and propagates.
+_EVALUATION_ERRORS: tuple[type[BaseException], ...] = (
+    ArithmeticError,
+    AttributeError,
+    IndexError,
+    KeyError,
+    NotImplementedError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    MFGSolverError,
+)
 
 
 def _raw_callable_advice(fn: Any) -> str:
@@ -537,10 +553,11 @@ def _compare_doors_with_methods(
 
     The library's solvers read the doors, and a door a subclass overrides is a source of its own: one that returns
     another value than its method makes the solve read two Hamiltonians. A Hamiltonian that does not read a batch
-    (``reads_a_batch`` False) is handed one point, the others a batch of one. A gap is an error above the witness margin
+    (``reads_a_batch`` False) is handed one point, the others a batch of one, and the method is called at exactly the
+    door's inputs, so a point-only Hamiltonian is left to the batch check. A gap is an error above the witness margin
     and a warning above ``tolerance``, both relative to the larger of the two values and above roundoff; a door that
     cannot be evaluated is warned about, never gating."""
-    from mfgarchon.core.hamiltonian import HamiltonianBase, HEvalState
+    from mfgarchon.core.hamiltonian import HamiltonianBase, HEvalState, _state_x
 
     if not isinstance(hamiltonian, HamiltonianBase):
         return
@@ -557,8 +574,10 @@ def _compare_doors_with_methods(
             try:
                 door = np.ravel(np.asarray(getattr(hamiltonian, door_name)(state), dtype=float))
                 method = hamiltonian if method_name == "__call__" else getattr(hamiltonian, method_name)
-                value = np.ravel(np.asarray(_call_h(method, x_sample, m, p), dtype=float))
-            except Exception as e:  # reported as a warning, never gating
+                # The method at exactly the door's inputs, so the comparison is the door's alone: how the Hamiltonian
+                # reads a batch against a point is `refuse_a_hamiltonian_whose_reads_disagree`'s fact.
+                value = np.ravel(np.asarray(method(t=state.t, x=_state_x(state), p=state.p, m=state.m), dtype=float))
+            except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
                 failures[door_name] = f"{type(e).__name__}: {e}"
                 continue
             if door.shape != value.shape:
@@ -606,7 +625,7 @@ def _compare_network_rates_with_dp(hamiltonian: Any, result: ValidationResult) -
     sits on its kink u_i = u_j, with the uniform density."""
     try:
         n = int(hamiltonian.num_nodes)
-    except Exception as e:  # reported as a warning, never gating
+    except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
         result.add_warning(
             f"Could not compare the network's rates with dp: {type(e).__name__}: {e}", location="optimal_control"
         )
@@ -629,7 +648,7 @@ def _compare_network_rates_with_dp(hamiltonian: Any, result: ValidationResult) -
                 above_noise = gap > _WITNESS_NOISE_SAFETY * float(np.finfo(float).eps) * max(scale, 1.0)
                 if above_noise and gap > _WITNESS_RTOL * scale and (worst is None or gap > worst[0]):
                     worst = (gap, i, u.copy(), grad, expected)
-    except Exception as e:  # reported as a warning, never gating
+    except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
         result.add_warning(
             f"Could not compare the network's rates with dp: {type(e).__name__}: {e}", location="optimal_control"
         )
@@ -740,7 +759,7 @@ def validate_hamiltonian_consistency(
                 # Its own guard: a control that cannot be evaluated is warned about and leaves the dp check standing.
                 try:
                     control = np.atleast_1d(_call_h(optimal_control, x_sample, m, p)).astype(float)
-                except Exception as e:  # reported as a warning, never gating
+                except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
                     control_failure = f"{type(e).__name__}: {e}"
             for i in range(dimension):
                 p_plus = p.copy()
