@@ -1,0 +1,1 @@
+- **AGENTS.md: a review's checkouts are worktrees, not copies** (user ruling, 2026-11-11). A reviewer checks out the base or the head with `git worktree add --detach` or `git archive` and removes it when the review returns; recursive copies of the working tree carried their caches and outlived their reviews.
