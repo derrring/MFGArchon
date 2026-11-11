@@ -66,17 +66,26 @@ _EVALUATION_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+def _is_family_callable(fn: Any) -> bool:
+    """Whether ``fn`` is a family object, a ``HamiltonianBase``/``LagrangianBase`` instance or a bound method of one or
+    of its class (a classmethod), or a ``functools.partial`` over one: called by keyword, as the library's doors call
+    it, not through a raw callable's binding (#2901)."""
+    import functools
+
+    from mfgarchon.core.hamiltonian import MFGOperatorBase
+
+    target = fn.func if isinstance(fn, functools.partial) else fn
+    owner = getattr(target, "__self__", target)
+    return isinstance(owner, MFGOperatorBase) or (isinstance(owner, type) and issubclass(owner, MFGOperatorBase))
+
+
 def _raw_callable_advice(fn: Any) -> str:
     """What a raw callable `_call_h` could not call is told, which keeps what a partial froze. A family object is told
     how it was called, and not a cause: its TypeError may come from its methods, a body it holds, its own signature or
     the binder's refusal of a frozen slot."""
-    import functools
-
-    from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, keeping_what_it_froze
 
-    target = fn.func if isinstance(fn, functools.partial) else fn
-    if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
+    if _is_family_callable(fn):
         return (
             "It is called by keyword, with t, x, p and m at one point, x a tuple of numbers and the density a number."
         )
@@ -88,18 +97,15 @@ def _raw_callable_advice(fn: Any) -> str:
 def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     """Evaluate a Hamiltonian, or one of its derivatives, the way its kind expects.
 
-    A family object (a ``HamiltonianBase``/``LagrangianBase`` instance, or a bound method of
-    one) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by keyword. A raw user callable
-    goes through its binding (``HAMILTONIAN_SLOTS``), like every user callable the library accepts.
+    A family object (`_is_family_callable`: a ``HamiltonianBase``/``LagrangianBase`` instance, or a
+    bound method of one or of its class) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by
+    keyword. A raw user callable goes through its binding (``HAMILTONIAN_SLOTS``), like every user
+    callable the library accepts.
     """
-    import functools
-
-    from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, _remembered, point_tuple, refuse_overridden
 
     x = point_tuple(x)
-    target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
-    if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
+    if _is_family_callable(fn):  # partial(H.dm) is still a family method
         refuse_overridden(fn, HAMILTONIAN_SLOTS.order, role="Hamiltonian callable")
         return fn(t=t, x=x, p=p, m=m)
     return _remembered(fn, HAMILTONIAN_SLOTS, "Hamiltonian callable")(t=t, x=x, p=p, m=m)
@@ -408,17 +414,23 @@ def _compare_derivative(
     )
 
 
+def _grid_nodes(geometry: GeometryProtocol, dimension: int) -> np.ndarray | None:
+    """The geometry's nodes as an (N, d) array, or None when its grid is not an array of nodes."""
+    grid = geometry.get_spatial_grid()
+    if isinstance(grid, np.ndarray) and grid.ndim == 2 and grid.shape[1] == dimension:
+        return np.asarray(grid, dtype=float)
+    if isinstance(grid, np.ndarray) and grid.ndim == 1 and dimension == 1:
+        return np.asarray(grid, dtype=float).reshape(-1, 1)
+    return None
+
+
 def _probe_points(geometry: GeometryProtocol, middle: np.ndarray) -> list[np.ndarray]:
     """The x the consistency probes read: the node nearest the centre of the nodes' bounding box (the middle node when
     every axis has an odd number of nodes), then along each axis the two end nodes nearest it in the other coordinates,
     so at most 2d + 1 nodes, all inside the domain (#2901). A geometry whose grid is not an array of nodes is probed at
     the sample point alone."""
-    grid = geometry.get_spatial_grid()
-    if isinstance(grid, np.ndarray) and grid.ndim == 2 and grid.shape[1] == middle.size:
-        nodes = np.asarray(grid, dtype=float)
-    elif isinstance(grid, np.ndarray) and grid.ndim == 1 and middle.size == 1:
-        nodes = np.asarray(grid, dtype=float).reshape(-1, 1)
-    else:
+    nodes = _grid_nodes(geometry, middle.size)
+    if nodes is None:
         return [middle]
     centre = 0.5 * (nodes.min(axis=0) + nodes.max(axis=0))
     middle = nodes[int(np.argmin(np.sum((nodes - centre) ** 2, axis=1)))]
@@ -573,7 +585,7 @@ def _report_control(
             location=location,
             suggestion="Make optimal_control return -dp. A HamiltonianBase subclass that overrides only __call__ gets "
             "dp and optimal_control derived from it; a SeparableHamiltonian's dp and optimal_control are its control "
-            "cost's, so a subclass that redefines __call__ redefines both",
+            "cost's, so a subclass that redefines __call__ must redefine both",
         )
     elif not comparison.smooth:
         result.add_warning(
@@ -617,14 +629,19 @@ def _compare_doors_with_methods(
     another value than its method makes the solve read two Hamiltonians. A Hamiltonian that does not read a batch
     (``reads_a_batch`` False) is handed one point, the others a batch of one, and the method is called at exactly the
     door's inputs, so a point-only Hamiltonian is left to the batch check. A gap is an error above the witness margin
-    and a warning above ``tolerance``, both relative to the larger of the two values and above roundoff; a probe at
-    which a door cannot be evaluated is warned about, never gating, and the door is still compared at the others."""
+    and a warning above ``tolerance``, both relative to the larger of the two values and above roundoff. Each read has
+    its own guard: a probe at which the method cannot be evaluated is skipped for that door, one at which the door
+    alone cannot is warned about and the door still compared at the others, and a door that raises at every probe at
+    which its method could be evaluated is an error, whatever ``reads_a_batch`` is (#2901)."""
     from mfgarchon.core.hamiltonian import HamiltonianBase, HEvalState, _state_x
 
     if not isinstance(hamiltonian, HamiltonianBase):
         return
     worst: dict[str, tuple[int, float, np.ndarray, float, np.ndarray, np.ndarray, np.ndarray]] = {}
     failures: dict[str, str] = {}
+    # Per door: the probes at which its method could be evaluated, and those at which the door then raised.
+    method_ok = dict.fromkeys(dict(_DOORS), 0)
+    door_failed = dict.fromkeys(dict(_DOORS), 0)
     probes = [(t, x, m, p) for t in times for x in points for m, p in _consistency_probes(dimension)]
     for t, x, m, p in probes:
         if hamiltonian.reads_a_batch:
@@ -632,13 +649,18 @@ def _compare_doors_with_methods(
         else:
             state = HEvalState(x=x, p=p, m=m, t=float(t))
         for door_name, method_name in _DOORS:
+            method = hamiltonian if method_name == "__call__" else getattr(hamiltonian, method_name)
             try:
-                door = np.ravel(np.asarray(getattr(hamiltonian, door_name)(state), dtype=float))
-                method = hamiltonian if method_name == "__call__" else getattr(hamiltonian, method_name)
                 # The method at exactly the door's inputs, so the comparison is the door's alone: how the Hamiltonian
                 # reads a batch against a point is `refuse_a_hamiltonian_whose_reads_disagree`'s fact.
                 value = np.ravel(np.asarray(method(t=state.t, x=_state_x(state), p=state.p, m=state.m), dtype=float))
-            except _EVALUATION_ERRORS as e:  # reported as a warning, never gating; the other probes still compare
+            except _EVALUATION_ERRORS:  # the method's own comparison reports it; this door is not compared here
+                continue
+            method_ok[door_name] += 1
+            try:
+                door = np.ravel(np.asarray(getattr(hamiltonian, door_name)(state), dtype=float))
+            except _EVALUATION_ERRORS as e:  # warned about; the other probes still compare
+                door_failed[door_name] += 1
                 failures.setdefault(door_name, f"at {_probe_text(t, x, m, p)}: {type(e).__name__}: {e}")
                 continue
             if door.shape != value.shape:
@@ -674,50 +696,66 @@ def _compare_doors_with_methods(
         else:
             result.add_warning(f"{door_name} may disagree with {method_name} {detail}.", location=door_name)
     for door_name, failure in failures.items():
-        result.add_warning(
-            f"Could not compare {door_name} with {method_of[door_name]} {failure}; the probes that could be evaluated "
-            "were compared",
-            location=door_name,
-        )
+        if door_failed[door_name] == method_ok[door_name]:
+            result.add_error(
+                f"{door_name} could not be evaluated at any probe at which {method_of[door_name]} could "
+                f"({method_ok[door_name]} of them), first {failure}. The library's solvers read {door_name}, so a "
+                f"solve would fail there (#2901).",
+                location=door_name,
+                suggestion=f"Make {door_name} evaluate where {method_of[door_name]} does, or do not override it",
+            )
+        else:
+            result.add_warning(
+                f"Could not compare {door_name} with {method_of[door_name]} {failure} ({door_failed[door_name]} of "
+                f"{method_ok[door_name]} probes); the probes that could be evaluated were compared",
+                location=door_name,
+            )
 
 
-def _compare_network_rates_with_dp(hamiltonian: Any, result: ValidationResult, times: Sequence[float]) -> None:
+def _compare_network_rates_with_dp(
+    hamiltonian: Any, result: ValidationResult, times: Sequence[float], n: int, nodes: Sequence[int]
+) -> None:
     """A ``NetworkHamiltonian``'s two sources against each other, on its own probes (#1474, #2901).
 
     Its optimal control is the transition rates alpha_ij out of node i, and its dp is dH/du over the nodes: dp[j] is
     -alpha_ij for each other node j, and dp[i] is the sum of the rates. The grid probes do not apply, since a node plays
-    x and p is u at every node. Checked at every node, as x, at three costate vectors whose entries are distinct, so no
-    edge sits on its kink u_i = u_j, with the uniform density, at each of ``times``."""
-    try:
-        n = int(hamiltonian.num_nodes)
-    except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
-        result.add_warning(
-            f"Could not compare the network's rates with dp: {type(e).__name__}: {e}", location="optimal_control"
-        )
-        return
+    x and p is u at every node. Checked at ``nodes`` (`_network_probe_nodes`), each as x, at three costate vectors whose
+    entries are distinct, so no edge sits on its kink u_i = u_j, with the uniform density, at each of ``times``. A
+    disagreement at a node not probed is not seen. A node at which a read fails is warned about, and the others are
+    still compared."""
     k = np.arange(n, dtype=float)
     costates = (np.linspace(0.0, 2.0, n), np.sqrt(k + 1.0), np.sin(1.3 * k + 0.2))
     density = np.full(n, 1.0 / n)
     worst: tuple[float, int, np.ndarray, np.ndarray, np.ndarray, float] | None = None
-    try:
-        for t, u in ((t, u) for t in times for u in costates):
-            for i in range(n):
-                rates = np.ravel(
-                    np.asarray(hamiltonian.optimal_control(t=float(t), x=np.array([i]), p=u, m=density), dtype=float)
-                )
-                grad = np.ravel(np.asarray(hamiltonian.dp(t=float(t), x=np.array([i]), p=u, m=density), dtype=float))
+    failure: str | None = None
+    for t in times:
+        for u in costates:
+            for i in nodes:
+                try:
+                    rates = np.ravel(
+                        np.asarray(
+                            hamiltonian.optimal_control(t=float(t), x=np.array([i]), p=u, m=density), dtype=float
+                        )
+                    )
+                    grad = np.ravel(
+                        np.asarray(hamiltonian.dp(t=float(t), x=np.array([i]), p=u, m=density), dtype=float)
+                    )
+                except _EVALUATION_ERRORS as e:  # warned about, never gating; the other nodes still compare
+                    if failure is None:
+                        failure = f"at t={float(t):.4g}, node {i}: {type(e).__name__}: {e}"
+                    continue
                 expected = -rates.copy()
                 expected[i] = float(np.sum(rates) - rates[i])
-                gap = float(np.max(np.abs(grad - expected), initial=0.0))
+                gap = float(np.max(np.abs(grad - expected), initial=0.0)) if grad.shape == expected.shape else np.inf
                 scale = float(max(np.max(np.abs(grad), initial=0.0), np.max(np.abs(expected), initial=0.0)))
                 above_noise = gap > _WITNESS_NOISE_SAFETY * float(np.finfo(float).eps) * max(scale, 1.0)
                 if above_noise and gap > _WITNESS_RTOL * scale and (worst is None or gap > worst[0]):
                     worst = (gap, i, u.copy(), grad, expected, float(t))
-    except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
+    if failure is not None:
         result.add_warning(
-            f"Could not compare the network's rates with dp: {type(e).__name__}: {e}", location="optimal_control"
+            f"Could not compare the network's rates with dp {failure}; the nodes that could be evaluated were compared",
+            location="optimal_control",
         )
-        return
     if worst is not None:
         gap, i, u, grad, expected, t = worst
         result.add_error(
@@ -732,9 +770,9 @@ def _compare_network_rates_with_dp(hamiltonian: Any, result: ValidationResult, t
 
 
 def _network_probe_nodes(hamiltonian: Any, n: int) -> list[int]:
-    """The nodes a network's derivatives are compared at (#2901): both ends of the node order, a middle node, and the
-    node of highest degree (the first, on a tie). At most four nodes, whatever the network's size, as the grid is probed
-    at 2d + 1 nodes and not at every node."""
+    """The nodes a network's rates and derivatives are compared at (#2901): both ends of the node order, a middle node,
+    and the node of highest degree (the first, on a tie). At most four nodes, whatever the network's size, as the grid
+    is probed at 2d + 1 nodes and not at every node."""
     nodes = [0, n - 1, n // 2]
     data = getattr(hamiltonian, "network_data", None)
     if data is not None:
@@ -744,25 +782,25 @@ def _network_probe_nodes(hamiltonian: Any, n: int) -> list[int]:
 
 
 def _compare_network_derivatives_with_h(
-    hamiltonian: Any, result: ValidationResult, times: Sequence[float], tolerance: float
+    hamiltonian: Any, result: ValidationResult, times: Sequence[float], tolerance: float, n: int, nodes: Sequence[int]
 ) -> None:
     """A ``NetworkHamiltonian``'s ``dp`` and ``dm`` against central differences of its ``__call__`` (#2901).
 
     NetworkHJBSolver reads ``__call__``, policy iteration and the network FP read the rates, and ``dp``'s readers read
     ``dp``; the rates are held to ``dp`` by :func:`_compare_network_rates_with_dp`, and this holds ``dp`` and ``dm`` to
-    ``__call__``. Compared at `_network_probe_nodes`, each over its own neighbourhood (the node and its neighbours,
-    the costate entries its H reads), at the rates check's three costates and at each of ``times``, with the uniform
-    density; ``dm`` against the difference in the node's own density. A disagreement at a node not probed is not seen.
-    The witness rule is the grid's (`_compare_derivative`); a probe that cannot be evaluated is warned about.
+    ``__call__``. Compared at ``nodes`` (`_network_probe_nodes`), each over its own neighbourhood (the node and its
+    neighbours, the costate entries its H reads), at the rates check's three costates and at each of ``times``, with
+    the uniform density; ``dm`` against the difference in the node's own density. A disagreement at a node not probed
+    is not seen. The witness rule is the grid's (`_compare_derivative`). Each read has its own guard: a node, a
+    neighbour or a ``dm`` read that cannot be evaluated is warned about, and the others are still compared.
 
-    A custom ``hamiltonian_func`` replaces ``__call__`` only: ``dp`` and the rates stay the built-in control by design
-    (#1545, open, is where routing a custom network H through them lives), and every reader of those refuses such a
-    Hamiltonian through its ``has_custom_hamiltonian``, so only NetworkHJBSolver reads it, through ``__call__``, one
-    source. Its derivatives are therefore not compared here."""
+    A custom ``hamiltonian_func`` replaces ``__call__``, and with a custom ``hamiltonian_dm_func`` also ``dm``; ``dp``
+    and the rates stay the built-in control by design (#1545, open, is where routing a custom network H through them
+    lives), and every reader of those refuses such a Hamiltonian through its ``has_custom_hamiltonian``, so only
+    NetworkHJBSolver reads it. Its derivatives are therefore not compared here."""
     if getattr(hamiltonian, "has_custom_hamiltonian", False):
         return
     try:
-        n = int(hamiltonian.num_nodes)
         data = hamiltonian.network_data
     except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
         result.add_warning(
@@ -775,59 +813,61 @@ def _compare_network_derivatives_with_h(
     step = _FD_STEP
     witness: dict[str, tuple[_FDComparison, int, int]] = {}
     failure: str | None = None
-    for t in times:
+
+    def fail(t: float, i: int, what: str, e: BaseException) -> None:
+        nonlocal failure
+        if failure is None:
+            failure = f"at t={t:.4g}, node {i} ({what}): {type(e).__name__}: {e}"
+
+    for t in (float(s) for s in times):
         for u in costates:
-            for i in _network_probe_nodes(hamiltonian, n):
+            for i in nodes:
                 node = np.array([i])
+
+                def h_at(costate: np.ndarray, rho: np.ndarray, node: np.ndarray = node, t: float = t) -> float:
+                    return float(np.ravel(np.asarray(hamiltonian(t=t, x=node, p=costate, m=rho), dtype=float))[0])
+
                 try:
-
-                    def h_at(
-                        costate: np.ndarray, rho: np.ndarray, node: np.ndarray = node, t: float = float(t)
-                    ) -> float:
-                        return float(np.ravel(np.asarray(hamiltonian(t=t, x=node, p=costate, m=rho), dtype=float))[0])
-
                     h_center = h_at(u, density)
-                    grad = np.ravel(np.asarray(hamiltonian.dp(t=float(t), x=node, p=u, m=density), dtype=float))
-                    for j in [i, *(int(q) for q in data.get_neighbors(i))]:
-                        e = np.zeros(n)
-                        e[j] = step
-                        comparison = _compare_derivative(
-                            h_at(u - e, density),
-                            h_center,
-                            h_at(u + e, density),
-                            step,
-                            float(grad[j]),
-                            float(density[i]),
-                            u,
-                            tolerance,
-                            float(t),
-                            node.astype(float),
-                        )
-                        if comparison.is_witness and "dp" not in witness:
-                            witness["dp"] = (comparison, i, j)
-                    e = np.zeros(n)
-                    e[i] = step
-                    dm = float(np.ravel(np.asarray(hamiltonian.dm(t=float(t), x=node, p=u, m=density), dtype=float))[0])
+                    neighbours = [i, *(int(q) for q in data.get_neighbors(i))]
+                except _EVALUATION_ERRORS as e:  # this node is skipped, warned about
+                    fail(t, i, "H", e)
+                    continue
+                try:
+                    grad = np.ravel(np.asarray(hamiltonian.dp(t=t, x=node, p=u, m=density), dtype=float))
+                except _EVALUATION_ERRORS as e:
+                    fail(t, i, "dp", e)
+                    grad = None
+                for j in neighbours if grad is not None else ():
+                    e_j = np.zeros(n)
+                    e_j[j] = step
+                    try:
+                        h_minus, h_plus = h_at(u - e_j, density), h_at(u + e_j, density)
+                    except _EVALUATION_ERRORS as e:  # this neighbour is skipped; the others still compare
+                        fail(t, i, f"H beside u[{j}]", e)
+                        continue
                     comparison = _compare_derivative(
-                        h_at(u, density - e),
-                        h_center,
-                        h_at(u, density + e),
-                        step,
-                        dm,
-                        float(density[i]),
-                        u,
-                        tolerance,
-                        float(t),
+                        h_minus, h_center, h_plus, step, float(grad[j]), float(density[i]), u, tolerance, t,
                         node.astype(float),
-                    )
-                    if comparison.is_witness and "dm" not in witness:
-                        witness["dm"] = (comparison, i, i)
-                except _EVALUATION_ERRORS as e:  # reported as a warning, never gating; the other nodes still compare
-                    if failure is None:
-                        failure = f"at t={float(t):.4g}, node {i}: {type(e).__name__}: {e}"
+                    )  # fmt: skip
+                    if comparison.is_witness and "dp" not in witness:
+                        witness["dp"] = (comparison, i, j)
+                e_i = np.zeros(n)
+                e_i[i] = step
+                try:
+                    dm = float(np.ravel(np.asarray(hamiltonian.dm(t=t, x=node, p=u, m=density), dtype=float))[0])
+                    h_minus, h_plus = h_at(u, density - e_i), h_at(u, density + e_i)
+                except _EVALUATION_ERRORS as e:
+                    fail(t, i, "dm", e)
+                    continue
+                comparison = _compare_derivative(
+                    h_minus, h_center, h_plus, step, dm, float(density[i]), u, tolerance, t, node.astype(float)
+                )
+                if comparison.is_witness and "dm" not in witness:
+                    witness["dm"] = (comparison, i, i)
     if failure is not None:
         result.add_warning(
-            f"Could not compare the network's dp and dm with H {failure}; the nodes that could be evaluated were compared",
+            f"Could not compare the network's dp and dm with H {failure}; the reads that could be evaluated were compared",
             location="dH_dp",
         )
     for name, (comparison, i, j) in witness.items():
@@ -849,9 +889,11 @@ def validate_composed_wall(
     #2901).
 
     ``MFGProblem`` composes ``state_penalty`` into the Hamiltonian's ``_potential``. A subclass whose ``__call__`` does not
-    read ``_potential`` would drop the wall from every solve, silently. At D2's probes (t, x, m, p), the walled H minus the
-    unwalled one must equal minus the change of the potential, read as ``SeparableHamiltonian`` reads it (``H = cost - V -
-    f``); a gap above the witness margin is an error. A wall that is zero at every probe is not seen."""
+    read ``_potential`` would drop the wall from every solve, silently. At D2's probes (t, x, m, p), with x also the grid
+    node where the wall is largest at that t, the walled H minus the unwalled one must equal minus the change of the
+    potential, read as ``SeparableHamiltonian`` reads it (``H = cost - V - f``); a gap above the witness margin is an
+    error. So a ``__call__`` that drops the wall is seen wherever the wall is nonzero on the grid, an interior obstacle
+    between D2's x probes included; one that reads the potential at some x and not others is seen only at those x."""
     from mfgarchon.core.hamiltonian import _bound_potential
     from mfgarchon.types.callable_protocols import point_tuple
 
@@ -867,8 +909,20 @@ def validate_composed_wall(
 
     worst: tuple[float, float, np.ndarray, float, np.ndarray, float, float] | None = None
     failure: str | None = None
+    nodes = _grid_nodes(geometry, dimension)
     for t in times:
-        for x in _probe_points(geometry, x_sample):
+        points = _probe_points(geometry, x_sample)
+        if nodes is not None:
+            try:
+                wall = [abs(potential(walled, float(t), x) - potential(unwalled, float(t), x)) for x in nodes]
+            except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
+                if failure is None:
+                    failure = f"at t={float(t):.4g}, reading the potential at the grid's nodes: {type(e).__name__}: {e}"
+            else:
+                largest = nodes[int(np.argmax(wall))]
+                if not any(np.array_equal(largest, q) for q in points):
+                    points.append(largest)
+        for x in points:
             for m, p in _consistency_probes(dimension):
                 try:
                     expected = -(potential(walled, float(t), x) - potential(unwalled, float(t), x))
@@ -919,8 +973,11 @@ def validate_hamiltonian_consistency(
       is probed at both signs and no two components equal (`_consistency_probes`).
 
     A disagreement that falls between the probes is not seen: the check proves a disagreement where it finds one, and an
-    agreement only at the probes. A probe at which an evaluation fails is warned about once, naming it, and skipped; the
-    other probes are still compared, and an error outside ``_EVALUATION_ERRORS`` propagates.
+    agreement only at the probes. Each comparison has its own guard inside a probe: a probe at which H cannot be
+    evaluated is skipped, and one at which a method (``dH_dm``, ``dH_dp``, ``optimal_control``) or H beside the probe
+    cannot is skipped for that comparison alone, each warned about once, naming the first such probe. A method that
+    raises at every probe at which H could be evaluated is an error, since whatever reads it would fail or read another
+    source (#2901). An error outside ``_EVALUATION_ERRORS`` propagates.
 
     This check owns one axis, the methods agreeing at a point. The other, a door's batch read agreeing with its point
     read, is ``refuse_a_hamiltonian_whose_reads_disagree``'s, which a problem runs beside this; and the cost standing for
@@ -936,8 +993,9 @@ def validate_hamiltonian_consistency(
     H is smooth, all values are finite, and the discrepancy clears both a relative
     margin and the differencing roundoff bound by a wide factor. Every weaker
     signal (small discrepancy, kink at the probe, non-finite value, failure to
-    evaluate) is a warning, because a false positive here would refuse a correct
-    problem at construction time.
+    evaluate somewhere) is a warning, because a false positive here would refuse a correct
+    problem at construction time. The one exception is a method or door that cannot be
+    evaluated at any probe (#2901).
 
     Args:
         hamiltonian: HamiltonianBase instance (called as H(t, x, p, m) by keyword) or a raw
@@ -952,10 +1010,11 @@ def validate_hamiltonian_consistency(
 
     A ``HamiltonianBase`` also has each door (``evaluate_H``, ``evaluate_dp``, ``evaluate_optimal_control``,
     ``dH_dm``) compared with its method at the same probes, at one point, at one population: a point-only Hamiltonian is
-    handed one point and the others a batch of one (#2901). A ``NetworkHamiltonian`` is checked on its own probes instead:
-    the rates it returns against ``dp`` by the network's identity at every node, and ``dp`` and ``dm`` against central
-    differences of its ``__call__`` at `_network_probe_nodes`, each over its own neighbourhood, at each of ``times``. A
-    disagreement at a node not probed is not seen (#2901).
+    handed one point and the others a batch of one, and a door that raises at every probe at which its method could be
+    evaluated is an error (#2901). A ``NetworkHamiltonian`` is checked on its own probes instead, at `_network_probe_nodes`
+    computed once: the rates it returns against ``dp`` by the network's identity, and ``dp`` and ``dm`` against central
+    differences of its ``__call__``, ``dp`` over each node's neighbourhood, at each of ``times``, three costates and the
+    uniform density. A disagreement at a node not probed is not seen (#2901).
 
     Returns:
         ValidationResult; is_valid is False when a witness was exhibited.
@@ -964,8 +1023,17 @@ def validate_hamiltonian_consistency(
 
     result = ValidationResult()
     if isinstance(hamiltonian, NetworkHamiltonian):
-        _compare_network_rates_with_dp(hamiltonian, result, times)
-        _compare_network_derivatives_with_h(hamiltonian, result, times, tolerance)
+        try:
+            n = int(hamiltonian.num_nodes)
+            nodes = _network_probe_nodes(hamiltonian, n)
+        except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
+            result.add_warning(
+                f"Could not read the network's nodes, so its sources were not compared: {type(e).__name__}: {e}",
+                location="hamiltonian",
+            )
+            return result
+        _compare_network_rates_with_dp(hamiltonian, result, times, n, nodes)
+        _compare_network_derivatives_with_h(hamiltonian, result, times, tolerance, n, nodes)
         return result
 
     x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "hamiltonian")
@@ -980,94 +1048,122 @@ def validate_hamiltonian_consistency(
     # Each with the dp the Hamiltonian returned at that probe, for the message.
     control_witness: list[tuple[_FDComparison, float] | None] = [None] * dimension
     control_inconsistent: list[tuple[_FDComparison, float] | None] = [None] * dimension
-    # The first probe at which an evaluation failed, for its warning; the others are still compared.
-    evaluation_failure: str | None = None
-    control_failure: str | None = None
+    # Each comparison has its own guard inside a probe, so one that cannot be evaluated leaves the others standing (#2901).
+    # `failures` keeps the first failure of H's reads and of each method's call, for its warning; `failed` counts the
+    # probes at which a method's call raised, against `evaluated`, the probes at which H itself could be evaluated.
+    failures: dict[str, str] = {}
+    failed = {"dH_dm": 0, "dH_dp": 0, "optimal_control": 0}
+    evaluated = 0
+
+    def fail(name: str, t: float, x: np.ndarray, m: float, p: np.ndarray, e: BaseException) -> None:
+        failures.setdefault(name, f"at {_probe_text(t, x, m, p)}: {type(e).__name__}: {e}")
 
     points = _probe_points(geometry, x_sample)
     probes = [(t, x, m, p) for t in times for x in points for m, p in _consistency_probes(dimension)]
     for t, x, m, p in probes:
         try:
             h_center = float(_call_h(hamiltonian, x, m, p, t))
+        except _EVALUATION_ERRORS as e:  # H cannot be evaluated here: the probe is skipped, warned about
+            fail("hamiltonian", t, x, m, p, e)
+            continue
+        evaluated += 1
 
-            # --- dH_dm ---
-            h_m_plus = float(_call_h(hamiltonian, x, m + step, p, t))
-            h_m_minus = float(_call_h(hamiltonian, x, m - step, p, t))
-            comparison = _compare_derivative(
-                h_m_minus,
-                h_center,
-                h_m_plus,
-                step,
-                float(_call_h(dH_dm, x, m, p, t)),
-                m,
-                p,
-                tolerance,
-                t,
-                x,
-            )
-            if comparison.is_witness and dm_witness is None:
-                dm_witness = comparison
-            if comparison.is_inconsistent and dm_inconsistent is None:
-                dm_inconsistent = comparison
+        # --- dH_dm: its call, then H's two reads beside the probe ---
+        try:
+            dm_value = float(_call_h(dH_dm, x, m, p, t))
+        except _EVALUATION_ERRORS as e:
+            fail("dH_dm", t, x, m, p, e)
+            failed["dH_dm"] += 1
+        else:
+            try:
+                h_m_plus = float(_call_h(hamiltonian, x, m + step, p, t))
+                h_m_minus = float(_call_h(hamiltonian, x, m - step, p, t))
+            except _EVALUATION_ERRORS as e:
+                fail("hamiltonian", t, x, m, p, e)
+            else:
+                comparison = _compare_derivative(h_m_minus, h_center, h_m_plus, step, dm_value, m, p, tolerance, t, x)
+                if comparison.is_witness and dm_witness is None:
+                    dm_witness = comparison
+                if comparison.is_inconsistent and dm_inconsistent is None:
+                    dm_inconsistent = comparison
 
-            # --- dH_dp and the optimal control, per component ---
-            if dH_dp is None and optimal_control is None:
-                continue
-            dp_analytical = None if dH_dp is None else np.atleast_1d(_call_h(dH_dp, x, m, p, t)).astype(float)
-            control = None
-            if optimal_control is not None:
-                # Its own guard: a control that cannot be evaluated here is warned about, and the dp comparison at this
-                # probe, and the control's at the others, still stand.
-                try:
-                    control = np.atleast_1d(_call_h(optimal_control, x, m, p, t)).astype(float)
-                except _EVALUATION_ERRORS as e:  # reported as a warning, never gating
-                    if control_failure is None:
-                        control_failure = f"at {_probe_text(t, x, m, p)}: {type(e).__name__}: {e}"
-            for i in range(dimension):
-                p_plus = p.copy()
-                p_minus = p.copy()
-                p_plus[i] += step
-                p_minus[i] -= step
+        # --- dH_dp and the optimal control: each call, then H's two reads per component ---
+        if dH_dp is None and optimal_control is None:
+            continue
+        dp_analytical = None
+        if dH_dp is not None:
+            try:
+                dp_analytical = np.atleast_1d(_call_h(dH_dp, x, m, p, t)).astype(float)
+            except _EVALUATION_ERRORS as e:
+                fail("dH_dp", t, x, m, p, e)
+                failed["dH_dp"] += 1
+        control = None
+        if optimal_control is not None:
+            try:
+                control = np.atleast_1d(_call_h(optimal_control, x, m, p, t)).astype(float)
+            except _EVALUATION_ERRORS as e:
+                fail("optimal_control", t, x, m, p, e)
+                failed["optimal_control"] += 1
+        if dp_analytical is None and control is None:
+            continue
+        for i in range(dimension):
+            p_plus = p.copy()
+            p_minus = p.copy()
+            p_plus[i] += step
+            p_minus[i] -= step
+            try:
                 h_minus = float(_call_h(hamiltonian, x, m, p_minus, t))
                 h_plus = float(_call_h(hamiltonian, x, m, p_plus, t))
-                if dp_analytical is not None:
-                    comparison = _compare_derivative(
-                        h_minus, h_center, h_plus, step, float(dp_analytical[i]), m, p, tolerance, t, x
-                    )
-                    if comparison.is_witness and dp_witness[i] is None:
-                        dp_witness[i] = comparison
-                    if comparison.is_inconsistent and dp_inconsistent[i] is None:
-                        dp_inconsistent[i] = comparison
-                if control is not None:
-                    dp_i = float("nan") if dp_analytical is None else float(dp_analytical[i])
-                    comparison = _compare_derivative(
-                        h_minus, h_center, h_plus, step, -float(control[i]), m, p, tolerance, t, x
-                    )
-                    if comparison.is_witness and control_witness[i] is None:
-                        control_witness[i] = (comparison, dp_i)
-                    if comparison.is_inconsistent and control_inconsistent[i] is None:
-                        control_inconsistent[i] = (comparison, dp_i)
+            except _EVALUATION_ERRORS as e:
+                fail("hamiltonian", t, x, m, p, e)
+                continue
+            if dp_analytical is not None:
+                comparison = _compare_derivative(
+                    h_minus, h_center, h_plus, step, float(dp_analytical[i]), m, p, tolerance, t, x
+                )
+                if comparison.is_witness and dp_witness[i] is None:
+                    dp_witness[i] = comparison
+                if comparison.is_inconsistent and dp_inconsistent[i] is None:
+                    dp_inconsistent[i] = comparison
+            if control is not None:
+                dp_i = float("nan") if dp_analytical is None else float(dp_analytical[i])
+                comparison = _compare_derivative(
+                    h_minus, h_center, h_plus, step, -float(control[i]), m, p, tolerance, t, x
+                )
+                if comparison.is_witness and control_witness[i] is None:
+                    control_witness[i] = (comparison, dp_i)
+                if comparison.is_inconsistent and control_inconsistent[i] is None:
+                    control_inconsistent[i] = (comparison, dp_i)
 
-        except _EVALUATION_ERRORS as e:  # this probe cannot be evaluated: warned about, never gating
-            if evaluation_failure is None:
-                evaluation_failure = f"at {_probe_text(t, x, m, p)}: {type(e).__name__}: {e}"
-
-    if evaluation_failure is not None:
+    if "hamiltonian" in failures:
         result.add_warning(
-            f"Could not evaluate Hamiltonian consistency {evaluation_failure}; the probes that could be evaluated were "
+            f"Could not evaluate the Hamiltonian {failures['hamiltonian']}; the probes that could be evaluated were "
             "compared",
             location="hamiltonian",
         )
+    for name in ("dH_dm", "dH_dp", "optimal_control"):
+        if name not in failures:
+            continue
+        if failed[name] == evaluated:
+            # A method that raises wherever H can be evaluated is not a gap between probes: whatever reads it fails, and
+            # a point-only Hamiltonian's doors are not read at construction by the batch check (#2901).
+            result.add_error(
+                f"{name} could not be evaluated at any probe at which H could ({evaluated} of them), first "
+                f"{failures[name]}. The library's solvers read {name}, so a solve would fail there or read another "
+                f"source in its place (#2901).",
+                location=name,
+                suggestion=f"Make {name} evaluate wherever H does",
+            )
+        else:
+            result.add_warning(
+                f"Could not evaluate {name} {failures[name]} ({failed[name]} of {evaluated} probes); the probes that "
+                "could be evaluated were compared",
+                location=name,
+            )
 
     _report(result, "dH_dm", "dH_dm", x_sample, dm_witness, dm_inconsistent)
     for i in range(dimension):
         _report(result, f"dH_dp[{i}]", f"dH_dp[{i}]", x_sample, dp_witness[i], dp_inconsistent[i])
-    if control_failure is not None:
-        result.add_warning(
-            f"Could not compare the optimal control with dH/dp {control_failure}; the probes that could be evaluated "
-            "were compared",
-            location="optimal_control",
-        )
     for i in range(dimension):
         _report_control(result, i, x_sample, control_witness[i], control_inconsistent[i])
     _compare_doors_with_methods(hamiltonian, points, times, dimension, tolerance, result)

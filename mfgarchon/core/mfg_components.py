@@ -84,10 +84,13 @@ class MFGComponents:
 
     Attributes
     ----------
-    hamiltonian : HamiltonianBase
-        Class-based Hamiltonian H(t, x, p, m). Required.
+    hamiltonian : HamiltonianBase, optional
+        Class-based Hamiltonian H(t, x, p, m). Give it or ``lagrangian``, not both (#2901).
     lagrangian : LagrangianBase, optional
-        Alternative to hamiltonian - auto-converted via Legendre transform.
+        The alternative to ``hamiltonian``. Its Hamiltonian is derived (``as_hamiltonian()`` for a
+        ``SeparableLagrangian``, the Legendre transform otherwise) and held privately: ``hamiltonian`` stays
+        ``None``, as given, and the derived Hamiltonian is read through ``MFGProblem.hamiltonian_class``
+        (user ruling, 2026-11-11).
     m_initial : Callable | NDArray
         Initial density distribution m_0(x).
     u_terminal : Callable | NDArray

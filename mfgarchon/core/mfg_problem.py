@@ -1828,8 +1828,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # - _m_initial(): Removed - must be provided via MFGComponents.m_initial
 
     def _refuse_a_hamiltonian_whose_reads_disagree(self) -> None:
-        """Compare the Hamiltonian's batch and point reads where it first meets this problem's points (#2875). A graph's
-        node plays x, and has no coordinates to read."""
+        """Compare the Hamiltonian's batch and point reads where it first meets this problem's points (#2875), at 0, T/2 and
+        T, the times D2 probes (#2901). A graph's node plays x, and has no coordinates to read."""
         from mfgarchon.core.hamiltonian import HamiltonianBase, refuse_a_hamiltonian_whose_reads_disagree
 
         hamiltonian = getattr(self.components, "_hamiltonian_class", None) if self.components is not None else None
@@ -1837,7 +1837,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             return
         grid = self.geometry.get_spatial_grid()
         if isinstance(grid, np.ndarray) and grid.ndim == 2:
-            refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid)
+            refuse_a_hamiltonian_whose_reads_disagree(
+                hamiltonian, grid, times=(0.0, 0.5 * float(self.T), float(self.T))
+            )
 
     def _compose_state_penalty_into_potential(self) -> None:
         """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign.

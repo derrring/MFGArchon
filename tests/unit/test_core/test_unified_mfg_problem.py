@@ -598,9 +598,14 @@ class TestCustomComponentExceptionPropagation:
             problem_type="custom",
         )
 
-        # Exception should propagate, not be silently caught. Since #2901 a problem reads the dH_dm door on a batch and
-        # on a point at construction (`refuse_a_hamiltonian_whose_reads_disagree`), so it propagates from there.
-        with pytest.raises(RuntimeError, match="Intentional error"):
+        # The error is not silently caught. Since #2901 a dm that raises at every probe is refused at construction by
+        # the consistency check, which names it.
+        from mfgarchon.utils.validation import ValidationError
+
+        with pytest.raises(
+            ValidationError,
+            match=r"dH_dm could not be evaluated at any probe.*RuntimeError: Intentional error in dH/dm",
+        ):
             MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
 
 

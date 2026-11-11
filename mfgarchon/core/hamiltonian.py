@@ -86,7 +86,7 @@ from mfgarchon.types.callable_protocols import (
 from mfgarchon.utils.exceptions import report_inner_failure
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from numpy.typing import NDArray
     from scipy.optimize import OptimizeResult
@@ -1129,20 +1129,35 @@ _FAMILY_METHODS = (
 )
 
 
-#: The control cost's family methods, which a cost read as it ships may not hold in its own ``__dict__`` (#2914).
-_COST_FAMILY_METHODS = ("optimal_control", "evaluate", "dp", "lagrangian", "hamiltonian", "proximal")
+#: The control cost's family methods, which a cost read as it ships may not hold in its own ``__dict__`` (#2914), with
+#: ``effective_domain``, which HJB-SL's DPP path reads as the control set (#2901).
+_COST_FAMILY_METHODS = (
+    "optimal_control",
+    "evaluate",
+    "dp",
+    "lagrangian",
+    "hamiltonian",
+    "proximal",
+    "effective_domain",
+)
 
 
 def _why_the_cost_is_not_as_it_ships(held: Any, cost: type | tuple[type, ...]) -> str | None:
     """Why the control cost ``held`` is not one of ``cost`` as the library ships it, or ``None`` if it is: its type one of
-    ``cost`` exactly, compared by identity, and no family method of its own on its instance. The cost half of
-    `_why_not_as_it_ships`, which a reader that holds a cost and no Hamiltonian reads directly (#2901)."""
+    ``cost`` exactly, compared by identity, and no family method of its own on its instance. A regularized cost
+    (``regularize()``'s Moreau-Yosida envelope) is as shipped only when the cost it wraps is: a user's cost wrapped is
+    still a user's cost (#2901). The cost half of `_why_not_as_it_ships`, which a reader that holds a cost and no
+    Hamiltonian reads directly (#2901)."""
     costs = cost if isinstance(cost, tuple) else (cost,)
     if not any(type(held) is shipped for shipped in costs):
         return f"its control cost is a {type(held).__name__}, not a {' or '.join(c.__name__ for c in costs)}"
     own = [name for name in _COST_FAMILY_METHODS if name in getattr(held, "__dict__", {})]
     if own:
         return f"its control cost's instance holds {own} of its own"
+    if type(held) is _MoreauYosidaControlCost:
+        why = _why_the_cost_is_not_as_it_ships(held.base, costs)
+        if why is not None:
+            return f"its control cost regularizes a cost that is not as shipped ({why})"
     return None
 
 
@@ -3287,7 +3302,9 @@ def create_hamiltonian(
         )
 
 
-def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid: NDArray, t: float = 0.0) -> None:
+def refuse_a_hamiltonian_whose_reads_disagree(
+    hamiltonian: HamiltonianBase, grid: NDArray, times: Sequence[float] = (0.0,)
+) -> None:
     """Refuse a Hamiltonian whose batch evaluation differs from evaluating each node alone (#1884, #2481, #2875).
 
     A problem takes the Hamiltonian here, so each door the library's solvers read (its value, ``dp``, the optimal control and
@@ -3298,6 +3315,10 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
     The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
     passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479). A node
     alone is read as the per-point solve paths read one: ``x`` one point, ``p`` of shape ``(d,)``, ``m`` a scalar.
+
+    Each door is read at each of ``times``; a problem hands 0, T/2 and T, the times D2 probes. A read that disagrees only
+    after t = 0, such as a control that reads x as one point where H's x-dependence grows with t, is not seen at t = 0
+    alone (#2901).
     """
     if not hamiltonian.reads_a_batch:
         return
@@ -3317,11 +3338,12 @@ def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid
         ("evaluate_optimal_control", hamiltonian.evaluate_optimal_control),
         ("dH_dm", hamiltonian.dH_dm),
     )
-    for name, evaluate in doors:
-        refuse_batch_disagreement(
-            lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
-            {"x": x, "p": p, "m": m, "t": t},
-            [{"x": x[i], "p": p[i], "m": m[i], "t": t} for i in range(k)],
-            name=f"{type(hamiltonian).__name__}.{name}",
-            guidance=guidance,
-        )
+    for t in times:
+        for name, evaluate in doors:
+            refuse_batch_disagreement(
+                lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
+                {"x": x, "p": p, "m": m, "t": float(t)},
+                [{"x": x[i], "p": p[i], "m": m[i], "t": float(t)} for i in range(k)],
+                name=f"{type(hamiltonian).__name__}.{name}",
+                guidance=(f"These reads are at t={float(t):.4g}. " if len(times) > 1 else "") + guidance,
+            )

@@ -3,32 +3,44 @@
 The library reads a Hamiltonian through several sources: `__call__` in the HJB residual, `dp` in its Jacobian,
 `optimal_control` in the Fokker–Planck drift, the doors over them on a batch and on a point, for a separable H its cost,
 the potential the soft wall is composed into, and on a network the rates. Before #2901 a problem checked `dp` and `dm`
-against `__call__` (`validate_hamiltonian_consistency`, #1642), and nothing else, so a subclass whose `optimal_control`
-was another H's was solved as a mixture with no error. The user ruled (A) on 2026-11-11: refuse it at construction.
-Three owners decide it: the consistency check (the methods agree at a point, at its probes), the batch owner
-`refuse_a_hamiltonian_whose_reads_disagree` (a door's batch read agrees with its point read), and `_why_not_as_it_ships`
-(the cost stands for H only as the library ships it).
+against `__call__` (`validate_hamiltonian_consistency`, #1642), and `evaluate_H` and `evaluate_dp` on a batch against a
+point (#1884), and nothing else, so a subclass whose `optimal_control` was another H's was solved as a mixture with no
+error. The user ruled (A) on 2026-11-11: refuse it at construction. Three owners decide it: the consistency check (the
+methods agree at a point, at its probes), the batch owner `refuse_a_hamiltonian_whose_reads_disagree` (a door's batch
+read agrees with its point read), and `_why_not_as_it_ships` (the cost stands for H only as the library ships it).
+Stage 1 of #2901: the Lagrangian side is its stage 2.
 
 - **The control against -dp** (a mutation-verified pin). `Mix` and the issue's reproduction are refused at
   construction, and the message names the pair that disagrees and the probe (t, x, m, p) where it does: against dp and
   H when dp agrees with H, against H alone when it does not.
 - **The probes vary t, x, m and p** (a mutation-verified pin). A control that departs from -dp only at T/2, only at T,
   only at an axis's first or last end node, only for p < 0, or only off the diagonal p_1 = p_2, is refused; so are a dp
-  wrong only after t = 0 and a dm wrong only at an end node. The probe times are the problem's own T (a row at T = 2).
-  On a grid with an even number of nodes the middle probe is the node nearest the centre, so there are still 2d + 1.
-- **A probe that cannot be evaluated is skipped, not the check** (a mutation-verified pin). A wrong dp, and `Mix`, whose
-  H raises at x = 0 are refused; so is `Mix` whose control raises at p = 0, or at t = T. A correct H whose control raises
-  at p = 0 is accepted with a warning. An `AssertionError` is not an evaluation error and propagates.
+  wrong only after t = 0, a dm wrong only at an end node, and a dm wrong only at m = 1. The probe times are the
+  problem's own T (a row at T = 2). On a grid with an even number of nodes the middle probe is the node nearest the
+  centre, so there are still 2d + 1.
+- **Each comparison has its own guard** (a mutation-verified pin). A wrong dp, and `Mix`, whose H raises at x = 0 are
+  refused; so is `Mix` whose control raises at p = 0, the first probe of its comparison, or at t = T. A correct H whose
+  control raises at p = 0 is accepted with a warning, and a wrong dm raising at p = 0 is warned about and refused at
+  the other probes. A point-only Hamiltonian whose dm raises at every probe is refused, beside its doubled control or
+  alone. An `AssertionError` is not an evaluation error and propagates.
 - **Each door against its method, at a point** (a mutation-verified pin), and **each door on a batch against a point**
-  (the batch owner): a door doubled at every input, and one doubled only on batches of two or more, are refused.
-- **A network Hamiltonian's sources** (a mutation-verified pin): its rates against its dp at every node, and its dp and
-  dm against differences of `__call__` at a bounded set of nodes. Each wrong source is refused, and so is a source wrong
-  only at t = T or only at one probed node.
+  (the batch owner, at 0, T/2 and T): a door doubled at every input, one doubled only on batches of two or more, and a
+  control that reads x as a point, are refused, also where they differ only after t = 0. A door that cannot be
+  evaluated at one probe is warned about, and one that raises at every probe is refused on a point-only Hamiltonian.
+- **A network Hamiltonian's sources** (a mutation-verified pin): its rates against its dp, and its dp and dm against
+  differences of `__call__`, at a bounded set of nodes. Each wrong source is refused, dp against `__call__` included,
+  and so is a source wrong only at t = T or only at one probed node, on a network whose four probed nodes are
+  distinct. A node that raises does not discard a witness found at another.
 - **The soft wall** (a mutation-verified pin): composed into a subclass whose `__call__` does not read the potential, it
-  is refused; a subclass that changes nothing is walled.
-- **`canonical_cs` and `_control_cost_lambda` read the cost only as shipped** (a mutation-verified pin).
-- **HJB-GFDM's DMP warning reads the Hamiltonian's dp at the step's density** (a mutation-verified pin), on a congestion
-  H with lambda != 1, where |grad u| / lambda, the dp at m = 1 and the dp at the step's density all differ.
+  is refused, also for an interior wall between D2's x probes, a subclass that drops it only after t = 0, and one whose
+  H raises at a probe; a subclass that changes nothing is walled.
+- **The cost stands for H only as shipped** (a mutation-verified pin): `canonical_cs`, `_control_cost_lambda`, HJB-SL's
+  DPP path, Howard and positive_qp_fan refuse subclasses, a cost instance with its own `effective_domain`, and a user's
+  HamiltonianBase carrying a cost; a user's cost that `regularize()` wraps derives no Lagrangian. Howard still runs on
+  `SeparableHamiltonian` and `QuadraticMFGHamiltonian`.
+- **HJB-GFDM's DMP warning reads the Hamiltonian's dp at the step's density and time** (a mutation-verified pin), on an
+  H whose dp depends on both, and both call sites, Newton's and the loop after Howard's sweep, hand it the step's
+  density row and its time.
 - **The control every reader must accept** (a necessary oracle): the library Hamiltonians of eight kinds, in 1-D and 2-D.
 """
 
@@ -133,6 +145,102 @@ class _DmAtTheFirstEnd(hm.SeparableHamiltonian):
         return np.where(_a(x[0]) < 0.25, 2.0, 1.0) * _a(super().dm(t=t, x=x, p=p, m=m))
 
 
+class _DmRightAtOneHalf(hm.SeparableHamiltonian):
+    """The library's H, dp and control, and dm doubled where m > 0.75: right at m = 0.5, wrong at the probe m = 1."""
+
+    def dm(self, t, x, p, m):
+        return np.where(_a(m) > 0.75, 2.0, 1.0) * _a(super().dm(t=t, x=x, p=p, m=m))
+
+
+class _WrittenOutH(hm.HamiltonianBase):
+    """H = |p|^2/2 - m/2 written out, every method its own; subclasses break one."""
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * np.sum(_a(p) ** 2, axis=-1) - 0.5 * _a(m)
+
+    def dp(self, t, x, p, m):
+        return _a(p)
+
+    def optimal_control(self, t, x, p, m):
+        return -_a(p)
+
+    def dm(self, t, x, p, m):
+        return -0.5 * np.ones_like(_a(m))
+
+
+class _PointOnlyDmRaises(_WrittenOutH):
+    """A point-only Hamiltonian (``reads_a_batch`` False) with no dH/dm: the batch owner does not read it."""
+
+    reads_a_batch = False
+
+    def dm(self, t, x, p, m):
+        raise NotImplementedError("no dH/dm written")
+
+
+class _PointOnlyDmRaisesControlDoubled(_PointOnlyDmRaises):
+    def optimal_control(self, t, x, p, m):
+        return -2.0 * _a(p)
+
+
+class _DmRaisingAtZeroMomentumWrongElsewhere(hm.SeparableHamiltonian):
+    """dm raises at p = 0, the first probe of each (t, x, m), and is doubled elsewhere."""
+
+    def dm(self, t, x, p, m):
+        if not np.any(_a(p)):
+            raise ValueError("dm not defined at p = 0")
+        return 2.0 * _a(super().dm(t=t, x=x, p=p, m=m))
+
+
+class _ControlPointReadAfterT0(hm.SeparableHamiltonian):
+    """H = (1 + 2 t x_1)|p|^2/2 - f(m): every method agrees at a point, and the control reads x as one point. At t = 0 the
+    x-dependence vanishes, so only a batch read after t = 0 differs (review 2 of #2952)."""
+
+    def _c(self, t, x):
+        return 1.0 + 2.0 * float(t) * _a(x[0])
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * self._c(t, x) * np.sum(_a(p) ** 2, axis=-1) - f(_a(m))
+
+    def dp(self, t, x, p, m):
+        c = self._c(t, x)
+        return c[..., None] * _a(p) if np.ndim(p) == 2 else c * _a(p)
+
+    def optimal_control(self, t, x, p, m):
+        return -(1.0 + 2.0 * float(t) * float(np.ravel(_a(x[0]))[0])) * _a(p)
+
+
+class _ControlDoorDoubledOnBatchesAfterT0(hm.SeparableHamiltonian):
+    def evaluate_optimal_control(self, state):
+        value = _a(super().evaluate_optimal_control(state))
+        return 2.0 * value if np.ndim(state.p) == 2 and np.shape(state.p)[0] > 1 and float(state.t) > 0 else value
+
+
+class _CarriesCost(hm.HamiltonianBase):
+    """A user's HamiltonianBase that carries a shipped QuadraticControlCost and writes the same H out by hand."""
+
+    def __init__(self):
+        super().__init__()
+        self.control_cost = _quadratic()
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * np.sum(_a(p) ** 2, axis=-1) - f(_a(m))
+
+    def dp(self, t, x, p, m):
+        return _a(p)
+
+    def optimal_control(self, t, x, p, m):
+        return -_a(p)
+
+    def dm(self, t, x, p, m):
+        return -0.5 * np.ones_like(_a(m))
+
+
+def _narrowed(cost):
+    """A shipped cost whose instance holds its own effective_domain, the control set HJB-SL's DPP path reads."""
+    cost.effective_domain = lambda: (-0.25, 0.25)
+    return cost
+
+
 def _door_doubled(door):
     class Doubled(hm.SeparableHamiltonian):
         pass
@@ -182,6 +290,18 @@ class _WrongDpRaisingAtTheFirstEnd(_RaisesAtTheFirstEnd):
         return 2.0 * _a(super().dp(t=t, x=x, p=p, m=m))
 
 
+class _WrongDpRaisingAtTheFirstProbe(hm.SeparableHamiltonian):
+    """dp doubled, and H raising at the first probe of the check, the middle node at t = 0."""
+
+    def __call__(self, t, x, p, m):
+        if float(t) == 0.0 and np.any(_a(x[0]) == 0.5):
+            raise ValueError("H not defined at the middle at t = 0")
+        return super().__call__(t=t, x=x, p=p, m=m)
+
+    def dp(self, t, x, p, m):
+        return 2.0 * _a(super().dp(t=t, x=x, p=p, m=m))
+
+
 class _MixRaisingAtTheFirstEnd(_RaisesAtTheFirstEnd):
     def optimal_control(self, t, x, p, m):
         return -2.0 * _a(p)
@@ -204,6 +324,22 @@ class _WrittenOut(hm.SeparableHamiltonian):
 
     def __call__(self, t, x, p, m):
         return 0.5 * np.sum(_a(p) ** 2, axis=-1) - f(_a(m))
+
+
+class _WrittenOutAfterT0(hm.SeparableHamiltonian):
+    """The library's H at t = 0, and H written out without the potential after it."""
+
+    def __call__(self, t, x, p, m):
+        if float(t) == 0.0:
+            return super().__call__(t=t, x=x, p=p, m=m)
+        return 0.5 * np.sum(_a(p) ** 2, axis=-1) - f(_a(m))
+
+
+class _WrittenOutRaisingAtTheFirstEnd(_WrittenOut):
+    def __call__(self, t, x, p, m):
+        if np.any(_a(x[0]) == 0.0):
+            raise ValueError("x outside (0, 1]")
+        return super().__call__(t=t, x=x, p=p, m=m)
 
 
 class _Plain(hm.SeparableHamiltonian):
@@ -340,8 +476,12 @@ def test_the_momenta_take_both_signs_on_every_component(make, dim, momentum):
     [
         (lambda: _DpAfterT0(_quadratic(), coupling=f), r"dH_dp\[0\] is not the derivative of H at t=0\.25"),
         (lambda: _DmAtTheFirstEnd(_quadratic(), coupling=f), r"dH_dm is not the derivative of H at t=0, x=\[0\.\]"),
+        (
+            lambda: _DmRightAtOneHalf(_quadratic(), coupling=f),
+            r"dH_dm is not the derivative of H at t=0, x=\[0\.5\], m=1,",
+        ),
     ],
-    ids=["dp wrong after t = 0", "dm wrong at the first end node"],
+    ids=["dp wrong after t = 0", "dm wrong at the first end node", "dm wrong at m = 1 only"],
 )
 def test_dp_and_dm_are_compared_at_every_probe(make, where):
     assert re.search(where, _refused(make)), _refused(make)
@@ -370,20 +510,29 @@ def test_an_end_node_is_found_on_a_domain_far_from_the_origin():
     [
         lambda: _WrongDpRaisingAtTheFirstEnd(_quadratic(), coupling=f),
         lambda: _MixRaisingAtTheFirstEnd(_quadratic(), coupling=f),
+        lambda: _WrongDpRaisingAtTheFirstProbe(_quadratic(), coupling=f),
         lambda: _control_raising(lambda t, p: not np.any(p), ValueError, wrong=True)(_quadratic(), coupling=f),
         lambda: _control_raising(lambda t, p: t == 0.5, ValueError, wrong=True)(_quadratic(), coupling=f),
     ],
     ids=[
         "a wrong dp whose H raises at x = 0",
         "Mix whose H raises at x = 0",
+        "a wrong dp whose H raises at the first probe",
         "Mix whose control raises at p = 0",
         "Mix whose control raises at t = T",
     ],
 )
 def test_a_probe_that_cannot_be_evaluated_is_skipped_not_the_check(make):
-    message = _refused(make)
-    assert "Could not" in message or "disagree" in message or "not the derivative" in message
-    assert "[ERROR]" in message, message
+    """The failing probe is warned about and the witness still refuses. In the first-probe row and the p = 0 row the
+    failure comes first in its comparison's order, so a check that stopped at its first failure would find no witness."""
+    h = make()
+    result = _quiet(
+        lambda: validate_custom_functions(
+            h, h.dm, h.dp, _grid(), optimal_control=h.optimal_control, times=(0.0, 0.25, 0.5)
+        )
+    )
+    assert not result.is_valid, [str(i) for i in result.issues]
+    assert any("Could not evaluate" in str(i) for i in result.issues), [str(i) for i in result.issues]
 
 
 @pytest.mark.parametrize(
@@ -393,13 +542,37 @@ def test_a_control_that_cannot_be_evaluated_somewhere_is_warned_about_not_refuse
     h = _control_raising(lambda t, p: not np.any(p), error, wrong=False)(_quadratic(), coupling=f)
     result = _quiet(lambda: validate_custom_functions(h, h.dm, h.dp, _grid(), optimal_control=h.optimal_control))
     assert result.is_valid, [str(i) for i in result.issues]
-    assert any("Could not compare the optimal control with dH/dp at t=0" in str(i) for i in result.issues)
+    assert any("Could not evaluate optimal_control at t=0" in str(i) for i in result.issues)
 
 
 def test_an_assertion_error_is_not_an_evaluation_error_and_propagates():
     h = _control_raising(lambda t, p: not np.any(p), AssertionError, wrong=False)
     with pytest.raises(AssertionError, match="a control not defined here"):
         _quiet(lambda: _problem(h(_quadratic(), coupling=f)))
+
+
+@pytest.mark.parametrize(
+    ("make", "names"),
+    [
+        (_PointOnlyDmRaisesControlDoubled, ("dH_dm could not be evaluated at any probe", "optimal_control disagrees")),
+        (_PointOnlyDmRaises, ("dH_dm could not be evaluated at any probe",)),
+    ],
+    ids=["dm raising everywhere, control doubled", "dm raising everywhere, the rest right"],
+)
+def test_a_method_that_cannot_be_evaluated_at_any_probe_is_refused_on_a_point_only_hamiltonian(make, names):
+    """A point-only Hamiltonian's doors are not read at construction by the batch owner, so the consistency check is
+    the only reader: a dm raising everywhere no longer discards the other comparisons, and is refused itself."""
+    message = _refused(make)
+    for name in names:
+        assert name in message, message
+
+
+def test_a_dm_that_cannot_be_evaluated_somewhere_is_warned_about_and_compared_at_the_others():
+    h = _DmRaisingAtZeroMomentumWrongElsewhere(_quadratic(), coupling=f)
+    result = _quiet(lambda: validate_custom_functions(h, h.dm, h.dp, _grid(), optimal_control=h.optimal_control))
+    assert any("Could not evaluate dH_dm at t=0" in str(i) for i in result.issues), [str(i) for i in result.issues]
+    assert any("dH_dm is not the derivative of H" in str(i) for i in result.issues), [str(i) for i in result.issues]
+    assert not result.is_valid
 
 
 @pytest.mark.parametrize(
@@ -437,6 +610,40 @@ def test_a_door_that_cannot_be_evaluated_at_one_probe_is_compared_at_the_others(
     assert "evaluate_optimal_control and optimal_control disagree" in message, message
 
 
+class _DoorRaisingAtZeroOnly(hm.SeparableHamiltonian):
+    """A control door that raises at p = 0 and is the method everywhere else."""
+
+    def evaluate_optimal_control(self, state):
+        if not np.any(_a(state.p)):
+            raise ValueError("a door not defined at p = 0")
+        return super().evaluate_optimal_control(state)
+
+
+class _PointOnlyDoorRaises(_WrittenOutH):
+    """A point-only Hamiltonian whose control door raises at every point, while its method is right."""
+
+    reads_a_batch = False
+
+    def evaluate_optimal_control(self, state):
+        raise NotImplementedError("no control door written")
+
+
+def test_a_door_that_cannot_be_evaluated_somewhere_is_warned_about_not_refused():
+    h = _DoorRaisingAtZeroOnly(_quadratic(), coupling=f)
+    result = _quiet(lambda: validate_custom_functions(h, h.dm, h.dp, _grid(), optimal_control=h.optimal_control))
+    assert result.is_valid, [str(i) for i in result.issues]
+    assert any(
+        "Could not compare evaluate_optimal_control with optimal_control at t=0" in str(i) for i in result.issues
+    ), [str(i) for i in result.issues]
+
+
+def test_a_door_that_cannot_be_evaluated_at_any_probe_is_refused_on_a_point_only_hamiltonian():
+    message = _refused(_PointOnlyDoorRaises)
+    assert "evaluate_optimal_control could not be evaluated at any probe at which optimal_control could" in message, (
+        message
+    )
+
+
 def test_a_point_only_hamiltonians_door_is_compared_at_one_point():
     """A point-only Hamiltonian is handed one point, not a batch of one, so its door and method are read as it reads."""
     message = _refused(lambda: _DualDoorDoubled(lagrangian=_QuadraticLagrangian()))
@@ -452,20 +659,28 @@ def test_a_point_only_hamiltonians_door_is_compared_at_one_point():
         ),
         (lambda: _door_doubled_on_batches("dH_dm")(_quadratic(), coupling=f), "dH_dm"),
         (lambda: _PointReadControl(_quadratic(), coupling=f), "evaluate_optimal_control"),
+        (lambda: _ControlPointReadAfterT0(_quadratic(), coupling=f), "evaluate_optimal_control"),
+        (lambda: _ControlDoorDoubledOnBatchesAfterT0(_quadratic(), coupling=f), "evaluate_optimal_control"),
     ],
-    ids=["control door doubled on batches", "dH_dm door doubled on batches", "a control that reads x as a point"],
+    ids=[
+        "control door doubled on batches",
+        "dH_dm door doubled on batches",
+        "a control that reads x as a point",
+        "a control that reads x as a point, seen after t = 0 only",
+        "control door doubled on batches after t = 0 only",
+    ],
 )
 def test_a_door_whose_batch_read_disagrees_with_its_point_read_is_refused(make, door):
     with pytest.raises(ValueError, match=rf"\.{door}, at \d samples, reads differently together"):
         _quiet(lambda: _problem(make()))
 
 
-def _network():
+def _network(width=3, height=3):
     pytest.importorskip("igraph")
     from mfgarchon.extensions.topology import NetworkMFGProblem
     from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
-    net = GridNetwork(width=3, height=3)
+    net = GridNetwork(width=width, height=height)
     net.create_network()
     problem = _quiet(lambda: NetworkMFGProblem(geometry=net, T=0.5, Nt=5))
     return problem.hamiltonian_class, problem.geometry
@@ -502,24 +717,16 @@ def _network_subclass(method, factor):
             lambda t, i: 2.0 if t == 0.5 else 1.0,
             "optimal_control and dp disagree on the network at t=0.5",
         ),
-        (
-            "optimal_control",
-            lambda t, i: 2.0 if i == 3 else 1.0,
-            "optimal_control and dp disagree on the network at t=0, node 3",
-        ),
-        ("__call__", lambda t, i: 2.0, "is not the derivative of the network's H at t=0, node 0"),
+        ("__call__", lambda t, i: 2.0, r"dp\[\d+\] is not the derivative of the network's H at t=0, node \d+"),
         ("dm", lambda t, i: 2.0, "dm is not the derivative of the network's H at t=0, node 0"),
         ("dm", lambda t, i: 2.0 if t == 0.5 else 1.0, "dm is not the derivative of the network's H at t=0.5"),
-        ("dm", lambda t, i: 2.0 if i == 4 else 1.0, "dm is not the derivative of the network's H at t=0, node 4"),
     ],
     ids=[
         "rates doubled",
         "rates doubled at T only",
-        "rates doubled at node 3 only",
         "__call__ doubled",
         "dm doubled",
         "dm doubled at T only",
-        "dm doubled at node 4 only",
     ],
 )
 def test_a_network_hamiltonian_whose_sources_disagree_is_refused(method, factor, message):
@@ -529,7 +736,70 @@ def test_a_network_hamiltonian_whose_sources_disagree_is_refused(method, factor,
     wrong = _network_subclass(method, factor)(network_data=library.network_data)
     refused = _network_check(wrong, geometry)
     assert not refused.is_valid
-    assert any(message in str(i) for i in refused.issues), [str(i) for i in refused.issues]
+    assert any(re.search(message, str(i)) for i in refused.issues), [str(i) for i in refused.issues]
+
+
+@pytest.mark.parametrize("method", ["optimal_control", "dm"])
+@pytest.mark.parametrize(("node", "which"), [(11, "the last"), (6, "the middle, n // 2"), (5, "the highest-degree")])
+def test_each_probed_network_node_is_compared(method, node, which):
+    """On a 4 x 3 grid network the probed nodes are 0, 11, 6 and 5, four distinct; a source wrong at one of them alone
+    is refused, naming it. A node not probed is not seen."""
+    library, geometry = _network(4, 3)
+    wrong = _network_subclass(method, lambda t, i: 2.0 if i == node else 1.0)(network_data=library.network_data)
+    refused = _network_check(wrong, geometry)
+    assert not refused.is_valid
+    assert any(f"at t=0, node {node}" in str(i) for i in refused.issues), [str(i) for i in refused.issues]
+
+
+def test_a_network_node_that_cannot_be_evaluated_does_not_discard_a_witness():
+    """Rates doubled at node 0 and raising at the last node: the witness at node 0 stands."""
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+
+    library, geometry = _network()
+
+    class Wrong(NetworkHamiltonian):
+        def optimal_control(self, t, x, p, m):
+            node = int(np.ravel(x)[0])
+            if node == self.num_nodes - 1:
+                raise ValueError("no rates at the last node")
+            return (2.0 if node == 0 else 1.0) * _a(super().optimal_control(t=t, x=x, p=p, m=m))
+
+    refused = _network_check(Wrong(network_data=library.network_data), geometry)
+    assert not refused.is_valid
+    assert any("optimal_control and dp disagree on the network at t=0, node 0" in str(i) for i in refused.issues)
+    assert any("Could not compare the network's rates with dp" in str(i) for i in refused.issues)
+
+
+@pytest.mark.parametrize("dim", [1, 2])
+def test_an_interior_wall_between_the_probes_is_read_back(dim):
+    """A wall on 0.15 < x_1 < 0.35, the nodes 0.2 and 0.3, is zero at every x of D2's probes (the middle and the end
+    nodes); the wall check also reads the grid node where it is largest."""
+
+    def wall(x):
+        return (_a(x[0]) > 0.15) & (_a(x[0]) < 0.35)
+
+    with pytest.raises(ValidationError, match=r"the soft wall composed into _WrittenOut's potential does not reach"):
+        _quiet(
+            lambda: _problem(_WrittenOut(_quadratic(), coupling=f), dim, state_penalty=wall, state_penalty_scale=5.0)
+        )
+
+
+@pytest.mark.parametrize(
+    ("make", "where"),
+    [
+        (lambda: _WrittenOutAfterT0(_quadratic(), coupling=f), "at t=0.25,"),
+        (lambda: _WrittenOutRaisingAtTheFirstEnd(_quadratic(), coupling=f), "at t=0, x=[1.]"),
+    ],
+    ids=["dropped after t = 0 only", "H raising at the first end node"],
+)
+def test_the_wall_is_read_back_at_every_probe(make, where):
+    def wall(x):
+        return _a(x[0]) > 0.85
+
+    with pytest.raises(ValidationError) as caught:
+        _quiet(lambda: _problem(make(), state_penalty=wall, state_penalty_scale=5.0))
+    assert "does not reach its __call__" in str(caught.value), str(caught.value)
+    assert where in str(caught.value), str(caught.value)
 
 
 def test_a_wall_composed_into_a_call_that_does_not_read_the_potential_is_refused():
@@ -633,8 +903,17 @@ def test_a_lagrangian_is_derived_from_the_cost_only_as_the_library_ships_both():
         (lambda: _Plain(_l1(), coupling=f), "its class is _Plain"),
         (lambda: hm.SeparableHamiltonian(_PlainL1(control_cost=1.0), coupling=f), "its control cost is a _PlainL1"),
         (lambda: _ExtraTerm(_l1(), coupling=f), "its class is _ExtraTerm"),
+        (
+            lambda: hm.SeparableHamiltonian(_narrowed(_l1()), coupling=f),
+            "its control cost's instance holds ['effective_domain'] of its own",
+        ),
     ],
-    ids=["a subclass that changes nothing", "an L1 cost subclass that changes nothing", "the g(x) subclass"],
+    ids=[
+        "a subclass that changes nothing",
+        "an L1 cost subclass that changes nothing",
+        "the g(x) subclass",
+        "a cost instance with its own effective_domain",
+    ],
 )
 def test_the_semi_lagrangian_dpp_path_reads_the_cost_only_as_shipped(make, reason):
     from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
@@ -642,7 +921,8 @@ def test_the_semi_lagrangian_dpp_path_reads_the_cost_only_as_shipped(make, reaso
     problem = _quiet(lambda: _problem(make()))
     with pytest.raises(
         NotImplementedError,
-        match=rf"HJBSemiLagrangianSolver, run on a 1-D problem with a non-smooth \w+: its DPP path .* \({re.escape(reason)}",
+        match=rf"HJBSemiLagrangianSolver, run on a 1-D problem with a non-smooth \w+: it solves a non-smooth separable "
+        rf"Hamiltonian on its DPP path, .* \({re.escape(reason)}",
     ):
         HJBSemiLagrangianSolver(problem)
 
@@ -657,12 +937,19 @@ def test_the_semi_lagrangian_dpp_path_reads_the_cost_only_as_shipped(make, reaso
             "its control cost is a _TwiceTheLagrangian",
         ),
         (lambda: _ExtraTerm(_quadratic(), coupling=f), "its class is _ExtraTerm"),
+        (
+            lambda: hm.SeparableHamiltonian(_narrowed(_quadratic()), coupling=f),
+            "its control cost's instance holds ['effective_domain'] of its own",
+        ),
+        (_CarriesCost, "its class is _CarriesCost"),
     ],
     ids=[
         "a subclass that changes nothing",
         "a cost subclass that changes nothing",
         "a cost overriding only lagrangian",
         "the g(x) subclass",
+        "a cost instance with its own effective_domain",
+        "a user's HamiltonianBase carrying a QuadraticControlCost",
     ],
 )
 def test_howard_reads_the_cost_only_as_shipped(make, reason):
@@ -684,8 +971,16 @@ def test_howard_reads_the_cost_only_as_shipped(make, reason):
     [
         (lambda: _Plain(_quadratic(), coupling=f), "its class is _Plain"),
         (lambda: hm.SeparableHamiltonian(_PlainCost(control_cost=1.0), coupling=f), "its control cost is a _PlainCost"),
+        (
+            lambda: hm.SeparableHamiltonian(_narrowed(_quadratic()), coupling=f),
+            "its control cost's instance holds ['effective_domain'] of its own",
+        ),
     ],
-    ids=["a subclass that changes nothing", "a cost subclass that changes nothing"],
+    ids=[
+        "a subclass that changes nothing",
+        "a cost subclass that changes nothing",
+        "a cost instance with its own effective_domain",
+    ],
 )
 def test_positive_qp_fan_reads_the_cost_only_as_shipped(make, reason):
     pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
@@ -706,6 +1001,37 @@ def test_positive_qp_fan_reads_the_cost_only_as_shipped(make, reason):
                 monotonicity_scheme="positive_qp_fan",
             )
         )
+
+
+@pytest.mark.parametrize(
+    "make",
+    [lambda: hm.SeparableHamiltonian(_quadratic(), coupling=f), hm.QuadraticMFGHamiltonian],
+    ids=["SeparableHamiltonian", "QuadraticMFGHamiltonian"],
+)
+def test_howard_still_runs_on_the_library_hamiltonians(make):
+    """The class rule's other side, which no refusal row can show: the shipped classes still run."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
+
+    problem = _quiet(lambda: _problem(make()))
+    x = np.linspace(0.0, 1.0, 11)
+    solver = _quiet(lambda: HJBGFDMSolver(problem, collocation_points=x[:, None], delta=0.35, inner_solver="howard"))
+    m = np.ones((6, 11))
+    assert np.all(np.isfinite(_quiet(lambda: solver.solve_hjb_system(m, (x - 0.5) ** 2, np.zeros_like(m)))))
+
+
+def test_a_regularized_user_cost_is_still_a_users_cost():
+    """``regularize()`` wraps the cost in its Moreau-Yosida envelope; the cost it wraps decides, so no Lagrangian is
+    derived from a user's cost through it."""
+    assert hm.why_the_cost_is_not_the_hamiltonians(hm.SeparableHamiltonian(_l1()).regularize(0.1)) is None
+    user = hm.SeparableHamiltonian(_PlainL1(control_cost=1.0), coupling=f).regularize(0.1)
+    why = hm.why_the_cost_is_not_the_hamiltonians(user)
+    assert why == (
+        "its control cost regularizes a cost that is not as shipped (its control cost is a _PlainL1, not a "
+        "QuadraticControlCost or L1ControlCost or BoundedControlCost or _MoreauYosidaControlCost)"
+    ), why
+    assert _quiet(lambda: _problem(user)).lagrangian_class is None
+    shipped = hm.SeparableHamiltonian(_l1(), coupling=f).regularize(0.1)
+    assert isinstance(_quiet(lambda: _problem(shipped)).lagrangian_class, hm.SeparableLagrangian)
 
 
 def test_the_fp_route_reads_the_hamiltonians_own_smoothness(monkeypatch):
@@ -797,7 +1123,7 @@ def test_a_lagrangian_whose_cost_is_not_as_shipped_is_refused_on_the_dpp_path():
     )
     with pytest.raises(
         NotImplementedError,
-        match=r"its DPP path solves a Lagrangian built on the control cost.*its control cost is a _NarrowL1",
+        match=r"it solves a non-smooth separable Hamiltonian on its DPP path, .*its control cost is a _NarrowL1",
     ):
         HJBSemiLagrangianSolver(problem)
 
@@ -826,19 +1152,32 @@ def test_a_users_lagrangian_base_is_unaffected():
     HJBSemiLagrangianSolver(problem)
 
 
-def test_the_dmp_warning_reads_the_hamiltonians_dp_at_the_steps_density(mfg_caplog):
-    """On a congestion H with lambda = 0.5, max|dp| at the step's density lies apart from |grad u| / lambda and from dp at
-    m = 1, so a threshold between them warns or stays silent only for the head's read."""
+class _TimeAndDensityScaled(hm.HamiltonianBase):
+    """H = (1 + 4t)(1 + 3m)|p|^2/2 - m/2, every method its own: dp depends on the time and the density."""
+
+    def _c(self, t, m):
+        return (1.0 + 4.0 * float(t)) * (1.0 + 3.0 * _a(m))
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * self._c(t, m) * np.sum(_a(p) ** 2, axis=-1) - 0.5 * _a(m)
+
+    def dp(self, t, x, p, m):
+        c = self._c(t, m)
+        return c[..., None] * _a(p) if np.ndim(p) == 2 else c * _a(p)
+
+    def optimal_control(self, t, x, p, m):
+        return -self.dp(t=t, x=x, p=p, m=m)
+
+    def dm(self, t, x, p, m):
+        return 1.5 * (1.0 + 4.0 * float(t)) * np.sum(_a(p) ** 2, axis=-1) - 0.5
+
+
+def _dmp_solver(h, **kwargs):
     from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
-    h = hm.CongestionHamiltonian(
-        control_cost=_quadratic(0.5),
-        congestion_factor=lambda m: 1 + 3.0 * m,
-        congestion_factor_dm=lambda m: 3.0 + 0 * m,
-    )
     problem = _quiet(lambda: _problem(h))
     x = np.linspace(0.0, 1.0, 11)
-    solver = _quiet(
+    return x, _quiet(
         lambda: HJBGFDMSolver(
             problem,
             x[:, None],
@@ -846,20 +1185,50 @@ def test_the_dmp_warning_reads_the_hamiltonians_dp_at_the_steps_density(mfg_capl
             monotonicity_scheme="joint_socp",
             monotonicity_application="precompute",
             check_dmp=True,
+            **kwargs,
         )
     )
+
+
+def test_the_dmp_warning_reads_the_hamiltonians_dp_at_the_steps_density_and_time(mfg_caplog):
+    """At t = 0.25 and m = 2, max|dp| lies above |grad u| (the control cost's reading at lambda = 1), dp at m = 1, and
+    dp at t = 0, so a threshold between them warns only for the head's read."""
+    h = _TimeAndDensityScaled()
+    x, solver = _dmp_solver(h)
     _quiet(lambda: solver.assemble_hjb_iteration_matrix(np.zeros((solver.n_points, 1))))
-    u, m = 2.0 * x, np.full(11, 2.0)
+    u, m, t = 2.0 * x, np.full(11, 2.0), 0.25
     grad = np.stack([solver._D_grad[0] @ u], axis=1)
-    head = float(np.max(np.abs(h.dp(t=0.0, x=(x,), p=grad, m=m))))
-    rivals = (float(np.max(np.abs(grad))) / 0.5, float(np.max(np.abs(h.dp(t=0.0, x=(x,), p=grad, m=np.ones(11))))))
-    assert head < min(rivals)
-    for threshold, warns in ((0.5 * (head + min(rivals)), False), (0.5 * head, True)):
+    head = float(np.max(np.abs(h.dp(t=t, x=(x,), p=grad, m=m))))
+    rivals = (
+        float(np.max(np.abs(grad))),
+        float(np.max(np.abs(h.dp(t=t, x=(x,), p=grad, m=np.ones(11))))),
+        float(np.max(np.abs(h.dp(t=0.0, x=(x,), p=grad, m=m)))),
+    )
+    assert head > max(rivals)
+    for threshold, warns in ((0.5 * (head + max(rivals)), True), (1.5 * head, False)):
         solver._dmp_alpha_crit, solver._dmp_warned = threshold, False
         mfg_caplog.clear()
         with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
-            solver._maybe_warn_dmp(u, m, 0.0)
+            solver._maybe_warn_dmp(u, m, t)
         assert any("DMP not guaranteed" in r for r in mfg_caplog.messages) is warns, (threshold, head, rivals)
+
+
+@pytest.mark.parametrize("inner_solver", ["newton", "howard"])
+def test_the_dmp_warning_is_handed_the_steps_density_and_time(inner_solver, monkeypatch):
+    """Both call sites, the Newton step's and the loop after Howard's sweep, hand the warning the step's density row and
+    its time: each density row is distinct, so a row and its time identify each other."""
+    x, solver = _dmp_solver(hm.SeparableHamiltonian(_quadratic(), coupling=f), inner_solver=inner_solver)
+    seen = []
+    monkeypatch.setattr(solver, "_maybe_warn_dmp", lambda u, m, t: seen.append((np.array(m, dtype=float), float(t))))
+    rows = 1.0 + 0.1 * np.arange(6)[:, None] + 0.0 * x
+    _quiet(lambda: solver.solve_hjb_system(rows, (x - 0.5) ** 2, np.zeros_like(rows)))
+    assert seen
+    dt = 0.5 / 5
+    for m, t in seen:
+        n = int(np.argmin(np.abs(rows[:, 0] - m[0])))
+        assert np.allclose(m, rows[n]), (m[0], t, n)
+        assert t == pytest.approx(n * dt), (m[0], t, n)
+    assert any(t > 0 for _, t in seen)
 
 
 @pytest.mark.parametrize("dim", [1, 2])

@@ -60,9 +60,12 @@ class _ScalarSpeed(_PointOrBatch):
 
 
 class _ComponentsFirst(_PointOrBatch):
-    """The right numbers in the wrong layout: ``(d, N)``, which has the size of ``(N, d)``."""
+    """The right numbers in the wrong layout where the velocity route reads dp, p of shape (90, 2): ``(d, N)``, which has
+    the size of ``(N, d)``. Construction compares dp with H at its own probes (#2901), so there it is the parent's."""
 
     def dp(self, t, x, p, m):
+        if np.shape(p) != (90, 2):
+            return super().dp(t=t, x=x, p=p, m=m)
         return (np.asarray(p) / (1.0 + LAM * np.asarray(m))[:, None]).T
 
 

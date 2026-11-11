@@ -296,35 +296,49 @@ batch and on a point. A problem refuses, at construction, a Hamiltonian whose so
   its method returns. It compares them at every $(t, x, m, p)$ of: $t$ at $0$, $T/2$ and $T$; $x$ at
   the node nearest the centre of the domain's nodes and, along each axis, its two end nodes nearest
   it; $m$ at $0.5$ and $1$; and $p$ a scale times the signs $(+1, -1, +1, \dots)$ of its components,
-  the scale at $0$, $0.4157$ and $-1.3691$, so every component is probed at both signs.
+  the scale at $0$, $0.4157$ and $-1.3691$, so every component is probed at both signs. Each
+  comparison has its own guard: a probe at which one read cannot be evaluated is warned about and the
+  others still compare, and a method or door that raises at every probe at which `__call__` (for a door,
+  its method) could be evaluated is refused.
 - `refuse_a_hamiltonian_whose_reads_disagree`: each door's read of a batch agrees with its reads of
-  the batch's points one at a time.
+  the batch's points one at a time, at three or four sample nodes and at $t$ of $0$, $T/2$ and $T$.
 
 A disagreement that falls between those probes is not seen: the check proves a disagreement where it
 finds one, and an agreement only at the probes. A non-smooth cost is compared only where $H$ is
-smooth at the probe. A soft wall (`state_penalty`) is composed into the Hamiltonian's potential and
-read back through its `__call__` at the same probes, so a subclass whose `__call__` does not read the
-potential is refused.
+smooth at the probe, and a gap $H$'s finite difference cannot resolve, such as one beside a constant
+potential of $10^7$, is not seen. A geometry whose grid is not an array of nodes is probed at its
+sample point alone.
 
-On a network the control is a rate per edge. The rates are held to `dp` by the network's own
-identity at every node and time. `dp` and `dm` are held to central differences of `__call__` at a
-fixed set of nodes, whatever the network's size: both ends of the node order, a middle node and a
-node of highest degree, each over its own neighbourhood. A disagreement at a node not probed is not
-seen. A custom `hamiltonian_func` replaces `__call__` only, and its `dp` and rates stay the built-in
-control (#1545, open, routes a custom network H through them); every reader of those refuses such a
-Hamiltonian (`has_custom_hamiltonian`), so only `NetworkHJBSolver` reads it, through `__call__`, and its
-derivatives are not compared.
+A soft wall (`state_penalty`) is composed into the Hamiltonian's potential and read back through its
+`__call__` at the same probes, with $x$ also the grid node where the wall is largest at each $t$. So a
+subclass whose `__call__` does not read the potential is refused wherever the wall is nonzero on the
+grid; one that reads the potential at some $x$ and not others is seen only at those $x$.
+
+On a network the control is a rate per edge. The rates are held to `dp` by the network's own identity,
+and `dp` and `dm` to central differences of `__call__`, at a fixed set of nodes whatever the network's
+size (both ends of the node order, a middle node and a node of highest degree), `dp` over each node's
+neighbourhood, at $t$ of $0$, $T/2$ and $T$, at three costate vectors with distinct entries, and at the
+uniform density. A disagreement at a node not probed, or at another density, is not seen. A custom
+`hamiltonian_func` replaces `__call__`, and with a custom `hamiltonian_dm_func` also `dm`, while `dp`
+and the rates stay the built-in control (#1545, open, routes a custom network H through them); every
+reader of those refuses such a Hamiltonian (`has_custom_hamiltonian`), so only `NetworkHJBSolver`
+reads it, and neither is compared.
 
 A control cost stands for its Hamiltonian only where the library ships both: a `SeparableHamiltonian`
 or `QuadraticMFGHamiltonian` and a cost of a class the library ships, neither redefining a method of its
-own (`_why_not_as_it_ships`, #2914; user ruling, 2026-11-11, for the readers of a Lagrangian built on the
-cost). HJB-SL's `canonical_cs` and `BaseHJBSolver._control_cost_lambda` read the cost's `lambda_` there
-only; `MFGComponents` derives a Lagrangian from the cost there only; and HJB-SL's DPP path (a non-smooth
-Hamiltonian), HJB-GFDM's `inner_solver='howard'` and `monotonicity_scheme='positive_qp_fan'` read the
-cost, or the Lagrangian built on it, there only, and refuse a subclass or a user's cost elsewhere,
-stating what was run. A problem is given a Hamiltonian or a Lagrangian, not both, in the `components=`
-form as in `Model`; a Lagrangian-defined `MFGComponents` keeps its derived Hamiltonian in
-`MFGProblem.hamiltonian_class`, and its `hamiltonian` field stays `None`.
+own on its class or its instance, `effective_domain` included; a cost `regularize()` wraps stands for it
+only when the wrapped cost does (`_why_not_as_it_ships`, #2914; user ruling, 2026-11-11, for the readers
+of a Lagrangian built on the cost). HJB-SL's `canonical_cs` and `BaseHJBSolver._control_cost_lambda`
+read the cost's `lambda_` there only; `MFGComponents` derives a Lagrangian from the cost there only;
+and HJB-SL's DPP path (a non-smooth separable Hamiltonian), HJB-GFDM's `inner_solver='howard'` and
+`monotonicity_scheme='positive_qp_fan'` read the cost, or the Lagrangian built on it, there only, and
+refuse a subclass or a user's cost elsewhere, stating what was run. A problem is given a Hamiltonian
+or a Lagrangian, not both, in the `components=` form as in `Model`; a Lagrangian-defined
+`MFGComponents` keeps its derived Hamiltonian in `MFGProblem.hamiltonian_class`, and its `hamiltonian`
+field stays `None`. *Not yet met (#2901, stage 2): a Lagrangian-defined problem's own methods.* A
+`SeparableLagrangian` subclass is read on the DPP path through its own `__call__`, while the
+Hamiltonian derived from it reads the cost; the stage-2 change derives that Hamiltonian only for the
+Lagrangian as the library ships it.
 
 ### What the Fokker–Planck solver receives
 
