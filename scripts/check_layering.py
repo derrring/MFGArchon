@@ -33,8 +33,8 @@ the forms on the closed list, apart from the forms stated as not read with that 
   ruling): that statement is the dependency ``import P.name`` makes, and the owner edge to each submodule stands. A
   name the ``__init__`` binds otherwise -- a function re-exported from a same-named submodule, or a star import that
   exports it -- keeps the path edge, and so does one whose binding is conditional, a star import whose exports
-  cannot be read (its source outside the tree, or a non-literal ``__all__``), and any module-level ``__getattr__``
-  in the ``__init__``. A star import's path is always an edge.
+  cannot be read (its source, or a source it star-imports in turn, outside the tree; or a non-literal ``__all__``),
+  and any module-level ``__getattr__`` in the ``__init__``. A star import's path is always an edge.
 - **The closed list.** At module level these bind names, unconditionally, and conditionally inside ``if``,
   ``try`` (body, ``else``, ``finally`` and handlers) or ``with``:
   - ``def``, ``async def`` and ``class``;
@@ -71,9 +71,10 @@ the forms on the closed list, apart from the forms stated as not read with that 
 - **Owners.** The last binding of a name wins, and a conditional last binding is ambiguous. An attribute or
   subscript target binds no name. A binding that leads back into a re-export ring is skipped for the binding
   before it; a ring no binding ends is ambiguous, and so is a ring of star imports. ``from x import *`` exports
-  ``x``'s static ``__all__``, or, when ``x`` binds no ``__all__``, its names with no leading underscore. A name
-  ``P`` does not bind is the submodule ``P.name`` when that exists and no star import in ``P`` could bind it. A
-  name bound nowhere is unresolved (not found). An unresolved owner is never taken to be the importing module.
+  ``x``'s static ``__all__``, or, when ``x`` binds no ``__all__``, its names with no leading underscore; a module ``x``
+  with no file in the tree, such as ``os.path``, exports what the check cannot read, so a name it may bind is
+  ambiguous. A name ``P`` does not bind is the submodule ``P.name`` when that exists and no star import in ``P`` could
+  bind it. A name bound nowhere is unresolved (not found). An unresolved owner is never taken to be the importing module.
 
 **What it reports.** Each report names a location, and none prints a total:
 
@@ -495,9 +496,10 @@ class Tree:
         return out
 
     def star_exports(self, module: str, seen: tuple[str, ...] = ()) -> set[str] | None:
-        """The names `from module import *` binds, or None when that cannot be decided statically, a ring of star
+        """The names `from module import *` binds, or None when that cannot be decided statically: a module with no file
+        in the tree (`os.path`, whose exports the check does not read), a non-literal `__all__`, or a ring of star
         imports among them."""
-        if module in seen:
+        if module in seen or not self.path_of(module)[0]:
             return None
         events = self.events(module)
         alls = [e for e in events if e[0] == "__all__"]
@@ -524,27 +526,32 @@ class Tree:
         """Whether `from package import name` binds the submodule object `package.name`: True, False or AMBIGUOUS
         (#2938's path-target ruling).
 
-        True when `package` is a package, `package.name` is a module on disk, no star import in its `__init__` may
-        bind `name`, and its `__init__`'s module-level bindings of `name` are none, or only `from . import name`: the
-        import system then hands back the submodule, the dependency `import package.name` makes. False when the
+        True when `package` is a package, `package.name` is a module on disk and not a dunder name, no module-level
+        `__getattr__` is bound in its `__init__`, directly or through a star import, no star import there may bind
+        `name`, and the `__init__`'s module-level bindings of `name` are none, or only `from . import name`: the import
+        system then hands back the submodule, the dependency `import package.name` makes. False when the
         `__init__` binds `name` otherwise -- a function re-exported from a same-named submodule
         (`operators.differential.function_gradient`), a `def`, a class, an assignment -- or a star import exports it,
         shadowing the submodule. AMBIGUOUS when a binding of `name` is conditional; when a star import's exports
-        cannot be read, its source being no module in the tree (`from os.path import *` binds `join`) or its
-        `__all__` not a literal; and when the `__init__` binds a module-level `__getattr__`, by any binding form or
-        through a star import. Python's import consults that `__getattr__` before it loads the submodule, so one bound
+        cannot be read (`star_exports`), its source or a source it star-imports in turn being no module in the tree
+        (`from os.path import *` binds `join`), or an `__all__` not a literal; and when the `__init__` binds a
+        module-level `__getattr__`, by any binding form or through a star import. Python's import consults that `__getattr__` before it loads the submodule, so one bound
         ahead of `from . import name` answers that import itself; the check does not follow which comes first. The
         `__init__`'s static bindings are read; a submodule load that rebinds the package's name at run time is #2945's
         (B3)."""
         _path, is_package = self.path_of(package)
-        if not is_package or not self.path_of(package + "." + name)[0]:
+        if (
+            not is_package
+            or (name.startswith("__") and name.endswith("__"))
+            or not self.path_of(package + "." + name)[0]
+        ):
             return False
         events = self.events(package)
         if any(e[0] == "__getattr__" for e in events):
             return AMBIGUOUS
         for e in events:
             if e[1] == "star":
-                exported = self.star_exports(e[2]) if self.path_of(e[2])[0] else None
+                exported = self.star_exports(e[2])
                 if exported is None or "__getattr__" in exported:
                     return AMBIGUOUS
                 if name in exported:
@@ -1262,7 +1269,7 @@ PATH_FILES: dict[str, str] = {
     "pt/high/p7/sub.py": "",
     "pt/low/vii_getattr.py": "from pt.high.p7 import sub\n",
     "pt/high/p8/__init__.py": "from .bad import *\n",
-    "pt/high/p8/bad.py": "NAME = 'x'\n__all__ = [NAME]\n",
+    "pt/high/p8/bad.py": "NAME = 'X'\nX = 1\n__all__ = [NAME]\n",
     "pt/high/p8/sub.py": "",
     "pt/low/viii_unread.py": "from pt.high.p8 import sub\n",
     "pt/high/p9/__init__.py": "from os.path import *\n",
@@ -1298,6 +1305,35 @@ PATH_FILES: dict[str, str] = {
     "pt/high/p18.py": "X = 1\n",
     "pt/high/p18/sub.py": "",
     "pt/low/xviii_module.py": "from pt.high.p18 import sub\n",
+    "pt/high/p19/__init__.py": "from .mid import *\n",
+    "pt/high/p19/mid.py": "from os.path import *\n",
+    "pt/high/p19/join.py": "",
+    "pt/low/xix_nested_outside.py": "from pt.high.p19 import join\n",
+    "pt/high/p20/__init__.py": "from .a import *\nfrom .b import *\n",
+    "pt/high/p20/a.py": "X = 1\n",
+    "pt/high/p20/b.py": "sub = 1\n",
+    "pt/high/p20/sub.py": "",
+    "pt/low/xx_second_star.py": "from pt.high.p20 import sub\n",
+    "pt/high/p21/__init__.py": "import os\nif os.sep:\n    from .a import *\n",
+    "pt/high/p21/a.py": "sub = 1\n",
+    "pt/high/p21/sub.py": "",
+    "pt/low/xxi_cond_star.py": "from pt.high.p21 import sub\n",
+    "pt/high/p22/__init__.py": "__getattr__ = lambda name: 42\n",
+    "pt/high/p22/sub.py": "",
+    "pt/low/xxii_getattr_assigned.py": "from pt.high.p22 import sub\n",
+    "pt/high/p23/__init__.py": "from . import sub\nfrom pt.low.base import other as sub\n",
+    "pt/high/p23/sub.py": "",
+    "pt/low/xxiii_def_after.py": "from pt.high.p23 import sub\n",
+    "pt/high/p24/__init__.py": "import os as sub\n",
+    "pt/high/p24/sub.py": "",
+    "pt/low/xxiv_import_as.py": "from pt.high.p24 import sub\n",
+    "pt/high/p25/__init__.py": "import os\nif os.sep:\n    from os.path import *\n",
+    "pt/high/p25/join.py": "",
+    "pt/low/xxv_cond_outside.py": "from pt.high.p25 import join\n",
+    "pt/high/p26/__init__.py": "try:\n    from .lazy import __getattr__\nexcept ImportError:\n    pass\n",
+    "pt/high/p26/lazy.py": "def __getattr__(name):\n    return 42\n",
+    "pt/high/p26/sub.py": "",
+    "pt/low/xxvi_getattr_try.py": "from pt.high.p26 import sub\n",
 }  # fmt: skip
 # (importer, package on its path, whether the path is an edge, the row)
 PATH_CASES = [
@@ -1319,6 +1355,14 @@ PATH_CASES = [
     ("pt.low.xvi_getattr_cond", "pt.high.p16", True, "(xvi) a __getattr__ under a module-level `if`: ambiguous"),
     ("pt.low.xvii_as", "pt.high.p17", True, "(xvii) `from . import other as sub` in the __init__"),
     ("pt.low.xviii_module", "pt.high.p18", True, "(xviii) a module P.py beside a directory P/ with no __init__.py"),
+    ("pt.low.xix_nested_outside", "pt.high.p19", True, "(xix) a star of a star from outside the tree: ambiguous"),
+    ("pt.low.xx_second_star", "pt.high.p20", True, "(xx) two star imports, the second exporting the name"),
+    ("pt.low.xxi_cond_star", "pt.high.p21", True, "(xxi) a conditional star import exporting the name"),
+    ("pt.low.xxii_getattr_assigned", "pt.high.p22", True, "(xxii) a __getattr__ bound by assignment: ambiguous"),
+    ("pt.low.xxiii_def_after", "pt.high.p23", True, "(xxiii) an import that rebinds sub after `from . import sub`"),
+    ("pt.low.xxiv_import_as", "pt.high.p24", True, "(xxiv) `import os as sub` in the __init__"),
+    ("pt.low.xxv_cond_outside", "pt.high.p25", True, "(xxv) a conditional star from outside the tree: ambiguous"),
+    ("pt.low.xxvi_getattr_try", "pt.high.p26", True, "(xxvi) a __getattr__ imported in a `try`: ambiguous"),
 ]
 # (package, name, what `Tree.binds_submodule` answers), one per name of each row: the three-way answer itself, which
 # the edge alone cannot tell apart, since a False and an AMBIGUOUS name both keep the path edge.
@@ -1343,6 +1387,15 @@ BINDS_CASES = [
     ("pt.high.p16", "sub", "ambiguous", "(xvi)"),
     ("pt.high.p17", "sub", False, "(xvii)"),
     ("pt.high.p18", "sub", False, "(xviii)"),
+    ("pt.high.p19", "join", "ambiguous", "(xix)"),
+    ("pt.high.p20", "sub", False, "(xx)"),
+    ("pt.high.p21", "sub", False, "(xxi)"),
+    ("pt.high.p22", "sub", "ambiguous", "(xxii)"),
+    ("pt.high.p23", "sub", False, "(xxiii)"),
+    ("pt.high.p24", "sub", False, "(xxiv)"),
+    ("pt.high.p25", "join", "ambiguous", "(xxv)"),
+    ("pt.high.p26", "sub", "ambiguous", "(xxvi)"),
+    ("pt", "__init__", False, "a dunder name is never the submodule"),
 ]
 
 
