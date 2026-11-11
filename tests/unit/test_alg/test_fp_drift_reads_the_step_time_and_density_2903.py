@@ -2,18 +2,24 @@
 
 The drift that advances step n to n + 1 is read at t_n = n dt, with U^n and with the density the solver holds at step n
 (docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives"). Before #2903 the weak-form family (FEM, meshless
-Galerkin) read it at t = 0 with m = None, and the particle solver's three loops with m = None: a time-dependent control
-was solved as a constant one, and a density-dependent one gave NaN or raised. FVM and the network solver held the
-convention already, and are the controls here.
+Galerkin) read it at t = 0 with m = None, so a time-dependent control was solved there as a constant one; the particle
+solver's three loops read the step's time with m = None. A control that reads m raised. FVM and the network solver held
+the convention already, and are the controls here.
 
-- **Time, by an oracle that does not read the implementation.** alpha = (1 + 4 t) alpha_lib(p) at step n is the
-  library's control applied to U'^n = (1 + 4 t_n) U^n, since the library's control is linear in p (on the network,
-  positively homogeneous). So the solve with that control on U equals the library's solve on U', to rounding.
-- **Which density.** A recording control keeps each read's (t, x, m): the times are the t_n, and each m is the solver's
-  own density at step n, where the solver reads it.
-- **A density-dependent control,** alpha_lib(p) / (1 + 0.2 m), gives a finite M, and FEM, meshless Galerkin and FVM
-  conserve its mass. It is written to broadcast in each solver's own layout (`to_p` below, #2875); no layout is pinned.
-- **The default path,** `problem.solve()` on a 1-D mesh, which picks FEM_P1, hands that control a density.
+- **Time** (a mutation-verified convention pin). alpha = (1 + 4 t) alpha_lib(p) at step n is the library's control
+  applied to U'^n = (1 + 4 t_n) U^n, since the library's control is linear in p (on the network, positively
+  homogeneous). So the solve with that control on U equals the library's solve on U', to rounding. It kills a time
+  read at t_{n+1} or at 0.
+- **Which density** (a mutation-verified convention pin). A recording control keeps each read's (t, x, m): the times
+  are the t_n, and each m is the solver's own density at step n where the solver reads it. On the particle rows that
+  is the returned density read at the recorded particles by `np.interp` or scipy's linear grid interpolator, not by the
+  solver's own `_estimate_density_at_particles`. It kills m = None, the step-0 density, a wrong step, the density at
+  FEM's nodes for its quadrature points, and an interpolator that returns the wrong values.
+- **The default path** (a happy-path assertion). `problem.solve()` on a 1-D mesh picks FEM_P1, and every read there
+  carries a density. It does not check which density; the test above does.
+
+The density-dependent control is written to broadcast in each solver's own layout (`to_p` below, #2875); no layout is
+pinned.
 """
 
 from __future__ import annotations
@@ -36,6 +42,9 @@ T, NT, SIGMA = 0.5, 10, 0.3
 DT = T / NT
 #: The time oracle's tolerance. A solver that reads t_{n+1}, or a fixed time, is far outside it (the PR's mutants).
 TIME_TOL = 1e-9
+#: The particle rows' oracle is an independent linear interpolation of the returned density, equal to the solver's to
+#: rounding; a wrong density is far outside it (the PR's mutants).
+INTERP_TOL = 1e-12
 
 
 class _Control:
@@ -132,12 +141,7 @@ def _fem(kind, time_scaled=False):
     solver = FPFEMSolver(_mesh_problem(h), order=1)
     x = solver._disc.dof_coordinates[:, 0]
     M = _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled)))
-    return SimpleNamespace(
-        h=h,
-        M=np.asarray(M),
-        weights=solver._mass_weights,
-        density=lambda n, read: solver._basis.interpolate(M[n]).value,
-    )
+    return SimpleNamespace(h=h, M=np.asarray(M), density=lambda n, read: (solver._basis.interpolate(M[n]).value, 0.0))
 
 
 def _meshless(kind, time_scaled=False):
@@ -147,7 +151,7 @@ def _meshless(kind, time_scaled=False):
     x = np.linspace(0.0, 1.0, 15)
     solver = MeshlessGalerkinFPSolver(_grid_problem(h, 15), collocation_points=x[:, None], delta=3.5 / 14)
     M = _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled)))
-    return SimpleNamespace(h=h, M=np.asarray(M), weights=solver._mass_weights, density=lambda n, read: M[n])
+    return SimpleNamespace(h=h, M=np.asarray(M), density=lambda n, read: (M[n], 0.0))
 
 
 def _particle_1d(kind, time_scaled=False):
@@ -160,10 +164,7 @@ def _particle_1d(kind, time_scaled=False):
         _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled), show_progress=False))
     )
 
-    def density(n, read):
-        return solver._estimate_density_at_particles(read[1][0].reshape(-1, 1), M[n], [x], [(0.0, 1.0)])
-
-    return SimpleNamespace(h=h, M=M, weights=None, density=density)
+    return SimpleNamespace(h=h, M=M, density=lambda n, read: (np.interp(read[1][0], x, M[n]), INTERP_TOL))
 
 
 def _particle_2d(kind, time_scaled=False):
@@ -185,10 +186,12 @@ def _particle_2d(kind, time_scaled=False):
     )
 
     def density(n, read):
-        positions = np.stack(read[1], axis=-1)
-        return solver._estimate_density_at_particles(positions, M[n], [x, x], [(0.0, 1.0), (0.0, 1.0)])
+        from scipy.interpolate import RegularGridInterpolator
 
-    return SimpleNamespace(h=h, M=M, weights=None, density=density)
+        positions = np.stack(read[1], axis=-1)
+        return RegularGridInterpolator((x, x), M[n], method="linear")(positions), INTERP_TOL
+
+    return SimpleNamespace(h=h, M=M, density=density)
 
 
 def _particle_gpu_loop(kind, time_scaled=False):
@@ -199,17 +202,14 @@ def _particle_gpu_loop(kind, time_scaled=False):
     h = _Separable(kind, to_p=lambda m, p: m)  # p and m are (particles,)
     x = np.linspace(0.0, 1.0, 41)
     np.random.seed(12345)
-    torch.manual_seed(12345)  # this loop samples and steps with torch's generator
+    torch.manual_seed(12345)  # this loop samples with torch's generator and steps with numpy's global stream
     solver = FPParticleSolver(_grid_problem(h, 41), num_particles=2000, kde_bandwidth=0.1, backend="torch")
     M = np.asarray(_quiet(lambda: solver.solve_fp_system(_m0(x), _u_1d(x, time_scaled))))
     assert solver.current_strategy.name != "cpu", (
         f"routed to the {solver.current_strategy.name!r} strategy, not the GPU loop, so this row tests the CPU loop"
     )
 
-    def density(n, read):
-        return solver._estimate_density_at_particles(read[1][0].reshape(-1, 1), M[n], [x], [(0.0, 1.0)])
-
-    return SimpleNamespace(h=h, M=M, weights=None, density=density)
+    return SimpleNamespace(h=h, M=M, density=lambda n, read: (np.interp(read[1][0], x, M[n]), INTERP_TOL))
 
 
 def _fvm(kind, time_scaled=False):
@@ -222,12 +222,7 @@ def _fvm(kind, time_scaled=False):
     M = np.asarray(
         _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled), show_progress=False))
     )
-    return SimpleNamespace(
-        h=h,
-        M=M,
-        weights=problem.geometry.measure_weights(),
-        density=lambda n, read: 0.5 * (M[n][:-1] + M[n][1:]),
-    )
+    return SimpleNamespace(h=h, M=M, density=lambda n, read: (0.5 * (M[n][:-1] + M[n][1:]), 0.0))
 
 
 def _network(kind, time_scaled=False):
@@ -250,7 +245,7 @@ def _network(kind, time_scaled=False):
             lambda: FPNetworkSolver(problem, scheme="explicit").solve_fp_system(m0 / m0.sum(), U, show_progress=False)
         )
     )
-    return SimpleNamespace(h=h, M=M, weights=None, density=lambda n_, read: M[n_])
+    return SimpleNamespace(h=h, M=M, density=lambda n_, read: (M[n_], 0.0))
 
 
 ROWS = {
@@ -285,20 +280,13 @@ def test_each_read_gets_the_steps_time_and_the_density_the_solver_holds(row):
         t, _, m = read
         assert m is not None, f"{row}: read at t = {t} with m = None (#2903)"
         n = round(t / DT)
-        expected = np.asarray(run.density(n, read), dtype=float)
+        expected, tol = run.density(n, read)
+        expected = np.asarray(expected, dtype=float)
         assert m.shape == expected.shape, f"{row}: the m read at t = {t} has shape {m.shape}, not {expected.shape}"
-        assert np.array_equal(m, expected), (
-            f"{row}: the m read at t = {t} is not the density the solver holds at step {n} (#2903)"
+        gap = float(np.max(np.abs(m - expected)))
+        assert gap <= tol, (
+            f"{row}: the m read at t = {t} is {gap:.3e} from the density the solver holds at step {n} (#2903)"
         )
-
-
-@pytest.mark.parametrize("row", list(ROWS))
-def test_a_density_dependent_control_gives_a_finite_density(row):
-    run = ROWS[row]("density")
-    assert np.all(np.isfinite(run.M)), f"{row}: {int(np.sum(~np.isfinite(run.M)))} entries of M are not finite"
-    if run.weights is not None:
-        mass = (run.M.reshape(run.M.shape[0], -1) * np.ravel(run.weights)).sum(axis=1)
-        assert np.allclose(mass, mass[0], rtol=1e-10, atol=0), f"{row}: mass {mass[0]:.15g} -> {mass[-1]:.15g}"
 
 
 def test_the_default_solve_on_a_mesh_hands_the_control_a_density():

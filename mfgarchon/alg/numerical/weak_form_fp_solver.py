@@ -180,10 +180,10 @@ class WeakFormFPSolver(BaseFPSolver):
     def _build_advection(self, U_n: NDArray, D: float, *, t: float, m_n: NDArray) -> sparse.csr_matrix:
         r"""Advection matrix, in divergence form, for the drift $\alpha^*$ that advances step n to n + 1.
 
-        ``U_n`` is the value function at step n, ``t`` the step's time $t_n = n\,\Delta t$, and ``m_n`` the density
-        this solve holds at step n, on its DOFs: what `optimal_control` is handed for that step
-        (docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives"; #2903). They are required: a default
-        would hand the next caller's control a time or density that is not the step's.
+        ``U_n``, ``t`` and ``m_n`` (on the DOFs) are the step's value function, time and density, which
+        `optimal_control` is handed as docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives", states
+        (#2903). They are required: a default would hand the next caller's control a time or density that is not
+        the step's.
 
         ``D`` is the diffusion coefficient of the CURRENT solve (``_diffusion_coefficient``,
         volatility-aware), passed so a subclass that adds a diffusion-scaled stabilization
@@ -287,7 +287,9 @@ class WeakFormFPSolver(BaseFPSolver):
 
             if potential_field is not None:
                 U_n = potential_field[n] if potential_field.ndim > 1 else potential_field
-                A_system = A_base + self._build_advection(U_n, D, t=n * dt, m_n=M[n])
+                # A copy: the step's density goes to user code, and a control that writes it in place must not rewrite
+                # the returned history.
+                A_system = A_base + self._build_advection(U_n, D, t=n * dt, m_n=M[n].copy())
             else:
                 A_system = A_base
 
