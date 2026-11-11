@@ -3,8 +3,9 @@
 The drift that advances step n to n + 1 is read at t_n = n dt, with U^n and with the density the solver holds at step n
 (docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives"). Before #2903 the weak-form family (FEM, meshless
 Galerkin) read it at t = 0 with m = None, so a time-dependent control was solved there as a constant one; the particle
-solver's three loops read the step's time with m = None. A control that reads m raised. FVM and the network solver held
-the convention already, and are the controls here.
+solver's three loops read the step's time with m = None. A control that used m directly raised; one that converted it
+first gave NaN on FEM and meshless Galerkin, and raised on the particle solver. FVM and the network solver held the
+convention already, and are the controls here.
 
 - **Time** (a mutation-verified convention pin). alpha = (1 + 4 t) alpha_lib(p) at step n is the library's control
   applied to U'^n = (1 + 4 t_n) U^n, since the library's control is linear in p (on the network, positively
@@ -15,8 +16,13 @@ the convention already, and are the controls here.
   is the returned density read at the recorded particles by `np.interp` or scipy's linear grid interpolator, not by the
   solver's own `_estimate_density_at_particles`. It kills m = None, the step-0 density, a wrong step, the density at
   FEM's nodes for its quadrature points, and an interpolator that returns the wrong values.
-- **The default path** (a happy-path assertion). `problem.solve()` on a 1-D mesh picks FEM_P1, and every read there
-  carries a density. It does not check which density; the test above does.
+- **The density is the solver's copy** (a mutation-verified pin). A control that writes the density it is handed, in
+  place, leaves the returned history as it was. It kills a hook handed the solver's own row `M[n]`: on meshless Galerkin,
+  which hands its node values on, the write then reaches the returned `M[0]`. FEM interpolates them into an array of its
+  own, so it is not a row here.
+- **The default path** (kills a mutation no other test here runs). `problem.solve()` on a 1-D mesh picks FEM_P1, and
+  every read there carries a density. A factory that routes a 1-D mesh away from FEM_P1 fails it alone. It does not
+  check which density; the which-density test does.
 
 The density-dependent control is written to broadcast in each solver's own layout (`to_p` below, #2875); no layout is
 pinned.
@@ -45,16 +51,21 @@ TIME_TOL = 1e-9
 #: The particle rows' oracle is an independent linear interpolation of the returned density, equal to the solver's to
 #: rounding; a wrong density is far outside it (the PR's mutants).
 INTERP_TOL = 1e-12
+#: What a "write" control floors the density it is handed at, in place: above _m0's minimum, so the write is seen.
+WRITE_FLOOR = 0.6
 
 
 class _Control:
-    """``kind``: "record" (the library's control), "time" ((1 + 4 t) times it), "density" (it over 1 + 0.2 m).
-    Every read's (t, x, m) is kept."""
+    """``kind``: "record" (the library's control), "time" ((1 + 4 t) times it), "density" (it over 1 + 0.2 m), "write"
+    (the library's control, after flooring the density it was handed at WRITE_FLOOR in place). Every read's (t, x, m) is
+    kept."""
 
     def _shaped(self, t, x, p, m, base):
         self.reads.append(
             (float(t), tuple(np.array(c, dtype=float) for c in x), None if m is None else np.array(m, dtype=float))
         )
+        if self.kind == "write":
+            np.maximum(m, WRITE_FLOOR, out=m)
         alpha = np.asarray(base(t=t, x=x, p=p, m=m), dtype=float)
         if self.kind == "time":
             return (1.0 + 4.0 * t) * alpha
@@ -287,6 +298,16 @@ def test_each_read_gets_the_steps_time_and_the_density_the_solver_holds(row):
         assert gap <= tol, (
             f"{row}: the m read at t = {t} is {gap:.3e} from the density the solver holds at step {n} (#2903)"
         )
+
+
+def test_a_control_that_writes_the_density_it_is_handed_leaves_the_returned_history():
+    run = _meshless("write")
+    m0 = _m0(np.linspace(0.0, 1.0, 15))
+    assert m0.min() < WRITE_FLOOR, "the initial density never falls below the floor, so a write cannot be seen"
+    assert np.array_equal(run.M[0], m0), (
+        f"meshless Galerkin: the returned M[0] is not the initial density (min {run.M[0].min():.4f}): a control that "
+        f"writes the density it is handed reached the solver's history (#2903)"
+    )
 
 
 def test_the_default_solve_on_a_mesh_hands_the_control_a_density():

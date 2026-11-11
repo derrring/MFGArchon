@@ -4,4 +4,4 @@
   - **Unchanged:** a library Hamiltonian's density, byte for byte, since its control reads neither $t$ nor $m$.
   - **Cost:** reading the density at the particles is new work on every particle solve. Measured as medians, base and head interleaved:
     - default KDE, 10,000 particles: about +10% in 1-D (51 nodes, $N_t = 50$) and +2% in 2-D ($21 \times 21$, $N_t = 20$);
-    - `kde_method="cic"`, 100,000 particles, same grids: +28% to +44% in 1-D and +19% to +29% in 2-D, over two rounds.
+    - `kde_method="cic"`, 100,000 particles, same grids: about +30% to +45% in 1-D and +15% to +30% in 2-D, over three rounds.

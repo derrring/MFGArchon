@@ -336,7 +336,8 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   velocity its step would not read, names the scheme that reads one.
 - **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
   refusals state it. For the step from $t_n$ to $t_{n+1}$ each of them but FP-FDM hands it the time
-  $t_n = n\,\Delta t$, $u^n$ as $p$ (its gradient, or on the network its value at every node), and
+  $t_n = n\,\Delta t$, $u^n$ as $p$ (its gradient; on FVM its normal derivative at each face; on the
+  network its value at every node), and
   the density it holds at step $n$, at the points where it reads the control, in the shapes of the
   table below (#2903):
   - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$, with the mean
