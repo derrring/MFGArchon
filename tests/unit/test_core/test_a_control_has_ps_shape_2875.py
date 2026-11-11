@@ -1,18 +1,23 @@
 """What `optimal_control` returns has p's shape, wherever the library reads it (#2875, stage 3, first slice).
 
 `HamiltonianBase.optimal_control` and `ControlCostBase.optimal_control` document "same shape as p". Every library read
-of a control passes what came back through one owner, `checked_control`, which refuses another shape and names the
-reader, the shapes it was handed and the shape that came back. Before it, each read decided alone: FEM and meshless
-Galerkin took a wrong shape silently (1.047 and 67.11 off on main bfe6de4d), the network solvers read the first n
-entries of a longer return, FVM and the velocity route reshaped or ravelled any return of p's size, and the velocity
-route's nD read and `utils/manufactured.py` each had a check of their own.
+of what `optimal_control` or `evaluate_optimal_control` returns passes it through one owner, `checked_control`, which
+refuses another shape and names the reader, the source and its method, the shapes of p and m handed, and the shape
+that came back. Before it, each read decided alone (main bfe6de4d): FEM and meshless Galerkin took a wrong shape
+silently, the network solvers read the first n entries of a longer return, FVM and the velocity route reshaped or
+ravelled any return of p's size, the velocity route's nD read and `utils/manufactured.py` checked with messages of their
+own, and `cone_policy` raised numpy's `IndexError`.
 
-- **Each read refuses another shape** (a mutation-verified pin). One row per read, each with a return of another shape
-  that read took before this change: silently wrong, read right by accident, or refused with its own message. The row
-  alone kills the mutant in which that read calls past the owner.
+- **Each read refuses another shape** (a mutation-verified pin). Two rows per read: a return of p's size in another
+  shape, and a return of another size. The message is pinned whole up to the shape that came back: the reader, the
+  source and its method, p's shape and the m clause. A read that calls past the owner, or that reshapes a same-size
+  return or truncates a longer one before handing it on, fails its own rows.
+- **Each read takes the library's control** (a mutation-verified pin). Through the same fixture, so a refusal is the
+  form's and not the fixture's. A read that hands the owner a p other than the one it handed the control fails here.
 - **The 0-d admission** (a mutation-verified pin). *Not yet met (#2875): the form of p.* FVM's 1-D wrap face hands a 0-d
   p, and the library's own control answers (1,). The owner admits it and returns it 0-d; stage 3 deletes this.
-- **The owner alone** (a mutation-verified pin): a (1,) return for a p that is not 0-d is refused.
+- **The owner alone** (a mutation-verified pin): it refuses (1,) for a p that is not 0-d, (2,) for a 0-d p, and (1,) for
+  a p of shape (1, 1).
 """
 
 from __future__ import annotations
@@ -238,54 +243,106 @@ def _manufactured_coefficient(form):
     return _drift_coefficient(_separable(form), 2)
 
 
-#: read -> (the reader the refusal names, how it is run with a control of a form, the form it refuses, the shape of p
-#: it was handed, the shape that came back). Each form is one this read took before #2875's owner (bfe6de4d).
+#: read -> (the reader the refusal names, the method it names, how it is run with a control of a form, the m clause it
+#: names, and two (form, shape of p handed, shape that came back): one of p's size, one of another size). At bfe6de4d each
+#: read took each of these forms silently (wrong, or right by accident), refused it with a message of its own, or raised
+#: a numpy error; the PR's revert run lists which.
 READS = {
-    "FEM": ("FPFEMSolver", lambda f: _fem(_separable(f)), "double", (1, 14, 2), (56,)),  # silent, 1.047 off
+    "FEM": (
+        "FPFEMSolver",
+        "optimal_control",
+        lambda f: _fem(_separable(f)),
+        "m None",
+        [("transposed", (1, 14, 2), (2, 14, 1)), ("double", (1, 14, 2), (56,))],
+    ),
     "meshless Galerkin": (
         "MeshlessGalerkinFPSolver",
+        "optimal_control",
         lambda f: _meshless(_separable(f)),
-        "transposed",
-        (15, 1),
-        (1, 15),
+        "m None",
+        [("transposed", (15, 1), (1, 15)), ("double", (15, 1), (30,))],
     ),
-    "particle": ("FPParticleSolver", lambda f: _particle(_separable(f)), "lead", (500,), (1, 500)),
-    "FVM face": ("FPFVMSolver", lambda f: _fvm(_separable(f)), "lead", (14,), (1, 14)),
-    "FVM wrap face": ("FPFVMSolver", lambda f: _fvm_periodic(_separable(f, only_0d=True)), "lead", (), (1, 1)),
-    "network FP": ("FPNetworkSolver", _network_fp, "double", (9,), (18,)),
+    "particle": (
+        "FPParticleSolver",
+        "optimal_control",
+        lambda f: _particle(_separable(f)),
+        "m None",
+        [("lead", (500,), (1, 500)), ("double", (500,), (1000,))],
+    ),
+    "FVM face": (
+        "FPFVMSolver",
+        "optimal_control",
+        lambda f: _fvm(_separable(f)),
+        "m of shape (14,)",
+        [("lead", (14,), (1, 14)), ("double", (14,), (28,))],
+    ),
+    "FVM wrap face": (
+        "FPFVMSolver",
+        "optimal_control",
+        lambda f: _fvm_periodic(_separable(f, only_0d=True)),
+        "m of shape ()",
+        [("lead", (), (1, 1)), ("double", (), (2,))],
+    ),
+    "network FP": (
+        "FPNetworkSolver",
+        "optimal_control",
+        _network_fp,
+        "m of shape (9,)",
+        [("lead", (9,), (1, 9)), ("double", (9,), (18,))],
+    ),
     "velocity route 1-D": (
         "compute_fp_velocity_field",
+        "evaluate_optimal_control",
         lambda f: _velocity(_separable(f), 1, 15),
-        "transposed",
-        (14, 1),
-        (1, 14),
+        "m of shape (14,)",
+        [("transposed", (14, 1), (1, 14)), ("double", (14, 1), (28,))],
     ),
     "velocity route nD": (
         "compute_fp_velocity_field",
+        "evaluate_optimal_control",
         lambda f: _velocity(_separable(f), 2, 7),
-        "lead",
-        (42, 2),
-        (1, 42, 2),
+        "m of shape (42,)",
+        [("lead", (42, 2), (1, 42, 2)), ("double", (42, 2), (168,))],
     ),
-    "network HJB": ("NetworkPolicyIterationHJBSolver", _hjb_network, "double", (9,), (18,)),
+    "network HJB": (
+        "NetworkPolicyIterationHJBSolver",
+        "optimal_control",
+        _hjb_network,
+        "m of shape (9,)",
+        [("lead", (9,), (1, 9)), ("double", (9,), (18,))],
+    ),
     "manufactured coefficient": (
         "manufactured._drift_coefficient",
+        "optimal_control",
         _manufactured_coefficient,
-        "lead",
-        (4, 2),
-        (1, 4, 2),
+        "m of shape (4,)",
+        [("lead", (4, 2), (1, 4, 2)), ("double", (4, 2), (16,))],
     ),
-    "manufactured source": ("manufactured.fp_source", _manufactured_source, "lead", (16, 2), (1, 16, 2)),
-    "cone_policy": ("cone_policy", _cone_policy, "transposed", (1, 2), (2, 1)),
+    "manufactured source": (
+        "manufactured.fp_source",
+        "optimal_control",
+        _manufactured_source,
+        "m of shape (16,)",
+        [("lead", (16, 2), (1, 16, 2)), ("double", (16, 2), (64,))],
+    ),
+    "cone_policy": (
+        "cone_policy",
+        "optimal_control",
+        _cone_policy,
+        "m None",
+        [("transposed", (1, 2), (2, 1)), ("double", (1, 2), (4,))],
+    ),
 }
+REFUSALS = [(read, form) for read, row in READS.items() for form, _, _ in row[4]]
 
 
-@pytest.mark.parametrize("read", list(READS))
-def test_each_read_refuses_a_control_of_another_shape(read):
-    reader, run, form, p_shape, got_shape = READS[read]
+@pytest.mark.parametrize(("read", "form"), REFUSALS)
+def test_each_read_refuses_a_control_of_another_shape(read, form):
+    reader, method, run, m_clause, cases = READS[read]
+    p_shape, got_shape = next((p, got) for f, p, got in cases if f == form)
     message = (
-        rf"^{re.escape(reader)}: \w+\.optimal_control was handed p of shape {re.escape(str(p_shape))} and (m None|m of shape \([^)]*\)), "
-        rf"and returned shape {re.escape(str(got_shape))}\."
+        rf"^{re.escape(reader)}: Formed\.{method} was handed p of shape {re.escape(str(p_shape))} and "
+        rf"{re.escape(m_clause)}, and returned shape {re.escape(str(got_shape))}\."
     )
     with pytest.raises(ValueError, match=message):
         _quiet(lambda: run(form))
@@ -295,7 +352,7 @@ def test_each_read_refuses_a_control_of_another_shape(read):
 def test_each_read_takes_the_librarys_control(read):
     """The control every reader must accept, through the same fixture: the refusal above is the form's, not the
     fixture's."""
-    _, run, _, _, _ = READS[read]
+    _, _, run, _, _ = READS[read]
     result = _quiet(lambda: run("library"))
     assert result is not None
 
@@ -311,6 +368,12 @@ def test_a_0d_p_may_come_back_as_one_value():
     assert np.all(np.isfinite(np.asarray(_quiet(lambda: _fvm_periodic(library)))))
 
 
-def test_one_value_back_for_a_p_that_is_not_0d_is_refused():
-    with pytest.raises(ValueError, match=r"^here: \w+\.optimal_control was handed p of shape \(3,\) and m None"):
-        checked_control(np.array([-2.0]), np.zeros(3), reader="here", source=object())
+@pytest.mark.parametrize(
+    ("returned", "p"),
+    [(np.array([-2.0]), np.zeros(3)), (np.zeros(2), np.float64(2.0)), (np.array([-2.0]), np.zeros((1, 1)))],
+    ids=["(1,) for p (3,)", "(2,) for a 0-d p", "(1,) for p (1, 1)"],
+)
+def test_the_owner_refuses_what_the_admission_does_not_cover(returned, p):
+    message = rf"^here: object\.optimal_control was handed p of shape {re.escape(str(np.shape(p)))} and m None, "
+    with pytest.raises(ValueError, match=message):
+        checked_control(returned, p, reader="here", source=object())

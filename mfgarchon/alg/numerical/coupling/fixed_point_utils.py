@@ -801,8 +801,9 @@ def compute_fp_velocity_field(
     Raises:
         ValueError: when the geometry's `get_grid_spacing` refuses a grid that is not uniform; when U's shape has
             no tensor grid of the problem's geometry to sit on (#2756); when a stated periodic convention contradicts
-            the grid's layout, or neither the grid nor the BC states a layout (#2910); and in nD, when ``optimal_control`` does not return
-            shape ``(N, d)``.
+            the grid's layout, or neither the grid nor the BC states a layout (#2910); and when
+            ``evaluate_optimal_control`` does not return p's shape, ``(N, 1)`` in 1-D and ``(N, d)`` in nD
+            (`checked_control`, #2875).
         NotImplementedError: handed no BC, when the problem's shared BC has a Neumann value that is not zero or a
             Robin condition; when the BC is periodic on some faces only; on a 1-D grid that wraps with its last node
             distinct from node 0, whose wrap face this does not build yet (#2910); and in nD, when
@@ -879,6 +880,7 @@ def compute_fp_velocity_field(
                     H_class.evaluate_optimal_control(state),
                     p_n,
                     reader="compute_fp_velocity_field",
+                    method="evaluate_optimal_control",
                     source=H_class,
                     m=m_n,
                 )
@@ -940,6 +942,7 @@ def compute_fp_velocity_field(
                     ),
                     p_batch,
                     reader="compute_fp_velocity_field",
+                    method="evaluate_optimal_control",
                     source=H_class,
                     m=m_batch,
                 )

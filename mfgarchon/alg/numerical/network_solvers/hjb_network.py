@@ -497,7 +497,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             A[i, i] = 1.0 / self.dt
             control_cost = 0.0
             for j in self.gradient_ops[i]:
-                a = float(alpha_i[j]) if j < len(alpha_i) else 0.0
+                a = float(alpha_i[j])
                 if a > 0.0:
                     A[i, i] += a
                     A[i, j] -= a

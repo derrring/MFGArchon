@@ -267,11 +267,18 @@ to stand in for one.
 ### What optimal_control returns
 
 A control has $p$'s shape: `HamiltonianBase.optimal_control` and `ControlCostBase.optimal_control`
-both say "same shape as p". Every library read of a control passes what came back through one owner,
-`checked_control` in `core/hamiltonian.py`, which refuses another shape. The refusal names the reader,
-the shapes of $p$ and $m$ it handed, and the shape that came back (#2875). No reader reshapes,
-broadcasts or indexes a return into the shape it wants. A control of another shape that once read
-right by accident is refused too: $(N,)$ for $p$ of shape $(N, 1)$, or $(1, N)$ for $(N,)$.
+both say "same shape as p". Every library read of what `optimal_control` or
+`evaluate_optimal_control` returns passes it through one owner, `checked_control` in
+`core/hamiltonian.py`, which refuses another shape. The refusal names the reader, the source and its
+method, the shapes of $p$ and $m$ it handed, and the shape that came back (#2875). No reader takes a
+return of another shape by reshaping, broadcasting or indexing it; a reader may still reshape what
+the owner has checked, as the 1-D velocity route ravels its $(N, 1)$. Refused with it are the
+returns of another shape that once read right by accident: on FEM a transposed one; $(N,)$ for $p$
+of shape $(N, 1)$; $(1, N)$ for $p$ of shape $(N,)$ or $(N, 1)$; and on the network solvers a longer
+return, of which they read the first entries. So are those that were silently wrong: on FEM a return
+of another size, on meshless Galerkin a transposed one, and on the network policy-iteration HJB a
+shorter one. What `dp` returns, which HJB-SL and HJB-GFDM read, is outside this owner; it is the
+second slice of #2875's stage 3.
 
 *Not yet met (#2875): the form of $p$.* Until #2875's stage 3 sets it, FVM's 1-D wrap face hands a
 0-d $p$, and the library's own control answers it with shape $(1,)$, since it hands
