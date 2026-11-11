@@ -2061,12 +2061,17 @@ class FPParticleSolver(BaseFPSolver):
         explicit scalar ``coupling_coefficient``; that legacy path keeps the hand scalar
         ``-c * grad`` unchanged (and does not silently reinterpret a non-separable H's control law).
         """
-        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, checked_control
 
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
-            return H.optimal_control(
-                x=coordinate_tuple(positions, self.problem.dimension), m=None, p=grad_at_particles, t=t
+            return checked_control(
+                H.optimal_control(
+                    x=coordinate_tuple(positions, self.problem.dimension), m=None, p=grad_at_particles, t=t
+                ),
+                grad_at_particles,
+                reader="FPParticleSolver",
+                source=H,
             )
         return -coupling_coefficient * grad_at_particles
 
