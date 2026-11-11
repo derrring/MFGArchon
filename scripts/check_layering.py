@@ -5,13 +5,12 @@ Usage:
     python scripts/check_layering.py [--root TREE]   # check TREE/mfgarchon (default: this repository)
     python scripts/check_layering.py --self-test     # its own cases, on temporary packages
 
-**It observes.** Neither CI nor the pre-push gate runs the check of the package. The gate runs only
-``--self-test``, in ``scripts/local_ci.sh``'s self-test loop: that guards the parser and enforces nothing
-about the package. When the check itself enters CI is the user's call (#2938).
+**It is enforced by the gate.** ``scripts/local_ci.sh`` runs ``--self-test`` in its self-test loop and then the check
+of the package as a step of its own, and a non-zero exit fails the gate (user ruling, 2026-11-11, #2938): the
+exception lists below are the ratchet. CI does not run it.
 
 This file holds the layer table (``LAYERS``) and the exception lists (``EDGE_EXCEPTIONS``,
-``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). One slice of the rule has a second owner until the check enters
-the gate (below). A PR that removes an edge removes its line in the same diff.
+``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). A PR that removes an edge removes its line in the same diff.
 
 **It does not simulate the interpreter** (#2938). It resolves a closed list of module-level binding forms, and any
 other module-level statement that binds a name in its syntax makes that name ambiguous: reported unless listed. It
@@ -29,8 +28,12 @@ the forms on the closed list, apart from the forms stated as not read with that 
     ``if False:``, since the rule is about the direction of source dependencies, not about what runs when a
     module is loaded.
 - An import has two targets: the module on its path, and the owner of each name it binds. Either one in an
-  upper layer is an edge, so a re-export of an upper name is an edge, and so is the path of every
-  ``from P import ...``, whatever the names are.
+  upper layer is an edge, so a re-export of an upper name is an edge. The path of ``from P import ...`` is an edge
+  unless every name it binds is, in ``P``, the submodule object (``Tree.binds_submodule``, #2938's path-target
+  ruling): that statement is the dependency ``import P.name`` makes, and the owner edge to each submodule stands. A
+  name the ``__init__`` binds otherwise -- a function re-exported from a same-named submodule, or a star import that
+  exports it -- keeps the path edge, and so does one whose binding is conditional, or decided by a module-level
+  ``__getattr__``. A star import's path is always an edge.
 - **The closed list.** At module level these bind names, unconditionally, and conditionally inside ``if``,
   ``try`` (body, ``else``, ``finally`` and handlers) or ``with``:
   - ``def``, ``async def`` and ``class``;
@@ -99,16 +102,14 @@ outside the package, and #2938's stage 4 deletes that module.
 unresolved (not found), not followed to the type binding. A symlinked directory under the package is not walked.
 A ``foo.py`` beside ``foo/__init__.py`` is scanned under the package's name.
 
-**A second owner of one slice.** ``tests/unit/test_utils_does_not_import_alg.py`` ratchets the module-level
-imports of ``mfgarchon.alg`` from every file under ``mfgarchon/utils/``, and runs in the gate. The two disagree on
-the seven ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer: the five in the solve layer, and
-``utils.cli`` and ``utils.experiment_manager`` in the entry layer. The test forbids each a module-level import of
-``alg`` because it sits in ``utils/``; this check allows it, by what the module is. Today one edge falls there,
-``utils/adjoint_validation.py`` -> ``alg.base_solver``, which the test counts as the last violation. The ratchet
-is deleted in the PR that puts this check into the gate (#2938); from then on the gate does not forbid those
-seven a module-level ``alg`` import, and six of the seven, all but ``utils.solver_decorators``, load with
-``mfgarchon.utils`` through its re-exports until #2938's stage 2a; ``utils.adjoint_validation`` already loads
-``alg.base_solver`` that way.
+**The one owner.** This check is the rule's one owner. ``tests/unit/test_utils_does_not_import_alg.py`` held a
+second count of one slice, the module-level imports of ``mfgarchon.alg`` from every file under
+``mfgarchon/utils/``, and its count was deleted when this check entered the gate (#2938). Where the two disagreed,
+the layer table's reading stands: the seven ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer (the
+five in the solve layer, and ``utils.cli`` and ``utils.experiment_manager`` in the entry layer) may import ``alg``
+at module level, so ``utils/adjoint_validation.py`` -> ``alg.base_solver``, which that count held as its last
+violation, lies within one layer and is not an edge. Six of the seven, all but ``utils.solver_decorators``, load
+with ``mfgarchon.utils`` through its re-exports until #2938's stage 2a.
 """
 
 from __future__ import annotations
@@ -517,6 +518,37 @@ class Tree:
                 names |= sub
         return names
 
+    def binds_submodule(self, package: str, name: str) -> object:
+        """Whether `from package import name` binds the submodule object `package.name`: True, False or AMBIGUOUS
+        (#2938's path-target ruling).
+
+        True when `package` is a package, `package.name` is a module on disk, no star import in its `__init__` may
+        bind `name`, and its `__init__`'s module-level bindings of `name` are none, or only `from . import name`: the
+        import system then hands back the submodule, the dependency `import package.name` makes. False when the
+        `__init__` binds `name` otherwise -- a function re-exported from a same-named submodule
+        (`operators.differential.function_gradient`), a `def`, a class, an assignment -- or a star import exports it,
+        shadowing the submodule. AMBIGUOUS when a binding of `name` is conditional, a star import's exports cannot be
+        read, or, with no static binding of `name`, the `__init__` defines a module-level `__getattr__`, which answers
+        before the import system falls back to the submodule. The `__init__`'s static bindings are read; a submodule
+        load that rebinds the package's name at run time is #2945's (B3)."""
+        _path, is_package = self.path_of(package)
+        if not is_package or not self.path_of(package + "." + name)[0]:
+            return False
+        events = self.events(package)
+        for e in events:
+            if e[1] == "star":
+                exported = self.star_exports(e[2])
+                if exported is None:
+                    return AMBIGUOUS
+                if name in exported:
+                    return False
+        hits = [e for e in events if e[0] == name and e[1] != "allmut"]
+        if not hits:
+            return AMBIGUOUS if any(e[0] == "__getattr__" for e in events) else True
+        if any(e[3] for e in hits):
+            return AMBIGUOUS
+        return all(e[1] == "import" and e[2] == (package, name) for e in hits)
+
     def owner(self, module: str, name: str) -> object:
         """The module that defines `name` as reached through `module`.
 
@@ -652,7 +684,11 @@ def scan_module(
         source = Tree.absolute(module, is_package, node)
         if not (source == package or source.startswith(package + ".")):
             return
-        add_edge(source, position, node.lineno)  # the path is a dependency of its own
+        # The path is a dependency of its own, unless every name the statement binds is, in the package it names, the
+        # submodule object: then the statement is the dependency `import P.name` makes (#2938's path-target ruling).
+        # A star import's path is always an edge, since no submodule is named `*`.
+        if not all(tree.binds_submodule(source, alias.name) is True for alias in node.names):
+            add_edge(source, position, node.lineno)
         for alias in node.names:
             if alias.name == "*":
                 exported = tree.star_exports(source)
@@ -1139,6 +1175,7 @@ def self_test() -> bool:
     ok = True
     for label, section in (
         ("parser cases", parser_section),
+        ("path targets", path_target_section),
         ("statement shapes", shapes_section),
         ("relative imports", relative_section),
         ("layer table", layer_section),
@@ -1182,6 +1219,63 @@ def parser_section() -> bool:
         ok &= report(
             "pk.low.bt_starchain: ... and so is a star import of a module that star-imports one",
             ("pk.low.bt_starchain", "pk.high.facade_badall", "*", "module") in found.unresolved,
+        )
+    return ok
+
+
+# #2938's path-target ruling: `from P import name` adds the path edge (importer, P) unless every name is, in P, the
+# submodule object. A package `pt` with `pt.low` below `pt.high`; each `pt.high.pN` a package with a submodule `sub`.
+PATH_FILES: dict[str, str] = {
+    "pt/__init__.py": "",
+    "pt/low/__init__.py": "",
+    "pt/high/__init__.py": "",
+    "pt/high/p1/__init__.py": "",
+    "pt/high/p1/sub.py": "X = 1\n",
+    "pt/low/i_sub.py": "from pt.high.p1 import sub\n",
+    "pt/high/p2/__init__.py": "from .sub import sub\n",
+    "pt/high/p2/sub.py": "def sub():\n    pass\n",
+    "pt/low/ii_func.py": "from pt.high.p2 import sub\n",
+    "pt/high/p3/__init__.py": "from .other import *\n",
+    "pt/high/p3/other.py": "sub = 1\n",
+    "pt/high/p3/sub.py": "",
+    "pt/low/iii_star.py": "from pt.high.p3 import sub\n",
+    "pt/high/p4/__init__.py": "from . import sub\n",
+    "pt/high/p4/sub.py": "",
+    "pt/low/iv_from_dot.py": "from pt.high.p4 import sub\n",
+    "pt/high/p5/__init__.py": "import os\nif os.environ.get('X'):\n    from . import sub\n",
+    "pt/high/p5/sub.py": "",
+    "pt/low/v_cond.py": "from pt.high.p5 import sub\n",
+    "pt/high/p6/__init__.py": "def other():\n    pass\n",
+    "pt/high/p6/sub.py": "",
+    "pt/low/vi_mixed.py": "from pt.high.p6 import sub, other\n",
+    "pt/high/p7/__init__.py": "def __getattr__(name):\n    raise AttributeError(name)\n",
+    "pt/high/p7/sub.py": "",
+    "pt/low/vii_getattr.py": "from pt.high.p7 import sub\n",
+}  # fmt: skip
+# (importer, package on its path, whether the path is an edge, the row)
+PATH_CASES = [
+    ("pt.low.i_sub", "pt.high.p1", False, "(i) a submodule the __init__ does not bind"),
+    ("pt.low.ii_func", "pt.high.p2", True, "(ii) a function re-exported from a same-named submodule"),
+    ("pt.low.iii_star", "pt.high.p3", True, "(iii) a star import in the __init__ that shadows the submodule"),
+    ("pt.low.iv_from_dot", "pt.high.p4", False, "(iv) `from . import sub` in the __init__"),
+    ("pt.low.v_cond", "pt.high.p5", True, "(v) a conditional binding: ambiguous"),
+    ("pt.low.vi_mixed", "pt.high.p6", True, "(vi) two names, one a submodule and one not"),
+    ("pt.low.vii_getattr", "pt.high.p7", True, "(vii) a module-level __getattr__ and no static binding: ambiguous"),
+]
+
+
+def path_target_section() -> bool:
+    ok = True
+    layer_of = make_layer_of({"low": 0, "high": 1, "(root)": 0}, "pt")
+    with tempfile.TemporaryDirectory() as root:
+        write_package(root, PATH_FILES)
+        found = scan(root, "pt", layer_of)
+        for importer, package, is_edge, row in PATH_CASES:
+            got = (importer, package, "module") in found.edges
+            ok &= report(f"{row}: the path is {'an' if is_edge else 'not an'} edge", got == is_edge, f"got {got}")
+        ok &= report(
+            "(i) the owner edge to the submodule stays",
+            ("pt.low.i_sub", "pt.high.p1.sub", "module") in found.edges,
         )
     return ok
 

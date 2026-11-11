@@ -541,8 +541,7 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
 # written and this gate never invoked either. ~4.1 s for the first ten in the loop (three runs: 4.1 / 4.1 / 4.1),
 # of which check_manifests is 2.0 s; check_layering, the eleventh, adds 0.14 s (three runs: 0.14 / 0.14 / 0.14).
-# check_layering is not a ratchet: only its self-test runs here. The gate does not run its check of the
-# package, which observes until the user puts it into CI (#2938).
+# check_layering's check of the package runs as its own step below, after this loop (#2938).
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
@@ -626,6 +625,13 @@ check $? "no new site restating a single-owner quantity"
 step "Citation ratchet"
 "${PYS[@]}" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
 check $? "no citation newly entered the review queue, and none left it unrecorded"
+
+# The layering rule's one owner (user ruling, 2026-11-11, #2938): a lower layer of mfgarchon does not import an upper
+# one. Its exception lists are the ratchet, so a new upward import, unresolved owner or dynamic site fails here, and so
+# does a listed one that no longer exists. CI does not run it.
+step "Layering check (a lower layer does not import an upper one)"
+"${PYS[@]}" scripts/check_layering.py --root .
+check $? "every upward import, unresolved owner and dynamic site is listed, and every listed one exists"
 
 # The mypy step above checks mfgarchon/config -- 1 of this package's 14 top-level subpackages,
 # scope copied from ci.yml, which states why (raw mypy pulls 1800+ transitive errors). The other
