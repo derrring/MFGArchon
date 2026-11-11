@@ -198,8 +198,8 @@ class _WallAsZeroNormalDerivative(FPFEMSolver):
     condition becomes ``D dm/dn = 0`` instead of ``J.n = 0``. Under a Robin wall the same Robin terms then impose
     ``alpha m + beta dm/dn = g`` instead of ``J.n = (D/beta)(alpha m - g)``: the rival Robin reading."""
 
-    def _build_advection(self, U_n, D=0.0):
-        return -super()._build_advection(U_n, D).T
+    def _build_advection(self, U_n, D=0.0, **step):
+        return -super()._build_advection(U_n, D, **step).T
 
 
 class _ExitKeepsTheValue(FPFEMSolver):

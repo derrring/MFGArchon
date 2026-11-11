@@ -167,7 +167,7 @@ class FPFEMSolver(WeakFormFPSolver):
         return assemble_robin_terms(self._basis, self._bc, D, natural_bc="flux", lump=self._disc.lumps_mass)
 
     # --- advection from drift via exact quadrature-point gradient of U --------
-    def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:
+    def _build_advection(self, U_n: NDArray, D: float = 0.0, *, t: float, m_n: NDArray) -> sparse.csr_matrix:
         r"""Assemble the mass-conserving FP advection block for drift $v = \alpha^* = H.\text{optimal\_control}(\nabla U_n)$.
 
         The raw convective form $C_{ij} = \int \phi_i\,(v\cdot\nabla\phi_j)\,dx$ (gradient on the
@@ -224,12 +224,12 @@ class FPFEMSolver(WeakFormFPSolver):
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
         assert_quadratic_drift(self.problem, context="FP FEM advection")
         du = self._basis.interpolate(U_n)
-        # x at quadrature points, same (dim, nelems, nqp) layout as du.grad (= p). The density m and
-        # timestep t are inert for the SeparableHamiltonian owner (optimal_control depends only on p);
-        # the base time-stepping loop threads neither the density DOFs nor the step index n into
-        # _build_advection, so m/t are passed as None/0.0.
+        # At the quadrature points: x in the (dim, nelems, nqp) layout of du.grad (= p), and the step's density in
+        # that layout without its first axis. A subclass's own optimal_control may read t and m, so the step's own
+        # are handed (#2903; docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives").
         x_qp = self._basis.global_coordinates().value
-        alpha = H.optimal_control(x=tuple(x_qp), m=None, p=du.grad, t=0.0)
+        m_qp = self._basis.interpolate(m_n).value
+        alpha = H.optimal_control(x=tuple(x_qp), m=m_qp, p=du.grad, t=t)
 
         @BilinearForm
         def advection_form(u, v, w):

@@ -166,7 +166,8 @@ def test_an_adjoint_step_keeps_its_negative_as_the_forward_step_does(build):
     solver = build()
     x = _points(solver)
     v = 3.2 if isinstance(solver, FPFEMSolver) else 30.0
-    advection = solver._build_advection(-v * x[:, 0], 0.01)
+    # The library's control reads neither t nor m (#2903).
+    advection = solver._build_advection(-v * x[:, 0], 0.01, t=0.0, m_n=np.ones(len(x)))
     m0 = _gaussian(x)
     stepped = solver.solve_fp_step_adjoint_mode(m0, advection, volatility=np.sqrt(0.02), time=0.25)
     assert stepped.min() < -1e-8

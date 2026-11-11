@@ -98,9 +98,10 @@ def test_sd_block_identical_in_fp_and_hjb():
     d_test = 0.1  # deliberately != 0.5 * sigma^2 (= 0.045)
     s_hjb = hjb._stabilization_terms(u, d_test).toarray()
 
-    with_sd = fp._build_advection(u, d_test).toarray()
+    # The library's control reads neither t nor m (#2903).
+    with_sd = fp._build_advection(u, d_test, t=0.0, m_n=np.ones_like(u)).toarray()
     fp._sd_scale = 0.0
-    without_sd = fp._build_advection(u, d_test).toarray()
+    without_sd = fp._build_advection(u, d_test, t=0.0, m_n=np.ones_like(u)).toarray()
     fp._sd_scale = 1.0
     s_fp = with_sd - without_sd
 

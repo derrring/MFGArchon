@@ -2041,6 +2041,7 @@ class FPParticleSolver(BaseFPSolver):
         grad_at_particles: np.ndarray,
         t: float,
         coupling_coefficient: float | None,
+        m_at_particles: np.ndarray,
     ) -> np.ndarray:
         """FP advective drift alpha* at the particles, from the single owner (Issue #1528).
 
@@ -2054,8 +2055,9 @@ class FPParticleSolver(BaseFPSolver):
         identical locally-computed ``grad_at_particles`` is fed to the owner, so byte-identity is
         independent of the coefficient.
 
-        ``SeparableHamiltonian.optimal_control`` uses only ``p`` (x, m, t are ignored), so no
-        density-at-particles interpolation is done here; ``m`` is passed as ``None``.
+        ``t`` is the step's time and ``m_at_particles`` the density the step holds, read at the particles by
+        ``_estimate_density_at_particles``: a subclass's own ``optimal_control`` may read either (#2903;
+        docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives").
 
         A problem with no Hamiltonian owner (H is None), or a non-separable one, still carries an
         explicit scalar ``coupling_coefficient``; that legacy path keeps the hand scalar
@@ -2066,7 +2068,7 @@ class FPParticleSolver(BaseFPSolver):
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
             return H.optimal_control(
-                x=coordinate_tuple(positions, self.problem.dimension), m=None, p=grad_at_particles, t=t
+                x=coordinate_tuple(positions, self.problem.dimension), m=m_at_particles, p=grad_at_particles, t=t
             )
         return -coupling_coefficient * grad_at_particles
 
@@ -2215,9 +2217,13 @@ class FPParticleSolver(BaseFPSolver):
             else:
                 dUdx_at_particles = np.zeros(n_particles_t)
 
-            # Issue #1528: single-owner FP advective drift via H.optimal_control (see _advective_drift).
+            # Issue #1528: single-owner FP advective drift via H.optimal_control (see _advective_drift), at the step's
+            # time and the density this step holds, read at the particles (#2903).
+            m_at_particles = self._estimate_density_at_particles(
+                particles_t.reshape(-1, 1), M_density_on_grid[n_time_idx], [x_grid], [(xmin, xmin + Lx)]
+            )
             alpha_optimal_at_particles = self._advective_drift(
-                particles_t, dUdx_at_particles, n_time_idx * Dt, coupling_coefficient
+                particles_t, dUdx_at_particles, n_time_idx * Dt, coupling_coefficient, m_at_particles
             )
 
             # Generate Brownian motion for current particle count
@@ -2402,8 +2408,14 @@ class FPParticleSolver(BaseFPSolver):
                         gradients[d], coordinates, bounds, particles_t
                     )
 
-                # Compute drift alpha* via the single owner H.optimal_control (Issue #1528).
-                drift = self._advective_drift(particles_t, grad_at_particles, t_idx * Dt, coupling_coefficient)
+                # Compute drift alpha* via the single owner H.optimal_control (Issue #1528), at the step's time and the
+                # density this step holds, read at the particles (#2903).
+                m_at_particles = self._estimate_density_at_particles(
+                    particles_t, M_density_on_grid[t_idx], coordinates, bounds
+                )
+                drift = self._advective_drift(
+                    particles_t, grad_at_particles, t_idx * Dt, coupling_coefficient, m_at_particles
+                )
 
             # Generate Brownian increments
             dW = self._generate_brownian_increment_nd(n_particles_t, dimension, Dt, sigma_sde)
@@ -2610,7 +2622,11 @@ class FPParticleSolver(BaseFPSolver):
             # and to_numpy/from_numpy are lossless, so this is byte-identical to the pre-#1528 GPU path.
             dUdx_host = self.backend.to_numpy(dUdx_particles_gpu)
             x_host = self.backend.to_numpy(X_particles_gpu[t, :])
-            drift_host = self._advective_drift(x_host, dUdx_host, t * Dt, coupling_coefficient)
+            # The step's density, on the host as the positions are, read at the particles (#2903).
+            m_host = self._estimate_density_at_particles(
+                x_host.reshape(-1, 1), self.backend.to_numpy(M_density_gpu[t, :]), [x_grid], [(xmin, xmin + Lx)]
+            )
+            drift_host = self._advective_drift(x_host, dUdx_host, t * Dt, coupling_coefficient, m_host)
             drift_gpu = self.backend.from_numpy(np.asarray(drift_host, dtype=dUdx_host.dtype))
 
             # Random noise (GPU native RNG)
