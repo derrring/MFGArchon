@@ -138,6 +138,7 @@ def validate_custom_functions(
     geometry: GeometryProtocol,
     *,
     check_consistency: bool = True,
+    optimal_control: Callable | None = None,
 ) -> ValidationResult:
     """
     Validate all custom Hamiltonian-related functions.
@@ -154,6 +155,8 @@ def validate_custom_functions(
             derivatives of H by finite differences. Costs O(dimension) extra
             scalar H evaluations; see validate_hamiltonian_consistency for when
             that check gates versus warns.
+        optimal_control: The Hamiltonian's optimal control, a family bound method or a raw callable(t, x, p, m).
+            With check_consistency, it is checked to be -dH/dp where H is smooth (#2901).
 
     Returns:
         ValidationResult with any issues found
@@ -174,7 +177,9 @@ def validate_custom_functions(
 
     # Check consistency if requested and all functions provided
     if check_consistency and hamiltonian is not None and dH_dm is not None:
-        results.append(validate_hamiltonian_consistency(hamiltonian, dH_dm, geometry, dH_dp=dH_dp))
+        results.append(
+            validate_hamiltonian_consistency(hamiltonian, dH_dm, geometry, dH_dp=dH_dp, optimal_control=optimal_control)
+        )
 
     # ValidationResult.combine is the one implementation of this merge: issues
     # concatenated, contexts merged, is_valid False if any part is False.
@@ -458,15 +463,200 @@ def _report(
         )
 
 
+def _report_control(
+    result: ValidationResult,
+    i: int,
+    x_sample: np.ndarray,
+    witness: tuple[_FDComparison, float] | None,
+    inconsistent: tuple[_FDComparison, float] | None,
+) -> None:
+    """Emit at most one issue for the optimal control's component i, at the highest grade observed (#2901).
+
+    The comparison's analytical value is -optimal_control[i], against the same central difference of H as dp[i]'s. The
+    message names the pair that disagrees: the control against dp and H when dp agrees with H at that probe, and the
+    control against H otherwise, where dp's own issue names dp."""
+    worst = witness if witness is not None else inconsistent
+    if worst is None:
+        return
+    comparison, dp_i = worst
+    location = f"optimal_control[{i}]"
+    point = f"x={np.array2string(x_sample, precision=4)}, m={comparison.m:.4g}, p={np.array2string(comparison.p, precision=4)}"
+    if not comparison.finite:
+        result.add_warning(
+            f"optimal_control[{i}] could not be compared with dH/dp at {point}: non-finite values "
+            f"(-optimal_control={comparison.analytical}, finite-difference={comparison.numerical})",
+            location=location,
+        )
+        return
+    dp_agrees = bool(np.isfinite(dp_i)) and abs(dp_i - comparison.numerical) <= max(
+        _WITNESS_RTOL * max(abs(dp_i), abs(comparison.numerical)), _WITNESS_NOISE_SAFETY * comparison.noise_bound
+    )
+    pair = "optimal_control disagrees with dp and with H" if dp_agrees else "optimal_control disagrees with H"
+    detail = (
+        f"at {point}: -optimal_control[{i}]={comparison.analytical:.8g}, dp[{i}]={dp_i:.8g}, and the central "
+        f"difference of H is {comparison.numerical:.8g} (step={_FD_STEP:g})"
+    )
+    result.context[f"{location}_witness_m"] = comparison.m
+    result.context[f"{location}_witness_p"] = comparison.p.tolist()
+    if witness is not None:
+        result.add_error(
+            f"{pair} {detail}. Where H is smooth, as it is here, its optimal control is -dH/dp. The solve reads H and dp "
+            f"in its HJB residual and Jacobian and the optimal control in its Fokker-Planck drift, so it would read "
+            f"two Hamiltonians (#2901).",
+            location=location,
+            suggestion="Make optimal_control return -dp, or override neither: HamiltonianBase derives optimal_control "
+            "from dp, and dp from H",
+        )
+    elif not comparison.smooth:
+        result.add_warning(
+            f"optimal_control may disagree with H {detail}. H is not differentiable at this probe (its one-sided "
+            f"slopes disagree), and a non-smooth cost's control is one selection of -dH/dp there.",
+            location=location,
+        )
+    else:
+        result.add_warning(
+            f"optimal_control may disagree with H {detail}. The relative gap exceeds {comparison.warn_rtol:g} but is "
+            f"too small to rule out a finite-difference artifact.",
+            location=location,
+        )
+
+
+#: The doors the library's readers call, each with the method it stands for (#2901).
+_DOORS = (
+    ("evaluate_H", "__call__"),
+    ("evaluate_dp", "dp"),
+    ("evaluate_optimal_control", "optimal_control"),
+    ("dH_dm", "dm"),
+)
+
+
+def _compare_doors_with_methods(
+    hamiltonian: Any, x_sample: np.ndarray, dimension: int, tolerance: float, result: ValidationResult
+) -> None:
+    """Each door of a ``HamiltonianBase`` against its method, at the consistency probes and one population (#2901).
+
+    The library's solvers read the doors, and a door a subclass overrides is a source of its own: one that returns
+    another value than its method makes the solve read two Hamiltonians. A Hamiltonian that does not read a batch
+    (``reads_a_batch`` False) is handed one point, the others a batch of one. A gap is an error above the witness margin
+    and a warning above ``tolerance``, both relative to the larger of the two values and above roundoff; a door that
+    cannot be evaluated is warned about, never gating."""
+    from mfgarchon.core.hamiltonian import HamiltonianBase, HEvalState
+
+    if not isinstance(hamiltonian, HamiltonianBase):
+        return
+    worst: dict[str, tuple[int, float, float, np.ndarray, np.ndarray, np.ndarray]] = {}
+    failures: dict[str, str] = {}
+    for m, p in _consistency_probes(dimension):
+        if hamiltonian.reads_a_batch:
+            state = HEvalState(x=x_sample[np.newaxis], p=p[np.newaxis], m=np.array([m]), t=0.0)
+        else:
+            state = HEvalState(x=x_sample, p=p, m=m, t=0.0)
+        for door_name, method_name in _DOORS:
+            if door_name in failures:
+                continue
+            try:
+                door = np.ravel(np.asarray(getattr(hamiltonian, door_name)(state), dtype=float))
+                method = hamiltonian if method_name == "__call__" else getattr(hamiltonian, method_name)
+                value = np.ravel(np.asarray(_call_h(method, x_sample, m, p), dtype=float))
+            except Exception as e:  # reported as a warning, never gating
+                failures[door_name] = f"{type(e).__name__}: {e}"
+                continue
+            if door.shape != value.shape:
+                grade, gap, scale = 2, float("inf"), 0.0
+            else:
+                gap = float(np.max(np.abs(door - value), initial=0.0))
+                scale = float(max(np.max(np.abs(door), initial=0.0), np.max(np.abs(value), initial=0.0)))
+                above_noise = gap > _WITNESS_NOISE_SAFETY * float(np.finfo(float).eps) * max(scale, 1.0)
+                grade = (
+                    2
+                    if above_noise and gap > _WITNESS_RTOL * scale
+                    else 1
+                    if above_noise and gap > tolerance * scale
+                    else 0
+                )
+            if grade and grade > worst.get(door_name, (0,))[0]:
+                worst[door_name] = (grade, m, gap, p.copy(), door, value)
+    method_of = dict(_DOORS)
+    for door_name, (grade, m, _gap, p, door, value) in worst.items():
+        method_name = method_of[door_name]
+        detail = (
+            f"at x={np.array2string(x_sample, precision=4)}, m={m:.4g}, p={np.array2string(p, precision=4)}: "
+            f"{door_name} returns {np.array2string(door, precision=8)} and {method_name} returns "
+            f"{np.array2string(value, precision=8)}"
+        )
+        if grade == 2:
+            result.add_error(
+                f"{door_name} and {method_name} disagree {detail}. The library's solvers read {door_name}, so a solve "
+                f"would read a Hamiltonian other than the one {method_name} describes (#2901).",
+                location=door_name,
+                suggestion=f"Make {door_name} return what {method_name} returns at one point, or override neither",
+            )
+        else:
+            result.add_warning(f"{door_name} may disagree with {method_name} {detail}.", location=door_name)
+    for door_name, failure in failures.items():
+        result.add_warning(f"Could not compare {door_name} with {method_of[door_name]}: {failure}", location=door_name)
+
+
+def _compare_network_rates_with_dp(hamiltonian: Any, result: ValidationResult) -> None:
+    """A ``NetworkHamiltonian``'s two sources against each other, on its own probes (#1474, #2901).
+
+    Its optimal control is the transition rates alpha_ij out of node i, and its dp is dH/du over the nodes: dp[j] is
+    -alpha_ij for each other node j, and dp[i] is the sum of the rates. The grid probes do not apply, since a node plays
+    x and p is u at every node. Checked at every node, at three costate vectors whose entries are distinct, so no edge
+    sits on its kink u_i = u_j, with the uniform density."""
+    try:
+        n = int(hamiltonian.num_nodes)
+    except Exception as e:  # reported as a warning, never gating
+        result.add_warning(
+            f"Could not compare the network's rates with dp: {type(e).__name__}: {e}", location="optimal_control"
+        )
+        return
+    k = np.arange(n, dtype=float)
+    costates = (np.linspace(0.0, 2.0, n), np.sqrt(k + 1.0), np.sin(1.3 * k + 0.2))
+    density = np.full(n, 1.0 / n)
+    worst: tuple[float, int, np.ndarray, np.ndarray, np.ndarray] | None = None
+    try:
+        for u in costates:
+            for i in range(n):
+                rates = np.ravel(
+                    np.asarray(hamiltonian.optimal_control(t=0.0, x=np.array([i]), p=u, m=density), dtype=float)
+                )
+                grad = np.ravel(np.asarray(hamiltonian.dp(t=0.0, x=np.array([i]), p=u, m=density), dtype=float))
+                expected = -rates.copy()
+                expected[i] = float(np.sum(rates) - rates[i])
+                gap = float(np.max(np.abs(grad - expected), initial=0.0))
+                scale = float(max(np.max(np.abs(grad), initial=0.0), np.max(np.abs(expected), initial=0.0)))
+                above_noise = gap > _WITNESS_NOISE_SAFETY * float(np.finfo(float).eps) * max(scale, 1.0)
+                if above_noise and gap > _WITNESS_RTOL * scale and (worst is None or gap > worst[0]):
+                    worst = (gap, i, u.copy(), grad, expected)
+    except Exception as e:  # reported as a warning, never gating
+        result.add_warning(
+            f"Could not compare the network's rates with dp: {type(e).__name__}: {e}", location="optimal_control"
+        )
+        return
+    if worst is not None:
+        gap, i, u, grad, expected = worst
+        result.add_error(
+            f"optimal_control and dp disagree on the network at node {i}, u={np.array2string(u, precision=4)}, uniform "
+            f"density: dp returns {np.array2string(grad, precision=6)}, while the rates optimal_control returns give "
+            f"{np.array2string(expected, precision=6)} (dp[j] = -alpha_ij for each other node j, dp[{i}] their sum). The "
+            f"policy-iteration HJB reads the rates and dp's readers read dp, so a solve would read two Hamiltonians "
+            f"(#2901).",
+            location="optimal_control",
+            suggestion="Make dp the gradient of the Hamiltonian whose rates optimal_control returns, or override neither",
+        )
+
+
 def validate_hamiltonian_consistency(
     hamiltonian: Any,
     dH_dm: Callable,
     geometry: GeometryProtocol,
     tolerance: float = _WARN_RTOL,
     dH_dp: Callable | None = None,
+    optimal_control: Callable | None = None,
 ) -> ValidationResult:
     """
-    Check that dH_dm and dH_dp are the derivatives of H, by finite differences.
+    Check that dH_dm and dH_dp are the derivatives of H, and that the optimal control is -dH/dp, by finite differences.
 
     Numerical checks, over a small grid of probe points (m, p):
         dH_dm_numerical = (H(t, x, p, m+eps) - H(t, x, p, m-eps)) / (2*eps)
@@ -488,11 +678,22 @@ def validate_hamiltonian_consistency(
         geometry: Geometry for sample point
         tolerance: Relative tolerance for the warning tier
         dH_dp: Claimed gradient dH/dp, the same kinds as dH_dm. Optional.
+        optimal_control: Claimed optimal control, the same kinds. Optional. Checked to be -dH/dp at the same probes,
+            with the same witness rule, so a non-smooth cost is compared only where H is smooth at the probe (#2901).
+
+    A ``HamiltonianBase`` also has each door (``evaluate_H``, ``evaluate_dp``, ``evaluate_optimal_control``,
+    ``dH_dm``) compared with its method at the probes, at one population (#2901). A ``NetworkHamiltonian`` is checked
+    on its own probes instead, with its own identity between the rates it returns and ``dp`` (#2901).
 
     Returns:
         ValidationResult; is_valid is False when a witness was exhibited.
     """
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+
     result = ValidationResult()
+    if isinstance(hamiltonian, NetworkHamiltonian):
+        _compare_network_rates_with_dp(hamiltonian, result)
+        return result
 
     x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "hamiltonian")
     if err is not None:
@@ -503,6 +704,10 @@ def validate_hamiltonian_consistency(
     dm_inconsistent: _FDComparison | None = None
     dp_witness: list[_FDComparison | None] = [None] * dimension
     dp_inconsistent: list[_FDComparison | None] = [None] * dimension
+    # Each with the dp the Hamiltonian returned at that probe, for the message.
+    control_witness: list[tuple[_FDComparison, float] | None] = [None] * dimension
+    control_inconsistent: list[tuple[_FDComparison, float] | None] = [None] * dimension
+    control_failure: str | None = None
 
     try:
         for m, p in _consistency_probes(dimension):
@@ -526,29 +731,41 @@ def validate_hamiltonian_consistency(
             if comparison.is_inconsistent and dm_inconsistent is None:
                 dm_inconsistent = comparison
 
-            # --- dH_dp, per component ---
-            if dH_dp is None:
+            # --- dH_dp and the optimal control, per component ---
+            if dH_dp is None and optimal_control is None:
                 continue
-            dp_analytical = np.atleast_1d(_call_h(dH_dp, x_sample, m, p)).astype(float)
+            dp_analytical = None if dH_dp is None else np.atleast_1d(_call_h(dH_dp, x_sample, m, p)).astype(float)
+            control = None
+            if optimal_control is not None and control_failure is None:
+                # Its own guard: a control that cannot be evaluated is warned about and leaves the dp check standing.
+                try:
+                    control = np.atleast_1d(_call_h(optimal_control, x_sample, m, p)).astype(float)
+                except Exception as e:  # reported as a warning, never gating
+                    control_failure = f"{type(e).__name__}: {e}"
             for i in range(dimension):
                 p_plus = p.copy()
                 p_minus = p.copy()
                 p_plus[i] += step
                 p_minus[i] -= step
-                comparison = _compare_derivative(
-                    float(_call_h(hamiltonian, x_sample, m, p_minus)),
-                    h_center,
-                    float(_call_h(hamiltonian, x_sample, m, p_plus)),
-                    step,
-                    float(dp_analytical[i]),
-                    m,
-                    p,
-                    tolerance,
-                )
-                if comparison.is_witness and dp_witness[i] is None:
-                    dp_witness[i] = comparison
-                if comparison.is_inconsistent and dp_inconsistent[i] is None:
-                    dp_inconsistent[i] = comparison
+                h_minus = float(_call_h(hamiltonian, x_sample, m, p_minus))
+                h_plus = float(_call_h(hamiltonian, x_sample, m, p_plus))
+                if dp_analytical is not None:
+                    comparison = _compare_derivative(
+                        h_minus, h_center, h_plus, step, float(dp_analytical[i]), m, p, tolerance
+                    )
+                    if comparison.is_witness and dp_witness[i] is None:
+                        dp_witness[i] = comparison
+                    if comparison.is_inconsistent and dp_inconsistent[i] is None:
+                        dp_inconsistent[i] = comparison
+                if control is not None:
+                    dp_i = float("nan") if dp_analytical is None else float(dp_analytical[i])
+                    comparison = _compare_derivative(
+                        h_minus, h_center, h_plus, step, -float(control[i]), m, p, tolerance
+                    )
+                    if comparison.is_witness and control_witness[i] is None:
+                        control_witness[i] = (comparison, dp_i)
+                    if comparison.is_inconsistent and control_inconsistent[i] is None:
+                        control_inconsistent[i] = (comparison, dp_i)
 
     except Exception as e:
         # Evaluation failed, so no witness can be exhibited: warn, never gate.
@@ -561,5 +778,12 @@ def validate_hamiltonian_consistency(
     _report(result, "dH_dm", "dH_dm", x_sample, dm_witness, dm_inconsistent)
     for i in range(dimension):
         _report(result, f"dH_dp[{i}]", f"dH_dp[{i}]", x_sample, dp_witness[i], dp_inconsistent[i])
+    if control_failure is not None:
+        result.add_warning(
+            f"Could not compare the optimal control with dH/dp: {control_failure}", location="optimal_control"
+        )
+    for i in range(dimension):
+        _report_control(result, i, x_sample, control_witness[i], control_inconsistent[i])
+    _compare_doors_with_methods(hamiltonian, x_sample, dimension, tolerance, result)
 
     return result

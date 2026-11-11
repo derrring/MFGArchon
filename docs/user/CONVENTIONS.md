@@ -285,6 +285,18 @@ second slice of #2875's stage 3.
 `np.atleast_1d(p)` to the cost. `checked_control` admits that return and gives it back 0-d. When
 stage 3 lands, no read hands a 0-d $p$, and the admission goes.
 
+**What it returns is the Hamiltonian's own control.** The library reads a Hamiltonian through several
+sources: `__call__` in the HJB residual, `dp` in its Jacobian, `optimal_control` in the Fokker–Planck
+drift, and the doors over them (`evaluate_H`, `evaluate_dp`, `evaluate_optimal_control`, `dH_dm`). A
+problem refuses, at construction, a Hamiltonian whose sources disagree (#1642, #2901): `dp` and `dm`
+that are not the derivatives of `__call__`, an `optimal_control` that is not $-\partial_p H$ where
+$H$ is smooth, and a door that returns another value than its method. It compares them at a few
+probes, so it proves a disagreement and cannot prove an agreement off them; a non-smooth cost is
+compared only where $H$ is smooth at the probe. On a network the control is a rate per edge, and the
+comparison is the network's own identity between the rates and `dp`. A control cost stands for its
+Hamiltonian only where the library ships both (`why_the_drift_is_not_the_control_costs`, #2914):
+HJB-SL's `canonical_cs` reads the cost's `lambda_` there only.
+
 ### What the Fokker–Planck solver receives
 
 Two channels, and each FP solver declares which one it reads (`_drift_convention`):

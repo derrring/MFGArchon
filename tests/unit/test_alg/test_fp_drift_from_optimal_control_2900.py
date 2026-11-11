@@ -475,8 +475,10 @@ def test_a_solver_that_takes_the_value_function_only_is_refused():
 
 
 def _plain_with_its_control_assigned():
+    # The entry serves the class's own control: an instance control another H's is refused at construction since
+    # #2901, before the drift is formed. The owner still reads the entry, whatever it serves (#2914).
     hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
-    hamiltonian.optimal_control = functools.partial(_steep_control, hamiltonian)
+    hamiltonian.optimal_control = functools.partial(SeparableHamiltonian.optimal_control, hamiltonian)
     return hamiltonian
 
 
