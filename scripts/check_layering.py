@@ -32,8 +32,9 @@ the forms on the closed list, apart from the forms stated as not read with that 
   unless every name it binds is, in ``P``, the submodule object (``Tree.binds_submodule``, #2938's path-target
   ruling): that statement is the dependency ``import P.name`` makes, and the owner edge to each submodule stands. A
   name the ``__init__`` binds otherwise -- a function re-exported from a same-named submodule, or a star import that
-  exports it -- keeps the path edge, and so does one whose binding is conditional, or decided by a module-level
-  ``__getattr__``. A star import's path is always an edge.
+  exports it -- keeps the path edge, and so does one whose binding is conditional, a star import whose exports
+  cannot be read (its source outside the tree, or a non-literal ``__all__``), and any module-level ``__getattr__``
+  in the ``__init__``. A star import's path is always an edge.
 - **The closed list.** At module level these bind names, unconditionally, and conditionally inside ``if``,
   ``try`` (body, ``else``, ``finally`` and handlers) or ``with``:
   - ``def``, ``async def`` and ``class``;
@@ -117,6 +118,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import importlib.util
 import io
 import os
 import sys
@@ -527,24 +529,29 @@ class Tree:
         import system then hands back the submodule, the dependency `import package.name` makes. False when the
         `__init__` binds `name` otherwise -- a function re-exported from a same-named submodule
         (`operators.differential.function_gradient`), a `def`, a class, an assignment -- or a star import exports it,
-        shadowing the submodule. AMBIGUOUS when a binding of `name` is conditional, a star import's exports cannot be
-        read, or, with no static binding of `name`, the `__init__` defines a module-level `__getattr__`, which answers
-        before the import system falls back to the submodule. The `__init__`'s static bindings are read; a submodule
-        load that rebinds the package's name at run time is #2945's (B3)."""
+        shadowing the submodule. AMBIGUOUS when a binding of `name` is conditional; when a star import's exports
+        cannot be read, its source being no module in the tree (`from os.path import *` binds `join`) or its
+        `__all__` not a literal; and when the `__init__` binds a module-level `__getattr__`, by any binding form or
+        through a star import. Python's import consults that `__getattr__` before it loads the submodule, so one bound
+        ahead of `from . import name` answers that import itself; the check does not follow which comes first. The
+        `__init__`'s static bindings are read; a submodule load that rebinds the package's name at run time is #2945's
+        (B3)."""
         _path, is_package = self.path_of(package)
         if not is_package or not self.path_of(package + "." + name)[0]:
             return False
         events = self.events(package)
+        if any(e[0] == "__getattr__" for e in events):
+            return AMBIGUOUS
         for e in events:
             if e[1] == "star":
-                exported = self.star_exports(e[2])
-                if exported is None:
+                exported = self.star_exports(e[2]) if self.path_of(e[2])[0] else None
+                if exported is None or "__getattr__" in exported:
                     return AMBIGUOUS
                 if name in exported:
                     return False
         hits = [e for e in events if e[0] == name and e[1] != "allmut"]
         if not hits:
-            return AMBIGUOUS if any(e[0] == "__getattr__" for e in events) else True
+            return True
         if any(e[3] for e in hits):
             return AMBIGUOUS
         return all(e[1] == "import" and e[2] == (package, name) for e in hits)
@@ -1090,9 +1097,10 @@ PARSER_CASES = {
     ("pk.low.ca_finally", "direct"): ("ambiguous", "module"),  # bound in a `finally`
 }
 
-# The fourteen statement shapes of tests/unit/test_utils_does_not_import_alg.py, then further ones, with the
-# position this check gives each. One differs from that test: it calls the body of `if False:` dead, while this
-# check measures the direction of source dependencies, not loading, so the import counts at module level.
+# The fourteen statement shapes the scanner of tests/unit/test_utils_does_not_import_alg.py held until it was deleted
+# (#2938), then further ones, with the position this check gives each. One differs from that scanner: it called the
+# body of `if False:` dead, while this check measures the direction of source dependencies, not loading, so the import
+# counts at module level.
 _I = "from pk.high.impl import direct"
 _TC = "from typing import TYPE_CHECKING\n"
 STATEMENT_SHAPES = (
@@ -1130,9 +1138,9 @@ STATEMENT_SHAPES = (
     ),
 )
 
-# (importing module, is a package, level, module named, expected absolute module): the relative cases of
-# tests/unit/test_utils_does_not_import_alg.py, checked there against importlib.util.resolve_name, and two beyond
-# the top-level package, which Python refuses.
+# (importing module, is a package, level, module named, expected absolute module): the five relative cases the deleted
+# scanner of tests/unit/test_utils_does_not_import_alg.py held, each also checked against importlib.util.resolve_name
+# below, and two beyond the top-level package, which Python refuses.
 RELATIVE_CASES = (
     ("mfgarchon.utils.numerical", True, 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.adjoint_validation", False, 2, "alg.base_solver", "mfgarchon.alg.base_solver"),
@@ -1245,12 +1253,51 @@ PATH_FILES: dict[str, str] = {
     "pt/high/p5/__init__.py": "import os\nif os.environ.get('X'):\n    from . import sub\n",
     "pt/high/p5/sub.py": "",
     "pt/low/v_cond.py": "from pt.high.p5 import sub\n",
-    "pt/high/p6/__init__.py": "def other():\n    pass\n",
+    "pt/low/base.py": "def other():\n    pass\n",
+    "pt/high/p6/__init__.py": "from pt.low.base import other\n",
     "pt/high/p6/sub.py": "",
-    "pt/low/vi_mixed.py": "from pt.high.p6 import sub, other\n",
+    "pt/high/p6/sub2.py": "",
+    "pt/low/vi_mixed.py": "from pt.high.p6 import sub, other, sub2\n",
     "pt/high/p7/__init__.py": "def __getattr__(name):\n    raise AttributeError(name)\n",
     "pt/high/p7/sub.py": "",
     "pt/low/vii_getattr.py": "from pt.high.p7 import sub\n",
+    "pt/high/p8/__init__.py": "from .bad import *\n",
+    "pt/high/p8/bad.py": "NAME = 'x'\n__all__ = [NAME]\n",
+    "pt/high/p8/sub.py": "",
+    "pt/low/viii_unread.py": "from pt.high.p8 import sub\n",
+    "pt/high/p9/__init__.py": "from os.path import *\n",
+    "pt/high/p9/join.py": "",
+    "pt/low/ix_outside.py": "from pt.high.p9 import join\n",
+    "pt/high/p10/__init__.py": "def __getattr__(name):\n    return 42\nfrom . import sub\n",
+    "pt/high/p10/sub.py": "",
+    "pt/low/x_getattr_first.py": "from pt.high.p10 import sub\n",
+    "pt/high/p11/__init__.py": "from .lazy import *\n",
+    "pt/high/p11/lazy.py": "__all__ = ['__getattr__']\ndef __getattr__(name):\n    return 42\n",
+    "pt/high/p11/sub.py": "",
+    "pt/low/xi_star_getattr.py": "from pt.high.p11 import sub\n",
+    "pt/high/p12/__init__.py": "def sub():\n    pass\nfrom . import sub\n",
+    "pt/high/p12/sub.py": "",
+    "pt/low/xii_def_first.py": "from pt.high.p12 import sub\n",
+    "pt/low/xiii_star_package.py": "from pt.high.p1 import *\n",
+    "pt/high/p14/__init__.py": "from .lazy import __getattr__\n",
+    "pt/high/p14/lazy.py": "def __getattr__(name):\n    return 42\n",
+    "pt/high/p14/sub.py": "",
+    "pt/low/xiv_getattr_imported.py": "from pt.high.p14 import sub\n",
+    "pt/high/p15/__init__.py": "from .a import *\nfrom .b import *\n",
+    "pt/high/p15/a.py": "sub = 1\n",
+    "pt/high/p15/b.py": "X = 1\n",
+    "pt/high/p15/sub.py": "",
+    "pt/low/xv_first_star.py": "from pt.high.p15 import sub\n",
+    "pt/high/p16/__init__.py": "import os\nif os.environ.get('X'):\n    def __getattr__(name):\n        return 42\n",
+    "pt/high/p16/sub.py": "",
+    "pt/low/xvi_getattr_cond.py": "from pt.high.p16 import sub\n",
+    "pt/high/p17/__init__.py": "from . import other as sub\n",
+    "pt/high/p17/other.py": "",
+    "pt/high/p17/sub.py": "",
+    "pt/low/xvii_as.py": "from pt.high.p17 import sub\n",
+    "pt/high/p18.py": "X = 1\n",
+    "pt/high/p18/sub.py": "",
+    "pt/low/xviii_module.py": "from pt.high.p18 import sub\n",
 }  # fmt: skip
 # (importer, package on its path, whether the path is an edge, the row)
 PATH_CASES = [
@@ -1259,8 +1306,43 @@ PATH_CASES = [
     ("pt.low.iii_star", "pt.high.p3", True, "(iii) a star import in the __init__ that shadows the submodule"),
     ("pt.low.iv_from_dot", "pt.high.p4", False, "(iv) `from . import sub` in the __init__"),
     ("pt.low.v_cond", "pt.high.p5", True, "(v) a conditional binding: ambiguous"),
-    ("pt.low.vi_mixed", "pt.high.p6", True, "(vi) two names, one a submodule and one not"),
+    ("pt.low.vi_mixed", "pt.high.p6", True, "(vi) three names, the middle one not a submodule"),
     ("pt.low.vii_getattr", "pt.high.p7", True, "(vii) a module-level __getattr__ and no static binding: ambiguous"),
+    ("pt.low.viii_unread", "pt.high.p8", True, "(viii) a star import whose __all__ is not a literal: ambiguous"),
+    ("pt.low.ix_outside", "pt.high.p9", True, "(ix) a star import from outside the tree: ambiguous"),
+    ("pt.low.x_getattr_first", "pt.high.p10", True, "(x) a __getattr__ ahead of `from . import sub`: ambiguous"),
+    ("pt.low.xi_star_getattr", "pt.high.p11", True, "(xi) a __getattr__ a star import exports: ambiguous"),
+    ("pt.low.xii_def_first", "pt.high.p12", True, "(xii) a def ahead of `from . import sub`"),
+    ("pt.low.xiii_star_package", "pt.high.p1", True, "(xiii) a star import of a package"),
+    ("pt.low.xiv_getattr_imported", "pt.high.p14", True, "(xiv) a __getattr__ bound by an import: ambiguous"),
+    ("pt.low.xv_first_star", "pt.high.p15", True, "(xv) two star imports, the first exporting the name"),
+    ("pt.low.xvi_getattr_cond", "pt.high.p16", True, "(xvi) a __getattr__ under a module-level `if`: ambiguous"),
+    ("pt.low.xvii_as", "pt.high.p17", True, "(xvii) `from . import other as sub` in the __init__"),
+    ("pt.low.xviii_module", "pt.high.p18", True, "(xviii) a module P.py beside a directory P/ with no __init__.py"),
+]
+# (package, name, what `Tree.binds_submodule` answers), one per name of each row: the three-way answer itself, which
+# the edge alone cannot tell apart, since a False and an AMBIGUOUS name both keep the path edge.
+BINDS_CASES = [
+    ("pt.high.p1", "sub", True, "(i)"),
+    ("pt.high.p2", "sub", False, "(ii)"),
+    ("pt.high.p3", "sub", False, "(iii)"),
+    ("pt.high.p4", "sub", True, "(iv)"),
+    ("pt.high.p5", "sub", "ambiguous", "(v)"),
+    ("pt.high.p6", "sub", True, "(vi)"),
+    ("pt.high.p6", "other", False, "(vi)"),
+    ("pt.high.p6", "sub2", True, "(vi)"),
+    ("pt.high.p7", "sub", "ambiguous", "(vii)"),
+    ("pt.high.p8", "sub", "ambiguous", "(viii)"),
+    ("pt.high.p9", "join", "ambiguous", "(ix)"),
+    ("pt.high.p10", "sub", "ambiguous", "(x)"),
+    ("pt.high.p11", "sub", "ambiguous", "(xi)"),
+    ("pt.high.p12", "sub", False, "(xii)"),
+    ("pt.high.p1", "*", False, "(xiii)"),
+    ("pt.high.p14", "sub", "ambiguous", "(xiv)"),
+    ("pt.high.p15", "sub", False, "(xv)"),
+    ("pt.high.p16", "sub", "ambiguous", "(xvi)"),
+    ("pt.high.p17", "sub", False, "(xvii)"),
+    ("pt.high.p18", "sub", False, "(xviii)"),
 ]
 
 
@@ -1277,6 +1359,11 @@ def path_target_section() -> bool:
             "(i) the owner edge to the submodule stays",
             ("pt.low.i_sub", "pt.high.p1.sub", "module") in found.edges,
         )
+        tree = Tree(root, "pt")
+        for package, name, expected, row in BINDS_CASES:
+            got = tree.binds_submodule(package, name)
+            shown = "ambiguous" if got is AMBIGUOUS else got
+            ok &= report(f"{row} binds_submodule({package}, {name!r}) is {expected}", shown == expected, f"got {shown}")
     return ok
 
 
@@ -1306,6 +1393,11 @@ def relative_section() -> bool:
         node = ast.ImportFrom(module=named, names=[ast.alias(name="X")], level=level)
         got = Tree.absolute(importer, is_package, node)
         ok &= report(f"{importer} level {level} {named}", got == expected, f"got {got!r}")
+        if expected:
+            python = importlib.util.resolve_name(
+                "." * level + (named or ""), importer if is_package else importer.rpartition(".")[0]
+            )
+            ok &= report(f"{importer} level {level} {named}: importlib agrees", python == expected, f"got {python!r}")
     return ok
 
 

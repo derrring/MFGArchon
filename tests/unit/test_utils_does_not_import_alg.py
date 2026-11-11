@@ -33,12 +33,13 @@ because `utils/numerical/__init__.py` imports `alg`, which reaches `fp_network`,
 name from `utils.numerical` while it is still stopped at that line. The eager import is
 load-bearing: it completes `utils.numerical` by another route first and hides the cycle. #1930.
 
-The count of module-level `utils` -> `alg` imports this file held, with its scanner, moved to
-`scripts/check_layering.py`, the layering rule's one owner, which the gate runs (#2938). Where the
-two disagreed, the layer table's reading stands: `utils/adjoint_validation.py` -> `alg.base_solver`
-lies within one layer. The scanner's fourteen statement shapes and five relative cases are that
-script's `STATEMENT_SHAPES` and `RELATIVE_CASES`. What stays here is not a count: the deleted shims
-stay deleted, a lazy `__getattr__` cannot restore them, and the hub import can be deferred.
+The count of module-level `utils` -> `alg` imports this file held, with its scanner, was deleted when
+`scripts/check_layering.py`, the layering rule's one owner, entered the gate (#2938). Where the two
+disagreed, the layer table's reading stands: `utils/adjoint_validation.py` -> `alg.base_solver` lies
+within one layer. The scanner's fourteen statement shapes are the first fourteen of that script's
+`STATEMENT_SHAPES`, and its five relative cases the first five of its `RELATIVE_CASES`. What stays here
+is not a count: the deleted shims stay deleted, a lazy `__getattr__` cannot restore them, and the hub
+import can be deferred.
 """
 
 from __future__ import annotations
@@ -63,12 +64,13 @@ def test_the_deleted_shims_stay_deleted():
 
 
 def test_a_lazy_shim_cannot_restore_a_deleted_import_path():
-    """The guard above counts imports; a PEP 562 `__getattr__` is not one.
+    """The file check above sees files; a PEP 562 `__getattr__` adds none.
 
     Review demonstrated the hole: appending a module-level `__getattr__` to
     `utils/numerical/__init__.py` that resolves `gfdm_strategies` and `anderson_acceleration` to
     their canonical `alg` modules restores BOTH deprecated import paths -- DeprecationWarning and
-    all -- while adding no file and no module-level import. Every assertion above stayed green.
+    all -- while adding no file and no module-level import. Every assertion this file then held
+    stayed green.
 
     That is not a hypothetical construction here: #1930's own step 4 proposes making
     `utils/__init__.py` a PEP 562 lazy re-export hub. This asserts the deleted paths in
@@ -96,7 +98,7 @@ def test_a_lazy_shim_cannot_restore_a_deleted_import_path():
         assert resolved is None, (
             f"`mfgarchon.utils.numerical.{name}` resolves again, as an attribute rather than a "
             f"file -- a lazy re-export restores the deprecated path while adding no module-level "
-            f"import, so neither the count nor the file check above can see it. It was deleted as "
+            f"import, so the file check above cannot see it. It was deleted as "
             f"a shim overdue since v0.21.0; import from `mfgarchon.alg` directly."
         )
 
