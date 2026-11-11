@@ -1,16 +1,19 @@
-"""psutil is required: imported plainly, and never guarded, skipped or removed; and README lists what pyproject requires.
+"""psutil is required: never imported under a `try` or a `with`, never named in a library string, and in tests never
+`importorskip`ped or removed through `sys.modules` in the forms below; and README lists what pyproject requires.
 
 User rulings, 2026-11-10 and 2026-11-11 (#2930), and AGENTS.md's package line: `[project].dependencies` is the one list
 of what an install guarantees; a package on it is imported plainly, and a missing one is Python's own
-`ModuleNotFoundError`. This stage of #2930 covers psutil; its stage B brings the same rule to every required package,
-and until then the library still guards the others (#2930's census, by stage).
+`ModuleNotFoundError`. This stage of #2930 covers psutil; its stage B brings a lexical rule to every required package,
+and decides there what L2 becomes for a package whose name is also a backend's, such as numpy. Until then the library
+still guards the others (#2930's census, by stage).
 
 **The rule for psutil is lexical.** It reads no handler, so no spelling of a handler can get round it. It matches the
 name "psutil" and any "psutil.<something>".
 
 - L1. In `mfgarchon/` and in `tests/`, no `import psutil...` or `from psutil... import` sits inside a `try` or a `with`, at any depth:
-  its body, a handler, its `else`, its `finally`, a nested block or a class body. The body of a `def`, `async def` or
-  `lambda` is a new start, since a `try` around a `def` does not guard what the function imports when it is called.
+  its body, a handler, its `else`, its `finally`, a nested block or a class body. The body of a `def` or `async def` is
+  a new start: the rule does not follow calls, so it does not report a `try` around a call of a function that imports
+  psutil, whether that `def` sits inside the `try` or elsewhere.
 - L2. In `mfgarchon/`, no string constant equals "psutil" or begins with "psutil.": that is every dynamic import,
   presence check and name comparison at once. A docstring that mentions psutil in prose is not equal to it.
 - T1. In `tests/`, no `importorskip` call has an argument or keyword equal to "psutil".
@@ -19,17 +22,39 @@ name "psutil" and any "psutil.<something>".
 
 It over-reports by design, and has no exceptions. At this stage's head it reports nothing. On main before #2930
 it reports the five function guards (L1) and `utils/__init__.py`'s two `err.name != "psutil"` (L2). T1 and T2 have no
-row on main either, so their evidence is the planted cases below, each of which fails the rule with its own message.
+row on main, although main's `test_availability_flags_measure_their_dependency_2088.py` made psutil absent with a
+meta-path finder, a form T2 does not spell. Their evidence is the planted cases below, each of which fails the rule
+with its own message.
 
-**What it does not cover, and who does:**
+**What the rule does not see:**
 - a guard in another module around an internal module that imports psutil at its top, such as
-  `try: from .memory_management import ...`: `test_no_import_guard_hides_a_missing_name_2088.py` reports that, and its
-  `ALLOWED` is empty;
+  `try: from .memory_management import ...` with `except Exception: MemoryMonitor = None` in `utils/__init__.py`.
+  `test_no_import_guard_hides_a_missing_name_2088.py` reports such a guard when its handler names `ImportError` or
+  `ModuleNotFoundError`, as a bare name or in a flat tuple, and not under `except Exception`, a tuple held in a name or
+  `contextlib.suppress(ImportError)`. Whatever the handler, `test_import_mfgarchon_fails_without_a_required_package`
+  fails once such guards let `import mfgarchon` succeed without psutil. A guard that leaves another psutil import on
+  that path unguarded is reported by neither test, and changes nothing: `import mfgarchon` still fails without psutil;
+- a `try` or a `with` around a call into a function that imports psutil, such as `try: _psutil = _load()` with
+  `except ImportError: _psutil = None` and `def _load(): import psutil` (see L1). Outside tests such a fallback cannot
+  run: `import mfgarchon` already fails without psutil (`test_import_mfgarchon_fails_without_a_required_package`), and
+  `tests/conftest.py` imports mfgarchon. A test can still make it run by removing psutil after the import;
+- in `tests/`, a skip or a removal that T1 and T2 do not spell, such as these nine:
+  - `skipif(importlib.util.find_spec("psutil") is None, ...)`;
+  - `psutil = importlib.import_module("psutil")` under a `try`, with a `skipif` on the result;
+  - `mock.patch.dict(sys.modules, psutil=None)`;
+  - `mock.patch.dict("sys.modules", {"psutil": None})`;
+  - `with mock.patch.dict(sys.modules) as mods: mods["psutil"] = None`;
+  - `monkeypatch.setattr(builtins, "__import__", ...)` with an import function that refuses psutil;
+  - `NAME = "psutil"` with `monkeypatch.setitem(sys.modules, NAME, None)`;
+  - `NAME = "psutil"` with `pytest.importorskip(NAME)`;
+  - `from sys import modules` with `monkeypatch.setitem(modules, "psutil", None)`.
+  So are a meta-path finder that refuses psutil, as main's flag test had, and an aliased `sys`, such as
+  `import sys as s; s.modules["psutil"] = None`;
 - a conditional import that is not a `try` or a `with`, such as `if sys.platform == "linux": import psutil`: by design,
   since it does not decide what happens without the package;
 - psutil reached through a computed name, such as `importlib.import_module("ps" + "util")`;
-- an aliased `sys` in a test, such as `import sys as s; s.modules["psutil"] = None`;
-- code that is not a `.py` file, and `benchmarks/` and `examples/`, which #2930's stage C covers.
+- code that is not a `.py` file, such as the Python inline in `.github/workflows/ci.yml`, and documents, such as
+  `benchmarks/README.md`'s "requires psutil"; and `benchmarks/` and `examples/`, which #2930's stage C covers.
 """
 
 from __future__ import annotations
@@ -157,8 +182,9 @@ def test_psutil_is_imported_plainly_and_never_removed():
     assert rows == [], message(rows)
 
 
-#: case -> (the directory the source would sit in, the source, the rule that must report it, at that line). The re-adds are the
-#: reviewers' own mutants of #2943, copied from their mutant files with only the indentation changed.
+#: case -> (the directory the source would sit in, the source, the rule that must report it, at that line). The seven
+#: cases named for a review are that reviewer's mutants of #2943: the text each wrote, re-indented, and for the four
+#: inside a function, under that function's `def` line from the library. The other two are the author's.
 PLANTED = {
     "review 1, suppress_watchdog": (
         "mfgarchon",
@@ -241,6 +267,15 @@ def test_the_rule_does_not_report(case):
     assert library_rows(NOT_REPORTED[case], "mfgarchon/planted.py") == []
 
 
+def test_the_scan_reaches_nested_files_in_both_trees(tmp_path):
+    """The control for the main test's `[]`: the scan reads files two directories down, in both trees."""
+    (tmp_path / "mfgarchon/a/b").mkdir(parents=True)
+    (tmp_path / "tests/c/d").mkdir(parents=True)
+    (tmp_path / "mfgarchon/a/b/x.py").write_text("try:\n    import psutil\nexcept ImportError:\n    psutil = None\n")
+    (tmp_path / "tests/c/d/test_y.py").write_text("import pytest\npsutil = pytest.importorskip('psutil')\n")
+    assert rule_rows(tmp_path) == [("mfgarchon/a/b/x.py", 2, "L1"), ("tests/c/d/test_y.py", 2, "T1")]
+
+
 def test_a_dependency_with_a_marker_is_refused(tmp_path):
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nname = "x"\ndependencies = ["numpy; python_version >= \'3.12\'"]\n')
@@ -291,6 +326,15 @@ def test_import_mfgarchon_fails_without_a_required_package(absent):
     assert str(REPO / "mfgarchon") in proc.stderr, (
         f"the traceback does not run through this tree:\n{proc.stderr[-1500:]}"
     )
+
+
+def test_a_retyped_error_fails_the_subprocess_test(monkeypatch):
+    """The control for the last-line check: a `RuntimeError` raised from psutil's absence, the shape of review 1's
+    retype. Its traceback runs through this tree and holds "No module named 'psutil'", so only the last line differs."""
+    retype = 'try:\n    import mfgarchon\nexcept Exception as err:\n    raise RuntimeError("mfgarchon needs psutil") from err\n'
+    monkeypatch.setitem(globals(), "_PROBE", _PROBE.replace("\nimport mfgarchon\n", "\n" + retype))
+    with pytest.raises(AssertionError, match="not a retyped error"):
+        test_import_mfgarchon_fails_without_a_required_package(NAME)
 
 
 def test_the_probe_imports_when_what_it_refuses_is_not_used():

@@ -8,4 +8,4 @@
     - `performance_logged(include_memory=True)` no longer turns tracking off with a warning;
     - `log_memory_usage` no longer logs the peak alone.
   - **README.md's default-install list loses typing-inspection** and is pinned equal to `[project].dependencies`.
-  - **Documents now point at the owner.** The benchmark, example and `mfgarchon/utils` READMEs, and the notebook execution guide's install steps, called a required package optional or offered a smaller install. AGENTS.md's package line is the user's rule. The hooks guide's `PerformanceHook` example imports psutil plainly.
+  - **Documents now point at the owner.** The benchmark, example and `mfgarchon/utils` READMEs, and the notebook execution guide's install steps, called a required package optional or offered a smaller install. AGENTS.md's package line is the user's rule. The hooks guide's `PerformanceHook` example imports psutil plainly. The notebook guide's troubleshooting and feature lines, which still call plotly optional and offer `pip install numpy matplotlib`, and `benchmarks/README.md`'s "requires psutil" are left to #2930's later stages.
