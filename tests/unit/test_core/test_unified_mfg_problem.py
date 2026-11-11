@@ -598,16 +598,10 @@ class TestCustomComponentExceptionPropagation:
             problem_type="custom",
         )
 
-        problem = MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
-
-        # Exception should propagate, not be silently caught
+        # Exception should propagate, not be silently caught. Since #2901 a problem reads the dH_dm door on a batch and
+        # on a point at construction (`refuse_a_hamiltonian_whose_reads_disagree`), so it propagates from there.
         with pytest.raises(RuntimeError, match="Intentional error"):
-            problem.dH_dm(
-                x_idx=5,
-                m_at_x=1.0,
-                derivs={(1,): 0.5},
-                t_idx=0,
-            )
+            MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
 
 
 if __name__ == "__main__":

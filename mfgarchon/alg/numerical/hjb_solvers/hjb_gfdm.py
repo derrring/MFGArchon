@@ -1138,7 +1138,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
     def _refuse_outside_positive_qp_fan_scope(self) -> None:
         """D5 of #1689 (comment 6191566926): what monotonicity_scheme='positive_qp_fan' can make monotone."""
-        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, why_the_cost_is_not_the_hamiltonians
 
         head = "HJBGFDMSolver(monotonicity_scheme='positive_qp_fan')"
         if self.dimension != 2:
@@ -1153,12 +1153,15 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
         hamiltonian = getattr(self.problem, "hamiltonian_class", None)
         control_cost = getattr(hamiltonian, "control_cost", None)
-        if not isinstance(hamiltonian, SeparableHamiltonian) or not isinstance(control_cost, QuadraticControlCost):
+        # #2901 (user ruling, 2026-11-11): the fan's policy is read from the cost, which stands for the Hamiltonian only
+        # as the library ships both.
+        why = why_the_cost_is_not_the_hamiltonians(hamiltonian, cost=QuadraticControlCost)
+        if why is not None:
             raise ValueError(
-                f"{head} needs a SeparableHamiltonian with a QuadraticControlCost: its exact sector argmin is the "
-                f"projection a quadratic cost makes it, and this problem's Hamiltonian is {type(hamiltonian).__name__} "
-                f"with {type(control_cost).__name__} (#1689). Use monotonicity_scheme='joint_socp' with "
-                "inner_solver='newton'."
+                f"{head} needs a SeparableHamiltonian with a QuadraticControlCost as the library ships them: its exact "
+                f"sector argmin is the projection a quadratic cost makes it, and its policy and Lagrangian are read from "
+                f"the cost; this problem's Hamiltonian is {type(hamiltonian).__name__} with {type(control_cost).__name__}, "
+                f"which is not ({why}) (#1689, #2901). Use monotonicity_scheme='joint_socp' with inner_solver='newton'."
             )
 
     def _positive_qp_fan_closure(self) -> tuple[dict[tuple[float, ...], float], np.ndarray]:
@@ -2312,13 +2315,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             self._dmp_alpha_crit = critical_drift_for_dmp(
                 self._D_lap, self._D_grad, diffusion_coeff, interior_indices=self.interior_indices
             )
+        from mfgarchon.core.hamiltonian import checked_control
+
         grad = np.stack([self._D_grad[d] @ u_current for d in range(self.dimension)], axis=1)
-        drift = np.asarray(
-            eval_dH_dp_batch(
-                self.problem.hamiltonian_class, self.collocation_points, np.asarray(m, dtype=float).ravel(), grad, t
-            ),
-            dtype=float,
-        ).reshape(grad.shape)
+        density = np.asarray(m, dtype=float).ravel()
+        drift = checked_control(
+            eval_dH_dp_batch(self.problem.hamiltonian_class, self.collocation_points, density, grad, t),
+            grad,
+            reader="HJBGFDMSolver's DMP warning",
+            source=self.problem.hamiltonian_class,
+            m=density,
+            method="evaluate_dp",
+        )
         max_alpha = float(np.max(np.linalg.norm(drift, axis=1)))
         if max_alpha > self._dmp_alpha_crit:
             logger.warning(
@@ -3259,9 +3267,41 @@ class HJBGFDMSolver(BaseHJBSolver):
         # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains
         # unmodelled -- a NON-quadratic control cost -- is failed loud below (validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
+        # Ordered BEFORE the control-cost gates and the probe deliberately (a CongestionHamiltonian is not a class whose
+        # cost stands for it, #2901, but this is the reason a caller can act on): the widened probe DOES detect congestion
+        # (measured, it departs from the declared quadratic by 1.000e+02), but it would report
+        # the generic "assumptions do not hold" message. The specific one names the mechanism
+        # and the attribute, which is what a caller can act on.
+        # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
+        # H = |p|^2/(2*lambda*c(m)) - V(t, x) - f(m). The control-cost gates below do NOT catch
+        # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
+        # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
+        # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
+        # (hjb_howard.py _howard_step RHS) with no c(m) factor, so the value function silently
+        # decouples from the congestion. Gate on the factor directly. Fail loud.
+        if getattr(H_class, "_congestion_factor", None) is not None:
+            raise NotImplementedError(
+                "inner_solver='howard' does not support multiplicative kinetic congestion c(m) "
+                "(CongestionHamiltonian): Howard hardcodes the unit-quadratic Lagrangian "
+                "(1/2)|alpha|^2 with no c(m) factor, so the value function silently decouples from "
+                "the congestion. Use inner_solver='newton' (deferred, Issue #1071/#1118 PR2)."
+            )
+
         control_cost = getattr(H_class, "control_cost", None)
         if control_cost is not None:
-            from mfgarchon.core.hamiltonian import QuadraticControlCost
+            from mfgarchon.core.hamiltonian import QuadraticControlCost, why_the_cost_is_not_the_hamiltonians
+
+            # #2901 (user ruling, 2026-11-11): Howard reads the cost's Lagrangian as the Hamiltonian's kinetic part, which
+            # stands for it only as the library ships both.
+            why = why_the_cost_is_not_the_hamiltonians(H_class)
+            if why is not None:
+                raise NotImplementedError(
+                    f"HJBGFDMSolver(inner_solver='howard'), run on a {self.dimension}-D problem: Howard reads the control "
+                    "cost's Lagrangian as the Hamiltonian's kinetic part, which is known to be the Hamiltonian's only for "
+                    "a SeparableHamiltonian or QuadraticMFGHamiltonian and a cost as the library ships them, and this "
+                    f"problem's {type(H_class).__name__} is not ({why}) (#2901). Use inner_solver='newton', which reads "
+                    "the Hamiltonian's own dp."
+                )
 
             # Issue #1071: the policy-evaluation RHS now consumes control_cost.lagrangian()
             # (wired below as control_lagrangian=), so any QUADRATIC control cost — unit or
@@ -3276,25 +3316,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     "Non-quadratic control costs have a non-smooth Lagrangian whose Howard "
                     "convergence is unvalidated; use inner_solver='newton' (Issue #1071)."
                 )
-        # Ordered BEFORE the probe deliberately: the widened probe DOES detect congestion
-        # (measured, it departs from the declared quadratic by 1.000e+02), but it would report
-        # the generic "assumptions do not hold" message. The specific one names the mechanism
-        # and the attribute, which is what a caller can act on.
-        # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
-        # H = |p|^2/(2*lambda*c(m)) - V(t, x) - f(m). The control-cost gate above does NOT catch
-        # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
-        # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
-        # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
-        # (hjb_howard.py _howard_step RHS) with no c(m) factor, so the value function silently
-        # decouples from the congestion. Gate on the factor directly. Fail loud.
-        if getattr(H_class, "_congestion_factor", None) is not None:
-            raise NotImplementedError(
-                "inner_solver='howard' does not support multiplicative kinetic congestion c(m) "
-                "(CongestionHamiltonian): Howard hardcodes the unit-quadratic Lagrangian "
-                "(1/2)|alpha|^2 with no c(m) factor, so the value function silently decouples from "
-                "the congestion. Use inner_solver='newton' (deferred, Issue #1071/#1118 PR2)."
-            )
-
         # Issue #2011, and #2015's review. THE PROBE RUNS FOR EVERY HAMILTONIAN, not only for one
         # that lacks `control_cost`. An earlier version put it in the `else:` of the branch above,
         # which meant any Hamiltonian exposing a QuadraticControlCost -- the ordinary way to write
@@ -3875,15 +3896,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         p = derivs.grad if derivs.grad is not None else np.zeros(self.problem.dimension)
 
-        # Fast path: for standard LQ Hamiltonian H = |p|²/(2λ), dH/dp = p/λ.
-        # Source λ from the canonical single source (``_control_cost_lambda`` ->
-        # ``control_cost.lambda_``, falling back to ``problem.lambda_`` only when the
-        # problem carries no Hamiltonian class) rather than reading ``problem.lambda_``
-        # directly. This was the last direct ``problem.lambda_`` read in a physics path
-        # -- the #1247 desync survivor on the per-point FD-Jacobian fast path (#1071
-        # Phase 4). On every reachable construction the two agree (the divergent case is
-        # unreachable: ``not is_custom`` implies the problem carries no control cost), so
-        # this is byte-identical single-source hygiene, not a behaviour change.
+        # Fast path: for standard LQ Hamiltonian H = |p|²/(2λ), dH/dp = p/λ, with λ from
+        # ``_control_cost_lambda``, which refuses a Hamiltonian whose cost does not stand for it
+        # as the library ships it (#2901, #2914). No public construction reaches this branch:
+        # ``is_custom`` is True on every problem one builds (#2953).
         is_custom = getattr(self.problem, "is_custom", False)
         if not is_custom:
             return p / self._control_cost_lambda()

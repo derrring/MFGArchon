@@ -405,10 +405,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
             # Every input this form was given beside model, domain, conditions and Nt, as given: the one record the
             # rebuilds read (`_rebuilt`), so solve(Nt=) and with_* do not drop what the constructor accepted (#2667).
-            # lambda_ is the fallback BaseHJBSolver._control_cost_lambda reads when the Hamiltonian exposes no
-            # control_cost, and coupling_coefficient the one fp_drift_coefficient reads for any Hamiltonian that is not
-            # a quadratic SeparableHamiltonian (#2681); whether they should exist is decided where those readers are
-            # repaired.
+            # lambda_ has no reader since #2901 deleted BaseHJBSolver._control_cost_lambda's fallback to it, and
+            # coupling_coefficient is the one fp_drift_coefficient reads for any Hamiltonian that is not a quadratic
+            # SeparableHamiltonian (#2681); whether they should exist is decided where those readers are repaired.
             self._v1_inputs: dict[str, Any] = {
                 "lambda_": lambda_,
                 "coupling_coefficient": coupling_coefficient,
@@ -1910,6 +1909,17 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         composed = _copy.copy(hamiltonian)
         composed._potential = composed_potential
+        # D2 reads the wall back through the composed H's __call__: a subclass that does not read `_potential` would
+        # drop it from every solve (#2901).
+        from mfgarchon.utils.validation import ValidationError
+        from mfgarchon.utils.validation.functions import validate_composed_wall
+
+        if self.geometry is not None:
+            walled = validate_composed_wall(
+                composed, hamiltonian, self.geometry, times=(0.0, 0.5 * float(self.T), float(self.T))
+            )
+            if not walled.is_valid:
+                raise ValidationError(walled)
         self.components._hamiltonian_class = composed
 
         # Keep every other holder of the potential in step, or a solver reads the unwalled copy.

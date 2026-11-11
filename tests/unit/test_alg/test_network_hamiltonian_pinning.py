@@ -377,8 +377,10 @@ def test_a_custom_dm_and_lagrangian_receive_each_argument_by_its_name():
     seen = {}
 
     def dm(t, node, neighbors, p, m):
+        # dH/dm of the built-in H, whose congestion term is -m^2/2 at the node: a problem refuses a dm that is not the
+        # derivative of its H (#2901).
         seen["dm"] = (t, node, list(neighbors), p[0], m[1])
-        return 0.0
+        return -m[node]
 
     def lagrangian(t, node, velocity, m):
         seen["lagrangian"] = (t, node, velocity[0], m[1])

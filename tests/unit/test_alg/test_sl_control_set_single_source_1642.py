@@ -14,90 +14,25 @@ The sweep now reads A from ``effective_domain()`` and keeps only the QUADRATURE 
 locally (three points for a piecewise-linear L_ctrl, eleven for a quadratic one) -- a
 genuine structural distinction, not a duplicated quantity. Narrowing that last isinstance
 to a control-cost capability is Issue #1651.
+
+Two numerical pins, written in cfb0207c (#1647), solved the DPP path with an L1 and a bounded
+cost subclass that narrowed only ``effective_domain()``. Since #2901 (user ruling, 2026-11-11)
+the DPP path reads the cost only as the library ships it, and refuses a subclass, so no public
+input separates ``effective_domain()`` from ``max_control`` there; they were deleted. A future
+shipped cost that separates them brings its own pin.
 """
 
 from __future__ import annotations
 
-import numpy as np
-
-from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
-from mfgarchon.core.hamiltonian import BoundedControlCost, L1ControlCost, SeparableHamiltonian
-from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
-
-NX, NT = 41, 10
-
-
-class _NarrowL1(L1ControlCost):
-    """An L1 cost whose admissible set is NOT the class default (-1, 1).
-
-    Nothing but ``effective_domain()`` changes, so a consumer that reads the owner
-    produces a different answer while one holding the ``(-1.0, 1.0)`` literal produces
-    the identical answer. That is the discrimination this module needs.
-    """
-
-    def effective_domain(self) -> tuple[float, float]:
-        return (-0.25, 0.25)
-
-
-class _NarrowBounded(BoundedControlCost):
-    """Same trick for the quadratic-on-A branch: A shrinks, ``max_control`` does not."""
-
-    def effective_domain(self) -> tuple[float, float]:
-        return (-0.2, 0.2)
-
-
-def _solve(control_cost) -> np.ndarray:
-    # H-only construction: MFGComponents derives the SeparableLagrangian that
-    # ``problem.lagrangian_class`` returns, which is the route production code takes.
-    problem = MFGProblem(
-        model=Model(hamiltonian=SeparableHamiltonian(control_cost=control_cost), volatility=0.15),
-        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1)),
-        conditions=Conditions(u_terminal=lambda x: (x[0] - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
-        Nt=NT,
-    )
-    solver = HJBSemiLagrangianSolver(problem)
-    assert solver._use_dpp, "this test is only meaningful on the DPP path; the gate changed"
-    xs = problem.geometry.coordinates[0]
-    density = np.ones((NT + 1, NX))
-    return solver.solve_hjb_system(density, (xs - 0.5) ** 2, U_coupling_prev=np.zeros((NT + 1, NX)))
-
-
-def test_dpp_sweep_reads_the_narrowed_domain_for_l1():
-    """The load-bearing pin. A hardcoded (-1, 0, 1) candidate set cannot see this change."""
-    wide = _solve(L1ControlCost(lambda_=0.5))
-    narrow = _solve(_NarrowL1(lambda_=0.5))
-
-    assert np.isfinite(wide).all()
-    assert np.isfinite(narrow).all()
-    assert not np.allclose(wide, narrow, rtol=0, atol=0), (
-        "shrinking effective_domain() from (-1, 1) to (-0.25, 0.25) left the value function "
-        "byte-identical: the DPP control sweep is not reading the admissible set from its owner"
-    )
-    # Restricting the admissible set can only raise the minimized DPP cost.
-    assert narrow.max() >= wide.max()
-
-
-def test_dpp_sweep_reads_the_narrowed_domain_for_bounded():
-    """Same pin on the quadratic-on-A branch, where the ladder read cc.max_control directly."""
-    wide = _solve(BoundedControlCost(lambda_=1.0, max_control=2.0))
-    narrow = _solve(_NarrowBounded(lambda_=1.0, max_control=2.0))
-
-    assert np.isfinite(wide).all()
-    assert np.isfinite(narrow).all()
-    assert not np.allclose(wide, narrow, rtol=0, atol=0), (
-        "shrinking effective_domain() left the value function byte-identical: the DPP sweep "
-        "is still reading cc.max_control instead of the owner"
-    )
 
 
 def test_no_second_owner_literals_survive_in_the_sweep():
     """Consolidation pin: the removed ladder's two re-derivations must not come back.
 
     Scope stated precisely -- this greps the method's source for the specific literals the
-    old ladder used. It cannot stop an arbitrary re-fork; the numerical tests above are the
-    checks that matter. It does stop the exact regression that was here.
+    old ladder used. It cannot stop an arbitrary re-fork. It does stop the exact regression
+    that was here.
     """
     import inspect
 

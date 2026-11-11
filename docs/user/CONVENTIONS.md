@@ -287,19 +287,44 @@ stage 3 lands, no read hands a 0-d $p$, and the admission goes.
 
 **What it returns is the Hamiltonian's own control.** The library reads a Hamiltonian through several
 sources: `__call__` in the HJB residual, `dp` in its Jacobian, `optimal_control` in the Fokker–Planck
-drift, and the doors over them (`evaluate_H`, `evaluate_dp`, `evaluate_optimal_control`, `dH_dm`). A
-problem refuses, at construction, a Hamiltonian whose sources disagree (#1642, #2901): `dp` and `dm`
-that are not the derivatives of `__call__`, an `optimal_control` that is not $-\partial_p H$ where
-$H$ is smooth, and a door that returns another value than its method. It compares them at every
-$(t, x, m, p)$ of: $t$ at $0$, $T/2$ and $T$; $x$ at the domain's middle node and, along each axis,
-its two end nodes nearest the middle; $m$ at $0.5$ and $1$; and $|p|$ at $0$, $0.4157$ and $1.3691$
-per component. A disagreement that falls between those probes is not seen: the check proves a
-disagreement where it finds one, and an agreement only at the probes. A non-smooth cost is compared
-only where $H$ is smooth at the probe. On a network the control is a rate per edge, and the
-comparison is the network's own identity between the rates and `dp`, at every node and the same
-times. A control cost stands for its
-Hamiltonian only where the library ships both (`why_the_drift_is_not_the_control_costs`, #2914):
-HJB-SL's `canonical_cs` reads the cost's `lambda_` there only.
+drift, and the doors over them (`evaluate_H`, `evaluate_dp`, `evaluate_optimal_control`, `dH_dm`), on a
+batch and on a point. A problem refuses, at construction, a Hamiltonian whose sources disagree (#1642,
+#2901). Two owners decide it, one per axis:
+
+- `validate_hamiltonian_consistency`: the methods agree at a point. `dp` and `dm` are the derivatives
+  of `__call__`, `optimal_control` is $-\partial_p H$ where $H$ is smooth, and each door returns what
+  its method returns. It compares them at every $(t, x, m, p)$ of: $t$ at $0$, $T/2$ and $T$; $x$ at
+  the node nearest the centre of the domain's nodes and, along each axis, its two end nodes nearest
+  it; $m$ at $0.5$ and $1$; and $p$ a scale times the signs $(+1, -1, +1, \dots)$ of its components,
+  the scale at $0$, $0.4157$ and $-1.3691$, so every component is probed at both signs.
+- `refuse_a_hamiltonian_whose_reads_disagree`: each door's read of a batch agrees with its reads of
+  the batch's points one at a time.
+
+A disagreement that falls between those probes is not seen: the check proves a disagreement where it
+finds one, and an agreement only at the probes. A non-smooth cost is compared only where $H$ is
+smooth at the probe. A soft wall (`state_penalty`) is composed into the Hamiltonian's potential and
+read back through its `__call__` at the same probes, so a subclass whose `__call__` does not read the
+potential is refused.
+
+On a network the control is a rate per edge. The rates are held to `dp` by the network's own
+identity at every node and time. `dp` and `dm` are held to central differences of `__call__` at a
+fixed set of nodes, whatever the network's size: both ends of the node order, a middle node and a
+node of highest degree, each over its own neighbourhood. A disagreement at a node not probed is not
+seen. A custom `hamiltonian_func` replaces `__call__` only, and its `dp` and rates stay the built-in
+control (#1545, open, routes a custom network H through them); every reader of those refuses such a
+Hamiltonian (`has_custom_hamiltonian`), so only `NetworkHJBSolver` reads it, through `__call__`, and its
+derivatives are not compared.
+
+A control cost stands for its Hamiltonian only where the library ships both: a `SeparableHamiltonian`
+or `QuadraticMFGHamiltonian` and a cost of a class the library ships, neither redefining a method of its
+own (`_why_not_as_it_ships`, #2914; user ruling, 2026-11-11, for the readers of a Lagrangian built on the
+cost). HJB-SL's `canonical_cs` and `BaseHJBSolver._control_cost_lambda` read the cost's `lambda_` there
+only; `MFGComponents` derives a Lagrangian from the cost there only; and HJB-SL's DPP path (a non-smooth
+Hamiltonian), HJB-GFDM's `inner_solver='howard'` and `monotonicity_scheme='positive_qp_fan'` read the
+cost, or the Lagrangian built on it, there only, and refuse a subclass or a user's cost elsewhere,
+stating what was run. A problem is given a Hamiltonian or a Lagrangian, not both, in the `components=`
+form as in `Model`; a Lagrangian-defined `MFGComponents` keeps its derived Hamiltonian in
+`MFGProblem.hamiltonian_class`, and its `hamiltonian` field stays `None`.
 
 ### What the Fokker–Planck solver receives
 

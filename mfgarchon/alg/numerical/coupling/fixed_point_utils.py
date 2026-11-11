@@ -1120,7 +1120,10 @@ def resolve_fp_drift_kwargs(
         # represent: the solver recovers alpha = -c*grad(U) internally. A non-smooth (or
         # non-separable) H has a set-valued / Clarke optimal control alpha* that is NOT -c*grad(U),
         # so it can only enter a VELOCITY-channel solver as a precomputed alpha*.
-        h_is_smooth_separable = isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth()
+        # The Hamiltonian's own statement of its smoothness, not its cost's: a cost stands for its Hamiltonian only as
+        # the library ships both (#2901), and every source this route then reads is the H's own -- optimal_control,
+        # which the consistency check compares, or -c*grad(U), which drift_is_the_control_costs gates below.
+        h_is_smooth_separable = isinstance(H_class, SeparableHamiltonian) and H_class.is_smooth()
         # #2900: -c*grad(U) is a smooth separable H's drift only where drift_is_the_control_costs holds. Only a solver
         # whose class says it forms its drift from U is affected: FVM, particle and the weak-form family read
         # optimal_control on the potential_field route. Such a solver takes the velocity path inside the closed set

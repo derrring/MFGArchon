@@ -50,7 +50,12 @@ class _PointOrBatch(HamiltonianBase):
 
 
 class _ScalarSpeed(_PointOrBatch):
+    """One speed per point where the velocity route reads dp, p of shape (90, 2). Construction compares dp with H
+    at its own probes (#2901), so there it is the parent's."""
+
     def dp(self, t, x, p, m):
+        if np.shape(p) != (90, 2):
+            return super().dp(t=t, x=x, p=p, m=m)
         return np.linalg.norm(np.asarray(p), axis=-1) / (1.0 + LAM * np.asarray(m))
 
 

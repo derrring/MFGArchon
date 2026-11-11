@@ -334,6 +334,27 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     f"{type(hamiltonian).__name__} is not ({why}) (#2901, #2914, #2866). Use HJBFDMSolver, or, where "
                     f"the Hamiltonian's is_smooth() is True, diffusion_method='adi' or 'stochastic', which read dH/dp."
                 )
+        # Where the Hamiltonian is not smooth the solver takes its DPP path (`_use_dpp`), which solves a Lagrangian built
+        # on the control cost: derived from a SeparableHamiltonian's cost, or the user's SeparableLagrangian whose
+        # Hamiltonian shares it. The cost stands for the Hamiltonian only as the library ships both (user ruling,
+        # 2026-11-11), so a non-smooth separable Hamiltonian whose cost is not as shipped is refused here, whatever
+        # lagrangian_class holds, rather than solved by readers that take H and L from different sources (#2901).
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, why_the_cost_is_not_the_hamiltonians
+
+        hamiltonian = self.problem.hamiltonian_class
+        why = (
+            why_the_cost_is_not_the_hamiltonians(hamiltonian)
+            if isinstance(hamiltonian, SeparableHamiltonian) and not hamiltonian.is_smooth()
+            else None
+        )
+        if why is not None:
+            raise NotImplementedError(
+                f"HJBSemiLagrangianSolver, run on a {self.problem.dimension}-D problem with a non-smooth "
+                f"{type(hamiltonian).__name__}: its DPP path solves a Lagrangian built on the control cost, which is "
+                f"known to describe the Hamiltonian only for a SeparableHamiltonian or QuadraticMFGHamiltonian and a "
+                f"cost as the library ships them, and this problem's is not ({why}) (#2901). Use HJBFDMSolver, which "
+                f"reads the Hamiltonian's own __call__ and dp."
+            )
 
         # Issue #1547 / RFC #1574 Phase 0 carried a refusal here for a MAXIMIZE control cost, whose
         # alpha* = +grad_u/lambda would have traced the characteristic feet in the wrong direction.

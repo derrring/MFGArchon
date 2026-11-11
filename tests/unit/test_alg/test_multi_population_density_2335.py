@@ -700,9 +700,9 @@ def test_at_two_populations_an_optimal_control_assigned_on_the_instance_is_what_
     """Over a congestion factor that does not declare the slot, each of two populations holds an `optimal_control`
     assigned on its instance: the velocity door reads the assignment at two populations too, not the rows path.
 
-    The assignment returns the library's control and records each read. Since #2901 a control that is not -dp is refused
-    at construction, which reads it at its probes with a scalar density; the solve's reads hand the density as an array,
-    and those are what is counted."""
+    The assignment returns the library's control and records each read. Since #2901 construction reads it too, at its
+    probes, so the records are cleared once the problems are built: what is counted is the solve's reads alone, each an
+    array of densities, one per node the door reads."""
 
     def factor(m):
         return 1.0 + 0.5 * m
@@ -715,9 +715,15 @@ def test_at_two_populations_an_optimal_control_assigned_on_the_instance_is_what_
     reads: list[list[tuple[int, ...]]] = [[], []]
     for hamiltonian, record in zip(assigned, reads, strict=True):
         hamiltonian.optimal_control = _recording(hamiltonian.optimal_control, record)
-    solved = _solve(assigned, [0.25, 0.75])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problems = [_problem(h, c) for h, c in zip(assigned, [0.25, 0.75], strict=True)]
+    for record in reads:
+        record.clear()
+    solved = _solve(assigned, [0.25, 0.75], problems=problems)
     for k in range(2):
-        assert any(len(shape) >= 1 for shape in reads[k]), f"population {k}'s assigned optimal_control was not read"
+        assert reads[k], f"population {k}'s assigned optimal_control was not read by the solve"
+        assert all(len(shape) == 1 and shape[0] > 1 for shape in reads[k]), (k, sorted(set(reads[k])))
         assert np.all(np.isfinite(solved[k][1])), f"population {k}"
 
 

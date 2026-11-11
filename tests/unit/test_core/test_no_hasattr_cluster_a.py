@@ -38,6 +38,21 @@ def _assert_no_hasattr(func, *, label: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _problem(components):
+    """A problem around ``components``: ``MFGProblem.hamiltonian_class`` is the public accessor for the Hamiltonian a
+    Lagrangian-defined MFGComponents derives (#2901)."""
+    import warnings
+
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return MFGProblem(geometry=grid, T=0.5, Nt=5, volatility=0.3, components=components)
+
+
 class TestNoHashattrStructural:
     """Verify that the targeted functions contain no hasattr() calls."""
 
@@ -104,9 +119,12 @@ class TestCapabilityDispatchBehavior:
             m_initial=lambda x: np.ones_like(x[0]) / 10.0,
             u_terminal=lambda x: np.zeros_like(x[0]),
         )
-        # Must have derived a SeparableHamiltonian (not a DualHamiltonian)
-        assert isinstance(comp.hamiltonian, SeparableHamiltonian), (
-            f"Expected SeparableHamiltonian, got {type(comp.hamiltonian).__name__}. "
+        # Must have derived a SeparableHamiltonian (not a DualHamiltonian). The derived H is read through the problem,
+        # its public accessor; the components' own field stays as given, None (#2901).
+        derived = _problem(comp).hamiltonian_class
+        assert comp.hamiltonian is None
+        assert isinstance(derived, SeparableHamiltonian), (
+            f"Expected SeparableHamiltonian, got {type(derived).__name__}. "
             "The analytic as_hamiltonian() path was not taken."
         )
 
@@ -129,10 +147,10 @@ class TestCapabilityDispatchBehavior:
             m_initial=lambda x: np.ones_like(x[0]) / 10.0,
             u_terminal=lambda x: np.zeros_like(x[0]),
         )
-        # General Lagrangian without as_hamiltonian() → DualHamiltonian
-        assert isinstance(comp.hamiltonian, DualHamiltonian), (
-            f"Expected DualHamiltonian, got {type(comp.hamiltonian).__name__}."
-        )
+        # General Lagrangian without as_hamiltonian() → DualHamiltonian, read through the problem (#2901)
+        derived = _problem(comp).hamiltonian_class
+        assert comp.hamiltonian is None
+        assert isinstance(derived, DualHamiltonian), f"Expected DualHamiltonian, got {type(derived).__name__}."
 
     def test_separable_hamiltonian_derives_lagrangian(self):
         """MFGComponents with SeparableHamiltonian → _lagrangian_class set."""

@@ -63,7 +63,9 @@ class _Control:
         self.reads.append(
             (float(t), tuple(np.array(c, dtype=float) for c in x), None if m is None else np.array(m, dtype=float))
         )
-        if self.kind == "write":
+        if self.kind == "write" and isinstance(m, np.ndarray) and m.ndim > 0:
+            # A point read hands a scalar density; the row is about the array a solver hands (#2901's batch check
+            # reads the control at one point too).
             np.maximum(m, WRITE_FLOOR, out=m)
         alpha = np.asarray(base(t=t, x=x, p=p, m=m), dtype=float)
         if self.kind == "time":

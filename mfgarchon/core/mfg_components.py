@@ -134,28 +134,40 @@ class MFGComponents:
         if self.lagrangian is not None and isinstance(self.lagrangian, LagrangianBase):
             self._lagrangian_class = self.lagrangian
 
-        # Issue #899: Accept either H or L (or both).
-        # If only L is provided, derive H for PDE solvers.
-        # If only H is provided, derive L if it's separable.
+        # Issue #899: accept H or L. If only L is provided, derive H for the PDE solvers; if only H is provided, derive L
+        # where the cost stands for H. Both together are refused, as Model refuses them (#2901): every reader but
+        # HJB-SL's DPP path read H, the DPP path read L, and nothing compared the two.
         if self.hamiltonian is not None and self.lagrangian is not None:
-            # Both provided: use as-is, no conversion
-            pass
+            raise ValueError(
+                f"MFGComponents was given hamiltonian={type(self.hamiltonian).__name__} and "
+                f"lagrangian={type(self.lagrangian).__name__}. Provide hamiltonian OR lagrangian, not both. They are dual "
+                f"descriptions of the same game; supply one, as Model requires (#2901)."
+            )
         elif self.lagrangian is not None and self.hamiltonian is None:
             # L only: derive H for PDE solvers
+            # The derived Hamiltonian is held in `_hamiltonian_class` (`MFGProblem.hamiltonian_class`), and the public
+            # field stays as the user gave it, so a copy (`dataclasses.replace`) carries one description (#2901).
             if isinstance(self.lagrangian, LagrangianBase):
                 # Issue #1068: isinstance(SeparableLagrangian) replaces hasattr(, "as_hamiltonian").
                 # SeparableLagrangian is the only LagrangianBase subclass with as_hamiltonian().
                 if isinstance(self.lagrangian, SeparableLagrangian):
                     # SeparableLagrangian: analytic conversion, no DualHamiltonian
-                    self.hamiltonian = self.lagrangian.as_hamiltonian()
+                    self._hamiltonian_class = self.lagrangian.as_hamiltonian()
                 else:
                     # General: numerical Legendre transform (legacy path)
-                    self.hamiltonian = self.lagrangian.legendre_transform()
+                    self._hamiltonian_class = self.lagrangian.legendre_transform()
         elif self.hamiltonian is not None and self.lagrangian is None:
             # H only: derive L if separable (for ADMM/variational)
             # Issue #1068: isinstance(SeparableHamiltonian) replaces hasattr(, "control_cost")
             # and hasattr(, "_potential"). Only SeparableHamiltonian carries both attributes.
-            if isinstance(self.hamiltonian, SeparableHamiltonian):
+            # #2901 (user ruling, 2026-11-11): the cost stands for H only as the library ships both, so a Lagrangian
+            # is derived from it only there; a subclass, or a user's cost, would have HJB-SL's DPP path solve another H.
+            from mfgarchon.core.hamiltonian import why_the_cost_is_not_the_hamiltonians
+
+            if (
+                isinstance(self.hamiltonian, SeparableHamiltonian)
+                and why_the_cost_is_not_the_hamiltonians(self.hamiltonian) is None
+            ):
                 self._lagrangian_class = SeparableLagrangian(
                     control_cost=self.hamiltonian.control_cost,
                     potential=getattr(self.hamiltonian, "_potential", None),

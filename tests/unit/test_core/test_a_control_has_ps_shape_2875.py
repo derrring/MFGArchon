@@ -47,14 +47,20 @@ FORMS = {
 }
 
 
-def _separable(form, *, only_0d=False, only_rows=None):
+def _separable(form, *, only_0d=False, only_rows=None, only_shape=None):
     """A SeparableHamiltonian whose control is the library's in another form. ``only_0d``: only where p is 0-d;
-    ``only_rows``: only where p has that many rows, so a reader's other reads stay the library's."""
+    ``only_rows``: only where p has that many rows; ``only_shape``: only where p has the reader's shape, so a problem's
+    construction, which reads the control door on a batch and on a point (#2901), and a reader's other reads stay the
+    library's."""
 
     class Formed(SeparableHamiltonian):
         def optimal_control(self, t, x, p, m):
             alpha = super().optimal_control(t=t, x=x, p=p, m=m)
-            if (only_0d and np.ndim(p) != 0) or (only_rows is not None and np.shape(p)[0] != only_rows):
+            if (
+                (only_0d and np.ndim(p) != 0)
+                or (only_rows is not None and np.shape(p)[0] != only_rows)
+                or (only_shape is not None and np.shape(p) != only_shape)
+            ):
                 return alpha
             return FORMS[form](alpha, p)
 
@@ -251,28 +257,28 @@ READS = {
     "FEM": (
         "FPFEMSolver",
         "optimal_control",
-        lambda f: _fem(_separable(f)),
+        lambda f: _fem(_separable(f, only_shape=(1, 14, 2))),
         "m of shape (14, 2)",
         [("transposed", (1, 14, 2), (2, 14, 1)), ("double", (1, 14, 2), (56,))],
     ),
     "meshless Galerkin": (
         "MeshlessGalerkinFPSolver",
         "optimal_control",
-        lambda f: _meshless(_separable(f)),
+        lambda f: _meshless(_separable(f, only_shape=(15, 1))),
         "m of shape (15,)",
         [("transposed", (15, 1), (1, 15)), ("double", (15, 1), (30,))],
     ),
     "particle": (
         "FPParticleSolver",
         "optimal_control",
-        lambda f: _particle(_separable(f)),
+        lambda f: _particle(_separable(f, only_shape=(500,))),
         "m of shape (500,)",
         [("lead", (500,), (1, 500)), ("double", (500,), (1000,))],
     ),
     "FVM face": (
         "FPFVMSolver",
         "optimal_control",
-        lambda f: _fvm(_separable(f)),
+        lambda f: _fvm(_separable(f, only_shape=(14,))),
         "m of shape (14,)",
         [("lead", (14,), (1, 14)), ("double", (14,), (28,))],
     ),
@@ -293,14 +299,14 @@ READS = {
     "velocity route 1-D": (
         "compute_fp_velocity_field",
         "evaluate_optimal_control",
-        lambda f: _velocity(_separable(f), 1, 15),
+        lambda f: _velocity(_separable(f, only_shape=(14, 1)), 1, 15),
         "m of shape (14,)",
         [("transposed", (14, 1), (1, 14)), ("double", (14, 1), (28,))],
     ),
     "velocity route nD": (
         "compute_fp_velocity_field",
         "evaluate_optimal_control",
-        lambda f: _velocity(_separable(f), 2, 7),
+        lambda f: _velocity(_separable(f, only_shape=(42, 2)), 2, 7),
         "m of shape (42,)",
         [("lead", (42, 2), (1, 42, 2)), ("double", (42, 2), (168,))],
     ),

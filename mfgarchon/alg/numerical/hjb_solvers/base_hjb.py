@@ -515,7 +515,7 @@ class BaseHJBSolver(BaseNumericalSolver):
                 f"{type(self).__name__} reads the control cost's lambda_ as the control's scale, which is known to be "
                 f"the Hamiltonian's only for a SeparableHamiltonian or QuadraticMFGHamiltonian and a "
                 f"QuadraticControlCost as the library ships them, and this problem's {type(hamiltonian).__name__} is "
-                f"not ({why}) (#2901, #2914)."
+                f"not ({why}), on a {getattr(self.problem, 'dimension', '?')}-D problem (#2901, #2914)."
             )
         lambda_val = float(control_cost.lambda_)
         if lambda_val <= 0:
