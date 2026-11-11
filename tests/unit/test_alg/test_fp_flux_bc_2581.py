@@ -180,8 +180,8 @@ class _FemWallDropsTheDrift(FPFEMSolver):
     """The rival FP-FEM wall: the advection transposed back to ``int phi_i (v . grad phi_j)``, whose natural condition is
     ``D dm/dn``, so the FLUX load imposes ``-D dm/dn = q`` (`test_fp_fem_bc_oracles_2512`'s ``dm/dn`` rival)."""
 
-    def _build_advection(self, U_n, D=0.0):
-        return -super()._build_advection(U_n, D).T
+    def _build_advection(self, U_n, D=0.0, **step):
+        return -super()._build_advection(U_n, D, **step).T
 
 
 def _fdm_wall_drops_the_drift(monkeypatch) -> None:

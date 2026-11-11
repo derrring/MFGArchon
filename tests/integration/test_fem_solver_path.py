@@ -80,7 +80,8 @@ class TestFEMSolverPath:
         problem, _ = _fem_problem()
         fp = FPFEMSolver(problem, order=order)
         u_n = np.random.RandomState(0).rand(fp._basis.N)
-        advection = fp._build_advection(u_n)
+        # The library's control reads neither t nor m (#2903).
+        advection = fp._build_advection(u_n, t=0.0, m_n=np.ones_like(u_n))
         max_col_sum = float(np.abs(np.asarray(advection.sum(axis=0)).ravel()).max())
         assert max_col_sum < 1e-12, f"FP advection (P{order}) not mass-conserving: max|col sum|={max_col_sum:.2e}"
 

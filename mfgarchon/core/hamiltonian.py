@@ -1632,6 +1632,11 @@ class HamiltonianBase(MFGOperatorBase):
         -------
         NDArray
             Optimal control α*, same shape as p
+
+        Notes
+        -----
+        Which ``t`` and ``m`` a Fokker–Planck solver hands it, for the step it advances, is stated in
+        docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives" (#2903).
         """
         dH_dp = self.dp(x=x, m=m, p=p, t=t)
         return -dH_dp

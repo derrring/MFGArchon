@@ -335,16 +335,42 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   what, and why it refuses, and names no other scheme. FP-FDM's #1632 guard, which refuses a
   velocity its step would not read, names the scheme that reads one.
 - **The FP solvers that read `optimal_control` themselves,** and what each one refuses, as its own
-  refusals state it:
-  - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$. It refuses
-    walls that are not one uniform condition, Dirichlet walls, a volatility that is not one constant,
-    and, on its value-function route, a control cost that is not quadratic (#1542).
-  - **The particle solver** reads it for a separable $H$, and hands it `m=None` (#2903). It refuses a
-    control cost that is not quadratic (#1542).
-  - **The weak-form family** (FEM, meshless Galerkin) reads it at $t = 0$ with `m=None` (#2903). The
-    meshless HJB with `streamline_diffusion_scale > 0` forms $-c\,\nabla u$ for its stabilisation,
-    and refuses such an $H$ there.
+  refusals state it. For the step from $t_n$ to $t_{n+1}$ each of them but FP-FDM hands it the time
+  $t_n = n\,\Delta t$, $u^n$ as $p$ (its gradient; on FVM its normal derivative at each face; on the
+  network its value at every node), and
+  the density it holds at step $n$, at the points where it reads the control, in the shapes of the
+  table below (#2903):
+  - **FVM** (`FPFVMSolver`; `FVM_UPWIND`, `FVM_MUSCL`) reads it at its faces, from $u$, with the mean
+    of the two cells' densities. It refuses walls that are not one uniform condition, Dirichlet walls,
+    a volatility that is not one constant, and, on its value-function route, a control cost that is
+    not quadratic (#1542).
+  - **The particle solver** reads it for a separable $H$ at the particles, with its grid density at
+    step $n$ read there, in its CPU loops and its GPU loop alike. It refuses a control cost that is
+    not quadratic (#1542).
+  - **The weak-form family** (FEM, meshless Galerkin) reads it at FEM's quadrature points or at the
+    meshless nodes, with the density there. The meshless HJB with `streamline_diffusion_scale > 0`
+    forms $-c\,\nabla u$ for its stabilisation, and refuses such an $H$ there.
+  - **The network solver** (`FPNetworkSolver`) reads it node by node, with the density at every node.
   - **FP-FDM** reads it as a velocity inside the set above.
+
+  The shapes each hands, $d$ the dimension and $N$ the points it reads at:
+
+  | Solver | `x` | `p` | `m` |
+  |---|---|---|---|
+  | FEM | a tuple of $d$ arrays, each (elements, quadrature points) | ($d$, elements, quadrature points) | (elements, quadrature points) |
+  | meshless Galerkin | a tuple of $d$ arrays, each $(N,)$, the nodes | $(N, d)$ | $(N,)$ |
+  | particle, $d = 1$ | a tuple of one array, $(N,)$, the particles | $(N,)$ | $(N,)$ |
+  | particle, $d \ge 2$ | a tuple of $d$ arrays, each $(N,)$ | $(N, d)$ | $(N,)$ |
+  | FVM | a tuple of $d$ arrays, the faces along one axis | one value per face | one value per face |
+  | network | the node's index | $u$ at every node, $(n,)$ | $(n,)$ |
+
+  *Not yet met (#2875): one form for `x`, `p` and `m` across these solvers.* A control written for
+  one solver's shapes can read the wrong values on another's. A return of another shape is refused
+  (§ "What optimal_control returns"); a return of $p$'s shape is taken as it comes. #2875 tracks it.
+
+  The velocity route, `compute_fp_velocity_field`, reads it at $t_n$ too. The density it hands is
+  the coupling iterate's at step $n$, since it is built before the FP solve, where the solvers above
+  hand the density they hold within that solve. The two agree at a fixed point.
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or

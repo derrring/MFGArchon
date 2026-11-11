@@ -179,7 +179,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
             "not nodal condensation. Reaching this hook means an unsupported BC type."
         )
 
-    def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
+    def _build_advection(self, U_n: NDArray, D: float, *, t: float, m_n: NDArray) -> sparse.csr_matrix:
         # Issue #1528 (G-017 single-source, supersedes the #1487/#1420 scalar read): the FP advective
         # drift has ONE owner -- the problem's Hamiltonian optimal-control primitive
         # alpha* = H.optimal_control(t, x, p, m) -- not a hand-coded -fp_drift_coefficient(problem)*grad(U).
@@ -221,20 +221,21 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         assert_quadratic_drift(self.problem, context="FP meshless-Galerkin advection")
         G = self._gradient_operators()
         grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim) = p at the collocation nodes
-        # x, m, t at the collocation nodes. The parent hook threads only U_n (neither the density nor the
-        # timestep reaches _build_advection), so m/t are unavailable here; a SeparableHamiltonian's optimal
-        # control depends on p alone, so alpha* is exact for this family's supported (separable) Hamiltonians.
-        # Feed the IDENTICAL grad_U the solver already recovered -- that is what preserves byte-identity.
+        # x, m and t at the collocation nodes: the step's density, one value per node as grad_U is, and the step's
+        # time. A subclass's own optimal_control may read them (#2903; docs/user/CONVENTIONS.md, "What the
+        # Fokker–Planck solver receives"). Feed the IDENTICAL grad_U the solver already recovered -- that is what
+        # preserves byte-identity for the library's own control.
         velocity = checked_control(
             H.optimal_control(
                 x=coordinate_tuple(self._disc.dof_coordinates, self._disc.dof_coordinates.shape[1]),
-                m=None,
+                m=m_n,
                 p=grad_U,
-                t=0.0,
+                t=t,
             ),
             grad_U,
             reader="MeshlessGalerkinFPSolver",
             source=H,
+            m=m_n,
         ).T  # (dim, N): alpha* = -grad(U)/lambda
         # FP weak form (Neumann, integrate by parts): the advection contributes
         # -C_b^T to the implicit operator (M/dt + D K - C_b^T), where

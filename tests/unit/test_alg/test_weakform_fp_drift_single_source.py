@@ -54,8 +54,9 @@ def test_meshless_fp_advection_is_single_sourced_from_control_cost():
     }
     _, fp_half = create_paired_solvers(_problem(0.5), NumericalScheme.MESHLESS_GALERKIN, hjb_config=cfg)
     _, fp_double = create_paired_solvers(_problem(2.0), NumericalScheme.MESHLESS_GALERKIN, hjb_config=cfg)
-    c_half = fp_half._build_advection(u, 0.045).toarray()
-    c_double = fp_double._build_advection(u, 0.045).toarray()
+    step = {"t": 0.0, "m_n": np.ones_like(u)}  # the library's control reads neither t nor m (#2903)
+    c_half = fp_half._build_advection(u, 0.045, **step).toarray()
+    c_double = fp_double._build_advection(u, 0.045, **step).toarray()
     assert np.abs(c_half).max() > 0.0
     assert np.allclose(c_half, c_double), (
         "FP advection must source the drift from control_cost (single source), not coupling_coefficient"
