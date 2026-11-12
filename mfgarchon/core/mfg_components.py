@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
+from mfgarchon.core.model import refuse_two_descriptions
 from mfgarchon.types.callable_protocols import (
     CONDITION_SLOTS,
     _remembered,
@@ -84,10 +85,13 @@ class MFGComponents:
 
     Attributes
     ----------
-    hamiltonian : HamiltonianBase
-        Class-based Hamiltonian H(t, x, p, m). Required.
+    hamiltonian : HamiltonianBase, optional
+        Class-based Hamiltonian H(t, x, p, m). Give it or ``lagrangian``, not both (#2901).
     lagrangian : LagrangianBase, optional
-        Alternative to hamiltonian - auto-converted via Legendre transform.
+        The alternative to ``hamiltonian``. Its Hamiltonian is derived (``as_hamiltonian()`` for a
+        ``SeparableLagrangian``, the Legendre transform otherwise) and held privately: ``hamiltonian`` stays
+        ``None``, as given, and the derived Hamiltonian is read through ``MFGProblem.hamiltonian_class``
+        (user ruling, 2026-11-11).
     m_initial : Callable | NDArray
         Initial density distribution m_0(x).
     u_terminal : Callable | NDArray
@@ -134,23 +138,23 @@ class MFGComponents:
         if self.lagrangian is not None and isinstance(self.lagrangian, LagrangianBase):
             self._lagrangian_class = self.lagrangian
 
-        # Issue #899: Accept either H or L (or both).
-        # If only L is provided, derive H for PDE solvers.
-        # If only H is provided, derive L if it's separable.
-        if self.hamiltonian is not None and self.lagrangian is not None:
-            # Both provided: use as-is, no conversion
-            pass
-        elif self.lagrangian is not None and self.hamiltonian is None:
+        # Issue #899: accept H or L. If only L is provided, derive H for the PDE solvers; if only H is provided, derive L
+        # where the cost stands for H. Both together are refused by the owner Model also reads (#2901): every reader
+        # but HJB-SL's DPP path read H, the DPP path read L, and nothing compared the two.
+        refuse_two_descriptions(self.hamiltonian, self.lagrangian)
+        if self.lagrangian is not None and self.hamiltonian is None:
             # L only: derive H for PDE solvers
+            # The derived Hamiltonian is held in `_hamiltonian_class` (`MFGProblem.hamiltonian_class`), and the public
+            # field stays as the user gave it, so a copy (`dataclasses.replace`) carries one description (#2901).
             if isinstance(self.lagrangian, LagrangianBase):
                 # Issue #1068: isinstance(SeparableLagrangian) replaces hasattr(, "as_hamiltonian").
                 # SeparableLagrangian is the only LagrangianBase subclass with as_hamiltonian().
                 if isinstance(self.lagrangian, SeparableLagrangian):
                     # SeparableLagrangian: analytic conversion, no DualHamiltonian
-                    self.hamiltonian = self.lagrangian.as_hamiltonian()
+                    self._hamiltonian_class = self.lagrangian.as_hamiltonian()
                 else:
                     # General: numerical Legendre transform (legacy path)
-                    self.hamiltonian = self.lagrangian.legendre_transform()
+                    self._hamiltonian_class = self.lagrangian.legendre_transform()
         elif self.hamiltonian is not None and self.lagrangian is None:
             # H only: derive L if separable (for ADMM/variational)
             # Issue #1068: isinstance(SeparableHamiltonian) replaces hasattr(, "control_cost")

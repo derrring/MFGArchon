@@ -37,6 +37,15 @@ UNREAD_DRIFT = (
 )
 
 
+def refuse_two_descriptions(hamiltonian: object, lagrangian: object) -> None:
+    """The one refusal of a game given both its Hamiltonian and its Lagrangian, read by ``Model`` and ``MFGComponents``
+    (#2901). Given together, each reader would take one of them and nothing would compare the two."""
+    if hamiltonian is not None and lagrangian is not None:
+        raise ValueError(
+            "Provide hamiltonian OR lagrangian, not both. They are dual descriptions of the same game; supply one."
+        )
+
+
 @runtime_checkable
 class CouplingCost(Protocol):
     """A coupling cost F[m], the value of ``Model.coupling_cost``: a specification free of any discretization, which
@@ -115,10 +124,7 @@ class Model:
 
         if not has_h and not has_l:
             raise ValueError("Model requires a hamiltonian or a lagrangian")
-        if has_h and has_l:
-            raise ValueError(
-                "Provide hamiltonian OR lagrangian, not both. They are dual descriptions of the same game; supply one."
-            )
+        refuse_two_descriptions(self.hamiltonian, self.lagrangian)
 
     def refuse_what_is_not_bound(self) -> None:
         """The refusals of what a problem cannot bind, read at construction and again where a problem binds this model,
