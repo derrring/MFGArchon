@@ -121,6 +121,14 @@ jobs:
         echo "Checking that no quantity with one owner gained another implementation..."
         python scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 
+    # The layering rule's one owner, as in scripts/local_ci.sh (#2938; user ruling, 2026-11-12): a lower layer of
+    # mfgarchon does not import an upper one. About 1.5 s of AST over the package, with no package imports.
+    - name: Layering check (a lower layer does not import an upper one)
+      timeout-minutes: 1
+      run: |
+        echo "Checking that no lower layer of mfgarchon imports an upper one..."
+        python scripts/check_layering.py --root .
+
   # === PHASE 1: Import Validation ===
   # Note: Ruff formatting, linting, and MyPy checks run in modern_quality.yml workflow
   import-validation:

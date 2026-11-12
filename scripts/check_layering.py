@@ -5,13 +5,13 @@ Usage:
     python scripts/check_layering.py [--root TREE]   # check TREE/mfgarchon (default: this repository)
     python scripts/check_layering.py --self-test     # its own cases, on temporary packages
 
-**It observes.** Neither CI nor the pre-push gate runs the check of the package. The gate runs only
-``--self-test``, in ``scripts/local_ci.sh``'s self-test loop: that guards the parser and enforces nothing
-about the package. When the check itself enters CI is the user's call (#2938).
+**It is enforced by the gate.** ``scripts/local_ci.sh`` runs ``--self-test`` in its self-test loop and then the check
+of the package as a step of its own, and a non-zero exit fails the gate (user ruling, 2026-11-11, #2938): the
+exception lists below are the ratchet. CI's quick-checks job runs the check of the package too (user ruling,
+2026-11-12).
 
 This file holds the layer table (``LAYERS``) and the exception lists (``EDGE_EXCEPTIONS``,
-``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). One slice of the rule has a second owner until the check enters
-the gate (below). A PR that removes an edge removes its line in the same diff.
+``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). A PR that removes an edge removes its line in the same diff.
 
 **It does not simulate the interpreter** (#2938). It resolves a closed list of module-level binding forms, and any
 other module-level statement that binds a name in its syntax makes that name ambiguous: reported unless listed. It
@@ -99,16 +99,15 @@ outside the package, and #2938's stage 4 deletes that module.
 unresolved (not found), not followed to the type binding. A symlinked directory under the package is not walked.
 A ``foo.py`` beside ``foo/__init__.py`` is scanned under the package's name.
 
-**A second owner of one slice.** ``tests/unit/test_utils_does_not_import_alg.py`` ratchets the module-level
-imports of ``mfgarchon.alg`` from every file under ``mfgarchon/utils/``, and runs in the gate. The two disagree on
-the seven ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer: the five in the solve layer, and
-``utils.cli`` and ``utils.experiment_manager`` in the entry layer. The test forbids each a module-level import of
-``alg`` because it sits in ``utils/``; this check allows it, by what the module is. Today one edge falls there,
-``utils/adjoint_validation.py`` -> ``alg.base_solver``, which the test counts as the last violation. The ratchet
-is deleted in the PR that puts this check into the gate (#2938); from then on the gate does not forbid those
-seven a module-level ``alg`` import, and six of the seven, all but ``utils.solver_decorators``, load with
-``mfgarchon.utils`` through its re-exports until #2938's stage 2a; ``utils.adjoint_validation`` already loads
-``alg.base_solver`` that way.
+**The one owner.** This check is the rule's one owner. ``tests/unit/test_utils_does_not_import_alg.py`` held a
+second count of one slice, the module-level imports of ``mfgarchon.alg`` from every file under
+``mfgarchon/utils/``, and its count was deleted when this check entered the gate (#2938). Where the two disagreed,
+the layer table's reading stands: the seven ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer (the
+five in the solve layer, and ``utils.cli`` and ``utils.experiment_manager`` in the entry layer) may import ``alg``
+at module level, so ``utils/adjoint_validation.py`` -> ``alg.base_solver``, which that count held as its last
+violation, lies within one layer and is not an edge. Six of the seven, all but ``utils.solver_decorators``, load
+with ``mfgarchon.utils`` through its re-exports until #2938's stage 2a; ``utils.adjoint_validation`` already
+loads ``alg.base_solver`` that way.
 """
 
 from __future__ import annotations
@@ -1054,9 +1053,10 @@ PARSER_CASES = {
     ("pk.low.ca_finally", "direct"): ("ambiguous", "module"),  # bound in a `finally`
 }
 
-# The fourteen statement shapes of tests/unit/test_utils_does_not_import_alg.py, then further ones, with the
-# position this check gives each. One differs from that test: it calls the body of `if False:` dead, while this
-# check measures the direction of source dependencies, not loading, so the import counts at module level.
+# The fourteen statement shapes the deleted tests of tests/unit/test_utils_does_not_import_alg.py held (#2938), then
+# further ones, with the position this check gives each. One differs from those tests: they called the body of
+# `if False:` dead, while this check measures the direction of source dependencies, not loading, so the import counts
+# at module level.
 _I = "from pk.high.impl import direct"
 _TC = "from typing import TYPE_CHECKING\n"
 STATEMENT_SHAPES = (
@@ -1094,9 +1094,9 @@ STATEMENT_SHAPES = (
     ),
 )
 
-# (importing module, is a package, level, module named, expected absolute module): the relative cases of
-# tests/unit/test_utils_does_not_import_alg.py, checked there against importlib.util.resolve_name, and two beyond
-# the top-level package, which Python refuses.
+# (importing module, is a package, level, module named, expected absolute module): the five relative cases the deleted
+# tests of tests/unit/test_utils_does_not_import_alg.py held (#2938), and two beyond the top-level package, which Python
+# refuses.
 RELATIVE_CASES = (
     ("mfgarchon.utils.numerical", True, 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.adjoint_validation", False, 2, "alg.base_solver", "mfgarchon.alg.base_solver"),
