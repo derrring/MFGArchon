@@ -496,39 +496,34 @@ class BaseHJBSolver(BaseNumericalSolver):
         return control_cost
 
     def _control_cost_lambda(self) -> float:
-        """Control-cost weight ``lambda`` from the Hamiltonian single source (Issue #1071).
+        """Control-cost weight ``lambda`` from the Hamiltonian single source (Issue #1071), for a Hamiltonian as the
+        library ships it (#2901).
 
-        Prefers the Hamiltonian's control cost (``hamiltonian_class.control_cost.lambda_``)
-        -- the canonical source of ``alpha* = -p/lambda``. Falls back to ``problem.lambda_``
-        ONLY when the problem carries no Hamiltonian class (the legacy LQ fast path, where
-        ``problem.lambda_`` is then the sole available source).
-
-        This redirect removes the silent desync where a solver read ``problem.lambda_``
-        while the components Hamiltonian's control cost said otherwise -- the root of the
-        #1247 Howard defects. For the matched ``lambda=1`` paper case the two agree, so the
-        golden byte-identity gate is preserved.
+        The cost's ``lambda_`` stands for the control's scale only where the cost is known to be the Hamiltonian's:
+        a ``SeparableHamiltonian`` or ``QuadraticMFGHamiltonian`` and a ``QuadraticControlCost`` exactly as the library
+        ships them, which ``why_the_drift_is_not_the_control_costs`` decides (#2914). Any other Hamiltonian is refused,
+        since its own methods may describe another one, and the cost's answer would then be returned with no error
+        (#2901). A problem always carries a Hamiltonian (#670), so there is no fallback to ``problem.lambda_``.
         """
-        H_class = getattr(self.problem, "hamiltonian_class", None)
-        if H_class is not None:
-            control_cost = getattr(H_class, "control_cost", None)
-            if control_cost is not None:
-                lambda_val = float(control_cost.lambda_)
-                if lambda_val <= 0:
-                    raise ValueError(
-                        f"Control cost lambda must be positive, got {lambda_val} from "
-                        f"{type(H_class).__name__}.control_cost (Issue #1071)."
-                    )
-                return lambda_val
-        # Legacy fallback: no Hamiltonian class -- problem.lambda_ is the only source.
-        lambda_val = getattr(self.problem, "lambda_", 1.0)
-        if lambda_val is None:
-            lambda_val = 1.0
+        from mfgarchon.utils.pde_coefficients import why_the_drift_is_not_the_control_costs
+
+        control_cost = self._hamiltonian_control_cost()
+        hamiltonian = self.problem.hamiltonian_class
+        why = why_the_drift_is_not_the_control_costs(hamiltonian)
+        if why is not None:
+            raise NotImplementedError(
+                f"{type(self).__name__} reads the control cost's lambda_ as the control's scale, which is known to be "
+                f"the Hamiltonian's only for a SeparableHamiltonian or QuadraticMFGHamiltonian and a "
+                f"QuadraticControlCost as the library ships them, and this problem's {type(hamiltonian).__name__} is "
+                f"not ({why}), on a {getattr(self.problem, 'dimension', '?')}-D problem (#2901, #2914)."
+            )
+        lambda_val = float(control_cost.lambda_)
         if lambda_val <= 0:
             raise ValueError(
-                f"Control cost parameter lambda_ must be positive, got {lambda_val}. "
-                "Set problem.lambda_ to a positive value."
+                f"Control cost lambda must be positive, got {lambda_val} from "
+                f"{type(hamiltonian).__name__}.control_cost (Issue #1071)."
             )
-        return float(lambda_val)
+        return lambda_val
 
     # Implementation of BaseMFGSolver abstract methods
     def solve(self) -> np.ndarray:

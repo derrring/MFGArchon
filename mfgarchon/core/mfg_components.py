@@ -140,8 +140,9 @@ class MFGComponents:
             self._lagrangian_class = self.lagrangian
 
         # Issue #899: accept H or L. If only L is provided, derive H for the PDE solvers; if only H is provided, derive L
-        # if H is a SeparableHamiltonian. Both together are refused by the owner Model also reads (#2901): every reader
-        # but HJB-SL's DPP path read H, the DPP path read L, and nothing compared the two.
+        # only where H is a SeparableHamiltonian whose cost stands for it as the library ships both (#2901, below). Both
+        # together are refused by the owner Model also reads (#2901): every reader but HJB-SL's DPP path read H, the DPP
+        # path read L, and nothing compared the two.
         refuse_two_descriptions(self.hamiltonian, self.lagrangian)
         if self.lagrangian is not None and self.hamiltonian is None:
             # L only: derive H for PDE solvers
@@ -169,7 +170,14 @@ class MFGComponents:
             # H only: derive L if separable (for ADMM/variational)
             # Issue #1068: isinstance(SeparableHamiltonian) replaces hasattr(, "control_cost")
             # and hasattr(, "_potential"). Only SeparableHamiltonian carries both attributes.
-            if isinstance(self.hamiltonian, SeparableHamiltonian):
+            # #2901 (user ruling, 2026-11-11): the cost stands for H only as the library ships both, so a Lagrangian
+            # is derived from it only there; a subclass, or a user's cost, would have HJB-SL's DPP path solve another H.
+            from mfgarchon.core.hamiltonian import why_the_cost_is_not_the_hamiltonians
+
+            if (
+                isinstance(self.hamiltonian, SeparableHamiltonian)
+                and why_the_cost_is_not_the_hamiltonians(self.hamiltonian) is None
+            ):
                 self._lagrangian_class = SeparableLagrangian(
                     control_cost=self.hamiltonian.control_cost,
                     potential=getattr(self.hamiltonian, "_potential", None),

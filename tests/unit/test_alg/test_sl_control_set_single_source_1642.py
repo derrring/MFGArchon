@@ -14,6 +14,12 @@ The sweep now reads A from ``effective_domain()`` and keeps only the QUADRATURE 
 locally (three points for a piecewise-linear L_ctrl, eleven for a quadratic one) -- a
 genuine structural distinction, not a duplicated quantity. Narrowing that last isinstance
 to a control-cost capability is Issue #1651.
+
+Since #2901 (user ruling, 2026-11-11) the DPP path reads the cost only as the library ships it, so a cost subclass, or
+a shipped cost whose instance holds its own ``effective_domain``, is refused there, and no public input separates
+``effective_domain()`` from ``max_control``. The two numerical pins below therefore narrow the shipped class itself
+with ``monkeypatch.setattr``, which the fixture undoes when the test ends: in a test the patch is the instrument. For a
+user, a library class patched at run time is unsupported (docs/user/CONVENTIONS.md, "One drift, one owner"; #2917).
 """
 
 from __future__ import annotations
@@ -27,25 +33,6 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 NX, NT = 41, 10
-
-
-class _NarrowL1(L1ControlCost):
-    """An L1 cost whose admissible set is NOT the class default (-1, 1).
-
-    Nothing but ``effective_domain()`` changes, so a consumer that reads the owner
-    produces a different answer while one holding the ``(-1.0, 1.0)`` literal produces
-    the identical answer. That is the discrimination this module needs.
-    """
-
-    def effective_domain(self) -> tuple[float, float]:
-        return (-0.25, 0.25)
-
-
-class _NarrowBounded(BoundedControlCost):
-    """Same trick for the quadratic-on-A branch: A shrinks, ``max_control`` does not."""
-
-    def effective_domain(self) -> tuple[float, float]:
-        return (-0.2, 0.2)
 
 
 def _solve(control_cost) -> np.ndarray:
@@ -64,10 +51,12 @@ def _solve(control_cost) -> np.ndarray:
     return solver.solve_hjb_system(density, (xs - 0.5) ** 2, U_coupling_prev=np.zeros((NT + 1, NX)))
 
 
-def test_dpp_sweep_reads_the_narrowed_domain_for_l1():
-    """The load-bearing pin. A hardcoded (-1, 0, 1) candidate set cannot see this change."""
+def test_dpp_sweep_reads_the_narrowed_domain_for_l1(monkeypatch):
+    """The load-bearing pin. A hardcoded (-1, 0, 1) candidate set cannot see this change: the shipped L1 cost's
+    admissible set alone is narrowed, from (-1, 1) to (-0.25, 0.25)."""
     wide = _solve(L1ControlCost(lambda_=0.5))
-    narrow = _solve(_NarrowL1(lambda_=0.5))
+    monkeypatch.setattr(L1ControlCost, "effective_domain", lambda self: (-0.25, 0.25))
+    narrow = _solve(L1ControlCost(lambda_=0.5))
 
     assert np.isfinite(wide).all()
     assert np.isfinite(narrow).all()
@@ -79,10 +68,12 @@ def test_dpp_sweep_reads_the_narrowed_domain_for_l1():
     assert narrow.max() >= wide.max()
 
 
-def test_dpp_sweep_reads_the_narrowed_domain_for_bounded():
-    """Same pin on the quadratic-on-A branch, where the ladder read cc.max_control directly."""
+def test_dpp_sweep_reads_the_narrowed_domain_for_bounded(monkeypatch):
+    """Same pin on the quadratic-on-A branch, where the ladder read cc.max_control directly: A shrinks to (-0.2, 0.2),
+    max_control does not."""
     wide = _solve(BoundedControlCost(lambda_=1.0, max_control=2.0))
-    narrow = _solve(_NarrowBounded(lambda_=1.0, max_control=2.0))
+    monkeypatch.setattr(BoundedControlCost, "effective_domain", lambda self: (-0.2, 0.2))
+    narrow = _solve(BoundedControlCost(lambda_=1.0, max_control=2.0))
 
     assert np.isfinite(wide).all()
     assert np.isfinite(narrow).all()

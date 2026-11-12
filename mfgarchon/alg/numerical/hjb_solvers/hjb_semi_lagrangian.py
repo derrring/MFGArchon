@@ -39,9 +39,9 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     check_adi_compatibility,
     diffusion_from_volatility,
-    has_quadratic_control_cost,
     resolve_volatility_override,
     scalar_volatility,
+    why_the_drift_is_not_the_control_costs,
 )
 
 from .base_hjb import BaseHJBSolver
@@ -319,20 +319,42 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"(monotone Q1), got '{self.interpolation_method}'. The Carlini-Silva 2014 "
                 f"stability proof only covers monotone interpolation; cubic/quintic break it."
             )
-        # Its objective hand-codes the quadratic running cost `0.5*lambda*|alpha|^2`, and it cannot tell whether another
-        # cost has that running cost, where one that does not returns a value with no error (#2866, #1547). A problem
-        # with no Hamiltonian builds, and raises in the solve.
+        # Its objective hand-codes the quadratic running cost `0.5*lambda*|alpha|^2` from the control cost's lambda_,
+        # which is the Hamiltonian's only for one as the library ships it (#2914's owner): a subclass that redefines H
+        # returned the cost's answer with no error (#2901). A problem with no Hamiltonian builds, and raises in the solve.
         if self.diffusion_method == "canonical_cs":
             hamiltonian = self.problem.hamiltonian_class
-            if hamiltonian is not None and not has_quadratic_control_cost(hamiltonian):
-                control_cost = getattr(hamiltonian, "control_cost", None)
+            why = None if hamiltonian is None else why_the_drift_is_not_the_control_costs(hamiltonian)
+            if why is not None:
                 raise NotImplementedError(
-                    f"diffusion_method='canonical_cs' needs a SeparableHamiltonian with a QuadraticControlCost: its "
-                    f"objective hand-codes 0.5*lambda*|alpha|^2, and this problem's Hamiltonian is "
-                    f"{type(hamiltonian).__name__} with {type(control_cost).__name__} (#2866, #1547). Use HJBFDMSolver, "
-                    f"or, where the Hamiltonian's is_smooth() is True, diffusion_method='adi' or 'stochastic', which "
-                    f"read dH/dp."
+                    f"HJBSemiLagrangianSolver(diffusion_method='canonical_cs'), run on a {self.problem.dimension}-D "
+                    f"problem: its objective hand-codes the quadratic running cost 0.5*lambda*|alpha|^2 from the "
+                    f"control cost's lambda_, which is known to be the Hamiltonian's only for a SeparableHamiltonian or "
+                    f"QuadraticMFGHamiltonian and a QuadraticControlCost as the library ships them, and this problem's "
+                    f"{type(hamiltonian).__name__} is not ({why}) (#2901, #2914, #2866). Use HJBFDMSolver, or, where "
+                    f"the Hamiltonian's is_smooth() is True, diffusion_method='adi' or 'stochastic', which read dH/dp."
                 )
+        # A non-smooth separable Hamiltonian is solved on the DPP path (`_use_dpp`), which reads a Lagrangian built on its
+        # control cost: derived from a SeparableHamiltonian's cost, or the user's SeparableLagrangian whose Hamiltonian
+        # shares it. The cost stands for the Hamiltonian only as the library ships both (user ruling, 2026-11-11), so one
+        # whose cost is not as shipped is refused here, whatever lagrangian_class holds (#2901). For a Hamiltonian given
+        # as such, `MFGComponents` then derives no Lagrangian at all; this refusal is what decides it.
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, why_the_cost_is_not_the_hamiltonians
+
+        hamiltonian = self.problem.hamiltonian_class
+        why = (
+            why_the_cost_is_not_the_hamiltonians(hamiltonian)
+            if isinstance(hamiltonian, SeparableHamiltonian) and not hamiltonian.is_smooth()
+            else None
+        )
+        if why is not None:
+            raise NotImplementedError(
+                f"HJBSemiLagrangianSolver, run on a {self.problem.dimension}-D problem with a non-smooth "
+                f"{type(hamiltonian).__name__}: it solves a non-smooth separable Hamiltonian on its DPP path, which "
+                f"reads a Lagrangian built on the control cost, and that cost is known to describe the Hamiltonian only "
+                f"for a SeparableHamiltonian or QuadraticMFGHamiltonian and a cost as the library ships them; this "
+                f"problem's is not ({why}) (#2901). Use HJBFDMSolver, which reads the Hamiltonian's own __call__ and dp."
+            )
 
         # Issue #1547 / RFC #1574 Phase 0 carried a refusal here for a MAXIMIZE control cost, whose
         # alpha* = +grad_u/lambda would have traced the characteristic feet in the wrong direction.
@@ -2352,12 +2374,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             ``dH/dp``, shape ``(N, d)``.
         """
         H_class = self.problem.hamiltonian_class
-        if H_class is None:
-            # Legacy no-Hamiltonian LQ path: p/lambda IS the definition of the scheme there, and
-            # problem.lambda_ is the only available source (Issue #1071). The value term fail-louds
-            # separately if this path is reached without any usable H.
-            return np.asarray(p, dtype=float) / self._control_cost_lambda()
-
         vel = np.asarray(eval_dH_dp_batch(H_class, x, m, p, t), dtype=float)
         p_arr = np.asarray(p, dtype=float)
         if vel.size != p_arr.size:

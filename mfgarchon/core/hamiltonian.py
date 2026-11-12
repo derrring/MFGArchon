@@ -1129,19 +1129,60 @@ _FAMILY_METHODS = (
 )
 
 
-#: The control cost's family methods, which a cost read as it ships may not hold in its own ``__dict__`` (#2914).
-_COST_FAMILY_METHODS = ("optimal_control", "evaluate", "dp", "lagrangian", "hamiltonian", "proximal")
+#: The control cost's family methods, which a cost read as it ships may not hold in its own ``__dict__`` (#2914), with
+#: ``effective_domain``, which HJB-SL's DPP path reads as the control set (#2901).
+_COST_FAMILY_METHODS = (
+    "optimal_control",
+    "evaluate",
+    "dp",
+    "lagrangian",
+    "hamiltonian",
+    "proximal",
+    "effective_domain",
+)
+
+
+def _why_the_cost_is_not_as_it_ships(held: Any, cost: type | tuple[type, ...]) -> str | None:
+    """Why the control cost ``held`` is not one of ``cost`` as the library ships it, or ``None`` if it is: its type one of
+    ``cost`` exactly, compared by identity, and no family method of its own on its instance. A regularized cost
+    (``regularize()``'s Moreau-Yosida envelope) is as shipped only when the cost it wraps is: a user's cost wrapped is
+    still a user's cost (#2901). The cost half of `_why_not_as_it_ships`, which a reader that holds a cost and no
+    Hamiltonian reads directly (#2901)."""
+    costs = cost if isinstance(cost, tuple) else (cost,)
+    if not any(type(held) is shipped for shipped in costs):
+        return f"its control cost is a {type(held).__name__}, not a {' or '.join(c.__name__ for c in costs)}"
+    own = [name for name in _COST_FAMILY_METHODS if name in getattr(held, "__dict__", {})]
+    if own:
+        return f"its control cost's instance holds {own} of its own"
+    if type(held) is _MoreauYosidaControlCost:
+        why = _why_the_cost_is_not_as_it_ships(held.base, costs)
+        if why is not None:
+            return f"its control cost regularizes a cost that is not as shipped ({why})"
+    return None
+
+
+def why_the_cost_is_not_the_hamiltonians(hamiltonian: Any, cost: type | tuple[type, ...] | None = None) -> str | None:
+    """Why ``hamiltonian``'s control cost is not known to stand for it, or ``None`` when it is (#2901).
+
+    A reader that takes a quantity from the cost, or from the Lagrangian derived from it, in place of the Hamiltonian's
+    own methods reads it only for a ``SeparableHamiltonian`` or ``QuadraticMFGHamiltonian`` and a cost of ``cost``
+    (default: every cost class the library ships), exactly as the library ships them (`_why_not_as_it_ships`). User
+    ruling, 2026-11-11: the class rule, for the semi-Lagrangian DPP path, GFDM Howard and positive_qp_fan."""
+    costs = (
+        (QuadraticControlCost, L1ControlCost, BoundedControlCost, _MoreauYosidaControlCost) if cost is None else cost
+    )
+    return _why_not_as_it_ships(hamiltonian, classes=(SeparableHamiltonian, QuadraticMFGHamiltonian), cost=costs)
 
 
 def _why_not_as_it_ships(
-    hamiltonian: Any, classes: tuple[type, ...] | None = None, cost: type | None = None
+    hamiltonian: Any, classes: tuple[type, ...] | None = None, cost: type | tuple[type, ...] | None = None
 ) -> str | None:
     """Why ``hamiltonian`` is not one of ``classes`` as the library ships it, or ``None`` if it is one: the one owner of
     "as the library ships it" (#2335, #2914).
 
     A Hamiltonian ships as it is when its type is one of ``classes`` exactly, compared by identity, and its instance
     holds no family method in its own ``__dict__``. With ``cost``, its control cost must also be of that type exactly,
-    with no family method of its own. ``classes`` defaults to ``SeparableHamiltonian`` and ``CongestionHamiltonian``,
+    with no family method of its own (one type, or any of a tuple). ``classes`` defaults to ``SeparableHamiltonian`` and ``CongestionHamiltonian``,
     the set a library primitive reads its terms at a door's rows for (`_takes_the_rows_path`); `drift_is_the_control_costs`
     asks it with the classes whose drift is their control cost's. The check is by type, not by what a method reports,
     so a wrapper or a subclass reads as not shipped whatever it serves (#2915 review 1).
@@ -1154,12 +1195,7 @@ def _why_not_as_it_ships(
     if own:
         return f"its instance holds {own} of its own"
     if cost is not None:
-        held = getattr(hamiltonian, "control_cost", None)
-        if type(held) is not cost:
-            return f"its control cost is a {type(held).__name__}, not a {cost.__name__}"
-        own = [name for name in _COST_FAMILY_METHODS if name in getattr(held, "__dict__", {})]
-        if own:
-            return f"its control cost's instance holds {own} of its own"
+        return _why_the_cost_is_not_as_it_ships(getattr(hamiltonian, "control_cost", None), cost)
     return None
 
 

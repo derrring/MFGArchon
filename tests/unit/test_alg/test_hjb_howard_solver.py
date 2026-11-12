@@ -1303,12 +1303,15 @@ def test_dmp_guard_warns_on_howard_path_when_advection_dominated(mfg_caplog):
     """#1381 + #1074 (end-to-end): with sigma=0 (pure advection -> alpha_crit=0) and the
     opt-in check_dmp=True, the guard emits its #1074 warning during the Howard backward
     sweep. Pre-fix the guard never ran on this path, so the warning never appeared.
+
+    The Hamiltonian is the shipped H = |p|^2/2, the same H as ``_LQHam``: the guard reads |grad u| / lambda only where
+    the control cost stands for H as the library ships it, and is not run for a Hamiltonian with no cost (#2901).
     """
     with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
         LX = 4.0
         pts, bdry, geom = _make_1d_cloud(LX=LX, n_int=11)
         problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=20, dimension=1)
-        problem.hamiltonian_class = _LQHam()
+        problem.hamiltonian_class = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
         gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="howard")
         gfdm.check_dmp = True  # opt-in diagnostic (Issue #1074); default off
 
