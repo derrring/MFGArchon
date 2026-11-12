@@ -372,18 +372,18 @@ def test_runtime_dmp_guard_warns_only_when_violated(mfg_caplog):
         x = np.linspace(0.0, 1.0, solver.n_points)
 
         mfg_caplog.clear()
-        solver._maybe_warn_dmp(1e-4 * x, np.ones(solver.n_points), 0.0)  # |drift| ≪ α_crit
+        solver._maybe_warn_dmp(1e-4 * x)  # |drift| ≪ α_crit
         assert not any("DMP" in m for m in mfg_caplog.messages), "guard warned in the diffusion-dominated regime"
 
         mfg_caplog.clear()
         solver._dmp_warned = False
-        solver._maybe_warn_dmp(100.0 * x, np.ones(solver.n_points), 0.0)  # |drift| ≫ α_crit
+        solver._maybe_warn_dmp(100.0 * x)  # |drift| ≫ α_crit
         assert any("Issue #1074" in m for m in mfg_caplog.messages), "guard did not warn under strong drift"
 
         off = _make_solver_check_dmp(sigma=0.3, check_dmp=False)
         off.assemble_hjb_iteration_matrix(np.zeros((off.n_points, 1)))
         mfg_caplog.clear()
-        off._maybe_warn_dmp(100.0 * x, np.ones(off.n_points), 0.0)
+        off._maybe_warn_dmp(100.0 * x)
         assert not any("DMP" in m for m in mfg_caplog.messages), "guard fired with check_dmp=False (should be inert)"
 
 

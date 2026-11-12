@@ -2282,7 +2282,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Separable LQ: ∂H/∂p = p/λ ignores m and t, so m=0 / t=0 are byte-identical.
         return self._compute_hjb_jacobian_hamiltonian(grad_u, np.zeros(self.n_points), H_class, 0.0)
 
-    def _maybe_warn_dmp(self, u_current: np.ndarray, m: np.ndarray, t: float) -> None:
+    def _maybe_warn_dmp(self, u_current: np.ndarray) -> None:
         """Warn (once) when the current drift exceeds the assembled-M-matrix threshold (Issue #1074).
 
         Per-stencil joint_socp feasibility does NOT imply the assembled HJB iteration matrix
@@ -2290,13 +2290,27 @@ class HJBGFDMSolver(BaseHJBSolver):
         positive once ``|α| > α_crit = D·min_edge(L_ij/‖D_grad_ij‖)`` (see
         :func:`critical_drift_for_dmp`). So the discrete maximum principle holds only in the
         diffusion-dominated regime. This is a *diagnostic* warning (numerically inert); active only
-        when ``check_dmp=True`` and the scheme is ``joint_socp``. The drift is the Hamiltonian's own ``dp`` at the
-        current iterate's gradient, through the assembled gradient operator, with the density ``m`` at time ``t``:
-        the velocity the Jacobian advects with (#2901, where it was the control cost's ``|grad u| / lambda``). It reads
-        ``dp`` as the solver does: values as many as p's are taken in p's shape, and any other number of values is not
-        read, the warning saying so once. What shape ``dp`` must return is #2875's second slice, for every reader.
+        when ``check_dmp=True`` and the scheme is ``joint_socp``. The drift is computed from the
+        current iterate via the assembled gradient operator, consistent with the Jacobian, as ``|grad u| / lambda``
+        with the control cost's ``lambda``. That is the drift only where the Hamiltonian and its quadratic cost are as
+        the library ships them (`why_the_drift_is_not_the_control_costs`, #2914); elsewhere the check is not run, and
+        says so once, and the solve is unaffected (#2901).
         """
         if not self.check_dmp or self._dmp_warned or self.monotonicity_scheme != "joint_socp":
+            return
+        from mfgarchon.utils.pde_coefficients import why_the_drift_is_not_the_control_costs
+
+        hamiltonian = self.problem.hamiltonian_class
+        why = why_the_drift_is_not_the_control_costs(hamiltonian)
+        if why is not None:
+            logger.warning(
+                "DMP check not run (joint_socp, Issue #1074): %s is not as the library ships it (%s), so its control "
+                "cost's lambda is not read and |grad u| / lambda is not known to be its drift (#2901). The solve is "
+                "unaffected.",
+                type(hamiltonian).__name__,
+                why,
+            )
+            self._dmp_warned = True
             return
         # Issue #1253 2026-06-10 audit: _D_grad/_D_lap are built lazily and are
         # None on the joint_socp per-point Newton path (_compute_hjb_jacobian_sparse
@@ -2317,24 +2331,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             self._dmp_alpha_crit = critical_drift_for_dmp(
                 self._D_lap, self._D_grad, diffusion_coeff, interior_indices=self.interior_indices
             )
+        lambda_val = self._control_cost_lambda()
         grad = np.stack([self._D_grad[d] @ u_current for d in range(self.dimension)], axis=1)
-        density = np.asarray(m, dtype=float).ravel()
-        values = np.asarray(
-            eval_dH_dp_batch(self.problem.hamiltonian_class, self.collocation_points, density, grad, t), dtype=float
-        )
-        if values.size != grad.size:
-            logger.warning(
-                "DMP check not run (joint_socp, Issue #1074): %s.evaluate_dp returned %d values for p of shape %s, so "
-                "the drift could not be read. The solve is unaffected; the warning reads dH/dp at each collocation "
-                "point (#2875, #2901).",
-                type(self.problem.hamiltonian_class).__name__,
-                values.size,
-                grad.shape,
-            )
-            self._dmp_warned = True
-            return
-        drift = values.reshape(grad.shape)
-        max_alpha = float(np.max(np.linalg.norm(drift, axis=1)))
+        max_alpha = float(np.max(np.linalg.norm(grad, axis=1)) / lambda_val)
         if max_alpha > self._dmp_alpha_crit:
             logger.warning(
                 "DMP not guaranteed (joint_socp, Issue #1074): max|drift| = %.3g exceeds the "
@@ -3159,9 +3158,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             # over the solved time-slices; the warn-once latch stops after the first
             # exceedance. No-op unless check_dmp=True (first line early-returns), and the
             # drift check is numerically inert (Issue #1074).
-            dt_slice = float(self.problem.T) / int(self.problem.Nt)
             for n in range(n_time_points - 1):
-                self._maybe_warn_dmp(U_solution_collocation[n, :], M_collocation[n], n * dt_slice)
+                self._maybe_warn_dmp(U_solution_collocation[n, :])
         else:
             # Backward time stepping: Nt steps from index (n_time_points-2) down to 0
             # This covers all Nt intervals in the backward direction (Issue #587 Protocol pattern)
@@ -3816,7 +3814,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 jacobian_sparse = self._compute_hjb_jacobian_sparse(u_current, m_n_plus_1, time_idx, derivs)
 
             # Issue #1074: diagnostic DMP guard (no-op unless check_dmp=True). Numerically inert.
-            self._maybe_warn_dmp(u_current, m_n_plus_1, current_time)
+            self._maybe_warn_dmp(u_current)
 
             # Apply boundary conditions (sparse-aware).
             # `u_current` is needed so BC rows encode the Newton residual
