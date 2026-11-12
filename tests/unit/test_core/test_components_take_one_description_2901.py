@@ -11,6 +11,8 @@ Hamiltonian lives in `_hamiltonian_class`, read through `MFGProblem.hamiltonian_
   Hamiltonian in the public field, `dataclasses.replace` handed `__post_init__` both, which (a) refuses.
 - **A Lagrangian-defined problem builds** (a necessary oracle): its Hamiltonian is derived, analytically for a
   `SeparableLagrangian` and as the Legendre dual of a user's `LagrangianBase`.
+- **A derived Hamiltonian that is not a `HamiltonianBase` is refused** (a mutation-verified pin), as a given one is.
+  The check read the public field, so (D) moved the derived Hamiltonian past it.
 """
 
 from __future__ import annotations
@@ -59,6 +61,14 @@ def _problem(components):
 
 
 @pytest.mark.parametrize(
+    "lagrangian",
+    [
+        lambda: hm.SeparableLagrangian(control_cost=hm.QuadraticControlCost(control_cost=1.0)),
+        lambda: lambda t, x, alpha, m: 0.5 * np.sum(_a(alpha) ** 2, axis=-1),
+    ],
+    ids=["a SeparableLagrangian", "a plain callable"],
+)
+@pytest.mark.parametrize(
     "construct",
     [
         lambda h, lag: MFGComponents(hamiltonian=h, lagrangian=lag, m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0),
@@ -66,14 +76,12 @@ def _problem(components):
     ],
     ids=["MFGComponents", "Model"],
 )
-def test_a_hamiltonian_and_a_lagrangian_given_together_are_refused(construct):
+def test_a_hamiltonian_and_a_lagrangian_given_together_are_refused(construct, lagrangian):
     with pytest.raises(
-        ValueError, match=r"Provide hamiltonian OR lagrangian, not both\. They are dual descriptions of the same game"
+        ValueError,
+        match=r"Provide hamiltonian OR lagrangian, not both\. They are dual descriptions of the same game; supply one\.",
     ):
-        construct(
-            hm.SeparableHamiltonian(hm.QuadraticControlCost(control_cost=1.0)),
-            hm.SeparableLagrangian(control_cost=hm.QuadraticControlCost(control_cost=1.0)),
-        )
+        construct(hm.SeparableHamiltonian(hm.QuadraticControlCost(control_cost=1.0)), lagrangian())
 
 
 @pytest.mark.parametrize(
@@ -108,3 +116,33 @@ def test_a_copy_of_a_lagrangian_defined_components_carries_one_description(lagra
 )
 def test_a_lagrangian_defined_problem_builds(lagrangian, derived):
     assert isinstance(_problem(_lagrangian_components(lagrangian())).hamiltonian_class, derived)
+
+
+class _NotAHamiltonianLagrangian(hm.LagrangianBase):
+    """A user's Lagrangian whose Legendre transform returns something that is not a Hamiltonian."""
+
+    def __call__(self, t, x, alpha, m):
+        return 0.5 * np.sum(_a(alpha) ** 2, axis=-1)
+
+    def legendre_transform(self):
+        return "not a Hamiltonian"
+
+
+class _NotAHamiltonianSeparableLagrangian(hm.SeparableLagrangian):
+    """A SeparableLagrangian subclass whose analytic conversion returns something that is not a Hamiltonian."""
+
+    def as_hamiltonian(self):
+        return "not a Hamiltonian"
+
+
+@pytest.mark.parametrize(
+    "lagrangian",
+    [
+        lambda: _NotAHamiltonianLagrangian(),
+        lambda: _NotAHamiltonianSeparableLagrangian(control_cost=hm.QuadraticControlCost(control_cost=1.0)),
+    ],
+    ids=["legendre_transform", "as_hamiltonian"],
+)
+def test_a_derived_hamiltonian_that_is_not_one_is_refused(lagrangian):
+    with pytest.raises(TypeError, match=r"hamiltonian must be a HamiltonianBase instance, got str"):
+        _lagrangian_components(lagrangian())

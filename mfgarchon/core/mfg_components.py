@@ -139,7 +139,7 @@ class MFGComponents:
             self._lagrangian_class = self.lagrangian
 
         # Issue #899: accept H or L. If only L is provided, derive H for the PDE solvers; if only H is provided, derive L
-        # where the cost stands for H. Both together are refused by the owner Model also reads (#2901): every reader
+        # if H is a SeparableHamiltonian. Both together are refused by the owner Model also reads (#2901): every reader
         # but HJB-SL's DPP path read H, the DPP path read L, and nothing compared the two.
         refuse_two_descriptions(self.hamiltonian, self.lagrangian)
         if self.lagrangian is not None and self.hamiltonian is None:
@@ -155,6 +155,15 @@ class MFGComponents:
                 else:
                     # General: numerical Legendre transform (legacy path)
                     self._hamiltonian_class = self.lagrangian.legendre_transform()
+                # Checked as a given Hamiltonian is, below: the derived one no longer passes through the public field.
+                if not isinstance(self._hamiltonian_class, HamiltonianBase):
+                    method = (
+                        "as_hamiltonian" if isinstance(self.lagrangian, SeparableLagrangian) else "legendre_transform"
+                    )
+                    raise TypeError(
+                        f"hamiltonian must be a HamiltonianBase instance, got {type(self._hamiltonian_class).__name__} "
+                        f"from {type(self.lagrangian).__name__}.{method}() (#2901)."
+                    )
         elif self.hamiltonian is not None and self.lagrangian is None:
             # H only: derive L if separable (for ADMM/variational)
             # Issue #1068: isinstance(SeparableHamiltonian) replaces hasattr(, "control_cost")
