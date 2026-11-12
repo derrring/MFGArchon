@@ -9,6 +9,7 @@ from mfgarchon.core.mfg_components import (
     ConditionsMixin,
     HamiltonianMixin,
     MFGComponents,
+    own_copy_for_a_problem,
 )
 
 # Issue #543: Runtime import for isinstance() checks
@@ -450,9 +451,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # This form's twin of `_v1_inputs`: every input it was given, held by reference before the normalisation
             # below. `_rebuilt` reads it, so a rebuild of a components-form problem carries its source, nonlocal
             # operator, ... -- StochasticMFGProblem.create_conditional_problem built its conditional problem by hand
-            # from five fields and dropped them all (#2666). By reference is not "as given" for `components` under
-            # `state_penalty`: the constructor composes the wall into the caller's MFGComponents itself, so a replay of
-            # this record composes it again (#2702). No public route replays it with a state penalty today.
+            # from five fields and dropped them all (#2666). By reference is "as given" for `components` too: the
+            # constructor writes into its own copy of them, never the caller's object, so a replay of this record
+            # composes a soft wall once (#2702).
             self._components_inputs: dict[str, Any] = {
                 "spatial_bounds": spatial_bounds,
                 "spatial_discretization": spatial_discretization,
@@ -757,8 +758,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self.hjb_geometry = getattr(self, "geometry", None)
             self.fp_geometry = getattr(self, "geometry", None)
 
-        # Store custom components if provided
-        self.components = components
+        # Store custom components if provided: the problem's own copy, which the construction writes into (#2702)
+        self.components = own_copy_for_a_problem(components)
         self.is_custom = components is not None
 
         if self.is_custom and self.components is not None:
@@ -1857,7 +1858,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         dropped ``population_index`` and downgraded a ``QuadraticMFGHamiltonian`` to its base
         class.
         ``copy.copy`` preserves the type and every attribute, and leaves the caller's own object
-        unmutated.
+        unmutated. The components written into are the problem's own copy (#2702).
+
+        The PUBLIC field is left as given (user ruling, 2026-11-12, #2702): the composed Hamiltonian
+        goes to ``_hamiltonian_class`` alone, as a Lagrangian's derived one does (#2901). A copy of
+        ``problem.components`` then carries the Hamiltonian the user gave, and a problem built from it
+        composes its own wall once.
 
         SHAPE. The composed closure returns exactly what the base potential returns, so a
         vectorised base stays vectorised -- ``SeparableHamiltonian`` probes the potential on a
@@ -1933,8 +1939,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"Lagrangian's own running cost instead -- there it is COST-signed and enters "
                 f"with a plus, the opposite of the Hamiltonian's V."
             )
-        if getattr(self.components, "hamiltonian", None) is hamiltonian:
-            self.components.hamiltonian = composed
 
     def _initialize_functions(self) -> None:
         """Initialize the initial density and the terminal value function.

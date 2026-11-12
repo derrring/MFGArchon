@@ -27,7 +27,7 @@ import numpy as np
 from mfgarchon.core.hamiltonian import (
     HamiltonianBase,
 )
-from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.mfg_components import MFGComponents, own_copy_for_a_problem
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.types.callable_protocols import (
     NETWORK_HAMILTONIAN_SLOTS,
@@ -443,12 +443,13 @@ class NetworkMFGProblem(MFGProblem):
             components=parent_components,
         )
 
-        # Issue #1474: store the SAME NetworkMFGComponents instance the NetworkHamiltonian was built
-        # from, and wire the object as the single-source Hamiltonian (`hamiltonian_class`). Previously
-        # `self.components` was overwritten with a fresh instance, orphaning the object
-        # (`hamiltonian_class == None`), so FP / policy iteration fell to divergent legacy paths while
-        # RK45 used the method — the three solved different HJBs. Now all read one Hamiltonian.
-        self.components = net_components  # type: ignore[assignment]
+        # Issue #1474: store the NetworkMFGComponents the NetworkHamiltonian was built from, and wire the
+        # object as the single-source Hamiltonian (`hamiltonian_class`). Previously `self.components` was
+        # overwritten with a fresh instance, orphaning the object (`hamiltonian_class == None`), so FP /
+        # policy iteration fell to divergent legacy paths while RK45 used the method — the three solved
+        # different HJBs. Now all read one Hamiltonian. The problem holds its own copy, so the two writes
+        # below leave the caller's object as given (#2702).
+        self.components = own_copy_for_a_problem(net_components)  # type: ignore[assignment]
         self.components.hamiltonian = network_hamiltonian
         self.components._hamiltonian_class = network_hamiltonian
 
