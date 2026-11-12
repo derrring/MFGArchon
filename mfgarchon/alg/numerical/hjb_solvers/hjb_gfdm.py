@@ -2292,7 +2292,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         diffusion-dominated regime. This is a *diagnostic* warning (numerically inert); active only
         when ``check_dmp=True`` and the scheme is ``joint_socp``. The drift is the Hamiltonian's own ``dp`` at the
         current iterate's gradient, through the assembled gradient operator, with the density ``m`` at time ``t``:
-        the velocity the Jacobian advects with (#2901, where it was the control cost's ``|grad u| / lambda``).
+        the velocity the Jacobian advects with (#2901, where it was the control cost's ``|grad u| / lambda``). It reads
+        ``dp`` as the solver does: values as many as p's are taken in p's shape, and any other number of values is not
+        read, the warning saying so once. What shape ``dp`` must return is #2875's second slice, for every reader.
         """
         if not self.check_dmp or self._dmp_warned or self.monotonicity_scheme != "joint_socp":
             return
@@ -2315,18 +2317,23 @@ class HJBGFDMSolver(BaseHJBSolver):
             self._dmp_alpha_crit = critical_drift_for_dmp(
                 self._D_lap, self._D_grad, diffusion_coeff, interior_indices=self.interior_indices
             )
-        from mfgarchon.core.hamiltonian import checked_control
-
         grad = np.stack([self._D_grad[d] @ u_current for d in range(self.dimension)], axis=1)
         density = np.asarray(m, dtype=float).ravel()
-        drift = checked_control(
-            eval_dH_dp_batch(self.problem.hamiltonian_class, self.collocation_points, density, grad, t),
-            grad,
-            reader="HJBGFDMSolver's DMP warning",
-            source=self.problem.hamiltonian_class,
-            m=density,
-            method="evaluate_dp",
+        values = np.asarray(
+            eval_dH_dp_batch(self.problem.hamiltonian_class, self.collocation_points, density, grad, t), dtype=float
         )
+        if values.size != grad.size:
+            logger.warning(
+                "DMP check not run (joint_socp, Issue #1074): %s.evaluate_dp returned %d values for p of shape %s, so "
+                "the drift could not be read. The solve is unaffected; the warning reads dH/dp at each collocation "
+                "point (#2875, #2901).",
+                type(self.problem.hamiltonian_class).__name__,
+                values.size,
+                grad.shape,
+            )
+            self._dmp_warned = True
+            return
+        drift = values.reshape(grad.shape)
         max_alpha = float(np.max(np.linalg.norm(drift, axis=1)))
         if max_alpha > self._dmp_alpha_crit:
             logger.warning(

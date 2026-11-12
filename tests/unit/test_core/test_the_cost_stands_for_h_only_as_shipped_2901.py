@@ -11,7 +11,9 @@ and a cost exactly as the library ships them; anything else is refused, saying w
   by a test of its own, and a subclass whose ``__call__`` carried another term was solved without it.
 - **``MFGComponents`` derives a Lagrangian only there** (a mutation-verified pin), through a ``regularize()`` wrapper too.
 - **The FP route asks the Hamiltonian, not its cost, whether it is smooth** (a mutation-verified pin).
-- **HJB-GFDM's DMP warning reads the Hamiltonian's ``dp`` at the step's density and time** (mutation-verified pins).
+- **HJB-GFDM's DMP warning reads the Hamiltonian's ``dp`` at the step's density and time** (mutation-verified pins),
+  and reads it as the solver does: values as many as p's in p's shape, any other number not read, with a warning. It
+  refuses no shape; what shape ``dp`` must return is #2875's, for every reader at once.
 - **The shipped classes still run** (necessary oracles): Howard on the library's Hamiltonians, a Lagrangian-defined
   problem with a shipped cost on the DPP path, and a user's ``LagrangianBase``.
 """
@@ -114,6 +116,13 @@ class _CarriesCost(hm.HamiltonianBase):
 def _narrowed(cost):
     """A shipped cost whose instance holds its own effective_domain, the control set HJB-SL's DPP path reads."""
     cost.effective_domain = lambda: (-0.25, 0.25)
+    return cost
+
+
+def _own_lagrangian(cost):
+    """A shipped cost whose instance holds its own lagrangian, twice the class's: Howard and the fan read it."""
+    shipped = type(cost).lagrangian
+    cost.lagrangian = lambda alpha: 2.0 * shipped(cost, alpha)
     return cost
 
 
@@ -251,6 +260,10 @@ def test_the_semi_lagrangian_dpp_path_reads_the_cost_only_as_shipped(make, reaso
             lambda: hm.SeparableHamiltonian(_narrowed(_quadratic()), coupling=f),
             "its control cost's instance holds ['effective_domain'] of its own",
         ),
+        (
+            lambda: hm.SeparableHamiltonian(_own_lagrangian(_quadratic()), coupling=f),
+            "its control cost's instance holds ['lagrangian'] of its own",
+        ),
         (_CarriesCost, "its class is _CarriesCost"),
     ],
     ids=[
@@ -259,6 +272,7 @@ def test_the_semi_lagrangian_dpp_path_reads_the_cost_only_as_shipped(make, reaso
         "a cost overriding only lagrangian",
         "the g(x) subclass",
         "a cost instance with its own effective_domain",
+        "a cost instance with its own lagrangian",
         "a user's HamiltonianBase carrying a QuadraticControlCost",
     ],
 )
@@ -288,11 +302,16 @@ def test_howard_reads_the_cost_only_as_shipped(make, reason):
             lambda: hm.SeparableHamiltonian(_narrowed(_quadratic()), coupling=f),
             "its control cost's instance holds ['effective_domain'] of its own",
         ),
+        (
+            lambda: hm.SeparableHamiltonian(_own_lagrangian(_quadratic()), coupling=f),
+            "its control cost's instance holds ['lagrangian'] of its own",
+        ),
     ],
     ids=[
         "a subclass that changes nothing",
         "a cost subclass that changes nothing",
         "a cost instance with its own effective_domain",
+        "a cost instance with its own lagrangian",
     ],
 )
 def test_positive_qp_fan_reads_the_cost_only_as_shipped(make, reason):
@@ -469,7 +488,7 @@ class _TimeAndDensityScaled(hm.HamiltonianBase):
         return 1.5 * (1.0 + 4.0 * float(t)) * np.sum(_a(p) ** 2, axis=-1) - 0.5
 
 
-def _dmp_solver(h, **kwargs):
+def _dmp_solver(h, check_dmp=True, **kwargs):
     pytest.importorskip("cvxpy", reason="joint_socp requires cvxpy (the `numerical` extra)")
     from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
@@ -482,7 +501,7 @@ def _dmp_solver(h, **kwargs):
             delta=0.25,
             monotonicity_scheme="joint_socp",
             monotonicity_application="precompute",
-            check_dmp=True,
+            check_dmp=check_dmp,
             **kwargs,
         )
     )
@@ -541,9 +560,14 @@ def test_the_dmp_warning_is_handed_the_steps_density_and_time(inner_solver, monk
 
 @pytest.mark.parametrize(
     ("cost", "refused"),
-    [(lambda: _PlainCost(), True), (lambda: hm.QuadraticControlCost(), False)],
+    [
+        (lambda: _PlainCost(), "its control cost is a _PlainCost"),
+        (_l1, "its control cost is a L1ControlCost, not a QuadraticControlCost"),
+        (lambda: hm.QuadraticControlCost(), None),
+    ],
     ids=[
         "a QuadraticControlCost subclass that changes nothing",
+        "a shipped L1 cost",
         "QuadraticControlCost, shipped",
     ],
 )
@@ -557,7 +581,7 @@ def test_the_guarded_fan_reads_the_cost_only_as_shipped(cost, refused):
     if refused:
         expected = (
             ValueError,
-            r"needs control_cost=QuadraticControlCost\(\.\.\.\) as the library ships it: .* \(its control cost is a _PlainCost",
+            r"needs control_cost=QuadraticControlCost\(\.\.\.\) as the library ships it: .* \(" + re.escape(refused),
         )
     else:
         expected = (
@@ -571,3 +595,63 @@ def test_the_guarded_fan_reads_the_cost_only_as_shipped(cost, refused):
             discretisation="guarded_fan",
             control_cost=cost(),
         )
+
+
+class _FlatDp(hm.HamiltonianBase):
+    """A user's Hamiltonian whose dp returns one value per point, shape (N,), for p of shape (N, 1): GFDM Newton reads
+    it, and so does the DMP warning."""
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * np.sum(_a(p) ** 2, axis=-1) - 0.5 * _a(m)
+
+    def dp(self, t, x, p, m):
+        p = _a(p)
+        return p[..., 0] if p.ndim == 2 else p
+
+    def optimal_control(self, t, x, p, m):
+        return -_a(p)
+
+    def dm(self, t, x, p, m):
+        return -0.5 * np.ones_like(_a(m))
+
+
+class _TwoValuesPerPointAfterT0(_FlatDp):
+    """dp on a batch after t = 0 returns two values per point for a 1-D p, so no reading of it gives p's shape."""
+
+    def dp(self, t, x, p, m):
+        p = _a(p)
+        return np.concatenate([p, p], axis=-1) if p.ndim == 2 and p.shape[0] > 1 and float(t) > 0 else p
+
+
+def _dmp_run(h, check_dmp, caplog):
+    x, solver = _dmp_solver(h, check_dmp=check_dmp)
+    m = np.ones((6, 11))
+    caplog.clear()
+    # Not `_quiet`: it disables logging, and the warning is the record read here.
+    with (
+        warnings.catch_warnings(),
+        caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"),
+    ):
+        warnings.simplefilter("ignore")
+        u = solver.solve_hjb_system(m, (x - 0.5) ** 2, np.zeros_like(m))
+    return np.asarray(u, dtype=float), list(caplog.messages)
+
+
+def test_the_dmp_warning_reads_a_dp_of_ps_size_as_the_solver_does(mfg_caplog):
+    """A dp of shape (N,) for p of shape (N, 1) is read in p's shape: the solve with the warning on returns the solve
+    with it off, and the warning fires on that drift, so it was read and not skipped."""
+    u_off, _ = _dmp_run(_FlatDp(), False, mfg_caplog)
+    u_on, messages = _dmp_run(_FlatDp(), True, mfg_caplog)
+    np.testing.assert_array_equal(u_on, u_off)
+    assert any("DMP not guaranteed" in r for r in messages), messages
+    assert not any("DMP check not run" in r for r in messages), messages
+
+
+def test_the_dmp_warning_skips_a_dp_it_cannot_read(mfg_caplog):
+    """A dp whose number of values is not p's is not read: the warning says so, and the solve is the one without it."""
+    u_off, _ = _dmp_run(_TwoValuesPerPointAfterT0(), False, mfg_caplog)
+    u_on, messages = _dmp_run(_TwoValuesPerPointAfterT0(), True, mfg_caplog)
+    np.testing.assert_array_equal(u_on, u_off)
+    assert any("DMP check not run" in r and "returned 22 values for p of shape (11, 1)" in r for r in messages), (
+        messages
+    )

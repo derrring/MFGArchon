@@ -1281,8 +1281,7 @@ def checked_control(
     """What ``source.<method>`` returned for ``p``, read only if it has p's shape (#2875).
 
     Every library read of what ``optimal_control`` (or ``evaluate_optimal_control``) returns passes it through here,
-    so no reader takes a return of another shape by reshaping, broadcasting or indexing it. HJB-GFDM's DMP warning reads
-    ``evaluate_dp`` through it too (#2901); the other ``dp`` readers are #2875's stage 3. Another shape is
+    so no reader takes a return of another shape by reshaping, broadcasting or indexing it. Another shape is
     refused, naming the reader, the source and its method, the shapes of p and m handed, and the shape that came
     back. One more form is admitted for now, a 0-d p answered with shape ``(1,)``, returned 0-d; the contract and
     why are in docs/user/CONVENTIONS.md, "What optimal_control returns".
@@ -1294,19 +1293,11 @@ def checked_control(
     if wanted == () and got.shape == (1,):
         return got.reshape(())
     handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
-    if method in ("dp", "evaluate_dp"):
-        contract = (
-            "The library reads dH/dp of p's shape, one component per component of p, the shape HamiltonianBase.dp "
-            "returns (#2875)."
-        )
-    else:
-        contract = (
-            "The library reads a control of p's shape, as HamiltonianBase.optimal_control and "
-            'ControlCostBase.optimal_control document (docs/user/CONVENTIONS.md, "What optimal_control returns"; #2875).'
-        )
     raise ValueError(
         f"{reader}: {type(source).__name__}.{method} was handed p of shape {wanted} and {handed_m}, and "
-        f"returned shape {got.shape}. {contract}"
+        f"returned shape {got.shape}. The library reads a control of p's shape, as HamiltonianBase.optimal_control "
+        f'and ControlCostBase.optimal_control document (docs/user/CONVENTIONS.md, "What optimal_control returns"; '
+        f"#2875)."
     )
 
 
