@@ -570,8 +570,14 @@ class TestCustomComponentExceptionPropagation:
             problem_type="custom",
         )
 
-        # A problem reads the Hamiltonian when it takes it (#2875), so the exception is raised there, not caught
-        with pytest.raises(ValueError, match="Intentional error"):
+        # A problem reads the Hamiltonian when it takes it (#2875), and the error is not silently caught. Since #2901
+        # revision 5 an H that raises at every probe is refused at construction by the consistency check, which names it.
+        from mfgarchon.utils.validation import ValidationError
+
+        with pytest.raises(
+            ValidationError,
+            match=r"The Hamiltonian could not be evaluated at any of the \d+ probes.*ValueError: Intentional error",
+        ):
             MFGProblem(geometry=domain, T=1.0, Nt=10, volatility=0.1, components=components)
 
     def test_custom_hamiltonian_dm_exception_propagates(self):

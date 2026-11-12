@@ -289,19 +289,26 @@ stage 3 lands, no read hands a 0-d $p$, and the admission goes.
 sources: `__call__` in the HJB residual, `dp` in its Jacobian, `optimal_control` in the Fokker–Planck
 drift, and the doors over them (`evaluate_H`, `evaluate_dp`, `evaluate_optimal_control`, `dH_dm`), on a
 batch and on a point. A problem refuses, at construction, a Hamiltonian whose sources disagree (#1642,
-#2901). Two owners decide it, one per axis:
+#2901). Two owners decide it, one per axis, and every check reads each source through one reader,
+`_read_source` in `utils/validation/functions.py`: it calls the source as its readers do and reads its
+values whatever array holds them, so $H$ of shape $(1,)$ at a point, or $dp$ as a $(1, d)$ row, is read
+and compared. A source that returns another number of values than is read (one for $H$ and `dm`, $d$
+for `dp` and the control) breaks its contract and is refused at the first probe where it does so:
 
 - `validate_hamiltonian_consistency`: the methods agree at a point. `dp` and `dm` are the derivatives
   of `__call__`, `optimal_control` is $-\partial_p H$ where $H$ is smooth, and each door returns what
   its method returns. It compares them at every $(t, x, m, p)$ of: $t$ at $0$, $T/2$ and $T$; $x$ at
   the node nearest the centre of the domain's nodes and, along each axis, its two end nodes nearest
-  it; $m$ at $0.5$ and $1$; and $p$ a scale times the signs $(+1, -1, +1, \dots)$ of its components,
-  the scale at $0$, $0.4157$ and $-1.3691$, so every component is probed at both signs. Each
-  comparison has its own guard: a probe at which one read cannot be evaluated is warned about and the
-  others still compare, and a method or door that raises at every probe at which `__call__` (for a door,
-  its method) could be evaluated is refused.
+  it; $m$ at $0.5$ and $1$; and $p$ with component $k$ a scale times $(-1)^k (1 + 0.3k)$, the scale at
+  $0$, $0.4157$ and $-1.3691$, so every component is probed at both signs and at a magnitude of its
+  own. A door is compared with its method read as this check reads it. Each comparison has its own
+  guard: a probe at which one read cannot be evaluated is warned about and the others still compare;
+  $H$ that cannot be evaluated at any probe is refused, and so is a method or door that raises at
+  every probe at which `__call__` (for a door, its method) could be evaluated.
 - `refuse_a_hamiltonian_whose_reads_disagree`: each door's read of a batch agrees with its reads of
-  the batch's points one at a time, at three or four sample nodes and at $t$ of $0$, $T/2$ and $T$.
+  the batch's points one at a time, at three or four sample nodes and at $t$ of $0$, $T/2$ and $T$. A
+  door that returns another number of values raises the reader's `SourceShapeError` out of the
+  problem's construction.
 
 A disagreement that falls between those probes is not seen: the check proves a disagreement where it
 finds one, and an agreement only at the probes. A non-smooth cost is compared only where $H$ is
@@ -312,13 +319,20 @@ sample point alone.
 A soft wall (`state_penalty`) is composed into the Hamiltonian's potential and read back through its
 `__call__` at the same probes, with $x$ also the grid node where the wall is largest at each $t$. So a
 subclass whose `__call__` does not read the potential is refused wherever the wall is nonzero on the
-grid; one that reads the potential at some $x$ and not others is seen only at those $x$.
+grid; one that reads the potential at some $x$ and not others is seen only at those $x$. The
+consistency check reads the Hamiltonian before the wall is composed into it, while the solvers read the
+composed one, so the composed Hamiltonian's doors are compared with its methods at the same probes: a
+door that does not read the potential is refused.
 
 On a network the control is a rate per edge. The rates are held to `dp` by the network's own identity,
 and `dp` and `dm` to central differences of `__call__`, at a fixed set of nodes whatever the network's
-size (both ends of the node order, a middle node and a node of highest degree), `dp` over each node's
-neighbourhood, at $t$ of $0$, $T/2$ and $T$, at three costate vectors with distinct entries, and at the
-uniform density. A disagreement at a node not probed, or at another density, is not seen. A custom
+size (both ends of the node order, a middle node and the node with the most neighbours, counted by
+`get_neighbors` and not by edge weight), `dp` over each node's neighbourhood, at $t$ of $0$, $T/2$ and
+$T$, at three costate vectors with distinct entries, and at the uniform density. Each source is read as
+the network's readers hand it: `__call__` and `dm` the node as an integer, `optimal_control` and `dp`
+`np.array([i])`. A read that raises at some probes is warned about, one that raises at every probe is
+refused, and so is one that returns another number of values. A disagreement at a node not probed, or
+at another density, is not seen; on a tie for the most neighbours the first node is probed. A custom
 `hamiltonian_func` replaces `__call__`, and with a custom `hamiltonian_dm_func` also `dm`, while `dp`
 and the rates stay the built-in control (#1545, open, routes a custom network H through them); every
 reader of those refuses such a Hamiltonian (`has_custom_hamiltonian`), so only `NetworkHJBSolver`

@@ -3319,7 +3319,13 @@ def refuse_a_hamiltonian_whose_reads_disagree(
     Each door is read at each of ``times``; a problem hands 0, T/2 and T, the times D2 probes. A read that disagrees only
     after t = 0, such as a control that reads x as one point where H's x-dependence grows with t, is not seen at t = 0
     alone (#2901).
+
+    Each read goes through the checks' one reader, `_read_source` in its door form, which counts one value per point for
+    the value and ``dH_dm`` and d for ``dp`` and the control. A door that returns another number of values raises its
+    ``SourceShapeError``, which no guard here takes (#2901).
     """
+    from mfgarchon.utils.validation.functions import _read_source
+
     if not hamiltonian.reads_a_batch:
         return
     points = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
@@ -3333,15 +3339,18 @@ def refuse_a_hamiltonian_whose_reads_disagree(
         "such as 0.5*np.sum(p**2, axis=-1), and to read x[0] as the coordinate (#2875)."
     )
     doors = (
-        ("evaluate_H", hamiltonian.evaluate_H),
-        ("evaluate_dp", hamiltonian.evaluate_dp),
-        ("evaluate_optimal_control", hamiltonian.evaluate_optimal_control),
-        ("dH_dm", hamiltonian.dH_dm),
+        ("evaluate_H", hamiltonian.evaluate_H, 1),
+        ("evaluate_dp", hamiltonian.evaluate_dp, d),
+        ("evaluate_optimal_control", hamiltonian.evaluate_optimal_control, d),
+        ("dH_dm", hamiltonian.dH_dm, 1),
     )
     for t in times:
-        for name, evaluate in doors:
+        for name, evaluate, size in doors:
+            described = f"{type(hamiltonian).__name__}.{name}, at t={float(t):.4g}"
             refuse_batch_disagreement(
-                lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
+                lambda evaluate=evaluate, size=size, described=described, **state: _read_source(
+                    evaluate, size=size, name=described, form="door", points=int(np.size(state["m"])), **state
+                ),
                 {"x": x, "p": p, "m": m, "t": float(t)},
                 [{"x": x[i], "p": p[i], "m": m[i], "t": float(t)} for i in range(k)],
                 name=f"{type(hamiltonian).__name__}.{name}",

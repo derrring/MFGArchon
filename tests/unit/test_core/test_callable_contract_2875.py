@@ -755,8 +755,14 @@ def test_a_lagrangians_proximal_hands_its_stand_in_x_as_a_tuple():
 @pytest.mark.parametrize("dimension", [1, 2, 3])
 def test_a_problem_refuses_a_point_only_hamiltonian_whichever_path_would_read_it(dimension):
     """#2481: HJB-FDM in d >= 2, the GFDM batch path and the semi-Lagrangian solver never read a check. It is one check now,
-    where a problem takes the Hamiltonian, so none of them can be reached with one that disagrees."""
-    with pytest.raises(ValueError, match=r"_PointOnly.evaluate_H, at"):
+    where a problem takes the Hamiltonian, so none of them can be reached with one that disagrees. In d >= 2 the
+    consistency check refuses it first: on a batch of one its value has d entries where one is read (#2901)."""
+    from mfgarchon.utils.validation import ValidationError
+
+    with pytest.raises(
+        (ValueError, ValidationError),
+        match=r"_PointOnly.evaluate_H, at|evaluate_H returned shape \(\d,\) where 1 value is read",
+    ):
         _problem(dimension=dimension, n=5, hamiltonian=_PointOnly())
 
 
@@ -1176,6 +1182,10 @@ def test_the_upwind_probe_reads_a_hamiltonian_at_one_point_as_a_number_at_d_1():
     problem's check accepts on another branch, and refused it (review 2)."""
 
     class ArrayOfOneBranch(HamiltonianBase):
+        # Point-only, so its doors are handed a point: on a batch of one they would read the other branch, which the
+        # consistency check compares with the method at a point and refuses (#2901).
+        reads_a_batch = False
+
         def __call__(self, t, x, p, m):
             pa = np.asarray(p, dtype=float)
             base = 0.5 * np.sum(pa**2, axis=-1)
