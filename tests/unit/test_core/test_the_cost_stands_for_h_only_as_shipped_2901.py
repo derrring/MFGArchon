@@ -552,14 +552,22 @@ def test_the_dmp_warning_fires_where_the_cost_stands_for_h(mfg_caplog):
     [
         lambda: _components_problem(_lagrangian_components(_QuadraticLagrangian())),
         lambda: _problem(hm.SeparableHamiltonian(_PlainCost(control_cost=1.0), coupling=f)),
+        lambda: _problem(hm.SeparableHamiltonian(_l1(), coupling=f)),
     ],
-    ids=["a user's LagrangianBase (DualHamiltonian)", "a QuadraticControlCost subclass that changes nothing"],
+    ids=[
+        "a user's LagrangianBase (DualHamiltonian)",
+        "a QuadraticControlCost subclass that changes nothing",
+        "a shipped L1 cost",
+    ],
 )
 def test_the_dmp_warning_is_not_run_where_the_cost_does_not_stand_for_h(make, mfg_caplog):
-    """No cost, or a cost not as shipped: |grad u| / lambda is not known to be the drift, so the warning is not run, and
-    says so, and the solve is the one without it. It fired there before, on the cost's lambda or problem.lambda_."""
+    """No cost, or a cost whose lambda does not give the drift as the library ships it: |grad u| / lambda is not known
+    to be the drift, so the warning is not run, says so once, and the solve is the one without it. It fired there
+    before, on the cost's lambda or problem.lambda_."""
     u_off, _ = _dmp_solve(make, False, mfg_caplog)
     u_on, messages = _dmp_solve(make, True, mfg_caplog)
     np.testing.assert_array_equal(u_on, u_off)
-    assert any("DMP check not run" in r and "is not as the library ships it" in r for r in messages), messages
+    not_run = [r for r in messages if "DMP check not run" in r]
+    assert len(not_run) == 1, messages
+    assert "is not as the library ships it" in not_run[0], messages
     assert not any("DMP not guaranteed" in r for r in messages), messages

@@ -417,9 +417,12 @@ class HJBHowardSolver:
                     "HJBHowardSolver(discretisation='guarded_fan') needs control_cost=QuadraticControlCost(...) as the "
                     "library ships it: its exact argmin over a fan sector is the Euclidean projection that a quadratic "
                     f"cost makes it, and its policy and Lagrangian are read from the cost, which is not ({why}) (#1689, "
-                    "#2901). For a subclass of QuadraticControlCost, use another discretisation, which takes the policy "
-                    "as alpha_star and the Lagrangian as control_lagrangian in place of control_cost. For another cost, "
-                    "use discretisation='central' with them, or HJBGFDMSolver(monotonicity_scheme='joint_socp')."
+                    "#2901). What has run in its place, on #1689's frame cloud, with the cost's policy as alpha_star "
+                    "and its Lagrangian as control_lagrangian: discretisation='central', for a QuadraticControlCost "
+                    "subclass, a shipped L1ControlCost or BoundedControlCost, an L1 cost regularized, and a cost "
+                    "instance holding its own method; 'upwind_projection' and 'upwind_per_axis' for the quadratic and "
+                    "bounded costs, but not for an L1 cost's policy, regularized or not, where they did not converge; "
+                    "and HJBGFDMSolver(monotonicity_scheme='joint_socp')."
                 )
             if getattr(stencil_provider, "_positive_qp_fan", None) is None or not callable(
                 getattr(stencil_provider, "_positive_qp_fan_closure", None)

@@ -2304,8 +2304,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         why = why_the_drift_is_not_the_control_costs(hamiltonian)
         if why is not None:
             logger.warning(
-                "DMP check not run (joint_socp, Issue #1074): %s is not as the library ships it (%s), so its control "
-                "cost's lambda is not read and |grad u| / lambda is not known to be its drift (#2901). The solve is "
+                "DMP check not run (joint_socp, Issue #1074): %s is not as the library ships it (%s), so no control "
+                "cost's lambda is read and |grad u| / lambda is not known to be its drift (#2901). The solve is "
                 "unaffected.",
                 type(hamiltonian).__name__,
                 why,
