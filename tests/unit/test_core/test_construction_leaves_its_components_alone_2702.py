@@ -16,7 +16,8 @@ Hamiltonian itself: with p = 0 and no coupling, H = -V, so one wall reads 5.
 - **A second network problem from the same components leaves the first on its own network** (a mutation-verified pin).
   Before, the second construction wrote its Hamiltonian into the object both held, and the first solved on it.
 - **The components a construction was given are left as given** (the fact, stated directly): every field holds the
-  object it held before.
+  object it held before. And a problem built with no wall holds its own copy too, so a field the caller rebinds
+  afterwards does not reach it (a mutation-verified pin: copying only for a walled problem leaves this red).
 """
 
 from __future__ import annotations
@@ -148,14 +149,22 @@ def test_a_second_network_problem_from_the_same_components_leaves_the_first_on_i
     assert first.hamiltonian_class.network_data is first.network_data
 
 
-@pytest.mark.parametrize("construction", ["a walled problem", "a network problem"])
+@pytest.mark.parametrize("construction", ["a walled problem", "a network problem", "an unwalled problem"])
 def test_the_components_a_construction_was_given_are_left_as_given(construction):
     if construction == "a walled problem":
         given = _components("H-defined")
         before = _snapshot(given)
         _problem(given)
-    else:
+    elif construction == "a network problem":
         given = _network_components()
         before = _snapshot(given)
         _network_problem(_network(2, 2), given)
+    else:
+        given = _components("H-defined")
+        before = _snapshot(given)
+        problem = _problem(given, walled=False)
+        held = problem.components.description
+        given.description = "rebound after the construction"
+        assert problem.components.description == held
+        given.description = held
     assert _snapshot(given) == before
