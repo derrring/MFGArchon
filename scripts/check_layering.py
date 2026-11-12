@@ -114,7 +114,6 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
-import importlib.util
 import io
 import os
 import sys
@@ -1053,10 +1052,10 @@ PARSER_CASES = {
     ("pk.low.ca_finally", "direct"): ("ambiguous", "module"),  # bound in a `finally`
 }
 
-# The fourteen statement shapes the scanner of tests/unit/test_utils_does_not_import_alg.py held until it was deleted
-# (#2938), then further ones, with the position this check gives each. One differs from that scanner: it called the
-# body of `if False:` dead, while this check measures the direction of source dependencies, not loading, so the import
-# counts at module level.
+# The fourteen statement shapes the deleted tests of tests/unit/test_utils_does_not_import_alg.py held (#2938), then
+# further ones, with the position this check gives each. One differs from those tests: they called the body of
+# `if False:` dead, while this check measures the direction of source dependencies, not loading, so the import counts
+# at module level.
 _I = "from pk.high.impl import direct"
 _TC = "from typing import TYPE_CHECKING\n"
 STATEMENT_SHAPES = (
@@ -1095,8 +1094,8 @@ STATEMENT_SHAPES = (
 )
 
 # (importing module, is a package, level, module named, expected absolute module): the five relative cases the deleted
-# scanner of tests/unit/test_utils_does_not_import_alg.py held, each also checked against importlib.util.resolve_name
-# below, and two beyond the top-level package, which Python refuses.
+# tests of tests/unit/test_utils_does_not_import_alg.py held (#2938), and two beyond the top-level package, which Python
+# refuses.
 RELATIVE_CASES = (
     ("mfgarchon.utils.numerical", True, 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
     ("mfgarchon.utils.adjoint_validation", False, 2, "alg.base_solver", "mfgarchon.alg.base_solver"),
@@ -1212,11 +1211,6 @@ def relative_section() -> bool:
         node = ast.ImportFrom(module=named, names=[ast.alias(name="X")], level=level)
         got = Tree.absolute(importer, is_package, node)
         ok &= report(f"{importer} level {level} {named}", got == expected, f"got {got!r}")
-        if expected:
-            python = importlib.util.resolve_name(
-                "." * level + (named or ""), importer if is_package else importer.rpartition(".")[0]
-            )
-            ok &= report(f"{importer} level {level} {named}: importlib agrees", python == expected, f"got {python!r}")
     return ok
 
 

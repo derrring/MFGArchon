@@ -36,8 +36,8 @@ load-bearing: it completes `utils.numerical` by another route first and hides th
 The count of module-level `utils` -> `alg` imports this file held, with its scanner, was deleted when
 `scripts/check_layering.py`, the layering rule's one owner, entered the gate (#2938). Where the two
 disagreed, the layer table's reading stands: `utils/adjoint_validation.py` -> `alg.base_solver` lies
-within one layer. The scanner's fourteen statement shapes are the first fourteen of that script's
-`STATEMENT_SHAPES`, and its five relative cases the first five of its `RELATIVE_CASES`. What stays here
+within one layer. The fourteen statement shapes and the five relative cases its tests held are the first
+fourteen of that script's `STATEMENT_SHAPES` and the first five of its `RELATIVE_CASES`. What stays here
 is not a count: the deleted shims stay deleted, a lazy `__getattr__` cannot restore them, and the hub
 import can be deferred.
 """
