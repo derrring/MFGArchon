@@ -7,7 +7,8 @@ Usage:
 
 **It is enforced by the gate.** ``scripts/local_ci.sh`` runs ``--self-test`` in its self-test loop and then the check
 of the package as a step of its own, and a non-zero exit fails the gate (user ruling, 2026-11-11, #2938): the
-exception lists below are the ratchet. CI does not run it.
+exception lists below are the ratchet. CI's quick-checks job runs the check of the package too (user ruling,
+2026-11-12).
 
 This file holds the layer table (``LAYERS``) and the exception lists (``EDGE_EXCEPTIONS``,
 ``UNRESOLVED_EXCEPTIONS``, ``DYNAMIC_SITES``). A PR that removes an edge removes its line in the same diff.

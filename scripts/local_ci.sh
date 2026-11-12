@@ -629,7 +629,7 @@ check $? "no citation newly entered the review queue, and none left it unrecorde
 # The layering rule's one owner (user ruling, 2026-11-11, #2938): a lower layer of mfgarchon does not import an upper
 # one. Its exception lists are the ratchet: an upward edge, unresolved owner or dynamic mechanism not in them fails here,
 # and so does a listed one the scan no longer finds. They are keyed by importer, target and position, or by module and
-# mechanism, so a further site of a listed key passes. CI does not run it.
+# mechanism, so a further site of a listed key passes. CI's quick-checks job runs it too.
 step "Layering check (a lower layer does not import an upper one)"
 "${PYS[@]}" scripts/check_layering.py --root .
 check $? "every upward import, unresolved owner and dynamic site is listed, and every listed one exists"
