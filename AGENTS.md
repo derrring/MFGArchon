@@ -59,6 +59,27 @@ Keep changes minimal + focused; no legacy fallbacks (use mature utilities direct
 
 **Package** (`mfgarchon/`): `alg/ backends/ config/ core/ extensions/ factory/ geometry/ hooks/ meta/ operators/ types/ utils/ visualization/ workflow/`.
 
+### Layers ⚠️ (user ruling, 2026-11-10; #2938)
+
+The package has seven layers, low to high: base, numerics, geometry, operators, model, solve, entry. Which module sits in which layer is `scripts/check_layering.py`'s `LAYERS` table, and only there.
+
+- **A lower layer does not import an upper one:** not at module level, not inside a function, and not through a re-export. The rule is about the direction of source dependencies: importing a submodule still runs its parent's `__init__.py`.
+- **An owner lives in the module that defines its meaning.** Where one file mixes a generic computation with a domain decision, split the two before deciding a direction.
+- **A lower layer that needs something from an upper one asks for the smallest capability it needs,** and the protocol sits on the side that owns that capability's meaning. `types` is not a place to park a cycle.
+- **A package `__init__` re-exports names of its own layer or below.**
+- Imports of third-party packages, torch and jax among them, are outside the rule: only `mfgarchon`'s modules have layers.
+
+**One owner, run twice.** `scripts/check_layering.py --root .` runs in `scripts/local_ci.sh` and in CI's quick-checks job (user rulings, 2026-11-11 and 2026-11-12). Its docstring states what it counts, what it reads and what it cannot follow (#2945).
+
+**Its exception lists are the ratchet.**
+- `EDGE_EXCEPTIONS`, keyed by importer, upper target and position. Each line names the stage of #2938 that removes it.
+- `UNRESOLVED_EXCEPTIONS`, keyed by importer, source, name and position.
+- `DYNAMIC_SITES`, keyed by module and mechanism.
+
+A key not in its list fails the check, and so does a listed key the scan no longer finds. A further site of a listed key passes. A PR that removes an edge deletes its line in the same diff. A new upward edge fails the gate: move the owner, or ask for the capability as above.
+
+**The path of `from P import ...` is an edge,** even when every name it binds is a submodule of `P`. Whether such a path counts is #2938's deferred path-target ruling ([the record](https://github.com/derrring/MFGArchon/issues/2938#issuecomment-6809169856)). It reopens when a layering stage's upward edge is a path edge that the ruling would remove.
+
 ---
 
 ## 🎨 MFGArchon-specific conventions
