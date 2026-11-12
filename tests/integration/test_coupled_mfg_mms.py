@@ -177,7 +177,7 @@ class CoupledSinusoid1D(ManufacturedSolution):
     # --- exact fields -----------------------------------------------------
     # Shape-preserving (scalar -> scalar, array -> array) so they can serve both
     # as MFGComponents IC/TC callables (read on the grid's coordinate tuple by
-    # `_condition_on_grid`, mfg_components.py:572) and as grid evaluators in the error metric.
+    # `_condition_on_grid`, mfg_components.py:585) and as grid evaluators in the error metric.
     def u_star(self, t: float, x):
         x = np.asarray(x, dtype=float)
         return self.b * np.exp(-t) * np.sin(self.k * x)
