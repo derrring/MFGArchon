@@ -561,7 +561,7 @@ def test_the_dmp_warning_fires_where_the_cost_stands_for_h(mfg_caplog):
     ],
 )
 def test_the_dmp_warning_is_not_run_where_the_cost_does_not_stand_for_h(make, mfg_caplog):
-    """No cost, or a cost whose lambda does not give the drift as the library ships it: |grad u| / lambda is not known
+    """No cost, a cost not as shipped, or a shipped cost other than the quadratic one: |grad u| / lambda is not known
     to be the drift, so the warning is not run, says so once, and the solve is the one without it. It fired there
     before, on the cost's lambda or problem.lambda_."""
     u_off, _ = _dmp_solve(make, False, mfg_caplog)
