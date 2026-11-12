@@ -7,6 +7,7 @@ With terminal ``c.x`` and no state term, ``p = c`` everywhere, so ``-u_t + H_con
 
 from __future__ import annotations
 
+import re
 import sys
 from types import SimpleNamespace
 
@@ -28,7 +29,7 @@ from mfgarchon.core.hamiltonian import (
 )
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift, why_the_drift_is_not_the_control_costs
 
 _T = 0.2
 _V0, _F0 = 0.7, 0.3
@@ -179,13 +180,15 @@ def test_canonical_cs_refuses_what_it_cannot_read_when_it_is_built(hamiltonian):
     """Its hand-coded quadratic read plain L1 at -0.248 and congestion at -0.169 from the exact solution, with no error.
 
     The names are the point of the match: congestion holds a quadratic control cost, and that alone is not what is refused.
+    Since #2901 the reason is the owner's, `why_the_drift_is_not_the_control_costs` (#2914): its class, or its cost.
     """
     given = _NOT_QUADRATIC[hamiltonian]
-    named = f"{type(given).__name__} with {type(given.control_cost).__name__}"
+    why = re.escape(why_the_drift_is_not_the_control_costs(given))
     with pytest.raises(
         NotImplementedError,
-        match=rf"needs a SeparableHamiltonian with a QuadraticControlCost.*Hamiltonian is {named} .*#2866.*"
-        r"Use HJBFDMSolver, or, where the Hamiltonian's is_smooth\(\) is True, diffusion_method='adi' or 'stochastic'",
+        match=rf"^HJBSemiLagrangianSolver\(diffusion_method='canonical_cs'\), run on a 1-D problem: .*this problem's "
+        rf"{type(given).__name__} is not \({why}\) \(#2901, #2914, #2866\)\. Use HJBFDMSolver, or, where the "
+        r"Hamiltonian's is_smooth\(\) is True, diffusion_method='adi' or 'stochastic'",
     ):
         HJBSemiLagrangianSolver(_problem(given), **_CANONICAL_CS)
 

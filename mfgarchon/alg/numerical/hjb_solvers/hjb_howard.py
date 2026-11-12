@@ -400,7 +400,7 @@ class HJBHowardSolver:
                 f"{discretisation!r}"
             )
         if discretisation == "guarded_fan":
-            from mfgarchon.core.hamiltonian import QuadraticControlCost
+            from mfgarchon.core.hamiltonian import QuadraticControlCost, _why_the_cost_is_not_as_it_ships
 
             # #1689: the policy is the exact argmin over each node's fan sectors, which for a quadratic cost is a
             # projection of control_cost.optimal_control, and the right-hand side is control_cost.lagrangian. An
@@ -411,12 +411,13 @@ class HJBHowardSolver:
                     "control_cost, so alpha_star and control_lagrangian would have no reader (#1689). Pass "
                     "control_cost only."
                 )
-            if not isinstance(control_cost, QuadraticControlCost):
+            why = _why_the_cost_is_not_as_it_ships(control_cost, QuadraticControlCost)
+            if why is not None:
                 raise ValueError(
-                    "HJBHowardSolver(discretisation='guarded_fan') needs control_cost=QuadraticControlCost(...): its "
-                    "exact argmin over a fan sector is the Euclidean projection that a quadratic cost makes it, got "
-                    f"{type(control_cost).__name__} (#1689). For another cost use another discretisation, or "
-                    "HJBGFDMSolver(monotonicity_scheme='joint_socp')."
+                    "HJBHowardSolver(discretisation='guarded_fan') needs control_cost=QuadraticControlCost(...) as the "
+                    "library ships it: its exact argmin over a fan sector is the Euclidean projection that a quadratic "
+                    f"cost makes it, and its policy and Lagrangian are read from the cost, which is not ({why}) (#1689, "
+                    "#2901). For another cost use another discretisation, or HJBGFDMSolver(monotonicity_scheme='joint_socp')."
                 )
             if getattr(stencil_provider, "_positive_qp_fan", None) is None or not callable(
                 getattr(stencil_provider, "_positive_qp_fan_closure", None)

@@ -520,7 +520,7 @@ def test_dmp_guard_uses_each_nodes_resolved_diffusion(monkeypatch):
     )
     solver.check_dmp = True
     solver.monotonicity_scheme = "joint_socp"
-    solver._maybe_warn_dmp(np.zeros(_N))
+    solver._maybe_warn_dmp(np.zeros(_N), np.ones(_N), 0.0)
 
     next_field = field[::-1].copy()
     x = np.linspace(0.0, 1.0, _N)
@@ -530,7 +530,7 @@ def test_dmp_guard_uses_each_nodes_resolved_diffusion(monkeypatch):
     solver.solve_hjb_system(M, 0.5 * x**2, **_volatility(next_field))
     solver.check_dmp = True
     solver.monotonicity_scheme = "joint_socp"
-    solver._maybe_warn_dmp(np.zeros(_N))
+    solver._maybe_warn_dmp(np.zeros(_N), np.ones(_N), 0.0)
 
     assert len(captured) == 2
     np.testing.assert_array_equal(captured[0], 0.5 * field**2)

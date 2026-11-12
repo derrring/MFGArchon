@@ -238,6 +238,20 @@ $$
 and for $\ell(\alpha) = \tfrac{\lambda}{2}|\alpha|^{2}$ this is $H_{\text{control}} =
 |p|^{2}/(2\lambda)$ with $\alpha^{*} = -p/\lambda$.
 
+A control cost stands for its Hamiltonian only where the library ships both: a `SeparableHamiltonian`
+or `QuadraticMFGHamiltonian` and a cost of a class the library ships, neither redefining a method of its
+own on its class or its instance, `effective_domain` included; a cost `regularize()` wraps stands for it
+only when the wrapped cost does (`_why_not_as_it_ships`, #2914; user ruling, 2026-11-11, for the readers
+of a Lagrangian built on the cost). HJB-SL's `canonical_cs` and `BaseHJBSolver._control_cost_lambda`
+read the cost's `lambda_` there only; `MFGComponents` derives a Lagrangian from the cost there only, so
+`MFGProblem.lagrangian_class` is `None` elsewhere; and HJB-SL's DPP path (a non-smooth separable
+Hamiltonian), HJB-GFDM's `inner_solver='howard'` and `monotonicity_scheme='positive_qp_fan'`, and
+`HJBHowardSolver(discretisation='guarded_fan')` read the cost, or the Lagrangian built on it, there only,
+and refuse a subclass or a user's cost elsewhere, stating what was run. *Not yet met (#2901, stage 2): a
+Lagrangian-defined problem's own methods.* A `SeparableLagrangian` subclass is read on the DPP path
+through its own `__call__`, while the Hamiltonian derived from it reads the cost; the stage-2 change
+derives that Hamiltonian only for the Lagrangian as the library ships it.
+
 ### One drift, one owner
 
 The Fokker–Planck drift has one owner, the Hamiltonian's control cost, and no solver keeps its own
