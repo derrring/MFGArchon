@@ -12,6 +12,7 @@ the logic in separate, focused modules.
 from __future__ import annotations
 
 import contextlib
+import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -194,6 +195,17 @@ class MFGComponents:
                     f"hamiltonian must be a HamiltonianBase instance, got {type(self.hamiltonian).__name__}."
                 )
             self._hamiltonian_class = self.hamiltonian
+
+
+def own_copy_for_a_problem(components: MFGComponents | None) -> MFGComponents | None:
+    """The copy of ``components`` a problem holds, so that constructing it does not change what it was given (#2702).
+
+    A construction writes into the components it holds: the soft wall's composed Hamiltonian and Lagrangian, and a
+    network's own Hamiltonian. Into a shallow copy, those writes leave the caller's object as given, so a second problem
+    built from it, or a replay of a problem's inputs, starts from what the caller gave. The fields' values are shared:
+    no construction writes into them (#2702's census). ``MFGProblem`` and ``NetworkMFGProblem`` both read this.
+    """
+    return None if components is None else copy.copy(components)
 
 
 # ============================================================================
