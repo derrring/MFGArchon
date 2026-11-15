@@ -157,7 +157,7 @@ class TestSDFParticleBCHandler:
     def test_sdf_handler_creation(self):
         """Test creating an SDF particle BC handler."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_sphere
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
         def circle_sdf(x):
             points = np.stack(x, axis=-1)
@@ -170,7 +170,7 @@ class TestSDFParticleBCHandler:
     def test_particles_inside_unchanged(self):
         """Test that particles inside domain are unchanged."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_sphere
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
         def circle_sdf(x):
             points = np.stack(x, axis=-1)
@@ -190,7 +190,7 @@ class TestSDFParticleBCHandler:
     def test_particle_crossing_reflected(self):
         """Test that particles crossing boundary are reflected."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_sphere
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
         def circle_sdf(x):
             points = np.stack(x, axis=-1)
@@ -210,7 +210,7 @@ class TestSDFParticleBCHandler:
     def test_velocity_reflection(self):
         """Test that velocity is reflected at boundary."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_sphere
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
         def circle_sdf(x):
             points = np.stack(x, axis=-1)
@@ -232,7 +232,7 @@ class TestSDFParticleBCHandler:
     def test_contains_method(self):
         """Test the contains() method."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_sphere
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
         def circle_sdf(x):
             points = np.stack(x, axis=-1)
@@ -250,7 +250,7 @@ class TestSDFParticleBCHandler:
     def test_multiple_particles_mixed(self):
         """Test handling multiple particles with mixed inside/crossing."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_sphere
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
         def circle_sdf(x):
             points = np.stack(x, axis=-1)
@@ -287,7 +287,7 @@ class TestSDFParticleBCHandler:
     def test_box_sdf(self):
         """Test with box/rectangular SDF."""
         from mfgarchon.geometry.boundary import SDFParticleBCHandler
-        from mfgarchon.utils.numerical import sdf_box
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_box
 
         def box_sdf(x):
             points = np.stack(x, axis=-1)

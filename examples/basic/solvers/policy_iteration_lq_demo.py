@@ -56,7 +56,7 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.numerical import create_lq_policy_problem
+from mfgarchon.utils.numerical.hjb_policy_iteration import create_lq_policy_problem
 
 
 def demonstrate_policy_iteration_concept():

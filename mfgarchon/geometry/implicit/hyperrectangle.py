@@ -457,7 +457,7 @@ class Hyperrectangle(ImplicitDomain):
             ... )
 
         See Also:
-            - mfgarchon.utils.numerical.compute_mesh_distances for quality verification
+            - mfgarchon.geometry.meshes.mesh_distances.compute_mesh_distances for quality verification
         """
         from mfgarchon.geometry.collocation import CollocationSampler
 

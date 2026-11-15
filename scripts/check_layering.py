@@ -102,12 +102,11 @@ A ``foo.py`` beside ``foo/__init__.py`` is scanned under the package's name.
 **The one owner.** This check is the rule's one owner. ``tests/unit/test_utils_does_not_import_alg.py`` held a
 second count of one slice, the module-level imports of ``mfgarchon.alg`` from every file under
 ``mfgarchon/utils/``, and its count was deleted when this check entered the gate (#2938). Where the two disagreed,
-the layer table's reading stands: the seven ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer (the
-five in the solve layer, and ``utils.cli`` and ``utils.experiment_manager`` in the entry layer) may import ``alg``
+the layer table's reading stands: the six ``utils`` modules ``LAYERS`` places in or above ``alg``'s layer (the
+four in the solve layer, and ``utils.cli`` and ``utils.experiment_manager`` in the entry layer) may import ``alg``
 at module level, so ``utils/adjoint_validation.py`` -> ``alg.base_solver``, which that count held as its last
-violation, lies within one layer and is not an edge. Six of the seven, all but ``utils.solver_decorators``, load
-with ``mfgarchon.utils`` through its re-exports until #2938's stage 2a; ``utils.adjoint_validation`` already
-loads ``alg.base_solver`` that way.
+violation, lies within one layer and is not an edge. Since #2938's stage 2a, ``mfgarchon.utils`` re-exports none
+of the six.
 """
 
 from __future__ import annotations
@@ -150,6 +149,7 @@ LAYERS: dict[str, int] = {
     "operators": 3,
     "utils.numerical.tensor_calculus": 3,
     "utils.numerical.implicit_diffusion": 3,
+    "utils.sparse_operations": 3,
     "core": 4,
     "extensions": 4,
     "meta": 4,
@@ -164,7 +164,6 @@ LAYERS: dict[str, int] = {
     "utils.adjoint_validation": 5,
     "utils.solver_decorators": 5,
     "utils.numerical.flux_diagnostics": 5,
-    "utils.numerical.mass_fabrication_gate": 5,
     "factory": 6,
     "workflow": 6,
     "visualization": 6,
@@ -182,29 +181,6 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.config.array_validation", "mfgarchon.utils.numerical.integration", "module", "#2938 stage 2b", "imports trapezoid through a layer-1 path; its owner is utils.numpy_compat"),
     ("mfgarchon.utils.solver_result", "mfgarchon.utils.io.hdf5_utils", "function", "#2938 stage 2b", "the result's save_hdf5 and load_hdf5 call the HDF5 writer and reader"),
     ("mfgarchon.utils.solver_result", "mfgarchon.utils.notebooks.reporting", "function", "#2938 stage 2b", "the result's report method calls the notebook reporter"),
-    # numerics -> geometry
-    ("mfgarchon.utils", "mfgarchon.geometry.implicit.hyperrectangle", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils", "mfgarchon.geometry.implicit.hypersphere", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils", "mfgarchon.geometry.implicit.implicit_domain", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils", "mfgarchon.geometry.implicit.sdf_utils", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils", "mfgarchon.utils.geometry", "module", "#2938 stage 2a", "utils/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils.numerical", "mfgarchon.geometry.implicit.sdf_utils", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils.numerical", "mfgarchon.geometry.meshes.mesh_distances", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a geometry name"),
-    ("mfgarchon.utils.numerical.particle.sampling", "mfgarchon.geometry.boundary.periodic", "function", "#2938 stage 2a", "sampling builds periodic ghost points and wraps positions with the periodic boundary's helpers"),
-    ("mfgarchon.utils.sparse_operations", "mfgarchon.geometry.grids.tensor_grid", "type", "#2938 stage 2a", "an annotation names TensorProductGrid"),
-    # numerics -> model
-    ("mfgarchon.utils", "mfgarchon.utils.drift_helpers", "module", "#2938 stage 2a", "utils/__init__ re-exports a model-layer name"),
-    ("mfgarchon.utils", "mfgarchon.utils.pde_coefficients", "module", "#2938 stage 2a", "utils/__init__ re-exports a model-layer name"),
-    # numerics -> solve
-    ("mfgarchon.utils", "mfgarchon.utils.adjoint_validation", "module", "#2938 stage 2a", "utils/__init__ re-exports a solve-layer name"),
-    ("mfgarchon.utils.numerical", "mfgarchon.utils.numerical.flux_diagnostics", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a solve-layer name"),
-    ("mfgarchon.utils.numerical", "mfgarchon.utils.numerical.hjb_policy_iteration", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a solve-layer name"),
-    ("mfgarchon.utils.numerical", "mfgarchon.utils.numerical.mass_fabrication_gate", "module", "#2938 stage 2a", "utils/numerical/__init__ re-exports a solve-layer name"),
-    ("mfgarchon.utils.numerical.particle.sampling", "mfgarchon.utils.numerical.mass_fabrication_gate", "function", "#2938 stage 2a", "sampling leaves out, or refuses, the mass of cells with no navigable point through the gate's leave_out_or_raise"),
-    # numerics -> entry
-    ("mfgarchon.utils", "mfgarchon.utils.cli", "module", "#2938 stage 2a", "utils/__init__ re-exports an entry-layer name"),
-    ("mfgarchon.utils", "mfgarchon.utils.experiment_manager", "module", "#2938 stage 2a", "utils/__init__ re-exports an entry-layer name"),
-    ("mfgarchon.utils.data.recorder", "mfgarchon", "function", "#2938 stage 2a", "the recorder reads the package's __version__"),
     # geometry -> operators
     ("mfgarchon.geometry", "mfgarchon.operators", "module", "#2938 stage 3", "geometry/__init__ re-exports GeometryProjector and ProjectionRegistry"),
     ("mfgarchon.geometry", "mfgarchon.operators.interpolation.projection", "module", "#2938 stage 3", "geometry/__init__ re-exports GeometryProjector and ProjectionRegistry"),
@@ -233,7 +209,6 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.operators.interaction.coupling_costs", "mfgarchon.core.model", "type", "#2938 stage 2d", "coupling_costs is the model's cost specification"),
     ("mfgarchon.utils.numerical.implicit_diffusion", "mfgarchon.utils.pde_coefficients", "module", "#2938 stage 2d", "the implicit diffusion step reads model-layer coefficient helpers"),
     # model -> solve
-    ("mfgarchon.core.measure", "mfgarchon.utils.numerical.mass_fabrication_gate", "module", "#2938 stage 2c", "the measure clips through mass_fabrication_gate, which imports only numpy and utils.numerical.quadrature and is read from layers 1, 4 and 5: its place in the table is the question"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.fixed_point_iterator", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.source_composition", "type", "#2938 stage 2c", "an annotation names CouplingBinding: which side owns the type it needs is the question (rule 3)"),
@@ -264,7 +239,6 @@ UNRESOLVED_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.utils.acceleration.jax_utils", "mfgarchon.types.solver_types", "JAXArray", "type", "bound in solver_types' try, whose body imports jax only under TYPE_CHECKING: at run time both arms bind Any"),
     ("mfgarchon.utils.numerical.nonlinear_solvers", "mfgarchon.utils.acceleration", "HAS_JAX", "module", "bound in utils/acceleration/__init__'s try on importing jax"),
     ("mfgarchon.utils.io", "mfgarchon.utils.io.hdf5_utils", "HDF5_AVAILABLE", "module", "bound in a try on importing h5py, a required package (#2930)"),
-    ("mfgarchon.utils.data.recorder", "mfgarchon", "__version__", "function", "bound in a try on the installed metadata"),
     ("mfgarchon.geometry", "mfgarchon.geometry.boundary", "MixedBoundaryConditions", "module", "served by geometry/boundary/__init__'s __getattr__"),
     ("mfgarchon.geometry", "mfgarchon.geometry.meshes", "Mesh1D", "module", "served by geometry/meshes/__init__'s __getattr__"),
     ("mfgarchon.geometry", "mfgarchon.geometry.meshes", "Mesh2D", "module", "served by geometry/meshes/__init__'s __getattr__"),

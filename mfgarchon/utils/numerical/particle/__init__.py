@@ -111,7 +111,6 @@ from mfgarchon.utils.numerical.particle.sampling import (
     integrate_gaussian_quadrature_mc,
     monte_carlo_integrate,
     sample_from_density,
-    sample_from_scattered_density,
 )
 
 __all__ = [
@@ -159,7 +158,6 @@ __all__ = [
     "integrate_gaussian_quadrature_mc",
     "estimate_expectation",
     "sample_from_density",
-    "sample_from_scattered_density",
     # MCMC
     "MCMCConfig",
     "MCMCResult",
