@@ -457,6 +457,15 @@ class _HRaisingEverywhere(_WrittenOutH):
         raise NotImplementedError("no H written")
 
 
+class _HRaisingAtTheFirstEndControlEverywhere(_ControlRaisingEverywhere):
+    """H raises at x = 0, one of the three probe points, so it can be read at 36 of the 54 probes."""
+
+    def __call__(self, t, x, p, m):
+        if float(_a(x[0])) == 0.0:
+            raise ValueError("H not defined at x = 0")
+        return super().__call__(t=t, x=x, p=p, m=m)
+
+
 @pytest.mark.parametrize(
     ("make", "message"),
     [
@@ -466,11 +475,16 @@ class _HRaisingEverywhere(_WrittenOutH):
             "optimal_control could not be evaluated at any probe at which H could (54 of them)",
         ),
         (_HRaisingEverywhere, "The Hamiltonian could not be evaluated at any of the 54 probes"),
+        (
+            _HRaisingAtTheFirstEndControlEverywhere,
+            "optimal_control could not be evaluated at any probe at which H could (36 of them)",
+        ),
     ],
-    ids=["dp", "the control", "H"],
+    ids=["dp", "the control", "H", "the control, counted where H could be read"],
 )
 def test_a_source_the_solvers_read_that_raises_at_every_probe_is_refused(make, message):
-    """1-D: 3 probe points, 3 times and 6 (m, p), so 54 probes."""
+    """1-D: 3 probe points, 3 times and 6 (m, p), so 54 probes. A method is counted against the probes at which H could
+    be read, so one raising wherever H can be read is refused even where H itself raises at some probes."""
     assert message in _refused(make)
 
 
