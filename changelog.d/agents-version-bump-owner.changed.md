@@ -1,0 +1,1 @@
+- **AGENTS.md: the version-bump checklist names `mfgarchon/utils/version.py`** (user ruling, 2026-11-15; #2938) as the file that reads `importlib.metadata`, which `mfgarchon/__init__.py` re-exports as `__version__` since #2961.

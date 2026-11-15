@@ -430,7 +430,7 @@ In a single commit:
 2. `CHANGELOG.md` — collate the `changelog.d/` fragments into a new `## [X.Y.Z] - YYYY-MM-DD` section: `python scripts/collate_changelog.py --version X.Y.Z --date $(date +%F)`, paste it under the new heading, then `git rm changelog.d/*.md` (keep the README). Keep-a-Changelog categories. *One-time (#1521):* the pre-#1521 `## [Unreleased]` block is promoted by hand at the first release after #1521; from then on fragments own the changelog.
 3. `scripts/citation_baseline.json` — re-record it: `python scripts/check_citations.py --write-baseline`. Step 2 moves `changelog.d/` prose into `CHANGELOG.md`, which the citation ratchet exempts, so **both its pins fire on a correct release**. This is mechanical and expected; the gate says so in its own message.
 
-Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow/__init__.py` (independent subpackage version), backend version reporting (external libs), historical version notes in docstrings. Sanity check: `grep -rn "^version =\|^__version__ =" pyproject.toml mfgarchon/` — only `pyproject.toml:11` should change.
+Do **not** edit: `mfgarchon/utils/version.py` (reads `importlib.metadata`; `mfgarchon/__init__.py` re-exports it as `__version__`), `workflow/__init__.py` (independent subpackage version), backend version reporting (external libs), historical version notes in docstrings. Sanity check: `grep -rn "^version =\|^__version__ =" pyproject.toml mfgarchon/` — only `pyproject.toml:11` should change.
 
 ### Branches & PRs
 - **Branch naming (MANDATORY)**: `<type>/<short-description>` — `feature/ fix/ chore/ docs/ refactor/ test/`.
