@@ -128,7 +128,9 @@ def _read_source(source: Any, *, t: float, x: Any, p: Any, m: Any, method: str) 
     it returns goes through the owner of that method's return shape: ``checked_control`` for ``dp`` and
     ``optimal_control``, ``checked_value`` for ``__call__`` and ``dm``. A return the owner refuses raises
     `SourceShapeError`. An error from the source itself, or from converting an admitted return to floats, propagates
-    to the caller's guard."""
+    to the caller's guard. numpy alone reads ``None`` in an object array as NaN, so such a return is converted entry by
+    entry: one that holds no number raises ``TypeError`` there, a probe its source could not be evaluated at, and is
+    never read as a NaN value."""
     from mfgarchon.core.hamiltonian import checked_control, checked_value
 
     value = _call_h(source, x, m, p, t)
@@ -140,6 +142,8 @@ def _read_source(source: Any, *, t: float, x: Any, p: Any, m: Any, method: str) 
             checked = checked_value(value, m, reader=reader, source=owner_of, p=p, method=method)
     except ValueError as refusal:
         raise SourceShapeError(str(refusal)) from refusal
+    if checked.dtype == object:
+        return np.array([float(v) for v in checked.reshape(-1).tolist()]).reshape(checked.shape)
     return np.asarray(checked, dtype=float)
 
 

@@ -19,7 +19,8 @@ H's was solved as a mixture with no error.
   reads dm. An `AssertionError` is not an evaluation error and propagates.
 - **What a source returns goes through the owner of its shape** (#2875). A value or a dm of shape (1,) at a point, and a
   dp or a control of shape (1, d), are refused at construction, naming the method and the shapes; the same values in
-  the contract's shapes are accepted. A shape refusal at one probe is not skipped.
+  the contract's shapes are accepted. A shape refusal at one probe is not skipped. A return of the right shape that
+  holds no number, `None`, is a probe the source could not be evaluated at, not a NaN value.
 - **The control every reader must accept** (a necessary oracle): the library's own Hamiltonians, in 1-D and 2-D.
 """
 
@@ -616,6 +617,40 @@ def test_a_return_of_another_shape_at_one_probe_is_refused_not_skipped():
         message
     ), message
     assert "At t=0, x=[1.], m=0.5, p=[0.]." in message, message
+
+
+class _ValueNoneAtTheLastEnd(_WrittenOutH):
+    """H returns None at x = 1: shape (), as one value at a point has, and no number."""
+
+    def __call__(self, t, x, p, m):
+        return None if float(_a(x[0])) == 1.0 else super().__call__(t=t, x=x, p=p, m=m)
+
+
+class _ControlNoneAtTheLastEnd(_WrittenOutH):
+    """The control returns [None] at x = 1: shape (1,), p's shape in 1-D, and no number."""
+
+    def optimal_control(self, t, x, p, m):
+        if float(_a(x[0])) == 1.0:
+            return np.array([None], dtype=object)
+        return super().optimal_control(t=t, x=x, p=p, m=m)
+
+
+@pytest.mark.parametrize(
+    ("make", "warned"),
+    [
+        (_ValueNoneAtTheLastEnd, "Could not evaluate the Hamiltonian at t=0, x=[1.]"),
+        (_ControlNoneAtTheLastEnd, "Could not evaluate optimal_control at t=0, x=[1.]"),
+    ],
+    ids=["the value", "the control"],
+)
+def test_a_return_that_holds_no_number_is_a_probe_not_evaluated_not_a_nan(make, warned):
+    """numpy reads None in an object array as NaN; the reader does not, so the probe is warned about as one the source
+    could not be evaluated at, naming the TypeError, and the other probes are compared."""
+    result = _checked(make())
+    issues = [str(i) for i in result.issues]
+    assert result.is_valid, issues
+    assert any(warned in i and "TypeError" in i for i in issues), issues
+    assert not any("non-finite" in i for i in issues), issues
 
 
 # --- The control every reader must accept --------------------------------------------------------------------------

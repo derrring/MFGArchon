@@ -1314,7 +1314,8 @@ def checked_value(value: Any, m: Any, *, reader: str, source: Any, p: Any = None
     that owner's contract table and the form of its refusal. A float m, one point, takes a value of shape (); an m of
     shape (N,), a batch, takes shape (N,). Another shape is refused, naming the reader, the source and its method, the
     shapes handed, and the shape that came back; so is a return numpy cannot read as an array. At a float m a return of
-    shape () that is not a number, ``None`` for instance, passes and fails at the reader's first arithmetic.
+    shape () that is not a number, ``None`` for instance, passes here, and its reader decides: the one reader of
+    ``validate_hamiltonian_consistency`` counts it as a probe the source could not be evaluated at.
 
     No other form is admitted. At the probes of ``validate_hamiltonian_consistency``, each of the library's own
     Hamiltonians returns a value of shape () for ``__call__`` and for ``dm`` (measured at 45fe3298 in #2901's stage 1c).
