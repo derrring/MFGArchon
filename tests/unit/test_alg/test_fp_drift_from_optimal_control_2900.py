@@ -474,9 +474,15 @@ def test_a_solver_that_takes_the_value_function_only_is_refused():
     )
 
 
+def _its_own_control(self, t, x, p, m):
+    return SeparableHamiltonian.optimal_control(self, t=t, x=x, p=p, m=m)
+
+
 def _plain_with_its_control_assigned():
+    """The library H with its own control assigned on its instance: one H, so construction takes it (#2901), and not as
+    the library ships it, since the instance holds a method of its own."""
     hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling)
-    hamiltonian.optimal_control = functools.partial(_steep_control, hamiltonian)
+    hamiltonian.optimal_control = functools.partial(_its_own_control, hamiltonian)
     return hamiltonian
 
 

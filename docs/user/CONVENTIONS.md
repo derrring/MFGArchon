@@ -305,12 +305,45 @@ reads `dp` at a point, $(1, d)$ for a point $p$ of shape $(d,)$ and $()$ for one
 `CongestionHamiltonian`, which divides its cost's `dp` by the congestion factor, a cost's return of
 shape $(1,)$ for any $p$, which that division broadcast, is refused before the division. So are
 those that were silently wrong: a return of another size on HJB-FDM's $n$-D linearised operator, and
-a transposed one on HJB-SL at $d = 2$ (#2875).
+a transposed one on HJB-SL at $d = 2$ (#2875). Since #2901's stage 1c-i the same check reads the control
+at a point too, so a control of shape $(1, d)$ for $p$ of shape $(d,)$ is refused at construction.
+
+The value and $\partial H/\partial m$ are one value per point, of $m$'s shape: `HamiltonianBase.__call__`
+returns shape $()$ at a point, where $m$ is a number, and shape $(N,)$ for a batch of $N$, and
+`HamiltonianBase.dm` the same. `checked_value`, beside `checked_control`, shares its contract table and
+the form of its refusal, and admits no other shape: each of the library's own Hamiltonians returns
+$()$ at a point (measured at 45fe3298 in #2901's stage 1c-i). In 1c-i only
+`validate_hamiltonian_consistency` reads through it, so at construction a value or a `dm` of shape
+$(1,)$ at a point is refused, though the solvers read such a value right by accident; the solvers'
+own reads of the value come with #2875's stage 3.
 
 *Not yet met (#2875): the form of $p$.* Until #2875's stage 3 sets it, FVM's 1-D wrap face hands a
 0-d $p$, and the library's own control and `dp` answer it with shape $(1,)$, since they hand
 `np.atleast_1d(p)` to the cost. `checked_control` admits that return and gives it back 0-d. When
 stage 3 lands, no read hands a 0-d $p$, and the admission goes.
+
+### What construction compares
+
+The HJB solvers read a Hamiltonian's `__call__` and `dp`, and the FP solvers read its `optimal_control`,
+so a problem's construction compares them (#2901). `validate_hamiltonian_consistency` holds `dp` and `dm`
+to central differences of `__call__`, and the control to $-\partial H/\partial p$, at every probe
+$(t, x, m, p)$:
+
+- $t$ at $0$, $T/2$ and $T$;
+- $x$ at the node nearest the centre of the grid's box and, along each axis, the two end nodes nearest
+  it, at most $2d + 1$ nodes;
+- $m$ at $0.5$ and $1$;
+- $p$ with component $k$ a scale times $(-1)^k (1 + 0.3 k)$, the scale in $0$, $0.4157$ and $-1.3691$,
+  so every component is probed at both signs and at a magnitude of its own.
+
+It refuses on an exhibited witness: a gap above $10^{-2}$ relative and $10^{4}$ times the differencing
+roundoff, at a probe where $H$ is smooth. A disagreement between the probes is not seen. Every source is
+read through one reader, and what it returns through the owner of its shape (above). A source that
+cannot be evaluated at a probe is warned about and skipped there. $H$, `dp` or the control that cannot
+be evaluated at any probe at which it could be read is refused; `dm`, which no grid solver reads, is
+warned about. A network Hamiltonian is not probed here. *Not yet met (#2901, stages 1c-ii and 1c-iii):
+the doors against their methods on the composed Hamiltonian, the composed wall, and the network's
+sources.*
 
 ### What the Fokker–Planck solver receives
 

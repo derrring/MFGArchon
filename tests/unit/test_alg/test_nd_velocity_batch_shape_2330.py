@@ -123,12 +123,12 @@ def test_the_velocity_is_the_optimal_control_at_each_points_own_density(hamilton
             r"validate_hamiltonian_consistency: _ScalarSpeed\.dp was handed p of shape \(2,\) and m of shape \(\), "
             r"and returned shape \(\)\.",
         ),
-        # The batch-against-point check refuses it at construction; past it, the owner of a control's shape would
-        # (#2875), where #2330's own check did.
+        # Its dp cannot be evaluated at a point, so the consistency check refuses it at construction (#2901); at
+        # 45fe3298 the batch-against-point check did, and past both the owner of a control's shape would (#2875).
         (
             _ComponentsFirst(),
-            ValueError,
-            r"compute_fp_velocity_field: .*was handed p of shape \(90, 2\).*returned shape|evaluate_dp, at 3",
+            ValidationError,
+            r"dH_dp could not be evaluated at any probe at which H could",
         ),
     ],
     ids=["one_per_point", "components_first"],

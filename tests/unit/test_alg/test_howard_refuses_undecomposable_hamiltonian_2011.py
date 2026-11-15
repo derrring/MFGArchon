@@ -95,7 +95,8 @@ class LocalCoupling(HamiltonianBase):
         # draft summed over axis=0, which broadcasts to the wrong shape and makes this a DIFFERENT
         # Hamiltonian -- caught by the mutation check below, not by any assertion.
         pa = np.asarray(p, dtype=float)
-        kinetic = 0.5 * np.sum(pa**2, axis=-1) if pa.ndim > 1 else 0.5 * pa**2
+        # One value per point: () at a point, as HamiltonianBase.__call__ documents (#2901).
+        kinetic = 0.5 * np.sum(pa**2, axis=-1) if pa.ndim > 1 else 0.5 * float(np.sum(pa**2))
         return kinetic + self.g * _first_coord(x[0]) * np.asarray(m, dtype=float)
 
     def dp(self, t, x, p, m):

@@ -1970,18 +1970,22 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # Issue #686: Validate custom functions (Hamiltonian, derivatives)
         # Issue #1642 (C1): the derivative-consistency check runs here (it is on by default) and gates only on an
-        # exhibited witness, a dH_dp return of another shape than p's among them (#2875), so a wrong dH_dm/dH_dp is
-        # refused at construction instead of silently steering every Picard step.
+        # exhibited witness, or a return the owner of its shape refuses (#2875), so a wrong dH_dm/dH_dp is refused at
+        # construction instead of silently steering every Picard step. The optimal control is compared with -dH/dp,
+        # since the HJB solvers read H and dp and the FP solvers read the control, at 0, T/2 and T (#2901).
         if has_components and self.geometry is not None:
             from mfgarchon.utils.validation import validate_custom_functions
 
             h_class = self.components._hamiltonian_class
             if h_class is not None:
+                T = float(self.tSpace[-1])
                 func_result = validate_custom_functions(
                     hamiltonian=h_class,
                     dH_dm=h_class.dm,
                     dH_dp=h_class.dp,
                     geometry=self.geometry,
+                    optimal_control=h_class.optimal_control,
+                    times=(0.0, 0.5 * T, T),
                 )
                 if not func_result.is_valid:
                     raise ValidationError(func_result)
