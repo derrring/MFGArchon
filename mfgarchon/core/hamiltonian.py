@@ -1275,7 +1275,8 @@ class Regularizer(Protocol):
         ...
 
 
-#: What each method's return is documented to be, for ``checked_control``'s refusal (#2875).
+#: What each method's return is documented to be, for the refusals of ``checked_control`` and ``checked_value``
+#: (#2875, #2901).
 _SHAPE_CONTRACTS = {
     "optimal_control": "a control of p's shape, as HamiltonianBase.optimal_control and ControlCostBase.optimal_control document",
     "evaluate_optimal_control": (
@@ -1283,6 +1284,8 @@ _SHAPE_CONTRACTS = {
     ),
     "dp": "dH/dp of p's shape, as HamiltonianBase.dp and ControlCostBase.dp document",
     "evaluate_dp": "dH/dp of p's shape, as HamiltonianBase.dp and ControlCostBase.dp document",
+    "__call__": "H's value, one per point and so of m's shape, as HamiltonianBase.__call__ documents",
+    "dm": "dH/dm, one per point and so of m's shape, as HamiltonianBase.dm documents",
 }
 
 
@@ -1301,29 +1304,58 @@ def checked_control(
     form is admitted for now, a 0-d p answered with shape ``(1,)``, returned 0-d; the contract and why are in
     docs/user/CONVENTIONS.md, "What optimal_control and dp return".
     """
-    wanted = np.shape(p)
+    return _checked_shape(alpha, np.shape(p), p=p, m=m, reader=reader, source=source, method=method, admit_1_at_0d=True)
+
+
+def checked_value(value: Any, m: Any, *, reader: str, source: Any, p: Any = None, method: str = "__call__") -> NDArray:
+    """What ``source.<method>`` returned for density ``m``, read only if it is one value per point, m's shape (#2901).
+
+    ``checked_control``'s sibling for the methods whose return is one value per point, ``__call__`` and ``dm``: it shares
+    that owner's contract table and the form of its refusal. A float m, one point, takes a value of shape (); an m of
+    shape (N,), a batch, takes shape (N,). Another shape is refused, naming the reader, the source and its method, the
+    shapes handed, and the shape that came back; so is a return numpy cannot read as an array. At a float m a return of
+    shape () that is not a number, ``None`` for instance, passes here, and its reader decides: the one reader of
+    ``validate_hamiltonian_consistency`` counts it as a probe the source could not be evaluated at.
+
+    No other form is admitted. At the probes of ``validate_hamiltonian_consistency``, each of the library's own
+    Hamiltonians returns a value of shape () for ``__call__`` and for ``dm`` (measured at 45fe3298 in #2901's stage 1c).
+    In 1c only that check reads through here; the solvers' reads of the value come with #2875's stage 3.
+    """
+    return _checked_shape(
+        value, np.shape(m), p=p, m=m, reader=reader, source=source, method=method, admit_1_at_0d=False
+    )
+
+
+def _checked_shape(
+    value: Any, wanted: tuple[int, ...], *, p: Any, m: Any, reader: str, source: Any, method: str, admit_1_at_0d: bool
+) -> NDArray:
+    """The one refusal behind ``checked_control`` and ``checked_value``: ``value`` read only if it has shape ``wanted``."""
+    handed_p = f"p of shape {np.shape(p)}"
     handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
-    handed = f"{reader}: {type(source).__name__}.{method} was handed p of shape {wanted} and {handed_m}, and"
+    named = (
+        source.__name__ if isinstance(source, type) else type(source).__name__
+    )  # a classmethod's source is its class
+    handed = f"{reader}: {named}.{method} was handed {handed_p} and {handed_m}, and"
     contract = (
         f"The library reads {_SHAPE_CONTRACTS[method]} "
         f'(docs/user/CONVENTIONS.md, "What optimal_control and dp return"; #2875).'
     )
     try:
-        got = np.asarray(alpha)
+        got = np.asarray(value)
     except ValueError as unreadable:
         raise ValueError(
-            f"{handed} returned a {type(alpha).__name__} that numpy cannot read as an array ({unreadable}). {contract}"
+            f"{handed} returned a {type(value).__name__} that numpy cannot read as an array ({unreadable}). {contract}"
         ) from unreadable
     if got.shape == wanted:
         return got
-    if wanted == () and got.shape == (1,):
+    if admit_1_at_0d and wanted == () and got.shape == (1,):
         return got.reshape(())
     if got.dtype.kind in "biufc":
         returned = f"returned shape {got.shape}"
-    elif isinstance(alpha, np.ndarray):
+    elif isinstance(value, np.ndarray):
         returned = f"returned shape {got.shape} of dtype {got.dtype}"
     else:
-        returned = f"returned a {type(alpha).__name__}, not an array of numbers"
+        returned = f"returned a {type(value).__name__}, not an array of numbers"
     raise ValueError(f"{handed} {returned}. {contract}")
 
 
@@ -1513,7 +1545,9 @@ class HamiltonianBase(MFGOperatorBase):
         Returns
         -------
         float | NDArray
-            Hamiltonian value(s)
+            The Hamiltonian's value, one per point and so of m's shape: shape () at a point, where m is a number, and
+            shape (N,) for a batch of N (``checked_value``, #2901). A ``NetworkHamiltonian`` is read otherwise: its m
+            is the density at every node, and it returns one value for the node it is handed.
         """
         ...
 

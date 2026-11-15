@@ -22,9 +22,10 @@ of another shape.
   Newton, `jacobian_fd`): a read that hands the owner a p other than the one it handed `dp` fails here.
 - **At construction, a point return of another shape is refused** (a mutation-verified pin): (1, d) for p (d,) at d = 1
   and 2, and () for p (1,), with batches right, so a solver that reads no point, such as HJB-FDM, is refused too.
-  `validate_hamiltonian_consistency` turns a failure to evaluate into a warning (#1642, C1: it gates only on an
-  exhibited witness), and a return of the refused shape at its probe is one, so it is an error. The control: a dp that
-  raises at the probe still leaves the result valid, with C1's warning.
+  `validate_hamiltonian_consistency` turns a failure to evaluate at some probes into a warning (#1642, C1: it gates
+  only on an exhibited witness), and a return of the refused shape at a probe is one, so it is an error. The control:
+  a dp that raises at some probes still leaves the result valid, with C1's warning; one that raises at every probe at
+  which H can be read is refused (#2901).
 - **The 0-d admission and the message per method.** *Not yet met (#2875): the form of p.* The library's dp answers a
   0-d p with (1,), as its control does; the owner admits it under `dp` too. The refusal's last sentence names what the
   method returns.
@@ -91,8 +92,8 @@ def _point(p, t):
     return np.ndim(p) == 1
 
 
-def _point_after_0(p, t):  # construction reads points at t = 0
-    return np.ndim(p) == 1 and t > 0
+def _point_off_the_probe_times(p, t):  # construction reads points at t = 0, T/2 and T (#2901)
+    return np.ndim(p) == 1 and min(abs(t - s) for s in (0.0, 0.5 * T, T)) > 1e-12
 
 
 def _separable(form, where):
@@ -254,7 +255,7 @@ READS = {
         "dp",
         _gfdm(monotonicity_scheme="joint_socp", monotonicity_application="precompute"),
         "m of shape ()",
-        [("lead", _point_after_0, (1,), (1, 1)), ("double", _point_after_0, (1,), (2,))],
+        [("lead", _point_off_the_probe_times, (1,), (1, 1)), ("double", _point_off_the_probe_times, (1,), (2,))],
     ),
     "HJB-SL foot velocity 1-D": (
         "HJBSemiLagrangianSolver._characteristic_foot_velocity",
@@ -282,7 +283,7 @@ READS = {
         "evaluate_dp",
         _semi_lagrangian("value at a point", 1),
         "m of shape ()",
-        [("lead", _point_after_0, (1,), (1, 1)), ("double", _point_after_0, (1,), (2,))],
+        [("lead", _point_off_the_probe_times, (1,), (1, 1)), ("double", _point_off_the_probe_times, (1,), (2,))],
     ),
     "HJB-SL value update 2-D": (
         "HJBSemiLagrangianSolver._sl_value_update",
@@ -329,7 +330,7 @@ def test_each_read_refuses_a_dp_of_another_shape(read, form):
     where, p_shape, got_shape = next((w, p, got) for f, w, p, got in cases if f == form)
     at_construction = reader == "validate_hamiltonian_consistency"
     message = (
-        ("^" if not at_construction else r"^\[ERROR\] \(hamiltonian\) ")
+        ("^" if not at_construction else r"^\[ERROR\] \(dH_dp\) ")
         + rf"{re.escape(reader)}: Formed\.{method} was handed p of shape {re.escape(str(p_shape))} and "
         rf"{re.escape(m_clause)}, and returned shape {re.escape(str(got_shape))}\."
     )
@@ -349,15 +350,16 @@ def test_each_read_takes_the_librarys_dp(read):
     assert np.array_equal(formed, shipped)
 
 
-def test_a_dp_that_fails_to_evaluate_at_the_probe_still_warns():
-    """C1 (#1642) is intact: only the owner's refusal moved to the error channel. A dp that raises at the consistency
-    probe is a failure to evaluate, which warns and leaves the result valid. Called as MFGProblem calls it: through a
-    problem, the batch-against-point check, which runs after the validators, refuses a dp that raises."""
+def test_a_dp_that_fails_to_evaluate_at_some_probes_still_warns():
+    """C1 (#1642) is intact: only the owner's refusal moved to the error channel. A dp that raises at some consistency
+    probes is a failure to evaluate there, which warns and leaves the result valid; one that raises at every probe is
+    #2901's every-probe refusal, pinned in its own file. Called as MFGProblem calls it: through a problem, the
+    batch-against-point check, which runs after the validators, refuses a dp that raises."""
 
     class Raising(SeparableHamiltonian):
         def dp(self, t, x, p, m):
-            if np.ndim(p) == 1:
-                raise ValueError("this dp cannot be evaluated at a point")
+            if np.ndim(p) == 1 and float(np.asarray(p)[0]) < 0:
+                raise ValueError("this dp cannot be evaluated at a negative momentum")
             return super().dp(t=t, x=x, p=p, m=m)
 
     h = Raising(control_cost=QuadraticControlCost(control_cost=1.0))
@@ -366,7 +368,8 @@ def test_a_dp_that_fails_to_evaluate_at_the_probe_still_warns():
     assert result.is_valid
     warned = [str(issue.message) for issue in result.issues]
     assert any(
-        w.startswith("Could not verify Hamiltonian consistency: this dp cannot be evaluated at a point") for w in warned
+        w.startswith("Could not evaluate dH_dp at ") and "this dp cannot be evaluated at a negative momentum" in w
+        for w in warned
     ), warned
 
 

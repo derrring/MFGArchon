@@ -190,15 +190,26 @@ def test_a_hamiltonian_not_as_shipped_is_read_as_it_serves(form, monkeypatch):
 
 
 def test_a_cost_instance_holding_only_its_optimal_control_is_read_as_it_serves():
-    """A QuadraticControlCost whose instance holds only an optimal_control, another cost's, is not as the library ships
-    it (#2914), so the control it serves drives the FP. It solves as the same methods served from a cost class does
-    (#2915 review 2, S1)."""
+    """A QuadraticControlCost whose instance holds only an optimal_control is not as the library ships it (#2914), so the
+    control it serves drives the FP, rather than -c*grad(U) formed from its type (#2915 review 2, S1).
+
+    Since #2901 a problem refuses a control that is not -dp of its H, so the served control is the cost's own, recorded,
+    and not another cost's. Construction reads it at its probes, so the records are cleared before the solve: what is
+    asserted is that the solve reads the entry the instance holds, and solves as the library H on that cost."""
     cost = QuadraticControlCost(control_cost=1.0)
-    cost.optimal_control = STEEP.optimal_control
-    by_instance = SeparableHamiltonian(cost, coupling=_coupling)
-    own = type("OwnControl", (QuadraticControlCost,), {"optimal_control": lambda self, p: STEEP.optimal_control(p)})
-    by_class = SeparableHamiltonian(own(control_cost=1.0), coupling=_coupling)
-    np.testing.assert_allclose(_default(by_instance), _default(by_class), rtol=0, atol=1e-12)
+    own, reads = cost.optimal_control, []
+
+    def served(p):
+        reads.append(np.shape(p))
+        return own(p)
+
+    cost.optimal_control = served
+    problem = _problem(SeparableHamiltonian(cost, coupling=_coupling))
+    reads.clear()
+    solved = _quiet(lambda: problem.solve(max_iterations=6, tolerance=1e-12, verbose=False))
+    assert reads, "the solve did not read the optimal_control the cost instance holds"
+    library = _default(SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=_coupling))
+    np.testing.assert_allclose(solved, library, rtol=0, atol=1e-12)
 
 
 def test_the_shipped_hamiltonian_is_certified_and_fp_sl_takes_it():
