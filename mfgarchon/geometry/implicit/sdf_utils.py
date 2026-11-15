@@ -27,7 +27,7 @@ Use Cases:
 
 Examples:
     >>> import numpy as np
-    >>> from mfgarchon.utils.numerical import sdf_sphere, sdf_box
+    >>> from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere, sdf_box
     >>>
     >>> # Distance to unit sphere centered at origin
     >>> points = np.array([[0, 0], [1, 0], [2, 0]])

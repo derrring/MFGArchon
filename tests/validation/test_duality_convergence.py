@@ -231,7 +231,7 @@ class TestDualityConvergence:
     def test_safe_mode_guarantees_duality(self):
         """Test that Safe Mode automatically creates dual pairs."""
         from mfgarchon.factory import create_paired_solvers
-        from mfgarchon.utils import check_solver_duality
+        from mfgarchon.utils.adjoint_validation import check_solver_duality
 
         problem = MFGProblem(
             geometry=TensorProductGrid(
@@ -258,7 +258,7 @@ class TestDualityConvergence:
         """Test that Expert Mode detects non-dual pairs."""
         from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPSLSolver
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-        from mfgarchon.utils import check_solver_duality
+        from mfgarchon.utils.adjoint_validation import check_solver_duality
 
         problem = MFGProblem(
             geometry=TensorProductGrid(
@@ -399,7 +399,7 @@ if __name__ == "__main__":
     print("Running duality convergence validation...\n")
 
     from mfgarchon.factory import create_paired_solvers
-    from mfgarchon.utils import check_solver_duality
+    from mfgarchon.utils.adjoint_validation import check_solver_duality
 
     # Test 1: Verify dual pairing
     print("Test 1: Safe Mode duality guarantee")

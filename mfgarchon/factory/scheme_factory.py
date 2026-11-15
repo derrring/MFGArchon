@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.types import NumericalScheme
-from mfgarchon.utils import DualityStatus, check_solver_duality
+from mfgarchon.utils.adjoint_validation import DualityStatus, check_solver_duality
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver

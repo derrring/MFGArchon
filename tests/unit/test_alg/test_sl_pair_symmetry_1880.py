@@ -31,7 +31,7 @@ from mfgarchon.factory.scheme_factory import create_paired_solvers
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.types import NumericalScheme
-from mfgarchon.utils import DualityStatus, check_solver_duality
+from mfgarchon.utils.adjoint_validation import DualityStatus, check_solver_duality
 
 _H = SeparableHamiltonian(
     control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: -m, coupling_dm=lambda m: -1.0

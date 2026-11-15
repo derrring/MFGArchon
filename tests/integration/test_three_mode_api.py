@@ -278,7 +278,7 @@ class TestExpertMode:
         fp = FPSLSolver(problem)  # Semi-Lagrangian FP with FDM HJB = not dual
 
         # Verify they're detected as non-dual
-        from mfgarchon.utils import check_solver_duality
+        from mfgarchon.utils.adjoint_validation import check_solver_duality
 
         result = check_solver_duality(hjb, fp, warn_on_mismatch=False)
         assert not result.is_valid_pairing()

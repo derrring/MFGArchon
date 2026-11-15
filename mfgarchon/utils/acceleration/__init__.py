@@ -65,9 +65,11 @@ JAX_UTILS_AVAILABLE = HAS_JAX
 # PyTorch utilities, re-exported LAZILY (PEP 562).
 #
 # This block used to `from .torch_utils import (...)` eagerly, and `torch_utils.py:16` is a bare
-# `import torch`. Three independent routes reach this file during `import mfgarchon` -- through
+# `import torch`. Three independent routes reached this file during `import mfgarchon` -- through
 # `adjoint_validation`, through `utils.geometry`, and through `backends` -- so torch was imported
-# unconditionally by anyone who touched the package, whichever route they arrived by. Measured on
+# unconditionally by anyone who touched the package, whichever route they arrived by. #2938's stage 2a
+# deleted the first two; the file still loads during `import mfgarchon`, through `utils.numerical`'s
+# `nonlinear_solvers`. Measured on
 # 1aa71b98: deferring this and the eager registrations in `backends/__init__.py` together takes
 # ~0.8s off `import mfgarchon` and removes torch from `sys.modules` entirely (the changelog holds
 # the one measurement with its conditions; absolutes drift ~0.4s between rounds). Deferring

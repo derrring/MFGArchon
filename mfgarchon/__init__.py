@@ -1,10 +1,6 @@
-from importlib.metadata import PackageNotFoundError, version
+from .utils.version import MFGARCHON_VERSION as _MFGARCHON_VERSION
 
-try:
-    __version__ = version("mfgarchon")  # Matches the name in pyproject.toml
-except PackageNotFoundError:
-    # package is not installed
-    __version__ = "0.0.0-dev"  # Or some other placeholder
+__version__ = _MFGARCHON_VERSION
 
 # Ensure NumPy 2.0+ compatibility on import
 from .utils.numpy_compat import ensure_numpy_compatibility

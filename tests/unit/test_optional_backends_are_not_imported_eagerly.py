@@ -6,27 +6,30 @@ both were nonetheless imported by anything that touched the package. Measured on
 and cuts ~0.8s — the same order as torch's own cold import
 cost measured on its own.
 
-**Two sites, and cutting either alone changes nothing.** Three independent routes reach torch
-during `import mfgarchon`:
+**Two sites, and cutting either alone changes nothing.** Three independent routes reached torch
+during `import mfgarchon` before #2938's stage 2a:
 
     utils/__init__.py -> adjoint_validation.py -> alg -> ...
         -> nonlinear_solvers.py -> utils/acceleration/__init__.py -> torch_utils.py
     utils/__init__.py -> utils/geometry.py -> geometry -> ... -> (same leaf)
     base_hjb.py -> backends/compat -> backends/__init__.py -> torch_backend.py
 
-The first two converge on `utils/acceleration`; the third does not *import torch through* it —
+The first two converged on `utils/acceleration`; the third does not *import torch through* it —
 though it does load the module (`import mfgarchon.backends` leaves `utils.acceleration` in
 `sys.modules`, measured on the base tree). `acceleration/__init__.py` states the loading reading
 and this states the torch-route reading; the operative conclusion is the same either way.
-Deferring only
-`backends` leaves routes 1 and 2; deferring only `acceleration` leaves route 3. That is why this
+Stage 2a deleted routes 1 and 2:
+`utils/__init__.py` no longer imports `adjoint_validation` or `utils/geometry`. `utils/acceleration` still loads,
+through `utils/__init__.py` -> `utils/numerical/__init__.py` -> `nonlinear_solvers.py`, and route 3 is unchanged.
+Deferring only `backends` leaves the route into `utils/acceleration`; deferring only `acceleration` leaves route 3. That is why this
 test asserts the outcome — torch is absent — rather than the shape of either file: an outcome
 assertion cannot be satisfied by fixing one site and calling it done.
 
 jax is NOT asserted here, but ~~it still arrives through cvxpy, a third-party chain this
 repository does not control~~ [CORRECTED 2026-09-07] is false: traced with an `__import__` hook,
-jax is already in `sys.modules` before cvxpy is reached. Its route is
-`mfgarchon/__init__.py` -> `utils/adjoint_validation.py` -> ... -> `utils/acceleration/__init__.py`,
+jax is already in `sys.modules` before cvxpy is reached. Its route, since #2938's stage 2a, is
+`mfgarchon/__init__.py` -> `utils/__init__.py` -> `utils/numerical/__init__.py` -> `nonlinear_solvers.py` ->
+`utils/acceleration/__init__.py`,
 which does `import jax` to COMPUTE `HAS_JAX` (it calls `jax.devices()`), so importing the flag
 imports the thing the flag is about. Deferring cvxpy does not move it -- measured. jax needs
 `utils/acceleration` to re-export its jax-backed names lazily, which is a larger change and its own

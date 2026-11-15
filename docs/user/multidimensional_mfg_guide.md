@@ -51,7 +51,7 @@ MFGArchon's multi-dimensional framework enables efficient solution of Mean Field
 
 ```python
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.utils import SparseMatrixBuilder, SparseSolver
+from mfgarchon.utils.sparse_operations import SparseMatrixBuilder, SparseSolver
 from mfgarchon.visualization import MultiDimVisualizer
 
 # 1. Create 2D grid
@@ -176,7 +176,7 @@ Efficient sparse linear algebra for large-scale systems.
 ### Building Sparse Operators
 
 ```python
-from mfgarchon.utils import SparseMatrixBuilder
+from mfgarchon.utils.sparse_operations import SparseMatrixBuilder
 
 builder = SparseMatrixBuilder(grid, matrix_format='csr')
 ```
@@ -215,7 +215,7 @@ du_dy = (Gy @ u_flat).reshape(grid.Nx_points)
 ### Solving Linear Systems
 
 ```python
-from mfgarchon.utils import SparseSolver
+from mfgarchon.utils.sparse_operations import SparseSolver
 
 # Direct solver (best for small-medium problems)
 solver_direct = SparseSolver(method='direct')
@@ -341,7 +341,7 @@ viz.save(fig, 'animation.html')
 ```python
 import numpy as np
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.utils import SparseMatrixBuilder, SparseSolver
+from mfgarchon.utils.sparse_operations import SparseMatrixBuilder, SparseSolver
 from mfgarchon.visualization import MultiDimVisualizer
 
 # === PROBLEM SETUP ===

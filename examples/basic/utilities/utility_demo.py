@@ -12,14 +12,8 @@ Run:
 
 import numpy as np
 
-from mfgarchon.utils import (
-    CircleObstacle,
-    RectangleObstacle,
-    Union,
-    create_circle_obstacle,
-    interpolate_grid_to_particles,
-    interpolate_particles_to_grid,
-)
+from mfgarchon.utils import interpolate_grid_to_particles, interpolate_particles_to_grid
+from mfgarchon.utils.geometry import CircleObstacle, RectangleObstacle, Union, create_circle_obstacle
 
 
 def demo_particle_interpolation():

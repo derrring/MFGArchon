@@ -25,30 +25,8 @@ Deprecation Note (v0.19.0):
 # NOTE: The `logging` alias (from . import mfg_logging as logging) was removed in v0.17.0
 # Users should import from mfgarchon.utils.mfg_logging or use the re-exported functions directly
 
-# SDF utilities, re-exported from their home in geometry
-from mfgarchon.geometry.implicit.sdf_utils import (
-    sdf_box,
-    sdf_complement,
-    sdf_difference,
-    sdf_gradient,
-    sdf_intersection,
-    sdf_smooth_intersection,
-    sdf_smooth_union,
-    sdf_sphere,
-    sdf_union,
-)
-
-# Adjoint duality validation (Issue #580)
-from .adjoint_validation import (
-    DualityStatus,
-    DualityValidationResult,
-    check_solver_duality,
-    validate_scheme_config,
-)
-
 # Core utility functions (non-plotting)
 from .aux_func import npart, ppart
-from .cli import main as cli_main  # noqa: F401
 from .convergence import (
     ConvergenceWrapper,
     DistributionComparator,
@@ -94,14 +72,6 @@ from .data.validation import (
     validate_mfg_solution,
     validate_solution_array,
 )
-
-# Drift field helpers for FP solvers
-from .drift_helpers import (
-    composite_drift,
-    density_dependent_drift,
-    prescribed_drift,
-    zero_drift,
-)
 from .exceptions import (
     ConfigurationError,
     ConvergenceError,
@@ -113,30 +83,6 @@ from .exceptions import (
     validate_array_dimensions,
     validate_parameter_value,
     validate_solver_state,
-)
-from .experiment_manager import (  # noqa: F401
-    load_experiment_data,
-    load_experiments_from_dir,
-    plot_comparison_final_m,
-    plot_comparison_total_mass,
-    save_experiment_data,
-)
-from .geometry import (
-    BoxObstacle,
-    CircleObstacle,
-    Complement,
-    Difference,
-    Hyperrectangle,
-    Hypersphere,
-    ImplicitDomain,
-    Intersection,
-    RectangleObstacle,
-    SphereObstacle,
-    Union,
-    create_box_obstacle,
-    create_circle_obstacle,
-    create_rectangle_obstacle,
-    create_sphere_obstacle,
 )
 from .memory_management import (  # noqa: F401
     MemoryMonitor,
@@ -183,9 +129,6 @@ from .numerical.particle.interpolation import (
     interpolate_grid_to_particles,
     interpolate_particles_to_grid,
 )
-
-# PDE coefficient handling
-from .pde_coefficients import CoefficientField, check_adi_compatibility, get_spatial_grid
 from .performance.monitoring import (  # noqa: F401
     PerformanceMonitor,
     benchmark_solver,
@@ -193,32 +136,12 @@ from .performance.monitoring import (  # noqa: F401
     performance_tracked,
 )
 from .solver_result import ConvergenceResult, MFGSolverResult, SolverResult, create_solver_result
-from .sparse_operations import (
-    SparseMatrixBuilder,
-    SparseSolver,
-    estimate_sparsity,
-    sparse_matmul,
-)
 
 # Public API - Core utilities always available
 # Keep organized with comments, don't auto-sort
 __all__ = [
     # Availability flag: whether polars is installed (re-exported from data.polars_integration)
     "POLARS_AVAILABLE",
-    # Adjoint duality validation (Issue #580)
-    "DualityStatus",
-    "DualityValidationResult",
-    "check_solver_duality",
-    "validate_scheme_config",
-    # PDE coefficient handling
-    "CoefficientField",
-    "check_adi_compatibility",
-    "get_spatial_grid",
-    # Drift field helpers for FP solvers
-    "zero_drift",
-    "prescribed_drift",
-    "density_dependent_drift",
-    "composite_drift",
     # Convergence monitoring (new names)
     "ConvergenceWrapper",
     "DistributionConvergenceMonitor",
@@ -231,24 +154,13 @@ __all__ = [
     "create_rolling_monitor",
     # Array norm (#2566)
     "compute_norm",
-    # Geometry utilities (obstacles, SDF)
-    "BoxObstacle",
-    "CircleObstacle",
-    "Complement",
     # Exception handling
     "ConfigurationError",
     "ConvergenceError",
     # Solver results
     "ConvergenceResult",
-    # CSG operations
-    "Difference",
     "DimensionMismatchError",
     "DistributionComparator",
-    # Geometry primitives
-    "Hyperrectangle",
-    "Hypersphere",
-    "ImplicitDomain",
-    "Intersection",
     # Callable signature adapter (Issue #684)
     # Hamiltonian signature adapter
     # Logging
@@ -260,8 +172,6 @@ __all__ = [
     "NumericalInstabilityError",
     "SolutionNotAvailableError",
     "SolverResult",
-    "SparseMatrixBuilder",
-    "SparseSolver",
     # NOTE: adaptive_bandwidth_selection was removed in v0.17.0, use estimate_kde_bandwidth
     "adaptive_convergence",
     "add_logging_to_class",
@@ -269,23 +179,12 @@ __all__ = [
     "configure_logging",
     "configure_research_logging",
     "create_solver_result",
-    "estimate_sparsity",
     # Integration utilities
     "get_integration_info",
     # Particle interpolation
     "interpolate_grid_to_particles",
     "interpolate_particles_to_grid",
     "estimate_kde_bandwidth",
-    # Signed distance functions
-    "sdf_box",
-    "sdf_complement",
-    "sdf_difference",
-    "sdf_gradient",
-    "sdf_intersection",
-    "sdf_smooth_intersection",
-    "sdf_smooth_union",
-    "sdf_sphere",
-    "sdf_union",
     "get_logger",
     "log_performance_metric",
     "log_solver_completion",
@@ -299,16 +198,10 @@ __all__ = [
     "npart",
     "performance_logged",
     "ppart",
-    # Geometry aliases
-    "RectangleObstacle",
-    "SphereObstacle",
     # Validation
     "safe_solution_return",
-    "sparse_matmul",
     "test_particle_detection",
     "trapezoid",
-    # CSG helpers
-    "Union",
     "validate_array_dimensions",
     "validate_convergence_parameters",
     "validate_mfg_solution",
@@ -316,11 +209,6 @@ __all__ = [
     "validate_solution_array",
     "validate_solver_state",
     "wrap_solver_with_adaptive_convergence",
-    # Geometry factory functions
-    "create_box_obstacle",
-    "create_circle_obstacle",
-    "create_rectangle_obstacle",
-    "create_sphere_obstacle",
 ]
 
 # Re-exported submodule APIs
@@ -343,21 +231,6 @@ __all__.extend(
     ]
 )
 
-__all__.extend(
-    [
-        "cli_main",
-    ]
-)
-
-__all__.extend(
-    [
-        "load_experiment_data",
-        "load_experiments_from_dir",
-        "plot_comparison_final_m",
-        "plot_comparison_total_mass",
-        "save_experiment_data",
-    ]
-)
 
 __all__.extend(
     [

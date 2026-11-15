@@ -23,7 +23,7 @@ These utilities wrap the full `mfgarchon.geometry.implicit` infrastructure with 
 ## Quick Start
 
 ```python
-from mfgarchon.utils import sdf_sphere, sdf_box, sdf_union, sdf_difference
+from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere, sdf_box, sdf_union, sdf_difference
 import numpy as np
 
 # Distance to unit sphere
@@ -52,7 +52,7 @@ Compute signed distance to hypersphere (interval in 1D, circle in 2D, ball in 3D
 
 ```python
 import numpy as np
-from mfgarchon.utils import sdf_sphere
+from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere
 
 # 1D interval [0, 1] = sphere centered at 0.5 with radius 0.5
 points = np.array([0.0, 0.5, 1.0, 1.5])
@@ -115,7 +115,7 @@ dist = sdf_box(points, bounds=[[0, 1], [0, 1], [0, 1]])
 Combine domains by taking minimum SDF (least restrictive).
 
 ```python
-from mfgarchon.utils import sdf_union
+from mfgarchon.geometry.implicit.sdf_utils import sdf_union
 
 # Two circles forming capsule-like shape
 points = np.linspace(-2, 2, 100).reshape(-1, 1)
@@ -138,7 +138,7 @@ union = sdf_union(s1, s2, s3)
 Intersect domains by taking maximum SDF (most restrictive).
 
 ```python
-from mfgarchon.utils import sdf_intersection
+from mfgarchon.geometry.implicit.sdf_utils import sdf_intersection
 
 # Intersection of two overlapping circles (lens shape)
 points = np.linspace(-2, 2, 100).reshape(-1, 1)
@@ -160,7 +160,7 @@ constrained = sdf_intersection(box, circle)
 Reverse inside/outside by negating SDF.
 
 ```python
-from mfgarchon.utils import sdf_complement
+from mfgarchon.geometry.implicit.sdf_utils import sdf_complement
 
 # Exterior of sphere (everything outside is now "inside")
 points = np.array([[0, 0], [1, 0], [2, 0]])
@@ -178,7 +178,7 @@ exterior = sdf_complement(sphere_dist)
 Remove one domain from another (A \ B).
 
 ```python
-from mfgarchon.utils import sdf_difference
+from mfgarchon.geometry.implicit.sdf_utils import sdf_difference
 
 # Box with circular hole
 points = np.random.uniform(-2, 2, (1000, 2))
@@ -202,7 +202,7 @@ ring = sdf_difference(outer, inner)
 Create smooth blend between shapes instead of sharp seam.
 
 ```python
-from mfgarchon.utils import sdf_smooth_union
+from mfgarchon.geometry.implicit.sdf_utils import sdf_smooth_union
 
 points = np.linspace(-2, 2, 100).reshape(-1, 1)
 circle1 = sdf_sphere(points, center=[-0.5], radius=0.5)
@@ -224,7 +224,7 @@ smooth = sdf_smooth_union(circle1, circle2, smoothing=0.2)
 Create smooth blend at intersection.
 
 ```python
-from mfgarchon.utils import sdf_smooth_intersection
+from mfgarchon.geometry.implicit.sdf_utils import sdf_smooth_intersection
 
 points = np.linspace(-2, 2, 100).reshape(-1, 1)
 circle1 = sdf_sphere(points, center=[-0.3], radius=0.7)
@@ -244,7 +244,7 @@ smooth = sdf_smooth_intersection(circle1, circle2, smoothing=0.1)
 Compute ∇φ using finite differences. For exact SDFs, |∇φ| = 1.
 
 ```python
-from mfgarchon.utils import sdf_gradient
+from mfgarchon.geometry.implicit.sdf_utils import sdf_gradient
 
 # Gradient points outward from sphere center
 points = np.array([[0.5, 0], [0, 0.5]])
@@ -267,7 +267,7 @@ avoidance_force = -obstacle_grad  # Push away from obstacle
 ### 1. Obstacle Avoidance in MFG
 
 ```python
-from mfgarchon.utils import sdf_sphere, sdf_box, sdf_union, sdf_gradient
+from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere, sdf_box, sdf_union, sdf_gradient
 
 # Define obstacles
 points = grid_points  # Your spatial grid
@@ -414,7 +414,7 @@ domain = UnionDomain([sphere, box])
 dist = domain.signed_distance(points)
 
 # Utility functions (for quick prototyping)
-from mfgarchon.utils import sdf_sphere, sdf_box, sdf_union
+from mfgarchon.geometry.implicit.sdf_utils import sdf_sphere, sdf_box, sdf_union
 
 sphere_dist = sdf_sphere(points, center=[0, 0], radius=1.0)
 box_dist = sdf_box(points, bounds=[[-1, 1], [-1, 1]])

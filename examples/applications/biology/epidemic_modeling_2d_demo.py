@@ -58,7 +58,7 @@ import numpy as np
 # Multi-dimensional infrastructure
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils import SparseMatrixBuilder, SparseSolver
+from mfgarchon.utils.sparse_operations import SparseMatrixBuilder, SparseSolver
 
 
 def create_epidemic_problem():

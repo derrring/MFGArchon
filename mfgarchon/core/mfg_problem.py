@@ -2574,7 +2574,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         from mfgarchon.alg.numerical.coupling import FixedPointIterator
         from mfgarchon.config import MFGSolverConfig
         from mfgarchon.factory import create_paired_solvers, get_recommended_scheme
-        from mfgarchon.utils import check_solver_duality
+        from mfgarchon.utils.adjoint_validation import check_solver_duality
 
         # Issue #875: Nt override at solve() time
         if Nt is not None and Nt != self.Nt:

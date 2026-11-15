@@ -67,8 +67,11 @@ from mfgarchon.geometry.boundary.corner import (
 )
 from mfgarchon.geometry.boundary.periodic import wrap_axis, wrap_positions
 from mfgarchon.geometry.implicit import Hyperrectangle, Hypersphere
-from mfgarchon.utils.numerical.particle.sampling import sample_from_scattered_density
-from mfgarchon.utils.particle_utils import apply_boundary_conditions_gpu, apply_boundary_conditions_numpy
+from mfgarchon.utils.particle_utils import (
+    apply_boundary_conditions_gpu,
+    apply_boundary_conditions_numpy,
+    sample_from_scattered_density,
+)
 
 P, D, NF = BCType.PERIODIC, BCType.DIRICHLET, BCType.NO_FLUX
 
