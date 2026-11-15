@@ -26,7 +26,8 @@ if TYPE_CHECKING:
 # The consistency check is allowed to *gate* (set is_valid False, so the caller's
 # `raise ValidationError(result)` fires), but only on an exhibited witness: a
 # concrete (x, m, p) where the derivative identity measurably fails by a margin
-# no finite-difference artifact can produce. Anything weaker stays a warning,
+# no finite-difference artifact can produce, or where dH_dp returns what the owner
+# of its shape, `checked_control`, refuses (#2875). Anything weaker stays a warning,
 # because a numerical check that raises on a false positive is worse than one
 # that warns.
 
@@ -294,8 +295,9 @@ def validate_hamiltonian_derivative(
 
     # Check return type
     if not isinstance(value, (int, float, np.integer, np.floating, np.ndarray)):
+        wanted = "an ndarray of p's shape" if name == "dH_dp" else "float or ndarray"
         result.add_error(
-            f"{name} must return float or ndarray, got {type(value).__name__}",
+            f"{name} must return {wanted}, got {type(value).__name__}",
             location=name,
         )
 
@@ -476,7 +478,9 @@ def validate_hamiltonian_consistency(
     result, so a caller doing `if not result.is_valid: raise ValidationError(...)`
     will fire. It does so only on an **exhibited witness** — a probe point where
     H is smooth, all values are finite, and the discrepancy clears both a relative
-    margin and the differencing roundoff bound by a wide factor. Every weaker
+    margin and the differencing roundoff bound by a wide factor, or a probe point
+    where dH_dp returns what ``checked_control`` refuses: another shape than p's,
+    or a return numpy cannot read as an array (#2875). Every weaker
     signal (small discrepancy, kink at the probe, non-finite value, failure to
     evaluate) is a warning, because a false positive here would refuse a correct
     problem at construction time.
@@ -490,7 +494,7 @@ def validate_hamiltonian_consistency(
         dH_dp: Claimed gradient dH/dp, the same kinds as dH_dm. Optional.
 
     Returns:
-        ValidationResult; is_valid is False when a witness was exhibited.
+        ValidationResult; is_valid is False when a witness was exhibited, a refused dH_dp return among them.
     """
     result = ValidationResult()
 
@@ -529,7 +533,24 @@ def validate_hamiltonian_consistency(
             # --- dH_dp, per component ---
             if dH_dp is None:
                 continue
-            dp_analytical = np.atleast_1d(_call_h(dH_dp, x_sample, m, p)).astype(float)
+            from mfgarchon.core.hamiltonian import checked_control
+
+            returned = _call_h(dH_dp, x_sample, m, p)
+            try:
+                checked = checked_control(
+                    returned,
+                    p,
+                    reader="validate_hamiltonian_consistency",
+                    source=getattr(dH_dp, "__self__", dH_dp),
+                    m=m,
+                    method="dp",
+                )
+            except ValueError as refusal:
+                # C1 gates only on an exhibited witness, and a return of the refused shape at this probe is one: the
+                # owner's refusal is an error, not the failure to evaluate that the except below warns of (#2875).
+                result.add_error(str(refusal), location="hamiltonian")
+                return result
+            dp_analytical = np.asarray(checked, dtype=float)
             for i in range(dimension):
                 p_plus = p.copy()
                 p_minus = p.copy()

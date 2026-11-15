@@ -32,6 +32,7 @@ from mfgarchon.core.hamiltonian import CongestionHamiltonian, HamiltonianBase, Q
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.validation import ValidationError
 
 LAM = 2.0
 SLOPES = (0.7, -1.3)
@@ -112,13 +113,28 @@ def test_the_velocity_is_the_optimal_control_at_each_points_own_density(hamilton
     np.testing.assert_allclose(velocity, closed_form, rtol=0, atol=1e-8)
 
 
-@pytest.mark.parametrize("hamiltonian", [_ScalarSpeed(), _ComponentsFirst()], ids=["one_per_point", "components_first"])
-def test_a_control_of_the_wrong_shape_is_refused(hamiltonian):
-    with pytest.raises(
-        # The owner of a control's shape refuses it (#2875), where #2330's own check did.
-        ValueError,
-        match=r"compute_fp_velocity_field: .*was handed p of shape \(90, 2\).*returned shape|evaluate_dp, at 3",
-    ):
+@pytest.mark.parametrize(
+    ("hamiltonian", "refusal", "message"),
+    [
+        # Its dp is one speed at a point too, () for p (2,): the problem refuses it at construction (#2875).
+        (
+            _ScalarSpeed(),
+            ValidationError,
+            r"validate_hamiltonian_consistency: _ScalarSpeed\.dp was handed p of shape \(2,\) and m of shape \(\), "
+            r"and returned shape \(\)\.",
+        ),
+        # The batch-against-point check refuses it at construction; past it, the owner of a control's shape would
+        # (#2875), where #2330's own check did.
+        (
+            _ComponentsFirst(),
+            ValueError,
+            r"compute_fp_velocity_field: .*was handed p of shape \(90, 2\).*returned shape|evaluate_dp, at 3",
+        ),
+    ],
+    ids=["one_per_point", "components_first"],
+)
+def test_a_control_of_the_wrong_shape_is_refused(hamiltonian, refusal, message):
+    with pytest.raises(refusal, match=message):
         _velocity(hamiltonian)
 
 

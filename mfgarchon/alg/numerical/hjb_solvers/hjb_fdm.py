@@ -1408,7 +1408,16 @@ class HJBFDMSolver(BaseHJBSolver):
         # Evaluate dH/dp at all grid points
         x_grid = self.problem.geometry.get_spatial_grid()  # (Nx, 1)
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
-        dH_dp = eval_dH_dp_batch(H_class, x_grid, M_flat, p_grid, time).ravel()  # (Nx,)
+        from mfgarchon.core.hamiltonian import checked_control
+
+        dH_dp = checked_control(
+            eval_dH_dp_batch(H_class, x_grid, M_flat, p_grid, time),
+            p_grid,
+            reader="HJBFDMSolver._build_linearized_operator_1d",
+            source=H_class,
+            m=M_flat,
+            method="evaluate_dp",
+        ).ravel()  # the checked (Nx, 1), as (Nx,)
 
         # Stencil coefficients from the numerical-Hamiltonian owner (#2313): p_i depends on the backward difference
         # (U_i - U_{i-1})/dx with weight dp/da and on the forward difference (U_{i+1} - U_i)/dx with weight dp/db.
@@ -1468,9 +1477,16 @@ class HJBFDMSolver(BaseHJBSolver):
         p_grid = np.column_stack([gradients[d].ravel() for d in range(self.dimension)])
 
         # Evaluate dH/dp: returns (N_total, dim) -- one component per dimension
-        dH_dp_all = eval_dH_dp_batch(H_class, x_grid, M_flat, p_grid, time)
-        if dH_dp_all.ndim == 1:
-            dH_dp_all = dH_dp_all.reshape(-1, 1)
+        from mfgarchon.core.hamiltonian import checked_control
+
+        dH_dp_all = checked_control(
+            eval_dH_dp_batch(H_class, x_grid, M_flat, p_grid, time),
+            p_grid,
+            reader="HJBFDMSolver._build_linearized_operator_nd",
+            source=H_class,
+            m=M_flat,
+            method="evaluate_dp",
+        )
 
         # Build sparse matrix using COO format
         row_indices = []

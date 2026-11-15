@@ -2374,16 +2374,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             ``dH/dp``, shape ``(N, d)``.
         """
         H_class = self.problem.hamiltonian_class
-        vel = np.asarray(eval_dH_dp_batch(H_class, x, m, p, t), dtype=float)
-        p_arr = np.asarray(p, dtype=float)
-        if vel.size != p_arr.size:
-            raise ValueError(
-                f"{type(H_class).__name__}.dp() returned shape {vel.shape} for momentum of shape "
-                f"{p_arr.shape}; the semi-Lagrangian characteristic foot needs one dH/dp component "
-                f"per momentum component. Fix the Hamiltonian's dp() to return the documented "
-                f"(N, d) batch shape (Issue #1547 / RFC #1574)."
-            )
-        return vel.reshape(p_arr.shape)
+        from mfgarchon.core.hamiltonian import checked_control
+
+        return checked_control(
+            eval_dH_dp_batch(H_class, x, m, p, t),
+            np.asarray(p, dtype=float),
+            reader="HJBSemiLagrangianSolver._characteristic_foot_velocity",
+            source=H_class,
+            m=m,
+            method="evaluate_dp",
+        )
 
     def _nd_foot_velocity_field(
         self,
@@ -2573,7 +2573,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         H_class = self.problem.hamiltonian_class
         p_arr = np.atleast_1d(np.asarray(p, dtype=float))
         H_full = np.asarray(eval_H_batch(H_class, x, m, p_arr, t), dtype=float)
-        H_p = np.asarray(eval_dH_dp_batch(H_class, x, m, p_arr, t), dtype=float).reshape(p_arr.shape)
+        from mfgarchon.core.hamiltonian import checked_control
+
+        H_p = checked_control(
+            eval_dH_dp_batch(H_class, x, m, p_arr, t),
+            p_arr,
+            reader="HJBSemiLagrangianSolver._sl_value_update",
+            source=H_class,
+            m=m,
+            method="evaluate_dp",
+        )
         return u_at_foot + dt * (np.sum(p_arr * H_p, axis=-1) - H_full)
 
     def _evaluate_hamiltonian(self, x: np.ndarray | float, p: np.ndarray | float, m: float, time_idx: int) -> float:

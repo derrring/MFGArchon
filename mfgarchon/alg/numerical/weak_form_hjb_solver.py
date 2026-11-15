@@ -304,14 +304,24 @@ class WeakFormHJBSolver(BaseHJBSolver):
         if condense:
             U_current[d_dofs] = d_vals
 
+        from mfgarchon.core.hamiltonian import checked_control
+
         delta_norm = np.inf
         for k in range(max_iterations):
             p_nodal = np.column_stack([self._apply_gradient_operator(d, U_current) for d in range(dim)])  # (N, dim)
 
             H_vals = np.asarray(H_class(x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t), dtype=float).ravel()
-            dH_dp = np.asarray(H_class.dp(x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t), dtype=float)
-            if dH_dp.ndim == 1:
-                dH_dp = dH_dp.reshape(-1, 1)
+            dH_dp = np.asarray(
+                checked_control(
+                    H_class.dp(x=coordinate_tuple(x_grid, dim), m=m_n, p=p_nodal, t=t),
+                    p_nodal,
+                    reader="WeakFormHJBSolver._solve_timestep_newton",
+                    source=H_class,
+                    m=m_n,
+                    method="dp",
+                ),
+                dtype=float,
+            )
 
             residual = (
                 (self._M_time / dt) @ (U_current - U_next) + D * (self._K @ U_current) + self._M @ H_vals - rhs_coupling

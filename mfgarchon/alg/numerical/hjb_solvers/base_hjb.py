@@ -10,7 +10,7 @@ import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
-from mfgarchon.core.hamiltonian import HEvalState, _population_rows
+from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
@@ -1370,9 +1370,14 @@ def compute_hjb_jacobian(
         # Single batch call: dH/dp at all grid points.
         # Issue #1071: consume the single-source Jacobian primitive (∂H/∂p only);
         # this never recomputes the Hamiltonian value H.
-        dH_dp = H_class.evaluate_dp(
-            HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time, cross_density=cross_grid)
-        ).ravel()  # (Nx,) — squeeze the 1D momentum dimension
+        dH_dp = checked_control(
+            H_class.evaluate_dp(HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time, cross_density=cross_grid)),
+            p_grid,
+            reader="compute_hjb_jacobian",
+            source=H_class,
+            m=m_grid,
+            method="evaluate_dp",
+        ).ravel()  # the checked (Nx, 1), as (Nx,)
 
         # dp_i/dU_j: row i of the SAME gradient operator the residual applied, extracted rather than
         # restated. Restating it wrote the interior stencil into the wall rows, which are one-sided
