@@ -159,6 +159,8 @@ def _linearised(dim):
 
 def _gfdm(**options):
     def run(h):
+        if options.get("monotonicity_scheme") == "joint_socp":
+            pytest.importorskip("cvxpy", reason="joint_socp requires cvxpy (the `numerical` extra)")
         from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
         solver = HJBGFDMSolver(_grid_problem(h), X11[:, None], delta=0.25, **options)
