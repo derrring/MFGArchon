@@ -347,18 +347,20 @@ be evaluated at any probe at which it could be read is refused; `dm`, which no g
 warned about. A network Hamiltonian is not probed here.
 
 The solvers read the Hamiltonian after the soft wall is composed into its potential, and they read it
-through its doors: `evaluate_H`, `evaluate_dp` and `evaluate_optimal_control`, handed one point on the
-semi-Lagrangian path and a batch of rows on every other. So construction compares that Hamiltonian's
-doors with their methods, `__call__`, `dp` and `optimal_control`
-(`refuse_a_hamiltonian_whose_reads_disagree`, #2901), at $0$, $T/2$ and $T$, at the probe nodes above with
-the node where the wall is largest added under a wall, and at the six $(m, p)$ above:
+through its doors. HJB-SL's `_sl_value_update` hands `evaluate_H` and `evaluate_dp` one point, the HJB
+batch paths hand them a batch of rows, and `evaluate_optimal_control`'s one reader,
+`compute_fp_velocity_field`, hands it a batch. So construction compares that Hamiltonian's doors with
+their methods, `__call__`, `dp` and `optimal_control` (`refuse_a_hamiltonian_whose_reads_disagree`,
+#2901), in the forms their readers hand them, at $0$, $T/2$ and $T$, at the probe nodes above with the
+node where the wall is largest added under a wall, and at the six $(m, p)$ above:
 
-- on a batch: six batches per time, row $i$ of batch $j$ reading probe $(i + j) \bmod 6$, each row of the
-  door's read compared with the method read at that row alone. A batch holds every probe node, three or
-  more on every grid but a one-dimensional grid of two nodes, which gives two; a row at which the method
-  cannot be read is left out of it and warned about, and a batch left with fewer than two rows is not handed;
-- at a point: the door read alone at each row, as the semi-Lagrangian path hands it, against the method
-  there.
+- on a batch: six batches per time, each row of the door's read compared with the method read at that row
+  alone. A row at which the method cannot be read is left out and warned about, and the $r$-th row left
+  in batch $j$ reads probe $(r + j) \bmod 6$, so a batch varies $p$ across its rows. A batch holds every
+  probe node, three or more on every grid but a one-dimensional grid of two nodes, which gives two, less
+  the rows left out; a batch left with fewer than two rows is not handed;
+- at a point, for `evaluate_H` and `evaluate_dp`: the door read alone at each row, as `_sl_value_update`
+  hands it, against the method there.
 
 `evaluate_H` and `__call__` are one function, so a difference beyond roundoff between them is refused.
 `dp` and the control may be finite differences of $H$, as `HamiltonianBase`'s are, and then carry $H$'s
@@ -368,8 +370,7 @@ $10^{4}\,\varepsilon \max(1, |H|) / h$ with $|H|$ at that row (taken as $1$ wher
 the Hamiltonian's `finite_diff_eps`, or the consistency check's step where it has none: about
 $2.2 \times 10^{-6}$ at $|H| \sim 1$ and the default step. A large $H$ at one row loosens no other row; at a
 row, a door that differs from its method by less than its floor is not seen. A door that raises where its
-method reads is refused too, naming the path that reads that form (the semi-Lagrangian path at one point,
-every other path on a batch), except on a batch when the
+method reads is refused too, naming the reader that hands it that form, except on a batch when the
 Hamiltonian declares `reads_a_batch` False: that is the declaration holding, and since no solver reads the
 flag its batch paths will raise there at solve time, so that batch is not compared. A disagreement on a
 batch is refused whatever the flag says. `dH_dm` and `evaluate` are not compared, since no library caller
@@ -814,8 +815,8 @@ The library chooses when to loop and when to vectorize, so a body that reads dif
 as an error. So a callable's batch read is compared with its read of a few of those points, and a difference, or a raise
 of `TypeError`, `ValueError`, `IndexError`, `ArithmeticError`, `AttributeError` or `KeyError`, is refused: a difference
 names both reads, and a raise names the read that raised. Any other raise reaches you as it is. `_compare_reads` makes the comparison for a callable at
-its door. A Hamiltonian's doors are compared with its methods instead, on a batch and at a point, which covers its
-batch against its points (§ *What construction compares*).
+its door. A Hamiltonian's doors are compared with its methods instead, each in the forms its readers hand it, which
+covers its batch against its points (§ *What construction compares*).
 
 - **Where.** A door with samples when it accepts the callable compares there: `MFGProblem` for its conditions, its
   potential, its `state_penalty` and its Hamiltonian, on its grid. Any other door compares at its first batch, before it

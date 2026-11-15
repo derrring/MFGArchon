@@ -3367,9 +3367,26 @@ def create_hamiltonian(
         )
 
 
-#: The doors the solvers read, each with the method it must agree with (#2901's census: no library caller reads the
-#: ``dH_dm`` door or ``evaluate``).
-_DOORS = (("evaluate_H", "__call__"), ("evaluate_dp", "dp"), ("evaluate_optimal_control", "optimal_control"))
+#: The doors the solvers read, each with the method it must agree with and the readers that hand it each form, at one
+#: point and on a batch (#2901's plan revision, from the call sites at ad5a7726): HJB-SL's `_sl_value_update` reads the value
+#: and dp doors at one point, and the HJB batch paths on a batch; only `compute_fp_velocity_field` reads the control door,
+#: on a batch. None means no reader hands that form, and the door is not compared in it. No library caller reads the
+#: ``dH_dm`` door or ``evaluate``.
+_DOORS = (
+    (
+        "evaluate_H",
+        "__call__",
+        "HJB-SL's `_sl_value_update` reads it at one point",
+        "The HJB batch paths read it on a batch",
+    ),
+    (
+        "evaluate_dp",
+        "dp",
+        "HJB-SL's `_sl_value_update` reads it at one point",
+        "The HJB batch paths read it on a batch",
+    ),
+    ("evaluate_optimal_control", "optimal_control", None, "`compute_fp_velocity_field` reads it on a batch"),
+)
 
 
 def refuse_a_hamiltonian_whose_reads_disagree(
@@ -3377,18 +3394,21 @@ def refuse_a_hamiltonian_whose_reads_disagree(
 ) -> None:
     """Refuse a Hamiltonian whose doors read another Hamiltonian than its methods (#1884, #2481, #2875, #2901).
 
-    The solvers read the doors: ``evaluate_H``, ``evaluate_dp`` and ``evaluate_optimal_control``, handed one point by the
-    semi-Lagrangian path and a batch of rows by every other. A problem compares each door with its method, ``__call__``,
-    ``dp`` and ``optimal_control``, read at each row alone as the consistency check reads it, at each of ``times``:
+    The solvers read the doors in the forms `_DOORS` names with their readers: HJB-SL's `_sl_value_update` hands
+    ``evaluate_H`` and ``evaluate_dp`` one point, the HJB batch paths hand them a batch, and ``evaluate_optimal_control``'s
+    one reader, `compute_fp_velocity_field`, hands it a batch. A problem compares each door with its method, ``__call__``,
+    ``dp`` and ``optimal_control``, read at each row alone as the consistency check reads it, at each of ``times``, in the
+    forms its readers hand it:
 
     - the rows: x the consistency check's probe nodes of ``grid`` (`_probe_nodes`), with the node where the soft wall is
       largest when ``unwalled``, the Hamiltonian before the wall was composed, is given; (m, p) the check's six probes
-      (`_consistency_probes`), row i of batch j reading probe (i + j) mod 6, so every pair is read in a batch. A batch
-      holds every probe node, three or more on every grid but a one-dimensional grid of two nodes, which gives two; a
-      row at which the method cannot be read is left out of it, and a batch left with fewer than two rows is not handed,
-      so no batch of one is;
+      (`_consistency_probes`). A row at which the method cannot be read is left out, and the r-th row left in batch j
+      reads probe (r + j) mod 6, so every readable pair is read in a batch and a batch varies p across its rows. A batch
+      holds every probe node, three or more on every grid but a one-dimensional grid of two nodes, which gives two, less
+      the rows left out; a batch left with fewer than two rows is not handed, so no batch of one is;
     - a batch: each row of the door's read against the method at that row;
-    - a point: the door read alone at each row, ``p`` of shape ``(d,)`` and ``m`` a number, against the method there.
+    - a point, for the value and dp doors: the door read alone at each row, ``p`` of shape ``(d,)`` and ``m`` a number,
+      against the method there.
 
     A Hamiltonian written for one point gives a wrong solve on a batch path, and not always an error: ``0.5*p[0]**2``
     reads node 0's momentum at every node, and Newton converges cleanly to that wrong equation (measured 0.962 off the
@@ -3402,8 +3422,8 @@ def refuse_a_hamiltonian_whose_reads_disagree(
     and at its rows, on values of order 1 (#2901). So their doors are compared above the consistency check's noise floor,
     row by row: ``_WITNESS_NOISE_SAFETY * eps * max(1, |H| at the row) / finite_diff_eps``, about 2.2e-6 at |H| ~ 1 and
     the default step, so a large H at one row loosens no other row. At a row, a door that differs from its method by less
-    than that is not seen. A door that raises where its method reads is refused, naming the path that reads the form it
-    raised in, except on a batch when the Hamiltonian declares ``reads_a_batch`` False: that is the declaration holding,
+    than that is not seen. A door that raises where its method reads is refused, naming the reader that hands it that
+    form, except on a batch when the Hamiltonian declares ``reads_a_batch`` False: that is the declaration holding,
     and the batch paths will raise on it at solve time, so the batch is not compared. A batch read that returns a row
     disagreeing with its method is refused whatever the flag says, since no solver reads it. Rows at which the method
     cannot be read are warned about once per door; the consistency check reports the method. A ``NetworkHamiltonian`` is not read here: its x is a node, and the probe nodes
@@ -3449,15 +3469,12 @@ def refuse_a_hamiltonian_whose_reads_disagree(
         sizes = [h_at[row] if row in h_at and np.isfinite(h_at[row]) else 1.0 for row in rows]
         return noise * np.maximum(1.0, np.array(sizes))[:, None]
 
-    def refused(e: BaseException, door_name: str, where: str, at_a_point: bool) -> ValueError:
+    def refused(e: BaseException, door_name: str, where: str, reads: str) -> ValueError:
         if isinstance(e, SourceShapeError):
             return ValueError(f"{e} At {where}.")
-        reads = (
-            "The semi-Lagrangian path reads it at one point" if at_a_point else "Every batch path reads it on a batch"
-        )
         return ValueError(
-            f"{name}.{door_name} could not be evaluated at {where}, where its method could be read: {e}. {reads}, so a "
-            f"solve there would fail. {guidance}"
+            f"{name}.{door_name} could not be evaluated at {where}, where its method could be read: {e}. "
+            f"{reads}, so a solve through it would fail there. {guidance}"
         )
 
     for t in (float(s) for s in times):
@@ -3470,7 +3487,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(
                 largest = None
             if largest is not None and not any(np.array_equal(largest, q) for q in points):
                 points.append(largest)
-        for door_name, method_name in _DOORS:
+        for door_name, method_name, point_reader, batch_reader in _DOORS:
             door = getattr(hamiltonian, door_name)
             method = hamiltonian if method_name == "__call__" else getattr(hamiltonian, method_name)
             value: dict[tuple[int, int], NDArray] = {}
@@ -3486,10 +3503,12 @@ def refuse_a_hamiltonian_whose_reads_disagree(
                         continue
                     if method_name == "__call__":
                         h_at[i, k] = float(np.max(np.abs(value[i, k]), initial=0.0))
+                    if point_reader is None:  # no solver hands this door one point
+                        continue
                     try:
                         alone = _read_source(door, t=t, x=x, p=p, m=m, method=door_name, form="door", reader=reader)
                     except (SourceShapeError, SourceEvaluationError) as e:
-                        raise refused(e, door_name, f"one point, {where}", at_a_point=True) from e
+                        raise refused(e, door_name, f"one point, {where}", point_reader) from e
                     _refuse_unless_equal(
                         alone,
                         value[i, k],
@@ -3500,8 +3519,13 @@ def refuse_a_hamiltonian_whose_reads_disagree(
                         atol=floor(door_name, [(i, k)], h_at),
                     )
             for j in range(len(probes)):
-                rows = [(i, (i + j) % len(probes)) for i in range(len(points))]
-                rows = [row for row in rows if row in value]  # a row the method cannot be read at is left out
+                # The r-th row the method can be read at reads probe (r + j) mod 6, so a batch with rows left out still
+                # varies p across its rows (#2901's plan revision, review 2's SF-1).
+                rows: list[tuple[int, int]] = []
+                for i in range(len(points)):
+                    row = (i, (len(rows) + j) % len(probes))
+                    if row in value:
+                        rows.append(row)
                 if len(rows) < 2:
                     continue
                 xs = np.stack([points[i] for i, _ in rows])
@@ -3511,10 +3535,10 @@ def refuse_a_hamiltonian_whose_reads_disagree(
                 try:
                     together = _read_source(door, t=t, x=xs, p=ps, m=ms, method=door_name, form="door", reader=reader)
                 except SourceShapeError as e:
-                    raise refused(e, door_name, where, at_a_point=False) from e
+                    raise refused(e, door_name, where, batch_reader) from e
                 except SourceEvaluationError as e:
                     if hamiltonian.reads_a_batch:
-                        raise refused(e, door_name, where, at_a_point=False) from e
+                        raise refused(e, door_name, where, batch_reader) from e
                     continue  # the declaration holding: the batch paths will raise on it at solve time
                 _refuse_unless_equal(
                     together,
@@ -3528,7 +3552,7 @@ def refuse_a_hamiltonian_whose_reads_disagree(
     for door_name, (source, first_error, *left_out) in unread.items():
         warnings.warn(
             f"{source} could not be evaluated at {len(left_out)} probe rows, first at {left_out[0]}: {first_error}. Those "
-            f"rows are left out of {door_name}'s comparison with it, at one point and on a batch: "
+            f"rows are left out of {door_name}'s comparison with it: "
             f"{'; '.join(left_out[:6])}{' ...' if len(left_out) > 6 else ''} (#2901).",
             UserWarning,
             stacklevel=3,

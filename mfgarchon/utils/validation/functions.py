@@ -182,21 +182,11 @@ def _read_source(
     from mfgarchon.core.hamiltonian import HEvalState, _bound_potential, checked_control, checked_value
     from mfgarchon.types.callable_protocols import coordinate_tuple, point_tuple
 
+    rows = form == "potential" and np.ndim(x) == 2
     if form == "potential":
-        rows = np.ndim(x) == 2
         at = coordinate_tuple(np.asarray(x, dtype=float), np.shape(x)[1]) if rows else point_tuple(x)
-        wanted = np.shape(x)[0] if rows else 1
-        try:
-            value = _floats(_bound_potential(source)(x=at, t=t))
-        except _EVALUATION_ERRORS as e:
-            raise SourceEvaluationError(e) from e
-        if value.size not in (1, wanted):
-            raise SourceShapeError(
-                f"{type(source).__name__}'s potential returned shape {value.shape} for {wanted} points, where one value "
-                "per point, or one for all of them, is read"
-            )
-        return np.broadcast_to(value.reshape(-1), (wanted,)).copy() if rows else value.reshape(())
-    if form == "door":
+        call = lambda: _bound_potential(source)(x=at, t=t)  # noqa: E731
+    elif form == "door":
         state = HEvalState(t=t, x=x, p=p, m=m)
         call = lambda: source(state)  # noqa: E731
     elif form == "point":
@@ -208,26 +198,35 @@ def _read_source(
         value = call()
     except _EVALUATION_ERRORS as e:
         raise SourceEvaluationError(e) from e
-    owner_of = getattr(source, "__self__", source)
+    if form != "potential":
+        owner_of = getattr(source, "__self__", source)
+        try:
+            if _SHAPE_OWNER[method] == "control":
+                value = checked_control(value, p, reader=reader, source=owner_of, m=m, method=method)
+            else:
+                value = checked_value(value, m, reader=reader, source=owner_of, p=p, method=method)
+        except ValueError as refusal:
+            raise SourceShapeError(str(refusal)) from refusal
+    # The reader's one conversion, for every form: an object array entry by entry, so None raises rather than reading
+    # as NaN.
     try:
-        if _SHAPE_OWNER[method] == "control":
-            checked = checked_control(value, p, reader=reader, source=owner_of, m=m, method=method)
-        else:
-            checked = checked_value(value, m, reader=reader, source=owner_of, p=p, method=method)
-    except ValueError as refusal:
-        raise SourceShapeError(str(refusal)) from refusal
-    try:
-        return _floats(checked)
+        array = np.asarray(value)
+        floats = (
+            np.array([float(v) for v in array.reshape(-1).tolist()]).reshape(array.shape)
+            if array.dtype == object
+            else np.asarray(array, dtype=float)
+        )
     except _EVALUATION_ERRORS as e:
         raise SourceEvaluationError(e) from e
-
-
-def _floats(value: Any) -> np.ndarray:
-    """``value`` as floats, an object array entry by entry, so ``None`` raises ``TypeError`` rather than reading as NaN."""
-    array = np.asarray(value)
-    if array.dtype == object:
-        return np.array([float(v) for v in array.reshape(-1).tolist()]).reshape(array.shape)
-    return np.asarray(array, dtype=float)
+    if form != "potential":
+        return floats
+    wanted = np.shape(x)[0] if rows else 1
+    if floats.size not in (1, wanted):
+        raise SourceShapeError(
+            f"{type(source).__name__}'s potential returned shape {floats.shape} for {wanted} points, where one value per "
+            "point, or one for all of them, is read"
+        )
+    return np.broadcast_to(floats.reshape(-1), (wanted,)).copy() if rows else floats.reshape(())
 
 
 def _get_sample_inputs(

@@ -1,15 +1,12 @@
 """#2901 stage 1c-ii: the Hamiltonian the solvers read, after the soft wall is composed, is the one its methods describe.
 
-The solvers read a Hamiltonian's doors (``evaluate_H``, ``evaluate_dp``, ``evaluate_optimal_control``): the
-semi-Lagrangian path hands one point, every other path a batch of rows. A problem compares each door with its method at
-the consistency check's probes, in both forms, at 0, T/2 and T, after the wall is composed, and reads the wall back
-through ``__call__`` (`refuse_a_hamiltonian_whose_reads_disagree`, `validate_composed_wall`).
+The solvers read a Hamiltonian's doors: HJB-SL hands ``evaluate_H`` and ``evaluate_dp`` one point, the HJB batch paths
+hand them a batch of rows, and ``compute_fp_velocity_field`` hands ``evaluate_optimal_control`` a batch. A problem compares
+each door with its method at the consistency check's probes, in the forms its readers hand it, at 0, T/2 and T, after the
+wall is composed, and reads the wall back through ``__call__`` (`refuse_a_hamiltonian_whose_reads_disagree`,
+`validate_composed_wall`).
 
-Every case below built at ad5a7726, and each names the defect it pins. On that sha's default solve, against the
-shipped Hamiltonian under the same wall: three moved M by 0.18 to 0.88; ``_PointOnly`` raised in the solve; and three
-read right by accident, since that solve does not read what they misread: ``_PointDoorDoubled``'s point door (M equal),
-``_DpDoorDoubledAfterStart``'s dp door, which Newton's Jacobian alone reads (4.1e-07), and ``_PointOnlyBatchWrong``'s
-constant shift of H on a batch (4.4e-16).
+Each case below names the defect it pins; #2968's body gives each one's behaviour at ad5a7726.
 """
 
 import warnings
@@ -54,11 +51,12 @@ def _edge_wall(x):
 
 
 class _PointDoorDoubled(hm.SeparableHamiltonian):
-    """The control door twice the method at one point, right on a batch: only the point form sees it."""
+    """The dp door twice dp at one point, right on a batch: HJB-SL's `_sl_value_update` reads it at one point, and only
+    the point form sees it."""
 
-    def evaluate_optimal_control(self, state):
+    def evaluate_dp(self, state):
         p = _a(state.p)
-        return (2.0 if p.ndim == 1 else 1.0) * super().evaluate_optimal_control(state)
+        return (2.0 if p.ndim == 1 else 1.0) * super().evaluate_dp(state)
 
 
 class _StaticControlDoorDoubled(hm.SeparableHamiltonian):
@@ -116,13 +114,14 @@ class _DpDoorDoubledWhereHIsInfinite(hm.SeparableHamiltonian):
         return (factor[:, None] if g.ndim == 2 else factor) * g
 
 
-class _PointOnlyUndefinedAtTheLeftEnd(hm.SeparableHamiltonian):
-    """H written for one point, reading row 0's momentum at every row, and undefined at x = 0, a probe node: a batch
-    skipped whole for that row compared nothing on a batch (review 1 of #2968)."""
+class _PointOnlyDefinedAboveTwoThirds(hm.SeparableHamiltonian):
+    """H written for one point, reading row 0's momentum at every row, and defined only for x > 0.65. A batch skipped
+    whole for a row left out compared nothing on a batch (review 1 of #2968). The probe nodes left are 1 and 0.9, whose
+    probes, numbered by node, lay 3 apart and shared p; numbered by row, they do not (review 2 of #2968)."""
 
     def __call__(self, t, x, p, m):
-        if np.any(_a(x[0]) <= 0.0):
-            raise ValueError("H is defined for x > 0")
+        if np.any(_a(x[0]) <= 0.65):
+            raise ValueError("H is defined for x > 0.65")
         return 0.5 * _a(p)[0] ** 2 - _coupling(m)
 
 
@@ -134,7 +133,7 @@ class _PointOnlyUndefinedAtTheLeftEnd(hm.SeparableHamiltonian):
         _DpDoorDoubledAfterStart,
         _PointOnlyDpBesideALargePotential,
         _DpDoorDoubledWhereHIsInfinite,
-        _PointOnlyUndefinedAtTheLeftEnd,
+        _PointOnlyDefinedAboveTwoThirds,
         _ValueDoorOffByOneInAHundredMillion,
     ],
     ids=[
@@ -143,7 +142,7 @@ class _PointOnlyUndefinedAtTheLeftEnd(hm.SeparableHamiltonian):
         "after t = 0",
         "a large H at one row",
         "an infinite H at one row",
-        "a row the method cannot be read at",
+        "rows left out that would share p",
         "the value door off by 1e-8",
     ],
 )
@@ -154,6 +153,24 @@ def test_a_door_that_reads_another_hamiltonian_than_its_method_is_refused(hamilt
         pytest.raises(ValueError, match=r"\.evaluate_(H|dp|optimal_control) .*reads differently"),
     ):
         _problem(hamiltonian(hm.QuadraticControlCost(), coupling=_coupling))
+
+
+class _ControlDoorReadsABatchOnly(hm.SeparableHamiltonian):
+    """The control door raises at one point and reads right on a batch, the one form its one reader,
+    `compute_fp_velocity_field`, hands it."""
+
+    def evaluate_optimal_control(self, state):
+        if _a(state.p).ndim == 1:
+            raise ValueError("this door reads a batch")
+        return super().evaluate_optimal_control(state)
+
+
+def test_the_control_door_is_compared_on_a_batch_only():
+    """No solver hands the control door one point (#2901's plan revision), so a door that cannot read one is accepted."""
+    assert (
+        _problem(_ControlDoorReadsABatchOnly(hm.QuadraticControlCost(), coupling=_coupling)).hamiltonian_class
+        is not None
+    )
 
 
 class _SkipsTheBaseInit(hm.HamiltonianBase):
