@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from mfgarchon.utils.numerical.integration import trapezoid
+from mfgarchon.utils.numpy_compat import trapezoid
 
 from .base_backend import BaseBackend
 
