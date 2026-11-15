@@ -18,7 +18,7 @@ Submodules:
 # A package `__init__` re-exports names of its own layer or below (#2938), and re-exporting them here
 # also closes an import cycle. `mfgarchon.utils` sits BELOW `mfgarchon.alg`, so importing upward from
 # here reaches `alg/__init__` -> fp_solvers -> network_solvers ->
-# `fp_network.py:36`, which needs a name from `utils.numerical` while this file is still stopped
+# `fp_network.py:35`, which needs a name from `utils.numerical` while this file is still stopped
 # at that line:
 #
 #     ImportError: cannot import name 'clip_nonnegative_or_raise' from partially initialized

@@ -415,7 +415,7 @@ class BaseFPSolver(BaseNumericalSolver):
         Helper Functions (Phase 2):
             For convenience and clarity, drift helper functions are available:
 
-            >>> from mfgarchon.utils import (
+            >>> from mfgarchon.utils.drift_helpers import (
             ...     zero_drift,
             ...     prescribed_drift,
             ...     density_dependent_drift,
