@@ -286,8 +286,10 @@ point and $(N, d)$ for a batch, and `ControlCostBase.dp` says "same shape as p".
 that uses what `optimal_control`, `evaluate_optimal_control`, `dp` or `evaluate_dp` returns passes it
 through one owner, `checked_control` in `core/hamiltonian.py`, which refuses another shape. The
 refusal names the reader, the source and its method, the shapes of $p$ and $m$ it handed, and the
-shape that came back (#2875). A return numpy cannot read as an array is refused too, and one that is
-not an array of numbers is named as such. Two construction checks read `dp` for other facts and do
+shape that came back (#2875). A return numpy cannot read as an array is refused too, and one of
+another shape that is not an array of numbers, such as `None`, is named as such rather than as a
+shape; at a 0-d $p$ such a return passes the owner and fails at the reader's first arithmetic. Two
+construction checks read `dp` for other facts and do
 not pass through the owner: the comparison of a batch read with its points, and the type check. No
 reader takes a return of another shape by reshaping, broadcasting or indexing it; a reader may still
 reshape what the owner has checked, as the 1-D velocity route ravels its $(N, 1)$. Refused with it

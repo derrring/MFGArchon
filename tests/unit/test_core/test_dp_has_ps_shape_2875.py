@@ -28,9 +28,10 @@ of another shape.
 - **The 0-d admission and the message per method.** *Not yet met (#2875): the form of p.* The library's dp answers a
   0-d p with (1,), as its control does; the owner admits it under `dp` too. The refusal's last sentence names what the
   method returns.
-- **A return that is not an array of numbers is named as such** (a mutation-verified pin): `None` and a string are not
-  called a shape error, an object array names its dtype, and a ragged list, which numpy cannot read, is refused naming
-  the reader. The construction type check of `dp` asks for an ndarray of p's shape, not a float, which the consistency
+- **A return of another shape that is not an array of numbers is named as such** (a mutation-verified pin): `None` and
+  a string are not called a shape error, an object array names its dtype, and a ragged list, which numpy cannot read,
+  is refused naming the reader. At a 0-d p such a return has p's shape () and passes the owner; it fails at the
+  reader's first arithmetic. The construction type check of `dp` asks for an ndarray of p's shape, not a float, which the consistency
   check would refuse.
 - **`CongestionHamiltonian` checks its cost's dp before dividing it by c(m)** (a mutation-verified pin). A cost whose
   dp is one entry whatever p is was broadcast by that division, and read right by accident; now its batch dp refuses

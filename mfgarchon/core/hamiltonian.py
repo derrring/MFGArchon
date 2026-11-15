@@ -1296,9 +1296,10 @@ def checked_control(
     indexing it. Two construction checks read ``dp`` for other facts and are not readers here: the comparison of a
     batch read with its points, and the type check. Another shape is refused, naming the reader, the source and its
     method, the shapes of p and m handed, and the shape that came back; so is a return numpy cannot read as an array,
-    and a return that is not an array of numbers is named as such. One more form is admitted for now, a 0-d p answered
-    with shape ``(1,)``, returned 0-d; the contract and why are in docs/user/CONVENTIONS.md, "What optimal_control and
-    dp return".
+    and one of another shape that is not an array of numbers is named as such rather than as a shape. At a 0-d p such
+    a return, ``None`` for instance, has p's shape () and passes; it fails at the reader's first arithmetic. One more
+    form is admitted for now, a 0-d p answered with shape ``(1,)``, returned 0-d; the contract and why are in
+    docs/user/CONVENTIONS.md, "What optimal_control and dp return".
     """
     wanted = np.shape(p)
     handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
