@@ -194,10 +194,8 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("mfgarchon.geometry.level_set.core", "mfgarchon.operators.stencils.finite_difference", "function", "#2938 stage 3", "level-set evolution uses an operator-layer stencil"),
     ("mfgarchon.geometry.level_set.reinitialization", "mfgarchon.operators.stencils.finite_difference", "function", "#2938 stage 3", "reinitialisation uses an operator-layer stencil"),
     # geometry -> solve
-    ("mfgarchon.geometry.base", "mfgarchon.alg.numerical.fem.assembly", "function", "#2938 stage 2c", "a geometry method reaches FEM assembly in the solve layer"),
-    ("mfgarchon.geometry.base", "mfgarchon.alg.numerical.fem.mesh_adapter", "function", "#2938 stage 2c", "a geometry method reaches the FEM mesh adapter in the solve layer"),
-    # operators -> solve
-    ("mfgarchon.operators.interpolation.projection", "mfgarchon.alg.numerical.density_estimation", "function", "#2938 stage 2c", "projection estimates a density with the solve layer's KDE"),
+    ("mfgarchon.geometry.base", "mfgarchon.alg.numerical.fem.assembly", "function", "#2938 stage 3", "the unstructured mesh builds its own FEM operators: who builds a discretisation's operators"),
+    ("mfgarchon.geometry.base", "mfgarchon.alg.numerical.fem.mesh_adapter", "function", "#2938 stage 3", "the unstructured mesh builds its own FEM operators: who builds a discretisation's operators"),
     # operators -> model
     ("mfgarchon.operators.differential.diffusion", "mfgarchon.utils.pde_coefficients", "function", "#2938 stage 2d", "the diffusion operator reads model-layer coefficient helpers"),
     ("mfgarchon.operators.interaction.convolution", "mfgarchon.core.mfg_problem", "type", "#2938 stage 2d", "an annotation names MFGProblem: building an operator from a problem is an adapter"),
@@ -208,7 +206,6 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     # model -> solve
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.fixed_point_iterator", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
-    ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.source_composition", "type", "#2938 stage 2c", "an annotation names CouplingBinding: which side owns the type it needs is the question (rule 3)"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.utils.adjoint_validation", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     # model -> entry
     ("mfgarchon.core.mfg_problem", "mfgarchon.factory", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),

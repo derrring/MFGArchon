@@ -15,7 +15,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mfgarchon.alg.numerical.density_estimation import (
+from mfgarchon.utils.numerical.particle.density_estimation import (
     gaussian_kde_gpu,
     gaussian_kde_numpy,
 )

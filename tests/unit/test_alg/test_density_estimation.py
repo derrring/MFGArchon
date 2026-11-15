@@ -9,7 +9,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.density_estimation import (
+from mfgarchon.utils.numerical.particle.density_estimation import (
     gaussian_kde_gpu,
     gaussian_kde_numpy,
 )
@@ -172,8 +172,8 @@ class TestWendlandC2Kernel:
 
     def test_invalid_kernel_rejected(self):
         """Unknown kernel string raises ValueError."""
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu
         from mfgarchon.backends.numpy_backend import NumPyBackend
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu
 
         with pytest.raises(ValueError, match="Unknown kernel"):
             gaussian_kde_gpu(
@@ -186,7 +186,7 @@ class TestWendlandC2Kernel:
 
     def test_wendland_normalization_constant(self):
         """Z_1(delta) = 2*delta/3 by direct integration of phi(u) = (1-u)^4(4u+1)."""
-        from mfgarchon.alg.numerical.density_estimation import (
+        from mfgarchon.utils.numerical.particle.density_estimation import (
             _wendland_c2_normalization_1d,
         )
 
@@ -200,8 +200,8 @@ class TestWendlandC2Kernel:
         Riemann sum approximates the analytic integral of K_h to machine
         precision (modulo trapezoidal error).
         """
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu
         from mfgarchon.backends.numpy_backend import NumPyBackend
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu
 
         backend = NumPyBackend()
         delta = 0.5
@@ -213,8 +213,8 @@ class TestWendlandC2Kernel:
 
     def test_wendland_compact_support(self):
         """Density is exactly zero at points beyond delta from every particle."""
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu
         from mfgarchon.backends.numpy_backend import NumPyBackend
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu
 
         backend = NumPyBackend()
         # Particles concentrated near origin
@@ -231,8 +231,8 @@ class TestWendlandC2Kernel:
 
     def test_wendland_total_mass_preserves(self):
         """Wendland KDE preserves total mass to within trapezoidal-rule accuracy."""
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu
         from mfgarchon.backends.numpy_backend import NumPyBackend
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu
 
         rng = np.random.default_rng(0)
         N = 5000
@@ -245,8 +245,8 @@ class TestWendlandC2Kernel:
 
     def test_gaussian_default_unchanged(self):
         """Calling without kernel= keeps the Gaussian default behavior."""
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu
         from mfgarchon.backends.numpy_backend import NumPyBackend
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu
 
         rng = np.random.default_rng(0)
         particles = rng.normal(0.0, 1.0, size=2000)

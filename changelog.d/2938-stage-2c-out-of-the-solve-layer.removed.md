@@ -1,0 +1,4 @@
+- **Layering stage 2c: two names leave the solve layer for their owners' layers, and one unused function is deleted** (#2938; the approver's rulings, 2026-11-15). No alias is kept (AGENTS.md, Removal before 1.0).
+  - `mfgarchon.alg.numerical.density_estimation` is now `mfgarchon.utils.numerical.particle.density_estimation`, in the numerics layer beside the particle interpolation it reads. Import `gaussian_kde_gpu`, `gaussian_kde_gpu_nd`, `gaussian_kde_gpu_internal`, `gaussian_kde_numpy` and `SUPPORTED_KERNELS` from there.
+  - `estimate_density_from_particles` is deleted: nothing in the repository called it, and its `method="histogram"` raised `NotImplementedError`. Call `gaussian_kde_gpu` with a backend, or `gaussian_kde_numpy` without one.
+  - `CouplingBinding` is defined in `mfgarchon.core.mfg_problem`, the model layer whose `MFGProblem.terminal_value` reads it. It was in `mfgarchon.alg.numerical.coupling.source_composition`, which now imports it.

@@ -66,11 +66,11 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.core.mfg_problem import CouplingBinding
 from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
 from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute, coordinate_tuple
 
@@ -94,24 +94,6 @@ def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray
     if np.ndim(m) > 1 and np.size(coordinates[0]) == np.size(m):  # one entry per coordinate, of the density's shape
         coordinates = tuple(np.reshape(entry, np.shape(m)) for entry in coordinates)
     return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=coordinates, m=m, v=v, t=t)
-
-
-@dataclass(frozen=True)
-class CouplingBinding:
-    """A coupling cost bound for one HJB evaluation: its energy, the points it was bound on, in the order of the
-    density the energy reads, and the cost it was bound from, the problem's ``declared_coupling_cost`` (#1642 stage
-    1b-2).
-
-    On a grid it is the problem's, `problem_coupling_binding`. Off a grid the problem binds nothing, since the cost is
-    bound where it is put to use: by the HJB solver that evaluates it, on its own points and weights
-    (``BaseHJBSolver.coupling_binding``), which the coupler hands to `compose_hjb_source`. ``cost`` is what
-    `coupling_binding_for` compares with the solved problem's, since a solver binds the cost of the problem it was
-    built from.
-    """
-
-    energy: EnergyFunctional
-    nodes: NDArray
-    cost: Any
 
 
 def problem_coupling_binding(problem: MFGProblem) -> CouplingBinding | None:

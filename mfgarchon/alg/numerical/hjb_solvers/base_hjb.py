@@ -18,7 +18,7 @@ from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
+    from mfgarchon.core.mfg_problem import CouplingBinding
     from mfgarchon.geometry.boundary import BoundaryConditions, ConstraintProtocol
 
 # BC-aware gradient computation (Issue #542 fix)

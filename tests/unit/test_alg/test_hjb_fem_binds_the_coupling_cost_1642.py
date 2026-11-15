@@ -593,7 +593,7 @@ def test_a_constant_kernel_as_g_shifts_u_at_t_by_c_times_the_mass():
 
 def _g_refused(case):
     """The call ``test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name`` refuses, for ``case``."""
-    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
+    from mfgarchon.core.mfg_problem import CouplingBinding
 
     if case == "HJB-FEM P2":
         return lambda: HJBFEMSolver(_g_problem("G"), order=2)

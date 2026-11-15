@@ -16,10 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
-    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
     from mfgarchon.types.solver_types import SolverReturnTuple
-
-    from .source_composition import CouplingBinding
 else:
     pass
 

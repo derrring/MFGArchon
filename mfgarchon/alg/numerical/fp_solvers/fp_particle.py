@@ -2489,7 +2489,7 @@ class FPParticleSolver(BaseFPSolver):
         decided on the step's positions on the host, one transfer per step. The width is recomputed every step, since
         the sample's spread changes; the width the path once computed from X0 and reused read a factor of std(X0) at
         every step (#2556)."""
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu_internal
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu_internal
         from mfgarchon.utils.numerical.particle.interpolation import kde_kernel_covariance
 
         backend = self.backend

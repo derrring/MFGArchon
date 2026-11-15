@@ -36,8 +36,8 @@ import numpy as np
 from scipy import special
 from scipy.stats import gaussian_kde
 
-from mfgarchon.alg.numerical import density_estimation as de
 from mfgarchon.backends import create_backend
+from mfgarchon.utils.numerical.particle import density_estimation as de
 from mfgarchon.utils.numerical.particle import interpolation as kde_owner
 from mfgarchon.utils.numerical.particle import kde_boundary as kb
 from mfgarchon.utils.numerical.particle.interpolation import (
