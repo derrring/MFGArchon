@@ -1275,16 +1275,27 @@ class Regularizer(Protocol):
         ...
 
 
+#: What each method's return is documented to be, for ``checked_control``'s refusal (#2875).
+_SHAPE_CONTRACTS = {
+    "optimal_control": "a control of p's shape, as HamiltonianBase.optimal_control and ControlCostBase.optimal_control document",
+    "evaluate_optimal_control": (
+        "a control of p's shape, as HamiltonianBase.optimal_control and ControlCostBase.optimal_control document"
+    ),
+    "dp": "dH/dp of p's shape, as HamiltonianBase.dp and ControlCostBase.dp document",
+    "evaluate_dp": "dH/dp of p's shape, as HamiltonianBase.dp and ControlCostBase.dp document",
+}
+
+
 def checked_control(
     alpha: Any, p: Any, *, reader: str, source: Any, m: Any = None, method: str = "optimal_control"
 ) -> NDArray:
     """What ``source.<method>`` returned for ``p``, read only if it has p's shape (#2875).
 
-    Every library read of what ``optimal_control`` (or ``evaluate_optimal_control``) returns passes it through here,
-    so no reader takes a return of another shape by reshaping, broadcasting or indexing it. Another shape is
-    refused, naming the reader, the source and its method, the shapes of p and m handed, and the shape that came
-    back. One more form is admitted for now, a 0-d p answered with shape ``(1,)``, returned 0-d; the contract and
-    why are in docs/user/CONVENTIONS.md, "What optimal_control returns".
+    Every library read of what ``optimal_control``, ``evaluate_optimal_control``, ``dp`` or ``evaluate_dp`` returns
+    passes it through here, so no reader takes a return of another shape by reshaping, broadcasting or indexing it.
+    Another shape is refused, naming the reader, the source and its method, the shapes of p and m handed, and the
+    shape that came back. One more form is admitted for now, a 0-d p answered with shape ``(1,)``, returned 0-d; the
+    contract and why are in docs/user/CONVENTIONS.md, "What optimal_control and dp return".
     """
     got = np.asarray(alpha)
     wanted = np.shape(p)
@@ -1295,9 +1306,8 @@ def checked_control(
     handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
     raise ValueError(
         f"{reader}: {type(source).__name__}.{method} was handed p of shape {wanted} and {handed_m}, and "
-        f"returned shape {got.shape}. The library reads a control of p's shape, as HamiltonianBase.optimal_control "
-        f'and ControlCostBase.optimal_control document (docs/user/CONVENTIONS.md, "What optimal_control returns"; '
-        f"#2875)."
+        f"returned shape {got.shape}. The library reads {_SHAPE_CONTRACTS[method]} "
+        f'(docs/user/CONVENTIONS.md, "What optimal_control and dp return"; #2875).'
     )
 
 
@@ -1729,7 +1739,9 @@ class HamiltonianBase(MFGOperatorBase):
         >>> A_upper = diffusion_upper + jac.upper
         """
         # Get ∂H/∂p from the class method
-        dH_dp = self.dp(x=x, m=m, p=p, t=t)
+        dH_dp = checked_control(
+            self.dp(x=x, m=m, p=p, t=t), p, reader="HamiltonianBase.jacobian_fd", source=self, m=m, method="dp"
+        )
         # Issue #1068: use np.ndim() instead of hasattr(, "__len__") to detect arrays.
         dH_dp_scalar = float(dH_dp[0]) if np.ndim(dH_dp) > 0 else float(dH_dp)
 

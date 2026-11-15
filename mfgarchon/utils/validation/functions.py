@@ -529,7 +529,24 @@ def validate_hamiltonian_consistency(
             # --- dH_dp, per component ---
             if dH_dp is None:
                 continue
-            dp_analytical = np.atleast_1d(_call_h(dH_dp, x_sample, m, p)).astype(float)
+            from mfgarchon.core.hamiltonian import checked_control
+
+            returned = _call_h(dH_dp, x_sample, m, p)
+            try:
+                checked = checked_control(
+                    returned,
+                    p,
+                    reader="validate_hamiltonian_consistency",
+                    source=getattr(dH_dp, "__self__", dH_dp),
+                    m=m,
+                    method="dp",
+                )
+            except ValueError as refusal:
+                # C1 gates only on an exhibited witness, and a return of the refused shape at this probe is one: the
+                # owner's refusal is an error, not the failure to evaluate that the except below warns of (#2875).
+                result.add_error(str(refusal), location="hamiltonian")
+                return result
+            dp_analytical = np.asarray(checked, dtype=float)
             for i in range(dimension):
                 p_plus = p.copy()
                 p_minus = p.copy()

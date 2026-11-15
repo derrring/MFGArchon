@@ -2408,6 +2408,17 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
             if dH_dp is None:
                 dH_dp = self._compute_dH_dp_fd(i, m_n_plus_1[i], p_derivs, time_idx)
+            else:
+                from mfgarchon.core.hamiltonian import checked_control
+
+                dH_dp = checked_control(
+                    dH_dp,
+                    p_derivs.grad,
+                    reader="HJBGFDMSolver._compute_hjb_jacobian_sparse",
+                    source=self.problem.hamiltonian_class,
+                    m=m_n_plus_1[i],
+                    method="dp",
+                )
 
             sigma_val = self._get_volatility_value(i)
             diffusion_coeff = diffusion_from_volatility(sigma_val)
@@ -3621,7 +3632,16 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         def alpha_star(t_idx, x, p, m):
             # Optimal feedback control alpha* = -dH/dp (the same dp() the Newton Jacobian reads).
-            return -eval_dH_dp_batch(H_class, x, m, p, t_idx * dt)
+            from mfgarchon.core.hamiltonian import checked_control
+
+            return -checked_control(
+                eval_dH_dp_batch(H_class, x, m, p, t_idx * dt),
+                p,
+                reader="HJBGFDMSolver._solve_backward_howard",
+                source=H_class,
+                m=m,
+                method="evaluate_dp",
+            )
 
         # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
         # — potential V(t, x), density coupling f(m^n) — and the MMS source into Howard's

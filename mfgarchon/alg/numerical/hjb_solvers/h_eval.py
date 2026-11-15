@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import HEvalState
+from mfgarchon.core.hamiltonian import HEvalState, checked_control
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 
@@ -128,7 +128,14 @@ def assemble_hjb_jacobian_diag(
     """
     from scipy.sparse import diags, eye
 
-    dH_dp = eval_dH_dp_batch(H_class, x, m, p, t)
+    dH_dp = checked_control(
+        eval_dH_dp_batch(H_class, x, m, p, t),
+        p,
+        reader="assemble_hjb_jacobian_diag",
+        source=H_class,
+        m=m,
+        method="evaluate_dp",
+    )
     n = D_lap.shape[0]
     jacobian = (1.0 / dt) * eye(n, format="csr")
     for dim in range(dH_dp.shape[1]):
