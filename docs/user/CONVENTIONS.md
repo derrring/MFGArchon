@@ -355,10 +355,13 @@ their methods, `__call__`, `dp` and `optimal_control` (`refuse_a_hamiltonian_who
 node where the wall is largest added under a wall, and at the six $(m, p)$ above:
 
 - on a batch: six batches per time, each row of the door's read compared with the method read at that row
-  alone. A row at which the method cannot be read is left out and warned about, and the $r$-th row left
-  in batch $j$ reads probe $(r + j) \bmod 6$, so a batch varies $p$ across its rows. A batch holds every
-  probe node, three or more on every grid but a one-dimensional grid of two nodes, which gives two, less
-  the rows left out; a batch left with fewer than two rows is not handed;
+  alone. Row $i$ of batch $j$ reads probe $\sigma((i + j) \bmod 6)$, with $\sigma$ ordering the six so
+  that $p$ runs $a, b, c, b, c, a$: every (node, probe) pair falls in exactly one batch, and two nodes read
+  different $p$ in at least one batch. With more than six rows, two nodes whose indices differ by $6$ read
+  the same probe in every batch. A row at which the method cannot be read is left out and warned about, so
+  a batch holds every probe node, three or more on every grid but a one-dimensional grid of two nodes,
+  which gives two, less the rows left out. A batch left with fewer than two rows is not handed, and its
+  readable pairs are not compared on a batch;
 - at a point, for `evaluate_H` and `evaluate_dp`: the door read alone at each row, as `_sl_value_update`
   hands it, against the method there.
 

@@ -116,8 +116,8 @@ class _DpDoorDoubledWhereHIsInfinite(hm.SeparableHamiltonian):
 
 class _PointOnlyDefinedAboveTwoThirds(hm.SeparableHamiltonian):
     """H written for one point, reading row 0's momentum at every row, and defined only for x > 0.65. A batch skipped
-    whole for a row left out compared nothing on a batch (review 1 of #2968). The probe nodes left are 1 and 0.9, whose
-    probes, numbered by node, lay 3 apart and shared p; numbered by row, they do not (review 2 of #2968)."""
+    whole for a row left out compared nothing on a batch (review 1 of #2968). The probe nodes left are 1 and 0.9, 3 apart:
+    in the probes' own order they would read the same p in every batch (review 2 of #2968)."""
 
     def __call__(self, t, x, p, m):
         if np.any(_a(x[0]) <= 0.65):
@@ -153,6 +153,32 @@ def test_a_door_that_reads_another_hamiltonian_than_its_method_is_refused(hamilt
         pytest.raises(ValueError, match=r"\.evaluate_(H|dp|optimal_control) .*reads differently"),
     ):
         _problem(hamiltonian(hm.QuadraticControlCost(), coupling=_coupling))
+
+
+class _ControlOffAtOnePair(hm.SeparableHamiltonian):
+    """``optimal_control`` cannot be read at x < 0.3 with m > 0.75, so some nodes can be read at some of their probes, and
+    the control door is 0.5 off its method at (x, m, p) = (0.9, 0.5, 0) alone. Rows numbered by the rows left in put that
+    pair in no batch, and the door is read on a batch only (#2901's plan revision addendum)."""
+
+    def optimal_control(self, t, x, p, m):
+        if np.any((_a(x[0]) < 0.3) & (_a(m) > 0.75)):
+            raise ValueError("the control is defined for x >= 0.3 or m <= 0.75")
+        return super().optimal_control(t, x, p, m)
+
+    def evaluate_optimal_control(self, state):
+        control = _a(super().evaluate_optimal_control(state))
+        p = _a(state.p)
+        if p.ndim == 2:
+            x = _a(state.x).reshape(p.shape[0], -1)[:, 0]
+            here = np.isclose(x, 0.9) & np.isclose(_a(state.m), 0.5) & np.isclose(p[:, 0], 0.0)
+            control = control + 0.5 * here[:, None]
+        return control
+
+
+def test_every_readable_pair_reaches_a_batch():
+    """A control door off at one (node, probe) pair, on a Hamiltonian whose method can be read at some probes of a node."""
+    with pytest.raises(ValueError, match="evaluate_optimal_control"):
+        _problem(_ControlOffAtOnePair(hm.QuadraticControlCost(), coupling=_coupling))
 
 
 class _ControlDoorReadsABatchOnly(hm.SeparableHamiltonian):

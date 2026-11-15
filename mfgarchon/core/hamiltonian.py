@@ -3388,6 +3388,13 @@ _DOORS = (
     ("evaluate_optimal_control", "optimal_control", None, "`compute_fp_velocity_field` reads it on a batch"),
 )
 
+#: The order a batch's rows take the consistency check's six probes in, as indices into `_consistency_probes`' order
+#: (m = 0.5 with the p scales 0, 0.4157 and -1.3691, then m = 1 with the same three): p runs a, b, c, b, c, a. Row i of
+#: batch j reads probe ``_BATCH_PROBE_ORDER[(i + j) % 6]``, so every (node, probe) pair falls in exactly one batch, and
+#: two nodes read different p in at least one batch. In the probes' own order, nodes 3 apart would read the same p in
+#: every batch (#2901's plan revision addendum).
+_BATCH_PROBE_ORDER = (0, 1, 2, 4, 5, 3)
+
 
 def refuse_a_hamiltonian_whose_reads_disagree(
     hamiltonian: HamiltonianBase, grid: NDArray, times: Sequence[float] = (0.0,), unwalled: Any = None
@@ -3402,10 +3409,12 @@ def refuse_a_hamiltonian_whose_reads_disagree(
 
     - the rows: x the consistency check's probe nodes of ``grid`` (`_probe_nodes`), with the node where the soft wall is
       largest when ``unwalled``, the Hamiltonian before the wall was composed, is given; (m, p) the check's six probes
-      (`_consistency_probes`). A row at which the method cannot be read is left out, and the r-th row left in batch j
-      reads probe (r + j) mod 6, so every readable pair is read in a batch and a batch varies p across its rows. A batch
-      holds every probe node, three or more on every grid but a one-dimensional grid of two nodes, which gives two, less
-      the rows left out; a batch left with fewer than two rows is not handed, so no batch of one is;
+      (`_consistency_probes`). Row i of batch j reads probe ``_BATCH_PROBE_ORDER[(i + j) % 6]``, so every (node, probe)
+      pair falls in exactly one batch, and two nodes read different p in at least one batch. With more than six rows,
+      two nodes whose indices differ by 6 read the same probe in every batch. A row at which the method cannot be read
+      is left out, so a batch holds every probe node, three or more on every grid but a one-dimensional grid of two
+      nodes, which gives two, less the rows left out. A batch left with fewer than two rows is not handed, so no batch
+      of one is, and its readable pairs are not compared on a batch;
     - a batch: each row of the door's read against the method at that row;
     - a point, for the value and dp doors: the door read alone at each row, ``p`` of shape ``(d,)`` and ``m`` a number,
       against the method there.
@@ -3519,13 +3528,10 @@ def refuse_a_hamiltonian_whose_reads_disagree(
                         atol=floor(door_name, [(i, k)], h_at),
                     )
             for j in range(len(probes)):
-                # The r-th row the method can be read at reads probe (r + j) mod 6, so a batch with rows left out still
-                # varies p across its rows (#2901's plan revision, review 2's SF-1).
-                rows: list[tuple[int, int]] = []
-                for i in range(len(points)):
-                    row = (i, (len(rows) + j) % len(probes))
-                    if row in value:
-                        rows.append(row)
+                # Rows numbered by node, so every (node, probe) pair falls in exactly one batch whatever the method can
+                # be read at; numbered by the rows left in, a pair could fall in none (#2901's plan revision addendum).
+                rows = [(i, _BATCH_PROBE_ORDER[(i + j) % len(probes)]) for i in range(len(points))]
+                rows = [row for row in rows if row in value]  # a row the method cannot be read at is left out
                 if len(rows) < 2:
                     continue
                 xs = np.stack([points[i] for i, _ in rows])
