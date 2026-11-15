@@ -1867,13 +1867,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             return
         T = float(self.tSpace[-1])
         times = (0.0, 0.5 * T, T)
+        # The doors first: their batch reads are the solvers' own, so a potential or a state_penalty that misreads a batch
+        # is refused there, by its own door's comparison, before the wall check would read it on a batch (#2901).
+        refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid, times, unwalled)
         if unwalled is not None:
             result = validate_composed_wall(hamiltonian, unwalled, self.geometry, times)
             if not result.is_valid:
                 raise ValidationError(result)
             for issue in result.warnings:
                 warnings.warn(f"{issue.message} (#2901).", UserWarning, stacklevel=3)
-        refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid, times, unwalled)
 
     def _compose_state_penalty_into_potential(self) -> Any:
         """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign, and return the Hamiltonian it

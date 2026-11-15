@@ -163,37 +163,45 @@ def _read_source(
     - ``"point"``: as `_call_h` calls it at one point, a family method by keyword, a raw callable through its binding;
     - ``"door"``: a door, handed ``HEvalState(t, x, p, m)``, at one point (p of shape (d,), m a number) or on a batch
       (x and p of shape (N, d), m of shape (N,)), as the solvers hand it;
-    - ``"potential"``: ``source._potential``, the potential a ``SeparableHamiltonian`` holds, at one point, bound and
-      read as its ``__call__`` reads it; ``p`` and ``m`` are not read.
+    - ``"potential"``: ``source._potential``, the potential a ``SeparableHamiltonian`` holds, bound and read as its
+      ``__call__`` reads it, at one point (``x`` of shape (d,)) or at the rows of ``x`` of shape (N, d), handed as a
+      coordinate tuple; ``p`` and ``m`` are not read.
 
     What a method or door returns goes through the owner of its return shape: ``checked_control`` for ``dp``,
     ``optimal_control`` and their doors, ``checked_value`` for ``__call__``, ``dm`` and ``evaluate_H``. A potential is one
-    value at a point. A return the owner refuses raises `SourceShapeError`, naming ``reader``.
+    value per point read, or one value for all of them, as ``SeparableHamiltonian`` broadcasts it. A return the owner
+    refuses raises `SourceShapeError`, naming ``reader``.
 
-    The reader tells three things apart (#2901). One of ``_EVALUATION_ERRORS`` raised by the source's own call, its
-    binding included, or by converting what it returned to floats, raises `SourceEvaluationError`: the source could
+    The reader tells three things apart (#2901). One of ``_EVALUATION_ERRORS`` raised by the source's call, which is the
+    source and its binding (the binder of a raw callable or a potential, and ``refuse_overridden``'s refusal of a family
+    method's parameters), or by converting what it returned to floats, raises `SourceEvaluationError`: the source could
     not be evaluated there. numpy alone reads ``None`` in an object array as NaN, so such a return is converted entry by
-    entry, and one that holds no number is a probe its source could not be evaluated at, never a NaN value. A shape
-    the owner refuses raises `SourceShapeError`. Anything else, the reader's own code included, propagates as it is."""
+    entry, and one that holds no number is a probe its source could not be evaluated at, never a NaN value. A shape the
+    owner refuses raises `SourceShapeError`. Anything else propagates as it is, and so does any error in the reader's own
+    code before or after that call, the conversion of ``x`` to the form handed included."""
     from mfgarchon.core.hamiltonian import HEvalState, _bound_potential, checked_control, checked_value
-    from mfgarchon.types.callable_protocols import point_tuple
+    from mfgarchon.types.callable_protocols import coordinate_tuple, point_tuple
 
     if form == "potential":
-        at = point_tuple(x)
+        rows = np.ndim(x) == 2
+        at = coordinate_tuple(np.asarray(x, dtype=float), np.shape(x)[1]) if rows else point_tuple(x)
+        wanted = np.shape(x)[0] if rows else 1
         try:
-            value = np.asarray(_bound_potential(source)(x=at, t=t), dtype=float)
+            value = _floats(_bound_potential(source)(x=at, t=t))
         except _EVALUATION_ERRORS as e:
             raise SourceEvaluationError(e) from e
-        if value.size != 1:
+        if value.size not in (1, wanted):
             raise SourceShapeError(
-                f"{type(source).__name__}'s potential returned shape {value.shape} at one point, where one value is read"
+                f"{type(source).__name__}'s potential returned shape {value.shape} for {wanted} points, where one value "
+                "per point, or one for all of them, is read"
             )
-        return value.reshape(())
+        return np.broadcast_to(value.reshape(-1), (wanted,)).copy() if rows else value.reshape(())
     if form == "door":
         state = HEvalState(t=t, x=x, p=p, m=m)
         call = lambda: source(state)  # noqa: E731
     elif form == "point":
-        call = lambda: _call_h(source, x, m, p, t)  # noqa: E731
+        at = point_tuple(x)
+        call = lambda: _call_h(source, at, m, p, t)  # noqa: E731
     else:
         raise ValueError(f"_read_source: unknown form {form!r}")
     try:
@@ -209,11 +217,17 @@ def _read_source(
     except ValueError as refusal:
         raise SourceShapeError(str(refusal)) from refusal
     try:
-        if checked.dtype == object:
-            return np.array([float(v) for v in checked.reshape(-1).tolist()]).reshape(checked.shape)
-        return np.asarray(checked, dtype=float)
+        return _floats(checked)
     except _EVALUATION_ERRORS as e:
         raise SourceEvaluationError(e) from e
+
+
+def _floats(value: Any) -> np.ndarray:
+    """``value`` as floats, an object array entry by entry, so ``None`` raises ``TypeError`` rather than reading as NaN."""
+    array = np.asarray(value)
+    if array.dtype == object:
+        return np.array([float(v) for v in array.reshape(-1).tolist()]).reshape(array.shape)
+    return np.asarray(array, dtype=float)
 
 
 def _get_sample_inputs(
@@ -941,17 +955,19 @@ def validate_hamiltonian_consistency(
     return result
 
 
-def _potential_at(h: Any, t: float, x: np.ndarray, reader: str) -> float:
-    """The potential ``h`` holds, at one point, read as its ``__call__`` reads it; 0 where it holds none."""
+def _potential_at(h: Any, t: float, x: np.ndarray, reader: str) -> np.ndarray:
+    """The potential ``h`` holds, read as its ``__call__`` reads it: at one point, shape (), or at the rows of an (N, d)
+    ``x``, shape (N,); 0 where it holds none."""
     if getattr(h, "_potential", None) is None:
-        return 0.0
-    return float(_read_source(h, t=t, x=x, p=None, m=None, method="potential", form="potential", reader=reader))
+        return np.zeros(np.shape(x)[0]) if np.ndim(x) == 2 else np.zeros(())
+    return _read_source(h, t=t, x=x, p=None, m=None, method="potential", form="potential", reader=reader)
 
 
 def _largest_wall_node(walled: Any, unwalled: Any, nodes: np.ndarray, t: float, reader: str) -> np.ndarray:
     """The node of ``nodes`` at which the soft wall composed into ``walled`` moves the potential most at ``t``: where a
-    read that drops the wall is furthest off (#2901). An error reading a potential propagates to the caller's guard."""
-    wall = [abs(_potential_at(walled, t, x, reader) - _potential_at(unwalled, t, x, reader)) for x in nodes]
+    read that drops the wall is furthest off (#2901). Each potential is read once, on all the nodes together. An error
+    reading a potential propagates to the caller's guard."""
+    wall = np.abs(_potential_at(walled, t, nodes, reader) - _potential_at(unwalled, t, nodes, reader))
     return nodes[int(np.argmax(wall))]
 
 
@@ -997,7 +1013,7 @@ def validate_composed_wall(
         for x in points:
             for m, p in _consistency_probes(dimension):
                 try:
-                    expected = -(_potential_at(walled, t, x, reader) - _potential_at(unwalled, t, x, reader))
+                    expected = -float(_potential_at(walled, t, x, reader) - _potential_at(unwalled, t, x, reader))
                     h_walled = float(_read_source(walled, t=t, x=x, p=p, m=m, method="__call__", reader=reader))
                     h_unwalled = float(_read_source(unwalled, t=t, x=x, p=p, m=m, method="__call__", reader=reader))
                 except SourceShapeError as e:

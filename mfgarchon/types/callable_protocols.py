@@ -385,12 +385,12 @@ def _refuse_unless_equal(
     *,
     first: str = "together",
     second: str = "one at a time",
-    atol: float | None = None,
+    atol: float | NDArray | None = None,
 ) -> None:
     """Refuse two reads that differ: ``together`` and ``alone``, named in the refusal by ``first`` and ``second``. NaN only
     matches NaN, and the tolerance is scaled by the finite values alone, so one infinite value cannot make the comparison
     vacuous (#2479). ``atol`` replaces the absolute margin, ``1e-12`` times that scale, where a read carries noise of its
-    own (#2901)."""
+    own; an array gives each row its own (#2901)."""
     finite = np.abs(alone[np.isfinite(alone)])
     scale = max(1.0, float(finite.max())) if finite.size else 1.0
     if together.size != alone.size or not np.allclose(

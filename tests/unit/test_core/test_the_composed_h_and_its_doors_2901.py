@@ -80,14 +80,105 @@ class _DpDoorDoubledAfterStart(hm.SeparableHamiltonian):
         return (2.0 if state.t > 0 else 1.0) * super().evaluate_dp(state)
 
 
+class _PointOnlyDpBesideALargePotential(hm.SeparableHamiltonian):
+    """dp written for one point, reading row 0's momentum at every row of a batch, beside a potential of 1e6 at x = 0, a
+    probe node: a margin taken from the largest H over a batch (2.2 there) hid the misread from every row."""
+
+    def __call__(self, t, x, p, m):
+        return super().__call__(t=t, x=x, p=p, m=m) - 1e6 * (_a(x[0]) < 0.05).astype(float)
+
+    def dp(self, t, x, p, m):
+        p = _a(p)
+        return p[0] * np.ones_like(p)
+
+
+class _ValueDoorOffByOneInAHundredMillion(hm.SeparableHamiltonian):
+    """The value door 1 + 1e-8 times ``__call__``: above roundoff, below the differencing floor the dp and control doors
+    are compared above. A door and its method of the same value are one function, so it is refused."""
+
+    def evaluate_H(self, state):
+        return (1.0 + 1e-8) * super().evaluate_H(state)
+
+
+_X_INFINITE = 0.6  # a probe node on 11 nodes: one of the three `spread_samples` picks
+
+
+class _DpDoorDoubledWhereHIsInfinite(hm.SeparableHamiltonian):
+    """H infinite at one probe node, and the dp door twice dp there alone: an infinite margin at that row hid it."""
+
+    def __call__(self, t, x, p, m):
+        return super().__call__(t=t, x=x, p=p, m=m) + np.where(np.isclose(_a(x[0]), _X_INFINITE), np.inf, 0.0)
+
+    def evaluate_dp(self, state):
+        g = super().evaluate_dp(state)
+        rows = g.shape[0] if g.ndim == 2 else 1
+        factor = np.where(np.isclose(_a(state.x).reshape(rows, -1)[:, 0], _X_INFINITE), 2.0, 1.0)
+        return (factor[:, None] if g.ndim == 2 else factor) * g
+
+
+class _PointOnlyUndefinedAtTheLeftEnd(hm.SeparableHamiltonian):
+    """H written for one point, reading row 0's momentum at every row, and undefined at x = 0, a probe node: a batch
+    skipped whole for that row compared nothing on a batch (review 1 of #2968)."""
+
+    def __call__(self, t, x, p, m):
+        if np.any(_a(x[0]) <= 0.0):
+            raise ValueError("H is defined for x > 0")
+        return 0.5 * _a(p)[0] ** 2 - _coupling(m)
+
+
 @pytest.mark.parametrize(
     "hamiltonian",
-    [_PointDoorDoubled, _StaticControlDoorDoubled, _DpDoorDoubledAfterStart],
-    ids=["point form", "method bound by its names", "after t = 0"],
+    [
+        _PointDoorDoubled,
+        _StaticControlDoorDoubled,
+        _DpDoorDoubledAfterStart,
+        _PointOnlyDpBesideALargePotential,
+        _DpDoorDoubledWhereHIsInfinite,
+        _PointOnlyUndefinedAtTheLeftEnd,
+        _ValueDoorOffByOneInAHundredMillion,
+    ],
+    ids=[
+        "point form",
+        "method bound by its names",
+        "after t = 0",
+        "a large H at one row",
+        "an infinite H at one row",
+        "a row the method cannot be read at",
+        "the value door off by 1e-8",
+    ],
 )
 def test_a_door_that_reads_another_hamiltonian_than_its_method_is_refused(hamiltonian):
-    with pytest.raises(ValueError, match=r"\.evaluate_(optimal_control|dp) .*reads differently"):
+    # An infinite H differenced in the base class's methods is numpy's invalid value, not the subject here.
+    with (
+        np.errstate(invalid="ignore"),
+        pytest.raises(ValueError, match=r"\.evaluate_(H|dp|optimal_control) .*reads differently"),
+    ):
         _problem(hamiltonian(hm.QuadraticControlCost(), coupling=_coupling))
+
+
+class _SkipsTheBaseInit(hm.HamiltonianBase):
+    """Every method its own, and ``__init__`` skipping ``super().__init__()``, so it holds no ``finite_diff_eps``."""
+
+    def __init__(self):
+        self.cost = 1.0
+
+    def __call__(self, t, x, p, m):
+        return 0.5 * self.cost * np.sum(_a(p) ** 2, axis=-1) - _coupling(m)
+
+    def dp(self, t, x, p, m):
+        return self.cost * _a(p)
+
+    def optimal_control(self, t, x, p, m):
+        return -self.cost * _a(p)
+
+    def dm(self, t, x, p, m):
+        return -0.5 + 0.0 * _a(m)
+
+
+def test_a_hamiltonian_that_skips_the_base_init_is_compared_with_the_checks_step():
+    """It cannot be using the base class's finite differences, which read ``finite_diff_eps``; the doors are compared
+    with the consistency check's step in its place, and the problem builds as it did at ad5a7726."""
+    assert _problem(_SkipsTheBaseInit()).hamiltonian_class is not None
 
 
 class _BatchDropsPotential(hm.SeparableHamiltonian):

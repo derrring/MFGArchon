@@ -353,19 +353,23 @@ doors with their methods, `__call__`, `dp` and `optimal_control`
 (`refuse_a_hamiltonian_whose_reads_disagree`, #2901), at $0$, $T/2$ and $T$, at the probe nodes above with
 the node where the wall is largest added under a wall, and at the six $(m, p)$ above:
 
-- on a batch: six batches per time, row $i$ of batch $j$ reading probe $(i + j) \bmod 6$, so each batch
-  has at least three rows, and each row of the door's read is compared with the method read at that row
-  alone;
+- on a batch: six batches per time, row $i$ of batch $j$ reading probe $(i + j) \bmod 6$, each row of the
+  door's read compared with the method read at that row alone. A batch holds every probe node, three or
+  more on every grid but a one-dimensional grid of two nodes, which gives two; a row at which the method
+  cannot be read is left out of it and warned about, and a batch left with fewer than two rows is not handed;
 - at a point: the door read alone at each row, as the semi-Lagrangian path hands it, against the method
   there.
 
 `evaluate_H` and `__call__` are one function, so a difference beyond roundoff between them is refused.
 `dp` and the control may be finite differences of $H$, as `HamiltonianBase`'s are, and then carry $H$'s
 roundoff divided by the step (measured $2.2 \times 10^{-10}$ between `dp` on a batch and at its rows, on
-values of order $1$). So their doors are refused above the consistency check's noise floor,
-$10^{4}\,\varepsilon \max(1, \max |H|) / h$ with $h$ the Hamiltonian's `finite_diff_eps`, about
-$2.2 \times 10^{-6}$ at $|H| \sim 1$ and the default step; a door that differs from its method by less than
-that is not seen. A door that raises where its method reads is refused too, except on a batch when the
+values of order $1$). So their doors are refused above the consistency check's noise floor, row by row,
+$10^{4}\,\varepsilon \max(1, |H|) / h$ with $|H|$ at that row (taken as $1$ where it is not finite) and $h$
+the Hamiltonian's `finite_diff_eps`, or the consistency check's step where it has none: about
+$2.2 \times 10^{-6}$ at $|H| \sim 1$ and the default step. A large $H$ at one row loosens no other row; at a
+row, a door that differs from its method by less than its floor is not seen. A door that raises where its
+method reads is refused too, naming the path that reads that form (the semi-Lagrangian path at one point,
+every other path on a batch), except on a batch when the
 Hamiltonian declares `reads_a_batch` False: that is the declaration holding, and since no solver reads the
 flag its batch paths will raise there at solve time, so that batch is not compared. A disagreement on a
 batch is refused whatever the flag says. `dH_dm` and `evaluate` are not compared, since no library caller
