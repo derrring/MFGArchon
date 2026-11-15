@@ -449,10 +449,10 @@ class GeometryProjector:
         custom axis that is not a lattice, or a CartesianGrid that is not a TensorProductGrid has none and reads the
         KDE as before (#2827).
         """
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.backends import create_backend
         from mfgarchon.geometry.base import CartesianGrid
         from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid, geometry_grid_axes
+        from mfgarchon.utils.numerical.particle.density_estimation import gaussian_kde_gpu, gaussian_kde_gpu_nd
         from mfgarchon.utils.numerical.particle.interpolation import (
             KDE_LATTICE_ALIASING_TOL,
             _lattice_spacings,

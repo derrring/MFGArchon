@@ -39,9 +39,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
     from mfgarchon.alg.numerical.weak_form_discretization import WeakFormDiscretization
-    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
     from mfgarchon.operators.interaction.point_measure import PointMeasure
 
 logger = get_logger(__name__)
@@ -138,7 +137,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 "not this solver's dofs in their order, compared bitwise: the density the coupling part reads is one "
                 "value per dof, in the dofs' order, so the measure's points are the dofs themselves (#1642)."
             )
-        from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
+        from mfgarchon.core.mfg_problem import CouplingBinding
         from mfgarchon.operators.interaction.point_measure import bind_on_measure
 
         def bound(c: Any) -> CouplingBinding | None:

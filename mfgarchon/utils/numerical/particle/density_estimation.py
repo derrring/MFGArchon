@@ -1,12 +1,13 @@
 """
-Density estimation methods for particle-based MFG solvers.
+Kernel density estimation (KDE) of a particle ensemble on a regular grid.
 
-This module provides GPU-accelerated kernel density estimation (KDE) and
-histogram-based density estimation for converting particle ensembles to
-density fields on regular grids.
+``gaussian_kde_gpu`` estimates through a compute backend with a Gaussian or Wendland C2 kernel in 1-D,
+``gaussian_kde_gpu_nd`` through one with a Gaussian kernel in d dimensions, and ``gaussian_kde_numpy`` through
+scipy's ``gaussian_kde``. It is generic numerics, in the numerics layer beside the particle interpolation it reads
+(#2938, stage 2c).
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -409,10 +410,10 @@ def gaussian_kde_numpy(
     bandwidth: float | str,
 ) -> np.ndarray:
     """
-    CPU fallback for Gaussian KDE using scipy.stats.gaussian_kde.
+    Gaussian KDE through scipy.stats.gaussian_kde, on the CPU.
 
-    This is the original implementation used when backend is None or
-    scipy is not available. Much slower than GPU version for large N.
+    No library code calls it: the benchmark and the tests compare the backend estimates with it
+    (#2938, stage 2c). Much slower than the backend version for large N.
 
     Note: scipy.stats.gaussian_kde interprets numeric bandwidth as
     a factor to multiply by data std, not absolute bandwidth, which is
@@ -439,58 +440,3 @@ def gaussian_kde_numpy(
     kde = gaussian_kde(particles, bw_method=bandwidth)
     density = kde(grid)
     return density
-
-
-def estimate_density_from_particles(
-    particles: np.ndarray,
-    grid: np.ndarray,
-    bandwidth: float | str = 0.1,
-    backend: Optional["BaseBackend"] = None,
-    method: str = "kde",
-) -> np.ndarray:
-    """
-    Unified interface for density estimation from particles.
-
-    Automatically selects GPU-accelerated KDE if backend is available,
-    otherwise falls back to scipy CPU implementation.
-
-    Parameters
-    ----------
-    particles : np.ndarray
-        Particle positions, shape (N,)
-    grid : np.ndarray
-        Grid points for density evaluation, shape (Nx,)
-    bandwidth : float or str
-        Kernel bandwidth (for KDE) or bin width (for histogram)
-    backend : BaseBackend, optional
-        If provided, use GPU acceleration. If None, use CPU scipy.
-    method : str
-        Density estimation method: 'kde' or 'histogram'
-
-    Returns
-    -------
-    np.ndarray
-        Estimated density on grid, shape (Nx,)
-
-    Examples
-    --------
-    >>> from mfgarchon.backends.torch_backend import TorchBackend
-    >>> backend = TorchBackend(device='mps')
-    >>> particles = np.random.randn(10000)
-    >>> grid = np.linspace(-3, 3, 100)
-    >>> density = estimate_density_from_particles(particles, grid, 0.1, backend)
-    >>> density.shape
-    (100,)
-    """
-    if method == "kde":
-        if backend is not None:
-            # GPU-accelerated KDE
-            return gaussian_kde_gpu(particles, grid, bandwidth, backend)
-        else:
-            # CPU fallback
-            return gaussian_kde_numpy(particles, grid, bandwidth)
-    elif method == "histogram":
-        # Fast histogram-based estimate (future enhancement)
-        raise NotImplementedError("Histogram method coming in Phase 2")
-    else:
-        raise ValueError(f"Unknown method: {method}. Use 'kde' or 'histogram'")

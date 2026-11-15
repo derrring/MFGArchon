@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
@@ -37,9 +38,26 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
     from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
+
+
+@dataclass(frozen=True)
+class CouplingBinding:
+    """A coupling cost bound for one HJB evaluation: its energy, the points it was bound on, in the order of the
+    density the energy reads, and the cost it was bound from, the problem's ``declared_coupling_cost`` (#1642 stage
+    1b-2). The model's type, which `MFGProblem.terminal_value` reads, so it lives with the problem (#2938, stage 2c).
+
+    On a grid it is the problem's, ``problem_coupling_binding`` (``alg.numerical.coupling.source_composition``). Off a
+    grid the problem binds nothing, since the cost is bound where it is put to use: by the HJB solver that evaluates
+    it, on its own points and weights (``BaseHJBSolver.coupling_binding``), which the coupler hands to
+    ``compose_hjb_source``. ``cost`` is what ``coupling_binding_for`` compares with the solved problem's, since a
+    solver binds the cost of the problem it was built from.
+    """
+
+    energy: EnergyFunctional
+    nodes: NDArray
+    cost: Any
 
 
 # What a refusal calls each mode of `_detect_init_mode`.
