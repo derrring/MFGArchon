@@ -28,7 +28,7 @@ The density-dependent control is written to broadcast in each solver's own layou
 pinned. Since #2901 a problem compares the control with -dp of its H at construction, so each control's H is the one it
 is the optimal control of: (1 + 4t) H_lib for "time", H_lib / (1 + 0.2 m) for "density", H_lib for the others. The FP
 rows read the control alone, so their oracles do not move. Construction reads the control at its probes too, so the
-reads it records are cleared before the solve; a "write" control writes only a density array, as the solvers hand.
+reads it records are cleared once the problem is built, before the solver is; a "write" control writes only a density array, as the solvers hand.
 """
 
 from __future__ import annotations
@@ -105,10 +105,11 @@ class _Separable(_Control, SeparableHamiltonian):
         return _per_point(1.0 + 0.2 * np.asarray(m, dtype=float), g) if self.kind == "density" else g
 
     def dm(self, t, x, p, m):
-        if self.kind != "density":
-            return (1.0 + 4.0 * t) * np.asarray(super().dm(t=t, x=x, p=p, m=m), dtype=float)
-        h = np.asarray(super().__call__(t=t, x=x, p=p, m=m), dtype=float)
-        return -0.2 * h / (1.0 + 0.2 * np.asarray(m, dtype=float)) ** 2
+        if self.kind == "density":
+            h = np.asarray(super().__call__(t=t, x=x, p=p, m=m), dtype=float)
+            return -0.2 * h / (1.0 + 0.2 * np.asarray(m, dtype=float)) ** 2
+        dm = np.asarray(super().dm(t=t, x=x, p=p, m=m), dtype=float)
+        return (1.0 + 4.0 * t) * dm if self.kind == "time" else dm
 
     def optimal_control(self, t, x, p, m):
         return self._shaped(t, x, p, m, super().optimal_control)
@@ -180,8 +181,9 @@ def _fem(kind, time_scaled=False):
     from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 
     h = _Separable(kind, to_p=lambda m, p: m[None])  # p is (d, elements, points); m is (elements, points)
-    solver = FPFEMSolver(_mesh_problem(h), order=1)
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    problem = _mesh_problem(h)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
+    solver = FPFEMSolver(problem, order=1)
     x = solver._disc.dof_coordinates[:, 0]
     M = _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled)))
     return SimpleNamespace(h=h, M=np.asarray(M), density=lambda n, read: (solver._basis.interpolate(M[n]).value, 0.0))
@@ -192,8 +194,9 @@ def _meshless(kind, time_scaled=False):
 
     h = _Separable(kind, to_p=lambda m, p: m[:, None])  # p is (nodes, d); m is (nodes,)
     x = np.linspace(0.0, 1.0, 15)
-    solver = MeshlessGalerkinFPSolver(_grid_problem(h, 15), collocation_points=x[:, None], delta=3.5 / 14)
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    problem = _grid_problem(h, 15)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
+    solver = MeshlessGalerkinFPSolver(problem, collocation_points=x[:, None], delta=3.5 / 14)
     M = _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled)))
     return SimpleNamespace(h=h, M=np.asarray(M), density=lambda n, read: (M[n], 0.0))
 
@@ -203,8 +206,9 @@ def _particle_1d(kind, time_scaled=False):
 
     h = _Separable(kind, to_p=lambda m, p: m)  # p and m are (particles,)
     x = np.linspace(0.0, 1.0, 15)
-    solver = FPParticleSolver(_grid_problem(h, 15), num_particles=2000, seed=2)
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    problem = _grid_problem(h, 15)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
+    solver = FPParticleSolver(problem, num_particles=2000, seed=2)
     M = np.asarray(
         _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled), show_progress=False))
     )
@@ -221,8 +225,9 @@ def _particle_2d(kind, time_scaled=False):
     U = np.stack(
         [s * 0.5 * ((X - 0.3) ** 2 + (Y - 0.6) ** 2) * (1 + 0.1 * k) for k, s in enumerate(_scale(time_scaled))]
     )
-    solver = FPParticleSolver(_grid_problem(h, 9, dim=2), num_particles=2000, seed=2)
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    problem = _grid_problem(h, 9, dim=2)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
+    solver = FPParticleSolver(problem, num_particles=2000, seed=2)
     M = np.asarray(
         _quiet(
             lambda: solver.solve_fp_system(
@@ -249,8 +254,9 @@ def _particle_gpu_loop(kind, time_scaled=False):
     x = np.linspace(0.0, 1.0, 41)
     np.random.seed(12345)
     torch.manual_seed(12345)  # this loop samples with torch's generator and steps with numpy's global stream
-    solver = FPParticleSolver(_grid_problem(h, 41), num_particles=2000, kde_bandwidth=0.1, backend="torch")
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    problem = _grid_problem(h, 41)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
+    solver = FPParticleSolver(problem, num_particles=2000, kde_bandwidth=0.1, backend="torch")
     M = np.asarray(_quiet(lambda: solver.solve_fp_system(_m0(x), _u_1d(x, time_scaled))))
     assert solver.current_strategy.name != "cpu", (
         f"routed to the {solver.current_strategy.name!r} strategy, not the GPU loop, so this row tests the CPU loop"
@@ -265,7 +271,7 @@ def _fvm(kind, time_scaled=False):
     h = _Separable(kind, to_p=lambda m, p: m)  # p and m are one value per face
     x = np.linspace(0.0, 1.0, 15)
     problem = _grid_problem(h, 15)
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
     solver = FPFVMSolver(problem)
     M = np.asarray(
         _quiet(lambda: solver.solve_fp_system(_m0(x), potential_field=_u_1d(x, time_scaled), show_progress=False))
@@ -352,7 +358,7 @@ def test_the_default_solve_on_a_mesh_hands_the_control_a_density():
     from FEM's quadrature points, two-dimensional per coordinate, and every one carries a density."""
     h = _Separable("density", to_p=lambda m, p: m[None])
     problem = _quiet(lambda: _mesh_problem(h))
-    h.reads.clear()  # construction's reads, at its probes (#2901)
+    h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
     result = _quiet(problem.solve)
     assert h.reads, "the solve read optimal_control nowhere"
     assert all(read[1][0].ndim == 2 for read in h.reads), "a read did not come from FEM's quadrature points"

@@ -54,17 +54,27 @@ _WITNESS_NOISE_SAFETY = 1e4
 _SMOOTHNESS_RTOL = 1e-3
 
 
+def _is_family_callable(fn: Any) -> bool:
+    """Whether `_call_h` calls ``fn`` by keyword as a family method: a ``HamiltonianBase``/``LagrangianBase`` instance, a
+    method bound to one, or a classmethod bound to a family class, which the solvers call by keyword as they do any
+    method (#2901); a ``functools.partial`` of any of these is one too. The one predicate `_call_h` and
+    `_raw_callable_advice` read."""
+    import functools
+
+    from mfgarchon.core.hamiltonian import MFGOperatorBase
+
+    target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
+    owner = getattr(target, "__self__", target)
+    return isinstance(owner, MFGOperatorBase) or (isinstance(owner, type) and issubclass(owner, MFGOperatorBase))
+
+
 def _raw_callable_advice(fn: Any) -> str:
     """What a raw callable `_call_h` could not call is told, which keeps what a partial froze. A family object is told
     how it was called, and not a cause: its TypeError may come from its methods, a body it holds, its own signature or
     the binder's refusal of a frozen slot."""
-    import functools
-
-    from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, keeping_what_it_froze
 
-    target = fn.func if isinstance(fn, functools.partial) else fn
-    if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
+    if _is_family_callable(fn):
         return (
             "It is called by keyword, with t, x, p and m at one point, x a tuple of numbers and the density a number."
         )
@@ -76,20 +86,14 @@ def _raw_callable_advice(fn: Any) -> str:
 def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     """Evaluate a Hamiltonian, or one of its derivatives, the way its kind expects.
 
-    A family object (a ``HamiltonianBase``/``LagrangianBase`` instance, or a bound method of
-    one) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by keyword. A raw user callable
-    goes through its binding (``HAMILTONIAN_SLOTS``), like every user callable the library accepts.
+    A family object (`_is_family_callable`: a ``HamiltonianBase``/``LagrangianBase`` instance, a method bound to one,
+    or a classmethod bound to a family class) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by keyword. A raw
+    user callable goes through its binding (``HAMILTONIAN_SLOTS``), like every user callable the library accepts.
     """
-    import functools
-
-    from mfgarchon.core.hamiltonian import MFGOperatorBase
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, _remembered, point_tuple, refuse_overridden
 
     x = point_tuple(x)
-    target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
-    owner = getattr(target, "__self__", target)
-    # A classmethod of a family class is bound to the class, and the solvers call it by keyword as they do any method.
-    if isinstance(owner, MFGOperatorBase) or (isinstance(owner, type) and issubclass(owner, MFGOperatorBase)):
+    if _is_family_callable(fn):
         refuse_overridden(fn, HAMILTONIAN_SLOTS.order, role="Hamiltonian callable")
         return fn(t=t, x=x, p=p, m=m)
     return _remembered(fn, HAMILTONIAN_SLOTS, "Hamiltonian callable")(t=t, x=x, p=p, m=m)
@@ -604,8 +608,9 @@ def _report_control(
         _WITNESS_RTOL * max(abs(dp_i), abs(comparison.numerical)), _WITNESS_NOISE_SAFETY * comparison.noise_bound
     )
     pair = "optimal_control disagrees with dp and with H" if dp_agrees else "optimal_control disagrees with H"
+    read_dp = f"dp[{i}]={dp_i:.8g}, " if np.isfinite(dp_i) else ""  # no dp read here: none handed, or none finite
     detail = (
-        f"at {point}: -optimal_control[{i}]={comparison.analytical:.8g}, dp[{i}]={dp_i:.8g}, and the central "
+        f"at {point}: -optimal_control[{i}]={comparison.analytical:.8g}, {read_dp}and the central "
         f"difference of H is {comparison.numerical:.8g} (step={_FD_STEP:g})"
     )
     result.context[f"{location}_witness_m"] = comparison.m

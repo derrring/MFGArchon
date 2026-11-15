@@ -337,7 +337,8 @@ $(t, x, m, p)$:
   so every component is probed at both signs and at a magnitude of its own.
 
 It refuses on an exhibited witness: a gap above $10^{-2}$ relative and $10^{4}$ times the differencing
-roundoff, at a probe where $H$ is smooth. A disagreement between the probes is not seen. Every source is
+roundoff, at a probe where $H$ is smooth. A disagreement between or beyond the probes is not seen: in 1-D a control equal to
+$-\partial H/\partial p$ for $|p| \le 2$ and clipped beyond passes, since no probe's $|p|$ there exceeds $1.3691$. Every source is
 read through one reader, and what it returns through the owner of its shape (above). A source that
 cannot be evaluated at a probe is warned about and skipped there. $H$, `dp` or the control that cannot
 be evaluated at any probe at which it could be read is refused; `dm`, which no grid solver reads, is

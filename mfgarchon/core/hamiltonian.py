@@ -1330,9 +1330,12 @@ def _checked_shape(
     value: Any, wanted: tuple[int, ...], *, p: Any, m: Any, reader: str, source: Any, method: str, admit_1_at_0d: bool
 ) -> NDArray:
     """The one refusal behind ``checked_control`` and ``checked_value``: ``value`` read only if it has shape ``wanted``."""
-    handed_p = "p None" if p is None else f"p of shape {np.shape(p)}"
+    handed_p = f"p of shape {np.shape(p)}"
     handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
-    handed = f"{reader}: {type(source).__name__}.{method} was handed {handed_p} and {handed_m}, and"
+    named = (
+        source.__name__ if isinstance(source, type) else type(source).__name__
+    )  # a classmethod's source is its class
+    handed = f"{reader}: {named}.{method} was handed {handed_p} and {handed_m}, and"
     contract = (
         f"The library reads {_SHAPE_CONTRACTS[method]} "
         f'(docs/user/CONVENTIONS.md, "What optimal_control and dp return"; #2875).'
@@ -1543,7 +1546,8 @@ class HamiltonianBase(MFGOperatorBase):
         -------
         float | NDArray
             The Hamiltonian's value, one per point and so of m's shape: shape () at a point, where m is a number, and
-            shape (N,) for a batch of N (``checked_value``, #2901).
+            shape (N,) for a batch of N (``checked_value``, #2901). A ``NetworkHamiltonian`` is read otherwise: its m
+            is the density at every node, and it returns one value for the node it is handed.
         """
         ...
 

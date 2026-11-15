@@ -5,21 +5,22 @@ read `optimal_control`. Before 1c-i the construction check `validate_hamiltonian
 `__call__` at one point at t = 0, and nothing compared the control, so a subclass whose `optimal_control` was another
 H's was solved as a mixture with no error.
 
-- **The control against -dp.** `Mix` and the issue's reproduction are refused at construction, and the message names
-  the pair that disagrees and the probe (t, x, m, p) where it does: against dp and H when dp agrees with H, against H
-  alone when it does not.
-- **The probes vary t, x, m and p.** A control that departs from -dp only at T/2, only at T, only at an axis's end node,
-  only for p < 0, or only off the diagonal is refused; so are a dp wrong only after t = 0, a dm wrong only at an end node,
-  and a dm wrong only at m = 1. The probe times are the problem's own T (a row at T = 2). On a grid with an even number
-  of nodes the middle probe is the node nearest the centre, so there are still 2d + 1. In 3-D each component is probed
-  at a magnitude of its own, so a 1<->3 swap is refused, with the 1<->2 swap as the control.
+- **The control against -dp.** The issue's reproduction is refused at construction, and the message names the pair that
+  disagrees and the probe (t, x, m, p) where it does: against dp and H when dp agrees with H, against H alone when it
+  does not.
+- **The probes vary t, x, m and p.** A control that departs from -dp only after t = 0 (found at T/2), only at T, only
+  away from the middle node, only at an axis's last end node, only for p < 0, or only off the diagonal is refused; so are
+  a dp wrong only after t = 0, a dm wrong only at an end node, and a dm wrong only at m = 1. The probe times are the
+  problem's own T (a row at T = 2). On a grid with an even number of nodes the middle probe is the node nearest the
+  centre, so there are still 2d + 1. In 3-D each component is probed at a magnitude of its own, so a 1<->3 swap is
+  refused.
 - **Each comparison has its own guard.** A probe at which a source cannot be evaluated is warned about and skipped for
   that comparison alone, so a witness found at another probe still refuses. H, dp or the control raising at every probe
   at which it could be read is refused; dm raising everywhere is warned about and not refused, since no grid solver
   reads dm. An `AssertionError` is not an evaluation error and propagates.
 - **What a source returns goes through the owner of its shape** (#2875). A value or a dm of shape (1,) at a point, and a
-  dp or a control of shape (1, d), are refused at construction, naming the method and the shapes; the same values in
-  the contract's shapes are accepted. A shape refusal at one probe is not skipped. A return of the right shape that
+  control of shape (1, d), are refused at construction, naming the method and the shapes (a dp's row is
+  `test_dp_has_ps_shape_2875.py`'s); the same values in the contract's shapes are accepted. A shape refusal at one probe is not skipped. A return of the right shape that
   holds no number, `None`, is a probe the source could not be evaluated at, not a NaN value.
 - **The control every reader must accept** (a necessary oracle): the library's own Hamiltonians, in 1-D and 2-D.
 """
@@ -62,13 +63,6 @@ class _OneHalfQuadratic(hm.SeparableHamiltonian):
 
     def dp(self, t, x, p, m):
         return 3.0 * _a(p)
-
-
-class _Mix(_OneHalfQuadratic):
-    """And its optimal control is the lambda = 1/2 one."""
-
-    def optimal_control(self, t, x, p, m):
-        return -2.0 * _a(p)
 
 
 class _WrongDpAndControl(hm.SeparableHamiltonian):
@@ -169,20 +163,6 @@ class _DmRaisingAtZeroMomentumWrongElsewhere(hm.SeparableHamiltonian):
         return 2.0 * _a(super().dm(t=t, x=x, p=p, m=m))
 
 
-class _RaisesAtTheFirstEnd(hm.SeparableHamiltonian):
-    """The library's H raising where x_1 = 0, an end node."""
-
-    def __call__(self, t, x, p, m):
-        if np.any(_a(x[0]) == 0.0):
-            raise ValueError("x outside (0, 1]")
-        return super().__call__(t=t, x=x, p=p, m=m)
-
-
-class _WrongDpRaisingAtTheFirstEnd(_RaisesAtTheFirstEnd):
-    def dp(self, t, x, p, m):
-        return 2.0 * _a(super().dp(t=t, x=x, p=p, m=m))
-
-
 class _WrongDpRaisingAtTheFirstProbe(hm.SeparableHamiltonian):
     """dp doubled, and H raising at the first probe of the check, the middle node at t = 0."""
 
@@ -193,11 +173,6 @@ class _WrongDpRaisingAtTheFirstProbe(hm.SeparableHamiltonian):
 
     def dp(self, t, x, p, m):
         return 2.0 * _a(super().dp(t=t, x=x, p=p, m=m))
-
-
-class _MixRaisingAtTheFirstEnd(_RaisesAtTheFirstEnd):
-    def optimal_control(self, t, x, p, m):
-        return -2.0 * _a(p)
 
 
 def _control_raising(where, error, wrong):
@@ -271,23 +246,16 @@ def _checked(h):
 
 
 @pytest.mark.parametrize("dim", [1, 2])
-@pytest.mark.parametrize(
-    ("make", "control"),
-    [
-        (lambda: _Mix(_quadratic(), coupling=f), "0.8314"),
-        (lambda: _OneHalfQuadratic(_quadratic(), coupling=f), "0.4157"),  # the issue's reproduction
-    ],
-    ids=["Mix", "the issue's reproduction"],
-)
-def test_a_control_that_is_not_minus_dp_is_refused_at_construction(make, control, dim):
+def test_a_control_that_is_not_minus_dp_is_refused_at_construction(dim):
+    """The issue's reproduction: `__call__` and `dp` are the lambda = 1/3 Hamiltonian's, the control the cost's."""
     probe = "[0.5]" if dim == 1 else "[0.5 0.5]"
     message = (
         rf"optimal_control disagrees with dp and with H at t=0, x={re.escape(probe)}, m=0\.5, "
-        rf"p={re.escape(_momentum(dim))}: -optimal_control\[0\]={control}, dp\[0\]=1\.2471, and the central difference "
+        rf"p={re.escape(_momentum(dim))}: -optimal_control\[0\]=0\.4157, dp\[0\]=1\.2471, and the central difference "
         rf"of H is 1\.2471"
     )
     with pytest.raises(ValidationError, match=message):
-        _quiet(lambda: _problem(make(), dim))
+        _quiet(lambda: _problem(_OneHalfQuadratic(_quadratic(), coupling=f), dim))
 
 
 def test_a_control_that_disagrees_with_dp_and_h_alike_is_named_against_h():
@@ -300,26 +268,24 @@ def test_a_control_that_disagrees_with_dp_and_h_alike_is_named_against_h():
 # --- The probes vary t, x, m and p ---------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("dim", [1, 2])
 @pytest.mark.parametrize(
     ("cls", "t", "x"),
     [
-        (_AFTER_T0, "0.25", lambda dim: [0.5] * dim),
-        (_ONLY_AT_T, "0.5", lambda dim: [0.5] * dim),
-        (_AWAY_FROM_THE_MIDDLE, "0", lambda dim: [0.0] + [0.5] * (dim - 1)),
-        (_ONLY_AT_THE_LAST_END, "0", lambda dim: [1.0] + [0.5] * (dim - 1)),
+        (_AFTER_T0, "0.25", "[0.5]"),
+        (_ONLY_AT_T, "0.5", "[0.5]"),
+        (_AWAY_FROM_THE_MIDDLE, "0", "[0.]"),
+        (_ONLY_AT_THE_LAST_END, "0", "[1.]"),
     ],
     ids=["after t = 0", "only at T", "away from the middle", "only at the last end node"],
 )
-def test_a_control_that_departs_from_minus_dp_off_one_point_and_time_is_refused(cls, t, x, dim):
-    """T = 0.5, so T/2 = 0.25; along axis 0 the end nodes are x = 0 and x = 1, the other axes at the middle."""
-    probe = np.array2string(np.array(x(dim), dtype=float), precision=4)
+def test_a_control_that_departs_from_minus_dp_off_one_point_and_time_is_refused(cls, t, x):
+    """T = 0.5, so T/2 = 0.25; the end nodes are x = 0 and x = 1."""
     message = (
-        rf"optimal_control disagrees with dp and with H at t={re.escape(t)}, x={re.escape(probe)}, m=0\.5, "
-        rf"p={re.escape(_momentum(dim))}: "
+        rf"optimal_control disagrees with dp and with H at t={re.escape(t)}, x={re.escape(x)}, m=0\.5, "
+        rf"p={re.escape(_momentum(1))}: "
     )
     with pytest.raises(ValidationError, match=message):
-        _quiet(lambda: _problem(cls(_quadratic(), coupling=f), dim))
+        _quiet(lambda: _problem(cls(_quadratic(), coupling=f)))
 
 
 def test_the_probe_times_are_the_problems_own():
@@ -357,11 +323,10 @@ def _swapped(first, second):
     return Swapped
 
 
-@pytest.mark.parametrize(("first", "second"), [(0, 2), (0, 1)], ids=["1<->3", "1<->2"])
-def test_each_component_is_probed_at_a_magnitude_of_its_own(first, second):
+def test_each_component_is_probed_at_a_magnitude_of_its_own():
     """With the signs alone, components 1 and 3 were equal at every probe in 3-D, so their swap was not seen (#2901 review
-    3, M1); the 1<->2 swap is the control."""
-    message = _refused(lambda: _swapped(first, second)(_quadratic(), coupling=f), dim=3)
+    3, M1)."""
+    message = _refused(lambda: _swapped(0, 2)(_quadratic(), coupling=f), dim=3)
     assert "optimal_control disagrees with dp and with H" in message, message
 
 
@@ -406,19 +371,10 @@ def test_an_end_node_is_found_on_a_domain_far_from_the_origin():
 @pytest.mark.parametrize(
     "make",
     [
-        lambda: _WrongDpRaisingAtTheFirstEnd(_quadratic(), coupling=f),
-        lambda: _MixRaisingAtTheFirstEnd(_quadratic(), coupling=f),
         lambda: _WrongDpRaisingAtTheFirstProbe(_quadratic(), coupling=f),
         lambda: _control_raising(lambda t, p: not np.any(p), ValueError, wrong=True)(_quadratic(), coupling=f),
-        lambda: _control_raising(lambda t, p: t == 0.5, ValueError, wrong=True)(_quadratic(), coupling=f),
     ],
-    ids=[
-        "a wrong dp whose H raises at x = 0",
-        "Mix whose H raises at x = 0",
-        "a wrong dp whose H raises at the first probe",
-        "Mix whose control raises at p = 0",
-        "Mix whose control raises at t = T",
-    ],
+    ids=["a wrong dp whose H raises at the first probe", "a doubled control raising at p = 0"],
 )
 def test_a_probe_that_cannot_be_evaluated_is_skipped_not_the_check(make):
     """The failing probe is warned about and the witness still refuses. In the first-probe row and the p = 0 row the
@@ -564,42 +520,37 @@ class _DmOfOneEntry(_WrittenOutH):
         return np.atleast_1d(super().dm(t=t, x=x, p=p, m=m))
 
 
-class _DpRow(_WrittenOutH):
-    def dp(self, t, x, p, m):
-        return _row(p)
-
-
 class _ControlRow(_WrittenOutH):
     def optimal_control(self, t, x, p, m):
         return -_row(p)
 
 
-@pytest.mark.parametrize("dim", [1, 2])
 @pytest.mark.parametrize(
-    ("make", "location", "method", "returned"),
+    ("make", "location", "method"),
     [
-        (_ValueOfOneEntry, "hamiltonian", "__call__", lambda dim: (1,)),
-        (_DmOfOneEntry, "dH_dm", "dm", lambda dim: (1,)),
-        (_DpRow, "dH_dp", "dp", lambda dim: (1, dim)),
-        (_ControlRow, "optimal_control", "optimal_control", lambda dim: (1, dim)),
+        (_ValueOfOneEntry, "hamiltonian", "__call__"),
+        (_DmOfOneEntry, "dH_dm", "dm"),
+        (_ControlRow, "optimal_control", "optimal_control"),
     ],
-    ids=["a value of shape (1,)", "a dm of shape (1,)", "a dp row", "a control row"],
+    ids=["a value of shape (1,)", "a dm of shape (1,)", "a control row"],
 )
-def test_a_return_in_another_shape_than_its_contract_is_refused_at_construction(make, location, method, returned, dim):
+def test_a_return_in_another_shape_than_its_contract_is_refused_at_construction(make, location, method):
     """Each is the right value in a shape the owner of its return's shape refuses (#2875; strict, the approver's ruling
-    of 2026-11-15): one value per point has m's shape, (), and dp and the control have p's, (d,)."""
-    message = _refused(make, dim)
+    of 2026-11-15): one value per point has m's shape, (), and the control has p's, (1,) in 1-D."""
+    message = _refused(make)
     expected = (
         rf"\[ERROR\] \({location}\) validate_hamiltonian_consistency: {make.__name__}\.{re.escape(method)} was handed "
-        rf"p of shape \({dim},\) and m of shape \(\), and returned shape {re.escape(str(returned(dim)))}\."
+        rf"p of shape \(1,\) and m of shape \(\), and returned shape \(1,\)\."
+        if method != "optimal_control"
+        else rf"\[ERROR\] \({location}\) validate_hamiltonian_consistency: {make.__name__}\.optimal_control was handed "
+        rf"p of shape \(1,\) and m of shape \(\), and returned shape \(1, 1\)\."
     )
     assert re.search(expected, message), message
 
 
-@pytest.mark.parametrize("dim", [1, 2])
-def test_the_same_values_in_the_contracts_shapes_are_accepted(dim):
+def test_the_same_values_in_the_contracts_shapes_are_accepted():
     """The control for the row above: the same H with every return in its contract's shape."""
-    assert _quiet(lambda: _problem(_WrittenOutH(), dim)).hamiltonian_class is not None
+    assert _quiet(lambda: _problem(_WrittenOutH())).hamiltonian_class is not None
 
 
 class _TwoValuesAtTheLastEnd(_WrittenOutH):

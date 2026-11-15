@@ -702,7 +702,7 @@ def test_at_two_populations_an_optimal_control_assigned_on_the_instance_is_what_
 
     The assignment returns the library's control and records each read. Since #2901 construction reads it too, at its
     probes, so the records are cleared once the problems are built: what is counted is the solve's reads alone, each an
-    array of densities, one per node the door reads."""
+    array of more than one density: a batch the door reads."""
 
     def factor(m):
         return 1.0 + 0.5 * m
