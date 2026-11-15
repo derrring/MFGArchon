@@ -1,9 +1,10 @@
 """
 Kernel density estimation (KDE) of a particle ensemble on a regular grid.
 
-``gaussian_kde_gpu`` and ``gaussian_kde_gpu_nd`` estimate through a compute backend (Gaussian or Wendland C2
-kernel), and ``gaussian_kde_numpy`` through scipy's ``gaussian_kde``. It is generic numerics, in the numerics
-layer beside the particle interpolation it reads (#2938, stage 2c).
+``gaussian_kde_gpu`` estimates through a compute backend with a Gaussian or Wendland C2 kernel in 1-D,
+``gaussian_kde_gpu_nd`` through one with a Gaussian kernel in d dimensions, and ``gaussian_kde_numpy`` through
+scipy's ``gaussian_kde``. It is generic numerics, in the numerics layer beside the particle interpolation it reads
+(#2938, stage 2c).
 """
 
 from typing import TYPE_CHECKING
@@ -409,10 +410,10 @@ def gaussian_kde_numpy(
     bandwidth: float | str,
 ) -> np.ndarray:
     """
-    CPU fallback for Gaussian KDE using scipy.stats.gaussian_kde.
+    Gaussian KDE through scipy.stats.gaussian_kde, on the CPU.
 
-    This is the original implementation used when backend is None or
-    scipy is not available. Much slower than GPU version for large N.
+    No library code calls it: the benchmark and the tests compare the backend estimates with it
+    (#2938, stage 2c). Much slower than the backend version for large N.
 
     Note: scipy.stats.gaussian_kde interprets numeric bandwidth as
     a factor to multiply by data std, not absolute bandwidth, which is
