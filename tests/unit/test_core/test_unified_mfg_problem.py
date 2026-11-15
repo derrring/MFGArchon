@@ -588,7 +588,8 @@ class TestCustomComponentExceptionPropagation:
         # Custom Hamiltonian class with broken dm() method
         class BrokenDmHamiltonian(HamiltonianBase):
             def __call__(self, t, x, p, m):
-                return 0.0
+                # One value per point, m's shape, as the doors' check reads it on a batch (#2901)
+                return np.zeros_like(np.asarray(m, dtype=float))
 
             def dp(self, t, x, p, m):
                 # p's shape, as the owner of dp's shape reads it (#2875); the consistency check reads it (#2901)

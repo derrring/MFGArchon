@@ -356,7 +356,9 @@ def test_a_control_that_writes_the_density_it_is_handed_leaves_the_returned_hist
 def test_the_default_solve_on_a_mesh_hands_the_control_a_density():
     """`problem.solve()` on a 1-D mesh picks FEM_P1 (the factory's scheme for an unstructured mesh). The reads come
     from FEM's quadrature points, two-dimensional per coordinate, and every one carries a density."""
-    h = _Separable("density", to_p=lambda m, p: m[None])
+    # FEM's quadrature points hand p axis first, (d, elements, points), with m (elements, points), as #2875's table
+    # records; construction hands the documented forms, (N, d) with m (N,) and (d,) with a number (#2901).
+    h = _Separable("density", to_p=lambda m, p: m[None] if np.shape(p)[1:] == np.shape(m) else m[..., None])
     problem = _quiet(lambda: _mesh_problem(h))
     h.reads.clear()  # the problem's construction reads the control at its probes (#2901); the solver's reads stay
     result = _quiet(problem.solve)

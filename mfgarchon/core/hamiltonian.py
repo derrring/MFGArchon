@@ -75,18 +75,17 @@ from mfgarchon.types.callable_protocols import (
     HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
     BoundCallable,
+    _refuse_unless_equal,
     bound_attribute,
     coordinate_tuple,
     point_at,
     point_tuple,
-    refuse_batch_disagreement,
     refuse_overridden,
-    spread_samples,
 )
 from mfgarchon.utils.exceptions import report_inner_failure
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from numpy.typing import NDArray
     from scipy.optimize import OptimizeResult
@@ -1285,6 +1284,7 @@ _SHAPE_CONTRACTS = {
     "dp": "dH/dp of p's shape, as HamiltonianBase.dp and ControlCostBase.dp document",
     "evaluate_dp": "dH/dp of p's shape, as HamiltonianBase.dp and ControlCostBase.dp document",
     "__call__": "H's value, one per point and so of m's shape, as HamiltonianBase.__call__ documents",
+    "evaluate_H": "H's value, one per point and so of m's shape, as HamiltonianBase.__call__ documents",
     "dm": "dH/dm, one per point and so of m's shape, as HamiltonianBase.dm documents",
 }
 
@@ -1417,7 +1417,11 @@ class HamiltonianBase(MFGOperatorBase):
     DualLagrangian : Lagrangian from Hamiltonian via inverse Legendre
     """
 
-    # Whether a problem compares this Hamiltonian's batch and point reads (`refuse_a_hamiltonian_whose_reads_disagree`).
+    # Whether this Hamiltonian's doors read a batch. No solver reads the flag: every batch path hands a batch whatever it
+    # says, so a False Hamiltonian's batch read may raise, and the batch paths will raise on it at solve time. It changes
+    # one thing, in `refuse_a_hamiltonian_whose_reads_disagree`: a door of a Hamiltonian that declares False and raises
+    # on a batch is not compared there rather than refused. A batch read that disagrees with the method is refused either
+    # way (#2901).
     reads_a_batch = True
 
     @property
@@ -2399,7 +2403,7 @@ class DualHamiltonian(HamiltonianBase):
     LagrangianBase.legendre_transform : Symmetric operation (L → H)
     """
 
-    # One optimization per point: it has no batch read to compare.
+    # One optimization per point: its doors raise on a batch (#2315), which a problem does not compare (#2901).
     reads_a_batch = False
 
     def __init__(
@@ -3363,35 +3367,153 @@ def create_hamiltonian(
         )
 
 
-def refuse_a_hamiltonian_whose_reads_disagree(hamiltonian: HamiltonianBase, grid: NDArray, t: float = 0.0) -> None:
-    """Refuse a Hamiltonian whose batch evaluation differs from evaluating each node alone (#1884, #2481, #2875).
+#: The doors the solvers read, each with the method it must agree with (#2901's census: no library caller reads the
+#: ``dH_dm`` door or ``evaluate``).
+_DOORS = (("evaluate_H", "__call__"), ("evaluate_dp", "dp"), ("evaluate_optimal_control", "optimal_control"))
 
-    A problem takes the Hamiltonian here, so its value and its ``dp`` are read on nodes of ``grid`` together and then one at
-    a time. A Hamiltonian written for one point gives a wrong solve on a batch path, and not always an error: ``0.5*p[0]**2``
+
+def refuse_a_hamiltonian_whose_reads_disagree(
+    hamiltonian: HamiltonianBase, grid: NDArray, times: Sequence[float] = (0.0,), unwalled: Any = None
+) -> None:
+    """Refuse a Hamiltonian whose doors read another Hamiltonian than its methods (#1884, #2481, #2875, #2901).
+
+    The solvers read the doors: ``evaluate_H``, ``evaluate_dp`` and ``evaluate_optimal_control``, handed one point by the
+    semi-Lagrangian path and a batch of rows by every other. A problem compares each door with its method, ``__call__``,
+    ``dp`` and ``optimal_control``, read at each row alone as the consistency check reads it, at each of ``times``:
+
+    - the rows: x the consistency check's probe nodes of ``grid`` (`_probe_nodes`), with the node where the soft wall is
+      largest when ``unwalled``, the Hamiltonian before the wall was composed, is given; (m, p) the check's six probes
+      (`_consistency_probes`), row i of batch j reading probe (i + j) mod 6, so every pair is read in a batch of at least
+      three rows, and no batch of one is handed;
+    - a batch: each row of the door's read against the method at that row;
+    - a point: the door read alone at each row, ``p`` of shape ``(d,)`` and ``m`` a number, against the method there.
+
+    A Hamiltonian written for one point gives a wrong solve on a batch path, and not always an error: ``0.5*p[0]**2``
     reads node 0's momentum at every node, and Newton converges cleanly to that wrong equation (measured 0.962 off the
-    per-point solve, with no inner failure).
+    per-point solve, with no inner failure). A door overridden to read another Hamiltonian than its method makes the
+    solvers read two: a doubled control door moved M by 0.478 (#2901).
 
-    The momenta and densities are synthetic and wide (p from -1.3 to 2.1), never a solve's first values: a narrow probe
-    passed a point-only dead-zone cost ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479). A node
-    alone is read as the per-point solve paths read one: ``x`` one point, ``p`` of shape ``(d,)``, ``m`` a scalar.
+    Every read goes through the checks' one reader, `_read_source`, and a return the owner of its shape refuses is
+    refused. A disagreement is refused (`_refuse_unless_equal`). ``evaluate_H`` and ``__call__`` are one function, so
+    nothing beyond roundoff is allowed between them. ``dp`` and the control may be finite differences of H, as
+    ``HamiltonianBase``'s are, and then carry H's roundoff divided by the step: measured 2.2e-10 between ``dp`` on a batch
+    and at its rows, on values of order 1 (#2901). So their doors are compared above the consistency check's noise floor,
+    ``_WITNESS_NOISE_SAFETY * eps * max(1, max |H| at the rows) / finite_diff_eps``, about 2.2e-6 at |H| ~ 1 and the
+    default step; a door that differs from its method by less than that is not seen. A door that raises where its method
+    reads is refused, except on a batch when the Hamiltonian declares ``reads_a_batch`` False: that is the declaration
+    holding, and the batch paths will raise on it at solve time, so the batch is not compared. A batch read that returns
+    a row disagreeing with its method is refused whatever the flag says, since no solver reads it. A batch holding a row
+    at which the method cannot be read is not compared, warned about once; the consistency check reports the method. A ``NetworkHamiltonian`` is not read here: its x is a node, and the probe nodes
+    of a grid mean nothing to it (#2901's stage 1c-iii compares its sources).
     """
-    if not hamiltonian.reads_a_batch:
-        return
-    points = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
-    d = points.shape[1]
-    k = 4 if d == 3 else 3
-    x = points[spread_samples(points.shape[0], k)]
-    p = np.linspace(-1.3, 2.1, k)[:, None] * (1.0 + 0.25 * np.arange(d))
-    m = np.linspace(0.5, 1.7, k)
-    guidance = (
-        "x is a tuple with one entry per coordinate, p has shape (N, d) and m shape (N,): write it to act row-wise on p, "
-        "such as 0.5*np.sum(p**2, axis=-1), and to read x[0] as the coordinate (#2875)."
+    import warnings
+
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+    from mfgarchon.utils.validation.functions import (
+        _WITNESS_NOISE_SAFETY,
+        SourceEvaluationError,
+        SourceShapeError,
+        _consistency_probes,
+        _largest_wall_node,
+        _probe_nodes,
+        _read_source,
     )
-    for name, evaluate in (("evaluate_H", hamiltonian.evaluate_H), ("evaluate_dp", hamiltonian.evaluate_dp)):
-        refuse_batch_disagreement(
-            lambda evaluate=evaluate, **state: evaluate(HEvalState(**state)),
-            {"x": x, "p": p, "m": m, "t": t},
-            [{"x": x[i], "p": p[i], "m": m[i], "t": t} for i in range(k)],
-            name=f"{type(hamiltonian).__name__}.{name}",
-            guidance=guidance,
+
+    if isinstance(hamiltonian, NetworkHamiltonian):
+        return
+    nodes = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
+    probes = list(_consistency_probes(nodes.shape[1]))
+    name = type(hamiltonian).__name__
+    reader = "refuse_a_hamiltonian_whose_reads_disagree"
+    guidance = (
+        "A door the library ships reads its method on the batch: write the method to act row-wise, x a tuple with one "
+        "entry per coordinate, p of shape (N, d) and m of shape (N,), such as 0.5*np.sum(p**2, axis=-1), reading x[0] as "
+        "the coordinate. A door you override must return what its method returns at each row (#2875, #2901)."
+    )
+    unread: dict[str, str] = {}
+    noise = _WITNESS_NOISE_SAFETY * float(np.finfo(float).eps) / hamiltonian.finite_diff_eps
+
+    def floor(door_name: str, rows: list[tuple[int, int]], h_at: dict[tuple[int, int], float]) -> float | None:
+        """The absolute margin a door is compared within: roundoff for the value, the differencing noise for the rest."""
+        if door_name == "evaluate_H":
+            return None
+        return noise * max([1.0, *(h_at[row] for row in rows if row in h_at)])
+
+    def refused(e: BaseException, door_name: str, where: str) -> ValueError:
+        if isinstance(e, SourceShapeError):
+            return ValueError(f"{e} At {where}.")
+        return ValueError(
+            f"{name}.{door_name} could not be evaluated at {where}, where its method could be read: {e}. The library's "
+            f"solvers read {door_name} there, so a solve would fail. {guidance}"
+        )
+
+    for t in (float(s) for s in times):
+        h_at: dict[tuple[int, int], float] = {}
+        points = _probe_nodes(nodes)
+        if unwalled is not None:
+            try:
+                largest = _largest_wall_node(hamiltonian, unwalled, nodes, t, reader)
+            except (SourceShapeError, SourceEvaluationError):  # `validate_composed_wall` reports the potential's read
+                largest = None
+            if largest is not None and not any(np.array_equal(largest, q) for q in points):
+                points.append(largest)
+        for door_name, method_name in _DOORS:
+            door = getattr(hamiltonian, door_name)
+            method = hamiltonian if method_name == "__call__" else getattr(hamiltonian, method_name)
+            value: dict[tuple[int, int], NDArray] = {}
+            for i, x in enumerate(points):
+                for k, (m, p) in enumerate(probes):
+                    where = f"t={t:.4g}, x={x.tolist()}, m={m:.4g}, p={p.tolist()}"
+                    try:
+                        value[i, k] = _read_source(method, t=t, x=x, p=p, m=m, method=method_name, reader=reader)
+                    except SourceShapeError as e:
+                        raise ValueError(f"{e} At {where}.") from e
+                    except SourceEvaluationError as e:
+                        unread.setdefault(method_name, f"{name}.{method_name} at {where}: {e}")
+                        continue
+                    if method_name == "__call__":
+                        h_at[i, k] = float(np.max(np.abs(value[i, k]), initial=0.0))
+                    try:
+                        alone = _read_source(door, t=t, x=x, p=p, m=m, method=door_name, form="door", reader=reader)
+                    except (SourceShapeError, SourceEvaluationError) as e:
+                        raise refused(e, door_name, f"one point, {where}") from e
+                    _refuse_unless_equal(
+                        alone,
+                        value[i, k],
+                        f"{name}.{door_name} at one point, {where}",
+                        guidance,
+                        first=door_name,
+                        second=method_name,
+                        atol=floor(door_name, [(i, k)], h_at),
+                    )
+            for j in range(len(probes)):
+                rows = [(i, (i + j) % len(probes)) for i in range(len(points))]
+                if any(row not in value for row in rows):
+                    continue
+                xs = np.stack([points[i] for i, _ in rows])
+                ps = np.stack([probes[k][1] for _, k in rows])
+                ms = np.array([probes[k][0] for _, k in rows])
+                where = f"t={t:.4g}, a batch of {len(rows)} rows, x={xs.tolist()}, m={ms.tolist()}, p={ps.tolist()}"
+                try:
+                    together = _read_source(door, t=t, x=xs, p=ps, m=ms, method=door_name, form="door", reader=reader)
+                except SourceShapeError as e:
+                    raise refused(e, door_name, where) from e
+                except SourceEvaluationError as e:
+                    if hamiltonian.reads_a_batch:
+                        raise refused(e, door_name, where) from e
+                    continue  # the declaration holding: the batch paths will raise on it at solve time
+                _refuse_unless_equal(
+                    together,
+                    np.vstack([value[row].reshape(1, -1) for row in rows]),
+                    f"{name}.{door_name} at {where}",
+                    guidance,
+                    first=f"{door_name} on the batch",
+                    second=f"{method_name} at each row alone",
+                    atol=floor(door_name, rows, h_at),
+                )
+    for source, what in unread.items():
+        warnings.warn(
+            f"{what}. {source} was not compared there (#2901).",
+            UserWarning,
+            stacklevel=3,
         )

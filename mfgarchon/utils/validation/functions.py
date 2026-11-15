@@ -100,8 +100,9 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
 
 
 #: What a Hamiltonian or one of its methods raises when it cannot be evaluated at a probe: a wrong call, a kink its own
-#: minimiser refuses (#2644's ConvergenceError is a RuntimeError), a value out of its domain. A comparison that meets one
-#: skips that probe and warns, and never gates on it alone (#2901); anything else is a bug and propagates.
+#: minimiser refuses (#2644's ConvergenceError is a RuntimeError), a value out of its domain. `_read_source` marks one
+#: raised by the source's own call as `SourceEvaluationError`, and a comparison that meets that skips the probe and
+#: warns, never gating on it alone (#2901); anything else is a bug and propagates.
 _EVALUATION_ERRORS: tuple[type[BaseException], ...] = (
     ArithmeticError,
     AttributeError,
@@ -121,24 +122,85 @@ class SourceShapeError(Exception):
     ``_EVALUATION_ERRORS`` nor a ``ValueError``, so no guard that skips a probe takes it."""
 
 
-#: The owner of each method's return shape (#2875, #2901): p's shape for dp and the control, m's for the value and dm.
-_SHAPE_OWNER = {"dp": "control", "optimal_control": "control", "__call__": "value", "dm": "value"}
+class SourceEvaluationError(Exception):
+    """A source could not be evaluated where `_read_source` read it: its own call raised one of ``_EVALUATION_ERRORS``,
+    or what it returned holds no number. The cause is chained, and the message is its type and text. The checks' guards
+    take this and `SourceShapeError` and nothing else, so an error in the reader's own code propagates as the bug it is
+    and is never read as the source failing (#2901)."""
+
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(f"{type(cause).__name__}: {str(cause).rstrip('.')}")
 
 
-def _read_source(source: Any, *, t: float, x: Any, p: Any, m: Any, method: str) -> np.ndarray:
-    """Read one of a Hamiltonian's sources at one point, as the checks' one reader (#2901).
+#: The owner of each method's and door's return shape (#2875, #2901): p's shape for dp, the control and their doors, m's
+#: for the value, dm and ``evaluate_H``.
+_SHAPE_OWNER = {
+    "dp": "control",
+    "optimal_control": "control",
+    "evaluate_dp": "control",
+    "evaluate_optimal_control": "control",
+    "__call__": "value",
+    "dm": "value",
+    "evaluate_H": "value",
+}
 
-    ``source`` is called as `_call_h` calls it: a family method by keyword, a raw callable through its binding. What
-    it returns goes through the owner of that method's return shape: ``checked_control`` for ``dp`` and
-    ``optimal_control``, ``checked_value`` for ``__call__`` and ``dm``. A return the owner refuses raises
-    `SourceShapeError`. An error from the source itself, or from converting an admitted return to floats, propagates
-    to the caller's guard. numpy alone reads ``None`` in an object array as NaN, so such a return is converted entry by
-    entry: one that holds no number raises ``TypeError`` there, a probe its source could not be evaluated at, and is
-    never read as a NaN value."""
-    from mfgarchon.core.hamiltonian import checked_control, checked_value
 
-    value = _call_h(source, x, m, p, t)
-    reader, owner_of = "validate_hamiltonian_consistency", getattr(source, "__self__", source)
+def _read_source(
+    source: Any,
+    *,
+    t: float,
+    x: Any,
+    p: Any,
+    m: Any,
+    method: str,
+    form: str = "point",
+    reader: str = "validate_hamiltonian_consistency",
+) -> np.ndarray:
+    """Read one of a Hamiltonian's sources, as the checks' one reader (#2901).
+
+    ``form`` is how the source is called:
+
+    - ``"point"``: as `_call_h` calls it at one point, a family method by keyword, a raw callable through its binding;
+    - ``"door"``: a door, handed ``HEvalState(t, x, p, m)``, at one point (p of shape (d,), m a number) or on a batch
+      (x and p of shape (N, d), m of shape (N,)), as the solvers hand it;
+    - ``"potential"``: ``source._potential``, the potential a ``SeparableHamiltonian`` holds, at one point, bound and
+      read as its ``__call__`` reads it; ``p`` and ``m`` are not read.
+
+    What a method or door returns goes through the owner of its return shape: ``checked_control`` for ``dp``,
+    ``optimal_control`` and their doors, ``checked_value`` for ``__call__``, ``dm`` and ``evaluate_H``. A potential is one
+    value at a point. A return the owner refuses raises `SourceShapeError`, naming ``reader``.
+
+    The reader tells three things apart (#2901). One of ``_EVALUATION_ERRORS`` raised by the source's own call, its
+    binding included, or by converting what it returned to floats, raises `SourceEvaluationError`: the source could
+    not be evaluated there. numpy alone reads ``None`` in an object array as NaN, so such a return is converted entry by
+    entry, and one that holds no number is a probe its source could not be evaluated at, never a NaN value. A shape
+    the owner refuses raises `SourceShapeError`. Anything else, the reader's own code included, propagates as it is."""
+    from mfgarchon.core.hamiltonian import HEvalState, _bound_potential, checked_control, checked_value
+    from mfgarchon.types.callable_protocols import point_tuple
+
+    if form == "potential":
+        at = point_tuple(x)
+        try:
+            value = np.asarray(_bound_potential(source)(x=at, t=t), dtype=float)
+        except _EVALUATION_ERRORS as e:
+            raise SourceEvaluationError(e) from e
+        if value.size != 1:
+            raise SourceShapeError(
+                f"{type(source).__name__}'s potential returned shape {value.shape} at one point, where one value is read"
+            )
+        return value.reshape(())
+    if form == "door":
+        state = HEvalState(t=t, x=x, p=p, m=m)
+        call = lambda: source(state)  # noqa: E731
+    elif form == "point":
+        call = lambda: _call_h(source, x, m, p, t)  # noqa: E731
+    else:
+        raise ValueError(f"_read_source: unknown form {form!r}")
+    try:
+        value = call()
+    except _EVALUATION_ERRORS as e:
+        raise SourceEvaluationError(e) from e
+    owner_of = getattr(source, "__self__", source)
     try:
         if _SHAPE_OWNER[method] == "control":
             checked = checked_control(value, p, reader=reader, source=owner_of, m=m, method=method)
@@ -146,9 +208,12 @@ def _read_source(source: Any, *, t: float, x: Any, p: Any, m: Any, method: str) 
             checked = checked_value(value, m, reader=reader, source=owner_of, p=p, method=method)
     except ValueError as refusal:
         raise SourceShapeError(str(refusal)) from refusal
-    if checked.dtype == object:
-        return np.array([float(v) for v in checked.reshape(-1).tolist()]).reshape(checked.shape)
-    return np.asarray(checked, dtype=float)
+    try:
+        if checked.dtype == object:
+            return np.array([float(v) for v in checked.reshape(-1).tolist()]).reshape(checked.shape)
+        return np.asarray(checked, dtype=float)
+    except _EVALUATION_ERRORS as e:
+        raise SourceEvaluationError(e) from e
 
 
 def _get_sample_inputs(
@@ -467,11 +532,20 @@ def _grid_nodes(geometry: GeometryProtocol, dimension: int) -> np.ndarray | None
 def _probe_points(geometry: GeometryProtocol, middle: np.ndarray) -> list[np.ndarray]:
     """The x the consistency probes read: the node nearest the centre of the nodes' bounding box (the middle node when
     every axis has an odd number of nodes), then along each axis the two end nodes nearest it in the other coordinates,
-    so at most 2d + 1 nodes, all inside the domain (#2901). A geometry whose grid is not an array of nodes is probed at
-    the sample point alone."""
+    then the nodes `spread_samples` picks, so at most 2d + 4 nodes in d <= 2 and 2d + 5 in 3-D, all inside the domain
+    (#2875, #2901). A geometry whose grid is not an array of nodes is probed at the sample point alone."""
     nodes = _grid_nodes(geometry, middle.size)
     if nodes is None:
         return [middle]
+    return _probe_nodes(nodes)
+
+
+def _probe_nodes(nodes: np.ndarray) -> list[np.ndarray]:
+    """`_probe_points` of an (N, d) array of nodes: the one owner of which nodes the checks probe (#2901). After the
+    centre and the end nodes come the nodes `spread_samples` picks, 3, or 4 in 3-D: on a uniform grid the centre and
+    the ends are where a term such as sin(2 pi x) takes one value, so a read frozen at one node passes there (#2875)."""
+    from mfgarchon.types.callable_protocols import _sample_count, spread_samples
+
     centre = 0.5 * (nodes.min(axis=0) + nodes.max(axis=0))
     middle = nodes[int(np.argmin(np.sum((nodes - centre) ** 2, axis=1)))]
     points = [middle]
@@ -481,6 +555,9 @@ def _probe_points(geometry: GeometryProtocol, middle: np.ndarray) -> list[np.nda
             nearest = on_end[int(np.argmin(np.sum((on_end - middle) ** 2, axis=1)))]
             if not any(np.array_equal(nearest, q) for q in points):
                 points.append(nearest)
+    for i in spread_samples(nodes.shape[0], _sample_count(nodes.shape[1])):
+        if not any(np.array_equal(nodes[i], q) for q in points):
+            points.append(nodes[i])
     return points
 
 
@@ -656,8 +733,8 @@ def validate_hamiltonian_consistency(
     The probes are every (t, x, m, p) of (#2901):
 
     - t in ``times`` (a problem hands 0, T/2 and T);
-    - x the node nearest the centre of the nodes' box and, along each axis, its two end nodes nearest it, at most 2d + 1
-      nodes (`_probe_points`);
+    - x the node nearest the centre of the nodes' box and, along each axis, its two end nodes nearest it, then the 3
+      nodes ``spread_samples`` picks (4 in 3-D), at most 2d + 4 nodes, 2d + 5 in 3-D (`_probe_points`);
     - m in 0.5, 1.0;
     - p with component k a scale times (-1)**k (1 + 0.3 k), the scale in 0, 0.4157, -1.3691, so every component is
       probed at both signs and at a magnitude of its own (`_consistency_probes`).
@@ -670,7 +747,7 @@ def validate_hamiltonian_consistency(
     comparison alone, each warned about once, naming the first such probe. H that cannot be evaluated at any probe is an
     error, and so is ``dH_dp`` or the control raising at every probe at which H could be evaluated, since whatever reads
     it would fail or read another source; ``dH_dm``, which no grid solver reads, is warned about there. A return the owner refuses is an error at the first probe it comes back, naming that
-    probe: it breaks the source's contract there. An error outside ``_EVALUATION_ERRORS`` propagates.
+    probe: it breaks the source's contract there. Any other error, the reader's own included, propagates.
 
     Numerical checks, at each probe:
         dH_dm_numerical = (H(t, x, p, m+eps) - H(t, x, p, m-eps)) / (2*eps)
@@ -737,14 +814,14 @@ def validate_hamiltonian_consistency(
         if isinstance(e, SourceShapeError):
             shapes.setdefault(name, f"{e} At {_probe_text(t, x, m, p)}.")
         else:
-            failures.setdefault(name, f"at {_probe_text(t, x, m, p)}: {type(e).__name__}: {str(e).rstrip('.')}")
+            failures.setdefault(name, f"at {_probe_text(t, x, m, p)}: {e}")
 
     points = _probe_points(geometry, x_sample)
     probes = [(float(t), x, m, p) for t in times for x in points for m, p in _consistency_probes(dimension)]
     for t, x, m, p in probes:
         try:
             h_center = float(_read_source(hamiltonian, t=t, x=x, p=p, m=m, method="__call__"))
-        except (SourceShapeError, *_EVALUATION_ERRORS) as e:  # H cannot be read here: the probe is skipped, reported
+        except (SourceShapeError, SourceEvaluationError) as e:  # H cannot be read here: the probe is skipped, reported
             failed["hamiltonian"] += not isinstance(e, SourceShapeError)
             fail("hamiltonian", t, x, m, p, e)
             continue
@@ -753,14 +830,14 @@ def validate_hamiltonian_consistency(
         # --- dH_dm: its read, then H's two reads beside the probe ---
         try:
             dm_value = float(_read_source(dH_dm, t=t, x=x, p=p, m=m, method="dm"))
-        except (SourceShapeError, *_EVALUATION_ERRORS) as e:
+        except (SourceShapeError, SourceEvaluationError) as e:
             failed["dH_dm"] += not isinstance(e, SourceShapeError)
             fail("dH_dm", t, x, m, p, e)
         else:
             try:
                 h_m_plus = float(_read_source(hamiltonian, t=t, x=x, p=p, m=m + step, method="__call__"))
                 h_m_minus = float(_read_source(hamiltonian, t=t, x=x, p=p, m=m - step, method="__call__"))
-            except (SourceShapeError, *_EVALUATION_ERRORS) as e:
+            except (SourceShapeError, SourceEvaluationError) as e:
                 fail("hamiltonian", t, x, m, p, e)
             else:
                 comparison = _compare_derivative(h_m_minus, h_center, h_m_plus, step, dm_value, m, p, tolerance, t, x)
@@ -776,14 +853,14 @@ def validate_hamiltonian_consistency(
         if dH_dp is not None:
             try:
                 dp_analytical = _read_source(dH_dp, t=t, x=x, p=p, m=m, method="dp")
-            except (SourceShapeError, *_EVALUATION_ERRORS) as e:
+            except (SourceShapeError, SourceEvaluationError) as e:
                 failed["dH_dp"] += not isinstance(e, SourceShapeError)
                 fail("dH_dp", t, x, m, p, e)
         control = None
         if optimal_control is not None:
             try:
                 control = _read_source(optimal_control, t=t, x=x, p=p, m=m, method="optimal_control")
-            except (SourceShapeError, *_EVALUATION_ERRORS) as e:
+            except (SourceShapeError, SourceEvaluationError) as e:
                 failed["optimal_control"] += not isinstance(e, SourceShapeError)
                 fail("optimal_control", t, x, m, p, e)
         if dp_analytical is None and control is None:
@@ -796,7 +873,7 @@ def validate_hamiltonian_consistency(
             try:
                 h_minus = float(_read_source(hamiltonian, t=t, x=x, p=p_minus, m=m, method="__call__"))
                 h_plus = float(_read_source(hamiltonian, t=t, x=x, p=p_plus, m=m, method="__call__"))
-            except (SourceShapeError, *_EVALUATION_ERRORS) as e:
+            except (SourceShapeError, SourceEvaluationError) as e:
                 fail("hamiltonian", t, x, m, p, e)
                 continue
             if dp_analytical is not None:
@@ -861,4 +938,93 @@ def validate_hamiltonian_consistency(
     for i in range(dimension):
         _report_control(result, i, x_sample, control_witness[i], control_inconsistent[i])
 
+    return result
+
+
+def _potential_at(h: Any, t: float, x: np.ndarray, reader: str) -> float:
+    """The potential ``h`` holds, at one point, read as its ``__call__`` reads it; 0 where it holds none."""
+    if getattr(h, "_potential", None) is None:
+        return 0.0
+    return float(_read_source(h, t=t, x=x, p=None, m=None, method="potential", form="potential", reader=reader))
+
+
+def _largest_wall_node(walled: Any, unwalled: Any, nodes: np.ndarray, t: float, reader: str) -> np.ndarray:
+    """The node of ``nodes`` at which the soft wall composed into ``walled`` moves the potential most at ``t``: where a
+    read that drops the wall is furthest off (#2901). An error reading a potential propagates to the caller's guard."""
+    wall = [abs(_potential_at(walled, t, x, reader) - _potential_at(unwalled, t, x, reader)) for x in nodes]
+    return nodes[int(np.argmax(wall))]
+
+
+def validate_composed_wall(
+    walled: Any, unwalled: Any, geometry: GeometryProtocol, times: Sequence[float] = (0.0,)
+) -> ValidationResult:
+    """The soft wall composed into a ``SeparableHamiltonian``'s potential, read back through the composed ``__call__``
+    (#2002, #2901).
+
+    ``MFGProblem`` composes ``state_penalty`` into the Hamiltonian's potential, and the solvers read the composed H. A
+    ``__call__`` that does not read the potential drops the wall from every solve, silently. At each of ``times``, at the
+    consistency probes (t, x, m, p), x also the node where the wall is largest at that t, the walled ``__call__`` minus
+    the unwalled one must equal minus the change of the potential, read as ``SeparableHamiltonian`` reads it
+    (H = cost - V - f). A gap above the witness margin is an error. So a ``__call__`` that drops the wall is seen
+    wherever the wall is nonzero on the grid, an interior obstacle between the probes included; one that reads the
+    potential at some x and not others is seen only at those x.
+
+    The composed H's doors are compared with its methods at the same nodes and times by
+    `refuse_a_hamiltonian_whose_reads_disagree`. Every read goes through `_read_source`: a read that cannot be evaluated
+    is warned about, once, and a return the owner of its shape refuses is an error."""
+    result = ValidationResult()
+    x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "state_penalty")
+    if err is not None:
+        return err
+    reader = "validate_composed_wall"
+    nodes = _grid_nodes(geometry, dimension)
+    worst: tuple[float, float, np.ndarray, float, np.ndarray, float, float] | None = None
+    failure: str | None = None
+    shapes: dict[str, str] = {}
+    for t in (float(s) for s in times):
+        points = _probe_points(geometry, x_sample)
+        if nodes is not None:
+            try:
+                largest = _largest_wall_node(walled, unwalled, nodes, t, reader)
+            except SourceShapeError as e:
+                shapes.setdefault("state_penalty", f"{e}, at t={t:.4g}, reading the potential at the grid's nodes")
+            except SourceEvaluationError as e:
+                if failure is None:
+                    failure = f"at t={t:.4g}, reading the potential at the grid's nodes: {e}"
+            else:
+                if not any(np.array_equal(largest, q) for q in points):
+                    points.append(largest)
+        for x in points:
+            for m, p in _consistency_probes(dimension):
+                try:
+                    expected = -(_potential_at(walled, t, x, reader) - _potential_at(unwalled, t, x, reader))
+                    h_walled = float(_read_source(walled, t=t, x=x, p=p, m=m, method="__call__", reader=reader))
+                    h_unwalled = float(_read_source(unwalled, t=t, x=x, p=p, m=m, method="__call__", reader=reader))
+                except SourceShapeError as e:
+                    shapes.setdefault("state_penalty", f"{e} At {_probe_text(t, x, m, p)}.")
+                    continue
+                except SourceEvaluationError as e:
+                    if failure is None:
+                        failure = f"at {_probe_text(t, x, m, p)}: {e}"
+                    continue
+                moved = h_walled - h_unwalled
+                gap = abs(moved - expected)
+                scale = max(abs(moved), abs(expected))
+                above_noise = gap > _WITNESS_NOISE_SAFETY * float(np.finfo(float).eps) * max(scale, 1.0)
+                if above_noise and gap > _WITNESS_RTOL * scale and (worst is None or gap > worst[0]):
+                    worst = (gap, t, x, m, p.copy(), moved, expected)
+    for name, where in shapes.items():
+        result.add_error(where, location=name)
+    if failure is not None:
+        result.add_warning(f"Could not compare the composed soft wall {failure}", location="state_penalty")
+    if worst is not None:
+        _gap, t, x, m, p, moved, expected = worst
+        result.add_error(
+            f"The soft wall composed into {type(walled).__name__}'s potential does not reach its __call__ at "
+            f"{_probe_text(t, x, m, p)}: __call__ moved by {moved:.6g}, and the wall moves H by {expected:.6g} there. "
+            f"Its __call__ does not read the potential the wall was composed into, so every solve would drop the wall "
+            f"(#2002, #2901).",
+            location="state_penalty",
+            suggestion="Read the potential through super().__call__, or fold the penalty into your own Hamiltonian",
+        )
     return result

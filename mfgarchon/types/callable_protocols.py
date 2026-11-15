@@ -377,39 +377,28 @@ def _defined_by_the_library(fn: Any) -> bool:
 _UNREADABLE = (TypeError, ValueError, IndexError, ArithmeticError, AttributeError, KeyError)
 
 
-def _refuse_unless_equal(together: NDArray, alone: NDArray, described: str, guidance: str) -> None:
-    """NaN only matches NaN, and the tolerance is scaled by the finite values alone, so one infinite value cannot make the
-    comparison vacuous (#2479)."""
+def _refuse_unless_equal(
+    together: NDArray,
+    alone: NDArray,
+    described: str,
+    guidance: str,
+    *,
+    first: str = "together",
+    second: str = "one at a time",
+    atol: float | None = None,
+) -> None:
+    """Refuse two reads that differ: ``together`` and ``alone``, named in the refusal by ``first`` and ``second``. NaN only
+    matches NaN, and the tolerance is scaled by the finite values alone, so one infinite value cannot make the comparison
+    vacuous (#2479). ``atol`` replaces the absolute margin, ``1e-12`` times that scale, where a read carries noise of its
+    own (#2901)."""
     finite = np.abs(alone[np.isfinite(alone)])
     scale = max(1.0, float(finite.max())) if finite.size else 1.0
     if together.size != alone.size or not np.allclose(
-        together.reshape(alone.shape), alone, rtol=1e-10, atol=1e-12 * scale, equal_nan=True
+        together.reshape(alone.shape), alone, rtol=1e-10, atol=1e-12 * scale if atol is None else atol, equal_nan=True
     ):
         raise ValueError(
-            f"{described}, reads differently together ({together.ravel()}) and one at a time ({alone.ravel()}). {guidance}"
+            f"{described}, reads differently {first} ({together.ravel()}) and {second} ({alone.ravel()}). {guidance}"
         )
-
-
-def refuse_batch_disagreement(
-    read: Callable[..., Any], batch: Mapping[str, Any], points: Sequence[Mapping[str, Any]], *, name: str, guidance: str
-) -> None:
-    """Refuse a body whose read of a batch differs from its read of each point alone, or that raises on either (#2875).
-
-    The library chooses when to loop and when to vectorize, so a body must read the same both ways: one that does not
-    comes back as a result and not as an error.
-    """
-    described = f"{name}, at {len(points)} samples"
-    try:
-        together = np.asarray(read(**batch), dtype=float)
-    except _UNREADABLE as e:
-        raise ValueError(f"{described} together, raised {type(e).__name__}: {e}. {guidance}") from e
-    try:
-        alone = np.vstack([np.asarray(read(**point), dtype=float).reshape(1, -1) for point in points])
-    except _UNREADABLE as e:
-        raise ValueError(f"{described} one at a time, raised {type(e).__name__}: {e}. {guidance}") from e
-    if together.size == 1:  # a constant reads the same at every sample
-        together = np.full((len(points), 1), float(together.reshape(-1)[0]))
-    _refuse_unless_equal(together, alone, described, guidance)
 
 
 def _sample_count(dimension: int) -> int:

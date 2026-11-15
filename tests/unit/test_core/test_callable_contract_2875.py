@@ -168,7 +168,7 @@ def test_a_misread_is_seen_on_a_uniform_grid_where_a_periodic_term_vanishes_at_t
 
     at_old_samples = np.sin(2 * np.pi * nodes[[0, 10, 20]])
     assert np.max(np.abs(at_old_samples - at_old_samples[0])) < 1e-14, "control: these three read the same"
-    with pytest.raises(ValueError, match="evaluate_H, at 3 samples, reads differently"):
+    with pytest.raises(ValueError, match=r"_Misread\.evaluate_H at t=0, a batch of \d+ rows, .* reads differently"):
         refuse_a_hamiltonian_whose_reads_disagree(_Misread(), nodes)
 
 
@@ -375,7 +375,7 @@ def test_a_first_batch_inside_a_dead_zone_cannot_see_the_misread_and_that_is_the
     """The check reads what the door's first batch holds. A particle drift's first batch is the initial cloud: inside the
     dead zone a body reading the cloud's largest coordinate reads the same both ways, and it is accepted. Outside it the
     same body, written again, is refused, so the limit is the first batch and not the body. The Hamiltonian does not have
-    this limit, since it is read on wide synthetic p and m."""
+    this limit, since its doors are read at the consistency check's probes when a problem takes it (#2901)."""
     _particle_solve(_dead_zone(), high=0.4)
     with pytest.raises(ValueError, match="reads differently"):
         _particle_solve(_dead_zone(), high=0.95)
@@ -734,7 +734,7 @@ class _DpAcrossTheBatch(_RowWise):
 
 
 def test_the_check_reads_a_hamiltonians_dp_as_well_as_its_value():
-    with pytest.raises(ValueError, match=r"_DpAcrossTheBatch.evaluate_dp, at"):
+    with pytest.raises(ValueError, match=r"_DpAcrossTheBatch\.evaluate_dp at t=0, a batch of \d+ rows"):
         refuse_a_hamiltonian_whose_reads_disagree(_DpAcrossTheBatch(), np.linspace(0.0, 1.0, 11))
 
 
@@ -756,7 +756,9 @@ def test_a_lagrangians_proximal_hands_its_stand_in_x_as_a_tuple():
 def test_a_problem_refuses_a_point_only_hamiltonian_whichever_path_would_read_it(dimension):
     """#2481: HJB-FDM in d >= 2, the GFDM batch path and the semi-Lagrangian solver never read a check. It is one check now,
     where a problem takes the Hamiltonian, so none of them can be reached with one that disagrees."""
-    with pytest.raises(ValueError, match=r"_PointOnly.evaluate_H, at"):
+    with pytest.raises(
+        ValueError, match=r"_PointOnly\.evaluate_H (could not be evaluated )?at t=0, a batch of \d+ rows"
+    ):
         _problem(dimension=dimension, n=5, hamiltonian=_PointOnly())
 
 

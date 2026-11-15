@@ -12,7 +12,8 @@ H's was solved as a mixture with no error.
   away from the middle node, only at an axis's last end node, only for p < 0, or only off the diagonal is refused; so are
   a dp wrong only after t = 0, a dm wrong only at an end node, and a dm wrong only at m = 1. The probe times are the
   problem's own T (a row at T = 2). On a grid with an even number of nodes the middle probe is the node nearest the
-  centre, so there are still 2d + 1. In 3-D each component is probed at a magnitude of its own, so a 1<->3 swap is
+  centre, so there are still 2d + 1 around it, before the nodes `spread_samples` adds (stage 1c-ii). In 3-D each
+  component is probed at a magnitude of its own, so a 1<->3 swap is
   refused.
 - **Each comparison has its own guard.** A probe at which a source cannot be evaluated is warned about and skipped for
   that comparison alone, so a witness found at another probe still refuses. H, dp or the control raising at every probe
@@ -352,7 +353,7 @@ def test_an_even_grid_still_has_2d_plus_1_probes_around_an_interior_middle():
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[10, 10], boundary_conditions=no_flux_bc(dimension=2))
     points = _probe_points(grid, _get_sample_inputs(grid, "x")[0])
-    assert len(points) == 5
+    assert len(points) == 5 + 3  # 2d + 1 around the middle, then the 3 nodes `spread_samples` picks
     assert all(0.0 < c < 1.0 for c in points[0]), points[0]
 
 
@@ -362,7 +363,7 @@ def test_an_end_node_is_found_on_a_domain_far_from_the_origin():
 
     grid = TensorProductGrid(bounds=[(1e7, 1e7 + 10.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
     points = _probe_points(grid, _get_sample_inputs(grid, "x")[0])
-    assert sorted(float(q[0]) for q in points) == [1e7, 1e7 + 5.0, 1e7 + 10.0]
+    assert sorted(float(q[0]) for q in points[:3]) == [1e7, 1e7 + 5.0, 1e7 + 10.0]
 
 
 # --- Each comparison has its own guard -----------------------------------------------------------------------------
@@ -415,7 +416,7 @@ class _HRaisingEverywhere(_WrittenOutH):
 
 
 class _HRaisingAtTheFirstEndControlEverywhere(_ControlRaisingEverywhere):
-    """H raises at x = 0, one of the three probe points, so it can be read at 36 of the 54 probes."""
+    """H raises at x = 0, one of the six probe points, so it can be read at 90 of the 108 probes."""
 
     def __call__(self, t, x, p, m):
         if float(_a(x[0])) == 0.0:
@@ -426,21 +427,22 @@ class _HRaisingAtTheFirstEndControlEverywhere(_ControlRaisingEverywhere):
 @pytest.mark.parametrize(
     ("make", "message"),
     [
-        (_DpRaisingEverywhere, "dH_dp could not be evaluated at any probe at which H could (54 of them)"),
+        (_DpRaisingEverywhere, "dH_dp could not be evaluated at any probe at which H could (108 of them)"),
         (
             _ControlRaisingEverywhere,
-            "optimal_control could not be evaluated at any probe at which H could (54 of them)",
+            "optimal_control could not be evaluated at any probe at which H could (108 of them)",
         ),
-        (_HRaisingEverywhere, "The Hamiltonian could not be evaluated at any of the 54 probes"),
+        (_HRaisingEverywhere, "The Hamiltonian could not be evaluated at any of the 108 probes"),
         (
             _HRaisingAtTheFirstEndControlEverywhere,
-            "optimal_control could not be evaluated at any probe at which H could (36 of them)",
+            "optimal_control could not be evaluated at any probe at which H could (90 of them)",
         ),
     ],
     ids=["dp", "the control", "H", "the control, counted where H could be read"],
 )
 def test_a_source_the_solvers_read_that_raises_at_every_probe_is_refused(make, message):
-    """1-D: 3 probe points, 3 times and 6 (m, p), so 54 probes. A method is counted against the probes at which H could
+    """1-D: 6 probe points (the middle, the two ends and the 3 spread nodes), 3 times and 6 (m, p), so 108 probes. A
+    method is counted against the probes at which H could
     be read, so one raising wherever H can be read is refused even where H itself raises at some probes."""
     assert message in _refused(make)
 
