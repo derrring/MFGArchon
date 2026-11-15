@@ -1969,8 +1969,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 raise ValidationError(result)
 
         # Issue #686: Validate custom functions (Hamiltonian, derivatives)
-        # Issue #1642 (C1): the derivative-consistency check runs here (it is on by
-        # default) and gates only on an exhibited witness, so a wrong dH_dm/dH_dp is
+        # Issue #1642 (C1): the derivative-consistency check runs here (it is on by default) and gates only on an
+        # exhibited witness, a dH_dp return of another shape than p's among them (#2875), so a wrong dH_dm/dH_dp is
         # refused at construction instead of silently steering every Picard step.
         if has_components and self.geometry is not None:
             from mfgarchon.utils.validation import validate_custom_functions

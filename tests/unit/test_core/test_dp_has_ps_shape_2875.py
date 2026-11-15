@@ -10,7 +10,9 @@ d = 2 transpose; the construction check `validate_hamiltonian_consistency` read 
 of another shape.
 
 - **Each read refuses another shape** (a mutation-verified pin). Per read, a return of p's size in another shape and a
-  return of another size; HJB-SL's in 1-D and at d = 2. The message is pinned up to the shape that came back. A form
+  return of another size; HJB-SL's in 1-D and at d = 2, and its value update at a point too, as the solver's per-node
+  loops read it. The message is pinned up to the shape that came back. HJB-GFDM's two Newtons and the weak-form FEM
+  Newton are pinned at d = 1; at d = 2 their wrong forms raised numpy errors at f5e6ffc2, none silent. A form
   that applies to every batch also reaches the construction check of batch against point reads
   (`refuse_a_hamiltonian_whose_reads_disagree`), which passes it; a form it refuses (a doubled return, a d = 2
   transpose) is applied past its batch of 3, so the row is about the read. HJB-SL's reads are called directly: on each
@@ -26,6 +28,13 @@ of another shape.
 - **The 0-d admission and the message per method.** *Not yet met (#2875): the form of p.* The library's dp answers a
   0-d p with (1,), as its control does; the owner admits it under `dp` too. The refusal's last sentence names what the
   method returns.
+- **A return that is not an array of numbers is named as such** (a mutation-verified pin): `None` and a string are not
+  called a shape error, an object array names its dtype, and a ragged list, which numpy cannot read, is refused naming
+  the reader. The construction type check of `dp` asks for an ndarray of p's shape, not a float, which the consistency
+  check would refuse.
+- **`CongestionHamiltonian` checks its cost's dp before dividing it by c(m)** (a mutation-verified pin). A cost whose
+  dp is one entry whatever p is was broadcast by that division, and read right by accident; now its batch dp refuses
+  it, naming the cost. At construction the batch-against-point check's batch read is the first to meet it.
 
 HJB-GFDM Howard's read (`alpha_star`) keeps the owner's call and has no row: Howard refuses at construction every
 Hamiltonian that is not a shipped `SeparableHamiltonian` or `QuadraticMFGHamiltonian`, and each of those returns p's
@@ -42,12 +51,18 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian, checked_control
+from mfgarchon.core.hamiltonian import (
+    CongestionHamiltonian,
+    ControlCostBase,
+    QuadraticControlCost,
+    SeparableHamiltonian,
+    checked_control,
+)
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import Mesh1D, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.validation import ValidationError, validate_custom_functions
+from mfgarchon.utils.validation import ValidationError, validate_custom_functions, validate_hamiltonian_derivative
 
 T, NT, SIGMA = 0.5, 5, 0.3
 
@@ -162,6 +177,8 @@ def _semi_lagrangian(read, dim):
         p = np.column_stack([np.linspace(-1.0, 1.4, n) * (1 + 0.5 * k) for k in range(dim)])
         if read == "foot":
             return solver._characteristic_foot_velocity(x, np.ones(n), p, 0.1)
+        if read == "value at a point":  # as the per-node loops call it: one node, p of shape (1,)
+            return solver._sl_value_update(0.3, 0.4, 1.0, np.array([0.7]), 0.1, 0.05)
         return solver._sl_value_update(np.linspace(0.0, 1.0, n), x, np.ones(n), p, 0.1, 0.05)
 
     return run
@@ -257,6 +274,13 @@ READS = {
         "m of shape (7,)",
         [("squeezed", _batch, (7, 1), (7,))],
     ),
+    "HJB-SL value update at a point": (
+        "HJBSemiLagrangianSolver._sl_value_update",
+        "evaluate_dp",
+        _semi_lagrangian("value at a point", 1),
+        "m of shape ()",
+        [("lead", _point_after_0, (1,), (1, 1)), ("double", _point_after_0, (1,), (2,))],
+    ),
     "HJB-SL value update 2-D": (
         "HJBSemiLagrangianSolver._sl_value_update",
         "evaluate_dp",
@@ -325,7 +349,7 @@ def test_each_read_takes_the_librarys_dp(read):
 def test_a_dp_that_fails_to_evaluate_at_the_probe_still_warns():
     """C1 (#1642) is intact: only the owner's refusal moved to the error channel. A dp that raises at the consistency
     probe is a failure to evaluate, which warns and leaves the result valid. Called as MFGProblem calls it: through a
-    problem, the batch-against-point check reads the same point dp first."""
+    problem, the batch-against-point check, which runs after the validators, refuses a dp that raises."""
 
     class Raising(SeparableHamiltonian):
         def dp(self, t, x, p, m):
@@ -377,3 +401,74 @@ def test_the_refusal_says_what_the_method_returns(method, contract):
     )
     with pytest.raises(ValueError, match=message):
         checked_control(np.zeros(2), np.zeros(3), reader="here", source=object(), method=method)
+
+
+@pytest.mark.parametrize(
+    ("returned", "said"),
+    [
+        (None, "returned a NoneType, not an array of numbers."),
+        ("abc", "returned a str, not an array of numbers."),
+        (np.array([1.0, None], dtype=object), "returned shape (2,) of dtype object."),
+        ([[1.0, 2.0], [3.0]], "returned a list that numpy cannot read as an array ("),
+    ],
+    ids=["None", "a str", "an object array", "a ragged list"],
+)
+def test_a_return_that_is_not_an_array_of_numbers_is_named_as_such(returned, said):
+    message = rf"^here: object\.dp was handed p of shape \(1,\) and m None, and {re.escape(said)}"
+    with pytest.raises(ValueError, match=message):
+        checked_control(returned, np.zeros(1), reader="here", source=object(), method="dp")
+
+
+def test_the_type_check_asks_for_an_ndarray_of_ps_shape():
+    class Listed(SeparableHamiltonian):
+        def dp(self, t, x, p, m):
+            return list(np.atleast_1d(super().dp(t=t, x=x, p=p, m=m)))
+
+    h = Listed(control_cost=QuadraticControlCost(control_cost=1.0))
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1))
+    result = validate_hamiltonian_derivative(h.dp, grid, "dH_dp")
+    assert [str(issue.message) for issue in result.issues] == ["dH_dp must return an ndarray of p's shape, got list"]
+
+
+B = 0.5
+
+
+class _ConstantCost(ControlCostBase):
+    """H(p) = B p_0, whose dp is B in each component."""
+
+    def evaluate(self, p):
+        return B * np.asarray(p, dtype=float)[..., 0]
+
+    def dp(self, p):
+        return np.full(np.shape(p), B)
+
+    def optimal_control(self, p):
+        return -B * np.ones_like(np.asarray(p, dtype=float))
+
+    def lagrangian(self, alpha):
+        return 0.0 * np.sum(np.asarray(alpha, dtype=float), axis=-1)
+
+
+class _OneEntry(_ConstantCost):
+    """The same cost, its dp written as one entry whatever p is."""
+
+    def dp(self, p):
+        return np.full(1, B)
+
+
+def _congestion(cost):
+    return _grid_problem(CongestionHamiltonian(control_cost=cost, congestion_factor=lambda m: 1.0 + np.asarray(m)))
+
+
+def test_congestion_refuses_a_costs_dp_of_another_shape_before_dividing_it():
+    h = CongestionHamiltonian(control_cost=_OneEntry(), congestion_factor=lambda m: 1.0 + np.asarray(m))
+    message = (
+        r"^CongestionHamiltonian\._dp: _OneEntry\.dp was handed p of shape \(5, 1\) and m of shape \(5,\), and "
+        r"returned shape \(1,\)\."
+    )
+    with pytest.raises(ValueError, match=message):
+        h.dp(t=0.0, x=(np.linspace(0.0, 1.0, 5),), p=np.linspace(-1.0, 1.0, 5)[:, None], m=np.ones(5))
+
+
+def test_congestion_takes_a_costs_dp_of_ps_shape():
+    assert _quiet(lambda: _congestion(_ConstantCost())).components.hamiltonian is not None

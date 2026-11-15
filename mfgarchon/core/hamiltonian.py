@@ -1291,24 +1291,39 @@ def checked_control(
 ) -> NDArray:
     """What ``source.<method>`` returned for ``p``, read only if it has p's shape (#2875).
 
-    Every library read of what ``optimal_control``, ``evaluate_optimal_control``, ``dp`` or ``evaluate_dp`` returns
-    passes it through here, so no reader takes a return of another shape by reshaping, broadcasting or indexing it.
-    Another shape is refused, naming the reader, the source and its method, the shapes of p and m handed, and the
-    shape that came back. One more form is admitted for now, a 0-d p answered with shape ``(1,)``, returned 0-d; the
-    contract and why are in docs/user/CONVENTIONS.md, "What optimal_control and dp return".
+    Every library read that uses what ``optimal_control``, ``evaluate_optimal_control``, ``dp`` or ``evaluate_dp``
+    returns passes it through here, so no reader takes a return of another shape by reshaping, broadcasting or
+    indexing it. Two construction checks read ``dp`` for other facts and are not readers here: the comparison of a
+    batch read with its points, and the type check. Another shape is refused, naming the reader, the source and its
+    method, the shapes of p and m handed, and the shape that came back; so is a return numpy cannot read as an array,
+    and a return that is not an array of numbers is named as such. One more form is admitted for now, a 0-d p answered
+    with shape ``(1,)``, returned 0-d; the contract and why are in docs/user/CONVENTIONS.md, "What optimal_control and
+    dp return".
     """
-    got = np.asarray(alpha)
     wanted = np.shape(p)
+    handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
+    handed = f"{reader}: {type(source).__name__}.{method} was handed p of shape {wanted} and {handed_m}, and"
+    contract = (
+        f"The library reads {_SHAPE_CONTRACTS[method]} "
+        f'(docs/user/CONVENTIONS.md, "What optimal_control and dp return"; #2875).'
+    )
+    try:
+        got = np.asarray(alpha)
+    except ValueError as unreadable:
+        raise ValueError(
+            f"{handed} returned a {type(alpha).__name__} that numpy cannot read as an array ({unreadable}). {contract}"
+        ) from unreadable
     if got.shape == wanted:
         return got
     if wanted == () and got.shape == (1,):
         return got.reshape(())
-    handed_m = "m None" if m is None else f"m of shape {np.shape(m)}"
-    raise ValueError(
-        f"{reader}: {type(source).__name__}.{method} was handed p of shape {wanted} and {handed_m}, and "
-        f"returned shape {got.shape}. The library reads {_SHAPE_CONTRACTS[method]} "
-        f'(docs/user/CONVENTIONS.md, "What optimal_control and dp return"; #2875).'
-    )
+    if got.dtype.kind in "biufc":
+        returned = f"returned shape {got.shape}"
+    elif isinstance(alpha, np.ndarray):
+        returned = f"returned shape {got.shape} of dtype {got.dtype}"
+    else:
+        returned = f"returned a {type(alpha).__name__}, not an array of numbers"
+    raise ValueError(f"{handed} {returned}. {contract}")
 
 
 class HamiltonianBase(MFGOperatorBase):
@@ -3072,8 +3087,16 @@ class CongestionHamiltonian(HamiltonianBase):
         else:
             c_m = _read_of_the_density(self, "_congestion_factor", m, rows)
 
-        # Delegate to control_cost.dp(), then divide by c(m) (Issue #898)
-        base_dp = self.control_cost.dp(p_arr)
+        # Delegate to control_cost.dp(), then divide by c(m) (Issue #898), its return checked before the division
+        # broadcasts it (#2875)
+        base_dp = checked_control(
+            self.control_cost.dp(p_arr),
+            p_arr,
+            reader="CongestionHamiltonian._dp",
+            source=self.control_cost,
+            m=m,
+            method="dp",
+        )
         if is_batch:
             return base_dp / c_m[:, np.newaxis]
         return base_dp / c_m

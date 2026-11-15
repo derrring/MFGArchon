@@ -283,12 +283,15 @@ to stand in for one.
 A control has $p$'s shape: `HamiltonianBase.optimal_control` and `ControlCostBase.optimal_control`
 both say "same shape as p". So does $\partial H/\partial p$: `HamiltonianBase.dp` says $(d,)$ for a
 point and $(N, d)$ for a batch, and `ControlCostBase.dp` says "same shape as p". Every library read
-of what `optimal_control`, `evaluate_optimal_control`, `dp` or `evaluate_dp` returns passes it
+that uses what `optimal_control`, `evaluate_optimal_control`, `dp` or `evaluate_dp` returns passes it
 through one owner, `checked_control` in `core/hamiltonian.py`, which refuses another shape. The
 refusal names the reader, the source and its method, the shapes of $p$ and $m$ it handed, and the
-shape that came back (#2875). No reader takes a
-return of another shape by reshaping, broadcasting or indexing it; a reader may still reshape what
-the owner has checked, as the 1-D velocity route ravels its $(N, 1)$. Refused with it are the
+shape that came back (#2875). A return numpy cannot read as an array is refused too, and one that is
+not an array of numbers is named as such. Two construction checks read `dp` for other facts and do
+not pass through the owner: the comparison of a batch read with its points, and the type check. No
+reader takes a return of another shape by reshaping, broadcasting or indexing it; a reader may still
+reshape what the owner has checked, as the 1-D velocity route ravels its $(N, 1)$. Refused with it
+are the
 returns of another shape that once read right by accident: on FEM a transposed one; $(N,)$ for $p$
 of shape $(N, 1)$; $(1, N)$ for $p$ of shape $(N,)$ or $(N, 1)$; and on the network solvers a longer
 return, of which they read the first entries. So are those that were silently wrong: on FEM a return
@@ -296,7 +299,9 @@ of another size, on meshless Galerkin a transposed one, and on the network polic
 shorter one. For `dp`, refused are the returns that read right by accident on HJB-FDM, HJB-SL, the
 weak-form FEM Newton and HJB-GFDM's `joint_socp` Newton: $(N,)$ for $p$ of shape $(N, 1)$; $(1, N, d)$
 for $(N, d)$; $(1, N)$ for $(N, 1)$; and, at construction, where `validate_hamiltonian_consistency`
-reads `dp` at a point, $(1, d)$ for a point $p$ of shape $(d,)$ and $()$ for one of shape $(1,)$. So are
+reads `dp` at a point, $(1, d)$ for a point $p$ of shape $(d,)$ and $()$ for one of shape $(1,)$. On
+`CongestionHamiltonian`, which divides its cost's `dp` by the congestion factor, a cost's return of
+shape $(1,)$ for any $p$, which that division broadcast, is refused before the division. So are
 those that were silently wrong: a return of another size on HJB-FDM's $n$-D linearised operator, and
 a transposed one on HJB-SL at $d = 2$ (#2875).
 
