@@ -140,6 +140,9 @@ LAYERS: dict[str, int] = {
     "utils.progress": 0,
     "utils.memory_management": 0,
     "utils.solver_result": 0,
+    "utils.acceleration.jax_precision": 0,
+    "utils.io": 0,
+    "utils.notebooks": 0,
     "utils": 1,
     "utils.numerical": 1,
     "utils.acceleration": 1,
@@ -175,12 +178,6 @@ LAYER_NAMES = {0: "base", 1: "numerics", 2: "geometry", 3: "operators", 4: "mode
 
 # (importing module, upper target module, position, the stage that removes it, reason). Stages are #2938's.
 EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
-    # base -> numerics
-    ("mfgarchon.backends.jax_backend", "mfgarchon.utils.acceleration.jax_precision", "function", "#2938 stage 2b", "the jax backend sets the x64 policy through an acceleration helper"),
-    ("mfgarchon.backends.numpy_backend", "mfgarchon.utils.numerical.integration", "module", "#2938 stage 2b", "imports trapezoid through a layer-1 path; its owner is utils.numpy_compat"),
-    ("mfgarchon.config.array_validation", "mfgarchon.utils.numerical.integration", "module", "#2938 stage 2b", "imports trapezoid through a layer-1 path; its owner is utils.numpy_compat"),
-    ("mfgarchon.utils.solver_result", "mfgarchon.utils.io.hdf5_utils", "function", "#2938 stage 2b", "the result's save_hdf5 and load_hdf5 call the HDF5 writer and reader"),
-    ("mfgarchon.utils.solver_result", "mfgarchon.utils.notebooks.reporting", "function", "#2938 stage 2b", "the result's report method calls the notebook reporter"),
     # geometry -> operators
     ("mfgarchon.geometry", "mfgarchon.operators", "module", "#2938 stage 3", "geometry/__init__ re-exports GeometryProjector and ProjectionRegistry"),
     ("mfgarchon.geometry", "mfgarchon.operators.interpolation.projection", "module", "#2938 stage 3", "geometry/__init__ re-exports GeometryProjector and ProjectionRegistry"),

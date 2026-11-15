@@ -24,7 +24,7 @@ from numpy.typing import NDArray  # noqa: TC002  (pydantic 2.12.5 needs runtime 
 
 from mfgarchon.config.core import BaseConfig
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.numerical.integration import trapezoid
+from mfgarchon.utils.numpy_compat import trapezoid
 
 logger = get_logger(__name__)
 
