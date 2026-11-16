@@ -361,7 +361,8 @@ node where the wall is largest added under a wall, and at the six $(m, p)$ above
   the same probe in every batch. A row at which the method cannot be read is left out and warned about, so
   a batch holds every probe node, three or more on every grid but a one-dimensional grid of two nodes,
   which gives two, less the rows left out. A batch left with fewer than two rows is not handed, and its
-  readable pairs are not compared on a batch;
+  readable pairs are not compared on a batch. Rows left out can also leave two nodes together only in
+  batches where they read the same $p$; a sweep found that in 3-D alone;
 - at a point, for `evaluate_H` and `evaluate_dp`: the door read alone at each row, as `_sl_value_update`
   hands it, against the method there.
 

@@ -6,7 +6,7 @@ each door with its method at the consistency check's probes, in the forms its re
 wall is composed, and reads the wall back through ``__call__`` (`refuse_a_hamiltonian_whose_reads_disagree`,
 `validate_composed_wall`).
 
-Each case below names the defect it pins; #2968's body gives each one's behaviour at ad5a7726.
+Each case below names the defect it pins.
 """
 
 import warnings
@@ -57,6 +57,17 @@ class _PointDoorDoubled(hm.SeparableHamiltonian):
     def evaluate_dp(self, state):
         p = _a(state.p)
         return (2.0 if p.ndim == 1 else 1.0) * super().evaluate_dp(state)
+
+
+class _ValueDoorDoubledAtTheMiddleNode(hm.SeparableHamiltonian):
+    """The value door twice H at one point at x = 0.5, right on a batch and at every other point: HJB-SL's
+    `_sl_value_update` reads it at one point, and only the point form sees it (review 3 of #2968)."""
+
+    def evaluate_H(self, state):
+        value = _a(super().evaluate_H(state))
+        if _a(state.p).ndim == 1 and np.isclose(_a(state.x).reshape(-1)[0], 0.5):
+            return 2.0 * value
+        return value
 
 
 class _StaticControlDoorDoubled(hm.SeparableHamiltonian):
@@ -129,6 +140,7 @@ class _PointOnlyDefinedAboveTwoThirds(hm.SeparableHamiltonian):
     "hamiltonian",
     [
         _PointDoorDoubled,
+        _ValueDoorDoubledAtTheMiddleNode,
         _StaticControlDoorDoubled,
         _DpDoorDoubledAfterStart,
         _PointOnlyDpBesideALargePotential,
@@ -138,6 +150,7 @@ class _PointOnlyDefinedAboveTwoThirds(hm.SeparableHamiltonian):
     ],
     ids=[
         "point form",
+        "the value door at one point",
         "method bound by its names",
         "after t = 0",
         "a large H at one row",

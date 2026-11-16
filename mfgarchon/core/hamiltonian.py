@@ -3392,7 +3392,8 @@ _DOORS = (
 #: (m = 0.5 with the p scales 0, 0.4157 and -1.3691, then m = 1 with the same three): p runs a, b, c, b, c, a. Row i of
 #: batch j reads probe ``_BATCH_PROBE_ORDER[(i + j) % 6]``, so every (node, probe) pair falls in exactly one batch, and
 #: two nodes read different p in at least one batch. In the probes' own order, nodes 3 apart would read the same p in
-#: every batch (#2901's plan revision addendum).
+#: every batch (#2901's plan revision addendum). It must be a permutation of 0 to 5, or some probe reaches no batch;
+#: nothing checks that.
 _BATCH_PROBE_ORDER = (0, 1, 2, 4, 5, 3)
 
 
@@ -3414,7 +3415,8 @@ def refuse_a_hamiltonian_whose_reads_disagree(
       two nodes whose indices differ by 6 read the same probe in every batch. A row at which the method cannot be read
       is left out, so a batch holds every probe node, three or more on every grid but a one-dimensional grid of two
       nodes, which gives two, less the rows left out. A batch left with fewer than two rows is not handed, so no batch
-      of one is, and its readable pairs are not compared on a batch;
+      of one is, and its readable pairs are not compared on a batch. Rows left out can also leave two nodes together
+      only in batches where they read the same p, which a sweep found in 3-D alone (#2968's review 3);
     - a batch: each row of the door's read against the method at that row;
     - a point, for the value and dp doors: the door read alone at each row, ``p`` of shape ``(d,)`` and ``m`` a number,
       against the method there.
