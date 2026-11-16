@@ -1,10 +1,11 @@
-"""#2901, stage 1c-iii: a network Hamiltonian is read only in the forms its solvers hand it.
+"""#2901, stage 1c-iii: on a network geometry, construction reads no Hamiltonian on a grid probe.
 
-NetworkHJBSolver reads `__call__` with the node as an integer, and p and m one entry per node. Policy iteration and the
-network FP read the rates with ``np.array([i])``. No solver reads its `dm` or `dp`. With a custom `hamiltonian_func`,
+The network solvers hand x a node, and p and m one entry per node: NetworkHJBSolver reads `__call__` with the node as an
+integer, and policy iteration and the network FP read the rates with ``np.array([i])``. No solver reads `dm` or `dp`.
+Construction's grid probe hands x a point's coordinates and p the coordinate dimension, a form none of them hands, so on
+a network geometry no check reads it, whatever the Hamiltonian (`_has_a_grid_probe`). With a custom `hamiltonian_func`,
 `__call__` reads that function while the rates stay the built-in control's, so both readers of the rates refuse it
-(#1545); those two refusals are what keeps the two from meeting in a solve. Construction's grid probe, which hands x a
-point's coordinates and p the coordinate dimension, reads no network Hamiltonian (`_grid_probes_apply`).
+(#1545); those two refusals are what keeps the two from meeting in a solve.
 """
 
 from __future__ import annotations
@@ -13,9 +14,13 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
 from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkPolicyIterationHJBSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
 
@@ -25,17 +30,12 @@ def _network():
     return net
 
 
+def _grid():
+    return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+
+
 def _own_density_dm(t, node, neighbors, p, m):
     return -m[node]
-
-
-def _custom_h_problem(hamiltonian_func, hamiltonian_dm_func=_own_density_dm):
-    return NetworkMFGProblem(
-        geometry=_network(),
-        T=0.5,
-        Nt=5,
-        components=NetworkMFGComponents(hamiltonian_func=hamiltonian_func, hamiltonian_dm_func=hamiltonian_dm_func),
-    )
 
 
 def _one_sided_h(t, node, neighbors, p, m):
@@ -53,33 +53,58 @@ def test_a_reader_of_the_built_in_rates_refuses_a_custom_h(solver, refusal):
     """The rates are the built-in control's whatever H is given, so the network FP and policy iteration refuse a custom
     `hamiltonian_func` by name (#1545): without the refusal, the density would move by one control while the HJB solved
     another."""
-    problem = _custom_h_problem(_one_sided_h)
+    problem = NetworkMFGProblem(
+        geometry=_network(),
+        T=0.5,
+        Nt=5,
+        components=NetworkMFGComponents(hamiltonian_func=_one_sided_h, hamiltonian_dm_func=_own_density_dm),
+    )
     with pytest.raises(NotImplementedError, match=refusal):
         solver(problem)
 
 
-def test_construction_reads_no_network_h_on_a_grid_probe():
-    """A custom whole H and its custom dm, each recording the size of every p it is handed. Construction hands neither
-    one of another size than the node count: the grid probe, whose p has the coordinate dimension (2 on this network),
-    reads neither `__call__` (`validate_hamiltonian`) nor `dm` (`validate_hamiltonian_derivative`). The recorder is
-    shown to work on the solvers' own routes, `NetworkMFGProblem.hamiltonian` and `hamiltonian_dm`. The network's `dp`
-    is the library's own and calls neither, so it is not recorded here."""
-    sizes: list[tuple[str, int]] = []
+@pytest.mark.parametrize(
+    ("domain", "density", "read"), [(_network, 1.0 / 9, False), (_grid, 1.0, True)], ids=["network", "grid"]
+)
+def test_the_geometry_decides_whether_construction_reads_the_hamiltonian(domain, density, read):
+    """A `SeparableHamiltonian`, which is no `NetworkHamiltonian`, with a soft wall, recording every read of its
+    sources. On a network geometry construction reads none of them; on a grid it reads them, which shows the recorder
+    records. A test of the Hamiltonian's type, or of how its methods are bound, would read it on the network."""
+    reads: list[str] = []
 
-    def recording_h(t, node, neighbors, p, m):
-        sizes.append(("H", int(np.size(p))))
-        return _one_sided_h(t, node, neighbors, p, m) if np.size(p) == 9 else 0.0
+    class Recording(SeparableHamiltonian):
+        def __call__(self, t, x, p, m):
+            reads.append("__call__")
+            return super().__call__(t=t, x=x, p=p, m=m)
 
-    def recording_dm(t, node, neighbors, p, m):
-        sizes.append(("dm", int(np.size(p))))
-        return _own_density_dm(t, node, neighbors, p, m) if np.size(p) == 9 else 0.0
+        def evaluate_H(self, state):
+            reads.append("evaluate_H")
+            return super().evaluate_H(state)
 
-    problem = _custom_h_problem(recording_h, recording_dm)
-    assert [(source, size) for source, size in sizes if size != 9] == []
-    before = len(sizes)
-    u = np.linspace(0.0, 1.0, 9)
-    m = np.full(9, 1.0 / 9)
-    neighbors = problem.get_node_neighbors(1)
-    problem.hamiltonian(t=0.0, node=1, neighbors=neighbors, p=u, m=m)
-    problem.hamiltonian_dm(t=0.0, node=1, neighbors=neighbors, p=u, m=m)
-    assert sizes[before:] == [("H", 9), ("dm", 9)]
+        def dp(self, t, x, p, m):
+            reads.append("dp")
+            return super().dp(t=t, x=x, p=p, m=m)
+
+        def evaluate_dp(self, state):
+            reads.append("evaluate_dp")
+            return super().evaluate_dp(state)
+
+        def dm(self, t, x, p, m):
+            reads.append("dm")
+            return super().dm(t=t, x=x, p=p, m=m)
+
+        def optimal_control(self, t, x, p, m):
+            reads.append("optimal_control")
+            return super().optimal_control(t=t, x=x, p=p, m=m)
+
+    def wall(x):
+        return np.ones(np.shape(x)[1:]) if np.ndim(x) >= 2 else 1.0
+
+    MFGProblem(
+        model=Model(hamiltonian=Recording(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+        domain=domain(),
+        conditions=Conditions(m_initial=lambda x: density, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=5,
+        state_penalty=wall,
+    )
+    assert bool(reads) is read

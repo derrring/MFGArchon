@@ -3437,8 +3437,8 @@ def refuse_a_hamiltonian_whose_reads_disagree(
     form, except on a batch when the Hamiltonian declares ``reads_a_batch`` False: that is the declaration holding,
     and the batch paths will raise on it at solve time, so the batch is not compared. A batch read that returns a row
     disagreeing with its method is refused whatever the flag says, since no solver reads it. Rows at which the method
-    cannot be read are warned about once per door; the consistency check reports the method. A ``NetworkHamiltonian`` is not read here: its x is a node, and the probe nodes
-    of a grid mean nothing to it. Its sources are compared nowhere (`_grid_probes_apply` says why).
+    cannot be read are warned about once per door; the consistency check reports the method. On a network geometry
+    its caller does not call it: no grid probe applies there (`_has_a_grid_probe`).
     """
     import warnings
 
@@ -3448,14 +3448,11 @@ def refuse_a_hamiltonian_whose_reads_disagree(
         SourceEvaluationError,
         SourceShapeError,
         _consistency_probes,
-        _grid_probes_apply,
         _largest_wall_node,
         _probe_nodes,
         _read_source,
     )
 
-    if not _grid_probes_apply(hamiltonian):
-        return
     nodes = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
     probes = list(_consistency_probes(nodes.shape[1]))
     name = type(hamiltonian).__name__
