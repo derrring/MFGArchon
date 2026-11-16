@@ -395,6 +395,52 @@ Hamiltonian handed to `MFGProblem` on a network through a model or its component
 among them, makes a problem no network solver accepts (#2970). No network solver reads `dm` or `dp`. Every other
 declared type keeps the probes (#2901, stage 1c-iii).
 
+### What construction refuses as non-finite
+
+A value or callable the caller supplies that is NaN or infinite where the solvers will read it is refused where it
+enters, naming it (#2974). `MFGProblem` reads each once, after it has built `m_initial` and `u_terminal`, at the state
+the solve is certain to read:
+
+- $T$, `m_initial`, `u_terminal`, a scalar or array volatility and `state_penalty_scale`, whole;
+- on a grid, each callable at $x$ the probe nodes above and the node `validate_hamiltonian` reads, $t$ at $0$, $T/2$
+  and $T$, and $m$ and $v$ the values of `m_initial` and `u_terminal` at those nodes where it takes them: a callable
+  volatility, `source_term_hjb`, `source_term_fp`, `state_penalty`, the callable value of the boundary segment that
+  governs each of those nodes on the boundary, and every source a Hamiltonian or a Lagrangian holds, such as
+  `potential`, `coupling` and `congestion_factor`, named by the operator the caller gave;
+- on a network, the `hamiltonian_func`, `node_potential_func` and `node_interaction_func` of a `NetworkHamiltonian`, in
+  the form its solvers hand: an integer node, with $m$ `m_initial` and $p$ `u_terminal`;
+- `coupling_cost` and `terminal_coupling` as their derivative at `m_initial`, and `nonlocal_operator` applied to
+  `u_terminal`.
+
+A scalar held by an object that exists before any problem is refused where that object is built: a control cost's
+`lambda_`, `BoundedControlCost`'s `max_control` (NaN; $+\infty$ means unbounded), `QuadraticMFGHamiltonian`'s
+`coupling_coefficient`, a radial kernel's parameters, and a boundary segment's constant value, `alpha` and `beta`. A
+volatility handed to `solve_hjb_system` or `solve_fp_system` is refused there. Each Hamiltonian and Lagrangian class
+declares every value its constructor takes: a source read here (`HELD_SOURCES`), a scalar its constructor refuses
+(`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`).
+
+A Hamiltonian's own `__call__`, `dp` and `optimal_control` take $p$, which construction does not know, so they are not
+read here. `validate_hamiltonian` refuses a `__call__` that is NaN or infinite at one state: $t = 0$, the grid's middle
+node in index order, $p = 0$, and $m$ the value of `m_initial` there. On a grid that state is inside the reads above,
+so a source the Hamiltonian holds is refused first, by name. The comparison above checks the three methods against each other, and
+a non-finite value at its probes is warned about, not refused.
+
+Not seen here:
+
+- a source finite at these reads and non-finite elsewhere: off the probe nodes, at another $m$ or $v$, or at a state
+  the solve reaches. A coupling NaN only at $m = 0.5$, or only at $m = 1$ where `m_initial` is never $1$, builds;
+- an own `dp` or `optimal_control` that is non-finite, and an own `__call__` that is non-finite away from its one
+  state (#2975);
+- on an implicit domain, which draws its points afresh at each read of its grid (#2778), the callables: no node there pairs
+  with an entry of `m_initial`, so only the arrays and scalars are read, and a Hamiltonian's sources are read only
+  through its `__call__`, by `validate_hamiltonian` at a node of its own draw with $m = 1$;
+- an input no solver reads, such as `dm`;
+- a source whose read raises, and a boundary condition its owner refuses, which are left to their readers at use.
+
+What the solve reaches is the point-of-use checks' fact: the callable volatility's output check, the boundary ghost
+layer's reading of a callable value at each time, and the FP solver's non-finite check (#2975, #2976). Their messages
+name what they read, which need not be the source.
+
 ### What the Fokker–Planck solver receives
 
 Two channels, and each FP solver declares which one it reads (`_drift_convention`):

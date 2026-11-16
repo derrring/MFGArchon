@@ -50,6 +50,7 @@ References:
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -68,6 +69,14 @@ class RadialKernel(ABC):
     :meth:`matrix`. All radial kernels are translation-invariant, so they are
     FFT-eligible on regular grids.
     """
+
+    @staticmethod
+    def _refuse_non_finite(kernel: str, **parameters: float) -> None:
+        """Refuse a parameter that is NaN or infinite where the kernel is built, by name: every value the cost reads is
+        then non-finite, and the solve returns a wrong U rather than refusing (#2974)."""
+        for name, value in parameters.items():
+            if not math.isfinite(value):
+                raise ValueError(f"{kernel}: {name} must be finite, got {value} (#2974)")
 
     @abstractmethod
     def profile(self, r: NDArray) -> NDArray:
@@ -123,6 +132,7 @@ class GaussianKernel(RadialKernel):
     """
 
     def __init__(self, amplitude: float = 1.0, length_scale: float = 0.1):
+        self._refuse_non_finite("GaussianKernel", amplitude=amplitude, length_scale=length_scale)
         if length_scale <= 0:
             raise ValueError(f"length_scale must be positive, got {length_scale}")
         self.amplitude = amplitude
@@ -155,6 +165,7 @@ class TentKernel(RadialKernel):
     """
 
     def __init__(self, amplitude: float = 1.0, length_scale: float = 0.1):
+        self._refuse_non_finite("TentKernel", amplitude=amplitude, length_scale=length_scale)
         if length_scale <= 0:
             raise ValueError(f"length_scale must be positive, got {length_scale}")
         self.amplitude = amplitude
@@ -189,6 +200,7 @@ class WendlandKernel(RadialKernel):
     """
 
     def __init__(self, amplitude: float = 1.0, length_scale: float = 0.1):
+        self._refuse_non_finite("WendlandKernel", amplitude=amplitude, length_scale=length_scale)
         if length_scale <= 0:
             raise ValueError(f"length_scale must be positive, got {length_scale}")
         self.amplitude = amplitude
@@ -238,6 +250,13 @@ class DipoleKernel(RadialKernel):
         att_amplitude: float = 0.5,
         att_scale: float = 0.2,
     ):
+        self._refuse_non_finite(
+            "DipoleKernel",
+            rep_amplitude=rep_amplitude,
+            rep_scale=rep_scale,
+            att_amplitude=att_amplitude,
+            att_scale=att_scale,
+        )
         if rep_scale <= 0 or att_scale <= 0:
             raise ValueError("rep_scale and att_scale must be positive")
         self.rep_amplitude = rep_amplitude
@@ -283,6 +302,7 @@ class PowerLawKernel(RadialKernel):
     """
 
     def __init__(self, amplitude: float = 1.0, exponent: float = 1.0, softening: float = 0.05):
+        self._refuse_non_finite("PowerLawKernel", amplitude=amplitude, exponent=exponent, softening=softening)
         if exponent <= 0:
             raise ValueError(f"exponent must be positive, got {exponent}")
         if softening <= 0:

@@ -179,7 +179,7 @@ class TestTheThreeTiers:
     Measured, by constructing each case and reading which exception actually arrives:
 
         negative     ValueError       from Check 1, "m_initial contains negative values"
-        non-finite   ValidationError  from validate_finite -- not even a ValueError
+        non-finite   ValidationError  from _refuse_a_non_finite_source (#2974) -- not even a ValueError
         zero mass    ValueError       from tier 1
 
     So tier 1's negative and non-finite branches were unreachable, and the tests below now assert
@@ -205,14 +205,14 @@ class TestTheThreeTiers:
     def test_a_non_finite_density_raises_ValidationError_and_not_ValueError(self):
         """The exception TYPE is the discriminating half, and it is not the obvious one.
 
-        `validate_finite` raises `ValidationError`, whose MRO is [ValidationError, Exception] -- it
-        is not a `ValueError`. Any caller catching `ValueError` to mean "bad initial density" misses
+        `_refuse_a_non_finite_source` raises `ValidationError`, whose MRO is [ValidationError, Exception] --
+        it is not a `ValueError`. Any caller catching `ValueError` to mean "bad initial density" misses
         this case entirely, which is worth pinning independently of who raises it.
         """
         from mfgarchon.utils.validation import ValidationError
 
         assert not issubclass(ValidationError, ValueError)
-        with pytest.raises(ValidationError, match=r"NaN or Inf"):
+        with pytest.raises(ValidationError, match=r"m_initial is non-finite where the solvers read it"):
             _problem(1, 11, m0=lambda x: np.where(np.asarray(x) > 0.4, np.nan, 1.0))
 
     def test_tier_1_refuses_a_zero_mass_density(self):

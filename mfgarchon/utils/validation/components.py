@@ -114,7 +114,8 @@ def validate_m_initial(
     - Not None (required)
     - If callable: correct signature and return type
     - If array: correct shape matching geometry
-    - Values are finite (no NaN/Inf)
+
+    Whether its values are finite is decided where a problem is built, by `_refuse_a_non_finite_source` (#2974).
 
     Args:
         m_initial: Initial density (callable or array)
@@ -162,7 +163,8 @@ def validate_u_terminal(
     - Not None (required)
     - If callable: correct signature and return type
     - If array: correct shape matching geometry
-    - Values are finite (no NaN/Inf)
+
+    Whether its values are finite is decided where a problem is built, by `_refuse_a_non_finite_source` (#2974).
 
     Args:
         u_terminal: Terminal value function (callable or array)
@@ -479,20 +481,8 @@ def _validate_callable_ic(
         )
         return result
 
-    # Check for NaN/Inf
-    if np.isscalar(value):
-        if not np.isfinite(value):
-            result.add_error(
-                f"{name} returned non-finite value at sample point",
-                location=name,
-            )
-    elif isinstance(value, np.ndarray):
-        if not np.all(np.isfinite(value)):
-            result.add_error(
-                f"{name} returned array with NaN or Inf values",
-                location=name,
-            )
-
+    # A non-finite value is not this check's: `_refuse_a_non_finite_source` reads the built array whole where a problem is
+    # built, and names it (#2974).
     return result
 
 
@@ -528,15 +518,8 @@ def _validate_array_ic(
         )
         return result
 
-    # Check for NaN/Inf
-    if not np.all(np.isfinite(arr)):
-        n_nan = np.sum(np.isnan(arr))
-        n_inf = np.sum(np.isinf(arr))
-        result.add_error(
-            f"{name} contains {n_nan} NaN and {n_inf} Inf values",
-            location=name,
-        )
-
+    # A non-finite entry is not this check's: `_refuse_a_non_finite_source` reads the array whole where a problem is built
+    # (#2974).
     return result
 
 

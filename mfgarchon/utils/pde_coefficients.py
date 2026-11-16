@@ -250,7 +250,9 @@ def resolve_volatility_override(
     ------
     ValueError
         For a kind with no array or callable to read it, an unknown kind, an array without a kind, or
-        a per-axis ``(d,)`` vector, which is the diagonal tensor ``np.diag(v)`` and not a field.
+        a per-axis ``(d,)`` vector, which is the diagonal tensor ``np.diag(v)`` and not a field. For a scalar
+        or an array override holding NaN or an infinity, the one decider of that override's finiteness
+        (#2618, #2974); a callable override is read at the point of use.
     """
     if volatility is None:
         if volatility_kind is not None:
@@ -270,10 +272,17 @@ def resolve_volatility_override(
                 "was given with a scalar volatility=, where it would be read by nothing."
             )
         value = float(volatility)
-        if value < 0:
-            raise ValueError(f"{consumer}: a scalar volatility must be non-negative, got {value}.")
+        if not np.isfinite(value) or value < 0:
+            raise ValueError(
+                f"{consumer}: a scalar volatility must be finite and non-negative, got {value} (#2618, #2974)."
+            )
         return value, None
     array = np.asarray(volatility, dtype=float)
+    if not np.all(np.isfinite(array)):
+        raise ValueError(
+            f"{consumer}: the volatility= array holds {int(np.sum(~np.isfinite(array)))} non-finite values of "
+            f"{array.size} (#2618, #2974)."
+        )
     dimension = getattr(problem, "dimension", None)
     per_axis = isinstance(dimension, int) and dimension >= 2 and array.shape == (dimension,)
     if per_axis and volatility_kind != "field":

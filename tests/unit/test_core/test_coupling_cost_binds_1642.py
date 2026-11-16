@@ -300,6 +300,9 @@ def test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given(solve
         conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
         Nt=nt,
     )
+    # Construction reads the part at m_initial, at 0, T/2 and T, to refuse a non-finite one (#2974); no solver
+    # makes those reads.
+    cost.calls.clear()
     x = _x(problem)
     M = np.array([(1.0 + n) * (1.0 + x) for n in range(nt + 1)])
     U = np.zeros_like(M)

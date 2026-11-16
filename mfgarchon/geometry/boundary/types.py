@@ -661,6 +661,14 @@ class BCSegment:
         # built, not when a solver first reads it (#2512 row B2, user ruling).
         if callable(self.value) and not is_provider(self.value):
             self.value_binding()
+        # A constant that is NaN or infinite is refused where the segment is built, by the one reading of a boundary
+        # datum, `_read_constant`, which reads it again at use (#2974). A callable's returns are read at the
+        # construction probes by `_refuse_a_non_finite_source`, and at use; a provider's are computed at use.
+        for name in ("value", "alpha", "beta"):
+            given = getattr(self, name)
+            if _a_real_constant(given):
+                kind = f"BCSegment {self.name!r}" if name == "value" else f"BCSegment {self.name!r} (its {name})"
+                _read_constant(given, kind=kind, where="a solver that reads it")
 
     def value_binding(self) -> BoundCallable:
         """The binding of this segment's callable value to ``(t, x)``, made once per value object.
@@ -1033,6 +1041,21 @@ def _dtype_refusal(value: Any) -> str | None:
 
 
 _VALUE_ADVICE = "give a real number, a real array of one element, or a callable g(t, x)"
+
+
+def _a_real_constant(value: Any) -> bool:
+    """Whether a segment's ``value``, ``alpha`` or ``beta`` is a real number given as such, a Python or numpy real or a
+    numeric array of one element, which `BCSegment.__post_init__` reads where the segment is built (#2974). A bool, a
+    callable, a provider or anything else is left to its reader at use, as before."""
+    if isinstance(value, (bool, np.bool_)):
+        return False
+    if isinstance(value, numbers.Real):
+        return True
+    return (
+        isinstance(value, np.ndarray)
+        and value.size == 1
+        and (np.issubdtype(value.dtype, np.floating) or np.issubdtype(value.dtype, np.integer))
+    )
 
 
 def _read_constant(

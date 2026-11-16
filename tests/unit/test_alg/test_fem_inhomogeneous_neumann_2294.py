@@ -389,20 +389,24 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
     # instead of spreading the load over the whole boundary, which these accepted values used to rely on.
     mesh = skfem.MeshTri.init_sqsymmetric().refined(2).with_boundaries({"x_min": lambda x: np.isclose(x[0], 0.0)})
     basis = skfem.Basis(mesh, skfem.ElementTriP1())
-    bc = BoundaryConditions(
-        dimension=2,
-        segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=value, boundary="x_min")],
-        default_bc=BCType.NO_FLUX,
-    )
+
+    def assemble():
+        bc = BoundaryConditions(
+            dimension=2,
+            segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=value, boundary="x_min")],
+            default_bc=BCType.NO_FLUX,
+        )
+        return assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
 
     if accepted:
-        _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
+        _, rhs = assemble()
         assert rhs is not None, f"{value!r} is a real number and must assemble a load"
         assert np.isfinite(rhs).all(), f"{value!r} assembled a non-finite load: {rhs.sum()}"
     else:
-        # The value is read by the one owner (#2512 row B2), which names what it cannot read.
+        # The value is read by the one owner (#2512 row B2), which names what it cannot read: a non-finite number
+        # where the segment is built (#2974), anything else here.
         with pytest.raises(NotImplementedError, match=r"has a (value of type|non-finite)"):
-            assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient", lump=False)
+            assemble()
 
 
 @pytest.mark.parametrize(

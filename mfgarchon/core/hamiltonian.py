@@ -64,7 +64,7 @@ import math
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 import numpy as np
 
@@ -75,6 +75,7 @@ from mfgarchon.types.callable_protocols import (
     HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
     BoundCallable,
+    Slots,
     _refuse_unless_equal,
     bound_attribute,
     coordinate_tuple,
@@ -531,7 +532,8 @@ class BoundedControlCost(ControlCostBase):
     lambda_ : float
         Control cost weight. Default 1.0.
     max_control : float
-        Maximum control magnitude alpha_max. Default 1.0.
+        Maximum control magnitude alpha_max. Default 1.0. ``float("inf")`` means unbounded: the control is
+        ``-p/lambda``, as ``QuadraticControlCost``'s. NaN is refused (#2974).
 
     Examples
     --------
@@ -548,8 +550,8 @@ class BoundedControlCost(ControlCostBase):
         lambda_: float | None = None,
     ):
         super().__init__(control_cost, lambda_=lambda_)
-        if max_control <= 0:
-            raise ValueError(f"max_control must be positive, got {max_control}")
+        if math.isnan(max_control) or max_control <= 0:
+            raise ValueError(f"max_control must be positive, got {max_control} (#2974)")
         self.max_control = max_control
 
     def optimal_control(self, p: np.ndarray) -> np.ndarray:
@@ -857,6 +859,39 @@ def _bind_density_terms(owner: Any, *names: str) -> None:
         if getattr(owner, name) is not None:
             bound_attribute(owner, name, DENSITY_SLOTS, role=name.lstrip("_"))
     owner._density_terms = (*getattr(owner, "_density_terms", ()), *names)
+
+
+def held_sources(owner: Any) -> dict[str, tuple[str, Slots]]:
+    """``HELD_SOURCES`` merged along ``type(owner)``'s MRO, base first, so each class declares only what it adds: the
+    constructor parameter of each caller-supplied source the operator holds, the attribute that holds it, and the slots
+    it is read with (#2974)."""
+    merged: dict[str, tuple[str, Slots]] = {}
+    for klass in reversed(type(owner).__mro__):
+        merged.update(vars(klass).get("HELD_SOURCES", {}))
+    return merged
+
+
+# What `_value_parameter` reads in a constructor parameter's annotation: an object holding its own sources, which its own
+# class declares, and the marks of a number, an array or a callable.
+_CONTAINER_MARKS = ("ControlCostBase", "LagrangianBase", "HamiltonianBase", "Regularizer", "Problem", "NetworkData")
+_VALUE_MARKS = ("float", "int", "complex", "NDArray", "ndarray", "Callable", "callable", "tuple")
+
+
+def _value_parameter(annotation: str, default: Any) -> bool:
+    """Whether a constructor parameter, by its annotation's text and its default, takes a caller's number, array or
+    callable: the classification test_a_non_finite_source_is_refused_where_it_enters_2974.py reads, so that a class
+    which gains such a parameter must declare it in ``HELD_SOURCES`` or ``NOT_HELD`` (#2974).
+
+    An annotation naming a container (a control cost, a Lagrangian, a Hamiltonian, a problem, the graph) is not one: the
+    container's own class declares its sources. One naming a number, an array, a callable or a tuple is. An unannotated
+    parameter is one unless its default is a string or a bool, since nothing else says what it takes."""
+    if any(mark in annotation for mark in _CONTAINER_MARKS):
+        return False
+    if any(mark in annotation for mark in _VALUE_MARKS):
+        return True
+    if annotation:
+        return isinstance(default, (int, float)) and not isinstance(default, bool)
+    return not isinstance(default, (str, bool))
 
 
 def _terms_reading_every_population(owner: Any) -> list[str]:
@@ -1423,6 +1458,22 @@ class HamiltonianBase(MFGOperatorBase):
     # on a batch is not compared there rather than refused. A batch read that disagrees with the method is refused either
     # way (#2901).
     reads_a_batch = True
+
+    # The caller-supplied sources this class holds, by constructor parameter: the attribute that holds each and the
+    # slots it is read with. `_refuse_a_non_finite_source` reads every one where a problem is built, and refuses a
+    # non-finite value there by name (#2974). Each class declares what it adds; the reader merges the declarations along
+    # the MRO (`held_sources`).
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {}
+    # The scalars this class's constructor refuses when NaN or infinite, by name ("<class>: <name> must be finite"),
+    # which the owner therefore does not read (#2974).
+    CHECKED_SCALARS: ClassVar[tuple[str, ...]] = ()
+    # The constructor's other parameters that take a number, an array or a callable (`_value_parameter`), each with why
+    # it is not read: a setting, or a source no solver reads (#2974). A parameter in none of the three declarations
+    # fails test_a_non_finite_source_is_refused_where_it_enters_2974.py.
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "finite_diff_eps": "the step of the finite-difference derivatives: a setting",
+        "population_index": "which population's rows a stacked density holds: an index, not a value",
+    }
 
     @property
     def is_hamiltonian(self) -> bool:
@@ -2004,6 +2055,22 @@ class LagrangianBase(MFGOperatorBase):
     ----------
     """
 
+    # The caller-supplied sources this class holds, by constructor parameter: the attribute that holds each and the
+    # slots it is read with. `_refuse_a_non_finite_source` reads every one where a problem is built, and refuses a
+    # non-finite value there by name (#2974). Each class declares what it adds; the reader merges the declarations along
+    # the MRO (`held_sources`).
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {}
+    # The scalars this class's constructor refuses when NaN or infinite, by name ("<class>: <name> must be finite"),
+    # which the owner therefore does not read (#2974).
+    CHECKED_SCALARS: ClassVar[tuple[str, ...]] = ()
+    # The constructor's other parameters that take a number, an array or a callable (`_value_parameter`), each with why
+    # it is not read: a setting, or a source no solver reads (#2974). A parameter in none of the three declarations
+    # fails test_a_non_finite_source_is_refused_where_it_enters_2974.py.
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "finite_diff_eps": "the step of the finite-difference derivatives: a setting",
+        "population_index": "which population's rows a stacked density holds: an index, not a value",
+    }
+
     @property
     def is_hamiltonian(self) -> bool:
         return False
@@ -2307,6 +2374,11 @@ class SeparableLagrangian(LagrangianBase):
         f(m). If None, f = 0.
     """
 
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {
+        "potential": ("_potential", POTENTIAL_SLOTS),
+        "coupling": ("_coupling", DENSITY_SLOTS),
+    }
+
     def __init__(
         self,
         control_cost: ControlCostBase,
@@ -2402,6 +2474,11 @@ class DualHamiltonian(HamiltonianBase):
     DualLagrangian : Lagrangian created from Hamiltonian via Legendre transform
     LagrangianBase.legendre_transform : Symmetric operation (L → H)
     """
+
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "alpha_bounds": "a search interval of the numerical Legendre transform: a setting",
+        "n_search": "the size of that search: a setting",
+    }
 
     # One optimization per point: its doors raise on a batch (#2315), which a problem does not compare (#2901).
     reads_a_batch = False
@@ -2581,6 +2658,11 @@ class DualLagrangian(LagrangianBase):
     DualHamiltonian : Hamiltonian created from Lagrangian via Legendre transform
     HamiltonianBase.legendre_transform : Symmetric operation (H → L)
     """
+
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "p_bounds": "a search interval of the numerical Legendre transform: a setting",
+        "n_search": "the size of that search: a setting",
+    }
 
     def __init__(
         self,
@@ -2800,6 +2882,14 @@ class SeparableHamiltonian(HamiltonianBase):
     ...     potential=potential,
     ... )
     """
+
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {
+        "potential": ("_potential", POTENTIAL_SLOTS),
+        "coupling": ("_coupling", DENSITY_SLOTS),
+    }
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "coupling_dm": "read as dm, which no grid solver reads (#2901's census)",
+    }
 
     def __init__(
         self,
@@ -3022,6 +3112,16 @@ class CongestionHamiltonian(HamiltonianBase):
     ...     congestion_factor_dm=lambda m: gamma * domain_volume,
     ... )
     """
+
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {
+        "congestion_factor": ("_congestion_factor", DENSITY_SLOTS),
+        "potential": ("_potential", POTENTIAL_SLOTS),
+        "coupling": ("_coupling", DENSITY_SLOTS),
+    }
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "congestion_factor_dm": "read as dm, which no grid solver reads (#2901's census)",
+        "coupling_dm": "read as dm, which no grid solver reads (#2901's census)",
+    }
 
     def __init__(
         self,
@@ -3274,11 +3374,17 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
     α* = -c·p.
     """
 
+    CHECKED_SCALARS: ClassVar[tuple[str, ...]] = ("coupling_coefficient",)
+
     def __init__(
         self,
         coupling_coefficient: float = 1.0,
         potential: callable | None = None,
     ):
+        if not math.isfinite(coupling_coefficient):
+            raise ValueError(
+                f"QuadraticMFGHamiltonian: coupling_coefficient must be finite, got {coupling_coefficient} (#2974)"
+            )
         super().__init__(
             control_cost=QuadraticControlCost(
                 control_cost=1.0 / coupling_coefficient if coupling_coefficient > 0 else 1.0,

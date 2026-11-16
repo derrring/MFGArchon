@@ -259,6 +259,15 @@ def _has_a_grid_probe(geometry: GeometryProtocol) -> bool:
     return geometry.geometry_type is not GeometryType.NETWORK
 
 
+def _draws_its_nodes(geometry: GeometryProtocol) -> bool:
+    """Whether ``geometry`` draws its points afresh at each ``get_spatial_grid()``, by its declared type: an implicit
+    domain samples a point cloud from its SDF at each call (#2778). So its problem's arrays and a check's reads stand
+    at different points, and no read pairs a node with its entry in ``m_initial`` (#2974)."""
+    from mfgarchon.geometry import GeometryType
+
+    return geometry.geometry_type is GeometryType.IMPLICIT
+
+
 def _get_sample_inputs(
     geometry: GeometryProtocol,
     location: str,
@@ -317,6 +326,7 @@ def validate_custom_functions(
     check_consistency: bool = True,
     optimal_control: Callable | None = None,
     times: Sequence[float] = (0.0,),
+    m_initial: np.ndarray | None = None,
 ) -> ValidationResult:
     """
     Validate all custom Hamiltonian-related functions.
@@ -335,6 +345,8 @@ def validate_custom_functions(
             that check gates versus warns.
         optimal_control: The optimal control, the same kinds as dH_dp. Optional; checked to be -dH/dp (#2901).
         times: The consistency probes' times. A problem hands 0, T/2 and T (#2901).
+        m_initial: The problem's initial density, one value per node, which `validate_hamiltonian` reads at its sample
+            node (#2974). A problem hands it; without it the sample's m is 1.
 
     Returns:
         ValidationResult with any issues found
@@ -345,7 +357,7 @@ def validate_custom_functions(
     results: list[ValidationResult] = []
 
     if hamiltonian is not None:
-        results.append(validate_hamiltonian(hamiltonian, geometry))
+        results.append(validate_hamiltonian(hamiltonian, geometry, m_initial=m_initial))
 
     if dH_dm is not None:
         results.append(validate_hamiltonian_derivative(dH_dm, geometry, "dH_dm"))
@@ -366,9 +378,233 @@ def validate_custom_functions(
     return ValidationResult.combine(results)
 
 
+def _refuse_a_non_finite_source(problem: Any) -> None:
+    """Refuse a caller-supplied value or callable that is non-finite where the solvers will read it, where it enters, by
+    name (#2974). ``MFGProblem`` calls it once, after it has built ``m_initial`` and ``u_terminal`` and bound its
+    coupling costs, and before the consistency check and the soft wall's composition.
+
+    It reads at the state the solve is certain to read:
+
+    - ``m_initial``, ``u_terminal``, a scalar or array volatility, ``T`` and ``state_penalty_scale`` whole;
+    - on a geometry with a grid probe (`_has_a_grid_probe`) whose nodes the arrays hold, each callable at x the probe
+      nodes (`_probe_nodes`) and the node `validate_hamiltonian` reads, and t at 0, T/2 and T, with m ``m_initial``'s
+      values and v ``u_terminal``'s at those nodes where it takes them: a callable volatility, ``source_term_hjb``,
+      ``source_term_fp``, ``state_penalty``, the callable value of the boundary segment that governs each of those nodes
+      on the boundary (through `_read_constant`), and every source a Hamiltonian or Lagrangian holds (`held_sources`),
+      with its own rows as ``cross_density``, each callable once, named by the operator the caller gave;
+    - on a network, each held source in the node form the network solvers hand: an integer node, m ``m_initial`` and
+      p ``u_terminal``, one entry per node;
+    - ``coupling_cost`` and ``terminal_coupling``, bound, as their derivative at ``m_initial``, and ``nonlocal_operator``
+      applied to ``u_terminal``.
+
+    A scalar its own object refuses where it is built is not read again: a control cost's ``lambda_``, a bounded
+    control's ``max_control``, ``QuadraticMFGHamiltonian``'s ``coupling_coefficient``, a radial kernel's parameters
+    and a boundary segment's constants. A volatility override handed to a solver is refused by
+    ``resolve_volatility_override``.
+
+    A Hamiltonian's own ``__call__``, ``dp`` and ``optimal_control`` take p, which construction does not know, and are
+    not read here. ``validate_hamiltonian`` reads ``__call__`` at one state, inside these reads, and the consistency
+    check compares the three.
+
+    **What it does not see.** A source finite at these reads and non-finite elsewhere, off the probe nodes or at a state
+    the solve reaches: the point-of-use checks see it (#2975, #2976). A read that raises one of ``_EVALUATION_ERRORS``
+    is not this fact and is left to the readers at use.
+    """
+    from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase, _own_rows, held_sources
+    from mfgarchon.geometry.boundary import BoundaryConditions
+    from mfgarchon.geometry.boundary.providers import is_provider
+    from mfgarchon.geometry.boundary.types import _read_constant
+    from mfgarchon.types.callable_protocols import (
+        REGION_SLOTS,
+        SOURCE_TERM_SLOTS,
+        VOLATILITY_SLOTS,
+        _remembered,
+        bound_attribute,
+        spread_samples,
+    )
+    from mfgarchon.utils.validation import ValidationError
+
+    result = ValidationResult()
+
+    def refuse(name: str, value: Any, where: str = "") -> None:
+        values = np.asarray(value, dtype=float)
+        if not np.all(np.isfinite(values)):
+            bad = int(np.sum(~np.isfinite(values)))
+            at = f" {where}" if where else ""
+            result.add_error(
+                f"{name} is non-finite where the solvers read it: {bad} of {values.size} values{at} are NaN or "
+                "infinite (#2974).",
+                location=name,
+            )
+
+    def read(name: str, call: Any, where: str) -> None:
+        try:
+            value = call()
+        except _EVALUATION_ERRORS:
+            return
+        refuse(name, value, where)
+
+    def held(bound: Any, slots: Any, **state: Any) -> Any:
+        # A held source is handed its own slots only, as the operator's methods hand them: a density term reads m and
+        # cross_density, and is never handed x, which would start a batch comparison its reader does not make.
+        return bound(**{slot: value for slot, value in state.items() if slot in slots.order})
+
+    def stop_if_refused() -> None:
+        if not result.is_valid:
+            raise ValidationError(result)
+
+    T = float(problem.T)
+    refuse("T", T)
+    refuse("m_initial", problem.m_initial)
+    refuse("u_terminal", problem.u_terminal)
+    refuse("state_penalty_scale", problem.state_penalty_scale)
+    volatility = problem.volatility
+    if volatility is not None and not callable(volatility):
+        refuse("volatility", volatility)
+    # The arrays and T are the state every read below is made at.
+    stop_if_refused()
+
+    times = (0.0, 0.5 * T, T)
+    m_all = np.asarray(problem.m_initial, dtype=float).reshape(-1)
+    v_all = np.asarray(problem.u_terminal, dtype=float).reshape(-1)
+    components = problem.components
+    # The operators that hold sources, the caller's own first, then the one derived from it and any it holds (a dual's
+    # Lagrangian). A derived operator holds the caller's callables, so each callable is read once, and named by the
+    # operator the caller gave.
+    operators: list[Any] = []
+    for candidate in (
+        getattr(components, "hamiltonian", None),
+        getattr(components, "lagrangian", None),
+        getattr(components, "_hamiltonian_class", None),
+        getattr(components, "_lagrangian_class", None),
+    ):
+        if isinstance(candidate, (HamiltonianBase, LagrangianBase)) and all(candidate is not o for o in operators):
+            operators.append(candidate)
+    for operator in list(operators):
+        for inner in vars(operator).values():
+            if isinstance(inner, (HamiltonianBase, LagrangianBase)) and all(inner is not o for o in operators):
+                operators.append(inner)
+    read_already: set[tuple[int, tuple[str, ...]]] = set()
+
+    def first_read(source: Any, slots: Any) -> bool:
+        key = (id(source), slots.order)
+        if source is None or key in read_already:
+            return False
+        read_already.add(key)
+        return True
+
+    if problem.geometry is not None and not _has_a_grid_probe(problem.geometry):
+        count = m_all.size
+        nodes = sorted({0, count - 1, *(int(i) for i in spread_samples(count, 3))})
+        for operator in operators:
+            for parameter, (attr, slots) in held_sources(operator).items():
+                # A source read at x, held by a Hamiltonian handed to MFGProblem on a network, is outside: no solver
+                # accepts that problem (#2971).
+                if "node" not in slots.order or not first_read(getattr(operator, attr, None), slots):
+                    continue
+                bound = bound_attribute(operator, attr, slots, role=parameter)
+                name = f"{type(operator).__name__}'s {parameter}"
+                for node in nodes:
+                    neighbors = operator.network_data.get_neighbors(node)
+                    for t in times:
+                        read(
+                            name,
+                            lambda b=bound, q=slots, n=node, k=neighbors, s=t: held(
+                                b, q, t=s, node=n, neighbors=k, p=v_all, m=m_all
+                            ),
+                            f"at node {node}, t={t:g}",
+                        )
+        stop_if_refused()
+        return
+
+    # The callables are read at nodes whose m and v the arrays hold, so a geometry whose nodes are not the arrays'
+    # entries, or that draws them afresh at each read, has its arrays and scalars read, above, and nothing else.
+    geometry = problem.geometry
+    grid = None if geometry is None or _draws_its_nodes(geometry) else _grid_nodes(geometry, geometry.dimension)
+    if grid is None or grid.shape[0] != m_all.size:
+        stop_if_refused()
+        return
+    # The probe nodes, and the node `validate_hamiltonian` reads a Hamiltonian's own __call__ at, so that a source the
+    # Hamiltonian holds that is non-finite at that state is refused here first, by name (#2974). On a grid with an
+    # odd number of nodes on every axis it is the first probe node already.
+    points = _probe_nodes(grid)
+    sample = _get_sample_inputs(geometry, "_refuse_a_non_finite_source")[0]
+    if not any(np.array_equal(sample, q) for q in points):
+        points.append(sample)
+    rows = _node_rows(grid, points, geometry)
+    x = tuple(np.asarray([q[k] for q in points], dtype=float) for k in range(grid.shape[1]))
+    m, v = m_all[rows], v_all[rows]
+    where = [f"at the probe nodes, t={t:g}" for t in times]
+
+    if callable(volatility):
+        bound = _remembered(volatility, VOLATILITY_SLOTS, "volatility")
+        for t, at in zip(times, where, strict=True):
+            read("volatility", lambda s=t: bound(t=s, x=x, m=m), at)
+    for operator in operators:
+        for parameter, (attr, slots) in held_sources(operator).items():
+            # A node's source, held by a NetworkHamiltonian on a geometry that is not a network, is not read at x: that
+            # pairing is #2972's.
+            if "node" in slots.order or not first_read(getattr(operator, attr, None), slots):
+                continue
+            bound = bound_attribute(operator, attr, slots, role=parameter)
+            name = f"{type(operator).__name__}'s {parameter}"
+            for t, at in zip(times, where, strict=True):
+                read(name, lambda b=bound, q=slots, s=t: held(b, q, t=s, x=x, m=m, cross_density=_own_rows(m), v=v), at)
+    for field in ("source_term_hjb", "source_term_fp"):
+        source = getattr(problem, field, None)
+        if callable(source):
+            bound = _remembered(source, SOURCE_TERM_SLOTS, field)
+            for t, at in zip(times, where, strict=True):
+                read(field, lambda b=bound, s=t: b(t=s, x=x, v=v, m=m), at)
+    if callable(problem.state_penalty):
+        wall = _remembered(problem.state_penalty, REGION_SLOTS, "state_penalty")
+        read("state_penalty", lambda: wall(x=x), "at the probe nodes")
+    for field, energy in (("coupling_cost", problem._coupling_energy), ("terminal_coupling", problem._terminal_energy)):
+        if energy is not None:
+            for t in times:
+                read(field, lambda e=energy, s=t: e.flat_derivative(m_all, t=s), f"at m_initial, t={t:g}")
+    if problem.nonlocal_operator is not None:
+        read("nonlocal_operator", lambda: problem.nonlocal_operator @ v_all, "applied to u_terminal")
+    stop_if_refused()
+
+    # A boundary segment's callable value, at each probe node on the box's boundary, read with the segment that governs
+    # that node, as the solvers read it: the BC is the problem's one (`get_boundary_conditions`, #2530), and the
+    # segment the one `segment_for_point` names. A BC or a placement that its owner refuses is left to its readers.
+    try:
+        conditions = problem.get_boundary_conditions()
+    except _EVALUATION_ERRORS:
+        return
+    if not isinstance(conditions, BoundaryConditions):
+        return
+    lower, upper = grid.min(axis=0), grid.max(axis=0)
+    for q in points:
+        if not bool(np.any((q == lower) | (q == upper))):
+            continue
+        try:
+            segment = conditions.segment_for_point(q, geometry=problem.geometry)
+        except _EVALUATION_ERRORS:
+            continue
+        if not callable(segment.value) or is_provider(segment.value):
+            continue
+        binding = segment.value_binding()
+        for t in times:
+            try:
+                returned = binding(t=t, x=tuple(float(c) for c in q))
+            except _EVALUATION_ERRORS:
+                continue
+            _read_constant(
+                returned,
+                kind=f"BCSegment {segment.name!r} (what its callable returned at t={t:g})",
+                where="a solver that reads it",
+                returned=True,
+            )
+
+
 def validate_hamiltonian(
     hamiltonian: Any,
     geometry: GeometryProtocol,
+    *,
+    m_initial: np.ndarray | None = None,
 ) -> ValidationResult:
     """
     Validate a Hamiltonian: a HamiltonianBase instance, or a raw callable of (t, x, p, m), which declares p and what else it reads.
@@ -379,13 +615,17 @@ def validate_hamiltonian(
     Checks:
     - Callable with correct signature
     - Returns float or array
-    - No NaN/Inf in output
+    - No NaN/Inf in output: the one check at construction of a Hamiltonian's own ``__call__`` being finite, at one
+      state, t 0, the sample node, p 0 and m ``m_initial``'s value there (1 without it). A source the Hamiltonian holds
+      is read at that state first, by `_refuse_a_non_finite_source`, which reads the sample node too, and is refused
+      there by name (#2974).
 
     On a network geometry nothing is read here: no grid probe applies there (`_has_a_grid_probe`).
 
     Args:
         hamiltonian: HamiltonianBase instance or callable
         geometry: Geometry for sample point
+        m_initial: The initial density, one value per node, read at the sample node (#2974)
 
     Returns:
         ValidationResult
@@ -394,9 +634,12 @@ def validate_hamiltonian(
     if not _has_a_grid_probe(geometry):
         return result
 
-    x_sample, p_sample, m_sample, _dim, err = _get_sample_inputs(geometry, "hamiltonian")
+    x_sample, p_sample, m_sample, dimension, err = _get_sample_inputs(geometry, "hamiltonian")
     if err is not None:
         return err
+    nodes = None if m_initial is None or _draws_its_nodes(geometry) else _grid_nodes(geometry, dimension)
+    if nodes is not None and nodes.shape[0] == np.size(m_initial):
+        m_sample = float(np.ravel(m_initial)[_node_rows(nodes, [x_sample], geometry)[0]])
 
     # Evaluate: a HamiltonianBase by keyword; a raw callable through its binding, (t, x, p, m)
     try:
@@ -585,6 +828,22 @@ def _grid_nodes(geometry: GeometryProtocol, dimension: int) -> np.ndarray | None
     if isinstance(grid, np.ndarray) and grid.ndim == 1 and dimension == 1:
         return np.asarray(grid, dtype=float).reshape(-1, 1)
     return None
+
+
+def _node_rows(nodes: np.ndarray, points: list[np.ndarray], geometry: GeometryProtocol) -> list[int]:
+    """The row of ``nodes`` each of ``points`` is, for reading an array that holds one entry per node (#2974). A point
+    that is no node means the geometry returned other nodes on another read, which `_draws_its_nodes` says of none
+    but an implicit domain."""
+    rows = []
+    for point in points:
+        at = np.flatnonzero(np.all(nodes == point, axis=1))
+        if at.size == 0:
+            raise AssertionError(
+                f"{type(geometry).__name__}.get_spatial_grid() returned other nodes on another read, and "
+                f"{np.asarray(point).tolist()} is not among them; `_draws_its_nodes` should say so (#2974)"
+            )
+        rows.append(int(at[0]))
+    return rows
 
 
 def _probe_points(geometry: GeometryProtocol, middle: np.ndarray) -> list[np.ndarray]:

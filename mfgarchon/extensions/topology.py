@@ -36,6 +36,7 @@ from mfgarchon.types.callable_protocols import (
     NODE_POTENTIAL_SLOTS,
     NODE_VALUE_SLOTS,
     BoundCallable,
+    Slots,
     _remembered,
     bound_attribute,
 )
@@ -86,6 +87,17 @@ class NetworkHamiltonian(HamiltonianBase):
 
     # A graph's node plays x, and it is read node by node.
     reads_a_batch = False
+
+    # Read in the node form the network solvers hand: an integer node, and p and m one entry per node (#2974).
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {
+        "hamiltonian_func": ("_hamiltonian_func", _USER_CALLABLE_SLOTS["_hamiltonian_func"]),
+        "node_potential_func": ("_node_potential", _USER_CALLABLE_SLOTS["_node_potential"]),
+        "node_interaction_func": ("_node_interaction", _USER_CALLABLE_SLOTS["_node_interaction"]),
+    }
+    NOT_HELD: ClassVar[dict[str, str]] = {
+        "hamiltonian_dm_func": "read only by NetworkMFGProblem.hamiltonian_dm, which no library code calls (#2573)",
+        "network_data": "the graph, not a value",
+    }
 
     def __init__(
         self,

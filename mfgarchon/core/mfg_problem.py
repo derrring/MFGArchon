@@ -799,10 +799,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         self._refuse_a_hamiltonian_whose_reads_disagree(unwalled)
 
-        # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
-        # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
-        self._coupling_energy = self._bind_cost("coupling_cost")
-        self._terminal_energy = self._bind_cost("terminal_coupling")
         # Off a grid the HJB solver binds F and G as declared (stage 1b-2, stage 1b's G line). Read with the binding, so
         # that a Model changed after this build moves neither (#2745).
         self._declared_coupling_cost = None if self._v1_model is None else self._v1_model.coupling_cost
@@ -2008,35 +2004,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             if not result.is_valid:
                 raise ValidationError(result)
 
-        # Issue #686: Validate custom functions (Hamiltonian, derivatives)
-        # Issue #1642 (C1): the derivative-consistency check runs here (it is on by default) and gates only on an
-        # exhibited witness, or a return the owner of its shape refuses (#2875), so a wrong dH_dm/dH_dp is refused at
-        # construction instead of silently steering every Picard step. The optimal control is compared with -dH/dp,
-        # since the HJB solvers read H and dp and the FP solvers read the control, at 0, T/2 and T (#2901).
-        if has_components and self.geometry is not None:
-            from mfgarchon.utils.validation import validate_custom_functions
-
-            h_class = self.components._hamiltonian_class
-            if h_class is not None:
-                T = float(self.tSpace[-1])
-                func_result = validate_custom_functions(
-                    hamiltonian=h_class,
-                    dH_dm=h_class.dm,
-                    dH_dp=h_class.dp,
-                    geometry=self.geometry,
-                    optimal_control=h_class.optimal_control,
-                    times=(0.0, 0.5 * T, T),
-                )
-                if not func_result.is_valid:
-                    raise ValidationError(func_result)
-
         # Issue #687: Validate an array-type diffusion field
         if self.geometry is not None and self.spatial_shape is not None:
             from mfgarchon.utils.validation import (
                 ValidationResult,
                 validate_array_dtype,
                 validate_field_shape,
-                validate_finite,
             )
 
             # Validate an array volatility against the shape its kind promises (#2375 ruling 6)
@@ -2070,7 +2043,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 for check in [
                     validate_array_dtype(vol, "volatility"),
                     *shape_check,
-                    validate_finite(vol, "volatility"),
                 ]:
                     arr_result.issues.extend(check.issues)
                     if not check.is_valid:
@@ -2098,17 +2070,43 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
-        # Issue #687: Validate computed arrays for NaN/Inf (after setup methods)
+        # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
+        # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model. Bound here, before
+        # `_refuse_a_non_finite_source`, which reads each as its derivative at m_initial (#2974).
+        self._coupling_energy = self._bind_cost("coupling_cost")
+        self._terminal_energy = self._bind_cost("terminal_coupling")
+
+        # A caller-supplied value or callable that is non-finite where the solvers read it is refused here, where it
+        # enters, by name: the arrays just built, the volatility, every source the Hamiltonian holds, the source terms,
+        # the soft wall, the coupling costs and the boundary values. One owner, before the checks below read any of them
+        # (#2974).
         if self.geometry is not None:
-            from mfgarchon.utils.validation import ValidationError, validate_finite
+            from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
 
-            u_result = validate_finite(self.u_terminal, "u_terminal")
-            if not u_result.is_valid:
-                raise ValidationError(u_result)
+            _refuse_a_non_finite_source(self)
 
-            m_result = validate_finite(self.m_initial, "m_initial")
-            if not m_result.is_valid:
-                raise ValidationError(m_result)
+        # Issue #686: Validate custom functions (Hamiltonian, derivatives)
+        # Issue #1642 (C1): the derivative-consistency check runs here (it is on by default) and gates only on an
+        # exhibited witness, or a return the owner of its shape refuses (#2875), so a wrong dH_dm/dH_dp is refused at
+        # construction instead of silently steering every Picard step. The optimal control is compared with -dH/dp,
+        # since the HJB solvers read H and dp and the FP solvers read the control, at 0, T/2 and T (#2901).
+        if has_components and self.geometry is not None:
+            from mfgarchon.utils.validation import ValidationError, validate_custom_functions
+
+            h_class = self.components._hamiltonian_class
+            if h_class is not None:
+                T = float(self.tSpace[-1])
+                func_result = validate_custom_functions(
+                    hamiltonian=h_class,
+                    dH_dm=h_class.dm,
+                    dH_dp=h_class.dp,
+                    geometry=self.geometry,
+                    optimal_control=h_class.optimal_control,
+                    times=(0.0, 0.5 * T, T),
+                    m_initial=self.m_initial,
+                )
+                if not func_result.is_valid:
+                    raise ValidationError(func_result)
 
         # === Issue #672: Validate m_initial before normalization (Fail Fast) ===
         # Check 1: Non-negativity (density must be >= 0)
@@ -2142,9 +2140,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # TIER 1 -- refuse. One branch, because the other two already have owners upstream and
         # restating them here made a dead branch look load-bearing: a negative density is refused
         # by Check 1 above ("m_initial contains negative values"), and a non-finite one by
-        # `validate_finite`, which raises ValidationError -- not even the same exception type this
-        # tier would have used. Measured: of the three cases a duplicated tier 1 claimed to own,
-        # only a non-positive mass ever reached it. Found by independent review of #2174.
+        # `_refuse_a_non_finite_source` (#2974). Measured: of the three cases a duplicated tier 1 claimed to own,
+        # only a non-positive mass ever reached it. Found by independent review of #2174. Its `isfinite` stays: it
+        # reads the mass, a derived state, and finite entries near 1e308 sum to an infinite one (#2974).
         if not np.isfinite(mass) or mass <= 0.0:
             raise ValueError(
                 f"m_initial has total mass {mass!r} on the {measure} measure. Initial density must "
