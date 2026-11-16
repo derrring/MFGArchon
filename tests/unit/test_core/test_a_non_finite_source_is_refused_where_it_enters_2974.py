@@ -1,19 +1,28 @@
 """#2974: a caller-supplied value or callable that is non-finite where the solvers will read it is refused where it
 enters, by name.
 
-`_refuse_a_non_finite_source` reads once, where `MFGProblem` is built: the arrays and scalars whole, and each callable at
-the state the solve is certain to read, x the probe nodes and t at 0, T/2 and T, with m `m_initial`'s values and v
-`u_terminal`'s. A scalar held by an object that exists before any problem (a control cost, a kernel, a boundary segment,
-`QuadraticMFGHamiltonian`) is refused where that object is built, and a volatility override handed to a solver by
+`_refuse_a_non_finite_source` reads once, where `MFGProblem` is built: the arrays and scalars whole, and each callable only
+at states the default solve hands it.
+- Times: t_0 and the interior time nodes for what the HJB side reads; the interior nodes and T for the FP's source.
+- Space: the probe nodes off the boundary.
+- m and v: `m_initial` and `u_terminal`, the first Picard iteration's guesses.
+- On a network: a node source at t_0, and a `NodeBC`'s callable value at its nodes.
+The last test here records both sides, construction and `problem.solve()`, and holds the first inside the second
+(#2974's R1). A scalar held by an object that exists before any problem (a control cost, a kernel, a boundary segment,
+`QuadraticMFGHamiltonian`) is refused where that object is built. A volatility override handed to a solver is refused by
 `resolve_volatility_override`.
 
-A Hamiltonian's own `__call__` is read at one state by `validate_hamiltonian`: t 0, its sample node, p 0, and m
-`m_initial`'s value there. The owner reads that node too, so a source the Hamiltonian holds that is non-finite at that
-state is refused by the owner first, by name, on a grid whose middle index is not its centre as well.
+A Hamiltonian's own `__call__` is read at one state by `validate_hamiltonian`: t 0, the owner's centre node, p 0, and m
+`m_initial`'s value there. So a source the Hamiltonian holds that is non-finite at that state is refused by the owner
+first, by name.
 
-What is not refused: a source finite at those reads and non-finite elsewhere (a coupling NaN only at m = 0.5 or at m = 1,
-where `m_initial` takes neither, builds), an input no solver reads (`coupling_dm`), and an infinity that means something
-(`BoundedControlCost(max_control=inf)`, unbounded).
+What is not refused:
+- a source finite at those reads and non-finite elsewhere, at a time, a node, an m or a v the solve does not hand it at
+  entry. A coupling NaN only at m = 0.5 or at m = 1, where `m_initial` takes neither, builds; so does a source
+  non-finite only at T/2, which is no time node here;
+- an input no solver reads (`coupling_dm`);
+- a network source that takes p or m, which the solvers are handed by their caller;
+- an infinity that means something (`BoundedControlCost(max_control=inf)`, unbounded).
 
 Every value parameter of a `HamiltonianBase` or `LagrangianBase` subclass is declared beside the class: a source the owner
 reads (`HELD_SOURCES`), a scalar its constructor refuses (`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`). The last
@@ -52,9 +61,11 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
 from mfgarchon.geometry import Hyperrectangle, TensorProductGrid
 from mfgarchon.geometry import boundary as bnd
+from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, NodeBC
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 from mfgarchon.operators.interaction import kernels
 from mfgarchon.utils.validation import ValidationError
+from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
 
 NAN, INF = float("nan"), float("inf")
 _POINTS = {1: 11, 2: 36}
@@ -103,9 +114,11 @@ def _components_problem(dim, *, m_initial=None, u_terminal=None, T=0.5, lagrangi
     )
 
 
-def _network_problem(T=0.5, **components):
+def _network_problem(T=0.5, node_bcs=(), **components):
     network = GridNetwork(width=3, height=3)
     network.create_network()
+    if node_bcs:
+        network.set_boundary_conditions(GraphBCConfig(node_bcs=tuple(node_bcs)))
     return NetworkMFGProblem(geometry=network, T=T, Nt=5, components=NetworkMFGComponents(**components))
 
 
@@ -135,8 +148,8 @@ def _nan_only_at(value):
 
 
 def _rising(x):
-    """An initial density that is 1 nowhere and takes one value at one node of each grid below: 2 + x on [0, 1], and
-    2 + x + 7y on the unit square, unique at the 6 x 6 grid's middle index, (0.6, 0)."""
+    """An initial density that is 1 nowhere and takes one value at one node of each grid below: 2 + x on [0, 1], 2.5 at
+    its centre, and 2 + x + 7y on the unit square, 5.2 at the 6 x 6 grid's centre node (0.4, 0.4) alone."""
     return 2.0 + np.asarray(x[0], dtype=float) + (7.0 * np.asarray(x[1], dtype=float) if len(x) > 1 else 0.0)
 
 
@@ -171,9 +184,9 @@ GRID_REFUSALS = [
         _read("SeparableHamiltonian's coupling"),
     ),
     (
-        "coupling NaN only at m_initial at validate_hamiltonian's node",
+        "coupling NaN only at m_initial at the centre node, validate_hamiltonian's",
         lambda d: _problem(
-            d, m_initial=_rising, model={"hamiltonian": _h(coupling=_nan_only_at(2.5 if d == 1 else 2.6))}
+            d, m_initial=_rising, model={"hamiltonian": _h(coupling=_nan_only_at(2.5 if d == 1 else 5.2))}
         ),
         ValidationError,
         _read("SeparableHamiltonian's coupling"),
@@ -328,19 +341,6 @@ NETWORK_REFUSALS = [
         {"node_potential_func": lambda t, node: INF},
         _read("NetworkHamiltonian's node_potential_func"),
     ),
-    (
-        "node_interaction_func NaN",
-        {"node_interaction_func": lambda t, node, m: NAN},
-        _read("NetworkHamiltonian's node_interaction_func"),
-    ),
-    (
-        "hamiltonian_func NaN",
-        {
-            "hamiltonian_func": lambda t, node, neighbors, p, m: NAN,
-            "hamiltonian_dm_func": lambda t, node, neighbors, p, m: 0.0,
-        },
-        _read("NetworkHamiltonian's hamiltonian_func"),
-    ),
     ("T NaN", {"T": NAN}, _read("T")),
 ]
 
@@ -349,9 +349,18 @@ NETWORK_REFUSALS = [
     ("given", "names"), [row[1:] for row in NETWORK_REFUSALS], ids=[row[0] for row in NETWORK_REFUSALS]
 )
 def test_a_non_finite_source_on_a_network_is_refused_by_name(given, names):
-    """Read in the node form the network solvers hand: an integer node, and m and p one entry per node."""
+    """Read in the node form the network HJB solvers hand, an integer node, at t_0, the one grid time both read."""
     with pytest.raises(ValidationError, match=names):
         _network_problem(**given)
+
+
+def test_a_node_bcs_callable_value_is_refused_by_name():
+    """Read at its nodes at the HJB side's times, which policy iteration hands it, as the graph applicator reads it."""
+    exit_bc = NodeBC(nodes=[0], value=lambda t, node: NAN, name="exit")
+    with pytest.raises(
+        NotImplementedError, match=r"NodeBC 'exit': value \(what its callable returned at node 0, t=0\)"
+    ):
+        _network_problem(node_bcs=[exit_bc])
 
 
 @pytest.mark.parametrize(
@@ -659,3 +668,345 @@ def test_a_declared_scalar_is_refused_by_its_constructor(module, name, scalar):
     operator = getattr(importlib.import_module(module), name)
     with pytest.raises(ValueError, match=rf"{name}: {scalar} must be finite, got nan"):
         operator(**{scalar: NAN})
+
+
+class _OwnCallNaNAtTheCentre(SeparableHamiltonian):
+    """A Hamiltonian whose own __call__ is NaN at the 6 x 6 grid's centre node (0.4, 0.4) alone, and its parts finite."""
+
+    def __call__(self, t, x, p, m):
+        value = np.asarray(super().__call__(t=t, x=x, p=p, m=m), dtype=float)
+        at = np.isclose(np.asarray(x[0], dtype=float), 0.4) & np.isclose(np.asarray(x[1], dtype=float), 0.4)
+        return np.where(at, NAN, value)
+
+
+@_MASS_IS_NOT_THE_SUBJECT
+def test_validate_hamiltonian_reads_an_own_call_at_the_owners_centre_node():
+    """Its state is inside the owner's reads: t 0, the centre probe node off the boundary, p 0, m m_initial's value there.
+    On a 6 x 6 grid that node is (0.4, 0.4), where the grid's middle index, (0.6, 0), is a boundary node."""
+    with pytest.raises(ValidationError, match=r"Hamiltonian returned"):
+        _problem(2, model={"hamiltonian": _OwnCallNaNAtTheCentre(QuadraticControlCost(control_cost=1.0))})
+
+
+def test_on_an_implicit_domain_the_owner_reads_no_callable():
+    """An implicit domain draws its points afresh at each read of its grid (#2778), so no node pairs with an entry of
+    m_initial and the owner reads no callable there. A Hamiltonian's NaN potential is then refused by validate_hamiltonian,
+    through its __call__, and not by the owner's read of the potential, which would read a random draw."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # the density's mass on this measure is not this pin's subject
+        with pytest.raises(ValidationError, match=r"Hamiltonian returned NaN or Inf at sample point"):
+            MFGProblem(
+                model=Model(hamiltonian=_h(potential=_at_tx(NAN)), volatility=0.2),
+                domain=Hyperrectangle(np.array([[0.0, 1.0]])),
+                conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+                Nt=4,
+            )
+
+
+# --- States the solve does not read are not refused. ---
+
+
+def _only_at(t_star, value=0.0):
+    """A value non-finite (NaN) at time ``t_star`` alone, and ``value`` at every other time."""
+    return lambda t: NAN if abs(float(t) - t_star) < 1e-12 else value
+
+
+def _one_over_x(x):
+    with np.errstate(divide="ignore"):
+        return 1.0 / np.asarray(x[0], dtype=float)
+
+
+NOT_READ = [
+    ("source_term_hjb NaN only at T", lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.5)(t))(x))),
+    (
+        "source_term_hjb NaN only at T/2, no time node",
+        lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.25)(t))(x)),
+    ),
+    ("source_term_fp NaN only at t_0", lambda: _problem(1, source_term_fp=lambda t, x: _at_x(_only_at(0.0)(t))(x))),
+    (
+        "potential NaN only at T",
+        lambda: _problem(1, model={"hamiltonian": _h(potential=lambda t, x: _at_x(_only_at(0.5)(t))(x))}),
+    ),
+    (
+        "volatility NaN only at T",
+        lambda: _problem(1, model={"volatility": lambda t, x: _at_x(_only_at(0.5, 0.2)(t))(x)}),
+    ),
+    (
+        "potential 1/x, infinite at a Dirichlet node",
+        lambda: _problem(
+            1,
+            model={"hamiltonian": _h(potential=lambda t, x: _one_over_x(x))},
+            bc=bnd.dirichlet_bc(value=0.0, dimension=1),
+        ),
+    ),
+    (
+        "potential 1/x under no-flux, infinite at a boundary node",
+        lambda: _problem(1, model={"hamiltonian": _h(potential=lambda t, x: _one_over_x(x))}),
+    ),
+    (
+        "source_term_fp taking v, NaN where v is not u_terminal",
+        lambda: _problem(
+            1,
+            source_term_fp=lambda t, x, v, m: np.where(
+                np.isclose(v, np.sin(np.pi * np.asarray(x[0], dtype=float))), 0.0, NAN
+            ),
+        ),
+    ),
+    (
+        "network hamiltonian_func NaN, which takes p and m",
+        lambda: _network_problem(
+            hamiltonian_func=lambda t, node, neighbors, p, m: NAN,
+            hamiltonian_dm_func=lambda t, node, neighbors, p, m: 0.0,
+        ),
+    ),
+    (
+        "network node_interaction_func NaN, which takes m",
+        lambda: _network_problem(node_interaction_func=lambda t, node, m: NAN),
+    ),
+]
+
+
+@pytest.mark.parametrize("build", [row[1] for row in NOT_READ], ids=[row[0] for row in NOT_READ])
+def test_a_state_the_solve_is_not_handed_at_entry_is_not_refused(build):
+    """The read set's limits, each a problem the owner must build. Each is non-finite only where the default solve is not
+    handed it at entry, or where its value does not reach the solution (a Dirichlet node), or is a node source taking
+    the caller's p or m. A wider read set refuses them, and at 21ef740b the ones on a grid solve as their finite twin."""
+    build()
+
+
+# --- R1: every state the owner reads a callable at is one the default solve hands it. ---
+
+# Construction runs other checks too (the consistency check reads its own probes), so the owner is run alone, on the
+# built problem, while its reads are noted: "off" while the problem is built, "owner", then "solve".
+_PHASE = ["off"]
+_SEEN: dict[str, set] = {"owner": set(), "solve": set()}
+_CTX: dict = {}
+
+
+def _t(t):
+    return None if t is None else round(float(np.asarray(t).reshape(-1)[0]), 10)
+
+
+def _flag(values, reference, node, k):
+    if values is None:
+        return None
+    handed = np.asarray(values, dtype=float).reshape(-1)
+    if handed.size == reference.size:
+        return bool(np.isclose(handed[node], reference[node]))
+    return bool(np.isclose(handed[k if handed.size > 1 else 0], reference[node]))
+
+
+def _note(name, *, t=None, x=None, m=None, v=None, node=None):
+    """One call's states, one per node it names: (name, t, node, m is m_initial's there, v is u_terminal's there)."""
+    if _PHASE[0] == "off":
+        return
+    seen = _SEEN[_PHASE[0]]
+    if node is not None:
+        seen.add((name, _t(t), int(node), None, None))
+        return
+    if x is None:
+        if m is not None:  # a density term: the m values it is handed
+            seen.update(
+                (name, None, None, round(float(value), 10), None) for value in np.asarray(m, dtype=float).ravel()
+            )
+        else:
+            seen.add((name, _t(t), None, None, None))
+        return
+    nodes = _CTX["nodes"]
+    points = np.stack([np.atleast_1d(np.asarray(c, dtype=float)).reshape(-1) for c in x], axis=1)
+    for k, point in enumerate(points):
+        hit = np.flatnonzero(np.all(np.isclose(nodes, point, rtol=0, atol=1e-12), axis=1))
+        i = int(hit[0]) if hit.size else -1
+        seen.add(
+            (
+                name,
+                _t(t),
+                i,
+                _flag(m, _CTX["m0"], i, k) if i >= 0 else None,
+                _flag(v, _CTX["vT"], i, k) if i >= 0 else None,
+            )
+        )
+
+
+class _NotedCost:
+    """A coupling cost whose bound energy notes each derivative it is asked for: (t, whether m is m_initial)."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def bind(self, problem):
+        energy = PotentialCost(lambda x: np.zeros(np.shape(np.asarray(x[0], dtype=float)))).bind(problem)
+        name = self.name
+
+        class Noted:
+            def __getattr__(self, attr):
+                return getattr(energy, attr)
+
+            def flat_derivative(self, m, *, t=0.0):
+                if _PHASE[0] != "off":
+                    _SEEN[_PHASE[0]].add((name, _t(t), None, bool(np.allclose(np.ravel(m), _CTX["m0"])), None))
+                return energy.flat_derivative(m, t=t)
+
+        return Noted()
+
+
+def _hamiltonian_group():
+    def potential(t, x):
+        _note("potential", t=t, x=x)
+        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
+
+    def coupling(m):
+        _note("coupling", m=m)
+        return 0.5 * np.asarray(m, dtype=float)
+
+    def volatility(t, x, m):
+        _note("volatility", t=t, x=x, m=m)
+        return np.full(np.shape(np.asarray(x[0], dtype=float)), 0.2)
+
+    def wall(x):
+        _note("state_penalty", x=tuple(np.asarray(x)) if np.ndim(x) >= 2 else (np.asarray(x),))
+        return np.zeros(np.shape(x)[1:]) if np.ndim(x) >= 2 else 0.0
+
+    model = Model(
+        hamiltonian=_h(potential=potential, coupling=coupling),
+        volatility=volatility,
+        coupling_cost=_NotedCost("coupling_cost"),
+        terminal_coupling=_NotedCost("terminal_coupling"),
+    )
+    return {"model": model, "state_penalty": wall}, {
+        "potential",
+        "coupling",
+        "volatility",
+        "state_penalty",
+        "coupling_cost",
+        "terminal_coupling",
+    }
+
+
+def _source_group(fp_takes_v):
+    def source_hjb(t, x, v, m):
+        _note("source_term_hjb", t=t, x=x, v=v, m=m)
+        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
+
+    def source_fp_v(t, x, v, m):
+        _note("source_term_fp", t=t, x=x, v=v, m=m)
+        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
+
+    def source_fp(t, x, m):
+        _note("source_term_fp", t=t, x=x, m=m)
+        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
+
+    return (
+        {"source_term_hjb": source_hjb, "source_term_fp": source_fp_v if fp_takes_v else source_fp},
+        {"source_term_hjb", "source_term_fp"},
+    )
+
+
+def _nonlocal_group():
+    def matvec(v):
+        if _PHASE[0] != "off":
+            _SEEN[_PHASE[0]].add(("nonlocal_operator", None, None, None, bool(np.allclose(np.ravel(v), _CTX["vT"]))))
+        return np.zeros(np.shape(v))
+
+    return {"nonlocal_operator": LinearOperator((11, 11), matvec=matvec, dtype=float)}, {"nonlocal_operator"}
+
+
+def _boundary_group():
+    def g(t):
+        _note("Dirichlet g(t)", t=t)
+        return 0.0
+
+    return {"bc": bnd.dirichlet_bc(value=g, dimension=1)}, {"Dirichlet g(t)"}
+
+
+GRID_SETUPS = [
+    ("1-D, Nt 5, the Hamiltonian's sources, volatility, wall, costs", 1, 5, _hamiltonian_group),
+    ("1-D, Nt 5, the source terms, the FP's taking v", 1, 5, lambda: _source_group(True)),
+    ("1-D, Nt 5, the FP's source without v", 1, 5, lambda: _source_group(False)),
+    ("1-D, Nt 5, nonlocal_operator", 1, 5, _nonlocal_group),
+    ("1-D, Nt 5, a Dirichlet g(t)", 1, 5, _boundary_group),
+    ("1-D, Nt 1, the Hamiltonian's sources, volatility, wall, costs", 1, 1, _hamiltonian_group),
+    ("1-D, Nt 1, the source terms", 1, 1, lambda: _source_group(True)),
+    ("1-D, Nt 4, the source terms", 1, 4, lambda: _source_group(True)),
+    ("6 x 6, Nt 5, the Hamiltonian's sources, volatility, wall, costs", 2, 5, _hamiltonian_group),
+    ("6 x 6, Nt 5, the source terms", 2, 5, lambda: _source_group(True)),
+]
+
+
+@_MASS_IS_NOT_THE_SUBJECT
+@pytest.mark.parametrize(
+    ("dim", "steps", "group"), [row[1:] for row in GRID_SETUPS], ids=[row[0] for row in GRID_SETUPS]
+)
+def test_every_state_the_owner_reads_is_one_the_default_solve_hands(dim, steps, group):
+    """Each callable notes every state it is handed, while the problem is built and then while problem.solve() runs, as
+    (time, node, m is m_initial's there, v is u_terminal's there). What construction read must be among what the solve
+    read: a solve that stops reading one of the owner's states, or an owner that reads one it does not, fails here."""
+    kwargs, names = group()
+    bc = kwargs.pop("bc", None)
+    for side in _SEEN.values():
+        side.clear()
+    _PHASE[0] = "off"
+    problem = MFGProblem(
+        model=kwargs.pop("model", None) or Model(hamiltonian=_h(), volatility=0.2),
+        domain=_grid(dim, bc),
+        conditions=Conditions(
+            m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x[0], dtype=float)), u_terminal=_u_terminal, T=0.5
+        ),
+        Nt=steps,
+        **kwargs,
+    )
+    _CTX.update(
+        nodes=np.asarray(problem.geometry.get_spatial_grid(), dtype=float).reshape(-1, dim),
+        m0=np.asarray(problem.m_initial, dtype=float).ravel(),
+        vT=np.asarray(problem.u_terminal, dtype=float).ravel(),
+    )
+    _read_as_the_owner_then_solve(problem, lambda: problem.solve(max_iterations=2, verbose=False))
+    read = {state[0] for state in _SEEN["owner"]}
+    assert names <= read, f"the owner read none of {sorted(names - read)}"
+    unread = sorted(_SEEN["owner"] - _SEEN["solve"], key=str)
+    assert not unread, f"{len(unread)} states the owner read that the solve was not handed, first {unread[:3]}"
+
+
+def _read_as_the_owner_then_solve(problem, solve):
+    _PHASE[0] = "owner"
+    try:
+        _refuse_a_non_finite_source(problem)
+        _PHASE[0] = "solve"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solve()
+    finally:
+        _PHASE[0] = "off"
+
+
+@pytest.mark.parametrize("solver", ["NetworkHJBSolver", "NetworkPolicyIterationHJBSolver"])
+def test_every_state_the_owner_reads_on_a_network_is_one_its_hjb_solvers_hand(solver):
+    """The network's: a node source at t_0, and a NodeBC's callable value at its nodes at the HJB side's times, which
+    policy iteration hands it (NetworkHJBSolver refuses a node BC). Each solver is driven as a caller drives it, with the
+    problem's own arrays."""
+    from mfgarchon.alg.numerical.network_solvers import hjb_network
+
+    def node_potential(t, node):
+        _note("node_potential_func", t=t, node=node)
+        return 0.0
+
+    def exit_value(t, node):
+        _note("NodeBC value", t=t, node=node)
+        return 0.5
+
+    policy = solver == "NetworkPolicyIterationHJBSolver"
+    for side in _SEEN.values():
+        side.clear()
+    _PHASE[0] = "off"
+    problem = _network_problem(
+        node_potential_func=node_potential,
+        node_bcs=[NodeBC(nodes=[8], value=exit_value, name="exit")] if policy else (),
+    )
+    M = np.tile(np.asarray(problem.m_initial, dtype=float), (6, 1))
+    U_T = np.asarray(problem.u_terminal, dtype=float)
+    _read_as_the_owner_then_solve(
+        problem, lambda: getattr(hjb_network, solver)(problem).solve_hjb_system(M, U_T, np.zeros((6, 9)))
+    )
+    names = {"node_potential_func", "NodeBC value"} if policy else {"node_potential_func"}
+    assert names <= {state[0] for state in _SEEN["owner"]}, f"the owner read none of {sorted(names)}"
+    unread = sorted(_SEEN["owner"] - _SEEN["solve"], key=str)
+    assert not unread, f"{len(unread)} states the owner read that {solver} was not handed, first {unread[:3]}"

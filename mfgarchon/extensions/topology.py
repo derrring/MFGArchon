@@ -90,11 +90,11 @@ class NetworkHamiltonian(HamiltonianBase):
 
     # Read in the node form the network solvers hand: an integer node, and p and m one entry per node (#2974).
     HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {
-        "hamiltonian_func": ("_hamiltonian_func", _USER_CALLABLE_SLOTS["_hamiltonian_func"]),
         "node_potential_func": ("_node_potential", _USER_CALLABLE_SLOTS["_node_potential"]),
-        "node_interaction_func": ("_node_interaction", _USER_CALLABLE_SLOTS["_node_interaction"]),
     }
     NOT_HELD: ClassVar[dict[str, str]] = {
+        "hamiltonian_func": "takes p and m, which the network solvers are handed by their caller, not the problem (#2974)",
+        "node_interaction_func": "takes m, which the network solvers are handed by their caller, not the problem (#2974)",
         "hamiltonian_dm_func": "read only by NetworkMFGProblem.hamiltonian_dm, which no library code calls (#2573)",
         "network_data": "the graph, not a value",
     }

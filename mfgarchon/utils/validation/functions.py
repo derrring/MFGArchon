@@ -378,24 +378,104 @@ def validate_custom_functions(
     return ValidationResult.combine(results)
 
 
+def _interior_probe_nodes(nodes: np.ndarray) -> list[np.ndarray]:
+    """`_probe_nodes` off the box's boundary, the centre first: the nodes `_refuse_a_non_finite_source` reads an in-domain
+    callable at, and the first the one `validate_hamiltonian` reads a Hamiltonian's own ``__call__`` at (#2974). A grid
+    with an axis of 2 nodes has none."""
+    lower, upper = nodes.min(axis=0), nodes.max(axis=0)
+    return [q for q in _probe_nodes(nodes) if not bool(np.any((q == lower) | (q == upper)))]
+
+
+def _refuse_a_non_finite_node_source(
+    problem: Any, operators: list[Any], hjb_times: list[float], count: int, held: Any, read: Any, first_read: Any
+) -> None:
+    """`_refuse_a_non_finite_source` on a network (#2974). The network HJB solvers read a held source in the node form,
+    an integer node: ``NetworkHJBSolver`` at the stages of its ODE and policy iteration at t_0 ... t_{Nt-1}, so the one
+    grid time both read is t_0. A source that also takes p or m is handed the arrays the caller gives the solver, not
+    the problem's, and none is held (``NetworkHamiltonian.NOT_HELD``). A node a ``NodeBC`` governs has its value
+    imposed and is not read. A ``NodeBC``'s callable value is read at its nodes at the HJB side's times, which policy
+    iteration hands it, through `_read_constant` as the graph applicator reads it."""
+    from mfgarchon.core.hamiltonian import held_sources
+    from mfgarchon.geometry.boundary.types import _read_constant
+    from mfgarchon.types.callable_protocols import bound_attribute, spread_samples
+
+    def sampled(nodes: list[int]) -> list[int]:
+        if len(nodes) <= 5:
+            return nodes
+        return [nodes[0], nodes[-1], *(nodes[int(i)] for i in spread_samples(len(nodes), 3))]
+
+    try:
+        conditions = problem.get_boundary_conditions()
+    except _EVALUATION_ERRORS:
+        conditions = None
+    governed: set[int] = set()
+    callables: list[tuple[Any, list[int]]] = []
+    for condition in tuple(getattr(conditions, "node_bcs", ()) or ()):
+        try:
+            nodes = [int(n) for n in condition.get_nodes(count)]
+        except _EVALUATION_ERRORS:
+            continue
+        governed.update(nodes)
+        # A CUSTOM condition takes its rule apart and a value of 0 (`NodeBC`), so a callable value is a value's.
+        if callable(condition.value):
+            callables.append((condition, nodes))
+    free = sampled(sorted(set(range(count)) - governed))
+    for operator in operators:
+        for parameter, (attr, slots) in held_sources(operator).items():
+            if "node" not in slots.order or not first_read(getattr(operator, attr, None), slots):
+                continue
+            bound = bound_attribute(operator, attr, slots, role=parameter)
+            name = f"{type(operator).__name__}'s {parameter}"
+            for node in free:
+                neighbors = operator.network_data.get_neighbors(node)
+                read(
+                    name,
+                    lambda b=bound, q=slots, n=node, k=neighbors: held(b, q, t=0.0, node=n, neighbors=k),
+                    f"at node {node}, t=0",
+                )
+    for condition, nodes in callables:
+        for node in sampled(sorted(set(nodes))):
+            for t in hjb_times:
+                try:
+                    returned = condition._reader(t=t, node=node)
+                except _EVALUATION_ERRORS:
+                    continue
+                _read_constant(
+                    returned,
+                    kind=f"NodeBC {condition.name!r}: value (what its callable returned at node {node}, t={t:g})",
+                    where="the graph applicator",
+                    returned=True,
+                    advice="return one real number",
+                )
+
+
 def _refuse_a_non_finite_source(problem: Any) -> None:
     """Refuse a caller-supplied value or callable that is non-finite where the solvers will read it, where it enters, by
     name (#2974). ``MFGProblem`` calls it once, after it has built ``m_initial`` and ``u_terminal`` and bound its
     coupling costs, and before the consistency check and the soft wall's composition.
 
-    It reads at the state the solve is certain to read:
+    It reads only states the default solve hands each callable, as #2974's recording census found them and its R1 test
+    pins them:
 
     - ``m_initial``, ``u_terminal``, a scalar or array volatility, ``T`` and ``state_penalty_scale`` whole;
-    - on a geometry with a grid probe (`_has_a_grid_probe`) whose nodes the arrays hold, each callable at x the probe
-      nodes (`_probe_nodes`) and the node `validate_hamiltonian` reads, and t at 0, T/2 and T, with m ``m_initial``'s
-      values and v ``u_terminal``'s at those nodes where it takes them: a callable volatility, ``source_term_hjb``,
-      ``source_term_fp``, ``state_penalty``, the callable value of the boundary segment that governs each of those nodes
-      on the boundary (through `_read_constant`), and every source a Hamiltonian or Lagrangian holds (`held_sources`),
-      with its own rows as ``cross_density``, each callable once, named by the operator the caller gave;
-    - on a network, each held source in the node form the network solvers hand: an integer node, m ``m_initial`` and
-      p ``u_terminal``, one entry per node;
-    - ``coupling_cost`` and ``terminal_coupling``, bound, as their derivative at ``m_initial``, and ``nonlocal_operator``
-      applied to ``u_terminal``.
+    - times: nodes of the time grid only, t_n = n dt. The interior nodes t_1, t_{Nt // 2} and t_{Nt - 1}, which both
+      directions of stepping read; with t_0 for a callable the HJB side reads, which steps t_0 ... t_{Nt-1}; and T
+      for the FP's source, which it reads at t_1 ... T, and for the terminal coupling. At Nt = 1 each is read at its
+      endpoint alone;
+    - space, on a geometry with a grid probe (`_has_a_grid_probe`) whose nodes the arrays hold and that does not draw
+      them afresh (`_draws_its_nodes`): the probe nodes off the box's boundary (`_interior_probe_nodes`), since a
+      Dirichlet node's value does not reach the solution. There it reads a callable volatility, ``source_term_hjb``,
+      ``source_term_fp``, ``state_penalty`` and every source a Hamiltonian or Lagrangian holds (`held_sources`), each
+      callable once, named by the operator the caller gave. A boundary segment's callable value is read at the
+      boundary probe nodes it governs (``segment_for_point``);
+    - m and v: the first Picard iteration hands the HJB ``m_initial`` and ``u_terminal`` at every t_n, and the FP
+      ``m_initial``, with v ``u_terminal`` only at T. So a callable that takes them is handed those values at its
+      nodes, and the FP's source, if it takes v, is read at T alone. ``coupling_cost`` is read as its derivative at
+      ``m_initial`` at the HJB side's times, ``terminal_coupling`` at T, and ``nonlocal_operator`` applied to
+      ``u_terminal``;
+    - on a network (`_refuse_a_non_finite_node_source`), a held source in the node form at t_0, the one grid time both
+      network HJB solvers read, at nodes no ``NodeBC`` governs, and a ``NodeBC``'s callable value at its nodes at the
+      HJB side's times.
 
     A scalar its own object refuses where it is built is not read again: a control cost's ``lambda_``, a bounded
     control's ``max_control``, ``QuadraticMFGHamiltonian``'s ``coupling_coefficient``, a radial kernel's parameters
@@ -406,9 +486,11 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
     not read here. ``validate_hamiltonian`` reads ``__call__`` at one state, inside these reads, and the consistency
     check compares the three.
 
-    **What it does not see.** A source finite at these reads and non-finite elsewhere, off the probe nodes or at a state
-    the solve reaches: the point-of-use checks see it (#2975, #2976). A read that raises one of ``_EVALUATION_ERRORS``
-    is not this fact and is left to the readers at use.
+    **What it does not see.** A source finite at these reads and non-finite elsewhere: at a boundary node, which the
+    solve reads under no-flux; at another time, m or v; or at a state the solve reaches. The point-of-use checks see it
+    (#2975, #2976). Nor, at Nt = 1, more than each endpoint; on a grid with an axis of 2 nodes, which has no interior,
+    any callable; or on a network, a source that takes p or m, which the solvers are handed by their caller. A read that
+    raises one of ``_EVALUATION_ERRORS`` is not this fact and is left to the readers at use.
     """
     from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase, _own_rows, held_sources
     from mfgarchon.geometry.boundary import BoundaryConditions
@@ -420,7 +502,6 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
         VOLATILITY_SLOTS,
         _remembered,
         bound_attribute,
-        spread_samples,
     )
     from mfgarchon.utils.validation import ValidationError
 
@@ -464,7 +545,15 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
     # The arrays and T are the state every read below is made at.
     stop_if_refused()
 
-    times = (0.0, 0.5 * T, T)
+    # The times a callable is read at are nodes of the problem's time grid that the default solve hands it (the
+    # recording census of #2974's R1, pinned by test_a_non_finite_source_is_refused_where_it_enters_2974.py): the
+    # interior nodes t_1, t_{Nt // 2} and t_{Nt - 1}, which both directions of stepping read, with t_0 for a callable the
+    # HJB side reads (it steps t_0 ... t_{Nt-1}) and T for the FP's source (t_1 ... T) and the terminal coupling. At
+    # Nt = 1 there is no interior node, and each is read at its endpoint alone. t_n is n * dt, as the solvers form it.
+    dt, steps = float(problem.dt), int(problem.Nt)
+    interior = [n * dt for n in sorted({1, steps // 2, steps - 1} - {0, steps})]
+    hjb_times = [0.0, *interior]
+    fp_times = [*interior, steps * dt]
     m_all = np.asarray(problem.m_initial, dtype=float).reshape(-1)
     v_all = np.asarray(problem.u_terminal, dtype=float).reshape(-1)
     components = problem.components
@@ -494,26 +583,7 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
         return True
 
     if problem.geometry is not None and not _has_a_grid_probe(problem.geometry):
-        count = m_all.size
-        nodes = sorted({0, count - 1, *(int(i) for i in spread_samples(count, 3))})
-        for operator in operators:
-            for parameter, (attr, slots) in held_sources(operator).items():
-                # A source read at x, held by a Hamiltonian handed to MFGProblem on a network, is outside: no solver
-                # accepts that problem (#2971).
-                if "node" not in slots.order or not first_read(getattr(operator, attr, None), slots):
-                    continue
-                bound = bound_attribute(operator, attr, slots, role=parameter)
-                name = f"{type(operator).__name__}'s {parameter}"
-                for node in nodes:
-                    neighbors = operator.network_data.get_neighbors(node)
-                    for t in times:
-                        read(
-                            name,
-                            lambda b=bound, q=slots, n=node, k=neighbors, s=t: held(
-                                b, q, t=s, node=n, neighbors=k, p=v_all, m=m_all
-                            ),
-                            f"at node {node}, t={t:g}",
-                        )
+        _refuse_a_non_finite_node_source(problem, operators, hjb_times, m_all.size, held, read, first_read)
         stop_if_refused()
         return
 
@@ -524,44 +594,50 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
     if grid is None or grid.shape[0] != m_all.size:
         stop_if_refused()
         return
-    # The probe nodes, and the node `validate_hamiltonian` reads a Hamiltonian's own __call__ at, so that a source the
-    # Hamiltonian holds that is non-finite at that state is refused here first, by name (#2974). On a grid with an
-    # odd number of nodes on every axis it is the first probe node already.
-    points = _probe_nodes(grid)
-    sample = _get_sample_inputs(geometry, "_refuse_a_non_finite_source")[0]
-    if not any(np.array_equal(sample, q) for q in points):
-        points.append(sample)
-    rows = _node_rows(grid, points, geometry)
-    x = tuple(np.asarray([q[k] for q in points], dtype=float) for k in range(grid.shape[1]))
-    m, v = m_all[rows], v_all[rows]
-    where = [f"at the probe nodes, t={t:g}" for t in times]
-
-    if callable(volatility):
-        bound = _remembered(volatility, VOLATILITY_SLOTS, "volatility")
-        for t, at in zip(times, where, strict=True):
-            read("volatility", lambda s=t: bound(t=s, x=x, m=m), at)
-    for operator in operators:
-        for parameter, (attr, slots) in held_sources(operator).items():
-            # A node's source, held by a NetworkHamiltonian on a geometry that is not a network, is not read at x: that
-            # pairing is #2972's.
-            if "node" in slots.order or not first_read(getattr(operator, attr, None), slots):
-                continue
-            bound = bound_attribute(operator, attr, slots, role=parameter)
-            name = f"{type(operator).__name__}'s {parameter}"
-            for t, at in zip(times, where, strict=True):
-                read(name, lambda b=bound, q=slots, s=t: held(b, q, t=s, x=x, m=m, cross_density=_own_rows(m), v=v), at)
-    for field in ("source_term_hjb", "source_term_fp"):
-        source = getattr(problem, field, None)
-        if callable(source):
-            bound = _remembered(source, SOURCE_TERM_SLOTS, field)
-            for t, at in zip(times, where, strict=True):
-                read(field, lambda b=bound, s=t: b(t=s, x=x, v=v, m=m), at)
-    if callable(problem.state_penalty):
-        wall = _remembered(problem.state_penalty, REGION_SLOTS, "state_penalty")
-        read("state_penalty", lambda: wall(x=x), "at the probe nodes")
-    for field, energy in (("coupling_cost", problem._coupling_energy), ("terminal_coupling", problem._terminal_energy)):
+    # In space, the probe nodes off the box's boundary (`_interior_probe_nodes`): a Dirichlet node is handed its callable
+    # and imposes its value, which does not reach the solution, so the interior is the set every solve reads. The
+    # first is the centre, the node `validate_hamiltonian` reads a Hamiltonian's own __call__ at.
+    points = _interior_probe_nodes(grid)
+    if points:
+        rows = _node_rows(grid, points, geometry)
+        x = tuple(np.asarray([q[k] for q in points], dtype=float) for k in range(grid.shape[1]))
+        # In the first Picard iteration the HJB is handed m_initial and u_terminal at every t_n, and the FP m_initial;
+        # v is u_terminal on the FP side only at T. So a callable is read with m_initial's and u_terminal's values.
+        m, v = m_all[rows], v_all[rows]
+        if callable(volatility):
+            bound = _remembered(volatility, VOLATILITY_SLOTS, "volatility")
+            for t in hjb_times:
+                read("volatility", lambda s=t: bound(t=s, x=x, m=m), f"at the interior probe nodes, t={t:g}")
+        for operator in operators:
+            for parameter, (attr, slots) in held_sources(operator).items():
+                # A node's source, held by a NetworkHamiltonian on a geometry that is not a network, is not read at x:
+                # that pairing is #2972's.
+                if "node" in slots.order or not first_read(getattr(operator, attr, None), slots):
+                    continue
+                bound = bound_attribute(operator, attr, slots, role=parameter)
+                name = f"{type(operator).__name__}'s {parameter}"
+                for t in hjb_times if "t" in slots.order else [0.0]:
+                    read(
+                        name,
+                        lambda b=bound, q=slots, s=t: held(b, q, t=s, x=x, m=m, cross_density=_own_rows(m)),
+                        f"at the interior probe nodes{f', t={t:g}' if 't' in slots.order else ''}",
+                    )
+        for field, field_times in (("source_term_hjb", hjb_times), ("source_term_fp", fp_times)):
+            source = getattr(problem, field, None)
+            if callable(source):
+                bound = _remembered(source, SOURCE_TERM_SLOTS, field)
+                # The FP's source is handed u_terminal as v at T alone.
+                for t in [steps * dt] if field == "source_term_fp" and "v" in bound.passes else field_times:
+                    read(field, lambda b=bound, s=t: b(t=s, x=x, v=v, m=m), f"at the interior probe nodes, t={t:g}")
+        if callable(problem.state_penalty):
+            wall = _remembered(problem.state_penalty, REGION_SLOTS, "state_penalty")
+            read("state_penalty", lambda: wall(x=x), "at the interior probe nodes")
+    for field, energy, field_times in (
+        ("coupling_cost", problem._coupling_energy, hjb_times),
+        ("terminal_coupling", problem._terminal_energy, [steps * dt]),
+    ):
         if energy is not None:
-            for t in times:
+            for t in field_times:
                 read(field, lambda e=energy, s=t: e.flat_derivative(m_all, t=s), f"at m_initial, t={t:g}")
     if problem.nonlocal_operator is not None:
         read("nonlocal_operator", lambda: problem.nonlocal_operator @ v_all, "applied to u_terminal")
@@ -577,7 +653,7 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
     if not isinstance(conditions, BoundaryConditions):
         return
     lower, upper = grid.min(axis=0), grid.max(axis=0)
-    for q in points:
+    for q in _probe_nodes(grid):
         if not bool(np.any((q == lower) | (q == upper))):
             continue
         try:
@@ -587,7 +663,7 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
         if not callable(segment.value) or is_provider(segment.value):
             continue
         binding = segment.value_binding()
-        for t in times:
+        for t in hjb_times:
             try:
                 returned = binding(t=t, x=tuple(float(c) for c in q))
             except _EVALUATION_ERRORS:
@@ -616,9 +692,10 @@ def validate_hamiltonian(
     - Callable with correct signature
     - Returns float or array
     - No NaN/Inf in output: the one check at construction of a Hamiltonian's own ``__call__`` being finite, at one
-      state, t 0, the sample node, p 0 and m ``m_initial``'s value there (1 without it). A source the Hamiltonian holds
-      is read at that state first, by `_refuse_a_non_finite_source`, which reads the sample node too, and is refused
-      there by name (#2974).
+      state: t 0, the centre probe node off the boundary (`_interior_probe_nodes`; the sample node on a grid with no
+      interior, or on an implicit domain), p 0, and m ``m_initial``'s value there (1 without it). A source the
+      Hamiltonian holds is read at that state first, by `_refuse_a_non_finite_source`, and refused there by name
+      (#2974).
 
     On a network geometry nothing is read here: no grid probe applies there (`_has_a_grid_probe`).
 
@@ -637,9 +714,14 @@ def validate_hamiltonian(
     x_sample, p_sample, m_sample, dimension, err = _get_sample_inputs(geometry, "hamiltonian")
     if err is not None:
         return err
-    nodes = None if m_initial is None or _draws_its_nodes(geometry) else _grid_nodes(geometry, dimension)
-    if nodes is not None and nodes.shape[0] == np.size(m_initial):
-        m_sample = float(np.ravel(m_initial)[_node_rows(nodes, [x_sample], geometry)[0]])
+    # The node is the owner's centre probe node, where the grid has an interior: there every solve reads the
+    # Hamiltonian, and the owner reads every source it holds at this state first, by name (#2974).
+    nodes = None if _draws_its_nodes(geometry) else _grid_nodes(geometry, dimension)
+    if nodes is not None:
+        centre = _interior_probe_nodes(nodes)
+        x_sample = centre[0] if centre else x_sample
+        if m_initial is not None and nodes.shape[0] == np.size(m_initial):
+            m_sample = float(np.ravel(m_initial)[_node_rows(nodes, [x_sample], geometry)[0]])
 
     # Evaluate: a HamiltonianBase by keyword; a raw callable through its binding, (t, x, p, m)
     try:
