@@ -476,6 +476,22 @@ def refuse_a_non_continuum_bc_type(bc_type: object, where: str, field_name: str)
         )
 
 
+# The fields of a segment that its type's readers read, for every BCType (#2974): the condition's datum, and Robin's two
+# weights, which every reader takes through `segment_robin_coefficients` for a Robin segment alone. NO_FLUX and
+# REFLECTING impose a zero normal flux whatever value they carry (#1938); PERIODIC and the extrapolations carry none.
+FIELDS_READ: dict[BCType, tuple[str, ...]] = {
+    BCType.DIRICHLET: ("value",),
+    BCType.NEUMANN: ("value",),
+    BCType.ROBIN: ("value", "alpha", "beta"),
+    BCType.PERIODIC: (),
+    BCType.REFLECTING: (),
+    BCType.NO_FLUX: (),
+    BCType.FLUX: ("value",),
+    BCType.EXTRAPOLATION_LINEAR: (),
+    BCType.EXTRAPOLATION_QUADRATIC: (),
+}
+
+
 @dataclass
 class BCSegment:
     """
@@ -662,9 +678,10 @@ class BCSegment:
         if callable(self.value) and not is_provider(self.value):
             self.value_binding()
         # A constant that is NaN or infinite is refused where the segment is built, by the one reading of a boundary
-        # datum, `_read_constant`, which reads it again at use (#2974). A callable's returns are read at the
-        # construction probes by `_refuse_a_non_finite_source`, and at use; a provider's are computed at use.
-        for name in ("value", "alpha", "beta"):
+        # datum, `_read_constant`, which reads it again at use (#2974): only a field its type's readers read
+        # (`FIELDS_READ`). A callable's returns are read at the construction probes by `_refuse_a_non_finite_source`,
+        # and at use; a provider's are computed at use.
+        for name in FIELDS_READ[self.bc_type]:
             given = getattr(self, name)
             if _a_real_constant(given):
                 kind = f"BCSegment {self.name!r}" if name == "value" else f"BCSegment {self.name!r} (its {name})"

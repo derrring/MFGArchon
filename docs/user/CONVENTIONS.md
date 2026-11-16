@@ -399,18 +399,21 @@ declared type keeps the probes (#2901, stage 1c-iii).
 
 A value or callable the caller supplies that is NaN or infinite where the solvers will read it is refused where it
 enters, naming it (#2974). `MFGProblem` reads each once, after it has built `m_initial` and `u_terminal`, and only at a
-state the default solve hands that callable. A recording census of the solve found these states, and a test holds the
-reads inside them:
+state that every `NumericalScheme` that solves the problem hands that callable. A recording census of
+`problem.solve(scheme=...)` over the enum found these states, and a test holds the reads inside them for every member;
+a solver built by hand and handed to `problem.solve` (expert mode) is outside it:
 
 - $T$, `m_initial`, `u_terminal`, a scalar or array volatility and `state_penalty_scale`, whole;
-- **times**, nodes of the time grid only, $t_n = n\,\Delta t$:
-  - the interior nodes $t_1$, $t_{\lfloor N_t/2 \rfloor}$ and $t_{N_t-1}$, which both directions of stepping read;
-  - with $t_0$ for what the HJB side reads, since it steps $t_0, \dots, t_{N_t-1}$: the potential and the Hamiltonian's
-    other time-dependent sources, a callable volatility, `source_term_hjb`, `coupling_cost` and a boundary callable;
-  - with $T$ for `source_term_fp`, which the FP reads at $t_1, \dots, T$, and for `terminal_coupling`, read at $T$
-    alone.
+- **times**, nodes of the problem's time grid only, $t_n = n\,\Delta t$ for the $N_t$ it was built with:
+  - the interior nodes $t_1$, $t_{\lfloor N_t/2 \rfloor}$ and $t_{N_t-1}$, which every scheme reads;
+  - with $t_0$ for the potential and the Hamiltonian's other time-dependent sources, a callable volatility and a
+    boundary callable, which every scheme that takes them reads there;
+  - `source_term_hjb`, `coupling_cost` and `source_term_fp` at the interior nodes alone: the semi-Lagrangian schemes
+    read the first two at $t_1, \dots, T$, and the finite-volume ones the third at $t_0, \dots, t_{N_t-1}$;
+  - `terminal_coupling` at $T$ alone.
 
-  $T/2$ is read only when it is one of these nodes;
+  $T/2$ is read only when it is one of these nodes. `solve(Nt=...)` builds the problem again with that $N_t$, and the
+  rebuilt problem is read on its own grid;
 - **space**, on a grid: the probe nodes above that lie off the box's boundary. A Dirichlet node is handed its callable,
   and its value does not reach the solution. There the owner reads a callable volatility, `source_term_hjb`,
   `source_term_fp`, `state_penalty`, and every source a Hamiltonian or a Lagrangian holds, such as `potential`,
@@ -418,7 +421,7 @@ reads inside them:
   read at the boundary probe nodes it governs;
 - **$m$ and $v$**: the first Picard iteration hands the HJB `m_initial` and `u_terminal` at every $t_n$. It hands the FP
   `m_initial`, with $v$ `u_terminal` only at $T$. So a callable that takes them is read with those values at its nodes.
-  A `source_term_fp` that takes $v$ is read at $T$ alone;
+  A `source_term_fp` that takes $v$ is not read, since no finite-volume scheme reads it at $T$;
 - `coupling_cost` as its derivative at `m_initial`, `terminal_coupling` likewise at $T$, and `nonlocal_operator`
   applied to `u_terminal`;
 - **on a network**:
@@ -429,8 +432,11 @@ A scalar held by an object that exists before any problem is refused where that 
 - a control cost's `lambda_`;
 - `BoundedControlCost`'s `max_control` (NaN; $+\infty$ means unbounded);
 - `QuadraticMFGHamiltonian`'s `coupling_coefficient`;
-- a radial kernel's parameters;
-- a boundary segment's constant value, `alpha` and `beta`, and a `NodeBC`'s constant value.
+- a radial kernel's parameters: NaN in any, and an infinite amplitude or exponent. An infinite length scale is the
+  constant kernel it tends to, and an infinite softening the zero one, and each solves as that limit;
+- a boundary segment's constant in a field its type reads (`FIELDS_READ`): the value of a Dirichlet, Neumann, Robin or
+  flux segment, and a Robin segment's `alpha` and `beta`. A NO_FLUX or REFLECTING segment imposes a zero flux whatever
+  value it carries, and PERIODIC and the extrapolations carry none; a `NodeBC`'s constant value.
 
 A volatility handed to `solve_hjb_system` or `solve_fp_system` is refused there. Each Hamiltonian and Lagrangian class
 declares every value its constructor takes: a source read here (`HELD_SOURCES`), a scalar its constructor refuses
@@ -451,8 +457,14 @@ Not seen here:
   A coupling NaN only at $m = 0.5$, or only at $m = 1$ where `m_initial` is never $1$, builds;
 - **an own `dp` or `optimal_control` that is non-finite**, and an own `__call__` non-finite away from its one state
   (#2975);
-- **at $N_t = 1$**, more than each endpoint, since there is no interior time node;
-- **on a grid with an axis of 2 nodes**, which has no interior node, any callable;
+- **at $N_t = 1$**, `source_term_hjb`, `source_term_fp` and `coupling_cost`, since there is no interior time node;
+- **a `source_term_fp` that takes $v$**, and a source NaN only at $t_0$ (`source_term_hjb`, `coupling_cost`) or only
+  at $T$ (`source_term_fp`), which a scheme that solves the problem does not read;
+- **on a grid with an axis of 2 nodes**, which has no probe node off the boundary, what is read there: a callable
+  volatility, every source a Hamiltonian or a Lagrangian holds, `source_term_hjb`, `source_term_fp` and
+  `state_penalty`. The arrays and scalars, `coupling_cost`, `terminal_coupling`, `nonlocal_operator` and a boundary
+  segment's callable are read as on any grid;
+- **a problem solved by an expert-mode solver**, at a state that solver reads and no scheme of the enum does;
 - **on a network, a source that takes $p$ or $m$** (`hamiltonian_func`, `node_interaction_func`): the network solvers
   are handed those by their caller, not by the problem;
 - **on an implicit domain**, which draws its points afresh at each read of its grid (#2778), the callables. No node there

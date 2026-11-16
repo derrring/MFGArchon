@@ -2,15 +2,16 @@
 enters, by name.
 
 `_refuse_a_non_finite_source` reads once, where `MFGProblem` is built: the arrays and scalars whole, and each callable only
-at states the default solve hands it.
-- Times: t_0 and the interior time nodes for what the HJB side reads; the interior nodes and T for the FP's source.
+at states every `NumericalScheme` that solves the problem hands it.
+- Times: the interior time nodes; t_0 as well for the Hamiltonian's sources, a callable volatility and a boundary
+  callable; T alone for the terminal coupling. The two source terms and the coupling cost at the interior nodes alone.
 - Space: the probe nodes off the boundary.
 - m and v: `m_initial` and `u_terminal`, the first Picard iteration's guesses.
 - On a network: a node source at t_0, and a `NodeBC`'s callable value at its nodes.
-The last test here records both sides, construction and `problem.solve()`, and holds the first inside the second
-(#2974's R1). A scalar held by an object that exists before any problem (a control cost, a kernel, a boundary segment,
-`QuadraticMFGHamiltonian`) is refused where that object is built. A volatility override handed to a solver is refused by
-`resolve_volatility_override`.
+The R1 tests record both sides, the owner's reads and `problem.solve(scheme=...)`'s under every member of the enum, and
+hold the first inside the second (#2974's R1). A scalar held by an object that exists before any problem (a control
+cost, a kernel, a boundary segment, `QuadraticMFGHamiltonian`) is refused where that object is built, in what its
+readers read. A volatility override handed to a solver is refused by `resolve_volatility_override`.
 
 A Hamiltonian's own `__call__` is read at one state by `validate_hamiltonian`: t 0, the owner's centre node, p 0, and m
 `m_initial`'s value there. So a source the Hamiltonian holds that is non-finite at that state is refused by the owner
@@ -20,6 +21,8 @@ What is not refused:
 - a source finite at those reads and non-finite elsewhere, at a time, a node, an m or a v the solve does not hand it at
   entry. A coupling NaN only at m = 0.5 or at m = 1, where `m_initial` takes neither, builds; so does a source
   non-finite only at T/2, which is no time node here;
+- a source non-finite only at a state some scheme that solves the problem is not handed (the HJB source or the coupling
+  cost at t_0, the FP's source at T), and a FP source that takes v;
 - an input no solver reads (`coupling_dm`);
 - a network source that takes p or m, which the solvers are handed by their caller;
 - an infinity that means something (`BoundedControlCost(max_control=inf)`, unbounded).
@@ -62,8 +65,10 @@ from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProble
 from mfgarchon.geometry import Hyperrectangle, TensorProductGrid
 from mfgarchon.geometry import boundary as bnd
 from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, NodeBC
+from mfgarchon.geometry.boundary.types import FIELDS_READ
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 from mfgarchon.operators.interaction import kernels
+from mfgarchon.types.schemes import NumericalScheme
 from mfgarchon.utils.validation import ValidationError
 from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
 
@@ -258,7 +263,7 @@ GRID_REFUSALS = [
     ),
     (
         "source_term_fp NaN",
-        lambda d: _problem(d, source_term_fp=_source(NAN)),
+        lambda d: _problem(d, source_term_fp=lambda t, x, m: np.full(np.shape(m), NAN)),
         ValidationError,
         _read("source_term_fp"),
     ),
@@ -408,6 +413,46 @@ def test_a_non_finite_volatility_override_is_refused_by_name(solve, given, names
         run()
 
 
+# What each type's readers read, as #2974's rows measured it: the condition's datum, and Robin's two weights. Written out
+# here, not read from `FIELDS_READ`, so a wrong entry there fails instead of moving the expectation with it.
+_READ_BY_ITS_READERS = {
+    bnd.BCType.DIRICHLET: {"value"},
+    bnd.BCType.NEUMANN: {"value"},
+    bnd.BCType.ROBIN: {"value", "alpha", "beta"},
+    bnd.BCType.PERIODIC: set(),
+    bnd.BCType.REFLECTING: set(),
+    bnd.BCType.NO_FLUX: set(),
+    bnd.BCType.FLUX: {"value"},
+    bnd.BCType.EXTRAPOLATION_LINEAR: set(),
+    bnd.BCType.EXTRAPOLATION_QUADRATIC: set(),
+}
+_SEGMENT_FIELDS = [(bc_type, name) for bc_type in bnd.BCType for name in ("value", "alpha", "beta")]
+
+
+@pytest.mark.parametrize(("bc_type", "name"), _SEGMENT_FIELDS, ids=[f"{t.name}.{n}" for t, n in _SEGMENT_FIELDS])
+def test_a_segment_refuses_a_nan_constant_in_a_field_its_type_reads_and_nowhere_else(bc_type, name):
+    """Every `BCType` is classified, and a segment of that type built with a NaN in one field is refused where it is
+    built if its type's readers read that field, and builds if they do not. At 21ef740b a Dirichlet segment's NaN
+    alpha or beta, and a NO_FLUX segment's, solved as the finite twin under every scheme that takes the segment, and so
+    did a NO_FLUX value under SL and FEM (FDM refuses it where it reads it)."""
+    assert set(_READ_BY_ITS_READERS) == set(bnd.BCType) == set(FIELDS_READ)
+
+    def build():
+        return bnd.BCSegment(name="wall", bc_type=bc_type, boundary="x_max", **{name: NAN})
+
+    if name in _READ_BY_ITS_READERS[bc_type]:
+        label = "" if name == "value" else rf" \(its {name}\)"
+        with pytest.raises(NotImplementedError, match=rf"BCSegment 'wall'{label} has a non-finite value nan"):
+            build()
+    else:
+        build()
+
+
+def test_a_dirichlet_segment_does_not_read_a_weight_too_large_for_a_float():
+    """At 21ef740b a Dirichlet segment with alpha 10**400 solved as its twin with alpha 1."""
+    bnd.BCSegment(name="wall", bc_type=bnd.BCType.DIRICHLET, boundary="x_max", value=0.0, alpha=10**400)
+
+
 def test_a_finite_mass_is_read_whole():
     """Every entry finite, the total infinite: the mass check reads the total, a state built from the entries, and
     refuses it (`MFGProblem`'s tier 1). On [0, 10] the measure is 10, so entries of 1e308 integrate past the largest
@@ -437,10 +482,44 @@ KERNEL_PARAMETERS = [
 ]
 
 
+_KERNEL_SCALES = {"length_scale", "rep_scale", "att_scale", "softening"}
+_AMPLITUDES_AND_EXPONENTS = [(kernel, name) for kernel, name in KERNEL_PARAMETERS if name not in _KERNEL_SCALES]
+
+
 @pytest.mark.parametrize(("kernel", "name"), KERNEL_PARAMETERS, ids=[f"{k.__name__}.{n}" for k, n in KERNEL_PARAMETERS])
-def test_a_kernel_refuses_a_non_finite_parameter_by_name(kernel, name):
-    with pytest.raises(ValueError, match=rf"{kernel.__name__}: {name} must be finite, got nan"):
+def test_a_kernel_refuses_a_nan_parameter_by_name(kernel, name):
+    with pytest.raises(ValueError, match=rf"{kernel.__name__}: {name} must be a number, got nan"):
         kernel(**{name: NAN})
+
+
+@pytest.mark.parametrize(
+    ("kernel", "name"), _AMPLITUDES_AND_EXPONENTS, ids=[f"{k.__name__}.{n}" for k, n in _AMPLITUDES_AND_EXPONENTS]
+)
+def test_a_kernel_refuses_an_infinite_amplitude_or_exponent_by_name(kernel, name):
+    """At 21ef740b each of these built, and its solve returned a finite U with `converged` False."""
+    with pytest.raises(ValueError, match=rf"{kernel.__name__}: {name} must be finite, got inf"):
+        kernel(**{name: INF})
+
+
+_KERNEL_LIMITS = [
+    (kernels.GaussianKernel, "length_scale", lambda r: np.ones_like(r)),
+    (kernels.TentKernel, "length_scale", lambda r: np.ones_like(r)),
+    (kernels.WendlandKernel, "length_scale", lambda r: np.ones_like(r)),
+    (kernels.DipoleKernel, "rep_scale", lambda r: 1.0 + kernels.DipoleKernel(rep_amplitude=0.0).profile(r)),
+    (kernels.DipoleKernel, "att_scale", lambda r: kernels.DipoleKernel(att_amplitude=0.0).profile(r) - 0.5),
+    (kernels.PowerLawKernel, "softening", lambda r: np.zeros_like(r)),
+]
+
+
+@pytest.mark.parametrize(
+    ("kernel", "name", "limit"), _KERNEL_LIMITS, ids=[f"{k.__name__}.{n}" for k, n, _ in _KERNEL_LIMITS]
+)
+def test_an_infinite_scale_builds_the_kernel_it_tends_to(kernel, name, limit):
+    """An infinite length scale is the constant kernel, and an infinite softening the zero one, with the defaults'
+    amplitudes (1, and Dipole's 1 and 0.5). At 21ef740b each solved bit for bit as that limit, written as its own kernel."""
+    assert {n for k, n, _ in _KERNEL_LIMITS} == _KERNEL_SCALES
+    r = np.linspace(0.0, 2.0, 9)
+    np.testing.assert_array_equal(kernel(**{name: INF}).profile(r), limit(r))
 
 
 def _coupling_nan_at_a_half(m):
@@ -643,8 +722,15 @@ def test_every_value_parameter_of_an_operator_is_declared():
 
 
 def test_the_declaration_check_finds_an_undeclared_parameter():
-    """The check, on a planted class: a float it flags, a container and a declared index it does not, and a declaration
-    of a name the constructor does not take it reports."""
+    """The check, on a planted class. It flags a float, an ``ArrayLike``, an ``Any`` or unannotated parameter with a
+    ``None`` default, and a callable whose annotation names a container it returns. It does not flag a container, a
+    string, or a declared index. It reports a declaration of a name the constructor does not take.
+
+    Its limits. It reads class statements and ``__init__`` signatures from the source, so it does not see a value
+    taken through ``**kwargs``, a dataclass field (no ``__init__`` is written), a class whose base is an alias of an
+    operator class (``Base = HamiltonianBase``), or a class built with ``type()``. It reads the annotation's text, so a
+    value or a container behind an alias it has no mark for is misread, and an annotation naming neither, such as an
+    enum, is a value only when its default is a number."""
     planted = """
 class HamiltonianBase:
     NOT_HELD = {"population_index": "an index"}
@@ -652,10 +738,24 @@ class HamiltonianBase:
 
 class Planted(HamiltonianBase):
     CHECKED_SCALARS = ("gone",)
-    def __init__(self, control_cost: ControlCostBase, strength: float = 1.0, population_index: int = 0): ...
+    def __init__(
+        self,
+        control_cost: ControlCostBase,
+        strength: float = 1.0,
+        weights: ArrayLike = None,
+        anything: Any = None,
+        bare=None,
+        factory: Callable[[], ControlCostBase] | None = None,
+        label: str = "planted",
+        population_index: int = 0,
+    ): ...
 """
     assert _undeclared(_classes({"planted.py": planted})) == [
         ("Planted", "strength", "undeclared"),
+        ("Planted", "weights", "undeclared"),
+        ("Planted", "anything", "undeclared"),
+        ("Planted", "bare", "undeclared"),
+        ("Planted", "factory", "undeclared"),
         ("Planted", "gone", "in CHECKED_SCALARS, not a parameter"),
     ]
 
@@ -785,7 +885,56 @@ def test_a_state_the_solve_is_not_handed_at_entry_is_not_refused(build):
     build()
 
 
-# --- R1: every state the owner reads a callable at is one the default solve hands it. ---
+class _CostNaNAtTheStart:
+    """A coupling cost whose derivative is NaN at t = 0 alone."""
+
+    def bind(self, problem):
+        energy = PotentialCost(lambda x: np.zeros(np.shape(np.asarray(x[0], dtype=float)))).bind(problem)
+
+        class Bound:
+            def __getattr__(self, attr):
+                return getattr(energy, attr)
+
+            def flat_derivative(self, m, *, t=0.0):
+                out = np.asarray(energy.flat_derivative(m, t=t), dtype=float)
+                return np.full(np.shape(out), NAN) if abs(float(t)) < 1e-12 else out
+
+        return Bound()
+
+
+NOT_READ_BY_EVERY_SCHEME = [
+    (
+        "source_term_hjb NaN only at t_0, which SL is not handed",
+        lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.0)(t))(x)),
+    ),
+    (
+        "coupling_cost NaN only at t_0, which SL is not handed",
+        lambda: _problem(1, model={"coupling_cost": _CostNaNAtTheStart()}),
+    ),
+    (
+        "source_term_fp NaN only at T, which FVM is not handed",
+        lambda: _problem(1, source_term_fp=lambda t, x: _at_x(_only_at(0.5)(t))(x)),
+    ),
+    (
+        "source_term_fp taking v, NaN at every state",
+        lambda: _problem(1, source_term_fp=lambda t, x, v, m: np.full(np.shape(m), NAN)),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "build", [row[1] for row in NOT_READ_BY_EVERY_SCHEME], ids=[row[0] for row in NOT_READ_BY_EVERY_SCHEME]
+)
+def test_a_state_a_scheme_that_solves_the_problem_is_not_handed_is_not_refused(build):
+    """The read set is what every `NumericalScheme` that solves the problem hands. The semi-Lagrangian schemes never read
+    the HJB source or the coupling cost at t_0, and the finite-volume ones never read the FP's source at T, so each of
+    these builds; a FP source that takes v is handed u_terminal at T alone, so none of its states is read. At 21ef740b
+    the first three solved as their finite twins under those schemes, and the default scheme reached all four. What the
+    solve reaches is the point-of-use checks' (#2975, #2976)."""
+    build()
+
+
+# --- R1: every state the owner reads a callable at is one each scheme that solves the problem hands it. ---
 
 # Construction runs other checks too (the consistency check reads its own probes), so the owner is run alone, on the
 # built problem, while its reads are noted: "off" while the problem is built, "owner", then "solve".
@@ -861,37 +1010,37 @@ class _NotedCost:
         return Noted()
 
 
-def _hamiltonian_group():
-    def potential(t, x):
-        _note("potential", t=t, x=x)
-        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
+def _potential(t, x):
+    _note("potential", t=t, x=x)
+    return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
 
+
+def _hamiltonian_group(costs=True):
     def coupling(m):
         _note("coupling", m=m)
         return 0.5 * np.asarray(m, dtype=float)
 
-    def volatility(t, x, m):
-        _note("volatility", t=t, x=x, m=m)
-        return np.full(np.shape(np.asarray(x[0], dtype=float)), 0.2)
-
     def wall(x):
-        _note("state_penalty", x=tuple(np.asarray(x)) if np.ndim(x) >= 2 else (np.asarray(x),))
+        _note("state_penalty", x=x)
         return np.zeros(np.shape(x)[1:]) if np.ndim(x) >= 2 else 0.0
 
-    model = Model(
-        hamiltonian=_h(potential=potential, coupling=coupling),
-        volatility=volatility,
-        coupling_cost=_NotedCost("coupling_cost"),
-        terminal_coupling=_NotedCost("terminal_coupling"),
-    )
+    # Off a grid a coupling cost binds on the solver's own measure, and the problem binds none for the owner to read.
+    noted = {"coupling_cost": _NotedCost("coupling_cost"), "terminal_coupling": _NotedCost("terminal_coupling")}
+    model = Model(hamiltonian=_h(potential=_potential, coupling=coupling), volatility=0.5, **(noted if costs else {}))
     return {"model": model, "state_penalty": wall}, {
         "potential",
         "coupling",
-        "volatility",
         "state_penalty",
-        "coupling_cost",
-        "terminal_coupling",
+        *(noted if costs else ()),
     }
+
+
+def _volatility_group():
+    def volatility(t, x, m):
+        _note("volatility", t=t, x=x, m=m)
+        return np.full(np.shape(np.asarray(x[0], dtype=float)), 0.5)
+
+    return {"model": Model(hamiltonian=_h(potential=_potential), volatility=volatility)}, {"potential", "volatility"}
 
 
 def _source_group(fp_takes_v):
@@ -899,17 +1048,18 @@ def _source_group(fp_takes_v):
         _note("source_term_hjb", t=t, x=x, v=v, m=m)
         return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
 
-    def source_fp_v(t, x, v, m):
-        _note("source_term_fp", t=t, x=x, v=v, m=m)
-        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
-
     def source_fp(t, x, m):
         _note("source_term_fp", t=t, x=x, m=m)
         return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
 
+    def source_fp_v(t, x, v, m):
+        _note("source_term_fp", t=t, x=x, v=v, m=m)
+        return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
+
+    # A source_term_fp that takes v is handed u_terminal at T alone, which no finite-volume scheme reads: not read.
     return (
         {"source_term_hjb": source_hjb, "source_term_fp": source_fp_v if fp_takes_v else source_fp},
-        {"source_term_hjb", "source_term_fp"},
+        {"potential", "source_term_hjb", *(() if fp_takes_v else ("source_term_fp",))},
     )
 
 
@@ -919,7 +1069,10 @@ def _nonlocal_group():
             _SEEN[_PHASE[0]].add(("nonlocal_operator", None, None, None, bool(np.allclose(np.ravel(v), _CTX["vT"]))))
         return np.zeros(np.shape(v))
 
-    return {"nonlocal_operator": LinearOperator((11, 11), matvec=matvec, dtype=float)}, {"nonlocal_operator"}
+    return {"nonlocal_operator": LinearOperator((11, 11), matvec=matvec, dtype=float)}, {
+        "potential",
+        "nonlocal_operator",
+    }
 
 
 def _boundary_group():
@@ -927,41 +1080,95 @@ def _boundary_group():
         _note("Dirichlet g(t)", t=t)
         return 0.0
 
-    return {"bc": bnd.dirichlet_bc(value=g, dimension=1)}, {"Dirichlet g(t)"}
+    return {"bc": bnd.dirichlet_bc(value=g, dimension=1)}, {"potential", "Dirichlet g(t)"}
 
 
+def _mesh_1d(bc=None):
+    from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
+
+    mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=16)
+    mesh.generate_mesh()
+    mesh.boundary_conditions = bc or bnd.no_flux_bc(dimension=1)
+    return mesh
+
+
+# (id, domain: 1 or 2 for the grid, "mesh" for a Mesh1D of 16 cells, which FEM solves on; Nt; group)
 GRID_SETUPS = [
-    ("1-D, Nt 5, the Hamiltonian's sources, volatility, wall, costs", 1, 5, _hamiltonian_group),
+    ("1-D, Nt 5, the Hamiltonian's sources, wall, costs", 1, 5, _hamiltonian_group),
+    ("1-D, Nt 5, a volatility(t, x, m)", 1, 5, _volatility_group),
     ("1-D, Nt 5, the source terms, the FP's taking v", 1, 5, lambda: _source_group(True)),
     ("1-D, Nt 5, the FP's source without v", 1, 5, lambda: _source_group(False)),
     ("1-D, Nt 5, nonlocal_operator", 1, 5, _nonlocal_group),
     ("1-D, Nt 5, a Dirichlet g(t)", 1, 5, _boundary_group),
-    ("1-D, Nt 1, the Hamiltonian's sources, volatility, wall, costs", 1, 1, _hamiltonian_group),
-    ("1-D, Nt 1, the source terms", 1, 1, lambda: _source_group(True)),
-    ("1-D, Nt 4, the source terms", 1, 4, lambda: _source_group(True)),
-    ("6 x 6, Nt 5, the Hamiltonian's sources, volatility, wall, costs", 2, 5, _hamiltonian_group),
-    ("6 x 6, Nt 5, the source terms", 2, 5, lambda: _source_group(True)),
+    ("1-D, Nt 1, the Hamiltonian's sources, wall, costs", 1, 1, _hamiltonian_group),
+    ("1-D, Nt 1, the FP's source without v", 1, 1, lambda: _source_group(False)),
+    ("1-D, Nt 4, the FP's source without v", 1, 4, lambda: _source_group(False)),
+    ("6 x 6, Nt 5, the Hamiltonian's sources, wall, costs", 2, 5, _hamiltonian_group),
+    ("6 x 6, Nt 5, the FP's source without v", 2, 5, lambda: _source_group(False)),
+    ("Mesh1D, Nt 5, the Hamiltonian's sources and wall", "mesh", 5, lambda: _hamiltonian_group(costs=False)),
+    ("Mesh1D, Nt 5, the FP's source without v", "mesh", 5, lambda: _source_group(False)),
+    ("Mesh1D, Nt 5, a Dirichlet g(t)", "mesh", 5, _boundary_group),
 ]
 
 
+def _refusal(scheme, domain, names):
+    """Why ``scheme`` does not solve the setup, as a pattern its message matches, or None where it solves it (#2974's
+    record). A member this does not name is expected to solve every setup, so a new one fails here until it is read."""
+    name = scheme.name
+    if name == "GFDM":
+        return "has no FP half"
+    if name == "MESHLESS_GALERKIN":  # problem.solve cannot hand it its collocation points
+        return "collocation_points"
+    if name.startswith("FEM_"):
+        if domain != "mesh":
+            return "requires an unstructured mesh"
+        # P2's DOFs are the vertices and the edge midpoints, never the problem's points.
+        return "points that are not those of the problem being solved" if name == "FEM_P2" else None
+    if domain == "mesh":
+        return "Cannot use .* with this problem"
+    if name.startswith("SL_"):
+        if "volatility" in names:
+            return "reads one constant volatility"
+        if "Dirichlet g(t)" in names:
+            return "does not support boundary condition type"
+    if name.startswith("FVM_"):
+        if "volatility" in names:
+            return "supports only scalar/None volatility"
+        if "Dirichlet g(t)" in names:
+            return "does not support Dirichlet BC"
+    return None
+
+
 @_MASS_IS_NOT_THE_SUBJECT
+@pytest.mark.parametrize("scheme", list(NumericalScheme), ids=[scheme.name for scheme in NumericalScheme])
 @pytest.mark.parametrize(
-    ("dim", "steps", "group"), [row[1:] for row in GRID_SETUPS], ids=[row[0] for row in GRID_SETUPS]
+    ("domain", "steps", "group"), [row[1:] for row in GRID_SETUPS], ids=[row[0] for row in GRID_SETUPS]
 )
-def test_every_state_the_owner_reads_is_one_the_default_solve_hands(dim, steps, group):
-    """Each callable notes every state it is handed, while the problem is built and then while problem.solve() runs, as
-    (time, node, m is m_initial's there, v is u_terminal's there). What construction read must be among what the solve
-    read: a solve that stops reading one of the owner's states, or an owner that reads one it does not, fails here."""
+def test_every_state_the_owner_reads_is_one_each_scheme_hands(domain, steps, group, scheme):
+    """Each callable notes every state it is handed, while the owner reads the built problem and then while
+    problem.solve(scheme=...) runs, as (time, node, m is m_initial's there, v is u_terminal's there). For every
+    `NumericalScheme` member that solves the setup, what the owner read must be among what the solve read: a scheme that
+    stops reading one of the owner's states, or an owner that reads one a scheme does not, fails here. A member that does
+    not solve it must refuse it with the message `_refusal` names.
+
+    The control: the potential, and the wall where the setup has one, are handed every node by every scheme, so their
+    recorded node sets must be the whole grid or mesh. A recorder that misreads a point it is handed shrinks the record
+    to a plausible subset; this fails instead."""
     kwargs, names = group()
+    if steps == 1:  # no interior time node, the only times every scheme hands these
+        names -= {"coupling_cost", "source_term_hjb", "source_term_fp"}
     bc = kwargs.pop("bc", None)
     for side in _SEEN.values():
         side.clear()
     _PHASE[0] = "off"
+    dim = 1 if domain == "mesh" else domain
     problem = MFGProblem(
-        model=kwargs.pop("model", None) or Model(hamiltonian=_h(), volatility=0.2),
-        domain=_grid(dim, bc),
+        model=kwargs.pop("model", None) or Model(hamiltonian=_h(potential=_potential), volatility=0.5),
+        domain=_mesh_1d(bc) if domain == "mesh" else _grid(dim, bc),
         conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x[0], dtype=float)), u_terminal=_u_terminal, T=0.5
+            m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x[0], dtype=float)),
+            u_terminal=lambda x: 0.1 * _u_terminal(x),
+            T=0.5,
         ),
         Nt=steps,
         **kwargs,
@@ -971,11 +1178,21 @@ def test_every_state_the_owner_reads_is_one_the_default_solve_hands(dim, steps, 
         m0=np.asarray(problem.m_initial, dtype=float).ravel(),
         vT=np.asarray(problem.u_terminal, dtype=float).ravel(),
     )
-    _read_as_the_owner_then_solve(problem, lambda: problem.solve(max_iterations=2, verbose=False))
+    solve = lambda: problem.solve(scheme=scheme, max_iterations=2, verbose=False)  # noqa: E731
+    refusal = _refusal(scheme, domain, names)
+    if refusal is not None:
+        with pytest.raises((NotImplementedError, TypeError, ValueError), match=refusal):
+            _read_as_the_owner_then_solve(problem, solve)
+        return
+    _read_as_the_owner_then_solve(problem, solve)
     read = {state[0] for state in _SEEN["owner"]}
     assert names <= read, f"the owner read none of {sorted(names - read)}"
+    every_node = set(range(len(_CTX["nodes"])))
+    for name in {"potential", "state_penalty"} & names:
+        handed = {state[2] for state in _SEEN["solve"] if state[0] == name} - {-1}
+        assert handed == every_node, f"{name} recorded at {len(handed)} of {len(every_node)} nodes under {scheme.name}"
     unread = sorted(_SEEN["owner"] - _SEEN["solve"], key=str)
-    assert not unread, f"{len(unread)} states the owner read that the solve was not handed, first {unread[:3]}"
+    assert not unread, f"{len(unread)} states the owner read that {scheme.name} was not handed, first {unread[:3]}"
 
 
 def _read_as_the_owner_then_solve(problem, solve):

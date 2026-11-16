@@ -62,6 +62,7 @@ from __future__ import annotations
 import inspect
 import math
 import numbers
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
@@ -871,10 +872,12 @@ def held_sources(owner: Any) -> dict[str, tuple[str, Slots]]:
     return merged
 
 
-# What `_value_parameter` reads in a constructor parameter's annotation: an object holding its own sources, which its own
-# class declares, and the marks of a number, an array or a callable.
+# What `_value_parameter` reads in a constructor parameter's annotation: a callable, an object holding its own sources,
+# which its own class declares, and the marks of a number or an array.
+_CALLABLE_MARKS = ("Callable", "callable")
 _CONTAINER_MARKS = ("ControlCostBase", "LagrangianBase", "HamiltonianBase", "Regularizer", "Problem", "NetworkData")
-_VALUE_MARKS = ("float", "int", "complex", "NDArray", "ndarray", "Callable", "callable", "tuple")
+_VALUE_MARKS = ("float", "int", "complex", "NDArray", "ndarray", "ArrayLike", "tuple")
+_SAYS_NOTHING = {"Any", "None", "Optional", "typing"}
 
 
 def _value_parameter(annotation: str, default: Any) -> bool:
@@ -882,16 +885,19 @@ def _value_parameter(annotation: str, default: Any) -> bool:
     callable: the classification test_a_non_finite_source_is_refused_where_it_enters_2974.py reads, so that a class
     which gains such a parameter must declare it in ``HELD_SOURCES`` or ``NOT_HELD`` (#2974).
 
-    An annotation naming a container (a control cost, a Lagrangian, a Hamiltonian, a problem, the graph) is not one: the
-    container's own class declares its sources. One naming a number, an array, a callable or a tuple is. An unannotated
-    parameter is one unless its default is a string or a bool, since nothing else says what it takes."""
+    An annotation naming a callable is one, whatever it returns. One naming a container (a control cost, a Lagrangian,
+    a Hamiltonian, a problem, the graph) is not: the container's own class declares its sources. One naming a number,
+    an array or a tuple is. An annotation that says nothing of what it takes (none, or ``Any``, optionally with
+    ``None``) is one unless its default is a string or a bool; any other is one when its default is a number."""
+    if any(mark in annotation for mark in _CALLABLE_MARKS):
+        return True
     if any(mark in annotation for mark in _CONTAINER_MARKS):
         return False
     if any(mark in annotation for mark in _VALUE_MARKS):
         return True
-    if annotation:
-        return isinstance(default, (int, float)) and not isinstance(default, bool)
-    return not isinstance(default, (str, bool))
+    if set(re.findall(r"[A-Za-z_][A-Za-z_0-9]*", annotation)) <= _SAYS_NOTHING:
+        return not isinstance(default, (str, bool))
+    return isinstance(default, (int, float)) and not isinstance(default, bool)
 
 
 def _terms_reading_every_population(owner: Any) -> list[str]:

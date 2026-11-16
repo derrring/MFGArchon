@@ -453,14 +453,17 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
     name (#2974). ``MFGProblem`` calls it once, after it has built ``m_initial`` and ``u_terminal`` and bound its
     coupling costs, and before the consistency check and the soft wall's composition.
 
-    It reads only states the default solve hands each callable, as #2974's recording census found them and its R1 test
-    pins them:
+    It reads only states that every `NumericalScheme` that solves the problem hands each callable, as #2974's
+    recording census over the enum found them and its R1 test pins them. Expert-mode solvers, which ``problem.solve``
+    is handed rather than builds, are outside that census.
 
     - ``m_initial``, ``u_terminal``, a scalar or array volatility, ``T`` and ``state_penalty_scale`` whole;
-    - times: nodes of the time grid only, t_n = n dt. The interior nodes t_1, t_{Nt // 2} and t_{Nt - 1}, which both
-      directions of stepping read; with t_0 for a callable the HJB side reads, which steps t_0 ... t_{Nt-1}; and T
-      for the FP's source, which it reads at t_1 ... T, and for the terminal coupling. At Nt = 1 each is read at its
-      endpoint alone;
+    - times: nodes of the problem's time grid only, t_n = n dt. The interior nodes t_1, t_{Nt // 2} and t_{Nt - 1},
+      which every scheme reads; t_0 as well for the potential and the Hamiltonian's other time-dependent sources, a
+      callable volatility and a boundary callable; and T alone for the terminal coupling. ``source_term_hjb`` and
+      ``coupling_cost`` are read at the interior nodes only, since the semi-Lagrangian schemes read them at
+      t_1 ... T, and so is ``source_term_fp``, since the finite-volume ones read it at t_0 ... t_{Nt-1}. At Nt = 1
+      there is no interior node: the endpoint reads alone remain;
     - space, on a geometry with a grid probe (`_has_a_grid_probe`) whose nodes the arrays hold and that does not draw
       them afresh (`_draws_its_nodes`): the probe nodes off the box's boundary (`_interior_probe_nodes`), since a
       Dirichlet node's value does not reach the solution. There it reads a callable volatility, ``source_term_hjb``,
@@ -469,17 +472,17 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
       boundary probe nodes it governs (``segment_for_point``);
     - m and v: the first Picard iteration hands the HJB ``m_initial`` and ``u_terminal`` at every t_n, and the FP
       ``m_initial``, with v ``u_terminal`` only at T. So a callable that takes them is handed those values at its
-      nodes, and the FP's source, if it takes v, is read at T alone. ``coupling_cost`` is read as its derivative at
-      ``m_initial`` at the HJB side's times, ``terminal_coupling`` at T, and ``nonlocal_operator`` applied to
-      ``u_terminal``;
+      nodes, and the FP's source, if it takes v, is not read: no finite-volume scheme reads it at T.
+      ``coupling_cost`` is read as its derivative at ``m_initial`` at the interior nodes, ``terminal_coupling`` at T,
+      and ``nonlocal_operator`` applied to ``u_terminal``;
     - on a network (`_refuse_a_non_finite_node_source`), a held source in the node form at t_0, the one grid time both
       network HJB solvers read, at sampled nodes, and a ``NodeBC``'s callable value at its nodes at the
       HJB side's times.
 
     A scalar its own object refuses where it is built is not read again: a control cost's ``lambda_``, a bounded
     control's ``max_control``, ``QuadraticMFGHamiltonian``'s ``coupling_coefficient``, a radial kernel's parameters
-    and a boundary segment's constants. A volatility override handed to a solver is refused by
-    ``resolve_volatility_override``.
+    and a boundary segment's constants in the fields its type reads (``FIELDS_READ``). A volatility override handed
+    to a solver is refused by ``resolve_volatility_override``.
 
     A Hamiltonian's own ``__call__``, ``dp`` and ``optimal_control`` take p, which construction does not know, and are
     not read here. ``validate_hamiltonian`` reads ``__call__`` at one state, inside these reads, and the consistency
@@ -487,9 +490,10 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
 
     **What it does not see.** A source finite at these reads and non-finite elsewhere: at a boundary node, which the
     solve reads under no-flux; at another time, m or v; or at a state the solve reaches. The point-of-use checks see it
-    (#2975, #2976). Nor, at Nt = 1, more than each endpoint; on a grid with an axis of 2 nodes, which has no interior,
-    any callable; or on a network, a source that takes p or m, which the solvers are handed by their caller. A read that
-    raises one of ``_EVALUATION_ERRORS`` is not this fact and is left to the readers at use.
+    (#2975, #2976). Nor, at Nt = 1, the sources and the coupling cost; on a grid with an axis of 2 nodes, which has no
+    probe node off the boundary, what is read there (a callable volatility, the held sources, the two source terms
+    and the wall); or on a network, a source that takes p or m, which the solvers are handed by their caller. A read
+    that raises one of ``_EVALUATION_ERRORS`` is not this fact and is left to the readers at use.
     """
     from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase, _own_rows, held_sources
     from mfgarchon.geometry.boundary import BoundaryConditions
@@ -544,15 +548,17 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
     # The arrays and T are the state every read below is made at.
     stop_if_refused()
 
-    # The times a callable is read at are nodes of the problem's time grid that the default solve hands it (the
-    # recording census of #2974's R1, pinned by test_a_non_finite_source_is_refused_where_it_enters_2974.py): the
-    # interior nodes t_1, t_{Nt // 2} and t_{Nt - 1}, which both directions of stepping read, with t_0 for a callable the
-    # HJB side reads (it steps t_0 ... t_{Nt-1}) and T for the FP's source (t_1 ... T) and the terminal coupling. At
-    # Nt = 1 there is no interior node, and each is read at its endpoint alone. t_n is n * dt, as the solvers form it.
+    # The times a callable is read at are nodes of the problem's time grid that every `NumericalScheme` that solves the
+    # problem hands it (#2974's recording census over the enum, pinned by
+    # test_a_non_finite_source_is_refused_where_it_enters_2974.py): the interior nodes t_1, t_{Nt // 2} and t_{Nt - 1},
+    # which every scheme reads. An endpoint only where every scheme that reads the callable reads it: t_0 for the
+    # potential and the Hamiltonian's other time-dependent sources, a callable volatility and a boundary callable, and
+    # T for the terminal coupling. The semi-Lagrangian schemes add the HJB source and the coupling cost at t_1 ... T,
+    # and the finite-volume ones read the FP's source at t_0 ... t_{Nt-1}, so those three are read at interior nodes
+    # only. t_n is n * dt, as the solvers form it.
     dt, steps = float(problem.dt), int(problem.Nt)
     interior = [n * dt for n in sorted({1, steps // 2, steps - 1} - {0, steps})]
     hjb_times = [0.0, *interior]
-    fp_times = [*interior, steps * dt]
     m_all = np.asarray(problem.m_initial, dtype=float).reshape(-1)
     v_all = np.asarray(problem.u_terminal, dtype=float).reshape(-1)
     components = problem.components
@@ -621,18 +627,21 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
                         lambda b=bound, q=slots, s=t: held(b, q, t=s, x=x, m=m, cross_density=_own_rows(m)),
                         f"at the interior probe nodes{f', t={t:g}' if 't' in slots.order else ''}",
                     )
-        for field, field_times in (("source_term_hjb", hjb_times), ("source_term_fp", fp_times)):
+        for field in ("source_term_hjb", "source_term_fp"):
             source = getattr(problem, field, None)
             if callable(source):
                 bound = _remembered(source, SOURCE_TERM_SLOTS, field)
-                # The FP's source is handed u_terminal as v at T alone.
-                for t in [steps * dt] if field == "source_term_fp" and "v" in bound.passes else field_times:
+                # The FP's source is handed u_terminal as v at T alone, which no finite-volume scheme reads: one that
+                # takes v is not read here.
+                if field == "source_term_fp" and "v" in bound.passes:
+                    continue
+                for t in interior:
                     read(field, lambda b=bound, s=t: b(t=s, x=x, v=v, m=m), f"at the interior probe nodes, t={t:g}")
         if callable(problem.state_penalty):
             wall = _remembered(problem.state_penalty, REGION_SLOTS, "state_penalty")
             read("state_penalty", lambda: wall(x=x), "at the interior probe nodes")
     for field, energy, field_times in (
-        ("coupling_cost", problem._coupling_energy, hjb_times),
+        ("coupling_cost", problem._coupling_energy, interior),
         ("terminal_coupling", problem._terminal_energy, [steps * dt]),
     ):
         if energy is not None:
