@@ -233,12 +233,15 @@ def _has_a_grid_probe(geometry: GeometryProtocol) -> bool:
     """Whether a construction check's grid probe applies on ``geometry`` (#2901, stage 1c-iii).
 
     The grid probe (`_get_sample_inputs`) hands a Hamiltonian's sources x as one point's coordinates, p of the
-    coordinate dimension and m one number. A check reads a source in the forms its readers hand it, and the geometry
-    decides which solvers those are. On a network (``GeometryType.NETWORK``) they are NetworkHJBSolver, policy
-    iteration and the network FP, which accept only a network problem and hand x a node, and p and m one entry per
-    node. So no grid probe applies there, whatever the source is or how it is bound. Each check that takes a geometry
-    reads this first and returns before reading, the door check's caller in ``MFGProblem`` reads it before handing
-    points, and `_get_sample_inputs` refuses to build a grid probe where it is false.
+    coordinate dimension and m one number. A check reads a source in the forms its readers hand it, and the geometry's
+    declared type, ``geometry_type``, which ``MFGProblem`` reads to choose its construction, decides which solvers
+    those are. On a geometry that declares ``GeometryType.NETWORK`` they are NetworkHJBSolver, policy iteration and the
+    network FP, which accept only a network problem and hand x a node, and p and m one entry per node. So no grid probe
+    applies there, whatever the source is or how it is bound. Each check that takes a geometry reads this first and
+    returns before reading, the door check's caller in ``MFGProblem`` reads it before handing points, and
+    `_get_sample_inputs` refuses to build a grid probe where it is false. The network HJB solvers accept a problem by
+    its node data rather than its declared type, so a network geometry that declares another type is probed, and
+    refused there (#2972).
 
     Every other geometry type keeps it. The solvers the stage's census saw reading a problem on a grid, an implicit
     domain, a mesh or a maze (``GeometryType.MAZE``) hand x a point's coordinates or a batch of them; on a maze that is
@@ -249,7 +252,7 @@ def _has_a_grid_probe(geometry: GeometryProtocol) -> bool:
     readers of the rates, ``FPNetworkSolver`` and ``NetworkPolicyIterationHJBSolver``, refuse it (#1545). A Hamiltonian
     handed to ``MFGProblem`` on a network through a model or its components, a ``NetworkHamiltonian`` subclass among
     them, makes a problem no network solver accepts: the two HJB solvers refuse it by name, and ``FPNetworkSolver``
-    raises ``AttributeError`` (#2970). No solver reads ``dm`` or ``dp``.
+    raises ``AttributeError`` (#2970). No network solver reads ``dm`` or ``dp``.
     """
     from mfgarchon.geometry import GeometryType
 

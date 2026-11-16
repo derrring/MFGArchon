@@ -1,11 +1,11 @@
-"""#2901, stage 1c-iii: on a network geometry, construction reads no Hamiltonian on a grid probe.
+"""#2901, stage 1c-iii: on a geometry that declares itself a network, construction reads no Hamiltonian on a grid probe.
 
 The network solvers hand x a node, and p and m one entry per node: NetworkHJBSolver reads `__call__` with the node as an
-integer, and policy iteration and the network FP read the rates with ``np.array([i])``. No solver reads `dm` or `dp`.
-Construction's grid probe hands x a point's coordinates and p the coordinate dimension, a form none of them hands, so on
-a network geometry no check reads it, whatever the Hamiltonian (`_has_a_grid_probe`). With a custom `hamiltonian_func`,
-`__call__` reads that function while the rates stay the built-in control's, so both readers of the rates refuse it
-(#1545); those two refusals are what keeps the two from meeting in a solve.
+integer, and policy iteration and the network FP read the rates with ``np.array([i])``. No network solver reads `dm` or
+`dp`. Construction's grid probe hands x a point's coordinates and p the coordinate dimension, a form none of them hands,
+so where the geometry's declared type is a network no check reads it, whatever the Hamiltonian (`_has_a_grid_probe`).
+With a custom `hamiltonian_func`, `__call__` reads that function while the rates stay the built-in control's, so both
+readers of the rates refuse it (#1545); those two refusals are what keeps the two from meeting in a solve.
 """
 
 from __future__ import annotations

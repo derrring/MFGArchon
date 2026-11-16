@@ -385,14 +385,15 @@ minus the unwalled one must be minus the wall's change of the potential, and a g
 margin is refused. So a `__call__` written without the potential is refused wherever the wall is nonzero
 on the grid.
 
-On a network geometry nothing in this section is read. The network solvers hand $x$ a node, and $p$ and $m$ one entry
-per node, so a grid probe hands a form none of them hands, whatever the Hamiltonian is or how its methods are bound. A
-network Hamiltonian's sources are compared nowhere, and need no comparison. With the built-in control, `__call__`, the
-rates `optimal_control` returns and `source_term` come from one formula. With a custom `hamiltonian_func`, `__call__`
-reads that function, and both readers of the rates, `FPNetworkSolver` and `NetworkPolicyIterationHJBSolver`, refuse it
-(#1545), so the two never meet in a solve. A Hamiltonian handed to `MFGProblem` on a network through a model or its
-components, a `NetworkHamiltonian` subclass among them, makes a problem no network solver accepts (#2970). No solver
-reads `dm` or `dp`. Every other geometry keeps the probes (#2901, stage 1c-iii).
+On a geometry whose declared type, `geometry_type`, is `NETWORK`, nothing in this section is read. The network solvers
+hand $x$ a node, and $p$ and $m$ one entry per node, so a grid probe hands a form none of them hands, whatever the
+Hamiltonian is or how its methods are bound. A network Hamiltonian's sources are compared nowhere, and need no
+comparison. With the built-in control, `__call__`, the rates `optimal_control` returns and `source_term` come from one
+formula. With a custom `hamiltonian_func`, `__call__` reads that function, and both readers of the rates,
+`FPNetworkSolver` and `NetworkPolicyIterationHJBSolver`, refuse it (#1545), so the two never meet in a solve. A
+Hamiltonian handed to `MFGProblem` on a network through a model or its components, a `NetworkHamiltonian` subclass
+among them, makes a problem no network solver accepts (#2970). No network solver reads `dm` or `dp`. Every other
+declared type keeps the probes (#2901, stage 1c-iii).
 
 ### What the Fokker–Planck solver receives
 
