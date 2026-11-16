@@ -28,11 +28,8 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSol
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    resolve_volatility_override,
-    scalar_volatility,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override, scalar_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable

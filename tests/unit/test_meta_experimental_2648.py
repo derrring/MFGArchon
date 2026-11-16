@@ -35,7 +35,7 @@ def test_the_generated_flux_takes_the_diffusion_from_its_owner():
     source = generate_solver_class("Pinned", system, schemes)
     flux = [line.strip() for line in source.splitlines() if line.strip().startswith("flux =")]
     assert flux == ["flux = m[x_idx] * optimal_control[x_idx] - diffusion_from_volatility(sigma) * m_grad"], flux
-    assert "from mfgarchon.utils.pde_coefficients import diffusion_from_volatility" in source
+    assert "from mfgarchon.utils.numerical.volatility import diffusion_from_volatility" in source
     assert "0.5 * sigma**2" not in source
 
 

@@ -38,11 +38,8 @@ from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, s
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
 from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    resolve_diffusion_source,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import resolve_diffusion_source, resolve_volatility_override
 
 from .base_hjb import (
     DEFAULT_NEWTON_MAX_ITERATIONS,

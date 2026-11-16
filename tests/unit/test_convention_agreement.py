@@ -25,7 +25,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 SIGMAS = [0.1, 0.7, 1.0, np.sqrt(2.0), 2.5, 3.0]
 

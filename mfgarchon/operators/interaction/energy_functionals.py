@@ -229,20 +229,6 @@ def energy_functional_members() -> tuple[str, ...]:
     return tuple(sorted(EnergyFunctional.__protocol_attrs__))
 
 
-def bound_energy_functional(cost: Any, problem: Any) -> EnergyFunctional:
-    """``cost.bind(problem)``, refused by the cost's name where what it returns is not an `EnergyFunctional` (#1642):
-    the one check for every binding, a part of a sum included, so a near-miss is refused at construction rather than
-    at the first evaluation."""
-    energy = cost.bind(problem)
-    missing = missing_energy_functional_members(energy)
-    if missing:
-        raise TypeError(
-            f"{type(cost).__name__}.bind(problem) returned {type(energy).__name__}, which is not an "
-            f"EnergyFunctional: it lacks {', '.join(missing)} (#1642)."
-        )
-    return cast("EnergyFunctional", energy)
-
-
 def missing_energy_functional_members(obj: object) -> tuple[str, ...]:
     """Return the required :class:`EnergyFunctional` members ``obj`` lacks, sorted.
 

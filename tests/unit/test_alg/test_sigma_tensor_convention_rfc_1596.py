@@ -20,7 +20,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step, apply_cross_diffusion_explicit
 from mfgarchon.operators.differential.diffusion import DiffusionOperator
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, volatility_from_diffusion
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility, volatility_from_diffusion
 
 
 class TestKernelConvention:

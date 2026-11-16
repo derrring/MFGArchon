@@ -445,7 +445,7 @@ class TestLLFJacobianEffect:
         scaling (which does NOT row-scale for an array left operand)."""
         from scipy.sparse import diags, eye
 
-        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+        from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
         problem, pts = problem_and_pts
         with warnings.catch_warnings():
@@ -487,7 +487,7 @@ class TestLLFJacobianEffect:
         residual — locks against a residual/Jacobian σ-source split where the residual silently
         reverts to the base scalar σ while the Jacobian (separately pinned above) uses σ_eff."""
         from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
-        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+        from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
         problem, pts = problem_and_pts
         with warnings.catch_warnings():

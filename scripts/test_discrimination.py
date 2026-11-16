@@ -101,7 +101,7 @@ class Mutation:
 MUTATIONS: list[Mutation] = [
     Mutation(
         name="diffusion_scalar_2x",
-        path="mfgarchon/utils/pde_coefficients.py",
+        path="mfgarchon/utils/numerical/volatility.py",
         old="        return 0.5 * float(arr) ** 2  # scalar isotropic: unambiguous, kind not needed",
         new="        return float(arr) ** 2  # MUTATED: 2x diffusion",
         owner="D = sigma^2/2 for scalar sigma (#811)",
@@ -109,7 +109,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="diffusion_field_2x",
-        path="mfgarchon/utils/pde_coefficients.py",
+        path="mfgarchon/utils/numerical/volatility.py",
         old='    if kind == "field":\n        return 0.5 * arr**2',
         new='    if kind == "field":\n        return arr**2  # MUTATED: 2x diffusion',
         owner="D = sigma^2/2 elementwise for a volatility field (#811)",
@@ -554,7 +554,8 @@ def _assert_import_is_the_mutated_tree() -> None:
 
 _VERIFY_PRELUDE = """
 import numpy as np
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry.boundary import neumann_bc

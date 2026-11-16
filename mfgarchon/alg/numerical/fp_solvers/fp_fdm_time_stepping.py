@@ -74,10 +74,10 @@ from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_valu
 from mfgarchon.types.callable_protocols import VOLATILITY_SLOTS, _remembered, evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.numerical.mass_fabrication_gate import MAX_CLIP_MASS_FABRICATION, refuse_what_a_flux_takes_negative
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     _DriftDispatcher,
-    diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
 )

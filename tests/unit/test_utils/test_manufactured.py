@@ -43,7 +43,7 @@ from mfgarchon.utils.manufactured import (
     pair_derivative_errors,
     pair_for,
 )
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 L, T, SIGMA, ZETA, BETA = 20.0, 4.0, 1.0, 0.5, 0.6
 C = np.pi / L

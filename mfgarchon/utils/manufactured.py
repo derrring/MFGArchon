@@ -37,7 +37,7 @@ happens:
 - ``H``            -> the problem's own :meth:`HamiltonianBase.evaluate_H`.
 - ``alpha*``       -> the problem's own :meth:`optimal_control`, which owns the convention. Deriving
   ``alpha* = -grad u / lambda`` here instead would be silently wrong for any non-quadratic cost.
-- ``sigma -> D``   -> :func:`mfgarchon.utils.pde_coefficients.diffusion_from_volatility`, including
+- ``sigma -> D``   -> :func:`mfgarchon.utils.numerical.volatility.diffusion_from_volatility`, including
   its ``kind`` argument and its refusal to guess. A ``(d, d)`` volatility is the symmetric
   standard-deviation matrix ``S`` with ``D = (1/2) S S^T`` (RFC #1596), NOT a covariance -- reading
   it as one is a silent factor of ``S``.
@@ -85,10 +85,7 @@ from mfgarchon.types.callable_protocols import (
     bind_user_callable,
     coordinate_tuple,
 )
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    validate_symmetric_psd,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility, validate_symmetric_psd
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

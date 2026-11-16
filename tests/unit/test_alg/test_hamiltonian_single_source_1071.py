@@ -47,7 +47,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 # ---------------------------------------------------------------------------
 # Phase 0 -- contract surface
@@ -231,7 +231,7 @@ def test_jacobian_byte_identical_to_inline_assembly():
     # tautological here and is pinned externally by
     # tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py.
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _advection_bands, _bc_laplacian_bands
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
     lap_bands = _bc_laplacian_bands(nx, dx, bc, t)
     _sub, _diag, _sup, _extras = lap_bands

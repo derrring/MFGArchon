@@ -52,7 +52,7 @@ import numpy as np
 from scipy import sparse
 
 from mfgarchon.utils.numerical.implicit_diffusion import cn_alpha, neumann_cn_stencil, wall_factor
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

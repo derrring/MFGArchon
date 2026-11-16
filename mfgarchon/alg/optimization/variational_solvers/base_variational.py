@@ -18,7 +18,7 @@ from mfgarchon.alg.base_solver import BaseOptimizationSolver
 from mfgarchon.types.callable_protocols import CONDITION_SLOTS, _remembered
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

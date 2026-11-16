@@ -259,7 +259,7 @@ def _face_cell_centres():
 
 
 def _grid_point_measure():
-    from mfgarchon.operators.interaction.point_measure import GridPointMeasure
+    from mfgarchon.core.coupling_costs import GridPointMeasure
 
     with pytest.raises(TypeError, match=r"_NotAGrid, which is not a CartesianGrid"):
         GridPointMeasure(SimpleNamespace(geometry=_NotAGrid()))

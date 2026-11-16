@@ -33,6 +33,7 @@ from mfgarchon.alg.numerical.coupling.lions_correction import (
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.config import MFGSolverConfig, PicardConfig
+from mfgarchon.core.coupling_costs import InteractionCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -537,10 +538,10 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
     if grid_only:
         energy = potential
     else:
-        conv = ConvolutionCouplingOperator.from_problem(
-            GaussianKernel(amplitude=amp, length_scale=length_scale), problem, use_fft=True
+        interaction = InteractionCost(GaussianKernel(amplitude=amp, length_scale=length_scale), use_fft=True).bind(
+            problem
         )
-        energy = CombinedEnergy([QuadraticInteractionEnergy(conv), potential])
+        energy = CombinedEnergy([interaction, potential])
     problem.source_term_hjb = create_lions_source(energy)
     return problem, g
 

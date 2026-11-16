@@ -542,7 +542,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             vola_value = volatility
         elif diffusion is not None:
             # D -> Sigma by the one reverse converter (a negative D is refused there, #811).
-            from mfgarchon.utils.pde_coefficients import volatility_from_diffusion
+            from mfgarchon.utils.numerical.volatility import volatility_from_diffusion
 
             if callable(diffusion):
                 _D_callable = bind_user_callable(diffusion, VOLATILITY_SLOTS, role="diffusion")
@@ -1318,7 +1318,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         ``volatility_kind``, or a callable A(t, x, m). For one scalar D, a consumer calls
         ``diffusion_from_volatility(scalar_volatility(problem.volatility, consumer=...))``.
         """
-        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+        from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
         volatility, kind = self._volatility, self._volatility_kind
         if callable(volatility):
@@ -2315,7 +2315,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         if not isinstance(self.geometry, TensorProductGrid):
             return None
-        from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
+        from mfgarchon.core.coupling_costs import bound_energy_functional
 
         energy = bound_energy_functional(cost, self)
         nodes = int(np.asarray(self.geometry.get_spatial_grid()).shape[0])

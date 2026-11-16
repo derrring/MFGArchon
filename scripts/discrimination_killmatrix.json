@@ -4150,7 +4150,7 @@
     "tests/unit/test_operators/test_interaction_energy.py::TestWeightsOntology::test_public_weights_member_cannot_corrupt_the_owner[quadratic]": [
       "quadrature_wall_node_counting_measure"
     ],
-    "tests/unit/test_operators/test_interaction_energy.py::test_from_problem_reads_the_grid_the_measure_and_the_topology[uniform grid]": [
+    "tests/unit/test_operators/test_interaction_energy.py::test_interaction_cost_binds_on_the_grid_the_measure_and_the_topology[uniform grid]": [
       "grid_spacing_uses_point_count"
     ],
     "tests/unit/test_operators/test_interaction_energy.py::test_the_box_integral_converges_at_second_order[1-dense]": [
@@ -5582,7 +5582,7 @@
         "tests/unit/test_geometry/test_tensor_product_grid.py::TestSpacingQueries::test_get_spacing_uniform_1d",
         "tests/unit/test_geometry/test_tensor_product_grid.py::TestSpacingQueries::test_get_spacing_uniform_2d",
         "tests/unit/test_geometry/test_tensor_product_grid_ndim.py::TestNDimensionalGrids::test_spacing_4d",
-        "tests/unit/test_operators/test_interaction_energy.py::test_from_problem_reads_the_grid_the_measure_and_the_topology[uniform grid]",
+        "tests/unit/test_operators/test_interaction_energy.py::test_interaction_cost_binds_on_the_grid_the_measure_and_the_topology[uniform grid]",
         "tests/unit/test_operators/test_point_measure_1642.py::test_the_grid_s_fft_path_is_the_direct_quadrature_on_the_same_measure",
         "tests/validation/test_stefan_analytical.py::TestNeumannSolution::test_convergence_with_grid_refinement"
       ],

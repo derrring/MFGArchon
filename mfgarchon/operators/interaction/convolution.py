@@ -24,7 +24,8 @@ and both are second-order. The rectangle rule ``prod(spacings)`` they replace ga
 node a full cell reaching past the domain, an O(dx) error (#1642).
 
 The convolution is Euclidean on both paths: it does not wrap, so it is not the interaction on
-a periodic domain. :meth:`ConvolutionCouplingOperator.from_problem` refuses a periodic axis.
+a periodic domain. `mfgarchon.core.coupling_costs.InteractionCost`, which builds it on a problem's grid, refuses a
+periodic axis.
 
 Inherits :class:`scipy.sparse.linalg.LinearOperator` for matrix-free use in
 iterative solvers and operator algebra (``F @ m``, ``F.T @ g``).
@@ -44,8 +45,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from numpy.typing import NDArray
-
-    from mfgarchon.core.mfg_problem import MFGProblem
 
     from .kernels import RadialKernel
 
@@ -95,7 +94,8 @@ class ConvolutionCouplingOperator(LinearOperator):
     >>> m = np.exp(-((np.linspace(0, 1, 128) - 0.5) ** 2) / 0.02)
     >>> Fm = F @ m  # = integral K(x - y) m(y) dy
 
-    On a problem, :meth:`from_problem` reads the grid, the problem's measure and its topology.
+    On a problem's grid it is built by `mfgarchon.core.coupling_costs.InteractionCost`, which reads the grid, the
+    problem's measure and its topology; the operator itself reads no problem.
     """
 
     def __init__(
@@ -160,53 +160,6 @@ class ConvolutionCouplingOperator(LinearOperator):
             self._W = kernel.matrix(self._points)
 
         super().__init__(dtype=np.float64, shape=(N, N))
-
-    @classmethod
-    def from_problem(
-        cls, kernel: RadialKernel, problem: MFGProblem, *, use_fft: bool | None = None
-    ) -> ConvolutionCouplingOperator:
-        """The interaction on ``problem``'s grid, weighted by the problem's own measure (#1642).
-
-        Reads three things the problem owns: its grid, a `TensorProductGrid`; its measure,
-        :meth:`MFGProblem.spatial_measure`, whose ``weights`` become the operator's; and its topology,
-        :meth:`MFGProblem.get_boundary_conditions` read face by face (`periodic_faces`). A uniform grid gets
-        the regular mode, where the FFT path is available. A graded grid gets the point mode with the same
-        weights, which is direct only.
-
-        Refused by name:
-
-        - a periodic axis. The convolution is Euclidean and does not wrap, so near one wall it would miss
-          the mass just beyond the other;
-        - a geometry that is not a `TensorProductGrid`. A point cloud's measure is a point average, not a
-          quadrature, and its quadrature weights have no owner yet.
-        """
-        from mfgarchon.geometry.boundary.conditions import periodic_faces
-        from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
-
-        geometry = problem.geometry
-        if not isinstance(geometry, TensorProductGrid):
-            raise TypeError(
-                f"ConvolutionCouplingOperator.from_problem: the problem's geometry is a {type(geometry).__name__}, "
-                "not a TensorProductGrid. Only a grid's measure is a quadrature here; for a point set, construct the "
-                "operator with points= and the cell_volume that is its quadrature (#1642)."
-            )
-        shape = tuple(geometry.get_grid_shape())
-        periodic = periodic_faces(problem.get_boundary_conditions(), len(shape), geometry)
-        wrapped = sorted({face // 2 for face, is_periodic in enumerate(periodic) if is_periodic})
-        if wrapped:
-            raise ValueError(
-                f"ConvolutionCouplingOperator.from_problem: axis {wrapped} of the problem's grid is periodic, and "
-                "this convolution is Euclidean: it does not wrap, so near one wall it would miss the mass just beyond "
-                "the other. A periodic interaction is #2725; pose the problem on a non-periodic grid (#1642)."
-            )
-        weights = problem.spatial_measure().weights
-        if geometry.is_uniform:
-            return cls(
-                kernel, grid_shape=shape, spacings=geometry.get_grid_spacing(), cell_volume=weights, use_fft=use_fft
-            )
-        mesh = np.meshgrid(*geometry.coordinates[: len(shape)], indexing="ij")
-        points = np.stack([axis.ravel() for axis in mesh], axis=-1)
-        return cls(kernel, points=points, cell_volume=np.asarray(weights, dtype=float).ravel(), use_fft=use_fft)
 
     def _grid_axes(self) -> list[NDArray]:
         """The regular grid's axes, ``arange(n) * s`` (origin at 0, endpoint-inclusive)."""

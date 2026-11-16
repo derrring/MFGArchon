@@ -53,7 +53,7 @@ class CouplingCost(Protocol):
 
     ``bind(problem)`` returns the ``EnergyFunctional`` of F on that problem's nodes and measure, whose flat derivative
     the HJB source composes. The shipped specifications are ``InteractionCost(kernel)`` and ``PotentialCost(V)`` in
-    ``mfgarchon.operators.interaction``, and their sum.
+    ``mfgarchon.core.coupling_costs``, and their sum.
     """
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional: ...
@@ -85,7 +85,7 @@ class Model:
         drift_field: Refused when given: no solver reads a problem-level drift (#2678). A solver's and an iterator's own
             ``drift_field=`` are the routes, and the refusal names them.
         coupling_cost: The coupling cost F[m], a `CouplingCost` -- ``InteractionCost(kernel)``,
-            ``PotentialCost(V)`` or their sum (``mfgarchon.operators.interaction``). ``MFGProblem`` binds it to its grid
+            ``PotentialCost(V)`` or their sum (``mfgarchon.core.coupling_costs``). ``MFGProblem`` binds it to its grid
             and measure, and the HJB carries its flat derivative ``delta F / delta m`` as a source, cost-signed, summed
             with the Hamiltonian's own coupling ``f`` (#1642). Bound on a ``TensorProductGrid``; HJB-GFDM, which
             evaluates its source at its collocation points, reads ``delta F / delta m`` there. Off a grid the HJB solver
@@ -234,14 +234,14 @@ def _refuse_unbindable_cost(field: str, cost: object) -> None:
     if field == "terminal_coupling":
         raise TypeError(
             f"Model(terminal_coupling=...) takes a coupling cost the library binds to the problem's grid and measure -- "
-            f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
+            f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.core.coupling_costs, or an "
             f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. The "
             f"problem adds its flat derivative delta G / delta m at m(T) to u(T) (#1642). A terminal cost that does not "
             f"depend on m(T) is Conditions(u_terminal=...)."
         )
     raise TypeError(
         f"Model(coupling_cost=...) takes a coupling cost the library binds to the problem's grid and measure -- "
-        f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
+        f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.core.coupling_costs, or an "
         f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
         f"such an F to the problem's HJB source explicitly, on that grid: MFGProblem(..., domain=grid, "
         f"source_term_hjb=create_lions_source(F, FiniteDifferenceFunctionalDerivative(), "

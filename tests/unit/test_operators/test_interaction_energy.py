@@ -27,8 +27,10 @@ import numpy as np
 from scipy.special import erf
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.core.coupling_costs import InteractionCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry import GeometryProtocol, TensorProductGrid
+from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, periodic_bc
 from mfgarchon.geometry.implicit import Hyperrectangle
 from mfgarchon.operators.interaction.convolution import ConvolutionCouplingOperator
@@ -652,8 +654,8 @@ class TestConstruction:
 # The convolution on the problem's measure (#1642, Stage 0 item 4). On a regular grid the operator weighted every node by
 # prod(spacings), the rectangle rule: each end node owned a full cell past the domain, an O(dx) error, while the
 # problem's measure is the trapezoid rule. Both paths now weight node j by the grid's trapezoid weight, so the FFT path
-# convolves m * w and its adjoint is w * (K * g). `from_problem` reads the problem's grid, measure and topology, and
-# refuses a periodic axis, on which this Euclidean convolution does not wrap.
+# convolves m * w and its adjoint is w * (K * g). `InteractionCost.bind` builds it from the problem's grid, measure and
+# topology, and refuses a periodic axis, on which this Euclidean convolution does not wrap.
 # ---------------------------------------------------------------------------
 
 _ELL = 0.1
@@ -711,45 +713,80 @@ def _problem(domain):
     )
 
 
+def _not_a_tensor_product_grid():
+    """A `CartesianGrid` that is not a `TensorProductGrid`: every member delegates to a 1-D one of 11 nodes. No library
+    class is such a grid, so this is the one way into `InteractionCost`'s refusal of it."""
+    inner = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(1))
+
+    class DelegatingGrid(CartesianGrid):
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return getattr(inner, name)
+
+    members = set(CartesianGrid.__abstractmethods__).union(
+        GeometryProtocol.__protocol_attrs__,
+        *(getattr(base, "__protocol_attrs__", set()) for base in TensorProductGrid.__mro__),
+    )
+    for name in sorted(members - set(DelegatingGrid.__dict__)):
+        if isinstance(getattr(TensorProductGrid, name, None), property):
+            setattr(DelegatingGrid, name, property(lambda self, name=name: getattr(inner, name)))
+        else:
+            setattr(DelegatingGrid, name, lambda self, *a, name=name, **k: getattr(inner, name)(*a, **k))
+    DelegatingGrid.__abstractmethods__ = frozenset()
+    grid = DelegatingGrid()
+    assert isinstance(grid, CartesianGrid)
+    assert not isinstance(grid, TensorProductGrid)
+    return grid
+
+
 @pytest.mark.parametrize(
-    "case", ["uniform grid", "graded grid", "periodic grid", "periodic in x only", "periodic in y only", "not a grid"]
+    "case",
+    [
+        "uniform grid",
+        "graded grid",
+        "periodic grid",
+        "periodic in x only",
+        "periodic in y only",
+        "a Cartesian grid that is not a TensorProductGrid",
+        "not a grid",
+    ],
 )
-def test_from_problem_reads_the_grid_the_measure_and_the_topology(case):
-    """The operator's weights are the problem's measure, on a uniform grid (where FFT is available) and on a graded one
-    (direct). On the uniform grid, whose two spacings differ, ``op @ m`` is the sum written out on the grid's own nodes.
-    A periodic axis is refused by name, read face by face, so a 2-D grid periodic in one axis names that axis (#2726,
-    review 1); a geometry that is not a grid is refused too."""
+def test_interaction_cost_binds_on_the_grid_the_measure_and_the_topology(case):
+    """On a problem's grid, ``InteractionCost(K).bind(problem)`` builds the convolution on the problem's measure: on a
+    uniform grid (where FFT is available) and on a graded one (direct). On both, the energy's flat derivative is the sum
+    written out on the grid's own nodes; the uniform grid's two spacings differ. A periodic axis is refused by name, read
+    face by face, so a 2-D grid periodic in one axis names that axis (#2726, review 1). A Cartesian grid that is not a
+    `TensorProductGrid` is refused by the grid branch of `InteractionCost.bind_on`; a geometry that is not a Cartesian
+    grid is refused before it, by `GridPointMeasure`, and this case pins that message. Whether the FFT path was taken is
+    read off the energy's private operator, ``_conv``: nothing public says it (#2938 stage 2d)."""
     kernel = GaussianKernel(1.0, _ELL)
-    if case == "uniform grid":
-        problem = _problem(
-            TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 9], boundary_conditions=no_flux_bc(2))
-        )
-        op = ConvolutionCouplingOperator.from_problem(kernel, problem)
-        assert op.uses_fft
-        nodes = problem.geometry.get_spatial_grid().reshape(-1, 2)
-        w = problem.spatial_measure().weights.ravel()
-        m = 1.0 + nodes[:, 0] + 2.0 * nodes[:, 1] ** 2
-        written_out = kernel(np.linalg.norm(nodes[:, None, :] - nodes[None, :, :], axis=-1)) @ (w * m)
-        np.testing.assert_allclose(op @ m, written_out, atol=1e-14)
-    elif case == "graded grid":
-        axis = np.linspace(0.0, 1.0, 11) ** 2
-        problem = _problem(
-            TensorProductGrid(
+    cost = InteractionCost(kernel)
+    if case in ("uniform grid", "graded grid"):
+        if case == "uniform grid":
+            grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 9], boundary_conditions=no_flux_bc(2))
+        else:
+            axis = np.linspace(0.0, 1.0, 11) ** 2
+            grid = TensorProductGrid(
                 bounds=[(0.0, 1.0)],
                 Nx_points=[11],
                 spacing_type="custom",
                 custom_coordinates=[axis],
                 boundary_conditions=no_flux_bc(1),
             )
-        )
-        op = ConvolutionCouplingOperator.from_problem(kernel, problem)
-        assert not op.uses_fft
-        np.testing.assert_array_equal(op.points[:, 0], axis)
+        problem = _problem(grid)
+        energy = cost.bind(problem)
+        assert energy._conv.uses_fft == (case == "uniform grid")
+        nodes = problem.geometry.get_spatial_grid().reshape(problem.geometry.num_spatial_points, -1)
+        w = problem.spatial_measure().weights.ravel()
+        m = 1.0 + nodes[:, 0] + 2.0 * nodes[:, -1] ** 2
+        written_out = kernel(np.linalg.norm(nodes[:, None, :] - nodes[None, :, :], axis=-1)) @ (w * m)
+        np.testing.assert_allclose(energy.flat_derivative(m), written_out, atol=1e-14)
+        np.testing.assert_array_equal(energy.weights, w)
     elif case == "periodic grid":
         problem = _problem(TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=periodic_bc(1)))
         with pytest.raises(ValueError, match=r"axis \[0\] of the problem's grid is periodic"):
-            ConvolutionCouplingOperator.from_problem(kernel, problem)
-        return
+            cost.bind(problem)
     elif case.startswith("periodic in"):
         axis = 0 if case.endswith("x only") else 1
         faces = [
@@ -759,11 +796,17 @@ def test_from_problem_reads_the_grid_the_measure_and_the_topology(case):
         bc = BoundaryConditions(dimension=2, segments=faces, default_bc=BCType.NO_FLUX)
         problem = _problem(TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 9], boundary_conditions=bc))
         with pytest.raises(ValueError, match=rf"axis \[{axis}\] of the problem's grid is periodic"):
-            ConvolutionCouplingOperator.from_problem(kernel, problem)
-        return
+            cost.bind(problem)
+    elif case == "a Cartesian grid that is not a TensorProductGrid":
+        problem = _problem(_not_a_tensor_product_grid())
+        with pytest.raises(
+            TypeError, match=r"InteractionCost: the problem's geometry is a DelegatingGrid, not a TensorProductGrid"
+        ):
+            cost.bind(problem)
     else:
         problem = _problem(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])))
-        with pytest.raises(TypeError, match=r"not a TensorProductGrid"):
-            ConvolutionCouplingOperator.from_problem(kernel, problem)
-        return
-    np.testing.assert_array_equal(op.weights, problem.spatial_measure().weights.ravel())
+        with pytest.raises(
+            TypeError,
+            match=r"GridPointMeasure: the problem's geometry is a Hyperrectangle, which is not a CartesianGrid",
+        ):
+            cost.bind(problem)

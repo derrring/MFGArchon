@@ -18,12 +18,12 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.core.coupling_costs import PotentialCost
 from mfgarchon.core.hamiltonian import DualHamiltonian, DualLagrangian, QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import applicator_graph as graph
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.types import bind_boundary_value
-from mfgarchon.operators.interaction import PotentialCost
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.pde_coefficients import CoefficientField
 from mfgarchon.utils.validation.functions import _call_h, validate_hamiltonian, validate_hamiltonian_derivative

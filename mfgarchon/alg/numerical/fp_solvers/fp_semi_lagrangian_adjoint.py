@@ -56,11 +56,8 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    fp_drift_coefficient,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_sl_splatting import splat_1d, splat_nd

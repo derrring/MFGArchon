@@ -15,15 +15,11 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.core.coupling_costs import GridPointMeasure, InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
-from mfgarchon.operators.interaction import (
-    GridPointMeasure,
-    InteractionCost,
-    PotentialCost,
-    bind_on_measure,
-)
+from mfgarchon.operators.interaction import bind_on_measure
 from mfgarchon.operators.interaction.kernels import GaussianKernel
 
 

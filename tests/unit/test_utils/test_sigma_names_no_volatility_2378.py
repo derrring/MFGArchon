@@ -78,6 +78,7 @@ def _renamed_public_api():
     from mfgarchon.operators.differential.diffusion import DiffusionOperator
     from mfgarchon.utils import manufactured as mms
     from mfgarchon.utils import pde_coefficients as pc
+    from mfgarchon.utils.numerical import volatility
 
     unbound = [
         adjoint_ops.build_diffusion_matrix,
@@ -86,8 +87,8 @@ def _renamed_public_api():
         adjoint_ops.build_diffusion_matrix_from_geometry,
         vp.create_quadratic_variational_mfg,
         vp.create_obstacle_variational_mfg,
-        pc.diffusion_from_volatility,
-        pc.diffusion_from_volatility_torch,
+        volatility.diffusion_from_volatility,
+        volatility.diffusion_from_volatility_torch,
         pc.check_adi_compatibility,
         mms.hjb_source,
         mms.fp_source,

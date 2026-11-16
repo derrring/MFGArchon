@@ -163,7 +163,7 @@ class DiffusionOperator(LinearOperator):
         diffusion tensor D directly (Path A). Shapes: scalar σ → D = σ²/2; ``(d,)`` per-axis σ →
         D_i = σ_i²/2; ``(d, d)`` symmetric std-dev matrix S → D = ½ S Sᵀ (S gated symmetric PSD).
         """
-        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
+        from mfgarchon.utils.numerical.volatility import diffusion_from_volatility, validate_symmetric_psd
 
         if np.isscalar(volatility):
             D: float | NDArray = diffusion_from_volatility(float(volatility))
@@ -206,7 +206,7 @@ class DiffusionOperator(LinearOperator):
         if coeff.ndim == 2 and coeff.shape == (d, d):
             # Constant diffusion tensor D. Gate symmetry + PSD (RFC #1596): a diffusion tensor
             # is symmetric PSD; an asymmetric input is caller confusion (e.g. a Cholesky factor).
-            from mfgarchon.utils.pde_coefficients import validate_symmetric_psd
+            from mfgarchon.utils.numerical.volatility import validate_symmetric_psd
 
             validate_symmetric_psd(coeff, name="DiffusionOperator diffusion tensor D")
             return coeff, "constant_tensor"

@@ -10,11 +10,8 @@ from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    fp_drift_coefficient,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
