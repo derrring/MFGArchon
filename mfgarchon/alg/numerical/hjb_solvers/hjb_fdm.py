@@ -278,8 +278,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 residual and for the analytic (chain-rule) Jacobian, O(Nx) per Newton step. The
                 per-point path evaluates it one node at a time and assembles the Jacobian by
                 finite differences, O(Nx^2). A Hamiltonian that gives a different answer when
-                evaluated on several nodes at once is refused when the problem takes it
-                (`refuse_a_hamiltonian_whose_reads_disagree`, #2875).
+                evaluated on several nodes at once than at each alone is refused when the problem
+                takes it (`refuse_a_hamiltonian_whose_reads_disagree`, #2875, #2901).
                 The batch path became the default in #1884. #1607 had kept it opt-in because it
                 then converged on fewer problems, which no longer reproduces at 5a16d60f: across
                 27 coupled LQ configurations (Nx 31-81, coupling 0.02-2, sigma 0.05-0.4,

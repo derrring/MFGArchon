@@ -331,7 +331,9 @@ $(t, x, m, p)$:
 
 - $t$ at $0$, $T/2$ and $T$;
 - $x$ at the node nearest the centre of the grid's box and, along each axis, the two end nodes nearest
-  it, at most $2d + 1$ nodes;
+  it, then the $3$ nodes `spread_samples` picks ($4$ in 3-D), at most $2d + 4$ nodes ($2d + 5$ in 3-D). On a
+  uniform grid the centre and the ends are where a term such as $\sin(2\pi x)$ takes one value, so a read
+  frozen at one node passes there;
 - $m$ at $0.5$ and $1$;
 - $p$ with component $k$ a scale times $(-1)^k (1 + 0.3 k)$, the scale in $0$, $0.4157$ and $-1.3691$,
   so every component is probed at both signs and at a magnitude of its own.
@@ -342,9 +344,48 @@ $-\partial H/\partial p$ for $|p| \le 2$ and clipped beyond passes, since no pro
 read through one reader, and what it returns through the owner of its shape (above). A source that
 cannot be evaluated at a probe is warned about and skipped there. $H$, `dp` or the control that cannot
 be evaluated at any probe at which it could be read is refused; `dm`, which no grid solver reads, is
-warned about. A network Hamiltonian is not probed here. *Not yet met (#2901, stages 1c-ii and 1c-iii):
-the doors against their methods on the composed Hamiltonian, the composed wall, and the network's
-sources.*
+warned about. A network Hamiltonian is not probed here.
+
+The solvers read the Hamiltonian after the soft wall is composed into its potential, and they read it
+through its doors. HJB-SL's `_sl_value_update` hands `evaluate_H` and `evaluate_dp` one point, the HJB
+batch paths hand them a batch of rows, and `evaluate_optimal_control`'s one reader,
+`compute_fp_velocity_field`, hands it a batch. So construction compares that Hamiltonian's doors with
+their methods, `__call__`, `dp` and `optimal_control` (`refuse_a_hamiltonian_whose_reads_disagree`,
+#2901), in the forms their readers hand them, at $0$, $T/2$ and $T$, at the probe nodes above with the
+node where the wall is largest added under a wall, and at the six $(m, p)$ above:
+
+- on a batch: six batches per time, each row of the door's read compared with the method read at that row
+  alone. Row $i$ of batch $j$ reads probe $\sigma((i + j) \bmod 6)$, with $\sigma$ ordering the six so
+  that $p$ runs $a, b, c, b, c, a$: every (node, probe) pair falls in exactly one batch, and two nodes read
+  different $p$ in at least one batch. With more than six rows, two nodes whose indices differ by $6$ read
+  the same probe in every batch. A row at which the method cannot be read is left out and warned about, so
+  a batch holds every probe node, three or more on every grid but a one-dimensional grid of two nodes,
+  which gives two, less the rows left out. A batch left with fewer than two rows is not handed, and its
+  readable pairs are not compared on a batch. Rows left out can also leave two nodes together only in
+  batches where they read the same $p$; a sweep found that in 3-D alone;
+- at a point, for `evaluate_H` and `evaluate_dp`: the door read alone at each row, as `_sl_value_update`
+  hands it, against the method there.
+
+`evaluate_H` and `__call__` are one function, so a difference beyond roundoff between them is refused.
+`dp` and the control may be finite differences of $H$, as `HamiltonianBase`'s are, and then carry $H$'s
+roundoff divided by the step (measured $2.2 \times 10^{-10}$ between `dp` on a batch and at its rows, on
+values of order $1$). So their doors are refused above the consistency check's noise floor, row by row,
+$10^{4}\,\varepsilon \max(1, |H|) / h$ with $|H|$ at that row (taken as $1$ where it is not finite) and $h$
+the Hamiltonian's `finite_diff_eps`, or the consistency check's step where it has none: about
+$2.2 \times 10^{-6}$ at $|H| \sim 1$ and the default step. A large $H$ at one row loosens no other row; at a
+row, a door that differs from its method by less than its floor is not seen. A door that raises where its
+method reads is refused too, naming the reader that hands it that form, except on a batch when the
+Hamiltonian declares `reads_a_batch` False: that is the declaration holding, and since no solver reads the
+flag its batch paths will raise there at solve time, so that batch is not compared. A disagreement on a
+batch is refused whatever the flag says. `dH_dm` and `evaluate` are not compared, since no library caller
+reads them. A disagreement between or beyond the probes is not seen.
+
+`validate_composed_wall` reads the wall back through `__call__` at the same probes: the walled `__call__`
+minus the unwalled one must be minus the wall's change of the potential, and a gap above the witness
+margin is refused. So a `__call__` written without the potential is refused wherever the wall is nonzero
+on the grid.
+
+*Not yet met (#2901, stage 1c-iii): the network's sources.*
 
 ### What the Fokker–Planck solver receives
 
@@ -777,8 +818,9 @@ Each door states it, in `callable_protocols.py`'s `Slots`, and the check below r
 The library chooses when to loop and when to vectorize, so a body that reads differently comes back as a result and not
 as an error. So a callable's batch read is compared with its read of a few of those points, and a difference, or a raise
 of `TypeError`, `ValueError`, `IndexError`, `ArithmeticError`, `AttributeError` or `KeyError`, is refused: a difference
-names both reads, and a raise names the read that raised. Any other raise reaches you as it is. Two functions make the comparison: `_compare_reads` for a callable at its
-door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `evaluate_dp`.
+names both reads, and a raise names the read that raised. Any other raise reaches you as it is. `_compare_reads` makes the comparison for a callable at
+its door. A Hamiltonian's doors are compared with its methods instead, each in the forms its readers hand it, which
+covers its batch against its points (§ *What construction compares*).
 
 - **Where.** A door with samples when it accepts the callable compares there: `MFGProblem` for its conditions, its
   potential, its `state_penalty` and its Hamiltonian, on its grid. Any other door compares at its first batch, before it
@@ -821,9 +863,9 @@ door, and `refuse_batch_disagreement` for a Hamiltonian's `evaluate_H` and `eval
   Anything else has no entry per point and is refused by name, before it reaches a read by size that would take a
   transposed array in C order. So a body holding an array is refused at a condition, a potential, a solver's `source_term`,
   a region, a measure field, `PotentialCost` and an exact solution's field, and a constant vector is refused at a drift.
-- **A Hamiltonian is compared on wide synthetic $p$ and $m$**, $p$ from $-1.3$ to $2.1$, never on a solve's first values,
-  where a problem takes it, on `evaluate_H` and `evaluate_dp`. `DualHamiltonian` and `NetworkHamiltonian` read one point
-  at a time on every path, and are not compared.
+- **A Hamiltonian's doors are compared with its methods at the consistency check's probes** (§ *What construction
+  compares*), never on a solve's first values, where a problem takes it. A `DualHamiltonian`'s doors raise on a batch
+  (#2315), and its batch is not compared; a `NetworkHamiltonian`'s are compared in #2901's stage 1c-iii.
 - **A closure the library wrote is not compared.** The user's callable it wraps has its own door.
 
 **What this does not catch.**

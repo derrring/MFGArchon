@@ -12,11 +12,10 @@ of another shape.
 - **Each read refuses another shape** (a mutation-verified pin). Per read, a return of p's size in another shape and a
   return of another size; HJB-SL's in 1-D and at d = 2, and its value update at a point too, as the solver's per-node
   loops read it. The message is pinned up to the shape that came back. HJB-GFDM's two Newtons and the weak-form FEM
-  Newton are pinned at d = 1; at d = 2 their wrong forms raised numpy errors at f5e6ffc2, none silent. A form
-  that applies to every batch also reaches the construction check of batch against point reads
-  (`refuse_a_hamiltonian_whose_reads_disagree`), which passes it; a form it refuses (a doubled return, a d = 2
-  transpose) is applied past its batch of 3, so the row is about the read. HJB-SL's reads are called directly: on each
-  step the foot velocity reads `dp` before the value update does.
+  Newton are pinned at d = 1; at d = 2 their wrong forms raised numpy errors at f5e6ffc2, none silent. Construction
+  reads `dp` too, at its probes and through its doors (#2901), so a solver row's fixture reads right until its problem
+  is built and misreads after (`_arm`): the row reaches the solver's own read whatever construction probes. HJB-SL's
+  reads are called directly: on each step the foot velocity reads `dp` before the value update does.
 - **Each read takes the library's dp.** Through the same fixture, bitwise the shipped H's result, so a refusal is the
   form's and not the fixture's. Mutation-verified at four reads (HJB-FDM's and HJB-GFDM's Newton, the weak-form FEM
   Newton, `jacobian_fd`): a read that hands the owner a p other than the one it handed `dp` fails here.
@@ -84,26 +83,31 @@ def _batch(p, t):
     return np.ndim(p) == 2
 
 
-def _batch_past_the_probe(p, t):  # the construction check reads a batch of 3
-    return np.ndim(p) == 2 and np.shape(p)[0] != 3
-
-
 def _point(p, t):
     return np.ndim(p) == 1
 
 
-def _point_off_the_probe_times(p, t):  # construction reads points at t = 0, T/2 and T (#2901)
-    return np.ndim(p) == 1 and min(abs(t - s) for s in (0.0, 0.5 * T, T)) > 1e-12
+class _Armable(SeparableHamiltonian):
+    """A fixture that reads right until it is armed: a class attribute, so a copy the problem makes is armed too."""
+
+    armed = False
 
 
-def _separable(form, where):
-    """A SeparableHamiltonian whose dp is the library's in another form where ``where(p, t)`` holds."""
+def _arm(h):
+    """Arm a fixture once its problem is built, so what it misreads reaches a solver's read and not construction's."""
+    if isinstance(h, _Armable):
+        type(h).armed = True
 
-    class Formed(SeparableHamiltonian):
+
+def _separable(form, where, *, armed):
+    """A SeparableHamiltonian whose dp is the library's in another form where ``where(p, t)`` holds, once armed."""
+
+    class Formed(_Armable):
         def dp(self, t, x, p, m):
             g = super().dp(t=t, x=x, p=p, m=m)
-            return FORMS[form](np.asarray(g)) if where(p, t) else g
+            return FORMS[form](np.asarray(g)) if type(self).armed and where(p, t) else g
 
+    Formed.armed = armed
     return Formed(control_cost=QuadraticControlCost(control_cost=1.0))
 
 
@@ -133,7 +137,9 @@ def _grid_problem(h, dim=1, n=11):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=no_flux_bc(dimension=dim)
     )
-    return MFGProblem(geometry=grid, T=T, Nt=NT, volatility=SIGMA, components=_components(h))
+    problem = MFGProblem(geometry=grid, T=T, Nt=NT, volatility=SIGMA, components=_components(h))
+    _arm(h)
+    return problem
 
 
 X11 = np.linspace(0.0, 1.0, 11)
@@ -197,6 +203,7 @@ def _fem_newton(h):
     problem = MFGProblem(
         geometry=mesh, T=T, Nt=NT, volatility=SIGMA, coupling_coefficient=0.0, components=_components(h)
     )
+    _arm(h)
     solver = HJBFEMSolver(problem, order=1)
     x = np.asarray(solver._disc.dof_coordinates, dtype=float).ravel()
     n = len(x)
@@ -214,6 +221,7 @@ def _built_2d(h):
 
 
 def _jacobian_fd(h):
+    _arm(h)  # no problem is built
     jac = h.jacobian_fd(t=0.1, x=(0.5,), p=np.array([0.7]), m=1.0, dx=0.1)
     return np.array([jac.diagonal, jac.lower, jac.upper], dtype=float)
 
@@ -227,35 +235,35 @@ READS = {
         "evaluate_dp",
         _fdm,
         "m of shape (11,)",
-        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch_past_the_probe, (11, 1), (22,))],
+        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch, (11, 1), (22,))],
     ),
     "HJB-GFDM Newton": (
         "assemble_hjb_jacobian_diag",
         "evaluate_dp",
         _gfdm(),
         "m of shape (11,)",
-        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch_past_the_probe, (11, 1), (22,))],
+        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch, (11, 1), (22,))],
     ),
     "HJB-FDM linearised operator 1-D": (
         "HJBFDMSolver._build_linearized_operator_1d",
         "evaluate_dp",
         _linearised(1),
         "m of shape (11,)",
-        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch_past_the_probe, (11, 1), (22,))],
+        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch, (11, 1), (22,))],
     ),
     "HJB-FDM linearised operator 2-D": (
         "HJBFDMSolver._build_linearized_operator_nd",
         "evaluate_dp",
         _linearised(2),
         "m of shape (36,)",
-        [("transposed", _batch_past_the_probe, (36, 2), (2, 36)), ("double", _batch_past_the_probe, (36, 2), (144,))],
+        [("transposed", _batch, (36, 2), (2, 36)), ("double", _batch, (36, 2), (144,))],
     ),
     "HJB-GFDM joint_socp Newton": (
         "HJBGFDMSolver._compute_hjb_jacobian_sparse",
         "dp",
         _gfdm(monotonicity_scheme="joint_socp", monotonicity_application="precompute"),
         "m of shape ()",
-        [("lead", _point_off_the_probe_times, (1,), (1, 1)), ("double", _point_off_the_probe_times, (1,), (2,))],
+        [("lead", _point, (1,), (1, 1)), ("double", _point, (1,), (2,))],
     ),
     "HJB-SL foot velocity 1-D": (
         "HJBSemiLagrangianSolver._characteristic_foot_velocity",
@@ -269,7 +277,7 @@ READS = {
         "evaluate_dp",
         _semi_lagrangian("foot", 2),
         "m of shape (7,)",
-        [("transposed", _batch_past_the_probe, (7, 2), (2, 7)), ("double", _batch_past_the_probe, (7, 2), (28,))],
+        [("transposed", _batch, (7, 2), (2, 7)), ("double", _batch, (7, 2), (28,))],
     ),
     "HJB-SL value update 1-D": (
         "HJBSemiLagrangianSolver._sl_value_update",
@@ -283,21 +291,21 @@ READS = {
         "evaluate_dp",
         _semi_lagrangian("value at a point", 1),
         "m of shape ()",
-        [("lead", _point_off_the_probe_times, (1,), (1, 1)), ("double", _point_off_the_probe_times, (1,), (2,))],
+        [("lead", _point, (1,), (1, 1)), ("double", _point, (1,), (2,))],
     ),
     "HJB-SL value update 2-D": (
         "HJBSemiLagrangianSolver._sl_value_update",
         "evaluate_dp",
         _semi_lagrangian("value", 2),
         "m of shape (7,)",
-        [("transposed", _batch_past_the_probe, (7, 2), (2, 7)), ("double", _batch_past_the_probe, (7, 2), (28,))],
+        [("transposed", _batch, (7, 2), (2, 7)), ("double", _batch, (7, 2), (28,))],
     ),
     "weak-form FEM Newton": (
         "WeakFormHJBSolver._solve_timestep_newton",
         "dp",
         _fem_newton,
         "m of shape (11,)",
-        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch_past_the_probe, (11, 1), (22,))],
+        [("squeezed", _batch, (11, 1), (11,)), ("double", _batch, (11, 1), (22,))],
     ),
     "construction, a solver that reads no point": (
         "validate_hamiltonian_consistency",
@@ -335,7 +343,7 @@ def test_each_read_refuses_a_dp_of_another_shape(read, form):
         rf"{re.escape(m_clause)}, and returned shape {re.escape(str(got_shape))}\."
     )
     with pytest.raises(ValidationError if at_construction else ValueError, match=message):
-        _quiet(lambda: run(_separable(form, where)))
+        _quiet(lambda: run(_separable(form, where, armed=at_construction)))
 
 
 @pytest.mark.parametrize("read", [read for read in READS if not read.startswith("construction")])
@@ -343,7 +351,7 @@ def test_each_read_takes_the_librarys_dp(read):
     """The dp every reader must accept, through the same fixture, gives the shipped H's result bitwise: the refusal
     above is the form's, not the fixture's."""
     run = READS[read][2]
-    formed = _quiet(lambda: run(_separable("library", _batch)))
+    formed = _quiet(lambda: run(_separable("library", _batch, armed=False)))
     shipped = _quiet(lambda: run(_shipped()))
     formed, shipped = (np.asarray(r[0] if isinstance(r, tuple) else r) for r in (formed, shipped))
     assert formed.shape == shipped.shape

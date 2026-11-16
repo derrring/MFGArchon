@@ -791,11 +791,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # A soft wall is a POTENTIAL, so it is composed into H here rather than handed to a
         # solver as a source (#2002). Done after _initialize_functions because that is where the
-        # Hamiltonian becomes available.
+        # Hamiltonian becomes available. The composed H is what the solvers read, so it is checked
+        # after the wall, against the H before it (#2901).
+        unwalled = None
         if self.state_penalty is not None:
-            self._compose_state_penalty_into_potential()
+            unwalled = self._compose_state_penalty_into_potential()
 
-        self._refuse_a_hamiltonian_whose_reads_disagree()
+        self._refuse_a_hamiltonian_whose_reads_disagree(unwalled)
 
         # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
         # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
@@ -1846,20 +1848,38 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # - _u_final(): Removed - must be provided via MFGComponents.u_terminal
     # - _m_initial(): Removed - must be provided via MFGComponents.m_initial
 
-    def _refuse_a_hamiltonian_whose_reads_disagree(self) -> None:
-        """Compare the Hamiltonian's batch and point reads where it first meets this problem's points (#2875). A graph's
-        node plays x, and has no coordinates to read."""
+    def _refuse_a_hamiltonian_whose_reads_disagree(self, unwalled: Any = None) -> None:
+        """Check the Hamiltonian the solvers read, after the soft wall is composed, where it first meets this problem's
+        points, at 0, T/2 and T: its doors against its methods (`refuse_a_hamiltonian_whose_reads_disagree`), and, given
+        ``unwalled``, the H before the wall, the wall read back through its ``__call__`` (`validate_composed_wall`)
+        (#2875, #2901). A graph's node plays x, and has no coordinates to read."""
+        import warnings
+
         from mfgarchon.core.hamiltonian import HamiltonianBase, refuse_a_hamiltonian_whose_reads_disagree
+        from mfgarchon.utils.validation import ValidationError
+        from mfgarchon.utils.validation.functions import validate_composed_wall
 
         hamiltonian = getattr(self.components, "_hamiltonian_class", None) if self.components is not None else None
         if not isinstance(hamiltonian, HamiltonianBase) or self.geometry is None:
             return
         grid = self.geometry.get_spatial_grid()
-        if isinstance(grid, np.ndarray) and grid.ndim == 2:
-            refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid)
+        if not (isinstance(grid, np.ndarray) and grid.ndim == 2):
+            return
+        T = float(self.tSpace[-1])
+        times = (0.0, 0.5 * T, T)
+        # The doors first: their batch reads are the solvers' own, so a potential or a state_penalty that misreads a batch
+        # is refused there, by its own door's comparison, before the wall check would read it on a batch (#2901).
+        refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid, times, unwalled)
+        if unwalled is not None:
+            result = validate_composed_wall(hamiltonian, unwalled, self.geometry, times)
+            if not result.is_valid:
+                raise ValidationError(result)
+            for issue in result.warnings:
+                warnings.warn(f"{issue.message} (#2901).", UserWarning, stacklevel=3)
 
-    def _compose_state_penalty_into_potential(self) -> None:
-        """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign.
+    def _compose_state_penalty_into_potential(self) -> Any:
+        """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign, and return the Hamiltonian it
+        was folded into, unwalled, for the check that reads the wall back (#2901).
 
         ``state_penalty`` is COST-signed: positive where the region is expensive. So is the
         Hamiltonian's ``potential`` (#2375 ruling 3), so the composition **adds**::
@@ -1956,6 +1976,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"Lagrangian's own running cost instead -- there it is COST-signed and enters "
                 f"with a plus, the opposite of the Hamiltonian's V."
             )
+        return hamiltonian
 
     def _initialize_functions(self) -> None:
         """Initialize the initial density and the terminal value function.

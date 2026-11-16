@@ -117,7 +117,7 @@ def test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path(case):
     assert np.all(np.isfinite(reference))
     np.testing.assert_allclose(_solve(_H(row_wise), analytic_jacobian=False), reference, rtol=0, atol=1e-10)
 
-    with pytest.raises(ValueError, match="evaluate_H, at 3 samples"):
+    with pytest.raises(ValueError, match=r"evaluate_H at t=0, a batch of \d+ rows, .* reads differently evaluate_H on"):
         _solve(_H(point_only))
 
 
@@ -128,12 +128,13 @@ def test_nan_matches_nan_and_an_infinite_value_does_not_make_the_check_vacuous()
         with np.errstate(invalid="ignore", divide="ignore"):
             refuse_a_hamiltonian_whose_reads_disagree(_H(formula, dp), grid.get_spatial_grid())
 
-    # Row-wise and NaN for |p| > 1, which two of the probe's three momenta are.
+    # Row-wise and NaN for |p| > 1, which one of the probes' three momenta, -1.3691, is.
     check(lambda t, x, p, m: 1.0 - np.sqrt(1.0 - np.sum(np.asarray(p) ** 2, axis=-1)) + 0.3 * np.asarray(m))
 
     # Point-only in p and infinite at a probe node, with a row-wise dH/dp, so that only the comparison of H
     # itself can refuse it.
-    with pytest.raises(ValueError, match="evaluate_H, at 3 samples, reads differently"):
+    # The infinite node is a row: the batch read holds inf, and the finite rows still disagree.
+    with pytest.raises(ValueError, match=r"evaluate_H at t=0, a batch of \d+ rows, .* on the batch \(\[[^]]*\binf\b"):
         check(
             lambda t, x, p, m: 0.5 * np.asarray(p)[0] ** 2 + 1.0 / (np.asarray(x[0]) - X[spread_samples(NX, 3)[0]]),
             dp=lambda t, x, p, m: np.asarray(p, dtype=float),

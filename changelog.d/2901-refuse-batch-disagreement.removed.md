@@ -1,0 +1,1 @@
+- **`refuse_batch_disagreement` is removed** (#2901, stage 1c-ii). Its one caller, `refuse_a_hamiltonian_whose_reads_disagree`, now reads every source through the checks' one reader and compares what it read with `_refuse_unless_equal`. Its `t=` parameter is replaced by `times=`, the times it compares at.
