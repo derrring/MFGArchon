@@ -12,5 +12,6 @@
     `mfgarchon.utils.pde_coefficients`.
 - **`ConvolutionCouplingOperator.from_problem` is removed.** `InteractionCost(kernel).bind(problem)` builds the same
   convolution on a problem's grid, and its energy applies it; a convolution on given points or a regular grid is
-  `ConvolutionCouplingOperator(kernel, ...)`, as before. Its two refusals are now `InteractionCost`'s, for the same
-  inputs: a periodic axis, and a `CartesianGrid` that is not a `TensorProductGrid`.
+  `ConvolutionCouplingOperator(kernel, ...)`, as before. Every input it refused is still refused, through
+  `InteractionCost(kernel).bind(problem)`: a periodic axis and a `CartesianGrid` that is not a `TensorProductGrid` by
+  `InteractionCost`, and a geometry that is not a `CartesianGrid` by `GridPointMeasure`, which reads the problem first.

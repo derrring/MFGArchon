@@ -129,10 +129,11 @@ class InteractionCost(_SummableCost):
             if not isinstance(geometry, TensorProductGrid):
                 raise TypeError(
                     f"InteractionCost: the problem's geometry is a {type(geometry).__name__}, not a "
-                    "TensorProductGrid, whose shape, spacing and coordinates the grid path reads. To bind on these "
-                    "points, give them with their quadrature weights as a PointMeasure (points, weights, "
-                    "domain_measure) and bind there: bind_on_measure(cost, measure), from "
-                    "mfgarchon.operators.interaction, builds the operator on those points with those weights (#1642)."
+                    "TensorProductGrid, whose shape, spacing and coordinates the grid path reads. Points with their "
+                    "quadrature weights can be bound as a PointMeasure (points, weights, domain_measure) through "
+                    "bind_on_measure(cost, measure), from mfgarchon.operators.interaction: run on a 1-D grid's points "
+                    "with use_fft unset, it bound the direct quadrature on those points and weights. It refuses "
+                    "use_fft=True, and its quadrature is Euclidean, so it does not wrap a periodic axis (#2725, #1642)."
                 )
             shape = tuple(geometry.get_grid_shape())
             periodic = periodic_faces(problem.get_boundary_conditions(), len(shape), geometry)

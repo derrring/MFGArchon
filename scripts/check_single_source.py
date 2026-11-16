@@ -17,7 +17,8 @@ were 18 and 18.
 
 So each entry names a `sentinel_file` and a `sentinel_symbol` -- a `def` inside it whose body
 MUST contain a match. Naming the symbol rather than only the file is what makes the anchor
-checkable: the second review found that entry 1's sole match in `pde_coefficients.py` sits in
+checkable: the second review found that entry 1's sole match in its sentinel file, then
+`pde_coefficients.py` and since #2938's stage 2d `utils/numerical/volatility.py`, sits in
 `diffusion_from_volatility_torch`, not in `diffusion_from_volatility`, which its `owner` field
 names. The primary owner's body computes on a local `arr` (`0.5 * arr**2`), invisible to any
 sigma-anchored pattern, so a file-level sentinel was being held up by a duplicate -- and
