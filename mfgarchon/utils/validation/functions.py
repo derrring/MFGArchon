@@ -240,9 +240,9 @@ def _has_a_grid_probe(geometry: GeometryProtocol) -> bool:
     reads this first and returns before reading, the door check's caller in ``MFGProblem`` reads it before handing
     points, and `_get_sample_inputs` refuses to build a grid probe where it is false.
 
-    Every other geometry type keeps it. The solvers that read a problem on a grid, an implicit domain or a mesh hand x a
-    point's coordinates or a batch of them. On a point cloud and on a maze (``GeometryType.MAZE``) the one solver that
-    accepts the problem, the particle FP, fails before it reads H (the stage's census, d1b3879f).
+    Every other geometry type keeps it. The solvers the stage's census saw reading a problem on a grid, an implicit
+    domain, a mesh or a maze (``GeometryType.MAZE``) hand x a point's coordinates or a batch of them; on a maze that is
+    the particle FP, which reads the control at its particles' coordinates. On a point cloud it saw none read H.
 
     Nothing compares a network Hamiltonian's sources. With the built-in control, ``__call__``, the rates
     ``optimal_control`` returns and ``source_term`` come from one formula. With a custom ``hamiltonian_func``, both
