@@ -1852,12 +1852,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """Check the Hamiltonian the solvers read, after the soft wall is composed, where it first meets this problem's
         points, at 0, T/2 and T: its doors against its methods (`refuse_a_hamiltonian_whose_reads_disagree`), and, given
         ``unwalled``, the H before the wall, the wall read back through its ``__call__`` (`validate_composed_wall`)
-        (#2875, #2901). A graph's node plays x, and has no coordinates to read."""
+        (#2875, #2901). On a network geometry neither is read: no grid probe applies there (`_has_a_grid_probe`)."""
         import warnings
 
         from mfgarchon.core.hamiltonian import HamiltonianBase, refuse_a_hamiltonian_whose_reads_disagree
         from mfgarchon.utils.validation import ValidationError
-        from mfgarchon.utils.validation.functions import validate_composed_wall
+        from mfgarchon.utils.validation.functions import _has_a_grid_probe, validate_composed_wall
 
         hamiltonian = getattr(self.components, "_hamiltonian_class", None) if self.components is not None else None
         if not isinstance(hamiltonian, HamiltonianBase) or self.geometry is None:
@@ -1869,7 +1869,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         times = (0.0, 0.5 * T, T)
         # The doors first: their batch reads are the solvers' own, so a potential or a state_penalty that misreads a batch
         # is refused there, by its own door's comparison, before the wall check would read it on a batch (#2901).
-        refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid, times, unwalled)
+        if _has_a_grid_probe(self.geometry):
+            refuse_a_hamiltonian_whose_reads_disagree(hamiltonian, grid, times, unwalled)
         if unwalled is not None:
             result = validate_composed_wall(hamiltonian, unwalled, self.geometry, times)
             if not result.is_valid:

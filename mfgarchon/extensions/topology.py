@@ -418,8 +418,8 @@ class NetworkMFGProblem(MFGProblem):
         self.network_geometry = network_geometry
         self.network_data = network_geometry.network_data
 
-        # Issue #910: Create NetworkHamiltonian for parent class validation.
-        # Uses the real network Hamiltonian instead of a dummy placeholder.
+        # Issue #910: the problem's NetworkHamiltonian, which the parent wires as the problem's Hamiltonian.
+        # Construction's checks read none of it on a network geometry (#2901, stage 1c-iii).
         num_nodes = network_geometry.num_nodes
         net_components = components or NetworkMFGComponents()
         network_hamiltonian = NetworkHamiltonian(

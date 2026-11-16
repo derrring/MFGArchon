@@ -229,16 +229,53 @@ def _read_source(
     return np.broadcast_to(floats.reshape(-1), (wanted,)).copy() if rows else floats.reshape(())
 
 
+def _has_a_grid_probe(geometry: GeometryProtocol) -> bool:
+    """Whether a construction check's grid probe applies on ``geometry`` (#2901, stage 1c-iii).
+
+    The grid probe (`_get_sample_inputs`) hands a Hamiltonian's sources x as one point's coordinates, p of the
+    coordinate dimension and m one number. A check reads a source in the forms its readers hand it, and the geometry's
+    declared type, ``geometry_type``, which ``MFGProblem`` reads to choose its construction, decides which solvers
+    those are. On a geometry that declares ``GeometryType.NETWORK`` they are NetworkHJBSolver, policy iteration and the
+    network FP, which accept only a network problem and hand x a node, and p and m one entry per node. So no grid probe
+    applies there, whatever the source is or how it is bound. Each check that takes a geometry reads this first and
+    returns before reading, the door check's caller in ``MFGProblem`` reads it before handing points, and
+    `_get_sample_inputs` refuses to build a grid probe where it is false. The network HJB solvers accept a problem by
+    its node data rather than its declared type, so a network geometry that declares another type is probed, and
+    refused there (#2972).
+
+    Every other geometry type keeps it. The solvers the stage's census saw reading a problem on a grid, an implicit
+    domain, a mesh or a maze (``GeometryType.MAZE``) hand x a point's coordinates or a batch of them; on a maze that is
+    the particle FP, which reads the control at its particles' coordinates. On a point cloud it saw none read H.
+
+    Nothing compares a network Hamiltonian's sources. With the built-in control, ``__call__``, the rates
+    ``optimal_control`` returns and ``source_term`` come from one formula. With a custom ``hamiltonian_func``, both
+    readers of the rates, ``FPNetworkSolver`` and ``NetworkPolicyIterationHJBSolver``, refuse it (#1545). A Hamiltonian
+    handed to ``MFGProblem`` on a network through a model or its components, a ``NetworkHamiltonian`` subclass among
+    them, makes a problem no network solver accepts: the two HJB solvers refuse it by name, and ``FPNetworkSolver``
+    raises ``AttributeError`` (#2970). No network solver reads ``dm`` or ``dp``.
+    """
+    from mfgarchon.geometry import GeometryType
+
+    return geometry.geometry_type is not GeometryType.NETWORK
+
+
 def _get_sample_inputs(
     geometry: GeometryProtocol,
     location: str,
 ) -> tuple[np.ndarray, np.ndarray, float, int, ValidationResult | None]:
     """Extract a sample point (x, p, m) from geometry for validation.
 
+    A geometry with no grid probe (`_has_a_grid_probe`) gets none: a caller that asks for one has not read the owner.
+
     Returns:
         (x_sample, p_sample, m_sample, dimension, error_result)
         If error_result is not None, the caller should return it immediately.
     """
+    if not _has_a_grid_probe(geometry):
+        raise AssertionError(
+            f"{location}: a grid probe was asked of a {type(geometry).__name__}, which has none; read "
+            f"_has_a_grid_probe before probing (#2901)"
+        )
     try:
         grid = geometry.get_spatial_grid()
         if isinstance(grid, np.ndarray) and grid.ndim == 2:
@@ -344,6 +381,8 @@ def validate_hamiltonian(
     - Returns float or array
     - No NaN/Inf in output
 
+    On a network geometry nothing is read here: no grid probe applies there (`_has_a_grid_probe`).
+
     Args:
         hamiltonian: HamiltonianBase instance or callable
         geometry: Geometry for sample point
@@ -352,6 +391,8 @@ def validate_hamiltonian(
         ValidationResult
     """
     result = ValidationResult()
+    if not _has_a_grid_probe(geometry):
+        return result
 
     x_sample, p_sample, m_sample, _dim, err = _get_sample_inputs(geometry, "hamiltonian")
     if err is not None:
@@ -409,6 +450,8 @@ def validate_hamiltonian_derivative(
     The derivative should have signature f(t, x, p, m) matching
     HamiltonianBase.dm() / HamiltonianBase.dp().
 
+    On a network geometry nothing is read here: no grid probe applies there (`_has_a_grid_probe`).
+
     Args:
         derivative_func: Derivative function (bound method or callable)
         geometry: Geometry for sample point
@@ -418,6 +461,8 @@ def validate_hamiltonian_derivative(
         ValidationResult
     """
     result = ValidationResult()
+    if not _has_a_grid_probe(geometry):
+        return result
 
     x_sample, p_sample, m_sample, _dim, err = _get_sample_inputs(geometry, name)
     if err is not None:
@@ -788,17 +833,15 @@ def validate_hamiltonian_consistency(
             with the same witness rule, so a non-smooth cost is compared only where H is smooth at the probe (#2901).
         times: The probes' times. A problem hands 0, T/2 and T (#2901).
 
-    A ``NetworkHamiltonian`` is not probed here: its x is a node and its p the costate at every node, so a grid probe
-    reads nothing it defines. Its sources are compared on its own probes in #2901's stage 1c-iii.
+    On a network geometry nothing is probed here, and a network Hamiltonian's sources are compared nowhere
+    (`_has_a_grid_probe` says why).
 
     Returns:
         ValidationResult; is_valid is False when a witness was exhibited, when H or a method cannot be evaluated at any
         probe, and when a source returns what the owner of its shape refuses.
     """
-    from mfgarchon.extensions.topology import NetworkHamiltonian
-
     result = ValidationResult()
-    if isinstance(hamiltonian, NetworkHamiltonian):
+    if not _has_a_grid_probe(geometry):
         return result
 
     x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "hamiltonian")
@@ -986,8 +1029,12 @@ def validate_composed_wall(
 
     The composed H's doors are compared with its methods at the same nodes and times by
     `refuse_a_hamiltonian_whose_reads_disagree`. Every read goes through `_read_source`: a read that cannot be evaluated
-    is warned about, once, and a return the owner of its shape refuses is an error."""
+    is warned about, once, and a return the owner of its shape refuses is an error.
+
+    On a network geometry nothing is read here: no grid probe applies there (`_has_a_grid_probe`)."""
     result = ValidationResult()
+    if not _has_a_grid_probe(geometry):
+        return result
     x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "state_penalty")
     if err is not None:
         return err

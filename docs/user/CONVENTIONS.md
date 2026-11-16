@@ -344,7 +344,7 @@ $-\partial H/\partial p$ for $|p| \le 2$ and clipped beyond passes, since no pro
 read through one reader, and what it returns through the owner of its shape (above). A source that
 cannot be evaluated at a probe is warned about and skipped there. $H$, `dp` or the control that cannot
 be evaluated at any probe at which it could be read is refused; `dm`, which no grid solver reads, is
-warned about. A network Hamiltonian is not probed here.
+warned about. On a network geometry nothing is probed here (below).
 
 The solvers read the Hamiltonian after the soft wall is composed into its potential, and they read it
 through its doors. HJB-SL's `_sl_value_update` hands `evaluate_H` and `evaluate_dp` one point, the HJB
@@ -385,7 +385,15 @@ minus the unwalled one must be minus the wall's change of the potential, and a g
 margin is refused. So a `__call__` written without the potential is refused wherever the wall is nonzero
 on the grid.
 
-*Not yet met (#2901, stage 1c-iii): the network's sources.*
+On a geometry whose declared type, `geometry_type`, is `NETWORK`, nothing in this section is read. The network solvers
+hand $x$ a node, and $p$ and $m$ one entry per node, so a grid probe hands a form none of them hands, whatever the
+Hamiltonian is or how its methods are bound. A network Hamiltonian's sources are compared nowhere, and need no
+comparison. With the built-in control, `__call__`, the rates `optimal_control` returns and `source_term` come from one
+formula. With a custom `hamiltonian_func`, `__call__` reads that function, and both readers of the rates,
+`FPNetworkSolver` and `NetworkPolicyIterationHJBSolver`, refuse it (#1545), so the two never meet in a solve. A
+Hamiltonian handed to `MFGProblem` on a network through a model or its components, a `NetworkHamiltonian` subclass
+among them, makes a problem no network solver accepts (#2970). No network solver reads `dm` or `dp`. Every other
+declared type keeps the probes (#2901, stage 1c-iii).
 
 ### What the Fokker–Planck solver receives
 
@@ -865,7 +873,7 @@ covers its batch against its points (§ *What construction compares*).
   a region, a measure field, `PotentialCost` and an exact solution's field, and a constant vector is refused at a drift.
 - **A Hamiltonian's doors are compared with its methods at the consistency check's probes** (§ *What construction
   compares*), never on a solve's first values, where a problem takes it. A `DualHamiltonian`'s doors raise on a batch
-  (#2315), and its batch is not compared; a `NetworkHamiltonian`'s are compared in #2901's stage 1c-iii.
+  (#2315), and its batch is not compared; on a network geometry no door is read (§ *What construction compares*).
 - **A closure the library wrote is not compared.** The user's callable it wraps has its own door.
 
 **What this does not catch.**

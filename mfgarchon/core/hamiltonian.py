@@ -3437,12 +3437,11 @@ def refuse_a_hamiltonian_whose_reads_disagree(
     form, except on a batch when the Hamiltonian declares ``reads_a_batch`` False: that is the declaration holding,
     and the batch paths will raise on it at solve time, so the batch is not compared. A batch read that returns a row
     disagreeing with its method is refused whatever the flag says, since no solver reads it. Rows at which the method
-    cannot be read are warned about once per door; the consistency check reports the method. A ``NetworkHamiltonian`` is not read here: its x is a node, and the probe nodes
-    of a grid mean nothing to it (#2901's stage 1c-iii compares its sources).
+    cannot be read are warned about once per door; the consistency check reports the method. On a network geometry
+    its caller does not call it: no grid probe applies there (`_has_a_grid_probe`).
     """
     import warnings
 
-    from mfgarchon.extensions.topology import NetworkHamiltonian
     from mfgarchon.utils.validation.functions import (
         _FD_STEP,
         _WITNESS_NOISE_SAFETY,
@@ -3454,8 +3453,6 @@ def refuse_a_hamiltonian_whose_reads_disagree(
         _read_source,
     )
 
-    if isinstance(hamiltonian, NetworkHamiltonian):
-        return
     nodes = np.asarray(grid, dtype=float).reshape(np.shape(grid)[0], -1)
     probes = list(_consistency_probes(nodes.shape[1]))
     name = type(hamiltonian).__name__
