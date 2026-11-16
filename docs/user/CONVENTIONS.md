@@ -385,7 +385,12 @@ minus the unwalled one must be minus the wall's change of the potential, and a g
 margin is refused. So a `__call__` written without the potential is refused wherever the wall is nonzero
 on the grid.
 
-*Not yet met (#2901, stage 1c-iii): the network's sources.*
+A `NetworkHamiltonian` is not probed: its $x$ is a node and its $p$ the costate at every node, so a grid probe hands it a
+form no network solver hands. Its sources are compared nowhere, and need no comparison. With the built-in control,
+`__call__`, the rates `optimal_control` returns and `source_term` come from one formula. With a custom
+`hamiltonian_func`, `__call__` reads that function, and both readers of the rates, `FPNetworkSolver` and
+`NetworkPolicyIterationHJBSolver`, refuse it (#1545), so the two never meet in a solve. No solver reads its `dm` or `dp`
+(#2901, stage 1c-iii).
 
 ### What the Fokker–Planck solver receives
 
@@ -865,7 +870,7 @@ covers its batch against its points (§ *What construction compares*).
   a region, a measure field, `PotentialCost` and an exact solution's field, and a constant vector is refused at a drift.
 - **A Hamiltonian's doors are compared with its methods at the consistency check's probes** (§ *What construction
   compares*), never on a solve's first values, where a problem takes it. A `DualHamiltonian`'s doors raise on a batch
-  (#2315), and its batch is not compared; a `NetworkHamiltonian`'s are compared in #2901's stage 1c-iii.
+  (#2315), and its batch is not compared; a `NetworkHamiltonian`'s are not read (§ *What construction compares*).
 - **A closure the library wrote is not compared.** The user's callable it wraps has its own door.
 
 **What this does not catch.**

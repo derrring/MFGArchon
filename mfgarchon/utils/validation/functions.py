@@ -329,6 +329,30 @@ def validate_custom_functions(
     return ValidationResult.combine(results)
 
 
+def _grid_probes_apply(source: Any) -> bool:
+    """Whether the construction checks' grid probes apply to a Hamiltonian source (#2901, stage 1c-iii).
+
+    They do not for a ``NetworkHamiltonian``, or a method bound to one. Its x is a node and its p the costate at every
+    node, so a grid probe hands it a form no network solver hands: x a point's coordinates, which it casts to a node,
+    p of the coordinate dimension and m one number. Nor is a network Hamiltonian compared some other way, and it needs
+    no comparison. With the built-in control, ``__call__``, the rates ``optimal_control`` returns and ``source_term``
+    come from one formula. With a custom ``hamiltonian_func``, ``__call__`` reads that function, and both readers of
+    the rates, ``FPNetworkSolver`` and ``NetworkPolicyIterationHJBSolver``, refuse it (#1545), so the two never meet
+    in a solve. No solver reads its ``dm`` or ``dp`` (the stage's census, at d1b3879f).
+
+    Every check that would read a network Hamiltonian on a grid probe reads this, and returns before reading. A network
+    method that is no longer bound, such as a ``functools.partial`` of ``h.dm`` handed to
+    ``validate_hamiltonian_derivative`` directly, is not recognised and is read on the grid probe; construction hands
+    the bound method.
+    """
+    import inspect
+
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+
+    owner = source.__self__ if inspect.ismethod(source) else source
+    return not isinstance(owner, NetworkHamiltonian)
+
+
 def validate_hamiltonian(
     hamiltonian: Any,
     geometry: GeometryProtocol,
@@ -344,6 +368,9 @@ def validate_hamiltonian(
     - Returns float or array
     - No NaN/Inf in output
 
+    A ``NetworkHamiltonian`` is not read here: the grid probe hands it a form no network solver hands
+    (`_grid_probes_apply`).
+
     Args:
         hamiltonian: HamiltonianBase instance or callable
         geometry: Geometry for sample point
@@ -352,6 +379,8 @@ def validate_hamiltonian(
         ValidationResult
     """
     result = ValidationResult()
+    if not _grid_probes_apply(hamiltonian):
+        return result
 
     x_sample, p_sample, m_sample, _dim, err = _get_sample_inputs(geometry, "hamiltonian")
     if err is not None:
@@ -409,6 +438,9 @@ def validate_hamiltonian_derivative(
     The derivative should have signature f(t, x, p, m) matching
     HamiltonianBase.dm() / HamiltonianBase.dp().
 
+    A method bound to a ``NetworkHamiltonian`` is not read here: the grid probe hands it a form no network solver
+    hands (`_grid_probes_apply`).
+
     Args:
         derivative_func: Derivative function (bound method or callable)
         geometry: Geometry for sample point
@@ -418,6 +450,8 @@ def validate_hamiltonian_derivative(
         ValidationResult
     """
     result = ValidationResult()
+    if not _grid_probes_apply(derivative_func):
+        return result
 
     x_sample, p_sample, m_sample, _dim, err = _get_sample_inputs(geometry, name)
     if err is not None:
@@ -788,17 +822,14 @@ def validate_hamiltonian_consistency(
             with the same witness rule, so a non-smooth cost is compared only where H is smooth at the probe (#2901).
         times: The probes' times. A problem hands 0, T/2 and T (#2901).
 
-    A ``NetworkHamiltonian`` is not probed here: its x is a node and its p the costate at every node, so a grid probe
-    reads nothing it defines. Its sources are compared on its own probes in #2901's stage 1c-iii.
+    A ``NetworkHamiltonian`` is not probed here, and its sources are compared nowhere (`_grid_probes_apply` says why).
 
     Returns:
         ValidationResult; is_valid is False when a witness was exhibited, when H or a method cannot be evaluated at any
         probe, and when a source returns what the owner of its shape refuses.
     """
-    from mfgarchon.extensions.topology import NetworkHamiltonian
-
     result = ValidationResult()
-    if isinstance(hamiltonian, NetworkHamiltonian):
+    if not _grid_probes_apply(hamiltonian):
         return result
 
     x_sample, _p_sample, _m_sample, dimension, err = _get_sample_inputs(geometry, "hamiltonian")
