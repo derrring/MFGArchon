@@ -392,9 +392,10 @@ def _refuse_a_non_finite_node_source(
     """`_refuse_a_non_finite_source` on a network (#2974). The network HJB solvers read a held source in the node form,
     an integer node: ``NetworkHJBSolver`` at the stages of its ODE and policy iteration at t_0 ... t_{Nt-1}, so the one
     grid time both read is t_0. A source that also takes p or m is handed the arrays the caller gives the solver, not
-    the problem's, and none is held (``NetworkHamiltonian.NOT_HELD``). A node a ``NodeBC`` governs has its value
-    imposed and is not read. A ``NodeBC``'s callable value is read at its nodes at the HJB side's times, which policy
-    iteration hands it, through `_read_constant` as the graph applicator reads it."""
+    the problem's, and none is held (``NetworkHamiltonian.NOT_HELD``). A held source is read at every node, a node a
+    ``NodeBC`` governs among them: policy iteration hands it there too, and a non-finite value there stops its
+    convergence. A ``NodeBC``'s callable value is read at its nodes at the HJB side's times, which policy iteration
+    hands it, through `_read_constant` as the graph applicator reads it."""
     from mfgarchon.core.hamiltonian import held_sources
     from mfgarchon.geometry.boundary.types import _read_constant
     from mfgarchon.types.callable_protocols import bound_attribute, spread_samples
@@ -408,25 +409,23 @@ def _refuse_a_non_finite_node_source(
         conditions = problem.get_boundary_conditions()
     except _EVALUATION_ERRORS:
         conditions = None
-    governed: set[int] = set()
     callables: list[tuple[Any, list[int]]] = []
     for condition in tuple(getattr(conditions, "node_bcs", ()) or ()):
         try:
             nodes = [int(n) for n in condition.get_nodes(count)]
         except _EVALUATION_ERRORS:
             continue
-        governed.update(nodes)
         # A CUSTOM condition takes its rule apart and a value of 0 (`NodeBC`), so a callable value is a value's.
         if callable(condition.value):
             callables.append((condition, nodes))
-    free = sampled(sorted(set(range(count)) - governed))
+    nodes_read = sampled(list(range(count)))
     for operator in operators:
         for parameter, (attr, slots) in held_sources(operator).items():
             if "node" not in slots.order or not first_read(getattr(operator, attr, None), slots):
                 continue
             bound = bound_attribute(operator, attr, slots, role=parameter)
             name = f"{type(operator).__name__}'s {parameter}"
-            for node in free:
+            for node in nodes_read:
                 neighbors = operator.network_data.get_neighbors(node)
                 read(
                     name,
@@ -474,7 +473,7 @@ def _refuse_a_non_finite_source(problem: Any) -> None:
       ``m_initial`` at the HJB side's times, ``terminal_coupling`` at T, and ``nonlocal_operator`` applied to
       ``u_terminal``;
     - on a network (`_refuse_a_non_finite_node_source`), a held source in the node form at t_0, the one grid time both
-      network HJB solvers read, at nodes no ``NodeBC`` governs, and a ``NodeBC``'s callable value at its nodes at the
+      network HJB solvers read, at sampled nodes, and a ``NodeBC``'s callable value at its nodes at the
       HJB side's times.
 
     A scalar its own object refuses where it is built is not read again: a control cost's ``lambda_``, a bounded

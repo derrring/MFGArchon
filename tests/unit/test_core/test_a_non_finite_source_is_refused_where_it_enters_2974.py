@@ -354,6 +354,18 @@ def test_a_non_finite_source_on_a_network_is_refused_by_name(given, names):
         _network_problem(**given)
 
 
+def test_a_node_source_is_read_at_a_node_a_node_bc_governs():
+    """A Dirichlet NodeBC does not keep its node's potential out of the solve: policy iteration hands the potential there
+    at every step, and a NaN there stops it converging. So the owner reads that node too, by name."""
+
+    def potential(t, node):
+        return NAN if int(node) == 8 else 0.0
+
+    exit_bc = NodeBC(nodes=[8], value=0.5, name="exit")
+    with pytest.raises(ValidationError, match=_read("NetworkHamiltonian's node_potential_func")):
+        _network_problem(node_bcs=[exit_bc], node_potential_func=potential)
+
+
 def test_a_node_bcs_callable_value_is_refused_by_name():
     """Read at its nodes at the HJB side's times, which policy iteration hands it, as the graph applicator reads it."""
     exit_bc = NodeBC(nodes=[0], value=lambda t, node: NAN, name="exit")

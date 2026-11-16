@@ -422,8 +422,7 @@ reads inside them:
 - `coupling_cost` as its derivative at `m_initial`, `terminal_coupling` likewise at $T$, and `nonlocal_operator`
   applied to `u_terminal`;
 - **on a network**:
-  - a `NetworkHamiltonian`'s `node_potential_func` at $t_0$, the one grid time both network HJB solvers read, at nodes
-    no `NodeBC` governs;
+  - a `NetworkHamiltonian`'s `node_potential_func` at $t_0$, the one grid time both network HJB solvers read;
   - a `NodeBC`'s callable value at its nodes, at the HJB side's times, which policy iteration hands it.
 
 A scalar held by an object that exists before any problem is refused where that object is built:
