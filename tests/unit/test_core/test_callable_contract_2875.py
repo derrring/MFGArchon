@@ -20,6 +20,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.alg.numerical.pde_solvers.implicit_heat import ImplicitHeatSolver
+from mfgarchon.core.coupling_costs import PotentialCost
 from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
     DualHamiltonian,
@@ -37,7 +38,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.nitsche_1d import Nitsche1DPoissonSolver
 from mfgarchon.geometry.implicit import ImplicitDomain
 from mfgarchon.geometry.level_set.core import LevelSetEvolver
-from mfgarchon.operators.interaction import PotentialCost, PotentialEnergy
+from mfgarchon.operators.interaction import PotentialEnergy
 from mfgarchon.types import callable_protocols as cp
 from mfgarchon.utils.pde_coefficients import CoefficientField, resolve_diffusion_source
 

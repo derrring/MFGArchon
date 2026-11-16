@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.core.hamiltonian import HEvalState, checked_control
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 
 def _diffusion_coeff(volatility: float | NDArray) -> float | NDArray:

@@ -33,11 +33,8 @@ from mfgarchon.utils.numerical.mass_fabrication_gate import (
     negative_density_report,
     refuse_what_a_flux_takes_negative,
 )
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    resolve_volatility_override,
-    scalar_volatility,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override, scalar_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -35,7 +35,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
     import numpy as np

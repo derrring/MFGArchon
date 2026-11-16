@@ -45,11 +45,8 @@ from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    resolve_volatility_override,
-    scalar_volatility,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override, scalar_volatility
 
 from .base_hjb import BaseHJBSolver
 

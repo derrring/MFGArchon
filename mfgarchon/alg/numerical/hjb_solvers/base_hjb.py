@@ -13,7 +13,7 @@ from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, 
 from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable

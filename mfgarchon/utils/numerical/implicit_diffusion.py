@@ -85,7 +85,7 @@ from scipy.linalg import solve_banded
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 __all__ = [
     "NeumannCNStencil",

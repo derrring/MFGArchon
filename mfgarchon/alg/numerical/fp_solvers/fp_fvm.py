@@ -89,11 +89,8 @@ from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.pde_coefficients import (
-    assert_quadratic_drift,
-    diffusion_from_volatility,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift, resolve_volatility_override
 
 if TYPE_CHECKING:
     from collections.abc import Callable

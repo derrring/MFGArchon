@@ -36,9 +36,9 @@ from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import (
     check_adi_compatibility,
-    diffusion_from_volatility,
     resolve_volatility_override,
     scalar_volatility,
     why_the_drift_is_not_the_control_costs,

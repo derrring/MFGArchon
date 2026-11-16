@@ -30,11 +30,8 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tup
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    fp_drift_coefficient,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
 
 from . import base_hjb
 from .base_hjb import BaseHJBSolver, InnerSolveFailure, _volatility_at_n

@@ -23,7 +23,7 @@ import pytest
 import numpy as np
 import numpy.testing as npt
 
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 # ---------------------------------------------------------------------------
 # Equivalence proofs (dtype-independent, representative sigma/dx values)
@@ -193,7 +193,7 @@ def test_bc_no_flux_interior_in_d_coefficients(sigma, dx):
 
 def test_diffusion_from_volatility_torch_numpy_parity():
     """diffusion_from_volatility_torch(sigma) == diffusion_from_volatility(sigma) for scalars."""
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility_torch
 
     for sigma in SIGMA_VALUES:
         result_torch = diffusion_from_volatility_torch(sigma)
@@ -210,7 +210,7 @@ def test_diffusion_from_volatility_torch_preserves_autograd():
     pytest.importorskip("torch")
     import torch
 
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility_torch
 
     sigma = torch.tensor(0.3, requires_grad=True, dtype=torch.float64)
     D = diffusion_from_volatility_torch(sigma)
@@ -226,7 +226,7 @@ def test_diffusion_from_volatility_torch_preserves_autograd():
 
 def test_diffusion_from_volatility_torch_byte_identity_scalar():
     """diffusion_from_volatility_torch(sigma) == 0.5*sigma**2 for float scalars (byte-equal)."""
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility_torch
 
     for sigma in SIGMA_VALUES:
         npt.assert_array_equal(

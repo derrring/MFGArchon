@@ -323,8 +323,8 @@ def create_nonlocal_source(
     Optimized path for the common case F[m] = (1/2) int int W(x,y) m(x) m(y) dx dy,
     where delta F / delta m[m](x) = int W(x,y) m(y) dy = W @ (w * m), with ``w`` the
     per-node weights of the problem's measure. ``W`` need not be translation-invariant;
-    for a kernel K(x - y), ``ConvolutionCouplingOperator.from_problem`` is the same
-    integral with an FFT path.
+    for a kernel K(x - y), `ConvolutionCouplingOperator`, as ``InteractionCost`` builds it on a problem's grid, is the
+    same integral with an FFT path.
 
     This avoids the overhead of finite-difference functional derivatives
     by computing the convolution directly.

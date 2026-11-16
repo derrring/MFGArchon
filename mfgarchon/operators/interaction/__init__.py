@@ -22,9 +22,12 @@ Contents:
     - energy_functionals: EnergyFunctional protocol + QuadraticInteractionEnergy,
       PotentialEnergy, CombinedEnergy with analytic flat derivatives
       ``delta F / delta m``.
-    - coupling_costs: InteractionCost, PotentialCost and CombinedCost, the
-      discretization-free values of ``Model.coupling_cost``, each binding to one
-      of the energy functionals above on a problem's grid and measure (#1642).
+    - point_measure: the PointMeasure protocol a coupling cost binds on, and
+      bind_on_measure, the one place a measure is put to use (#1642).
+
+The coupling costs, InteractionCost, PotentialCost and CombinedCost, are the
+model's: ``mfgarchon.core.coupling_costs``, with what reads a problem to bind
+them (#2938 stage 2d).
 
 The analytic flat derivatives plug into
 ``alg.numerical.coupling.lions_correction.create_lions_source`` (Phase 2), which
@@ -35,7 +38,6 @@ Phase 1b.
 """
 
 from .convolution import ConvolutionCouplingOperator
-from .coupling_costs import CombinedCost, InteractionCost, PotentialCost
 from .energy_functionals import (
     CombinedEnergy,
     EnergyFunctional,
@@ -55,7 +57,7 @@ from .kernels import (
     TentKernel,
     WendlandKernel,
 )
-from .point_measure import BindsOnPointMeasure, GridPointMeasure, PointMeasure, bind_on_measure
+from .point_measure import BindsOnPointMeasure, PointMeasure, bind_on_measure
 
 __all__ = [
     # Kernels
@@ -67,14 +69,9 @@ __all__ = [
     "PowerLawKernel",
     # Convolution operator
     "ConvolutionCouplingOperator",
-    # Coupling costs: the values of Model.coupling_cost (#1642)
-    "InteractionCost",
-    "PotentialCost",
-    "CombinedCost",
     # What a coupling cost binds against (#1642 stage 1b-2)
     "PointMeasure",
     "BindsOnPointMeasure",
-    "GridPointMeasure",
     "bind_on_measure",
     # Energy functionals
     "EnergyFunctional",

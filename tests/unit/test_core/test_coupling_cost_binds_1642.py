@@ -28,11 +28,11 @@ from mfgarchon.alg.numerical.coupling.source_composition import _coupling_part, 
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.config import MFGSolverConfig, PicardConfig
+from mfgarchon.core.coupling_costs import InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.operators.interaction import InteractionCost, PotentialCost
 from mfgarchon.operators.interaction.energy_functionals import energy_functional_members
 from mfgarchon.operators.interaction.kernels import GaussianKernel, RadialKernel
 from mfgarchon.types import NumericalScheme

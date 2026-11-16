@@ -36,7 +36,7 @@ import numpy as np
 from scipy.linalg import solve_banded
 
 from mfgarchon.utils.numerical.implicit_diffusion import NeumannCNStencil, neumann_cn_stencil, neumann_cn_step
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility, validate_symmetric_psd
 
 #: The theta both halves of the SL pair take unless asked otherwise: Crank-Nicolson. It is second order in
 #: time, and keeps a non-negative field non-negative only up to a diffusion number (``positivity_edge``,

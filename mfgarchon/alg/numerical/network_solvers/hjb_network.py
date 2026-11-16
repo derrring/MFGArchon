@@ -29,10 +29,8 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem

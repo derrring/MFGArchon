@@ -70,10 +70,8 @@ from mfgarchon.types.callable_protocols import (
     bind_user_callable,
     coordinate_tuple,
 )
-from mfgarchon.utils.pde_coefficients import (
-    diffusion_from_volatility,
-    resolve_volatility_override,
-)
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver

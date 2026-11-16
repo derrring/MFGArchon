@@ -383,7 +383,7 @@ class Generated{solver_name}(BaseMFGSolver):
         """Generate flux computation code."""
         return textwrap.dedent(
             """
-        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+        from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
         sigma = float(self.problem.volatility)
         dx = self.problem.geometry.get_grid_spacing()[0]

@@ -196,13 +196,6 @@ EDGE_EXCEPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
     # geometry -> solve
     ("mfgarchon.geometry.base", "mfgarchon.alg.numerical.fem.assembly", "function", "#2938 stage 3", "the unstructured mesh builds its own FEM operators: who builds a discretisation's operators"),
     ("mfgarchon.geometry.base", "mfgarchon.alg.numerical.fem.mesh_adapter", "function", "#2938 stage 3", "the unstructured mesh builds its own FEM operators: who builds a discretisation's operators"),
-    # operators -> model
-    ("mfgarchon.operators.differential.diffusion", "mfgarchon.utils.pde_coefficients", "function", "#2938 stage 2d", "the diffusion operator reads model-layer coefficient helpers"),
-    ("mfgarchon.operators.interaction.convolution", "mfgarchon.core.mfg_problem", "type", "#2938 stage 2d", "an annotation names MFGProblem: building an operator from a problem is an adapter"),
-    ("mfgarchon.operators.interaction.coupling_costs", "mfgarchon.core.mfg_problem", "type", "#2938 stage 2d", "coupling_costs is the model's cost specification"),
-    ("mfgarchon.operators.interaction.coupling_costs", "mfgarchon.core.model", "function", "#2938 stage 2d", "coupling_costs is the model's cost specification"),
-    ("mfgarchon.operators.interaction.coupling_costs", "mfgarchon.core.model", "type", "#2938 stage 2d", "coupling_costs is the model's cost specification"),
-    ("mfgarchon.utils.numerical.implicit_diffusion", "mfgarchon.utils.pde_coefficients", "module", "#2938 stage 2d", "the implicit diffusion step reads model-layer coefficient helpers"),
     # model -> solve
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),
     ("mfgarchon.core.mfg_problem", "mfgarchon.alg.numerical.coupling.fixed_point_iterator", "function", "#2938 stage 4", "problem.solve() orchestrates the solve"),

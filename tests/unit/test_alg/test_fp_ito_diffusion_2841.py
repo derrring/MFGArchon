@@ -325,7 +325,7 @@ def test_the_tensor_step_is_the_ito_sum_component_by_component(off_diagonal: str
     of the component (e_i e_i^T, or e_i e_j^T + e_j e_i^T for i < j). An off-diagonal that is zero on a line, or
     negative, is still a component of A and is summed."""
     from mfgarchon.operators.differential.diffusion import apply_diffusion
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
     n, dt = 9, 0.002
     grid = _grid(2, n)

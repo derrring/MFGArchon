@@ -232,7 +232,7 @@ def test_assembled_m_matrix_breaks_under_strong_drift(sigma):
         critical_drift_for_dmp,
         verify_assembled_m_matrix,
     )
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
     solver = _make_solver(sigma=sigma, n_x=21)
     solver.assemble_hjb_iteration_matrix(np.zeros((solver.n_points, 1)))  # build operators
@@ -263,7 +263,7 @@ def test_vectorized_jacobian_byte_identical_to_inline_lq_formula(sigma):
     assembler drift (sign flip, stray m-term, wrong diffusion coefficient)."""
     from scipy.sparse import diags, eye
 
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
     solver = _make_solver(sigma=sigma, n_x=21)
     rng = np.random.default_rng(1071)

@@ -14,7 +14,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 
 class TestScalar:

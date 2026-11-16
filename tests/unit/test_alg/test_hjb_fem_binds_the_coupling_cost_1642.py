@@ -25,9 +25,9 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.base_mfg import hjb_solve_kwargs
 from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
 from mfgarchon.config import MFGSolverConfig, PicardConfig
+from mfgarchon.core.coupling_costs import InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.operators.interaction import InteractionCost, PotentialCost
 from mfgarchon.operators.interaction.kernels import GaussianKernel, RadialKernel
 
 skfem = pytest.importorskip("skfem", reason="scikit-fem required for FEM tests")
