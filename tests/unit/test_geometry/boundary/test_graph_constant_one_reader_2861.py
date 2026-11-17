@@ -50,14 +50,18 @@ _DOORS = {
 @pytest.mark.parametrize("value", _WRITTEN_BEFORE, ids=repr)
 @pytest.mark.parametrize("door", list(_DOORS))
 def test_a_non_finite_constant_is_refused_at_each_door(door, value):
-    with pytest.raises(NonFiniteReadError, match=r"the graph applicator: .* is non-finite where it reads it: .*#2975"):
+    with pytest.raises(
+        NonFiniteReadError,
+        match=rf"the graph applicator: .* is non-finite where it reads it: .*, the first {float(value)}, at the value it would impose; .*#2975",
+    ):
         _DOORS[door](value)
 
 
 @pytest.mark.parametrize("value", [math.inf, math.nan], ids=repr)
 def test_a_non_finite_boundary_value_is_refused_by_the_geometry_factory(value):
     with pytest.raises(
-        NonFiniteReadError, match=r"from_network_geometry: boundary_value is non-finite where it reads it"
+        NonFiniteReadError,
+        match=rf"from_network_geometry: boundary_value is non-finite where it reads it: .*, the first {float(value)}, at the value it would impose",
     ):
         GraphApplicator.from_network_geometry(_maze(), "degree", boundary_value=value)
 
@@ -106,7 +110,13 @@ def test_a_number_no_float_holds_is_refused_by_name_on_each_path(too_large):
 
 
 def test_a_non_finite_refusal_says_what_to_pass():
-    with pytest.raises(NonFiniteReadError, match=r"the value it would impose; pass a finite real number"):
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"value is non-finite where it reads it: .*, the first inf, at the value it would impose; pass a finite real number",
+    ):
         _at_a_node(math.inf)
-    with pytest.raises(NonFiniteReadError, match=r"the value it would impose; return one real number"):
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"a value \(what its callable returned\) is non-finite where it reads it: .*, the first inf, at the value it would impose; return one real number",
+    ):
         boundary_value(lambda t, x: math.inf, kind="a value", t=0.0, x=np.zeros(1), where="a grid")

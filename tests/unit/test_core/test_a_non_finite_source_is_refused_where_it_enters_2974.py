@@ -315,25 +315,25 @@ GRID_REFUSALS = [
         "a Dirichlet value g(t) NaN",
         lambda d: _problem(d, bc=bnd.dirichlet_bc(value=lambda t: NAN, dimension=d)),
         NonFiniteReadError,
-        r"BCSegment 'uniform' \(what its callable returned at t=0\) is non-finite where it reads it",
+        r"BCSegment 'uniform' \(what its callable returned at t=0\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a Dirichlet value NaN",
         lambda d: _problem(d, bc=bnd.dirichlet_bc(value=NAN, dimension=d)),
         NonFiniteReadError,
-        r"BCSegment 'uniform' is non-finite where it reads it",
+        r"BCSegment 'uniform' is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a Robin alpha NaN",
         lambda d: _problem(d, bc=bnd.robin_bc(value=0.0, alpha=NAN, beta=1.0, dimension=d)),
         NonFiniteReadError,
-        r"BCSegment 'uniform' \(its alpha\) is non-finite where it reads it",
+        r"BCSegment 'uniform' \(its alpha\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a flux value +inf",
         lambda d: _problem(d, bc=bnd.flux_bc(value=INF, dimension=d)),
         NonFiniteReadError,
-        r"BCSegment 'uniform' is non-finite where it reads it",
+        r"BCSegment 'uniform' is non-finite where it reads it: .*, the first inf, at the value it would impose",
     ),
 ]
 
@@ -389,7 +389,7 @@ def test_a_node_bcs_callable_value_is_refused_by_name():
     exit_bc = NodeBC(nodes=[0], value=lambda t, node: NAN, name="exit")
     with pytest.raises(
         NonFiniteReadError,
-        match=r"NodeBC 'exit': value \(what its callable returned at node 0, t=0\) is non-finite where it reads it",
+        match=r"NodeBC 'exit': value \(what its callable returned at node 0, t=0\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ):
         _network_problem(node_bcs=[exit_bc])
 
@@ -400,22 +400,22 @@ def test_a_node_bcs_callable_value_is_refused_by_name():
         (
             "hjb",
             NAN,
-            r"HJB-FDM \(solve_hjb_system_backward\): volatility is non-finite where it reads it: 1 of 1 values at its volatility= override",
+            r"HJB-FDM \(solve_hjb_system_backward\): volatility is non-finite where it reads it: .*, the first nan, at its volatility= override",
         ),
         (
             "hjb",
             INF,
-            r"HJB-FDM \(solve_hjb_system_backward\): volatility is non-finite where it reads it: 1 of 1 values at its volatility= override",
+            r"HJB-FDM \(solve_hjb_system_backward\): volatility is non-finite where it reads it: .*, the first inf, at its volatility= override",
         ),
         (
             "fp",
             NAN,
-            r"FPFDMSolver\.solve_fp_system: volatility is non-finite where it reads it: 1 of 1 values at its volatility= override",
+            r"FPFDMSolver\.solve_fp_system: volatility is non-finite where it reads it: .*, the first nan, at its volatility= override",
         ),
         (
             "fp",
             np.where(np.arange(11) == 4, NAN, 0.2),
-            r"FPFDMSolver\.solve_fp_system: volatility is non-finite where it reads it: 1 of 11 values at its volatility= override",
+            r"FPFDMSolver\.solve_fp_system: volatility is non-finite where it reads it: .*, the first nan, at its volatility= override",
         ),
     ],
     ids=["HJB scalar NaN", "HJB scalar +inf", "FP scalar NaN", "FP array, one NaN"],
@@ -464,7 +464,10 @@ def test_a_segment_refuses_a_nan_constant_in_a_field_its_type_reads_and_nowhere_
 
     if name in _READ_BY_ITS_READERS[bc_type]:
         label = "" if name == "value" else rf" \(its {name}\)"
-        with pytest.raises(NonFiniteReadError, match=rf"BCSegment 'wall'{label} is non-finite where it reads it"):
+        with pytest.raises(
+            NonFiniteReadError,
+            match=rf"BCSegment 'wall'{label} is non-finite where it reads it: .*, the first nan, at the value it would impose",
+        ):
             build()
     else:
         build()
@@ -708,7 +711,7 @@ LOWER_BOUND = [
             1, bc=bnd.dirichlet_bc(value=lambda t: NAN if abs(float(t) - 0.2) < 1e-12 else 0.0, dimension=1)
         ),
         NonFiniteReadError,
-        r"BCSegment 'uniform' \(what its callable returned at t=0.2\) is non-finite where it reads it",
+        r"BCSegment 'uniform' \(what its callable returned at t=0.2\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a NodeBC's callable value NaN only at an interior time",
@@ -716,7 +719,7 @@ LOWER_BOUND = [
             node_bcs=[NodeBC(nodes=[8], value=lambda t, node: NAN if abs(float(t) - 0.2) < 1e-12 else 0.5, name="exit")]
         ),
         NonFiniteReadError,
-        r"NodeBC 'exit': value \(what its callable returned at node 8, t=0.2\) is non-finite where it reads it",
+        r"NodeBC 'exit': value \(what its callable returned at node 8, t=0.2\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
 ]
 

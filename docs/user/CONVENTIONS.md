@@ -520,9 +520,10 @@ What the solve reaches is the next section's fact (#2975, #2976).
 A value a solver reads during the solve that holds a NaN or an infinity is refused where it is read. One function
 decides it, `refuse_a_non_finite_read` (`mfgarchon.utils.non_finite_read`), and it raises one error,
 `NonFiniteReadError`, a `ValueError`, naming the solver, what was read and where:
-"{solver}: {name} is non-finite where it reads it: {bad} of {n} values at {where} (#2975)". Each reader calls it where
-the value enters the solution, not around every return of the callable it came from, so a value a step computes and
-then discards, such as a Dirichlet row its condition overwrites, is not judged.
+"{solver}: {name} is non-finite where it reads it: {bad} of {n} values, the first {value}, at {where} (#2975)", where
+the value is `nan`, `inf` or `-inf`. Each reader calls it where the value enters the solution, not around every return
+of the callable it came from, so a value a step computes and then discards, such as a Dirichlet row its condition
+overwrites, is not judged.
 
 Where it is read:
 

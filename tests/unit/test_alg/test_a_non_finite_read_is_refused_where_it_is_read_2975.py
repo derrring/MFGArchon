@@ -37,8 +37,14 @@ OWN = "is non-finite where it reads it"
 def test_the_owner_names_the_first_non_finite_value_the_solver_and_where():
     with pytest.raises(NonFiniteReadError) as caught:
         refuse_a_non_finite_read("S", "time step 2 of 5", {"a": np.ones(3), "b": [1.0, np.inf, NAN], "c": NAN})
-    assert str(caught.value) == f"S: b {OWN}: 2 of 3 values at time step 2 of 5 (#2975)."
+    assert str(caught.value) == f"S: b {OWN}: 2 of 3 values, the first inf, at time step 2 of 5 (#2975)."
     assert isinstance(caught.value, ValueError)
+
+
+@pytest.mark.parametrize("bad", [NAN, np.inf, -np.inf], ids=repr)
+def test_the_owner_names_the_first_non_finite_value_whatever_it_is(bad):
+    with pytest.raises(NonFiniteReadError, match=rf"the first {bad}, at w "):
+        refuse_a_non_finite_read("S", "w", {"a": [1.0, bad, NAN]})
 
 
 def test_the_owner_passes_finite_values_and_skips_what_was_not_handed():
@@ -218,17 +224,17 @@ def _operator_nan_in_row_0():
 
 _SITE_1 = [
     ("the potential at x = 0.3", lambda: _problem({"potential": lambda t, x: _at(x, _near(0.3), NAN)}),
-     r"SeparableHamiltonian's potential " + OWN + r": 1 of 1 values at t=[0-9.]+, x=\[0\.3"),
+     r"SeparableHamiltonian's potential " + OWN + r": .*, the first nan, at t=[0-9.]+, x=\[0\.3"),
     ("the coupling where m < 1", lambda: _problem({"coupling": lambda m: np.where(np.asarray(m) < 1.0 - 1e-9, NAN, 0.5 * np.asarray(m))}),
-     r"SeparableHamiltonian's coupling " + OWN),
+     r"SeparableHamiltonian's coupling " + OWN + r": .*, the first nan, at t="),
     ("the HJB source at x = 0", lambda: _problem(source_term_hjb=lambda t, x: _at(x, _near(0.0), NAN)),
-     r"source_term_hjb " + OWN),
+     r"source_term_hjb " + OWN + r": .*, the first nan, at t="),
     ("the coupling cost at x = 0.3", lambda: _problem(model_kw={"coupling_cost": PotentialCost(lambda x: _at(x, _near(0.3), NAN, lambda a: 0.1 * a))}),
-     r"coupling_cost " + OWN),
-    ("nonlocal_operator in row 0", lambda: _problem(nonlocal_operator=_operator_nan_in_row_0()), r"nonlocal_operator " + OWN),
-    ("the wall at x = 0", lambda: _problem(state_penalty=lambda x: _at(x, _near(0.0), NAN)), r"state_penalty " + OWN),
-    ("an own __call__ where |p| > 1", lambda: _problem(_steep("__call__")), r"_NaNWhereSteep's value " + OWN),
-    ("an own dp where |p| > 1", lambda: _problem(_steep("dp")), r"_NaNWhereSteep's dp " + OWN + r": .* at t=.*, x=.*, p=.*, m="),
+     r"coupling_cost " + OWN + r": .*, the first nan, at t="),
+    ("nonlocal_operator in row 0", lambda: _problem(nonlocal_operator=_operator_nan_in_row_0()), r"nonlocal_operator " + OWN + r": .*, the first nan, at t="),
+    ("the wall at x = 0", lambda: _problem(state_penalty=lambda x: _at(x, _near(0.0), NAN)), r"state_penalty " + OWN + r": .*, the first nan, at t="),
+    ("an own __call__ where |p| > 1", lambda: _problem(_steep("__call__")), r"_NaNWhereSteep's value " + OWN + r": .*, the first nan, at t="),
+    ("an own dp where |p| > 1", lambda: _problem(_steep("dp")), r"_NaNWhereSteep's dp " + OWN + r": .*, the first nan, at t=.*, x=.*, p=.*, m="),
 ]  # fmt: skip
 
 
@@ -248,7 +254,8 @@ def test_hjb_fdm_in_two_dimensions_names_the_term():
         dimension=2,
     )
     with pytest.raises(
-        NonFiniteReadError, match=r"HJBFDMSolver's Newton step: SeparableHamiltonian's potential " + OWN
+        NonFiniteReadError,
+        match=r"HJBFDMSolver's Newton step: SeparableHamiltonian's potential " + OWN + r": .*, the first nan, at t=",
     ):
         problem.solve(max_iterations=20, verbose=False)
 
@@ -259,8 +266,14 @@ def test_hjb_fdm_in_two_dimensions_names_the_term():
 @pytest.mark.parametrize(
     ("scheme", "names"),
     [
-        (NumericalScheme.FDM_UPWIND, r"compute_fp_velocity_field: the optimal control " + OWN),
-        (NumericalScheme.FVM_UPWIND, r"the optimal control at the faces of axis 0 " + OWN),
+        (
+            NumericalScheme.FDM_UPWIND,
+            r"compute_fp_velocity_field: the optimal control " + OWN + r": .*, the first nan, at t=",
+        ),
+        (
+            NumericalScheme.FVM_UPWIND,
+            r"the optimal control at the faces of axis 0 " + OWN + r": .*, the first nan, at time step",
+        ),
     ],
     ids=["FDM_UPWIND", "FVM_UPWIND"],
 )
@@ -275,7 +288,7 @@ def test_fp_fdm_names_a_non_finite_source():
     problem = _problem(source_term_fp=lambda t, x: _at(x, lambda a: np.full(a.shape, abs(float(t) - 0.5) < 1e-12), NAN))
     with pytest.raises(
         NonFiniteReadError,
-        match=r"FPFDMSolver: source_term " + OWN + r": 11 of 11 values at t=0\.5, the rows the step keeps",
+        match=r"FPFDMSolver: source_term " + OWN + r": .*, the first nan, at t=0\.5, the rows the step keeps",
     ):
         problem.solve(max_iterations=20, verbose=False)
 
@@ -293,6 +306,31 @@ def test_fp_fdm_does_not_judge_a_source_at_a_dirichlet_node_whose_row_discards_i
     )
     assert np.array_equal(nan.U, twin.U)
     assert np.array_equal(nan.M, twin.M)
+
+
+def test_fp_fdm_refuses_a_source_at_a_capped_exit_whose_cap_reads_it():
+    """A capped exit reads the balance at its Dirichlet nodes, source included, to decide its switch (#2581), so the
+    source there reaches the solution: at 4ca7c9e0 a NaN only at the capped exit node returned a finite M unlike its
+    twin's (max |M - M_twin| 1.66) with no error. A coupled solve refuses a capped exit, so the FP is solved alone."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    capped = BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.NO_FLUX, boundary="x_min"),
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.5),
+        ],
+    )
+    x = np.linspace(0.0, 1.0, 11)
+    solver = FPFDMSolver(_problem(), boundary_conditions=capped)
+    with pytest.raises(NonFiniteReadError, match=r"FPFDMSolver: source_term " + OWN + r": .*, the first nan, at t="):
+        solver.solve_fp_system(
+            np.exp(0.5 * x),
+            potential_field=np.broadcast_to(-0.5 * x, (6, 11)).copy(),
+            source_term=lambda t, x: _at(x, _near(1.0), NAN),
+            show_progress=False,
+        )
 
 
 def test_fp_fdm_still_names_the_cfl_condition_for_a_step_that_overflows_from_finite_inputs():
@@ -315,7 +353,10 @@ def test_hjb_sl_names_the_read_where_its_fallback_stood():
         dimension=2,
     )
     with pytest.raises(
-        NonFiniteReadError, match=r"HJBSemiLagrangianSolver's value update: SeparableHamiltonian's potential " + OWN
+        NonFiniteReadError,
+        match=r"HJBSemiLagrangianSolver's value update: SeparableHamiltonian's potential "
+        + OWN
+        + r": .*, the first nan, at t=",
     ):
         problem.solve(scheme=NumericalScheme.SL_LINEAR, max_iterations=20, verbose=False)
 
@@ -341,7 +382,12 @@ def test_the_network_fp_refuses_a_non_finite_transition_rate(monkeypatch):
 
     monkeypatch.setattr(type(H), "optimal_control", nan_at_node_4)
     u = np.tile(np.linspace(0.0, 1.0, network.num_nodes), (6, 1))
-    with pytest.raises(NonFiniteReadError, match=r"FPNetworkSolver: the transition rates out of node \d+ " + OWN):
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPNetworkSolver: the transition rates out of node \d+ "
+        + OWN
+        + r": .*, the first nan, at t=.*, node \d+",
+    ):
         FPNetworkSolver(problem).solve_fp_system(np.ones(network.num_nodes), potential_field=u)
 
 
@@ -402,5 +448,7 @@ def test_a_door_refuses_a_non_finite_array_by_name(solver, array):
         args[name] = np.full_like(args[name], NAN)
         array = name
         call = lambda: door.solve_fp_system(**args)  # noqa: E731
-    with pytest.raises(NonFiniteReadError, match=rf"{solver}\.solve_(hjb|fp)_system: {array} {OWN}: .* at its door"):
+    with pytest.raises(
+        NonFiniteReadError, match=rf"{solver}\.solve_(hjb|fp)_system: {array} {OWN}: .*, the first nan, at its door"
+    ):
         call()

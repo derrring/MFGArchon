@@ -411,7 +411,7 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
             NotImplementedError if finite_or_not_a_number else NonFiniteReadError,
             match=r"has a value of type"
             if finite_or_not_a_number
-            else r"BCSegment 'L' is non-finite where it reads it",
+            else rf"BCSegment 'L' is non-finite where it reads it: .*, the first {float(value)}, at the value it would impose",
         ):
             assemble()
 

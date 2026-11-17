@@ -292,7 +292,10 @@ def test_each_fdm_reader_receives_the_owners_value_at_its_time(reader):
 @pytest.mark.parametrize(
     ("returned", "message"),
     [
-        (float("nan"), r"\(what its callable returned\) is non-finite where it reads it"),
+        (
+            float("nan"),
+            r"\(what its callable returned\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
+        ),
         (True, r"\(what its callable returned\) has a boolean value"),
         (np.complex128(1j), r"\(what its callable returned\) has a complex value"),
         (None, r"its value returned None at one point, .* does the function lack a `return`"),
@@ -553,7 +556,7 @@ _CONTRACT = [
     ('"0"', "0", False, 0.0),
     ("float32 0.5", np.float32(0.5), False, 0.5),
     ('"0.7"', "0.7", False, r"has a value of type str"),
-    ("nan", float("nan"), False, r"k is non-finite where it reads it"),
+    ("nan", float("nan"), False, r"k is non-finite where it reads it: .*, the first nan, at the value it would impose"),
 ]
 
 
@@ -609,7 +612,7 @@ def test_a_robin_coefficient_is_read_by_one_reader_and_a_callable_or_a_field_is_
             r"has a boolean value, which is not a boundary datum: give a real number, or a real array of one element: a Robin",
         ),
         (1j, r"has a complex value"),
-        (float("nan"), r"is non-finite where it reads it"),
+        (float("nan"), r"is non-finite where it reads it: .*, the first nan, at the value it would impose"),
         (None, r"'s alpha is None"),
     ):
         with pytest.raises(

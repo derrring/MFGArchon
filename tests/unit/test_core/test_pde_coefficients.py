@@ -295,7 +295,10 @@ class TestCoefficientFieldCallable:
         grid = np.linspace(0, 1, 11)
         density = np.ones(11)
 
-        with pytest.raises(NonFiniteReadError, match="the callable diffusion is non-finite where it reads it"):
+        with pytest.raises(
+            NonFiniteReadError,
+            match=r"the callable diffusion is non-finite where it reads it: .*, the first nan, at time step 0",
+        ):
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
     def test_callable_inf_detection(self):
@@ -311,7 +314,10 @@ class TestCoefficientFieldCallable:
         grid = np.linspace(0, 1, 11)
         density = np.ones(11)
 
-        with pytest.raises(NonFiniteReadError, match="the callable diffusion is non-finite where it reads it"):
+        with pytest.raises(
+            NonFiniteReadError,
+            match=r"the callable diffusion is non-finite where it reads it: .*, the first inf, at time step 0",
+        ):
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
 

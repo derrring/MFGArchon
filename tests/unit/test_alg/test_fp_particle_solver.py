@@ -1020,7 +1020,7 @@ class TestFPParticleInvalidMInitial1071:
         solver, u_solution, nx = self._solver_and_shapes()
         m_bad = np.full(nx, np.nan)
         with pytest.raises(
-            NonFiniteReadError, match="M_initial is non-finite where it reads it: 31 of 31 values at its door"
+            NonFiniteReadError, match=r"M_initial is non-finite where it reads it: .*, the first nan, at its door"
         ):
             solver.solve_fp_system(m_bad, u_solution)
 

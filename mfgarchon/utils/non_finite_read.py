@@ -39,7 +39,8 @@ def refuse_a_non_finite_read(solver: str, where: str, values: Mapping[str, Any])
     ``values`` maps each name to what the solver reads under it, in the order they are judged; a ``None`` is skipped,
     since an argument not handed is not read. Each is read as numpy reads it as floats, so a one-element array is
     judged as its number and an object array's ``None`` entry is NaN. ``where`` says where in the solve the read
-    happens, for example "its door" or "time step 3 of 5, t=0.3".
+    happens, for example "its door" or "time step 3 of 5, t=0.3". The message gives how many entries are non-finite
+    and the first of them, ``nan``, ``inf`` or ``-inf``.
     """
     for name, value in values.items():
         if value is None:
@@ -49,6 +50,8 @@ def refuse_a_non_finite_read(solver: str, where: str, values: Mapping[str, Any])
         if bool(np.all(finite)):
             continue
         bad = int(array.size - np.count_nonzero(finite))
+        first = float(array[~finite].flat[0])
         raise NonFiniteReadError(
-            f"{solver}: {name} is non-finite where it reads it: {bad} of {array.size} values at {where} (#2975)."
+            f"{solver}: {name} is non-finite where it reads it: {bad} of {array.size} values, the first {first}, at "
+            f"{where} (#2975)."
         )

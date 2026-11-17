@@ -1138,7 +1138,7 @@ def _gate_cases():
             "NodeBC[value=inf]",
             lambda: NodeBC(nodes=[1], value=math.inf),
             NonFiniteReadError,
-            "NodeBC 'boundary': value is non-finite where it reads it",
+            "NodeBC 'boundary': value is non-finite where it reads it: .*, the first inf, at the value it would impose",
         )
     )
     refuses.append(

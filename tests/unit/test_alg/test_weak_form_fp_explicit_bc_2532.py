@@ -250,7 +250,10 @@ def test_fem_refuses_a_dirichlet_value_it_cannot_read(route, value):
         build = lambda: HJBFEMSolver(_problem(_mesh(1), _exit(1, value)))  # noqa: E731
     # A non-finite number is refused where the segment is built, by the same owner (#2974); the others where FEM reads.
     if isinstance(value, float) and not np.isfinite(value):
-        error, refusal = NonFiniteReadError, r"BCSegment 'exit' is non-finite where it reads it"
+        error, refusal = (
+            NonFiniteReadError,
+            rf"BCSegment 'exit' is non-finite where it reads it: .*, the first {float(value)}, at the value it would impose",
+        )
     else:
         error, refusal = NotImplementedError, r"Dirichlet segment 'exit' has a (value of type|boolean|complex)"
     with pytest.raises(error, match=refusal):

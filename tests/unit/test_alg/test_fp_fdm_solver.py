@@ -715,7 +715,10 @@ class TestFPFDMSolverCallableDiffusion:
 
         m_initial = np.ones(Nx_points) / Nx_points
 
-        with pytest.raises(NonFiniteReadError, match="the callable volatility is non-finite where it reads it"):
+        with pytest.raises(
+            NonFiniteReadError,
+            match=r"the callable volatility is non-finite where it reads it: .*, the first nan, at time step 0",
+        ):
             solver.solve_fp_system(m_initial, volatility=nan_diffusion)
 
 

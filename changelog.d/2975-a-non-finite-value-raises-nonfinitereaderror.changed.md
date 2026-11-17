@@ -8,4 +8,5 @@
   - a callable volatility's or drift's NaN output, a volatility tensor, a `volatility=` override, the iterator's
     initial mass and the particle FP's `m_initial` raised `ValueError` with their own messages.
 
-  Where the old message printed the value, NaN or infinity, the new one gives the count of non-finite entries.
+  The message gives the count of non-finite entries and the first of them, `nan`, `inf` or `-inf`, as the old messages
+  that printed the value did.
