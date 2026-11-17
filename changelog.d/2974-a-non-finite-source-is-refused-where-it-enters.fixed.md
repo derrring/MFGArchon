@@ -2,13 +2,21 @@
   (#2974). `MFGProblem` reads each once while it is built, and only at states that every `NumericalScheme` that solves
   the problem hands that callable (`docs/user/CONVENTIONS.md`, "What construction refuses as non-finite"):
   - **the arrays and scalars whole**: `T`, `m_initial`, `u_terminal`, the volatility and `state_penalty_scale`;
-  - **each callable on the time grid's nodes**: the interior nodes for every callable, with t_0 for the potential, the
-    Hamiltonian's other time-dependent sources, a callable volatility and a boundary callable, and T alone for the
-    terminal coupling. `source_term_hjb`, `source_term_fp` and `coupling_cost` are read at the interior nodes alone;
-  - **at the probe nodes off the boundary**, with `m_initial`'s and `u_terminal`'s values there.
+  - **each callable on the time grid's nodes**: the interior nodes, with t_0 as well for the potential, the
+    Hamiltonian's other time-dependent sources, a callable volatility and a boundary callable. `source_term_hjb`,
+    `source_term_fp` and `coupling_cost` are read at the interior nodes alone, and `terminal_coupling` at T alone;
+  - **at the probe nodes off the box's boundary**, with the values the iterator's first iteration hands there: the
+    initial density, and v the terminal value at it (`terminal_value(get_m_init())`, which is `u_terminal` without a
+    terminal coupling);
+  - **each through the function the solve reads it with**: the source terms through `_call_problem_source`, the
+    coupling cost through `_coupling_part`, the terminal coupling through `terminal_value`, a callable volatility
+    through `CoefficientField.read_callable`, the read `evaluate_at` makes. `_call_problem_source`, `_coupling_part`
+    and `problem_coupling_binding` moved from `alg.numerical.coupling.source_composition` to `core.mfg_problem`,
+    unchanged, so that construction can call them without importing the solver layer.
 
-  A test records what `problem.solve(scheme=...)` hands each callable under every member of the enum, and holds these
-  reads inside it.
+  The coupling costs are bound where they always were, after the soft wall is composed and the initial mass measured;
+  they and what takes v are read right after. A test records what `problem.solve(scheme=...)` hands each callable
+  under every member of the enum, and holds these reads inside it.
   - **Refused at construction now, where the solve used to return a finite wrong U with `converged` False, a
     non-finite U, or an error naming something else** ("Check CFL condition"), when the value reaches those states:
     `state_penalty`, `state_penalty_scale`, `source_term_hjb`, `source_term_fp`, `nonlocal_operator`, `coupling_cost`
@@ -18,9 +26,10 @@
   - **Refused where its object is built:** a radial kernel's NaN parameter, and its infinite amplitude or exponent (an
     infinite length scale or softening stays accepted: it solves as the constant or zero kernel it tends to);
     `BoundedControlCost(max_control=nan)` (`max_control=inf` stays accepted: it solves as unbounded);
-    `QuadraticMFGHamiltonian(coupling_coefficient=nan)`; and a `BCSegment` whose constant is NaN or infinite in a
-    field its type reads (`FIELDS_READ`: the value of a Dirichlet, Neumann, Robin or flux segment, and a Robin
-    segment's `alpha` and `beta`), which the solve used to refuse where it read it.
+    `QuadraticMFGHamiltonian(coupling_coefficient=nan)`; and a `BCSegment` whose constant is NaN or infinite, or a
+    number no float holds, in a field its type reads (`FIELDS_READ`: the value of a Dirichlet, Neumann, Robin or flux
+    segment, and a Robin segment's `alpha` and `beta`), which the solve used to refuse where it read it. Each check
+    reads a one-element array as its number, as the solve does.
   - **Refused at the solver's door:** a NaN or infinite `volatility=` handed to `solve_hjb_system` or `solve_fp_system`,
     scalar or array, beside the negative one (#2618).
   - **Named by the source now, where the message said "Hamiltonian returned NaN or Inf at sample point" or named the
@@ -49,7 +58,11 @@
   - at Nt = 1, `source_term_hjb`, `source_term_fp` and `coupling_cost`;
   - on a grid with an axis of 2 nodes, which has no probe node off the boundary, the callables read there: a callable
     volatility, the held sources, the two source terms and `state_penalty`;
-  - what an expert-mode solver handed to `problem.solve` reads and no scheme of the enum does;
+  - where a terminal coupling is declared off a grid, what takes v, since the problem binds no terminal coupling there;
+  - a source term that returns no number (None), which its reader at use decides (a wall that does is read as NaN,
+    as the composed potential reads it, and refused);
+  - what an expert-mode solver handed to `problem.solve` reads and no scheme of the enum does, and the iterator's warm
+    start (`set_warm_start_data`);
   - on a network, a source that takes p or m (`hamiltonian_func`, `node_interaction_func`), which the solvers are
     handed by their caller;
   - on an implicit domain, the callables, since such a domain draws its points afresh at each read of its grid (#2778).

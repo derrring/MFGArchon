@@ -14,6 +14,7 @@ from mfgarchon.core.mfg_components import (
 )
 
 # Issue #543: Runtime import for isinstance() checks
+from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
 from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
@@ -27,6 +28,7 @@ from mfgarchon.types.callable_protocols import (
     _remembered,
     bind_user_callable,
     bound_attribute,
+    coordinate_tuple,
     refuse_methods_out_of_order,
 )
 from mfgarchon.utils.numerical.quadrature import integrate_on_weights
@@ -48,7 +50,7 @@ class CouplingBinding:
     density the energy reads, and the cost it was bound from, the problem's ``declared_coupling_cost`` (#1642 stage
     1b-2). The model's type, which `MFGProblem.terminal_value` reads, so it lives with the problem (#2938, stage 2c).
 
-    On a grid it is the problem's, ``problem_coupling_binding`` (``alg.numerical.coupling.source_composition``). Off a
+    On a grid it is the problem's, ``problem_coupling_binding`` (below). Off a
     grid the problem binds nothing, since the cost is bound where it is put to use: by the HJB solver that evaluates
     it, on its own points and weights (``BaseHJBSolver.coupling_binding``), which the coupler hands to
     ``compose_hjb_source``. ``cost`` is what ``coupling_binding_for`` compares with the solved problem's, since a
@@ -58,6 +60,84 @@ class CouplingBinding:
     energy: EnergyFunctional
     nodes: NDArray
     cost: Any
+
+
+def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray, m: NDArray, v: NDArray) -> NDArray:
+    """``problem.<name>`` at one time slice, through its binding (#2375 ruling 8).
+
+    The one place a problem's ``source_term_hjb`` or ``source_term_fp`` is invoked.
+    """
+    coordinates = coordinate_tuple(x, problem.dimension)
+    if np.ndim(m) > 1 and np.size(coordinates[0]) == np.size(m):  # one entry per coordinate, of the density's shape
+        coordinates = tuple(np.reshape(entry, np.shape(m)) for entry in coordinates)
+    return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=coordinates, m=m, v=v, t=t)
+
+
+def problem_coupling_binding(problem: MFGProblem) -> CouplingBinding | None:
+    """The problem's own binding of ``Model.coupling_cost``: ``problem.coupling_energy`` on the grid's nodes, the rows
+    of ``geometry.get_spatial_grid()``; None where the problem binds none, on a geometry that is not a grid, or with no
+    cost (#1642)."""
+    energy = problem.coupling_energy
+    if energy is None:
+        return None
+    return CouplingBinding(
+        energy, np.asarray(problem.geometry.get_spatial_grid(), dtype=float), problem.declared_coupling_cost
+    )
+
+
+def wall_values(penalty: Any, x: Any) -> NDArray:
+    """The soft wall's values at ``x``, as the Hamiltonian's composed potential reads them: the bound ``state_penalty``'s
+    return as floats, so a return that holds no number is NaN there. The one read of the wall, which the composition
+    and `_refuse_a_non_finite_source` both make (#2974)."""
+    return np.asarray(penalty(x=x), dtype=float)
+
+
+def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: NDArray, t: float) -> NDArray:
+    """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, evaluated at
+    ``x`` (#1642).
+
+    ``nodes`` are the points F was bound on (`CouplingBinding`): on a grid, the rows of ``geometry.get_spatial_grid()``
+    in the grid's C order; for HJB-FEM, its dofs. ``m_t`` is flattened in that order. At those points, in that order,
+    the part is ``flat_derivative``. At other points -- a solver's own, such as HJB-GFDM's collocation points, or the
+    nodes in another order -- it is ``flat_derivative_at``, which the bound energy has when it is a
+    `PointwiseFlatDerivative` and is refused by name when it is not (stage 1b-1).
+    """
+    from mfgarchon.operators.interaction.energy_functionals import PointwiseFlatDerivative
+
+    flat = np.asarray(m_t, dtype=float).ravel()
+    nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
+    if flat.size != len(nodes):
+        raise ValueError(
+            f"The coupling cost was bound on {len(nodes)} points, and this HJB evaluation passes a density slice of "
+            f"{flat.size} values. The density the coupling part reads is the one it was bound on, one value per point "
+            "in their order (#1642)."
+        )
+    if points_are_grid_nodes(x, nodes):
+        return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
+    d = nodes.shape[1]
+    points = np.asarray(x, dtype=float)
+    if points.ndim == 1 and d == 1:
+        points = points[:, None]
+    if points.ndim != 2 or points.shape[1] != d:
+        raise ValueError(
+            f"The coupling cost was bound on points in {d}-D, and this HJB evaluation passes x of shape "
+            f"{np.shape(x)}, not points of shape (n, {d}) (#1642)."
+        )
+    if not isinstance(energy, PointwiseFlatDerivative):
+        raise NotImplementedError(
+            f"The coupling cost's bound energy, {type(energy).__name__}, has no flat_derivative_at(m, x, *, t), so "
+            f"it evaluates only at the {len(nodes)} points it was bound on, in their order; this HJB evaluation "
+            f"passes {len(points)} other points, such as HJB-GFDM's collocation points. Give the energy a "
+            "flat_derivative_at (PointwiseFlatDerivative, in mfgarchon.operators.interaction.energy_functionals), or "
+            "solve with a solver that evaluates at the grid's nodes -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D (#1642)."
+        )
+    values = np.asarray(energy.flat_derivative_at(flat, points, t=t), dtype=float)
+    if values.shape != (len(points),):
+        raise ValueError(
+            f"{type(energy).__name__}.flat_derivative_at at {len(points)} points returned shape {values.shape}, "
+            f"not ({len(points)},) (#1642)."
+        )
+    return values
 
 
 # What a refusal calls each mode of `_detect_init_mode`.
@@ -799,10 +879,21 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         self._refuse_a_hamiltonian_whose_reads_disagree(unwalled)
 
+        # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
+        # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
+        self._coupling_energy = self._bind_cost("coupling_cost")
+        self._terminal_energy = self._bind_cost("terminal_coupling")
         # Off a grid the HJB solver binds F and G as declared (stage 1b-2, stage 1b's G line). Read with the binding, so
         # that a Model changed after this build moves neither (#2745).
         self._declared_coupling_cost = None if self._v1_model is None else self._v1_model.coupling_cost
         self._declared_terminal_coupling = None if self._v1_model is None else self._v1_model.terminal_coupling
+
+        # The owner's reads that need F and G bound: the costs, and what takes v, at the terminal value the first
+        # iteration hands (#2974).
+        if self.geometry is not None:
+            from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
+
+            _refuse_a_non_finite_source(self, after_binding=True)
 
         # Validate custom components if provided
         if self.is_custom:
@@ -1938,7 +2029,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         def composed_potential(t: float, x: Any) -> Any:
             import numpy as _np
 
-            wall = scale * _np.asarray(penalty(x=x), dtype=float)
+            wall = scale * wall_values(penalty, x)
             if previous is None:
                 squeezed = wall.squeeze()
                 return float(squeezed) if squeezed.ndim == 0 else squeezed
@@ -2070,16 +2161,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
-        # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
-        # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model. Bound here, before
-        # `_refuse_a_non_finite_source`, which reads each as its derivative at m_initial (#2974).
-        self._coupling_energy = self._bind_cost("coupling_cost")
-        self._terminal_energy = self._bind_cost("terminal_coupling")
-
         # A caller-supplied value or callable that is non-finite where the solvers read it is refused here, where it
-        # enters, by name: the arrays just built, the volatility, every source the Hamiltonian holds, the source terms,
-        # the soft wall, the coupling costs and the boundary values. One owner, before the checks below read any of them
-        # (#2974).
+        # enters, by name: the arrays just built, the volatility, every source the Hamiltonian holds, the source terms
+        # that do not take v, the soft wall and the boundary values. One owner, before the checks below read any of them
+        # (#2974). The coupling costs and what takes v are read once the costs are bound, below `_initialize_functions`.
         if self.geometry is not None:
             from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
 

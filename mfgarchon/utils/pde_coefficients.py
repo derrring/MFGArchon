@@ -548,9 +548,21 @@ class CoefficientField:
         """
         Evaluate a callable coefficient by the names it declares (#2875).
         """
+        return self._validate_callable_output(
+            self.read_callable(timestep_idx, grid, density, dt), density.shape, timestep_idx
+        )
+
+    def read_callable(
+        self,
+        timestep_idx: int,
+        grid: np.ndarray | tuple[np.ndarray, ...],
+        density: np.ndarray,
+        dt: float | None,
+    ) -> Any:
+        """The callable coefficient's return at ``timestep_idx``, ``grid`` and ``density``, before `evaluate_at` checks
+        it: the one read of it, which `evaluate_at` and `_refuse_a_non_finite_source` both make (#2974)."""
         t_current = timestep_idx * dt if dt is not None else timestep_idx
-        result = self._bound(t=t_current, x=points_of(grid, self.dimension), m=density)
-        return self._validate_callable_output(result, density.shape, timestep_idx)
+        return self._bound(t=t_current, x=points_of(grid, self.dimension), m=density)
 
     def _validate_callable_output(self, output: Any, expected_shape: tuple, timestep_idx: int) -> float | np.ndarray:
         """

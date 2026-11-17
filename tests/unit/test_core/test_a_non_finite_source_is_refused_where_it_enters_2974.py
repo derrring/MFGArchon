@@ -6,7 +6,8 @@ at states every `NumericalScheme` that solves the problem hands it.
 - Times: the interior time nodes; t_0 as well for the Hamiltonian's sources, a callable volatility and a boundary
   callable; T alone for the terminal coupling. The two source terms and the coupling cost at the interior nodes alone.
 - Space: the probe nodes off the boundary.
-- m and v: `m_initial` and `u_terminal`, the first Picard iteration's guesses.
+- m and v: the first Picard iteration's guesses, the initial density and the terminal value at it (`u_terminal`
+  without a terminal coupling).
 - On a network: a node source at t_0, and a `NodeBC`'s callable value at its nodes.
 The R1 tests record both sides, the owner's reads and `problem.solve(scheme=...)`'s under every member of the enum, and
 hold the first inside the second (#2974's R1). A scalar held by an object that exists before any problem (a control
@@ -453,6 +454,163 @@ def test_a_dirichlet_segment_does_not_read_a_weight_too_large_for_a_float():
     bnd.BCSegment(name="wall", bc_type=bnd.BCType.DIRICHLET, boundary="x_max", value=0.0, alpha=10**400)
 
 
+# --- Review 2: what each read is handed, and when. ---
+
+
+class _CostReadingTheBuild:
+    """A coupling cost whose `bind` reads what construction has built by then: the initial mass, and the Hamiltonian the
+    solvers read, at x = 0.95 where the wall below is 1 (p = 0, m = 1)."""
+
+    def bind(self, problem):
+        self.mass = float(problem.initial_mass)
+        hamiltonian = problem.hamiltonian_class
+        self.h = float(np.asarray(hamiltonian(t=0.0, x=(np.array(0.95),), p=np.zeros(1), m=1.0)).reshape(-1)[0])
+        return PotentialCost(lambda x: np.zeros(np.shape(np.asarray(x[0], dtype=float)))).bind(problem)
+
+
+def test_a_coupling_cost_is_bound_after_the_wall_and_the_mass():
+    """The costs are bound where 21ef740b binds them, after the soft wall is composed into H and the initial mass is
+    measured, so a cost's `bind` reads both, and H(0.95) is the wall's -1.0. Bound before the owner's first reads, as
+    01dcbb8a bound them, the same `bind` raised an AttributeError on `initial_mass` and saw H(0.95) = 0."""
+    cost = _CostReadingTheBuild()
+    problem = _problem(
+        1,
+        model={"coupling_cost": cost},
+        state_penalty=lambda x: np.where(np.asarray(x[0], dtype=float) > 0.9, 1.0, 0.0),
+    )
+    assert cost.mass == float(problem.initial_mass)
+    assert cost.h == -1.0
+
+
+class _TerminalNaNAt:
+    """A terminal coupling whose derivative is NaN at the time ``t_star`` alone, and 0 at every other."""
+
+    def __init__(self, t_star):
+        self.t_star = t_star
+
+    def bind(self, problem):
+        energy = PotentialCost(lambda x: np.zeros(np.shape(np.asarray(x[0], dtype=float)))).bind(problem)
+        t_star = self.t_star
+
+        class Bound:
+            def __getattr__(self, attr):
+                return getattr(energy, attr)
+
+            def flat_derivative(self, m, *, t=0.0):
+                out = np.asarray(energy.flat_derivative(m, t=t), dtype=float)
+                return np.full(np.shape(out), NAN) if float(t) == t_star else out
+
+        return Bound()
+
+
+def test_the_terminal_coupling_is_read_at_the_time_the_solve_reads_it():
+    """T 0.1 at Nt 11: 11 * (0.1 / 11) is not 0.1, so the time grid's last node, formed as Nt * dt, lies one ulp from T.
+    The solve reads G' through `terminal_value`, at T, and so does the owner: a G' NaN at T is refused, naming the
+    terminal coupling, and one NaN at Nt * dt alone builds."""
+    T, steps = 0.1, 11
+    assert steps * (T / steps) != T
+
+    def build(t_star):
+        return MFGProblem(
+            model=Model(hamiltonian=_h(), volatility=0.2, terminal_coupling=_TerminalNaNAt(t_star)),
+            domain=_grid(1),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=_u_terminal, T=T),
+            Nt=steps,
+        )
+
+    with pytest.raises(ValidationError, match=_read("terminal_coupling")):
+        build(T)
+    build(steps * (T / steps))
+
+
+ONE_ELEMENT_ARRAYS = [
+    ("GaussianKernel amplitude", lambda: kernels.GaussianKernel(amplitude=np.array([0.5]))),
+    ("GaussianKernel length_scale", lambda: kernels.GaussianKernel(length_scale=np.array([0.2]))),
+    ("PowerLawKernel exponent", lambda: kernels.PowerLawKernel(exponent=np.array([0.5]))),
+    ("BoundedControlCost max_control", lambda: BoundedControlCost(control_cost=1.0, max_control=np.array([1.0]))),
+]
+
+
+@pytest.mark.parametrize("build", [row[1] for row in ONE_ELEMENT_ARRAYS], ids=[row[0] for row in ONE_ELEMENT_ARRAYS])
+def test_a_one_element_array_is_read_as_its_number(build):
+    """At 21ef740b each, in a solved problem, gives U bit for bit as its scalar does; 01dcbb8a raised a TypeError."""
+    build()
+
+
+def test_a_one_element_array_that_is_nan_is_refused_by_name():
+    with pytest.raises(ValueError, match="GaussianKernel: amplitude must be a number"):
+        kernels.GaussianKernel(amplitude=np.array([NAN]))
+
+
+def test_a_callable_returning_no_number_is_read_as_its_reader_reads_it():
+    """A return that holds no number is decided by what the solve's reader makes of it. The HJB source's is not this
+    fact: at 21ef740b the solve raised a TypeError on it, and 01dcbb8a refused it as non-finite; here it builds, as at
+    21ef740b. The wall's reader, the composed potential, reads a None as NaN (`wall_values`), so a None wall is
+    non-finite where the solver reads it: at 21ef740b it solved to a U 0.54 off its twin's with `converged` False, and
+    it is refused here, naming the wall."""
+    _problem(1, source_term_hjb=lambda t, x: None)
+    with pytest.raises(ValidationError, match=_read("state_penalty")):
+        _problem(1, state_penalty=lambda x: None)
+
+
+# The read set from below, each a state the documented reads include and no other row pins (the probe nodes here are
+# 0.5, the centre, 0.6, 0.2 and 0.9; Nt 5, so t_{Nt // 2} is 0.2 and t_{Nt - 1} is 0.4).
+LOWER_BOUND = [
+    (
+        "source_term_hjb NaN only at t_{Nt // 2}",
+        lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.2)(t))(x)),
+        ValidationError,
+        _read("source_term_hjb"),
+    ),
+    (
+        "source_term_hjb NaN only at t_{Nt - 1}",
+        lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.4)(t))(x)),
+        ValidationError,
+        _read("source_term_hjb"),
+    ),
+    (
+        "potential NaN only at a probe node off the centre",
+        lambda: _problem(
+            1,
+            model={
+                "hamiltonian": _h(
+                    potential=lambda t, x: np.where(np.isclose(np.asarray(x[0], dtype=float), 0.9), NAN, 0.0)
+                )
+            },
+        ),
+        ValidationError,
+        _read("SeparableHamiltonian's potential"),
+    ),
+    (
+        "a Dirichlet g(t) NaN only at an interior time",
+        lambda: _problem(
+            1, bc=bnd.dirichlet_bc(value=lambda t: NAN if abs(float(t) - 0.2) < 1e-12 else 0.0, dimension=1)
+        ),
+        NotImplementedError,
+        r"BCSegment 'uniform' \(what its callable returned at t=0.2\) has a non-finite value nan",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "error", "names"), [row[1:] for row in LOWER_BOUND], ids=[row[0] for row in LOWER_BOUND]
+)
+def test_a_state_the_documented_reads_include_is_read(build, error, names):
+    with pytest.raises(error, match=names):
+        build()
+
+
+def test_a_source_a_derived_operator_holds_is_named_once_by_the_operator_given():
+    """A Lagrangian's potential is held again by the Hamiltonian derived from it; read once, it is named once, by the
+    operator the caller gave."""
+    with pytest.raises(ValidationError) as refused:
+        _components_problem(
+            1, lagrangian=SeparableLagrangian(QuadraticControlCost(control_cost=1.0), potential=_at_tx(NAN))
+        )
+    assert "SeparableLagrangian's potential" in str(refused.value)
+    assert "SeparableHamiltonian's potential" not in str(refused.value)
+
+
 def test_a_finite_mass_is_read_whole():
     """Every entry finite, the total infinite: the mass check reads the total, a state built from the entries, and
     refuses it (`MFGProblem`'s tier 1). On [0, 10] the measure is 10, so entries of 1e308 integrate past the largest
@@ -723,8 +881,9 @@ def test_every_value_parameter_of_an_operator_is_declared():
 
 def test_the_declaration_check_finds_an_undeclared_parameter():
     """The check, on a planted class. It flags a float, an ``ArrayLike``, an ``Any`` or unannotated parameter with a
-    ``None`` default, and a callable whose annotation names a container it returns. It does not flag a container, a
-    string, or a declared index. It reports a declaration of a name the constructor does not take.
+    ``None`` default, a callable whose annotation names a container it returns, and an annotation that names neither with
+    a number for its default. It does not flag a container, a string, the same annotation with a string for its default,
+    an unannotated bool, or a declared index. It reports a declaration of a name the constructor does not take.
 
     Its limits. It reads class statements and ``__init__`` signatures from the source, so it does not see a value
     taken through ``**kwargs``, a dataclass field (no ``__init__`` is written), a class whose base is an alias of an
@@ -747,6 +906,9 @@ class Planted(HamiltonianBase):
         bare=None,
         factory: Callable[[], ControlCostBase] | None = None,
         label: str = "planted",
+        kind: Kind = 0,
+        kind_name: Kind = "a",
+        flag=True,
         population_index: int = 0,
     ): ...
 """
@@ -756,6 +918,7 @@ class Planted(HamiltonianBase):
         ("Planted", "anything", "undeclared"),
         ("Planted", "bare", "undeclared"),
         ("Planted", "factory", "undeclared"),
+        ("Planted", "kind", "undeclared"),
         ("Planted", "gone", "in CHECKED_SCALARS, not a parameter"),
     ]
 
@@ -1043,7 +1206,18 @@ def _volatility_group():
     return {"model": Model(hamiltonian=_h(potential=_potential), volatility=volatility)}, {"potential", "volatility"}
 
 
-def _source_group(fp_takes_v):
+def _with_a_terminal_coupling(kwargs):
+    """A terminal coupling whose derivative is not zero, G'(m) = 0.3 + 0.2 x, so the first iteration hands the HJB v at
+    u_terminal + G'(m_initial), not u_terminal."""
+    kwargs["model"] = Model(
+        hamiltonian=_h(potential=_potential),
+        volatility=0.5,
+        terminal_coupling=PotentialCost(lambda x: 0.3 + 0.2 * np.asarray(x[0], dtype=float)),
+    )
+    return kwargs
+
+
+def _source_group(fp_takes_v, terminal=False):
     def source_hjb(t, x, v, m):
         _note("source_term_hjb", t=t, x=x, v=v, m=m)
         return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
@@ -1057,22 +1231,27 @@ def _source_group(fp_takes_v):
         return np.zeros(np.shape(np.asarray(x[0], dtype=float)))
 
     # A source_term_fp that takes v is handed u_terminal at T alone, which no finite-volume scheme reads: not read.
+    kwargs = {"source_term_hjb": source_hjb, "source_term_fp": source_fp_v if fp_takes_v else source_fp}
     return (
-        {"source_term_hjb": source_hjb, "source_term_fp": source_fp_v if fp_takes_v else source_fp},
+        _with_a_terminal_coupling(kwargs) if terminal else kwargs,
         {"potential", "source_term_hjb", *(() if fp_takes_v else ("source_term_fp",))},
     )
 
 
-def _nonlocal_group():
+def _nonlocal_group(terminal=False):
     def matvec(v):
+        # The operand has no time, node or m to tell the states apart, so it is named: the first iteration's v, u_terminal
+        # where that is another, or another iterate.
         if _PHASE[0] != "off":
-            _SEEN[_PHASE[0]].add(("nonlocal_operator", None, None, None, bool(np.allclose(np.ravel(v), _CTX["vT"]))))
+            flat = np.ravel(v)
+            operand = (
+                "first" if np.allclose(flat, _CTX["vT"]) else "u_terminal" if np.allclose(flat, _CTX["uT"]) else "other"
+            )
+            _SEEN[_PHASE[0]].add(("nonlocal_operator", None, None, None, operand))
         return np.zeros(np.shape(v))
 
-    return {"nonlocal_operator": LinearOperator((11, 11), matvec=matvec, dtype=float)}, {
-        "potential",
-        "nonlocal_operator",
-    }
+    kwargs = {"nonlocal_operator": LinearOperator((11, 11), matvec=matvec, dtype=float)}
+    return _with_a_terminal_coupling(kwargs) if terminal else kwargs, {"potential", "nonlocal_operator"}
 
 
 def _boundary_group():
@@ -1099,15 +1278,24 @@ GRID_SETUPS = [
     ("1-D, Nt 5, the source terms, the FP's taking v", 1, 5, lambda: _source_group(True)),
     ("1-D, Nt 5, the FP's source without v", 1, 5, lambda: _source_group(False)),
     ("1-D, Nt 5, nonlocal_operator", 1, 5, _nonlocal_group),
+    ("1-D, Nt 5, the source terms beside a terminal coupling", 1, 5, lambda: _source_group(True, terminal=True)),
+    ("1-D, Nt 5, nonlocal_operator beside a terminal coupling", 1, 5, lambda: _nonlocal_group(terminal=True)),
     ("1-D, Nt 5, a Dirichlet g(t)", 1, 5, _boundary_group),
     ("1-D, Nt 1, the Hamiltonian's sources, wall, costs", 1, 1, _hamiltonian_group),
     ("1-D, Nt 1, the FP's source without v", 1, 1, lambda: _source_group(False)),
     ("1-D, Nt 4, the FP's source without v", 1, 4, lambda: _source_group(False)),
     ("6 x 6, Nt 5, the Hamiltonian's sources, wall, costs", 2, 5, _hamiltonian_group),
     ("6 x 6, Nt 5, the FP's source without v", 2, 5, lambda: _source_group(False)),
+    ("6 x 6, Nt 5, the source terms beside a terminal coupling", 2, 5, lambda: _source_group(True, terminal=True)),
     ("Mesh1D, Nt 5, the Hamiltonian's sources and wall", "mesh", 5, lambda: _hamiltonian_group(costs=False)),
     ("Mesh1D, Nt 5, the FP's source without v", "mesh", 5, lambda: _source_group(False)),
     ("Mesh1D, Nt 5, a Dirichlet g(t)", "mesh", 5, _boundary_group),
+    (
+        "Mesh1D, Nt 5, the source terms beside a terminal coupling",
+        "mesh",
+        5,
+        lambda: _source_group(True, terminal=True),
+    ),
 ]
 
 
@@ -1122,8 +1310,9 @@ def _refusal(scheme, domain, names):
     if name.startswith("FEM_"):
         if domain != "mesh":
             return "requires an unstructured mesh"
-        # P2's DOFs are the vertices and the edge midpoints, never the problem's points.
-        return "points that are not those of the problem being solved" if name == "FEM_P2" else None
+        # P2's DOFs are the vertices and the edge midpoints, never the problem's points; and it binds a declared
+        # coupling cost or terminal coupling on P1 only, which it refuses first.
+        return "points that are not those of the problem being solved|on P1 only" if name == "FEM_P2" else None
     if domain == "mesh":
         return "Cannot use .* with this problem"
     if name.startswith("SL_"):
@@ -1146,7 +1335,8 @@ def _refusal(scheme, domain, names):
 )
 def test_every_state_the_owner_reads_is_one_each_scheme_hands(domain, steps, group, scheme):
     """Each callable notes every state it is handed, while the owner reads the built problem and then while
-    problem.solve(scheme=...) runs, as (time, node, m is m_initial's there, v is u_terminal's there). For every
+    problem.solve(scheme=...) runs, as (time, node, m is m_initial's there, v is the first iteration's there: the terminal
+    value at m_initial, which is u_terminal without a terminal coupling). For every
     `NumericalScheme` member that solves the setup, what the owner read must be among what the solve read: a scheme that
     stops reading one of the owner's states, or an owner that reads one a scheme does not, fails here. A member that does
     not solve it must refuse it with the message `_refusal` names.
@@ -1157,6 +1347,9 @@ def test_every_state_the_owner_reads_is_one_each_scheme_hands(domain, steps, gro
     kwargs, names = group()
     if steps == 1:  # no interior time node, the only times every scheme hands these
         names -= {"coupling_cost", "source_term_hjb", "source_term_fp"}
+    if domain == "mesh" and "model" in kwargs and kwargs["model"].terminal_coupling is not None:
+        # Off a grid the problem binds no G, and the v the first iteration hands is the HJB solver's binding's.
+        names -= {"source_term_hjb", "nonlocal_operator"}
     bc = kwargs.pop("bc", None)
     for side in _SEEN.values():
         side.clear()
@@ -1176,7 +1369,8 @@ def test_every_state_the_owner_reads_is_one_each_scheme_hands(domain, steps, gro
     _CTX.update(
         nodes=np.asarray(problem.geometry.get_spatial_grid(), dtype=float).reshape(-1, dim),
         m0=np.asarray(problem.m_initial, dtype=float).ravel(),
-        vT=np.asarray(problem.u_terminal, dtype=float).ravel(),
+        vT=_first_terminal_value(problem),
+        uT=np.asarray(problem.u_terminal, dtype=float).ravel(),
     )
     solve = lambda: problem.solve(scheme=scheme, max_iterations=2, verbose=False)  # noqa: E731
     refusal = _refusal(scheme, domain, names)
@@ -1195,10 +1389,20 @@ def test_every_state_the_owner_reads_is_one_each_scheme_hands(domain, steps, gro
     assert not unread, f"{len(unread)} states the owner read that {scheme.name} was not handed, first {unread[:3]}"
 
 
+def _first_terminal_value(problem):
+    """The v every row of the iterator's cold start holds: ``terminal_value(get_m_init())``, or u_terminal where G is
+    bound by the solver and not the problem (off a grid), where what takes v is not read at all."""
+    try:
+        return np.asarray(problem.terminal_value(problem.get_m_init()), dtype=float).ravel()
+    except (NotImplementedError, ValueError):
+        return np.asarray(problem.u_terminal, dtype=float).ravel()
+
+
 def _read_as_the_owner_then_solve(problem, solve):
     _PHASE[0] = "owner"
     try:
         _refuse_a_non_finite_source(problem)
+        _refuse_a_non_finite_source(problem, after_binding=True)
         _PHASE[0] = "solve"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

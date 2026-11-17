@@ -24,12 +24,13 @@ from scipy.special import erf
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import NewtonMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
-from mfgarchon.alg.numerical.coupling.source_composition import _coupling_part, compose_hjb_source
+from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.core.coupling_costs import InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_problem import _coupling_part
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
