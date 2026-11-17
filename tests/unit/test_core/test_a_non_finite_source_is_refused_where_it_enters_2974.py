@@ -6,8 +6,8 @@ at states every `NumericalScheme` that solves the problem hands it.
 - Times: the interior time nodes; t_0 as well for the Hamiltonian's sources, a callable volatility and a boundary
   callable; T alone for the terminal coupling. The two source terms and the coupling cost at the interior nodes alone.
 - Space: the probe nodes off the boundary. The coupling cost and `nonlocal_operator` are evaluated on the whole grid and
-  judged there; the terminal coupling at every node. A boundary segment's callable is read where its type reads its
-  value (`FIELDS_READ`).
+  judged at those probe nodes; the terminal coupling at every node. A boundary segment's callable is read where its
+  type reads its value (`FIELDS_READ`).
 - m and v: the first Picard iteration's guesses, the initial density and the terminal value at it (`u_terminal`
   without a terminal coupling).
 - On a network: a node source at t_0, and a `NodeBC`'s callable value at up to five of its nodes.

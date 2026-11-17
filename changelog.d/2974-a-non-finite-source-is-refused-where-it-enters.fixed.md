@@ -7,9 +7,9 @@
     `source_term_fp` and `coupling_cost` are read at the interior nodes alone, and `terminal_coupling` at T alone;
   - **at the probe nodes off the box's boundary**, with the values the iterator's first iteration hands there: the
     initial density, and v the terminal value at it (`terminal_value(get_m_init())`, which is `u_terminal` without a
-    terminal coupling). The coupling cost and `nonlocal_operator` are evaluated on the whole grid and judged there;
-    the terminal coupling at every node. A boundary segment's callable is read where its type reads its value
-    (`FIELDS_READ`), so a NO_FLUX or REFLECTING segment's is not, as its constant is not;
+    terminal coupling). The coupling cost and `nonlocal_operator` are evaluated on the whole grid and judged at those
+    probe nodes; the terminal coupling at every node. A boundary segment's callable is read where its type reads its
+    value (`FIELDS_READ`), so a NO_FLUX or REFLECTING segment's is not, as its constant is not;
   - **each through the function the solve reads it with**: the source terms through `_call_problem_source`, the FP's
     converted as FP-FVM, FP-SL and the weak-form FP convert it, the
     coupling cost through `_coupling_part`, the terminal coupling through `terminal_value`, a callable volatility
@@ -68,8 +68,8 @@
 
   **Not seen at construction:**
   - a source finite at these reads and non-finite elsewhere: at a boundary node, which the solve reads under no-flux,
-    or a Dirichlet node, whose value does not reach the solution; at another time, m or v; or at a state the solve
-    reaches;
+    or a Dirichlet node, whose value does not reach the solution; at an interior node that is not a probe node; at
+    another time, m or v; or at a state the solve reaches;
   - a NO_FLUX or REFLECTING segment's value, a constant or a callable, which its type does not impose;
   - a `source_term_fp` that takes v, and a source non-finite only at t_0 (`source_term_hjb`, `coupling_cost`) or only
     at T (`source_term_fp`), which some scheme that solves the problem does not read;

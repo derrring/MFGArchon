@@ -486,6 +486,7 @@ Not seen here:
 - **a source finite at these reads and non-finite elsewhere**:
   - at a boundary node, which the solve reads under no-flux, and at a Dirichlet node, whose value does not reach the
     solution;
+  - at an interior node that is not a probe node;
   - at another time, $m$ or $v$, or at a state the solve reaches.
 
   A coupling NaN only at $m = 0.5$, or only at $m = 1$ where `m_initial` is never $1$, builds;
