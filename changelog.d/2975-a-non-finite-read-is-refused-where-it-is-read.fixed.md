@@ -11,8 +11,10 @@
   - **FP-FVM given a NaN optimal control**: a wrong M with `converged` True and no warning, since `max|a| > 0` read a
     NaN velocity as no advection. The face velocities and the source are refused before the step, and the mask
     reads a velocity as present when any face is nonzero;
-  - **FP-FDM**: "Check CFL condition" for a NaN drift or source. Both are refused before the step; the check after it
-    stays, and names the CFL condition, for a non-finite M from finite inputs;
+  - **FP-FDM**: "Check CFL condition" for a NaN drift or source. The drift is refused before the step and the source
+    where the step adds it, at the rows that keep it, so a NaN only at a Dirichlet node, whose row discards it, still
+    solves as before. The check after the step stays, and names the CFL condition, for a non-finite M from finite
+    inputs;
   - **HJB-SL on a grid of two or more dimensions**: a non-finite value update was replaced by U at the next time, and
     the step raised only past 10% of the points, so a NaN at a few nodes gave a finite wrong U with `converged` True.
     The fill and the threshold are deleted, and the update names the read behind it;

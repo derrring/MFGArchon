@@ -540,12 +540,15 @@ Where it is read:
   - for the Jacobian, the Hamiltonian's `dp`.
 
   A row non-finite with every term finite is a failed Newton step, and #2644's policy reports it;
-- **FP-FDM's and FP-FVM's time step**: the drift and the source the step advances, before it advances them. The drift
-  is named by where it came from, the optimal control or `drift_field`. The check after the step stays for a
-  non-finite $M$ the step computed from finite inputs, and only that check names the CFL condition;
-- **HJB-SL's operator-splitting step (`diffusion_method="adi"`, the default) on a grid of two or more dimensions**:
-  a non-finite value update is named by the read behind it, in this order: the foot velocity (the Hamiltonian's `dp`), the wall, the sources the Hamiltonian holds, its value. A
-  result non-finite with every read finite stays in the step, and the check after the step reports it;
+- **FP-FDM's and FP-FVM's time step**: the drift before the step advances it, named by where it came from, the optimal
+  control or `drift_field`; and the source where the step adds it. FP-FDM's implicit step reads the source at the rows
+  that keep it: a Dirichlet row reads $m = g$ and discards it, unless a capped exit reads that row's balance. The check
+  after the step stays for a non-finite $M$ the step computed from finite inputs, and only that check names the CFL
+  condition;
+- **HJB-SL's operator-splitting step (`diffusion_method="adi"`, the default) on a grid of two or more dimensions**: a
+  non-finite value update is named by the read behind it, in this order: the foot velocity (the Hamiltonian's `dp`),
+  the wall, the sources the Hamiltonian holds, its value. A result non-finite with every read finite stays in the
+  step, and the check after the step reports it;
 - **the network FP's transition rates** out of each node;
 - **a coefficient or a boundary value**: the output of a callable volatility or drift, a volatility tensor, a
   `volatility=` override, and a boundary value at the ghost layer or the graph applicator. A boundary value of a type
