@@ -27,9 +27,10 @@ What is not refused:
 - an input no solver reads (`coupling_dm`);
 - a network source that takes p or m, which the solvers are handed by their caller;
 - an infinity that means something (`BoundedControlCost(max_control=inf)`, unbounded);
-- a return that holds no number (None) where the solve's reader raises on it: the source terms, a callable volatility
-  and a network node's source. A potential, a density term, the wall and the costs are read as the solve reads them,
-  which makes a None NaN, and are refused.
+- a return that holds no number (None) from a source read as it returns, whose readers at use raise on it: the source
+  terms, a callable volatility and a network node's source. A held potential or density term is read as the
+  Hamiltonians' evaluation reads it, and the wall and the costs through the functions the solve reads them with; each
+  of those makes a None NaN, which is refused whichever reader the solve then uses.
 
 Every value parameter of a `HamiltonianBase` or `LagrangianBase` subclass is declared beside the class: a source the owner
 reads (`HELD_SOURCES`), a scalar its constructor refuses (`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`). The last
@@ -547,7 +548,7 @@ def test_a_one_element_array_that_is_nan_is_refused_by_name():
         kernels.GaussianKernel(amplitude=np.array([NAN]))
 
 
-# A return that holds no number (None) is judged as the solve's reader converts it.
+# A return that holds no number (None) is judged as the reader the owner reads it through converts it.
 def _none_at_one_node(t, x):
     """None at the probe node x = 0.6 alone and 0 at every other x, entry by entry."""
     values = [None if np.isclose(v, 0.6) else 0.0 for v in np.atleast_1d(np.asarray(x[0], dtype=float))]
@@ -587,9 +588,9 @@ NONE_READ_AS_NAN = [
 )
 def test_a_none_its_reader_reads_as_nan_is_refused_by_name(build, names):
     """The Hamiltonian's evaluation reads a potential, a density term on a batch, and the composed wall as numpy
-    converts, so a None there is NaN where the solver reads it, and the owner reads each through that read. At
-    21ef740b each of these solved with `converged` False at 60 iterations, where its twin returning 0 there converges:
-    max |U - U_twin| 0.54 for the potential and for the wall, and 0.0255 for the coupling (0.0277 under FVM_UPWIND)."""
+    converts, so a None there is NaN, and the owner reads each through that read. At 21ef740b each of these solved with
+    `converged` False at 60 iterations, where its twin returning 0 there converges: max |U - U_twin| 0.54 for the
+    potential and for the wall, and 0.0255 for the coupling (0.0277 under FVM_UPWIND)."""
     with pytest.raises(ValidationError, match=_read(names)):
         build()
 
@@ -620,7 +621,7 @@ def test_a_held_source_of_a_kind_no_reader_reads_raises_naming_it():
 
 
 # The read set from below, each a state the documented reads include and no other row pins (the probe nodes here are
-# 0.5, the centre, 0.6, 0.2 and 0.9; Nt 5, so t_{Nt // 2} is 0.2 and t_{Nt - 1} is 0.4).
+# 0.5, the centre, 0.6, 0.2 and 0.9; Nt 5, so t_1 is 0.1, t_{Nt // 2} is 0.2 and t_{Nt - 1} is 0.4).
 LOWER_BOUND = [
     (
         "source_term_hjb NaN only at t_{Nt // 2}",
@@ -633,6 +634,24 @@ LOWER_BOUND = [
         lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.4)(t))(x)),
         ValidationError,
         _read("source_term_hjb"),
+    ),
+    (
+        "potential NaN only at t_1",
+        lambda: _problem(1, model={"hamiltonian": _h(potential=lambda t, x: _at_x(_only_at(0.1)(t))(x))}),
+        ValidationError,
+        _read("SeparableHamiltonian's potential") + r".*t=0\.1",
+    ),
+    (
+        "potential NaN only at t_{Nt // 2}",
+        lambda: _problem(1, model={"hamiltonian": _h(potential=lambda t, x: _at_x(_only_at(0.2)(t))(x))}),
+        ValidationError,
+        _read("SeparableHamiltonian's potential") + r".*t=0\.2",
+    ),
+    (
+        "potential NaN only at t_{Nt - 1}",
+        lambda: _problem(1, model={"hamiltonian": _h(potential=lambda t, x: _at_x(_only_at(0.4)(t))(x))}),
+        ValidationError,
+        _read("SeparableHamiltonian's potential") + r".*t=0\.4",
     ),
     (
         "potential NaN only at a probe node off the centre",
@@ -654,6 +673,14 @@ LOWER_BOUND = [
         ),
         NotImplementedError,
         r"BCSegment 'uniform' \(what its callable returned at t=0.2\) has a non-finite value nan",
+    ),
+    (
+        "a NodeBC's callable value NaN only at an interior time",
+        lambda: _network_problem(
+            node_bcs=[NodeBC(nodes=[8], value=lambda t, node: NAN if abs(float(t) - 0.2) < 1e-12 else 0.5, name="exit")]
+        ),
+        NotImplementedError,
+        r"NodeBC 'exit': value \(what its callable returned at node 8, t=0.2\) has a non-finite value nan",
     ),
 ]
 

@@ -25,7 +25,11 @@
     and `terminal_coupling`, a scalar volatility or `diffusion`, `T`, a `CongestionHamiltonian`'s `congestion_factor`,
     a Hamiltonian's `coupling` non-finite at `m_initial`'s values, a `NetworkHamiltonian`'s `node_potential_func`, a
     boundary segment's callable value, and a `NodeBC`'s callable value. Among them, a held potential or density term
-    and the wall that return None where the solver reads them, which their readers read as NaN.
+    and the wall that return None where construction reads them. It reads a held source as the Hamiltonians'
+    evaluation reads it, and the wall through `wall_values`, each of which makes a None NaN. Such a problem is refused
+    whichever reader the solve then uses: a semi-Lagrangian solve with a non-smooth control cost (`BoundedControlCost`,
+    `L1ControlCost`) reads the potential through `SeparableLagrangian`'s own call, which raised a TypeError on the
+    None. Which readers of a Hamiltonian's return make a None NaN and which raise is #2901's.
   - **Refused where its object is built:** a radial kernel's NaN parameter, and its infinite amplitude or exponent (an
     infinite length scale or softening stays accepted: it solves as the constant or zero kernel it tends to);
     `BoundedControlCost(max_control=nan)` (`max_control=inf` stays accepted: it solves as unbounded);
@@ -63,9 +67,8 @@
   - on a grid with an axis of 2 nodes, which has no probe node off the boundary, the callables read there: a callable
     volatility, the held sources, the two source terms and `state_penalty`;
   - where a terminal coupling is declared off a grid, what takes v, since the problem binds no terminal coupling there;
-  - a return that holds no number (None) where the solve's reader raises on it: the source terms, a callable
-    volatility and a network's `node_potential_func`. A potential, a density term, the wall and the costs are read as
-    the solve reads them, which makes a None NaN, and are refused by name;
+  - a return that holds no number (None) from a source construction reads as it returns, whose readers at use raise
+    on it: the source terms, a callable volatility and a network's `node_potential_func`;
   - what an expert-mode solver handed to `problem.solve` reads and no scheme of the enum does, and the iterator's warm
     start (`set_warm_start_data`);
   - on a network, a source that takes p or m (`hamiltonian_func`, `node_interaction_func`), which the solvers are

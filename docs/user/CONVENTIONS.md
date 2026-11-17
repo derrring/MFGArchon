@@ -446,11 +446,18 @@ A scalar held by an object that exists before any problem is refused where that 
   REFLECTING segment imposes a zero flux whatever value it carries, and PERIODIC and the extrapolations carry none; a
   `NodeBC`'s constant value.
 
-A return that holds no number (`None`) is judged as the solve's reader converts it:
-- **refused by name:** a potential, a density term, the wall and the coupling costs. Their readers convert as numpy
-  does, so a `None` is NaN where the solver reads it;
+A return that holds no number (`None`) is judged as the reader construction reads it through converts it:
+- **refused by name:** a held potential and a held density term, each read as the Hamiltonians' evaluation reads it,
+  and the wall and the coupling costs, read through the functions the solve reads them with. These convert as numpy
+  does, so a `None` is NaN;
 - **left to its reader:** the source terms, a callable volatility and a network's `node_potential_func`. They are
   read as they return, and their readers at use raise on a `None`.
+
+A held source that is `None` where construction reads it is refused whichever reader the solve then uses. Not every
+reader of a potential or a density term converts as numpy does: some raise on a `None`. A semi-Lagrangian solve with a
+non-smooth control cost (`BoundedControlCost`, `L1ControlCost`) reaches one, since it reads the potential through
+`SeparableLagrangian`'s own call, and such a problem is refused at construction all the same. Which reading of a `None`
+is right for a Hamiltonian's return is #2901's, where the readers that disagree are listed.
 
 A volatility handed to `solve_hjb_system` or `solve_fp_system` is refused there. Each Hamiltonian and Lagrangian class
 declares every value its constructor takes: a source read here (`HELD_SOURCES`), a scalar its constructor refuses

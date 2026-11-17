@@ -509,11 +509,13 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
     and the wall); or on a network, a source that takes p or m, which the solvers are handed by their caller. A read
     that raises one of ``_EVALUATION_ERRORS`` is not this fact and is left to the readers at use.
 
-    A return that holds no number (None) is judged as the solve's reader converts it, since each source is read through
-    that read. The potential and the density terms, the wall and the costs convert as numpy does, so a None is NaN
-    where the solver reads it, and is refused by name. The source terms, a callable volatility and a network node's
-    source are read as they return, before their readers' checks, and those readers raise on a None at use, so it is
-    left to them (``_floats_entry_by_entry``).
+    A return that holds no number (None) is judged as the read made here converts it. A held potential or density term
+    is read as the Hamiltonians' evaluation reads it, and the wall and the costs through the functions the solve reads
+    them with; each converts as numpy does, so a None is NaN, and is refused by name, whichever reader the solve then
+    uses. Other readers of a potential or a density term raise on a None (#2901), among them ``SeparableLagrangian``'s
+    call, which a semi-Lagrangian solve with a non-smooth control cost reaches. The source terms, a callable volatility
+    and a network node's source are read as they return, before their readers' checks, and those readers raise on a
+    None at use, so it is left to them (``_floats_entry_by_entry``).
     """
     from mfgarchon.core.hamiltonian import (
         HamiltonianBase,
