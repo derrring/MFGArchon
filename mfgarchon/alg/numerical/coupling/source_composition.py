@@ -70,9 +70,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.core.mfg_problem import CouplingBinding
-from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
-from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute, coordinate_tuple
+from mfgarchon.core.mfg_problem import (
+    CouplingBinding,
+    _call_problem_source,
+    _coupling_part,
+    problem_coupling_binding,
+)
 
 from .graph_coupling import _get_time_slice
 
@@ -82,30 +85,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
-
-
-def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray, m: NDArray, v: NDArray) -> NDArray:
-    """``problem.<name>`` at one time slice, through its binding (#2375 ruling 8).
-
-    The one place a problem's ``source_term_hjb`` or ``source_term_fp`` is invoked.
-    """
-    coordinates = coordinate_tuple(x, problem.dimension)
-    if np.ndim(m) > 1 and np.size(coordinates[0]) == np.size(m):  # one entry per coordinate, of the density's shape
-        coordinates = tuple(np.reshape(entry, np.shape(m)) for entry in coordinates)
-    return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=coordinates, m=m, v=v, t=t)
-
-
-def problem_coupling_binding(problem: MFGProblem) -> CouplingBinding | None:
-    """The problem's own binding of ``Model.coupling_cost``: ``problem.coupling_energy`` on the grid's nodes, the rows
-    of ``geometry.get_spatial_grid()``; None where the problem binds none, on a geometry that is not a grid, or with no
-    cost (#1642)."""
-    energy = problem.coupling_energy
-    if energy is None:
-        return None
-    return CouplingBinding(
-        energy, np.asarray(problem.geometry.get_spatial_grid(), dtype=float), problem.declared_coupling_cost
-    )
 
 
 def hjb_source_fields(problem: MFGProblem) -> list[str]:
@@ -131,54 +110,6 @@ def hjb_source_fields(problem: MFGProblem) -> list[str]:
 def hjb_source_is_active(problem: MFGProblem) -> bool:
     """Whether this problem declares any HJB source, without composing one (`hjb_source_fields`)."""
     return bool(hjb_source_fields(problem))
-
-
-def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: NDArray, t: float) -> NDArray:
-    """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, evaluated at
-    ``x`` (#1642).
-
-    ``nodes`` are the points F was bound on (`CouplingBinding`): on a grid, the rows of ``geometry.get_spatial_grid()``
-    in the grid's C order; for HJB-FEM, its dofs. ``m_t`` is flattened in that order. At those points, in that order,
-    the part is ``flat_derivative``. At other points -- a solver's own, such as HJB-GFDM's collocation points, or the
-    nodes in another order -- it is ``flat_derivative_at``, which the bound energy has when it is a
-    `PointwiseFlatDerivative` and is refused by name when it is not (stage 1b-1).
-    """
-    from mfgarchon.operators.interaction.energy_functionals import PointwiseFlatDerivative
-
-    flat = np.asarray(m_t, dtype=float).ravel()
-    nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
-    if flat.size != len(nodes):
-        raise ValueError(
-            f"The coupling cost was bound on {len(nodes)} points, and this HJB evaluation passes a density slice of "
-            f"{flat.size} values. The density the coupling part reads is the one it was bound on, one value per point "
-            "in their order (#1642)."
-        )
-    if points_are_grid_nodes(x, nodes):
-        return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
-    d = nodes.shape[1]
-    points = np.asarray(x, dtype=float)
-    if points.ndim == 1 and d == 1:
-        points = points[:, None]
-    if points.ndim != 2 or points.shape[1] != d:
-        raise ValueError(
-            f"The coupling cost was bound on points in {d}-D, and this HJB evaluation passes x of shape "
-            f"{np.shape(x)}, not points of shape (n, {d}) (#1642)."
-        )
-    if not isinstance(energy, PointwiseFlatDerivative):
-        raise NotImplementedError(
-            f"The coupling cost's bound energy, {type(energy).__name__}, has no flat_derivative_at(m, x, *, t), so "
-            f"it evaluates only at the {len(nodes)} points it was bound on, in their order; this HJB evaluation "
-            f"passes {len(points)} other points, such as HJB-GFDM's collocation points. Give the energy a "
-            "flat_derivative_at (PointwiseFlatDerivative, in mfgarchon.operators.interaction.energy_functionals), or "
-            "solve with a solver that evaluates at the grid's nodes -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D (#1642)."
-        )
-    values = np.asarray(energy.flat_derivative_at(flat, points, t=t), dtype=float)
-    if values.shape != (len(points),):
-        raise ValueError(
-            f"{type(energy).__name__}.flat_derivative_at at {len(points)} points returned shape {values.shape}, "
-            f"not ({len(points)},) (#1642)."
-        )
-    return values
 
 
 def coupling_binding_for(

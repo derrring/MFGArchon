@@ -24,12 +24,13 @@ from scipy.special import erf
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import NewtonMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
-from mfgarchon.alg.numerical.coupling.source_composition import _coupling_part, compose_hjb_source
+from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.core.coupling_costs import InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_problem import _coupling_part
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -300,6 +301,9 @@ def test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given(solve
         conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
         Nt=nt,
     )
+    # Construction reads the part at m_initial, at the times `_refuse_a_non_finite_source` reads, to refuse a
+    # non-finite one (#2974). What this pins is the solver's own reads, so they are counted from here.
+    cost.calls.clear()
     x = _x(problem)
     M = np.array([(1.0 + n) * (1.0 + x) for n in range(nt + 1)])
     U = np.zeros_like(M)

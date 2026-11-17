@@ -39,12 +39,12 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import (
-    _call_problem_source,
     _problem_hjb_source_terms,
     coupling_binding_for,
     hjb_source_fields,
     hjb_source_is_active,
 )
+from mfgarchon.core.mfg_problem import _call_problem_source
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 

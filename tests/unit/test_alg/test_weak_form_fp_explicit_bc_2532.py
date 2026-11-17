@@ -243,14 +243,16 @@ def test_fem_refuses_a_dirichlet_value_it_cannot_read(route, value):
     from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 
     if route == "fp-explicit":
-        problem, own = _problem(_mesh(1), _exit(1, EXIT_VALUE)), _exit(1, value)
-        build = lambda: _fem(problem, own)  # noqa: E731
+        problem = _problem(_mesh(1), _exit(1, EXIT_VALUE))
+        build = lambda: _fem(problem, _exit(1, value))  # noqa: E731
     else:
-        problem = _problem(_mesh(1), _exit(1, value))
-        build = lambda: HJBFEMSolver(problem)  # noqa: E731
-    with pytest.raises(
-        NotImplementedError, match=r"Dirichlet segment 'exit' has a (value of type|non-finite|boolean|complex)"
-    ):
+        build = lambda: HJBFEMSolver(_problem(_mesh(1), _exit(1, value)))  # noqa: E731
+    # A non-finite number is refused where the segment is built, by the same owner (#2974); the others where FEM reads.
+    if isinstance(value, float) and not np.isfinite(value):
+        refusal = r"BCSegment 'exit' has a non-finite value"
+    else:
+        refusal = r"Dirichlet segment 'exit' has a (value of type|non-finite|boolean|complex)"
+    with pytest.raises(NotImplementedError, match=refusal):
         build()
 
 

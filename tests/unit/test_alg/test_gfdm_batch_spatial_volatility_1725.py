@@ -326,6 +326,8 @@ def test_non_spatial_callable_fails_before_evaluation(has_defaults):
             return 0.2
 
     problem = _problem(sigma)
+    # Construction reads sigma at its probes to refuse a non-finite one (#2974); the solver is what must not.
+    calls = 0
     x = np.linspace(0.0, 1.0, _N)
     solver = _solver(problem, x)
     M = np.ones((problem.Nt + 1, _N))

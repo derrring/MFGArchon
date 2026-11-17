@@ -135,6 +135,9 @@ def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
         conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=1.0),
         Nt=NT,
     )
+    # Construction reads the value at the states `_refuse_a_non_finite_source` reads, to refuse a non-finite one
+    # (#2974). What this pins is the steps' own reads, so they are counted from here.
+    events.clear()
     axes = np.meshgrid(*grid.coordinates, indexing="ij")
     u_terminal = amp * sum((X - 0.4) ** 2 for X in axes)
     m = np.ones((NT + 1, *u_terminal.shape))

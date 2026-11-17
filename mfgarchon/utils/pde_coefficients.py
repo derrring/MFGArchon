@@ -250,7 +250,9 @@ def resolve_volatility_override(
     ------
     ValueError
         For a kind with no array or callable to read it, an unknown kind, an array without a kind, or
-        a per-axis ``(d,)`` vector, which is the diagonal tensor ``np.diag(v)`` and not a field.
+        a per-axis ``(d,)`` vector, which is the diagonal tensor ``np.diag(v)`` and not a field. For a scalar
+        or an array override holding NaN or an infinity, the one decider of that override's finiteness
+        (#2618, #2974); a callable override is read at the point of use.
     """
     if volatility is None:
         if volatility_kind is not None:
@@ -270,10 +272,17 @@ def resolve_volatility_override(
                 "was given with a scalar volatility=, where it would be read by nothing."
             )
         value = float(volatility)
-        if value < 0:
-            raise ValueError(f"{consumer}: a scalar volatility must be non-negative, got {value}.")
+        if not np.isfinite(value) or value < 0:
+            raise ValueError(
+                f"{consumer}: a scalar volatility must be finite and non-negative, got {value} (#2618, #2974)."
+            )
         return value, None
     array = np.asarray(volatility, dtype=float)
+    if not np.all(np.isfinite(array)):
+        raise ValueError(
+            f"{consumer}: the volatility= array holds {int(np.sum(~np.isfinite(array)))} non-finite values of "
+            f"{array.size} (#2618, #2974)."
+        )
     dimension = getattr(problem, "dimension", None)
     per_axis = isinstance(dimension, int) and dimension >= 2 and array.shape == (dimension,)
     if per_axis and volatility_kind != "field":
@@ -539,9 +548,21 @@ class CoefficientField:
         """
         Evaluate a callable coefficient by the names it declares (#2875).
         """
+        return self._validate_callable_output(
+            self.read_callable(timestep_idx, grid, density, dt), density.shape, timestep_idx
+        )
+
+    def read_callable(
+        self,
+        timestep_idx: int,
+        grid: np.ndarray | tuple[np.ndarray, ...],
+        density: np.ndarray,
+        dt: float | None,
+    ) -> Any:
+        """The callable coefficient's return at ``timestep_idx``, ``grid`` and ``density``, before `evaluate_at` checks
+        it: the one read of it, which `evaluate_at` and `_refuse_a_non_finite_source` both make (#2974)."""
         t_current = timestep_idx * dt if dt is not None else timestep_idx
-        result = self._bound(t=t_current, x=points_of(grid, self.dimension), m=density)
-        return self._validate_callable_output(result, density.shape, timestep_idx)
+        return self._bound(t=t_current, x=points_of(grid, self.dimension), m=density)
 
     def _validate_callable_output(self, output: Any, expected_shape: tuple, timestep_idx: int) -> float | np.ndarray:
         """

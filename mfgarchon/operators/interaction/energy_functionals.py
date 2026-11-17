@@ -141,7 +141,7 @@ class PointwiseFlatDerivative(Protocol):
 
     A protocol of its own rather than a member of :class:`EnergyFunctional`, so a user's energy without it still is
     one; the HJB source refuses to evaluate such an energy anywhere but at its nodes, by name
-    (``source_composition._coupling_part``). The shipped energies implement it when bound to a problem:
+    (``mfg_problem._coupling_part``). The shipped energies implement it when bound to a problem:
     ``PotentialEnergy`` evaluates V(x), ``QuadraticInteractionEnergy`` applies the bound quadrature at x, and
     ``CombinedEnergy`` sums its parts.
     """

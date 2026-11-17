@@ -350,6 +350,10 @@ class StochasticMFGProblem(MFGProblem):
         class _FrozenNoiseHamiltonian(HamiltonianBase):
             """H(t, x, p, m) with theta read from one frozen realisation of the noise."""
 
+            NOT_HELD: ClassVar[dict[str, str]] = {
+                "realisation": "a path of the noise the library draws, not a caller's value (#2974)"
+            }
+
             def __init__(self, problem: StochasticMFGProblem, realisation: np.ndarray) -> None:
                 super().__init__()
                 self._problem = problem
