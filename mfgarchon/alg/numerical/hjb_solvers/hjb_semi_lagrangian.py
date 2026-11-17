@@ -2517,7 +2517,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 )
 
     def _name_a_non_finite_value_update(
-        self, x: np.ndarray, m: float, p: np.ndarray, velocity: np.ndarray, t: float, node: tuple[int, ...]
+        self, x: np.ndarray, m: np.ndarray | float, p: np.ndarray, velocity: np.ndarray, t: float, node: tuple[int, ...]
     ) -> None:
         """The n-D value update's naming of a non-finite result (#2975), run where it would enter U_star.
 
@@ -2535,7 +2535,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         m_row = np.atleast_1d(np.asarray(m, dtype=float))
         named: dict[str, object] = {f"{type(H).__name__}'s dp, the foot velocity": velocity}
         named.update(_hamiltonian_terms_at(self.problem, t, tuple(np.atleast_1d(c) for c in x), m_row))
-        named[f"{type(H).__name__}'s value"] = eval_H_batch(H, x, m, p, t)
+        named[f"{type(H).__name__}'s value"] = eval_H_batch(H, x, np.asarray(m, dtype=float), p, t)
         refuse_a_non_finite_read(
             "HJBSemiLagrangianSolver's value update",
             f"t={t:g}, x={x.tolist()}, p={p.tolist()}, m={float(m_row[0]):.6g} (node {tuple(int(k) for k in node)})",

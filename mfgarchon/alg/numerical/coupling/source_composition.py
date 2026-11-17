@@ -66,7 +66,7 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -257,9 +257,10 @@ class ComposedHJBSource:
     ) -> None:
         self._problem, self._m, self._u, self._binding, self._reader = problem, m_current, u_current, binding, reader
 
-    def parts(self, t: float, x: NDArray) -> dict[str, NDArray]:
+    def parts(self, t: float, x: Any) -> dict[str, NDArray]:
         """The parts at ``(t, x)``, by the problem's field name: ``source_term_hjb``, ``coupling_cost``,
-        ``nonlocal_operator``, those the problem declares."""
+        ``nonlocal_operator``, those the problem declares. ``x`` as a call reads it: `evaluate_solver_source` calls a
+        closure the library composed with the solver's own x."""
         raw = _problem_hjb_source_terms(
             self._problem, self._m, self._u, t, x, self._problem.dt, self._binding, self._reader
         )

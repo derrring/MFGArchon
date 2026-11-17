@@ -1036,7 +1036,7 @@ def _refuse_a_non_finite_hjb_term(
     residual: np.ndarray,
     problem: MFGProblem,
     current_time: float,
-    x_grid: np.ndarray,
+    x_grid: np.ndarray | list[np.ndarray],
     p_grid: np.ndarray | None,
     m_grid: np.ndarray,
     H_values: np.ndarray | None,
@@ -1062,7 +1062,7 @@ def _refuse_a_non_finite_hjb_term(
         return
     from mfgarchon.alg.numerical.coupling.source_composition import ComposedHJBSource
 
-    points = np.asarray(x_grid, dtype=float).reshape(np.shape(residual)[0], -1)
+    points = _grid_points(x_grid, np.shape(residual)[0])
     first = int(bad[0])
     state = f"t={current_time:g}, x={points[first].tolist()}"
     if p_grid is not None:
@@ -1072,6 +1072,8 @@ def _refuse_a_non_finite_hjb_term(
     solver = "HJBFDMSolver's Newton step"
     if source_values is not None and not np.all(np.isfinite(np.asarray(source_values, dtype=float).ravel()[bad])):
         if isinstance(source_callable, ComposedHJBSource):
+            # Read as the step read the sum: `evaluate_solver_source` calls a closure the library composed with the
+            # solver's own x.
             parts = source_callable.parts(current_time, x_grid)
             refuse_a_non_finite_read(
                 solver, where, {n: np.asarray(v, dtype=float).ravel()[bad] for n, v in parts.items()}
@@ -1088,6 +1090,14 @@ def _refuse_a_non_finite_hjb_term(
     )
     named[f"{type(H).__name__}'s value"] = np.asarray(H_values, dtype=float).ravel()[bad]
     refuse_a_non_finite_read(solver, where, named)
+
+
+def _grid_points(x_grid: np.ndarray | list[np.ndarray], n: int) -> np.ndarray:
+    """The ``n`` points of a geometry's grid, one row each: as `get_spatial_grid` hands an array of points, or, from a
+    geometry that hands one array per axis, the rows of their columns. For the naming of a non-finite term (#2975)."""
+    if isinstance(x_grid, list):
+        return np.column_stack([np.ravel(axis) for axis in x_grid]).reshape(n, -1)
+    return np.asarray(x_grid, dtype=float).reshape(n, -1)
 
 
 def _hamiltonian_terms_at(
@@ -1596,7 +1606,12 @@ def compute_hjb_jacobian(
     return Jac
 
 
-def _refuse_a_non_finite_jacobian_term(jacobian, problem: MFGProblem, current_time: float, read_dp) -> None:
+def _refuse_a_non_finite_jacobian_term(
+    jacobian: sparse.csr_matrix,
+    problem: MFGProblem,
+    current_time: float,
+    read_dp: tuple[np.ndarray, np.ndarray | list[np.ndarray], np.ndarray, np.ndarray] | None,
+) -> None:
     """The 1-D HJB-FDM Jacobian's naming of a non-finite term (#2975), run where the Jacobian is assembled, after its
     Dirichlet rows are imposed. A row it keeps that holds a non-finite entry is named by what the step read for it: H's
     ``dp`` on the batch path (``read_dp``, as `checked_control` handed it), else H's value in the per-point difference.
@@ -1618,7 +1633,7 @@ def _refuse_a_non_finite_jacobian_term(jacobian, problem: MFGProblem, current_ti
     dp, x_grid, p_grid, m_grid = read_dp
     if np.all(np.isfinite(np.asarray(dp, dtype=float)[bad])):
         return
-    points = np.asarray(x_grid, dtype=float).reshape(jacobian.shape[0], -1)
+    points = _grid_points(x_grid, jacobian.shape[0])
     where = (
         f"t={current_time:g}, x={points[first].tolist()}, "
         f"p={np.asarray(p_grid, dtype=float).reshape(points.shape[0], -1)[first].tolist()}, "

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import warnings
 
 import pytest
 
@@ -198,17 +199,21 @@ def _problem(hamiltonian=None, model_kw=None, dimension=1, bc=None, **kw):
         Nx_points=[11] if dimension == 1 else [6, 6],
         boundary_conditions=bc if bc is not None else bnd.no_flux_bc(dimension=dimension),
     )
-    return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, **({"volatility": 0.2} | (model_kw or {}))),
-        domain=grid,
-        conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.5 * np.asarray(x[0], dtype=float),
-            u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)),
-            T=0.5,
-        ),
-        Nt=5,
-        **kw,
-    )
+    # m_initial 1 + x/2 keeps m >= 1 at the start, which the coupling row needs; its mass 1.25 is intended, so the
+    # library's warning that it does not rescale it is silenced as the library says to.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
+        return MFGProblem(
+            model=Model(hamiltonian=hamiltonian, **({"volatility": 0.2} | (model_kw or {}))),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.5 * np.asarray(x[0], dtype=float),
+                u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)),
+                T=0.5,
+            ),
+            Nt=5,
+            **kw,
+        )
 
 
 def _operator_nan_in_row_0():
@@ -337,7 +342,8 @@ def test_fp_fdm_still_names_the_cfl_condition_for_a_step_that_overflows_from_fin
     """The check after the step stays for a non-finite M the step computed from finite inputs."""
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 
-    with pytest.raises(ValueError, match="Check CFL condition") as caught:
+    # The step overflows by design; numpy's own warning about it is not this test's subject.
+    with np.errstate(over="ignore", invalid="ignore"), pytest.raises(ValueError, match="Check CFL condition") as caught:
         FPFDMSolver(_problem()).solve_fp_system(np.full(11, 1e308), drift_field=np.full((6, 11), 1e3))
     assert not isinstance(caught.value, NonFiniteReadError)
 
@@ -388,7 +394,9 @@ def test_the_network_fp_refuses_a_non_finite_transition_rate(monkeypatch):
         + OWN
         + r": .*, the first nan, at t=.*, node \d+",
     ):
-        FPNetworkSolver(problem).solve_fp_system(np.ones(network.num_nodes), potential_field=u)
+        FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(
+            np.ones(network.num_nodes), potential_field=u
+        )
 
 
 # --- Site 6: an array handed at a door is refused there, by name. ---
