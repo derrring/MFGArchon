@@ -145,6 +145,15 @@ _SHAPE_OWNER = {
 }
 
 
+def _floats_entry_by_entry(value: Any) -> np.ndarray:
+    """What a source returned, as floats: an object array entry by entry, since numpy alone reads ``None`` there as NaN.
+    A return that holds no number raises (``TypeError``) rather than reading as a NaN value (#2901, #2974)."""
+    array = np.asarray(value)
+    if array.dtype == object:
+        return np.array([float(v) for v in array.reshape(-1).tolist()]).reshape(array.shape)
+    return np.asarray(array, dtype=float)
+
+
 def _read_source(
     source: Any,
     *,
@@ -207,15 +216,9 @@ def _read_source(
                 value = checked_value(value, m, reader=reader, source=owner_of, p=p, method=method)
         except ValueError as refusal:
             raise SourceShapeError(str(refusal)) from refusal
-    # The reader's one conversion, for every form: an object array entry by entry, so None raises rather than reading
-    # as NaN.
+    # The reader's one conversion, for every form.
     try:
-        array = np.asarray(value)
-        floats = (
-            np.array([float(v) for v in array.reshape(-1).tolist()]).reshape(array.shape)
-            if array.dtype == object
-            else np.asarray(array, dtype=float)
-        )
+        floats = _floats_entry_by_entry(value)
     except _EVALUATION_ERRORS as e:
         raise SourceEvaluationError(e) from e
     if form != "potential":
@@ -474,9 +477,11 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
       is every node a solve reads but a Dirichlet node, whose value does not reach the solution; on a mesh whose
       boundary is not the box, some of them lie on the mesh's boundary, which the solve reads too. There it reads a
       callable volatility (``CoefficientField.read_callable``, the read ``evaluate_at`` makes), ``source_term_hjb``,
-      ``source_term_fp`` (``_call_problem_source``), ``state_penalty`` and every source a Hamiltonian or Lagrangian
-      holds (`held_sources`), each callable once, named by the operator the caller gave. A boundary segment's callable
-      value is read at the boundary probe nodes it governs (``segment_for_point``);
+      ``source_term_fp`` (``_call_problem_source``), ``state_penalty`` (``wall_values``) and every source a Hamiltonian
+      or Lagrangian holds (`held_sources`), each callable once, named by the operator the caller gave: a potential as
+      the Hamiltonians' evaluation reads it (``_read_of_the_potential``), a density term on a batch
+      (``_read_of_the_density``). A held source declared with any other slots is the check's own error, and raises. A
+      boundary segment's callable value is read at the boundary probe nodes it governs (``segment_for_point``);
     - m and v: the first Picard iteration hands the HJB the initial density at every t_n, and v the terminal value at
       it, ``terminal_value(get_m_init())``, which is ``u_terminal`` without a terminal coupling; the FP is handed the
       initial density, with v only at T. So a callable that takes them is handed those values at its nodes, and the
@@ -503,17 +508,31 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
     probe node off the boundary, what is read there (a callable volatility, the held sources, the two source terms
     and the wall); or on a network, a source that takes p or m, which the solvers are handed by their caller. A read
     that raises one of ``_EVALUATION_ERRORS`` is not this fact and is left to the readers at use.
+
+    A return that holds no number (None) is judged as the solve's reader converts it, since each source is read through
+    that read. The potential and the density terms, the wall and the costs convert as numpy does, so a None is NaN
+    where the solver reads it, and is refused by name. The source terms, a callable volatility and a network node's
+    source are read as they return, before their readers' checks, and those readers raise on a None at use, so it is
+    left to them (``_floats_entry_by_entry``).
     """
-    from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase, _own_rows, held_sources
+    from mfgarchon.core.hamiltonian import (
+        HamiltonianBase,
+        LagrangianBase,
+        _own_rows,
+        _read_of_the_density,
+        _read_of_the_potential,
+        held_sources,
+    )
     from mfgarchon.core.mfg_problem import _call_problem_source, wall_values
     from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.geometry.boundary.providers import is_provider
     from mfgarchon.geometry.boundary.types import _read_constant
     from mfgarchon.types.callable_protocols import (
+        DENSITY_SLOTS,
+        POTENTIAL_SLOTS,
         REGION_SLOTS,
         SOURCE_TERM_SLOTS,
         _remembered,
-        bound_attribute,
     )
     from mfgarchon.utils.validation import ValidationError
 
@@ -544,19 +563,17 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
             )
 
     def read(name: str, call: Any, where: str) -> None:
+        # ``call`` is the solve's own read of the source, so what it returns is what the solver reads. A return that
+        # holds no number reaches here only from a read that converts nothing, whose reader at use raises on it, and is
+        # left to that reader, as one that cannot be evaluated is.
         try:
-            value = call()
+            value = _floats_entry_by_entry(call())
         except _EVALUATION_ERRORS:
-            return
-        # A return that holds no number -- None, or an object array with a None entry -- is not this fact: its reader at
-        # use decides it, and it is never read as NaN, as `_read_source` converts a return entry by entry (#2901).
-        if value is None or any(entry is None for entry in np.asarray(value, dtype=object).reshape(-1).tolist()):
             return
         refuse(name, value, where)
 
     def held(bound: Any, slots: Any, **state: Any) -> Any:
-        # A held source is handed its own slots only, as the operator's methods hand them: a density term reads m and
-        # cross_density, and is never handed x, which would start a batch comparison its reader does not make.
+        # A node's held source is handed its own slots only, as the network solvers hand them.
         return bound(**{slot: value for slot, value in state.items() if slot in slots.order})
 
     def stop_if_refused() -> None:
@@ -651,13 +668,27 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
                 # that pairing is #2972's.
                 if "node" in slots.order or not first_read(getattr(operator, attr, None), slots):
                     continue
-                bound = bound_attribute(operator, attr, slots, role=parameter)
                 name = f"{type(operator).__name__}'s {parameter}"
-                for t in hjb_times if "t" in slots.order else [0.0]:
+                # Each through the solve's own read of its kind, so what it returns is judged as the solver reads it.
+                if slots == POTENTIAL_SLOTS:
+                    for t in hjb_times:
+                        read(
+                            name,
+                            lambda o=operator, a=attr, s=t: _read_of_the_potential(o, a, x, s),
+                            f"at the interior probe nodes, t={t:g}",
+                        )
+                elif slots == DENSITY_SLOTS:
                     read(
                         name,
-                        lambda b=bound, q=slots, s=t: held(b, q, t=s, x=x, m=m, cross_density=_own_rows(m)),
-                        f"at the interior probe nodes{f', t={t:g}' if 't' in slots.order else ''}",
+                        lambda o=operator, a=attr: _read_of_the_density(o, a, m, _own_rows(m), m.size),
+                        "at the interior probe nodes",
+                    )
+                else:
+                    raise TypeError(
+                        f"{type(operator).__name__}.HELD_SOURCES declares {parameter!r} with the slots {slots.order}, "
+                        "which no reader of a held source on a grid reads: the construction check reads a potential "
+                        "(POTENTIAL_SLOTS) and a density term (DENSITY_SLOTS), each as the solve reads it. Read the new "
+                        "kind there as its solver does, or the source is not checked (#2974)."
                     )
         for field_name in ("source_term_hjb", "source_term_fp"):
             source = getattr(problem, field_name, None)
@@ -728,7 +759,7 @@ def _refuse_a_non_finite_read_of_the_bound_terms(
     - what takes v -- ``source_term_hjb`` taking v, through `_call_problem_source`, and ``nonlocal_operator`` -- at the
       v the first iteration hands: ``terminal_value(m_initial)``, which every row of the cold start holds. Where a
       terminal coupling is declared and the problem binds none (off a grid), that v is the HJB solver's binding's, which
-      construction does not have, and what takes v is not read.
+      construction does not have: ``terminal_value`` refuses there, and what takes v is not read.
     """
     from mfgarchon.core.mfg_problem import _call_problem_source, _coupling_part, problem_coupling_binding
     from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, _remembered
@@ -744,8 +775,6 @@ def _refuse_a_non_finite_read_of_the_bound_terms(
     if problem._terminal_energy is not None:
         read("terminal_coupling", lambda: problem.terminal_value(m_all), f"at m_initial, t={float(problem.T):g}")
     stop_if_refused()
-    if problem._declared_terminal_coupling is not None and problem._terminal_energy is None:
-        return
     try:
         v_all = np.asarray(problem.terminal_value(m_all), dtype=float).reshape(-1)
     except _EVALUATION_ERRORS:

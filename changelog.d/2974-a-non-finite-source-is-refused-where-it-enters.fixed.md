@@ -10,7 +10,9 @@
     terminal coupling);
   - **each through the function the solve reads it with**: the source terms through `_call_problem_source`, the
     coupling cost through `_coupling_part`, the terminal coupling through `terminal_value`, a callable volatility
-    through `CoefficientField.read_callable`, the read `evaluate_at` makes. `_call_problem_source`, `_coupling_part`
+    through `CoefficientField.read_callable`, the read `evaluate_at` makes, the wall through `wall_values`, a held
+    potential through `_read_of_the_potential`, which the Hamiltonians' evaluation now calls, and a held density term
+    through `_read_of_the_density` on a batch. `_call_problem_source`, `_coupling_part`
     and `problem_coupling_binding` moved from `alg.numerical.coupling.source_composition` to `core.mfg_problem`,
     unchanged, so that construction can call them without importing the solver layer.
 
@@ -22,7 +24,8 @@
     `state_penalty`, `state_penalty_scale`, `source_term_hjb`, `source_term_fp`, `nonlocal_operator`, `coupling_cost`
     and `terminal_coupling`, a scalar volatility or `diffusion`, `T`, a `CongestionHamiltonian`'s `congestion_factor`,
     a Hamiltonian's `coupling` non-finite at `m_initial`'s values, a `NetworkHamiltonian`'s `node_potential_func`, a
-    boundary segment's callable value, and a `NodeBC`'s callable value.
+    boundary segment's callable value, and a `NodeBC`'s callable value. Among them, a held potential or density term
+    and the wall that return None where the solver reads them, which their readers read as NaN.
   - **Refused where its object is built:** a radial kernel's NaN parameter, and its infinite amplitude or exponent (an
     infinite length scale or softening stays accepted: it solves as the constant or zero kernel it tends to);
     `BoundedControlCost(max_control=nan)` (`max_control=inf` stays accepted: it solves as unbounded);
@@ -46,8 +49,9 @@
     a non-finite value; the problem's construction decides it. `validate_hamiltonian` and `validate_custom_functions`
     take `m_initial=`, and without it read m = 1 as before.
   - **For subclasses:** `HamiltonianBase` and `LagrangianBase` carry `HELD_SOURCES`, `CHECKED_SCALARS` and `NOT_HELD`.
-    A source a class lists in `HELD_SOURCES` is read by construction; the library's classes list every value their
-    constructor takes, and a test holds them to it.
+    A source a class lists in `HELD_SOURCES` is read by construction, as a potential or a density term by the slots it
+    declares; one declared with other slots raises, naming the class and the parameter. The library's classes list
+    every value their constructor takes, and a test holds them to it.
 
   **Not seen at construction:**
   - a source finite at these reads and non-finite elsewhere: at a boundary node, which the solve reads under no-flux;
@@ -59,8 +63,9 @@
   - on a grid with an axis of 2 nodes, which has no probe node off the boundary, the callables read there: a callable
     volatility, the held sources, the two source terms and `state_penalty`;
   - where a terminal coupling is declared off a grid, what takes v, since the problem binds no terminal coupling there;
-  - a source term that returns no number (None), which its reader at use decides (a wall that does is read as NaN,
-    as the composed potential reads it, and refused);
+  - a return that holds no number (None) where the solve's reader raises on it: the source terms, a callable
+    volatility and a network's `node_potential_func`. A potential, a density term, the wall and the costs are read as
+    the solve reads them, which makes a None NaN, and are refused by name;
   - what an expert-mode solver handed to `problem.solve` reads and no scheme of the enum does, and the iterator's warm
     start (`set_warm_start_data`);
   - on a network, a source that takes p or m (`hamiltonian_func`, `node_interaction_func`), which the solvers are

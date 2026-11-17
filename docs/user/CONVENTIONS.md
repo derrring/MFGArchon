@@ -420,8 +420,9 @@ these states, and a test holds the reads inside them for every member. A solver 
   Dirichlet node, which is handed its callable and imposes its value; on a mesh whose boundary is not the box, some of
   them lie on the mesh's boundary, which the solve reads too. There the owner reads a callable volatility,
   `source_term_hjb`, `source_term_fp`, `state_penalty`, and every source a Hamiltonian or a Lagrangian holds, such as
-  `potential`, `coupling` and `congestion_factor`, named by the operator the caller gave. A boundary segment's callable
-  value is read at the boundary probe nodes it governs;
+  `potential`, `coupling` and `congestion_factor`, named by the operator the caller gave: a potential as the
+  Hamiltonian's evaluation reads it, a density term as that evaluation reads it on a batch. A boundary segment's
+  callable value is read at the boundary probe nodes it governs;
 - **$m$ and $v$**: the first Picard iteration hands the HJB the initial density at every $t_n$, and $v$ the terminal
   value at it, `terminal_value(get_m_init())`: `u_terminal`, plus the terminal coupling's derivative where one is
   declared. It hands the FP the initial density, with $v$ only at $T$. So a callable that takes them is read with those
@@ -445,9 +446,17 @@ A scalar held by an object that exists before any problem is refused where that 
   REFLECTING segment imposes a zero flux whatever value it carries, and PERIODIC and the extrapolations carry none; a
   `NodeBC`'s constant value.
 
+A return that holds no number (`None`) is judged as the solve's reader converts it:
+- **refused by name:** a potential, a density term, the wall and the coupling costs. Their readers convert as numpy
+  does, so a `None` is NaN where the solver reads it;
+- **left to its reader:** the source terms, a callable volatility and a network's `node_potential_func`. They are
+  read as they return, and their readers at use raise on a `None`.
+
 A volatility handed to `solve_hjb_system` or `solve_fp_system` is refused there. Each Hamiltonian and Lagrangian class
 declares every value its constructor takes: a source read here (`HELD_SOURCES`), a scalar its constructor refuses
-(`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`).
+(`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`). A held source is read as a potential or a density term, by the
+slots it declares. One declared with any other slots raises when a problem is built, naming the class and the
+parameter.
 
 A Hamiltonian's own `__call__`, `dp` and `optimal_control` take $p$, which construction does not know, so they are not
 read here. `validate_hamiltonian` refuses a `__call__` that is NaN or infinite at one state: $t = 0$, the centre probe
@@ -481,7 +490,8 @@ Not seen here:
   there pairs with an entry of `m_initial`, so only the arrays and scalars are read. A Hamiltonian's sources are read
   only through its `__call__`, by `validate_hamiltonian`, at a node of its own draw with $m = 1$;
 - **an input no solver reads**, such as `dm`;
-- **a source whose read raises, and a boundary condition its owner refuses**, which are left to their readers at use.
+- **a source whose read raises, a `None` where the solve's reader raises on it, and a boundary condition its owner
+  refuses**, which are left to their readers at use.
 
 What the solve reaches is the point-of-use checks' fact (#2975, #2976):
 - the callable volatility's output check;

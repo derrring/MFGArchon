@@ -805,6 +805,13 @@ def _bound_potential(owner: Any) -> BoundCallable:
     return bound_attribute(owner, "_potential", POTENTIAL_SLOTS, role="potential")
 
 
+def _read_of_the_potential(owner: Any, name: str, x: Any, t: float) -> NDArray:
+    """``owner.<name>``, a function of t and x, read at them as the Hamiltonians' evaluation reads it: converted to floats
+    as numpy converts, so an entry that holds no number (None) is NaN where the solver reads it. The construction
+    check reads a held potential through it too (#2974)."""
+    return np.asarray(bound_attribute(owner, name, POTENTIAL_SLOTS, role=name.lstrip("_"))(x=x, t=t), dtype=float)
+
+
 def _unpaired_density(
     what: str, handed: int, count: int, *, returned: int | None = None, after: Exception | None = None
 ) -> str:
@@ -2943,7 +2950,7 @@ class SeparableHamiltonian(HamiltonianBase):
 
         # Potential term (Issue #929: auto-detect vectorized callable)
         if self._potential is not None:
-            V = np.asarray(_bound_potential(self)(x=x, t=t), dtype=float)
+            V = _read_of_the_potential(self, "_potential", x, t)
             V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
@@ -3188,7 +3195,7 @@ class CongestionHamiltonian(HamiltonianBase):
 
         # Potential term V(t, x)
         if self._potential is not None:
-            V = np.asarray(_bound_potential(self)(x=x, t=t), dtype=float)
+            V = _read_of_the_potential(self, "_potential", x, t)
             V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0

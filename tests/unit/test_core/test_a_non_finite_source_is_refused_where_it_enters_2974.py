@@ -26,7 +26,10 @@ What is not refused:
   cost at t_0, the FP's source at T), and a FP source that takes v;
 - an input no solver reads (`coupling_dm`);
 - a network source that takes p or m, which the solvers are handed by their caller;
-- an infinity that means something (`BoundedControlCost(max_control=inf)`, unbounded).
+- an infinity that means something (`BoundedControlCost(max_control=inf)`, unbounded);
+- a return that holds no number (None) where the solve's reader raises on it: the source terms, a callable volatility
+  and a network node's source. A potential, a density term, the wall and the costs are read as the solve reads them,
+  which makes a None NaN, and are refused.
 
 Every value parameter of a `HamiltonianBase` or `LagrangianBase` subclass is declared beside the class: a source the owner
 reads (`HELD_SOURCES`), a scalar its constructor refuses (`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`). The last
@@ -41,6 +44,7 @@ import inspect
 import pathlib
 import re
 import warnings
+from typing import ClassVar
 
 import pytest
 
@@ -69,6 +73,7 @@ from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, NodeBC
 from mfgarchon.geometry.boundary.types import FIELDS_READ
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 from mfgarchon.operators.interaction import kernels
+from mfgarchon.types.callable_protocols import Slots
 from mfgarchon.types.schemes import NumericalScheme
 from mfgarchon.utils.validation import ValidationError
 from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
@@ -542,15 +547,76 @@ def test_a_one_element_array_that_is_nan_is_refused_by_name():
         kernels.GaussianKernel(amplitude=np.array([NAN]))
 
 
-def test_a_callable_returning_no_number_is_read_as_its_reader_reads_it():
-    """A return that holds no number is decided by what the solve's reader makes of it. The HJB source's is not this
-    fact: at 21ef740b the solve raised a TypeError on it, and 01dcbb8a refused it as non-finite; here it builds, as at
-    21ef740b. The wall's reader, the composed potential, reads a None as NaN (`wall_values`), so a None wall is
-    non-finite where the solver reads it: at 21ef740b it solved to a U 0.54 off its twin's with `converged` False, and
-    it is refused here, naming the wall."""
+# A return that holds no number (None) is judged as the solve's reader converts it.
+def _none_at_one_node(t, x):
+    """None at the probe node x = 0.6 alone and 0 at every other x, entry by entry."""
+    values = [None if np.isclose(v, 0.6) else 0.0 for v in np.atleast_1d(np.asarray(x[0], dtype=float))]
+    return np.array(values, dtype=object) if np.ndim(np.asarray(x[0])) else values[0]
+
+
+def _none_where_empty(m):
+    """A coupling that is None where the density is 0 and m / 2 at every other m, entry by entry."""
+    values = [None if v == 0.0 else 0.5 * v for v in np.atleast_1d(np.asarray(m, dtype=float))]
+    return np.array(values, dtype=object) if np.ndim(np.asarray(m)) else values[0]
+
+
+def _empty_near_the_ends(x):
+    """An initial density that is 0 at x <= 0.1 and at x >= 0.9, the probe node 0.9 among them, and 1 + cos(pi x) / 2
+    between."""
+    a = np.asarray(x[0], dtype=float)
+    return np.where((a > 0.1 + 1e-9) & (a < 0.9 - 1e-9), 1.0 + 0.5 * np.cos(np.pi * a), 0.0)
+
+
+NONE_READ_AS_NAN = [
+    (
+        "SeparableHamiltonian's potential, None at one node",
+        lambda: _problem(1, model={"hamiltonian": _h(potential=_none_at_one_node)}),
+        "SeparableHamiltonian's potential",
+    ),
+    (
+        "SeparableHamiltonian's coupling, None where m = 0",
+        lambda: _problem(1, model={"hamiltonian": _h(coupling=_none_where_empty)}, m_initial=_empty_near_the_ends),
+        "SeparableHamiltonian's coupling",
+    ),
+    ("state_penalty, None", lambda: _problem(1, state_penalty=lambda x: None), "state_penalty"),
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "names"), [row[1:] for row in NONE_READ_AS_NAN], ids=[row[0] for row in NONE_READ_AS_NAN]
+)
+def test_a_none_its_reader_reads_as_nan_is_refused_by_name(build, names):
+    """The Hamiltonian's evaluation reads a potential, a density term on a batch, and the composed wall as numpy
+    converts, so a None there is NaN where the solver reads it, and the owner reads each through that read. At
+    21ef740b each of these solved with `converged` False at 60 iterations, where its twin returning 0 there converges:
+    max |U - U_twin| 0.54 for the potential and for the wall, and 0.0255 for the coupling (0.0277 under FVM_UPWIND)."""
+    with pytest.raises(ValidationError, match=_read(names)):
+        build()
+
+
+def test_a_none_its_reader_raises_on_is_left_to_it():
+    """The HJB source is summed as it returns (`compose_hjb_source`), which raises a TypeError on a None at the solve, at
+    21ef740b as here; 01dcbb8a refused it as non-finite. It builds, with None at one node and everywhere."""
+    _problem(1, source_term_hjb=_none_at_one_node)
     _problem(1, source_term_hjb=lambda t, x: None)
-    with pytest.raises(ValidationError, match=_read("state_penalty")):
-        _problem(1, state_penalty=lambda x: None)
+
+
+class _HoldingAnUnreadKind(SeparableHamiltonian):
+    """A Hamiltonian that declares a held source with slots no reader of a held source on a grid reads."""
+
+    HELD_SOURCES: ClassVar[dict[str, tuple[str, Slots]]] = {"bias": ("_bias", Slots(("t", "x", "m")))}
+
+    def __init__(self, bias):
+        super().__init__(QuadraticControlCost(control_cost=1.0))
+        self._bias = bias
+
+
+def test_a_held_source_of_a_kind_no_reader_reads_raises_naming_it():
+    """A held source is read as the kind its slots declare, a potential or a density term, each through the solve's
+    read. Any other kind is the check's own error and raises, naming the class and the parameter, so a source of a new
+    kind is never passed over unread."""
+    with pytest.raises(TypeError, match=r"_HoldingAnUnreadKind\.HELD_SOURCES declares 'bias' with the slots"):
+        _problem(1, model={"hamiltonian": _HoldingAnUnreadKind(lambda t, x, m: 0.0)})
 
 
 # The read set from below, each a state the documented reads include and no other row pins (the probe nodes here are
