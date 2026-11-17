@@ -585,8 +585,11 @@ class CoefficientField:
         ValueError
             If output shape doesn't match expected or contains NaN/Inf
         """
-        # Handle scalar output
+        # Handle scalar output: a scalar is read as one value at every point, and refused as the array is (#2975)
         if isinstance(output, (int, float)):
+            refuse_a_non_finite_read(
+                f"the {self.name} field", f"time step {timestep_idx}", {f"the callable {self.name}": float(output)}
+            )
             return float(output)
 
         # Handle array output

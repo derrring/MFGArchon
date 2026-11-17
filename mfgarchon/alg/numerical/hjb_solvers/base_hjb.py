@@ -962,12 +962,13 @@ def compute_hjb_residual(
 
         residual = _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
         _refuse_a_non_finite_hjb_term(
-            residual, problem, current_time, x_grid, p_grid, m_grid, H_values, source_term, source_callable
+            residual, problem, current_time, x_grid, p_grid, m_grid, H_values, source_term, source_callable, cross_grid
         )
         return residual
 
     # Fallback: per-point loop for backend != None or missing precomputed_grad
-    H_point = np.full(Nx, np.nan)  # each point's H, so a non-finite one can be named (#2975)
+    H_point = np.full(Nx, np.nan)  # each point's H and p, so a non-finite term can be named (#2975)
+    p_point = np.full(Nx, np.nan)
     for i in range(Nx):
         # Backend compatibility - tensor to scalar conversion (Issue #543 acceptable)
         phi_val = Phi_U[i].item() if hasattr(Phi_U[i], "item") else float(Phi_U[i])
@@ -987,6 +988,7 @@ def compute_hjb_residual(
         if np.any(np.isnan(list(derivs.values()))):
             Phi_U[i] = float("nan")
             continue
+        p_point[i] = float(derivs[(1,)])
 
         # Backend compatibility - tensor to scalar conversion (Issue #543 acceptable)
         m_val = (
@@ -1017,18 +1019,19 @@ def compute_hjb_residual(
         Phi_U -= source_term
 
     residual = _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
-    if backend is None:
-        _refuse_a_non_finite_hjb_term(
-            residual,
-            problem,
-            current_time,
-            problem.geometry.get_spatial_grid(),
-            None,
-            np.asarray(M_density_at_n_plus_1, dtype=float),
-            H_point,
-            source_term,
-            source_callable,
-        )
+    # The per-point path is the one `HJBFDMSolver(analytic_jacobian=False)` takes on NumPyBackend; its arrays are named
+    # as numpy reads them (#2975).
+    _refuse_a_non_finite_hjb_term(
+        to_numpy(residual, backend),
+        problem,
+        current_time,
+        problem.geometry.get_spatial_grid(),
+        p_point,
+        np.asarray(to_numpy(M_density_at_n_plus_1, backend), dtype=float),
+        H_point,
+        None if source_term is None else to_numpy(source_term, backend),
+        source_callable,
+    )
     return residual
 
 
@@ -1042,54 +1045,75 @@ def _refuse_a_non_finite_hjb_term(
     H_values: np.ndarray | None,
     source_values: np.ndarray | None,
     source_callable: Callable | None,
+    cross_rows: np.ndarray | None = None,
+    solver: str = "HJBFDMSolver's Newton step",
 ) -> None:
-    """The 1-D HJB-FDM residual's naming of a non-finite term (#2975), run where the residual is assembled.
+    """The HJB-FDM residual's naming of a non-finite term (#2975), run where the residual is assembled.
 
     A row the residual keeps, its Dirichlet rows imposed, that is non-finite while the iterate, U at t_{n+1} and the
-    density are finite (each refused at the solve's entry), comes from a term the step read. The first such row is
-    named by the term, each re-read through the one function the residual assembles it with:
+    density are finite (each refused at the solve's entry), comes from a term the step read. The term is named, each
+    re-read through the one function the residual assembles it with:
 
     - the source, by its part when it is the problem's composed source (`ComposedHJBSource.parts`), else as
       ``source_term``;
-    - else H: the wall (`wall_values`), then each source H holds, read as its evaluation reads it
-      (`_read_of_the_potential`, `_read_of_the_density`), then H's value itself, which is what an own ``__call__``
-      gives.
+    - else H: the wall (`wall_values`), then each source H holds, read as its evaluation reads it, a density term with
+      the population rows the residual handed (``cross_rows``) (`_read_of_the_potential`, `_read_of_the_density`),
+      then H's value itself, which is what an own ``__call__`` gives.
 
-    A row non-finite with every term finite is left to the Newton step, which reports it (#2644).
+    The first term non-finite at a row the residual keeps is named at the first such row, with its (t, x, p, m). A part
+    that returns one number holds at every row. A row non-finite with every term finite is left to the Newton step,
+    which reports it (#2644).
     """
     bad = np.flatnonzero(~np.isfinite(np.asarray(residual, dtype=float)))
     if bad.size == 0:
         return
     from mfgarchon.alg.numerical.coupling.source_composition import ComposedHJBSource
 
-    points = _grid_points(x_grid, np.shape(residual)[0])
-    first = int(bad[0])
-    state = f"t={current_time:g}, x={points[first].tolist()}"
-    if p_grid is not None:
-        state += f", p={np.asarray(p_grid, dtype=float).reshape(points.shape[0], -1)[first].tolist()}"
-    state += f", m={float(m_grid[first]):.6g}"
-    where = f"{state} (the first of {bad.size} row(s) the residual keeps that are non-finite)"
-    solver = "HJBFDMSolver's Newton step"
-    if source_values is not None and not np.all(np.isfinite(np.asarray(source_values, dtype=float).ravel()[bad])):
+    n = np.shape(residual)[0]
+    points = _grid_points(x_grid, n)
+    momenta = None if p_grid is None else np.asarray(p_grid, dtype=float).reshape(n, -1)
+    densities = np.asarray(m_grid, dtype=float).ravel()
+
+    def refuse(terms: dict[str, Any]) -> None:
+        for name, values in terms.items():
+            at_bad = _per_row(values, bad.size)
+            non_finite = np.flatnonzero(~np.isfinite(at_bad))
+            if non_finite.size == 0:
+                continue
+            row = int(bad[non_finite[0]])
+            state = f"t={current_time:g}, x={points[row].tolist()}"
+            if momenta is not None:
+                state += f", p={momenta[row].tolist()}"
+            state += f", m={float(densities[row]):.6g}"
+            refuse_a_non_finite_read(
+                solver, f"{state} (of the {bad.size} non-finite row(s) the residual keeps)", {name: at_bad}
+            )
+
+    if source_values is not None and not np.all(np.isfinite(_per_row(source_values, n)[bad])):
         if isinstance(source_callable, ComposedHJBSource):
             # Read as the step read the sum: `evaluate_solver_source` calls a closure the library composed with the
             # solver's own x.
             parts = source_callable.parts(current_time, x_grid)
-            refuse_a_non_finite_read(
-                solver, where, {n: np.asarray(v, dtype=float).ravel()[bad] for n, v in parts.items()}
-            )
-        refuse_a_non_finite_read(solver, where, {"source_term": np.asarray(source_values, dtype=float).ravel()[bad]})
-    if H_values is None or np.all(np.isfinite(np.asarray(H_values, dtype=float).ravel()[bad])):
+            refuse({name: _per_row(value, n)[bad] for name, value in parts.items()})
+        refuse({"source_term": _per_row(source_values, n)[bad]})
+    if H_values is None or np.all(np.isfinite(_per_row(H_values, n)[bad])):
         return
     H = problem.hamiltonian_class
     named = _hamiltonian_terms_at(
         problem,
         current_time,
         tuple(points[bad, k] for k in range(points.shape[1])),
-        np.asarray(m_grid, dtype=float).ravel()[bad],
+        densities[bad],
+        None if cross_rows is None else np.asarray(cross_rows, dtype=float)[:, bad],
     )
-    named[f"{type(H).__name__}'s value"] = np.asarray(H_values, dtype=float).ravel()[bad]
-    refuse_a_non_finite_read(solver, where, named)
+    named[f"{type(H).__name__}'s value"] = _per_row(H_values, n)[bad]
+    refuse(named)
+
+
+def _per_row(value: Any, n: int) -> np.ndarray:
+    """``value`` as ``n`` rows: a term that returns one number holds at every row (#2975)."""
+    flat = np.asarray(value, dtype=float).ravel()
+    return np.full(n, flat[0]) if flat.size == 1 else flat
 
 
 def _grid_points(x_grid: np.ndarray | list[np.ndarray], n: int) -> np.ndarray:
@@ -1101,7 +1125,11 @@ def _grid_points(x_grid: np.ndarray | list[np.ndarray], n: int) -> np.ndarray:
 
 
 def _hamiltonian_terms_at(
-    problem: MFGProblem, current_time: float, rows: tuple[np.ndarray, ...], m_rows: np.ndarray
+    problem: MFGProblem,
+    current_time: float,
+    rows: tuple[np.ndarray, ...],
+    m_rows: np.ndarray,
+    cross_rows: np.ndarray | None = None,
 ) -> dict[str, object]:
     """The terms H's value is assembled from at the points ``rows`` (one array per axis) and densities ``m_rows``, each
     re-read through the function H's evaluation reads it with (#2975): the wall (`wall_values`), then each source H
@@ -1122,7 +1150,9 @@ def _hamiltonian_terms_at(
         if slots == POTENTIAL_SLOTS:
             named[label] = _read_of_the_potential(H, attr, rows, current_time)
         elif slots == DENSITY_SLOTS:
-            named[label] = _read_of_the_density(H, attr, m_rows, _own_rows(m_rows), m_rows.size)
+            # With the population rows the residual handed (#2335), else the own row.
+            cross = _own_rows(m_rows) if cross_rows is None else cross_rows
+            named[label] = _read_of_the_density(H, attr, m_rows, cross, m_rows.size)
     return named
 
 
@@ -2163,13 +2193,7 @@ def solve_hjb_system_backward(
             timestep_idx=n_idx_hjb, grid=grid, density=M_n_prev_picard, dt=problem.dt
         )
 
-        # Handle backend compatibility for NaN/Inf checking in callable results
-        if diffusion.is_callable() and isinstance(volatility_at_n, np.ndarray):
-            refuse_a_non_finite_read(
-                "solve_hjb_system_backward",
-                f"time step {n_idx_hjb}",
-                {"the callable volatility": to_numpy(volatility_at_n, backend)},
-            )
+        # A callable volatility's output, a scalar or an array, is refused by `CoefficientField` where it is read (#2975).
 
         # Compute current time for time-dependent BCs
         current_time = n_idx_hjb * problem.dt
