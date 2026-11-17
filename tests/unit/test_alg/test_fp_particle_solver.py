@@ -16,6 +16,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 
 
 def _default_hamiltonian():
@@ -1018,7 +1019,9 @@ class TestFPParticleInvalidMInitial1071:
         """NaN m_initial must raise, not silently route to a uniform sample."""
         solver, u_solution, nx = self._solver_and_shapes()
         m_bad = np.full(nx, np.nan)
-        with pytest.raises(ValueError, match="NaN/Inf"):
+        with pytest.raises(
+            NonFiniteReadError, match="M_initial is non-finite where it reads it: 31 of 31 values at its door"
+        ):
             solver.solve_fp_system(m_bad, u_solution)
 
     def test_negative_m_initial_fails_loud(self):

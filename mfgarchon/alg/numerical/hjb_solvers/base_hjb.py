@@ -2134,8 +2134,11 @@ def solve_hjb_system_backward(
 
         # Handle backend compatibility for NaN/Inf checking in callable results
         if diffusion.is_callable() and isinstance(volatility_at_n, np.ndarray):
-            if has_nan_or_inf(volatility_at_n, backend):
-                raise ValueError(f"Callable volatility returned NaN/Inf at timestep {n_idx_hjb}")
+            refuse_a_non_finite_read(
+                "solve_hjb_system_backward",
+                f"time step {n_idx_hjb}",
+                {"the callable volatility": to_numpy(volatility_at_n, backend)},
+            )
 
         # Compute current time for time-dependent BCs
         current_time = n_idx_hjb * problem.dt

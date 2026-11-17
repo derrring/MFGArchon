@@ -16,6 +16,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.types import segment_value
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 
 
 def _segment(value, boundary="x_max") -> BCSegment:
@@ -291,7 +292,7 @@ def test_each_fdm_reader_receives_the_owners_value_at_its_time(reader):
 @pytest.mark.parametrize(
     ("returned", "message"),
     [
-        (float("nan"), r"\(what its callable returned\) has a non-finite value nan"),
+        (float("nan"), r"\(what its callable returned\) is non-finite where it reads it"),
         (True, r"\(what its callable returned\) has a boolean value"),
         (np.complex128(1j), r"\(what its callable returned\) has a complex value"),
         (None, r"its value returned None at one point, .* does the function lack a `return`"),
@@ -311,7 +312,9 @@ def test_what_a_callable_returns_is_read_as_a_constant_is(returned, message):
     ComplexWarning) for the first three, and None raised a bare TypeError; ``None`` is refused rather than read as 0,
     since a function with no ``return`` gives it. A one-element array is unwrapped before any rule reads it (review 1
     of #2598), so an object array holding True or None is read as True or None."""
-    with pytest.raises(NotImplementedError, match=message):
+    with pytest.raises(
+        NonFiniteReadError if "is non-finite where it reads it" in message else NotImplementedError, match=message
+    ):
         _fdm_ghost_wall(_fdm_bc(lambda t: returned))
 
 
@@ -550,7 +553,7 @@ _CONTRACT = [
     ('"0"', "0", False, 0.0),
     ("float32 0.5", np.float32(0.5), False, 0.5),
     ('"0.7"', "0.7", False, r"has a value of type str"),
-    ("nan", float("nan"), False, r"has a non-finite value nan"),
+    ("nan", float("nan"), False, r"k is non-finite where it reads it"),
 ]
 
 
@@ -564,7 +567,8 @@ def test_the_layered_contract(value, returned, expected):
 
     read = (lambda t: value) if returned else value
     if isinstance(expected, str):
-        with pytest.raises(NotImplementedError, match=expected):
+        error = NonFiniteReadError if "is non-finite where it reads it" in expected else NotImplementedError
+        with pytest.raises(error, match=expected):
             boundary_value(read, kind="k", t=0.5, x=None, where="w")
     else:
         assert boundary_value(read, kind="k", t=0.5, x=None, where="w") == pytest.approx(expected, abs=1e-7)
@@ -605,10 +609,12 @@ def test_a_robin_coefficient_is_read_by_one_reader_and_a_callable_or_a_field_is_
             r"has a boolean value, which is not a boundary datum: give a real number, or a real array of one element: a Robin",
         ),
         (1j, r"has a complex value"),
-        (float("nan"), r"has a non-finite value"),
+        (float("nan"), r"is non-finite where it reads it"),
         (None, r"'s alpha is None"),
     ):
-        with pytest.raises(NotImplementedError, match=refusal):
+        with pytest.raises(
+            NonFiniteReadError if "is non-finite where it reads it" in refusal else NotImplementedError, match=refusal
+        ):
             segment_robin_coefficients(robin(alpha, 1.0), where="w")
 
 

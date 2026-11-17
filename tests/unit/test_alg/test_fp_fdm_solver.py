@@ -25,6 +25,7 @@ from mfgarchon.geometry.boundary import (
     no_flux_bc,
     periodic_bc,
 )
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
@@ -714,8 +715,7 @@ class TestFPFDMSolverCallableDiffusion:
 
         m_initial = np.ones(Nx_points) / Nx_points
 
-        # Should raise ValueError about NaN
-        with pytest.raises(ValueError, match="NaN or Inf"):
+        with pytest.raises(NonFiniteReadError, match="the callable volatility is non-finite where it reads it"):
             solver.solve_fp_system(m_initial, volatility=nan_diffusion)
 
 

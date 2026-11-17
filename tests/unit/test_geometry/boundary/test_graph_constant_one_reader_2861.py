@@ -15,6 +15,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, GraphBCType, NodeBC, create_graph_applicator
 from mfgarchon.geometry.boundary.types import _read_constant, boundary_value
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 
 _WRITTEN_BEFORE = [math.nan, math.inf, -math.inf, np.float64(np.inf), np.float32(np.nan)]
 
@@ -49,13 +50,15 @@ _DOORS = {
 @pytest.mark.parametrize("value", _WRITTEN_BEFORE, ids=repr)
 @pytest.mark.parametrize("door", list(_DOORS))
 def test_a_non_finite_constant_is_refused_at_each_door(door, value):
-    with pytest.raises(NotImplementedError, match=r"non-finite value .*the graph applicator .*#2593"):
+    with pytest.raises(NonFiniteReadError, match=r"the graph applicator: .* is non-finite where it reads it: .*#2975"):
         _DOORS[door](value)
 
 
 @pytest.mark.parametrize("value", [math.inf, math.nan], ids=repr)
 def test_a_non_finite_boundary_value_is_refused_by_the_geometry_factory(value):
-    with pytest.raises(NotImplementedError, match=r"from_network_geometry: boundary_value has a non-finite value"):
+    with pytest.raises(
+        NonFiniteReadError, match=r"from_network_geometry: boundary_value is non-finite where it reads it"
+    ):
         GraphApplicator.from_network_geometry(_maze(), "degree", boundary_value=value)
 
 
@@ -103,7 +106,7 @@ def test_a_number_no_float_holds_is_refused_by_name_on_each_path(too_large):
 
 
 def test_a_non_finite_refusal_says_what_to_pass():
-    with pytest.raises(NotImplementedError, match=r"non-finite solution: pass a finite real number"):
+    with pytest.raises(NonFiniteReadError, match=r"the value it would impose; pass a finite real number"):
         _at_a_node(math.inf)
-    with pytest.raises(NotImplementedError, match=r"non-finite solution: return one real number"):
+    with pytest.raises(NonFiniteReadError, match=r"the value it would impose; return one real number"):
         boundary_value(lambda t, x: math.inf, kind="a value", t=0.0, x=np.zeros(1), where="a grid")

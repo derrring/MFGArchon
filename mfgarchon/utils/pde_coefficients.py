@@ -20,6 +20,7 @@ from mfgarchon.types.callable_protocols import (
     coordinate_tuple,
     point_tuple,
 )
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -272,17 +273,12 @@ def resolve_volatility_override(
                 "was given with a scalar volatility=, where it would be read by nothing."
             )
         value = float(volatility)
-        if not np.isfinite(value) or value < 0:
-            raise ValueError(
-                f"{consumer}: a scalar volatility must be finite and non-negative, got {value} (#2618, #2974)."
-            )
+        refuse_a_non_finite_read(consumer, "its volatility= override", {"volatility": value})
+        if value < 0:
+            raise ValueError(f"{consumer}: a scalar volatility must be finite and non-negative, got {value} (#2618).")
         return value, None
     array = np.asarray(volatility, dtype=float)
-    if not np.all(np.isfinite(array)):
-        raise ValueError(
-            f"{consumer}: the volatility= array holds {int(np.sum(~np.isfinite(array)))} non-finite values of "
-            f"{array.size} (#2618, #2974)."
-        )
+    refuse_a_non_finite_read(consumer, "its volatility= override", {"volatility": array})
     dimension = getattr(problem, "dimension", None)
     per_axis = isinstance(dimension, int) and dimension >= 2 and array.shape == (dimension,)
     if per_axis and volatility_kind != "field":
@@ -602,12 +598,9 @@ class CoefficientField:
                     f"expected {expected_shape} (matching density shape) at timestep {timestep_idx}"
                 )
 
-            # Check for NaN/Inf
-            if np.any(np.isnan(output)) or np.any(np.isinf(output)):
-                raise ValueError(
-                    f"Callable {self.name} returned NaN or Inf values at timestep {timestep_idx}. "
-                    f"Check your coefficient function implementation."
-                )
+            refuse_a_non_finite_read(
+                f"the {self.name} field", f"time step {timestep_idx}", {f"the callable {self.name}": output}
+            )
 
             return output
 
@@ -731,9 +724,7 @@ class CoefficientField:
         if not isinstance(sigma_tensor, np.ndarray):
             raise TypeError(f"{self.name} must be float or ndarray, got {type(sigma_tensor)}")
 
-        # Check for NaN/Inf
-        if not np.all(np.isfinite(sigma_tensor)):
-            raise ValueError(f"{self.name} contains NaN or Inf values")
+        refuse_a_non_finite_read(f"the {self.name} field", "its tensor", {self.name: sigma_tensor})
 
         # Determine tensor structure from shape
         shape = sigma_tensor.shape
@@ -1153,9 +1144,7 @@ class _DriftDispatcher:
         elif not isinstance(result, np.ndarray):
             raise TypeError(f"Drift callable must return float or ndarray, got {type(result)}")
 
-        # Check for NaN/Inf
-        if np.any(np.isnan(result)) or np.any(np.isinf(result)):
-            raise ValueError(f"Drift callable returned NaN or Inf at timestep {timestep_idx}")
+        refuse_a_non_finite_read("the drift field", f"time step {timestep_idx}", {"the drift callable": result})
 
         return result
 

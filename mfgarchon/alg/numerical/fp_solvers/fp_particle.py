@@ -2136,12 +2136,7 @@ class FPParticleSolver(BaseFPSolver):
         # uniform sample (that solves a different problem with no error). A NaN/Inf density would
         # otherwise route to the uniform `else` below (because `NaN > 1e-9` is False); a negative
         # density makes np.random.choice raise, which was previously swallowed to uniform.
-        if not np.all(np.isfinite(m_initial_condition)):
-            raise ValueError(
-                "FPParticleSolver: m_initial contains NaN/Inf — cannot sample initial particles. "
-                "Provide a finite, non-negative initial density; it will not be silently replaced "
-                "by a uniform sample (Issue #1071, fail-fast)."
-            )
+        # A non-finite initial density is refused at the door, solve_fp_system, before sampling (#2975).
         if Dx > 1e-14 and np.sum(m_initial_condition * Dx) > 1e-9:
             m0_probs_unnormalized = m_initial_condition * Dx
             m0_probs = m0_probs_unnormalized / np.sum(m0_probs_unnormalized)

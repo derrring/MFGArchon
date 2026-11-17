@@ -15,6 +15,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     fp_drift_coefficient,
@@ -294,7 +295,7 @@ class TestCoefficientFieldCallable:
         grid = np.linspace(0, 1, 11)
         density = np.ones(11)
 
-        with pytest.raises(ValueError, match="returned NaN or Inf"):
+        with pytest.raises(NonFiniteReadError, match="the callable diffusion is non-finite where it reads it"):
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
     def test_callable_inf_detection(self):
@@ -310,7 +311,7 @@ class TestCoefficientFieldCallable:
         grid = np.linspace(0, 1, 11)
         density = np.ones(11)
 
-        with pytest.raises(ValueError, match="returned NaN or Inf"):
+        with pytest.raises(NonFiniteReadError, match="the callable diffusion is non-finite where it reads it"):
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
 

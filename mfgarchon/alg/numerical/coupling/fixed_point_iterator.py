@@ -18,6 +18,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -875,7 +876,10 @@ class FixedPointIterator(BaseCouplingIterator):
                         mass_conservation_error = None
                     else:
                         initial_mass = float(mass_per_step[0])
-                        if not np.isfinite(initial_mass) or initial_mass <= 0.0:
+                        refuse_a_non_finite_read(
+                            "FixedPointIterator", "the initial density's total mass", {"the initial mass": initial_mass}
+                        )
+                        if initial_mass <= 0.0:
                             raise ValueError(
                                 f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
                                 "mass conservation is undefined and the solve that produced it is already wrong"
