@@ -34,6 +34,7 @@ from mfgarchon.types.callable_protocols import (
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.particle import (
     interpolate_grid_to_particles,
     sample_from_density,
@@ -1765,6 +1766,17 @@ class FPParticleSolver(BaseFPSolver):
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
         the same functional the library reports (#2145).
         """
+        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {
+                "M_initial": M_initial,
+                "drift_field": None if callable(drift_field) else drift_field,
+                "potential_field": None if callable(potential_field) else potential_field,
+                "initial_particles": initial_particles,
+            },
+        )
         if source_term is not None:
             raise NotImplementedError(
                 "FPParticleSolver: `source_term` is not wired here, and the reason is a "

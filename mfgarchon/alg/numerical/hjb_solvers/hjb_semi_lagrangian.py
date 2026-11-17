@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
 from mfgarchon.core.derivatives import DerivativeTensors
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 logger = get_logger(__name__)
 
@@ -987,6 +988,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
+        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal, "M_density": M_density, "U_coupling_prev": U_coupling_prev},
+        )
         # The per-axis read (#1560) at its point of use, ahead of the first gradient: a BC set on the geometry
         # after construction otherwise meets `value_gradient`'s refusal first, whose message is about an axis,
         # not about which BC this solver can honour (#2467).

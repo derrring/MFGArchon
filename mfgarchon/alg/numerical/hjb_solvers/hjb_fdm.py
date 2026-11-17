@@ -29,6 +29,7 @@ from mfgarchon.operators.stencils.finite_difference import (
 from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
@@ -490,6 +491,12 @@ class HJBFDMSolver(BaseHJBSolver):
             FixedPointIterator via problem.using_resolved_bc(state).
             See mfgarchon/geometry/boundary/providers.py for details.
         """
+        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal, "M_density": M_density, "U_coupling_prev": U_coupling_prev},
+        )
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")

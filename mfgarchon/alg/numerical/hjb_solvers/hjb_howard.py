@@ -70,6 +70,7 @@ from mfgarchon.types.callable_protocols import (
     bind_user_callable,
     coordinate_tuple,
 )
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
@@ -867,6 +868,12 @@ class HJBHowardSolver:
         np.ndarray
             Value function `U(t, x)`, shape `(Nt+1, n)`. `U[Nt] == U_terminal`.
         """
+        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal, "M_density": M_density},
+        )
         # Issue #1071: named explicitly so a multi-population cross-density trajectory fails loud
         # here rather than silently decoupling — it would never reach Howard's policy-iteration
         # evaluation.

@@ -88,6 +88,7 @@ from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift, resolve_volatility_override
@@ -497,6 +498,16 @@ class FPFVMSolver(BaseFPSolver):
         np.ndarray
             Density evolution, shape ``(Nt+1, *spatial_shape)``.
         """
+        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {
+                "M_initial": M_initial,
+                "drift_field": None if callable(drift_field) else drift_field,
+                "potential_field": None if callable(potential_field) else potential_field,
+            },
+        )
         if M_initial is None:
             M_initial = self.problem.get_initial_density()
         m0 = np.asarray(M_initial, dtype=float)
