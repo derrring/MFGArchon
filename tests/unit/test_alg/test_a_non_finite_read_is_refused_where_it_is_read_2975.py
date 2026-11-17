@@ -184,13 +184,13 @@ def _steep(method):
     return hamiltonian
 
 
-def _problem(hamiltonian=None, model_kw=None, dimension=1, **kw):
+def _problem(hamiltonian=None, model_kw=None, dimension=1, bc=None, **kw):
     if hamiltonian is None or isinstance(hamiltonian, dict):
         hamiltonian = SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), **(hamiltonian or {}))
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)] * dimension,
         Nx_points=[11] if dimension == 1 else [6, 6],
-        boundary_conditions=bnd.no_flux_bc(dimension=dimension),
+        boundary_conditions=bc if bc is not None else bnd.no_flux_bc(dimension=dimension),
     )
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, **({"volatility": 0.2} | (model_kw or {}))),
@@ -273,8 +273,26 @@ def test_the_fp_names_a_non_finite_optimal_control(scheme, names):
 
 def test_fp_fdm_names_a_non_finite_source():
     problem = _problem(source_term_fp=lambda t, x: _at(x, lambda a: np.full(a.shape, abs(float(t) - 0.5) < 1e-12), NAN))
-    with pytest.raises(NonFiniteReadError, match=r"FPFDMSolver: source_term " + OWN + r": .* at time step 5 of 5"):
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: source_term " + OWN + r": 11 of 11 values at t=0\.5, the rows the step keeps",
+    ):
         problem.solve(max_iterations=20, verbose=False)
+
+
+def test_fp_fdm_does_not_judge_a_source_at_a_dirichlet_node_whose_row_discards_it():
+    """A Dirichlet row reads m = g, so the source there never enters the step: at 4ca7c9e0 a NaN source only at a
+    Dirichlet node solved bit for bit as its twin under FDM_UPWIND (#2974's sweep, 8 such cells), and it still does."""
+
+    def source(bad):
+        return lambda t, x: _at(x, _near(0.0), bad)
+
+    bc = bnd.dirichlet_bc(value=0.0, dimension=1)
+    nan, twin = (
+        _problem(bc=bc, source_term_fp=source(bad)).solve(max_iterations=20, verbose=False) for bad in (NAN, 0.0)
+    )
+    assert np.array_equal(nan.U, twin.U)
+    assert np.array_equal(nan.M, twin.M)
 
 
 def test_fp_fdm_still_names_the_cfl_condition_for_a_step_that_overflows_from_finite_inputs():

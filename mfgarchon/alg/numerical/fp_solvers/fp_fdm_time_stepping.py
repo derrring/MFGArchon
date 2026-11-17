@@ -1322,10 +1322,12 @@ def solve_fp_nd_full_system(
         if source_term is not None:
             t_next = (k + 1) * dt
             source_values = np.ravel(evaluate_solver_source(source_term, t=t_next, x=x_grid, dimension=grid.dimension))
-            # The source the step adds, read before it is added, and refused if not finite (#2975).
-            refuse_a_non_finite_read(
-                "FPFDMSolver", f"time step {k + 1} of {Nt - 1}, t={t_next:g}", {"source_term": source_values}
-            )
+            # The explicit steps add the whole source to M; the implicit step reads it where its rows keep it, and
+            # refuses it there (`solve_timestep_full_nd`), since a Dirichlet row discards it (#2975).
+            if use_tensor_diffusion or drift.is_callable():
+                refuse_a_non_finite_read(
+                    "FPFDMSolver", f"time step {k + 1} of {Nt - 1}, t={t_next:g}", {"source_term": source_values}
+                )
         else:
             source_values = None
 
@@ -1935,6 +1937,20 @@ def solve_timestep_full_nd(
     # no-flux row: with the Dirichlet row in its place, its balance is the mass the exit takes, so the cap, the switch
     # and the outflow record all read the row the scheme already owns. The rows are built at the Dirichlet nodes alone.
     capped_exits = _capped_exit_nodes(boundary_conditions, dirichlet_nodes, shape, grid, spacing)
+    if source_term is not None:
+        # The source enters the rows that keep it: a Dirichlet row reads m = g and a repeated row m[i] = m[mirror], so a
+        # value there is discarded, unless a capped exit reads the balance at the Dirichlet nodes, which decides its
+        # switch below. It is refused where it enters, and a NaN only at a Dirichlet node solves as before (#2975). The
+        # private outflow record reads that balance too, and reaches no result.
+        keeps = np.ones(N_total, dtype=bool)
+        if not capped_exits:
+            keeps[dirichlet_nodes] = False
+        keeps[repeated_rows] = False
+        refuse_a_non_finite_read(
+            "FPFDMSolver",
+            f"t={time:g}, the rows the step keeps" if time is not None else "the rows the step keeps",
+            {"source_term": np.asarray(source_term, dtype=float).ravel()[keeps]},
+        )
     _refuse_a_cap_off_upwind([segment.name for segment, _ in capped_exits.values()], advection_scheme)
     A_step, b_step = A_matrix, b_rhs
     walls = None
