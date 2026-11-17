@@ -1061,9 +1061,6 @@ def _refuse_a_non_finite_hjb_term(
     if bad.size == 0:
         return
     from mfgarchon.alg.numerical.coupling.source_composition import ComposedHJBSource
-    from mfgarchon.core.hamiltonian import _own_rows, _read_of_the_density, _read_of_the_potential, held_sources
-    from mfgarchon.core.mfg_problem import wall_values
-    from mfgarchon.types.callable_protocols import DENSITY_SLOTS, POTENTIAL_SLOTS
 
     points = np.asarray(x_grid, dtype=float).reshape(np.shape(residual)[0], -1)
     first = int(bad[0])
@@ -1083,11 +1080,31 @@ def _refuse_a_non_finite_hjb_term(
     if H_values is None or np.all(np.isfinite(np.asarray(H_values, dtype=float).ravel()[bad])):
         return
     H = problem.hamiltonian_class
-    rows = tuple(points[bad, k] for k in range(points.shape[1]))
+    named = _hamiltonian_terms_at(
+        problem,
+        current_time,
+        tuple(points[bad, k] for k in range(points.shape[1])),
+        np.asarray(m_grid, dtype=float).ravel()[bad],
+    )
+    named[f"{type(H).__name__}'s value"] = np.asarray(H_values, dtype=float).ravel()[bad]
+    refuse_a_non_finite_read(solver, where, named)
+
+
+def _hamiltonian_terms_at(
+    problem: MFGProblem, current_time: float, rows: tuple[np.ndarray, ...], m_rows: np.ndarray
+) -> dict[str, object]:
+    """The terms H's value is assembled from at the points ``rows`` (one array per axis) and densities ``m_rows``, each
+    re-read through the function H's evaluation reads it with (#2975): the wall (`wall_values`), then each source H
+    holds (`_read_of_the_potential`, `_read_of_the_density`). In the order a non-finite one is named, so the wall, which
+    is composed into H's potential, is named as itself. H's value is the caller's to add, read as it read it."""
+    from mfgarchon.core.hamiltonian import _own_rows, _read_of_the_density, _read_of_the_potential, held_sources
+    from mfgarchon.core.mfg_problem import wall_values
+    from mfgarchon.types.callable_protocols import DENSITY_SLOTS, POTENTIAL_SLOTS
+
+    H = problem.hamiltonian_class
     named: dict[str, object] = {}
     if callable(problem.state_penalty):
         named["state_penalty"] = wall_values(problem.state_penalty, rows)
-    m_rows = np.asarray(m_grid, dtype=float).ravel()[bad]
     for parameter, (attr, slots) in held_sources(H).items():
         if getattr(H, attr, None) is None:
             continue
@@ -1096,8 +1113,7 @@ def _refuse_a_non_finite_hjb_term(
             named[label] = _read_of_the_potential(H, attr, rows, current_time)
         elif slots == DENSITY_SLOTS:
             named[label] = _read_of_the_density(H, attr, m_rows, _own_rows(m_rows), m_rows.size)
-    named[f"{type(H).__name__}'s value"] = np.asarray(H_values, dtype=float).ravel()[bad]
-    refuse_a_non_finite_read(solver, where, named)
+    return named
 
 
 def _impose_dirichlet_rows(

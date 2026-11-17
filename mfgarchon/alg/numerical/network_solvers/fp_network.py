@@ -531,6 +531,11 @@ class FPNetworkSolver(BaseFPSolver):
                 source=H_class,
                 m=m,
             )
+            # A NaN rate failed `alpha[j] > 0` and was dropped, read as no transition, so a NaN value field gave a
+            # finite M (#2975). The rates the step uses are refused here if one is not finite.
+            refuse_a_non_finite_read(
+                "FPNetworkSolver", f"t={t:g}, node {i}", {f"the transition rates out of node {i}": alpha[neighbors]}
+            )
             rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 

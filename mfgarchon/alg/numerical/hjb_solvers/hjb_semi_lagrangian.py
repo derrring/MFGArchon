@@ -1224,10 +1224,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         node. That substitution is finite by construction, so the NaN/Inf guard in
         solve_hjb_system could not see it and the solver returned a plausible, silently
         wrong value function with no machine-readable trace. The nD siblings catch no
-        exceptions at all; they do still substitute a stale value on NaN/Inf, counting the
-        affected nodes and escalating to a raise past a 10% threshold -- though the with-dt
-        sibling logs nothing below it, leaving that path as invisible as this one was.
-        Tracked in #1641.
+        exceptions either, and name a non-finite update by the read behind it
+        (`_name_a_non_finite_value_update`, #2975).
         """
         Nx = len(U_next)
         # Issue #1547: dH/dp from the Hamiltonian, batched once per sweep rather than a hardcoded
@@ -1408,10 +1406,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 time=time_idx * self.dt,
             )
 
-            # Track errors for diagnostics
-            error_count = 0
-            total_points = int(np.prod(grid_shape))
-
             # Issue #1413: hoist the time value for the Lax-Oleinik update in the loop.
             t_val = time_idx * self.dt
             # Issue #1547: dH/dp from the Hamiltonian, batched once per step (see
@@ -1433,28 +1427,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, self.dt)
 
-                # Check for numerical issues
-                if np.isnan(u_star_val) or np.isinf(u_star_val):
-                    error_count += 1
-                    if error_count <= 5:
-                        logger.warning(f"NaN/Inf at grid point {multi_idx}: u_departure={u_departure:.3e}")
-                    U_star[multi_idx] = U_next_shaped[multi_idx]  # Fallback
-                else:
-                    U_star[multi_idx] = u_star_val
-
-            # Report error summary if any occurred in advection
-            if error_count > 0:
-                error_pct = 100 * error_count / total_points
-                if error_pct > 10:
-                    raise ValueError(
-                        f"Semi-Lagrangian advection failed: {error_count}/{total_points} points ({error_pct:.1f}%) "
-                        f"had NaN/Inf values at time step {time_idx}. Check grid resolution and time step."
-                    )
-                else:
-                    logger.warning(
-                        f"Semi-Lagrangian advection: {error_count}/{total_points} points ({error_pct:.1f}%) "
-                        f"had NaN/Inf values at time step {time_idx}"
-                    )
+                if not np.isfinite(u_star_val):
+                    self._name_a_non_finite_value_update(x_current, m_current, p_optimal, vel, t_val, multi_idx)
+                U_star[multi_idx] = u_star_val
 
             # Step 2: Diffusion pass (using configured method)
             U_current_shaped = self._apply_diffusion(U_star, self.dt)
@@ -1545,9 +1520,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 U_next_shaped, check_cfl=False, t_idx=time_idx, m_density=M_next_shaped, time=time_idx * self.dt
             )
 
-            error_count = 0
-            total_points = int(np.prod(grid_shape))
-
             t_val = time_idx * self.dt
             # Issue #1547: dH/dp from the Hamiltonian, batched once (see _nd_foot_velocity_field).
             vel_grid = self._nd_foot_velocity_field(grid_shape, grad_components, M_next_shaped, t_val)
@@ -1562,19 +1534,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, dt)
 
-                if np.isnan(u_star_val) or np.isinf(u_star_val):
-                    error_count += 1
-                    U_star[multi_idx] = U_next_shaped[multi_idx]
-                else:
-                    U_star[multi_idx] = u_star_val
-
-            if error_count > 0:
-                error_pct = 100 * error_count / total_points
-                if error_pct > 10:
-                    raise ValueError(
-                        f"Semi-Lagrangian advection failed: {error_count}/{total_points} points ({error_pct:.1f}%) "
-                        f"had NaN/Inf values at time step {time_idx}."
-                    )
+                if not np.isfinite(u_star_val):
+                    self._name_a_non_finite_value_update(x_current, m_current, p_optimal, vel, t_val, multi_idx)
+                U_star[multi_idx] = u_star_val
 
             # ADI diffusion with custom dt
             U_current_shaped = self._apply_diffusion(U_star, dt)
@@ -2553,6 +2515,32 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     grid_coords,
                     grid_shape,
                 )
+
+    def _name_a_non_finite_value_update(
+        self, x: np.ndarray, m: float, p: np.ndarray, velocity: np.ndarray, t: float, node: tuple[int, ...]
+    ) -> None:
+        """The n-D value update's naming of a non-finite result (#2975), run where it would enter U_star.
+
+        The update stored U at t_{n+1} in its place, and raised only past 10% of the points, so a non-finite read at a
+        few nodes gave a finite wrong U with ``converged`` True. It is named by the read behind it, each re-read as the
+        update reads it: the foot velocity (H's dp, as `_nd_foot_velocity_field` hands it), then the terms of H's value
+        (`_hamiltonian_terms_at`), then H's value (`eval_H_batch`). A result non-finite with every read finite is a
+        computed failure: it stays in U_star, and the check after the step reports it.
+        """
+        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _hamiltonian_terms_at
+
+        H = self.problem.hamiltonian_class
+        x = np.asarray(x, dtype=float)
+        p = np.atleast_1d(np.asarray(p, dtype=float))
+        m_row = np.atleast_1d(np.asarray(m, dtype=float))
+        named: dict[str, object] = {f"{type(H).__name__}'s dp, the foot velocity": velocity}
+        named.update(_hamiltonian_terms_at(self.problem, t, tuple(np.atleast_1d(c) for c in x), m_row))
+        named[f"{type(H).__name__}'s value"] = eval_H_batch(H, x, m, p, t)
+        refuse_a_non_finite_read(
+            "HJBSemiLagrangianSolver's value update",
+            f"t={t:g}, x={x.tolist()}, p={p.tolist()}, m={float(m_row[0]):.6g} (node {tuple(int(k) for k in node)})",
+            named,
+        )
 
     def _sl_value_update(
         self,
