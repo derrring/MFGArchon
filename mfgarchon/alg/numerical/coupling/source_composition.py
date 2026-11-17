@@ -66,7 +66,7 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
@@ -230,8 +230,42 @@ def compose_hjb_source(
         return None
     if "coupling_cost" in hjb_source_fields(problem):
         binding = coupling_binding_for(problem, binding, reader)
+    return ComposedHJBSource(problem, m_current, u_current, binding, reader)
 
-    def composed(t: float, x: NDArray) -> NDArray:
+
+class ComposedHJBSource:
+    """The HJB source a problem declares, composed for a solver (`compose_hjb_source`).
+
+    Called at ``(t, x)`` it is the sum of its parts, in the one order every consumer sums them in. `parts` is the same
+    parts by the problem's field names, read through the same function (`_problem_hjb_source_terms`), so a reader that
+    meets a non-finite sum names the part that made it (#2975).
+    """
+
+    _FIELDS: ClassVar[dict[str, str]] = {
+        "source": "source_term_hjb",
+        "coupling": "coupling_cost",
+        "nonlocal": "nonlocal_operator",
+    }
+
+    def __init__(
+        self,
+        problem: MFGProblem,
+        m_current: NDArray,
+        u_current: NDArray,
+        binding: CouplingBinding | None,
+        reader: str | None,
+    ) -> None:
+        self._problem, self._m, self._u, self._binding, self._reader = problem, m_current, u_current, binding, reader
+
+    def parts(self, t: float, x: NDArray) -> dict[str, NDArray]:
+        """The parts at ``(t, x)``, by the problem's field name: ``source_term_hjb``, ``coupling_cost``,
+        ``nonlocal_operator``, those the problem declares."""
+        raw = _problem_hjb_source_terms(
+            self._problem, self._m, self._u, t, x, self._problem.dt, self._binding, self._reader
+        )
+        return {self._FIELDS[key]: value for key, value in raw.items()}
+
+    def __call__(self, t: float, x: NDArray) -> NDArray:
         # Source + nonlocal via the shared single-source primitive (Issue #1382). Order
         # [source, nonlocal] preserves byte-for-byte float-sum associativity with the pre-#1382
         # closure; the obstacle term that used to sit between them contributed
@@ -241,11 +275,11 @@ def compose_hjb_source(
         # The parts in the primitive's own order, source -> coupling -> nonlocal, the one order every consumer sums
         # in: the coupling part (#1642) sits after the source, so a problem without it sums the other two in their
         # pre-#1642 order, bit for bit.
-        parts = _problem_hjb_source_terms(problem, m_current, u_current, t, x, problem.dt, binding, reader)
+        parts = _problem_hjb_source_terms(
+            self._problem, self._m, self._u, t, x, self._problem.dt, self._binding, self._reader
+        )
         terms = list(parts.values())
         return sum(terms) if terms else np.zeros(x.shape[0])
-
-    return composed
 
 
 def fp_source_is_active(problem: MFGProblem) -> bool:
