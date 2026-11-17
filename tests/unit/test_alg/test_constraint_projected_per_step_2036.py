@@ -117,7 +117,8 @@ def test_a_y_independent_2d_solve_reproduces_the_1d_solve():
     [
         (1e-13, None),
         (1e-9, "U_terminal lies outside the constraint set"),
-        (np.nan, "non-finite entries"),
+        # A NaN entry is refused at the door, before the constraint is consulted (#2975).
+        (np.nan, "U_terminal is non-finite where it reads it"),
     ],
     ids=["round_off_accepted", "violation_refused", "nan_refused"],
 )

@@ -9,10 +9,11 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
-from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
+from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf, to_numpy
 from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -1947,6 +1948,18 @@ def solve_hjb_system_backward(
     Nt = problem.Nt + 1
     Nx = problem.geometry.get_grid_shape()[0]
 
+    # The arrays handed in are read before any work, and refused if not finite (#2975). HJBFDMSolver's door, which
+    # calls this, refuses them already; a direct call meets the same rule.
+    refuse_a_non_finite_read(
+        "solve_hjb_system_backward",
+        "its entry",
+        {
+            "U_terminal": to_numpy(U_final_condition_at_T, backend),
+            "M_density": to_numpy(M_density_from_prev_picard, backend),
+            "U_coupling_prev": to_numpy(U_from_prev_picard, backend),
+        },
+    )
+
     # Use backend.zeros() instead of xp.zeros() to ensure correct device
     if backend is not None:
         U_solution_this_picard_iter = backend.zeros((Nt, Nx))
@@ -1955,11 +1968,7 @@ def solve_hjb_system_backward(
     if Nt == 0:
         return U_solution_this_picard_iter
 
-    # Use backend-aware nan/inf checking and assignment
-    if has_nan_or_inf(U_final_condition_at_T, backend):
-        backend_aware_assign(U_solution_this_picard_iter, (Nt - 1, slice(None)), float("nan"), backend)
-    else:
-        backend_aware_assign(U_solution_this_picard_iter, (Nt - 1, slice(None)), U_final_condition_at_T, backend)
+    backend_aware_assign(U_solution_this_picard_iter, (Nt - 1, slice(None)), U_final_condition_at_T, backend)
 
     if Nt == 1:
         return U_solution_this_picard_iter
@@ -1977,9 +1986,6 @@ def solve_hjb_system_backward(
         # BUG #7 FIX: Use M at the same time index as we're solving for U
         # Previously used M[n+1], now correctly uses M[n] to match HJB equation structure
         M_n_prev_picard = M_density_from_prev_picard[n_idx_hjb, :]  # M_k[n] - FIXED from n_idx_hjb+1
-        if has_nan_or_inf(M_n_prev_picard, backend):
-            backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), float("nan"), backend)
-            continue
 
         # Issue #1071: index the stacked cross-density trajectory at the SAME integer timestep as
         # the own density above (n_idx_hjb) — an honest integer row-pick (no reverse-engineered
@@ -1987,9 +1993,6 @@ def solve_hjb_system_backward(
         cross_density_at_n = cross_density[n_idx_hjb, :] if cross_density is not None else None
 
         U_n_prev_picard = U_from_prev_picard[n_idx_hjb, :]  # U_k[n] from notebook
-        if has_nan_or_inf(U_n_prev_picard, backend):
-            backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), float("nan"), backend)
-            continue
 
         # Extract or evaluate diffusion using CoefficientField abstraction (Issue #1412: route
         # through the single-source factory so a None override falls back to the problem's

@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 
 # Import from responsibility-based modules per issue #388
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 from .fp_fdm_advection import compute_advection_from_drift_nd, compute_advection_term_nd
 from .fp_fdm_alg_divergence_centered import (
@@ -1321,6 +1322,10 @@ def solve_fp_nd_full_system(
         if source_term is not None:
             t_next = (k + 1) * dt
             source_values = np.ravel(evaluate_solver_source(source_term, t=t_next, x=x_grid, dimension=grid.dimension))
+            # The source the step adds, read before it is added, and refused if not finite (#2975).
+            refuse_a_non_finite_read(
+                "FPFDMSolver", f"time step {k + 1} of {Nt - 1}, t={t_next:g}", {"source_term": source_values}
+            )
         else:
             source_values = None
 

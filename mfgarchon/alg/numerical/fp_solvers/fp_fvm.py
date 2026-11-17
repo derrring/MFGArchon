@@ -588,6 +588,16 @@ class FPFVMSolver(BaseFPSolver):
                 alpha_faces = [np.zeros(_face_shape(shape, d), dtype=float) for d in range(len(shape))]
                 alpha_wrap = [None] * len(shape)
 
+            # The face velocities the update advances, read before it advances them, and refused if not finite (#2975).
+            # A NaN velocity reached the step, which read it as no advection and diffused alone.
+            origin = {"potential": "the optimal control", "drift": "drift_field"}.get(velocity_mode)
+            if origin is not None:
+                faces = {f"{origin} at the faces of axis {d}": a for d, a in enumerate(alpha_faces)}
+                faces.update(
+                    {f"{origin} at the seam of axis {d}": w for d, w in enumerate(alpha_wrap) if w is not None}
+                )
+                refuse_a_non_finite_read("FPFVMSolver", f"time step {k + 1} of {n_steps}, t={k * dt:g}", faces)
+
             m = self._strang_step(m, alpha_faces, alpha_wrap, dt, spacing, lu)
 
             if source_term is not None:
@@ -613,6 +623,9 @@ class FPFVMSolver(BaseFPSolver):
                         f"called with an (N, d) point array from geometry.get_spatial_grid() and "
                         f"must return one value per point (#2019)."
                     )
+                refuse_a_non_finite_read(
+                    "FPFVMSolver", f"time step {k + 1} of {n_steps}, t={k * dt:g}", {"source_term": s_vals}
+                )
                 m = m + dt * s_vals.reshape(shape)
 
             if not np.all(np.isfinite(m)):
@@ -646,8 +659,8 @@ class FPFVMSolver(BaseFPSolver):
 
     def _strang_step(self, m, alpha_faces, alpha_wrap, dt, spacing, lu):
         """One Strang split step: 1/2 advection, full implicit diffusion, 1/2 advection."""
-        amax = max((float(np.max(np.abs(a))) for a in alpha_faces), default=0.0)
-        has_advection = amax > 0.0
+        # Whether any face carries a velocity. `max(|a|) > 0` read a NaN velocity as none, and skipped advection (#2975).
+        has_advection = any(bool(np.any(a != 0.0)) for a in alpha_faces)
 
         if lu is not None and has_advection:
             m = self._advect(m, alpha_faces, alpha_wrap, 0.5 * dt, spacing)
