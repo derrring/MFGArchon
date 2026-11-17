@@ -513,13 +513,47 @@ Not seen here:
 - **a source whose read raises, a `None` from a source read as it returns (`source_term_hjb`, a callable volatility,
   `node_potential_func`), and a boundary condition its owner refuses**, which are left to their readers at use.
 
-What the solve reaches is the point-of-use checks' fact (#2975, #2976):
-- the callable volatility's output check;
-- the boundary ghost layer's reading of a callable value at each time;
-- the graph applicator's reading of a `NodeBC`'s callable;
-- the FP solver's non-finite check.
+What the solve reaches is the next section's fact (#2975, #2976).
 
-Their messages name what they read, which need not be the source.
+### What the solve refuses as non-finite
+
+A value a solver reads during the solve that holds a NaN or an infinity is refused where it is read. One function
+decides it, `refuse_a_non_finite_read` (`mfgarchon.utils.non_finite_read`), and it raises one error,
+`NonFiniteReadError`, a `ValueError`, naming the solver, what was read and where:
+"{solver}: {name} is non-finite where it reads it: {bad} of {n} values at {where} (#2975)". Each reader calls it where
+the value enters the solution, not around every return of the callable it came from, so a value a step computes and
+then discards, such as a Dirichlet row its condition overwrites, is not judged.
+
+Where it is read:
+
+- **at the door**: each concrete `solve_hjb_system` and `solve_fp_system` reads the arrays it is handed, before any
+  work: `U_terminal`, `M_density` and `U_coupling_prev`; `M_initial` and an array `drift_field` or `potential_field`
+  (#2976). An array is read whole, so a NaN entry the solve would not reach is refused too, such as a NaN `M_density`
+  handed to a solve whose Hamiltonian has no coupling;
+- **HJB-FDM's Newton step** (`FDM_UPWIND`, and FVM's HJB half), on the path that would fail: a row of the residual it
+  keeps that is non-finite at a finite iterate is named by the term the step read, each re-read through the function
+  the residual assembles it with, at the first such row's $(t, x, p, m)$. The terms, in the order they are named:
+  - the source by its part: `source_term_hjb`, `coupling_cost`, `nonlocal_operator`;
+  - the wall, `state_penalty`;
+  - each source the Hamiltonian holds, as its evaluation reads it;
+  - the Hamiltonian's value, which is what an own `__call__` gives;
+  - for the Jacobian, the Hamiltonian's `dp`.
+
+  A row non-finite with every term finite is a failed Newton step, and #2644's policy reports it;
+- **FP-FDM's and FP-FVM's time step**: the drift and the source the step advances, before it advances them. The drift
+  is named by where it came from, the optimal control or `drift_field`. The check after the step stays for a
+  non-finite $M$ the step computed from finite inputs, and only that check names the CFL condition;
+- **HJB-SL's operator-splitting step (`diffusion_method="adi"`, the default) on a grid of two or more dimensions**:
+  a non-finite value update is named by the read behind it, in this order: the foot velocity (the Hamiltonian's `dp`), the wall, the sources the Hamiltonian holds, its value. A
+  result non-finite with every read finite stays in the step, and the check after the step reports it;
+- **the network FP's transition rates** out of each node;
+- **a coefficient or a boundary value**: the output of a callable volatility or drift, a volatility tensor, a
+  `volatility=` override, and a boundary value at the ghost layer or the graph applicator. A boundary value of a type
+  the reader cannot read keeps its `NotImplementedError`.
+
+Not read here yet (#2975, stage 2): FP-SL, HJB-FEM, the weak-form FP, WENO, GFDM, Howard and the meshless solvers
+beyond their doors, and HJB-SL's one-dimensional path and its stochastic, Carlini–Silva and DPP steps. There a
+non-finite value reaches the solution and comes back non-finite, or the solve raises naming something else.
 
 ### What the Fokker–Planck solver receives
 
