@@ -5,10 +5,12 @@ enters, by name.
 at states every `NumericalScheme` that solves the problem hands it.
 - Times: the interior time nodes; t_0 as well for the Hamiltonian's sources, a callable volatility and a boundary
   callable; T alone for the terminal coupling. The two source terms and the coupling cost at the interior nodes alone.
-- Space: the probe nodes off the boundary.
+- Space: the probe nodes off the boundary. The coupling cost and `nonlocal_operator` are evaluated on the whole grid and
+  judged there; the terminal coupling at every node. A boundary segment's callable is read where its type reads its
+  value (`FIELDS_READ`).
 - m and v: the first Picard iteration's guesses, the initial density and the terminal value at it (`u_terminal`
   without a terminal coupling).
-- On a network: a node source at t_0, and a `NodeBC`'s callable value at its nodes.
+- On a network: a node source at t_0, and a `NodeBC`'s callable value at up to five of its nodes.
 The R1 tests record both sides, the owner's reads and `problem.solve(scheme=...)`'s under every member of the enum, and
 hold the first inside the second (#2974's R1). A scalar held by an object that exists before any problem (a control
 cost, a kernel, a boundary segment, `QuadraticMFGHamiltonian`) is refused where that object is built, in what its
@@ -20,17 +22,19 @@ first, by name.
 
 What is not refused:
 - a source finite at those reads and non-finite elsewhere, at a time, a node, an m or a v the solve does not hand it at
-  entry. A coupling NaN only at m = 0.5 or at m = 1, where `m_initial` takes neither, builds; so does a source
-  non-finite only at T/2, which is no time node here;
+  entry, or at a Dirichlet node, whose value does not reach the solution. A coupling NaN only at m = 0.5 or at m = 1,
+  where `m_initial` takes neither, builds; so does a source non-finite only at T/2, which is no time node here;
+- a value its type does not impose: a NO_FLUX or REFLECTING segment's, a constant or a callable;
 - a source non-finite only at a state some scheme that solves the problem is not handed (the HJB source or the coupling
   cost at t_0, the FP's source at T), and a FP source that takes v;
 - an input no solver reads (`coupling_dm`);
 - a network source that takes p or m, which the solvers are handed by their caller;
 - an infinity that means something (`BoundedControlCost(max_control=inf)`, unbounded);
-- a return that holds no number (None) from a source read as it returns, whose readers at use raise on it: the source
-  terms, a callable volatility and a network node's source. A held potential or density term is read as the
-  Hamiltonians' evaluation reads it, and the wall and the costs through the functions the solve reads them with; each
-  of those makes a None NaN, which is refused whichever reader the solve then uses.
+- a return that holds no number (None) from a source read as it returns, whose readers at use raise on it: the HJB
+  source, a callable volatility and a network node's source. A held potential or density term is read as the
+  Hamiltonians' evaluation reads it, the FP source as FP-FVM, FP-SL and the weak-form FP read it, and the wall and the
+  costs through the functions the solve reads them with; each of those makes a None NaN, which is refused whichever
+  reader the solve then uses.
 
 Every value parameter of a `HamiltonianBase` or `LagrangianBase` subclass is declared beside the class: a source the owner
 reads (`HELD_SOURCES`), a scalar its constructor refuses (`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`). The last
@@ -45,6 +49,7 @@ import inspect
 import pathlib
 import re
 import warnings
+from fractions import Fraction
 from typing import ClassVar
 
 import pytest
@@ -543,6 +548,24 @@ def test_a_one_element_array_is_read_as_its_number(build):
     build()
 
 
+FRACTIONS = [
+    (
+        "QuadraticMFGHamiltonian coupling_coefficient",
+        lambda: QuadraticMFGHamiltonian(coupling_coefficient=Fraction(1, 2)),
+    ),
+    ("BoundedControlCost max_control", lambda: BoundedControlCost(control_cost=1.0, max_control=Fraction(1, 2))),
+    ("GaussianKernel amplitude", lambda: kernels.GaussianKernel(amplitude=Fraction(1, 2))),
+]
+
+
+@pytest.mark.parametrize("build", [row[1] for row in FRACTIONS], ids=[row[0] for row in FRACTIONS])
+def test_a_finite_fraction_is_read_as_its_number(build):
+    """numpy's ufuncs do not take a Fraction, so each check reads its value as numpy reads it as a float. At 21ef740b
+    `QuadraticMFGHamiltonian(coupling_coefficient=Fraction(1, 2))` solved bit for bit as 0.5; 73aad465 raised numpy's
+    TypeError in all three."""
+    build()
+
+
 def test_a_one_element_array_that_is_nan_is_refused_by_name():
     with pytest.raises(ValueError, match="GaussianKernel: amplitude must be a number"):
         kernels.GaussianKernel(amplitude=np.array([NAN]))
@@ -580,6 +603,7 @@ NONE_READ_AS_NAN = [
         "SeparableHamiltonian's coupling",
     ),
     ("state_penalty, None", lambda: _problem(1, state_penalty=lambda x: None), "state_penalty"),
+    ("source_term_fp, None at one node", lambda: _problem(1, source_term_fp=_none_at_one_node), "source_term_fp"),
 ]
 
 
@@ -590,7 +614,9 @@ def test_a_none_its_reader_reads_as_nan_is_refused_by_name(build, names):
     """The Hamiltonian's evaluation reads a potential, a density term on a batch, and the composed wall as numpy
     converts, so a None there is NaN, and the owner reads each through that read. At 21ef740b each of these solved with
     `converged` False at 60 iterations, where its twin returning 0 there converges: max |U - U_twin| 0.54 for the
-    potential and for the wall, and 0.0255 for the coupling (0.0277 under FVM_UPWIND)."""
+    potential and for the wall, and 0.0255 for the coupling (0.0277 under FVM_UPWIND). FP-FVM, FP-SL and the weak-form
+    FP read the FP source so too: at 21ef740b FVM and SL raised their own non-finite checks on it, FP-FDM a TypeError,
+    and FEM_P1 on a Mesh1D returned a non-finite M without a word."""
     with pytest.raises(ValidationError, match=_read(names)):
         build()
 
@@ -1083,6 +1109,12 @@ def _one_over_x(x):
         return 1.0 / np.asarray(x[0], dtype=float)
 
 
+def _nan_in_the_first_row(v):
+    out = 0.1 * np.asarray(v, dtype=float).copy()
+    out[0] = NAN
+    return out
+
+
 NOT_READ = [
     ("source_term_hjb NaN only at T", lambda: _problem(1, source_term_hjb=lambda t, x: _at_x(_only_at(0.5)(t))(x))),
     (
@@ -1104,6 +1136,22 @@ NOT_READ = [
             1,
             model={"hamiltonian": _h(potential=lambda t, x: _one_over_x(x))},
             bc=bnd.dirichlet_bc(value=0.0, dimension=1),
+        ),
+    ),
+    (
+        "coupling_cost 1/x, infinite at a Dirichlet node",
+        lambda: _problem(
+            1,
+            model={"coupling_cost": PotentialCost(lambda x: 0.1 * _one_over_x(x))},
+            bc=bnd.dirichlet_bc(value=0.0, dimension=1),
+        ),
+    ),
+    (
+        "nonlocal_operator NaN only in a Dirichlet row",
+        lambda: _problem(
+            1,
+            bc=bnd.dirichlet_bc(value=0.0, dimension=1),
+            nonlocal_operator=LinearOperator((11, 11), matvec=_nan_in_the_first_row, dtype=float),
         ),
     ),
     (
@@ -1175,6 +1223,10 @@ NOT_READ_BY_EVERY_SCHEME = [
         "source_term_fp taking v, NaN at every state",
         lambda: _problem(1, source_term_fp=lambda t, x, v, m: np.full(np.shape(m), NAN)),
     ),
+    (
+        "a NO_FLUX segment's callable value NaN, which SL is not handed",
+        lambda: _problem(1, bc=bnd.uniform_bc(bnd.BCType.NO_FLUX, value=lambda t: NAN, dimension=1)),
+    ),
 ]
 
 
@@ -1184,9 +1236,10 @@ NOT_READ_BY_EVERY_SCHEME = [
 def test_a_state_a_scheme_that_solves_the_problem_is_not_handed_is_not_refused(build):
     """The read set is what every `NumericalScheme` that solves the problem hands. The semi-Lagrangian schemes never read
     the HJB source or the coupling cost at t_0, and the finite-volume ones never read the FP's source at T, so each of
-    these builds; a FP source that takes v is handed u_terminal at T alone, so none of its states is read. At 21ef740b
-    the first three solved as their finite twins under those schemes, and the default scheme reached all four. What the
-    solve reaches is the point-of-use checks' (#2975, #2976)."""
+    these builds; a FP source that takes v is handed u_terminal at T alone, so none of its states is read; and the
+    semi-Lagrangian schemes never call a NO_FLUX segment's value, which no reader imposes. At 21ef740b the first three
+    and the last solved as their finite twins under those schemes, and the default scheme reached the others or raised
+    at use. What the solve reaches is the point-of-use checks' (#2975, #2976)."""
     build()
 
 
@@ -1355,6 +1408,17 @@ def _boundary_group():
     return {"bc": bnd.dirichlet_bc(value=g, dimension=1)}, {"potential", "Dirichlet g(t)"}
 
 
+def _no_flux_group():
+    """A NO_FLUX segment whose value is a callable: FDM is handed it, and the semi-Lagrangian schemes are not, so the
+    owner reads none of its states."""
+
+    def g(t):
+        _note("NO_FLUX g(t)", t=t)
+        return 0.0
+
+    return {"bc": bnd.uniform_bc(bnd.BCType.NO_FLUX, value=g, dimension=1)}, {"potential"}
+
+
 def _mesh_1d(bc=None):
     from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 
@@ -1374,6 +1438,7 @@ GRID_SETUPS = [
     ("1-D, Nt 5, the source terms beside a terminal coupling", 1, 5, lambda: _source_group(True, terminal=True)),
     ("1-D, Nt 5, nonlocal_operator beside a terminal coupling", 1, 5, lambda: _nonlocal_group(terminal=True)),
     ("1-D, Nt 5, a Dirichlet g(t)", 1, 5, _boundary_group),
+    ("1-D, Nt 5, a NO_FLUX segment's callable value", 1, 5, _no_flux_group),
     ("1-D, Nt 1, the Hamiltonian's sources, wall, costs", 1, 1, _hamiltonian_group),
     ("1-D, Nt 1, the FP's source without v", 1, 1, lambda: _source_group(False)),
     ("1-D, Nt 4, the FP's source without v", 1, 4, lambda: _source_group(False)),

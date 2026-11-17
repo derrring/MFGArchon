@@ -551,7 +551,7 @@ class BoundedControlCost(ControlCostBase):
         lambda_: float | None = None,
     ):
         super().__init__(control_cost, lambda_=lambda_)
-        if np.any(np.isnan(max_control)) or max_control <= 0:
+        if np.any(np.isnan(np.asarray(max_control, dtype=float))) or max_control <= 0:
             raise ValueError(f"max_control must be positive, got {max_control} (#2974)")
         self.max_control = max_control
 
@@ -3394,7 +3394,7 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
         coupling_coefficient: float = 1.0,
         potential: callable | None = None,
     ):
-        if not np.all(np.isfinite(coupling_coefficient)):
+        if not np.all(np.isfinite(np.asarray(coupling_coefficient, dtype=float))):
             raise ValueError(
                 f"QuadraticMFGHamiltonian: coupling_coefficient must be finite, got {coupling_coefficient} (#2974)"
             )

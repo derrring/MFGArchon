@@ -145,6 +145,17 @@ _SHAPE_OWNER = {
 }
 
 
+def _as_numpy_converts(value: Any) -> np.ndarray:
+    """What a source returned, converted as ``np.asarray(..., dtype=float)`` converts it, as the readers that take it so
+    read it: an entry that holds no number (None) is NaN."""
+    return np.asarray(value, dtype=float)
+
+
+def _as_returned(value: Any) -> Any:
+    """What a source returned, as it returned it, for a reader that converts nothing."""
+    return value
+
+
 def _floats_entry_by_entry(value: Any) -> np.ndarray:
     """What a source returned, as floats: an object array entry by entry, since numpy alone reads ``None`` there as NaN.
     A return that holds no number raises (``TypeError``) rather than reading as a NaN value (#2901, #2974)."""
@@ -477,21 +488,24 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
       is every node a solve reads but a Dirichlet node, whose value does not reach the solution; on a mesh whose
       boundary is not the box, some of them lie on the mesh's boundary, which the solve reads too. There it reads a
       callable volatility (``CoefficientField.read_callable``, the read ``evaluate_at`` makes), ``source_term_hjb``,
-      ``source_term_fp`` (``_call_problem_source``), ``state_penalty`` (``wall_values``) and every source a Hamiltonian
+      ``source_term_fp`` (``_call_problem_source``; the FP's converted as numpy converts, as FP-FVM, FP-SL and the
+      weak-form FP read it), ``state_penalty`` (``wall_values``) and every source a Hamiltonian
       or Lagrangian holds (`held_sources`), each callable once, named by the operator the caller gave: a potential as
       the Hamiltonians' evaluation reads it (``_read_of_the_potential``), a density term on a batch
       (``_read_of_the_density``). A held source declared with any other slots is the check's own error, and raises. A
-      boundary segment's callable value is read at the boundary probe nodes it governs (``segment_for_point``);
+      boundary segment's callable value is read at the boundary probe nodes it governs (``segment_for_point``), where
+      its type reads its value (``FIELDS_READ``): a NO_FLUX or REFLECTING segment's is not read, as its constant is not;
     - m and v: the first Picard iteration hands the HJB the initial density at every t_n, and v the terminal value at
       it, ``terminal_value(get_m_init())``, which is ``u_terminal`` without a terminal coupling; the FP is handed the
       initial density, with v only at T. So a callable that takes them is handed those values at its nodes, and the
       FP's source, if it takes v, is not read: no finite-volume scheme reads it at T. Where a terminal coupling is
       declared and the problem binds none (off a grid), v is the HJB solver's binding's, and what takes v is not read.
-      ``coupling_cost`` is read through ``_coupling_part`` at the initial density and the interior nodes,
-      ``terminal_coupling`` through ``terminal_value``, at T, and ``nonlocal_operator`` applied to that v;
+      ``coupling_cost`` is read through ``_coupling_part`` at the initial density and the interior times, and
+      ``nonlocal_operator`` applied to that v, each evaluated on the whole grid and judged at the probe nodes;
+      ``terminal_coupling`` through ``terminal_value``, at T, at every node;
     - on a network (`_refuse_a_non_finite_node_source`), a held source in the node form at t_0, the one grid time both
-      network HJB solvers read, at sampled nodes, and a ``NodeBC``'s callable value at its nodes at the
-      HJB side's times.
+      network HJB solvers read, at sampled nodes, and a ``NodeBC``'s callable value at up to five of its nodes (the
+      first, the last and three spread between) at the HJB side's times.
 
     A scalar its own object refuses where it is built is not read again: a control cost's ``lambda_``, a bounded
     control's ``max_control``, ``QuadraticMFGHamiltonian``'s ``coupling_coefficient``, a radial kernel's parameters
@@ -499,23 +513,26 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
     to a solver is refused by ``resolve_volatility_override``.
 
     A Hamiltonian's own ``__call__``, ``dp`` and ``optimal_control`` take p, which construction does not know, and are
-    not read here. ``validate_hamiltonian`` reads ``__call__`` at one state, inside these reads, and the consistency
-    check compares the three.
+    not read here. ``validate_hamiltonian`` reads ``__call__`` at one state, inside these reads in t, x and m, with
+    p = 0, the check's own, which no solve need hand; the consistency check compares the three.
 
     **What it does not see.** A source finite at these reads and non-finite elsewhere: at a boundary node, which the
     solve reads under no-flux; at another time, m or v; or at a state the solve reaches. The point-of-use checks see it
     (#2975, #2976). Nor, at Nt = 1, the sources and the coupling cost; on a grid with an axis of 2 nodes, which has no
-    probe node off the boundary, what is read there (a callable volatility, the held sources, the two source terms
-    and the wall); or on a network, a source that takes p or m, which the solvers are handed by their caller. A read
+    probe node off the boundary, what is read there (a callable volatility, the held sources, the two source terms,
+    the wall, the coupling cost and ``nonlocal_operator``); or on a network, a source that takes p or m, which the
+    solvers are handed by their caller. A read
     that raises one of ``_EVALUATION_ERRORS`` is not this fact and is left to the readers at use.
 
     A return that holds no number (None) is judged as the read made here converts it. A held potential or density term
-    is read as the Hamiltonians' evaluation reads it, and the wall and the costs through the functions the solve reads
-    them with; each converts as numpy does, so a None is NaN, and is refused by name, whichever reader the solve then
-    uses. Other readers of a potential or a density term raise on a None (#2901), among them ``SeparableLagrangian``'s
-    call, which a semi-Lagrangian solve with a non-smooth control cost reaches. The source terms, a callable volatility
-    and a network node's source are read as they return, before their readers' checks, and those readers raise on a
-    None at use, so it is left to them (``_floats_entry_by_entry``).
+    is read as the Hamiltonians' evaluation reads it, ``source_term_fp`` as FP-FVM, FP-SL and the weak-form FP read
+    it, and the wall and the costs through the functions the solve reads them with; each converts as numpy does, so a
+    None is NaN, and is refused by name, whichever reader the solve then uses. Other readers raise on a None: FP-FDM's
+    of the FP source, and ``SeparableLagrangian``'s call and others of a potential or a density term (#2901). The
+    semi-Lagrangian HJB solver with a non-smooth control cost reads the potential through that call, and
+    ``problem.solve``'s semi-Lagrangian pair refuses such a problem at its FP half whatever the potential.
+    ``source_term_hjb``, a callable volatility and a network node's source are read as they return, before their
+    readers' checks, and those readers raise on a None at use, so it is left to them (``_floats_entry_by_entry``).
     """
     from mfgarchon.core.hamiltonian import (
         HamiltonianBase,
@@ -528,7 +545,7 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
     from mfgarchon.core.mfg_problem import _call_problem_source, wall_values
     from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.geometry.boundary.providers import is_provider
-    from mfgarchon.geometry.boundary.types import _read_constant
+    from mfgarchon.geometry.boundary.types import FIELDS_READ, _read_constant
     from mfgarchon.types.callable_protocols import (
         DENSITY_SLOTS,
         POTENTIAL_SLOTS,
@@ -698,10 +715,13 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
             # reads, so it is not read; the HJB's is read after the binding, with the v the solve hands.
             if not callable(source) or "v" in _remembered(source, SOURCE_TERM_SLOTS, field_name).passes:
                 continue
+            # The FP's source is read as FP-FVM, FP-SL and the weak-form FP read it, converted as numpy converts, so a
+            # return that holds no number is NaN there (FP-FDM raises on it); the HJB's is summed as it returns.
+            convert = _as_numpy_converts if field_name == "source_term_fp" else _as_returned
             for t in interior:
                 read(
                     field_name,
-                    lambda f=field_name, s=t: _call_problem_source(problem, f, t=s, x=probe, m=m, v=None),
+                    lambda f=field_name, s=t, c=convert: c(_call_problem_source(problem, f, t=s, x=probe, m=m, v=None)),
                     f"at the interior probe nodes, t={t:g}",
                 )
         if callable(problem.state_penalty):
@@ -718,6 +738,9 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
         return
     if not isinstance(conditions, BoundaryConditions):
         return
+    # A segment whose type imposes no value (NO_FLUX, REFLECTING: `FIELDS_READ`) is not read, as its constant is not: a
+    # scheme that solves the problem need not call it, and the semi-Lagrangian ones do not.
+    imposing_a_value = {bc_type for bc_type, fields in FIELDS_READ.items() if "value" in fields}
     lower, upper = grid.min(axis=0), grid.max(axis=0)
     for q in _probe_nodes(grid):
         if not bool(np.any((q == lower) | (q == upper))):
@@ -726,7 +749,7 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
             segment = conditions.segment_for_point(q, geometry=problem.geometry)
         except _EVALUATION_ERRORS:
             continue
-        if not callable(segment.value) or is_provider(segment.value):
+        if segment.bc_type not in imposing_a_value or not callable(segment.value) or is_provider(segment.value):
             continue
         binding = segment.value_binding()
         for t in hjb_times:
@@ -756,23 +779,27 @@ def _refuse_a_non_finite_read_of_the_bound_terms(
     them, where it always has (#2974). Each through the function the solve reads it with:
 
     - ``coupling_cost`` through `_coupling_part`, with the problem's own binding, at ``m_initial`` and the interior
-      nodes;
+      times;
     - ``terminal_coupling`` through ``problem.terminal_value(m_initial)``, the iterator's cold start, at T;
     - what takes v -- ``source_term_hjb`` taking v, through `_call_problem_source`, and ``nonlocal_operator`` -- at the
       v the first iteration hands: ``terminal_value(m_initial)``, which every row of the cold start holds. Where a
       terminal coupling is declared and the problem binds none (off a grid), that v is the HJB solver's binding's, which
       construction does not have: ``terminal_value`` refuses there, and what takes v is not read.
+
+    The coupling cost and ``nonlocal_operator`` are evaluated on the whole grid, since each reads m or v everywhere, and
+    judged at the probe rows, as every in-domain callable is: a Dirichlet node's value does not reach the solution. The
+    terminal coupling is judged at every node: T's terminal value is the solution's row there.
     """
     from mfgarchon.core.mfg_problem import _call_problem_source, _coupling_part, problem_coupling_binding
     from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, _remembered
 
     binding = problem_coupling_binding(problem)
-    if binding is not None:
+    if binding is not None and rows:
         for t in interior:
             read(
                 "coupling_cost",
-                lambda s=t: _coupling_part(binding.energy, binding.nodes, m_all, grid, s),
-                f"at m_initial, t={t:g}",
+                lambda s=t: np.asarray(_coupling_part(binding.energy, binding.nodes, m_all, grid, s)).reshape(-1)[rows],
+                f"at m_initial, at the interior probe nodes, t={t:g}",
             )
     if problem._terminal_energy is not None:
         read("terminal_coupling", lambda: problem.terminal_value(m_all), f"at m_initial, t={float(problem.T):g}")
@@ -790,8 +817,12 @@ def _refuse_a_non_finite_read_of_the_bound_terms(
                 lambda s=t: _call_problem_source(problem, "source_term_hjb", t=s, x=probe, m=m, v=v),
                 f"at the interior probe nodes, t={t:g}",
             )
-    if problem.nonlocal_operator is not None:
-        read("nonlocal_operator", lambda: problem.nonlocal_operator @ v_all, "applied to the terminal value")
+    if problem.nonlocal_operator is not None and rows:
+        read(
+            "nonlocal_operator",
+            lambda: np.asarray(problem.nonlocal_operator @ v_all).reshape(-1)[rows],
+            "applied to the terminal value, at the interior probe nodes",
+        )
     stop_if_refused()
 
 

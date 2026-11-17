@@ -422,18 +422,21 @@ these states, and a test holds the reads inside them for every member. A solver 
   `source_term_hjb`, `source_term_fp`, `state_penalty`, and every source a Hamiltonian or a Lagrangian holds, such as
   `potential`, `coupling` and `congestion_factor`, named by the operator the caller gave: a potential as the
   Hamiltonian's evaluation reads it, a density term as that evaluation reads it on a batch. A boundary segment's
-  callable value is read at the boundary probe nodes it governs;
+  callable value is read at the boundary probe nodes it governs, where its type reads its value (`FIELDS_READ`): a
+  NO_FLUX or REFLECTING segment's is not read, as its constant is not;
 - **$m$ and $v$**: the first Picard iteration hands the HJB the initial density at every $t_n$, and $v$ the terminal
   value at it, `terminal_value(get_m_init())`: `u_terminal`, plus the terminal coupling's derivative where one is
   declared. It hands the FP the initial density, with $v$ only at $T$. So a callable that takes them is read with those
   values at its nodes. A `source_term_fp` that takes $v$ is not read, since no finite-volume scheme reads it at $T$;
   and where a terminal coupling is declared off a grid, which the problem does not bind, $v$ is the HJB solver's
   binding's, and nothing that takes $v$ is read;
-- `coupling_cost` as its derivative at the initial density (`_coupling_part`), `terminal_coupling` through
-  `terminal_value`, at $T$, and `nonlocal_operator` applied to that $v$;
+- `coupling_cost` as its derivative at the initial density (`_coupling_part`), and `nonlocal_operator` applied to that
+  $v$, each evaluated on the whole grid and judged at the probe nodes off the boundary, as above; `terminal_coupling`
+  through `terminal_value`, at $T$, at every node, since at $T$ the terminal value is the solution;
 - **on a network**:
   - a `NetworkHamiltonian`'s `node_potential_func` at $t_0$, the one grid time both network HJB solvers read;
-  - a `NodeBC`'s callable value at its nodes, at the HJB side's times, which policy iteration hands it.
+  - a `NodeBC`'s callable value at up to five of its nodes (the first, the last and three spread between), at the HJB
+    side's times, which policy iteration hands it.
 
 A scalar held by an object that exists before any problem is refused where that object is built:
 - a control cost's `lambda_`;
@@ -446,35 +449,43 @@ A scalar held by an object that exists before any problem is refused where that 
   REFLECTING segment imposes a zero flux whatever value it carries, and PERIODIC and the extrapolations carry none; a
   `NodeBC`'s constant value.
 
-A return that holds no number (`None`) is judged as the reader construction reads it through converts it:
-- **refused by name:** a held potential and a held density term, each read as the Hamiltonians' evaluation reads it,
-  and the wall and the coupling costs, read through the functions the solve reads them with. These convert as numpy
-  does, so a `None` is NaN;
-- **left to its reader:** the source terms, a callable volatility and a network's `node_potential_func`. They are
-  read as they return, and their readers at use raise on a `None`.
+Each of these checks reads its value as numpy reads it as a float, so a one-element array or a `Fraction` is judged as
+its number.
 
-A held source that is `None` where construction reads it is refused whichever reader the solve then uses. Not every
-reader of a potential or a density term converts as numpy does: some raise on a `None`. A semi-Lagrangian solve with a
-non-smooth control cost (`BoundedControlCost`, `L1ControlCost`) reaches one, since it reads the potential through
-`SeparableLagrangian`'s own call, and such a problem is refused at construction all the same. Which reading of a `None`
-is right for a Hamiltonian's return is #2901's, where the readers that disagree are listed.
+A return that holds no number (`None`) is judged as the reader construction reads it through converts it:
+- **refused by name:** a held potential and a held density term, each read as the Hamiltonians' evaluation reads it;
+  `source_term_fp`, read as FP-FVM, FP-SL and the weak-form FP read it; and the wall and the coupling costs, read
+  through the functions the solve reads them with. These convert as numpy does, so a `None` is NaN;
+- **left to its reader:** `source_term_hjb`, a callable volatility and a network's `node_potential_func`. They are read
+  as they return, and their readers at use raise on a `None`.
+
+A source that is `None` where construction reads it is refused whichever reader the solve then uses. Not every reader
+converts as numpy does: FP-FDM raises on an FP source's `None`, and some readers of a potential or a density term raise
+on it too. The semi-Lagrangian HJB solver with a non-smooth control cost (`BoundedControlCost`, `L1ControlCost`) reads
+the potential through `SeparableLagrangian`'s own call, which raises; `problem.solve`'s semi-Lagrangian pair refuses
+such a problem at its FP half whatever the potential. Which reading of a `None` is right for a Hamiltonian's return is
+#2901's, where the readers that disagree are listed.
 
 A volatility handed to `solve_hjb_system` or `solve_fp_system` is refused there. Each Hamiltonian and Lagrangian class
 declares every value its constructor takes: a source read here (`HELD_SOURCES`), a scalar its constructor refuses
 (`CHECKED_SCALARS`), or neither, with why (`NOT_HELD`). A held source is read as a potential or a density term, by the
-slots it declares. One declared with any other slots raises when a problem is built, naming the class and the
-parameter.
+slots it declares. One declared with any other slots raises when a problem is built on a grid with a probe node off the
+boundary, naming the class and the parameter. On a grid with an axis of 2 nodes held sources are not read, and none
+raises; on a grid a source with node slots is skipped (#2972's pairing), and on a network only node slots are read.
 
 A Hamiltonian's own `__call__`, `dp` and `optimal_control` take $p$, which construction does not know, so they are not
 read here. `validate_hamiltonian` refuses a `__call__` that is NaN or infinite at one state: $t = 0$, the centre probe
-node off the boundary, $p = 0$, and $m$ the value of `m_initial` there. That state is inside the reads above, so a
-source the Hamiltonian holds is refused first, by name. The comparison above checks the three methods against each
-other, and a non-finite value at its probes is warned about, not refused.
+node off the boundary, $p = 0$, and $m$ the value of `m_initial` there. That state is inside the reads above in $t$, $x$
+and $m$, so a source the Hamiltonian holds is refused first, by name. $p = 0$ is the check's own, and no solve need hand
+it: an own `__call__` NaN only at $p = 0$ there is refused, as one NaN only at $p = 0$ and $m = 1$ was before. The
+comparison above checks the three methods against each other, and a non-finite value at its probes is not refused:
+`validate_custom_functions` records it as a warning in its result, which construction does not report.
 
 Not seen here:
 
 - **a source finite at these reads and non-finite elsewhere**:
-  - at a boundary node, which the solve reads under no-flux;
+  - at a boundary node, which the solve reads under no-flux, and at a Dirichlet node, whose value does not reach the
+    solution;
   - at another time, $m$ or $v$, or at a state the solve reaches.
 
   A coupling NaN only at $m = 0.5$, or only at $m = 1$ where `m_initial` is never $1$, builds;
@@ -484,9 +495,10 @@ Not seen here:
 - **a `source_term_fp` that takes $v$**, and a source NaN only at $t_0$ (`source_term_hjb`, `coupling_cost`) or only
   at $T$ (`source_term_fp`), which a scheme that solves the problem does not read;
 - **on a grid with an axis of 2 nodes**, which has no probe node off the boundary, what is read there: a callable
-  volatility, every source a Hamiltonian or a Lagrangian holds, `source_term_hjb`, `source_term_fp` and
-  `state_penalty`. The arrays and scalars, `coupling_cost`, `terminal_coupling`, `nonlocal_operator` and a boundary
-  segment's callable are read as on any grid;
+  volatility, every source a Hamiltonian or a Lagrangian holds, `source_term_hjb`, `source_term_fp`, `state_penalty`,
+  `coupling_cost` and `nonlocal_operator`. The arrays and scalars, `terminal_coupling` and a boundary segment's callable
+  are read as on any grid;
+- **a NO_FLUX or REFLECTING segment's value**, a constant or a callable, which its type does not impose;
 - **where a terminal coupling is declared off a grid**, what takes $v$: the problem binds no terminal coupling there,
   and the $v$ the first iteration hands is the HJB solver's binding's;
 - **a problem solved by an expert-mode solver**, at a state that solver reads and no scheme of the enum does, or from
@@ -497,8 +509,8 @@ Not seen here:
   there pairs with an entry of `m_initial`, so only the arrays and scalars are read. A Hamiltonian's sources are read
   only through its `__call__`, by `validate_hamiltonian`, at a node of its own draw with $m = 1$;
 - **an input no solver reads**, such as `dm`;
-- **a source whose read raises, a `None` where the solve's reader raises on it, and a boundary condition its owner
-  refuses**, which are left to their readers at use.
+- **a source whose read raises, a `None` from a source read as it returns (`source_term_hjb`, a callable volatility,
+  `node_potential_func`), and a boundary condition its owner refuses**, which are left to their readers at use.
 
 What the solve reaches is the point-of-use checks' fact (#2975, #2976):
 - the callable volatility's output check;

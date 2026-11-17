@@ -7,8 +7,11 @@
     `source_term_fp` and `coupling_cost` are read at the interior nodes alone, and `terminal_coupling` at T alone;
   - **at the probe nodes off the box's boundary**, with the values the iterator's first iteration hands there: the
     initial density, and v the terminal value at it (`terminal_value(get_m_init())`, which is `u_terminal` without a
-    terminal coupling);
-  - **each through the function the solve reads it with**: the source terms through `_call_problem_source`, the
+    terminal coupling). The coupling cost and `nonlocal_operator` are evaluated on the whole grid and judged there;
+    the terminal coupling at every node. A boundary segment's callable is read where its type reads its value
+    (`FIELDS_READ`), so a NO_FLUX or REFLECTING segment's is not, as its constant is not;
+  - **each through the function the solve reads it with**: the source terms through `_call_problem_source`, the FP's
+    converted as FP-FVM, FP-SL and the weak-form FP convert it, the
     coupling cost through `_coupling_part`, the terminal coupling through `terminal_value`, a callable volatility
     through `CoefficientField.read_callable`, the read `evaluate_at` makes, the wall through `wall_values`, a held
     potential through `_read_of_the_potential`, which the Hamiltonians' evaluation now calls, and a held density term
@@ -24,19 +27,24 @@
     `state_penalty`, `state_penalty_scale`, `source_term_hjb`, `source_term_fp`, `nonlocal_operator`, `coupling_cost`
     and `terminal_coupling`, a scalar volatility or `diffusion`, `T`, a `CongestionHamiltonian`'s `congestion_factor`,
     a Hamiltonian's `coupling` non-finite at `m_initial`'s values, a `NetworkHamiltonian`'s `node_potential_func`, a
-    boundary segment's callable value, and a `NodeBC`'s callable value. Among them, a held potential or density term
-    and the wall that return None where construction reads them. It reads a held source as the Hamiltonians'
-    evaluation reads it, and the wall through `wall_values`, each of which makes a None NaN. Such a problem is refused
-    whichever reader the solve then uses: a semi-Lagrangian solve with a non-smooth control cost (`BoundedControlCost`,
-    `L1ControlCost`) reads the potential through `SeparableLagrangian`'s own call, which raised a TypeError on the
-    None. Which readers of a Hamiltonian's return make a None NaN and which raise is #2901's.
+    boundary segment's callable value, and a `NodeBC`'s callable value at up to five of its nodes. Among them, a held
+    potential or density term, `source_term_fp` and the wall that return None where construction reads them. It reads
+    a held source as the Hamiltonians' evaluation reads it, `source_term_fp` as FP-FVM, FP-SL and the weak-form FP read
+    it, and the wall through `wall_values`, each of which makes a None NaN. Such a problem is refused whichever reader
+    the solve then uses. FP-FDM raised a TypeError on an FP source's None, FP-FVM and FP-SL their own non-finite
+    checks, and FEM_P1 returned a non-finite M without a word. The semi-Lagrangian HJB solver with a non-smooth
+    control cost (`BoundedControlCost`, `L1ControlCost`) reads the potential through `SeparableLagrangian`'s own call,
+    which raised a TypeError on the None; `problem.solve`'s semi-Lagrangian pair refuses such a problem at its FP half
+    whatever the potential. Which readers of a Hamiltonian's return make a None NaN and which raise is #2901's.
   - **Refused where its object is built:** a radial kernel's NaN parameter, and its infinite amplitude or exponent (an
     infinite length scale or softening stays accepted: it solves as the constant or zero kernel it tends to);
     `BoundedControlCost(max_control=nan)` (`max_control=inf` stays accepted: it solves as unbounded);
-    `QuadraticMFGHamiltonian(coupling_coefficient=nan)`; and a `BCSegment` whose constant is NaN or infinite, or a
-    number no float holds, in a field its type reads (`FIELDS_READ`: the value of a Dirichlet, Neumann, Robin or flux
-    segment, and a Robin segment's `alpha` and `beta`), which the solve used to refuse where it read it. Each check
-    reads a one-element array as its number, as the solve does.
+    a non-finite `QuadraticMFGHamiltonian` `coupling_coefficient`; and a `BCSegment` whose constant is NaN or
+    infinite, or a number no float holds, in a field its type reads (`FIELDS_READ`: the value of a Dirichlet, Neumann,
+    Robin or flux segment, and a Robin segment's `alpha` and `beta`), which the solve used to refuse where it read it.
+    Each check
+    reads its value as numpy reads it as a float, so a one-element array or a `Fraction` is judged as its number, as
+    the solve does.
   - **Refused at the solver's door:** a NaN or infinite `volatility=` handed to `solve_hjb_system` or `solve_fp_system`,
     scalar or array, beside the negative one (#2618).
   - **Named by the source now, where the message said "Hamiltonian returned NaN or Inf at sample point" or named the
@@ -54,21 +62,24 @@
     take `m_initial=`, and without it read m = 1 as before.
   - **For subclasses:** `HamiltonianBase` and `LagrangianBase` carry `HELD_SOURCES`, `CHECKED_SCALARS` and `NOT_HELD`.
     A source a class lists in `HELD_SOURCES` is read by construction, as a potential or a density term by the slots it
-    declares; one declared with other slots raises, naming the class and the parameter. The library's classes list
+    declares; one declared with other slots raises, naming the class and the parameter, when a problem is built on a
+    grid with a probe node off the boundary (on a network only node slots are read). The library's classes list
     every value their constructor takes, and a test holds them to it.
 
   **Not seen at construction:**
-  - a source finite at these reads and non-finite elsewhere: at a boundary node, which the solve reads under no-flux;
-    at another time, m or v; or at a state the solve reaches;
+  - a source finite at these reads and non-finite elsewhere: at a boundary node, which the solve reads under no-flux,
+    or a Dirichlet node, whose value does not reach the solution; at another time, m or v; or at a state the solve
+    reaches;
+  - a NO_FLUX or REFLECTING segment's value, a constant or a callable, which its type does not impose;
   - a `source_term_fp` that takes v, and a source non-finite only at t_0 (`source_term_hjb`, `coupling_cost`) or only
     at T (`source_term_fp`), which some scheme that solves the problem does not read;
   - a Hamiltonian's own `dp` and `optimal_control`;
   - at Nt = 1, `source_term_hjb`, `source_term_fp` and `coupling_cost`;
   - on a grid with an axis of 2 nodes, which has no probe node off the boundary, the callables read there: a callable
-    volatility, the held sources, the two source terms and `state_penalty`;
+    volatility, the held sources, the two source terms, `state_penalty`, `coupling_cost` and `nonlocal_operator`;
   - where a terminal coupling is declared off a grid, what takes v, since the problem binds no terminal coupling there;
   - a return that holds no number (None) from a source construction reads as it returns, whose readers at use raise
-    on it: the source terms, a callable volatility and a network's `node_potential_func`;
+    on it: `source_term_hjb`, a callable volatility and a network's `node_potential_func`;
   - what an expert-mode solver handed to `problem.solve` reads and no scheme of the enum does, and the iterator's warm
     start (`set_warm_start_data`);
   - on a network, a source that takes p or m (`hamiltonian_func`, `node_interaction_func`), which the solvers are

@@ -76,9 +76,11 @@ class RadialKernel(ABC):
         with `converged` False. An infinite scale named in ``scales`` is kept: the kernel is then the limit it tends to,
         a constant for a length scale and zero for a softening, and it solves as that limit does."""
         for name, value in parameters.items():
-            if np.any(np.isnan(value)):
+            # As numpy reads it as a float, so a one-element array or a Fraction is judged as its number.
+            number = np.asarray(value, dtype=float)
+            if np.any(np.isnan(number)):
                 raise ValueError(f"{kernel}: {name} must be a number, got {value} (#2974)")
-            if np.any(np.isinf(value)) and name not in scales:
+            if np.any(np.isinf(number)) and name not in scales:
                 raise ValueError(f"{kernel}: {name} must be finite, got {value} (#2974)")
 
     @abstractmethod
