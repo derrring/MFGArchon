@@ -1844,21 +1844,24 @@ def solve_timestep_full_nd(
             return "wall", None
         return "interior", None
 
-    kinds = [row_kind(grid.get_multi_index(flat_idx)) for flat_idx in range(N_total)]
+    multi_indices = [grid.get_multi_index(flat_idx) for flat_idx in range(N_total)]
+    kinds = [row_kind(multi_idx) for multi_idx in multi_indices]
+    if any(kind == "wall" for kind, _ in kinds):
+        _refuse_provider_wall_coefficients(boundary_conditions)
 
     # A volatility that varies in space is Ito diffusion, Delta(D m) (#2841): the rows below are then assembled with
     # D = 0, and the handlers' unit stencil (sigma = 1, so D = 1/2, with no time derivative and no advection) is scaled
     # by D column by column (`ito_diffusion`). A row scaled by its own D_i was D Delta m, which does not conserve mass.
     # The unit stencil is assembled at the kept rows (neither Dirichlet nor repeated) before the branch is chosen: its
     # column support is the set of nodes whose volatility the Ito branch reads, which is all the choice reads (review 2
-    # of #2981), and the same rows are the Ito branch's. The scalar path assembles none.
+    # of #2981), and the same rows are the Ito branch's. The scalar path assembles none, and neither does an array that
+    # does not vary over every node: it does not vary over the nodes the step reads either.
     unit_rows: tuple[list[int], list[int], list[float]] = ([], [], [])
-    if isinstance(volatility, np.ndarray):
+    if isinstance(volatility, np.ndarray) and volatility_varies(volatility, np.arange(volatility.size)):
         unit_u = np.zeros_like(u_flat)
         for flat_idx, (kind, _) in enumerate(kinds):
-            multi_idx = grid.get_multi_index(flat_idx)
+            multi_idx = multi_indices[flat_idx]
             if kind == "wall":
-                _refuse_provider_wall_coefficients(boundary_conditions)
                 _BOUNDARY_HANDLERS[advection_scheme](
                     *unit_rows, flat_idx, multi_idx, shape, ndim, np.inf, 1.0, 0.0, spacing, unit_u, grid
                 )
@@ -1923,8 +1926,7 @@ def solve_timestep_full_nd(
 
     # Build matrix by iterating over all grid points, each row by its kind (`row_kind`)
     for flat_idx, (kind, mirror_flat) in enumerate(kinds):
-        # Convert flat index to multi-index (i, j, k, ...)
-        multi_idx = grid.get_multi_index(flat_idx)
+        multi_idx = multi_indices[flat_idx]
 
         if kind == "repeated":
             row_indices.extend((flat_idx, flat_idx))
@@ -1942,7 +1944,6 @@ def solve_timestep_full_nd(
             _add_boundary_dirichlet_entries(row_indices, col_indices, data_values, flat_idx, dt, bc_value)
         elif kind == "wall":
             # No-flux or mixed BC at boundary: scheme-specific assembly
-            _refuse_provider_wall_coefficients(boundary_conditions)
             add_wall_rows((row_indices, col_indices, data_values), unit_rows, flat_idx, multi_idx)
         else:
             # Interior point or periodic boundary

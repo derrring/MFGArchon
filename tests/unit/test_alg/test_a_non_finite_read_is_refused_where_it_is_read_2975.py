@@ -1790,19 +1790,21 @@ def test_the_fp_steps_branch_choice_reads_exactly_the_volatility_its_matrix_read
 
     def matrix(field):
         matrices.clear()
+        reads.clear()
         FPFDMSolver(problem).solve_fp_system(
             np.ones(shape), **handed, volatility=field, volatility_kind="field", show_progress=False
         )
         return matrices[0]
 
     base = matrix(sigma)
+    read_set = reads[-1]  # the implicit step first asks whether the array varies over every node
     moved = set()
     for j in range(sigma.size):
         perturbed = sigma.copy()
         perturbed.flat[j] *= 1.5
         if not np.array_equal(matrix(perturbed), base):
             moved.add(j)
-    assert reads[0] == moved, (sorted(reads[0] - moved), sorted(moved - reads[0]))
+    assert read_set == moved, (sorted(read_set - moved), sorted(moved - read_set))
     assert (node in moved) is read_there
     assert 0 < len(moved) < sigma.size or read_there
 
