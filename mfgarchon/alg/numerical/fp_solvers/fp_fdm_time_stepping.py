@@ -986,6 +986,7 @@ def solve_fp_nd_full_system(
     velocity_field: np.ndarray | None = None,
     volatility_kind: str | None = None,
     outflow: dict[str, np.ndarray] | None = None,
+    drift_free: bool = False,
 ) -> np.ndarray:
     """
     Solve multi-dimensional FP equation using full-dimensional sparse linear system.
@@ -1043,6 +1044,9 @@ def solve_fp_nd_full_system(
           Signature: (t: float, x: list[ndarray], m: ndarray) -> ndarray
           Returns drift vector field, shape (ndim, N1, N2, ..., Nd)
           where ndim is spatial dimension.
+    drift_free : bool
+        The caller handed no drift, so ``U_solution_for_drift`` is zero and forms none: no drift coefficient is
+        resolved from the Hamiltonian (#2977).
 
     Returns
     -------
@@ -1084,7 +1088,7 @@ def solve_fp_nd_full_system(
     )
     use_tensor_diffusion = volatility_kind == "tensor"
     # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
-    # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
+    # (the single source α* = -∇U/control_cost).
     #
     # Issue #1528 phase 2: resolve it lazily, at the point of use. fp_drift_coefficient
     # raises for any Hamiltonian whose optimal control is not -∇U/control_cost
@@ -1107,7 +1111,9 @@ def solve_fp_nd_full_system(
         dispatcher's, and 0.0 gives the drift exactly. Without a velocity the drift comes from U, and c is resolved.
         """
         if velocity_field is None:
-            return resolve_coupling_coefficient()
+            # A solve handed no drift (``drift_free``) forms none from its zero U, and 0.0 gives it exactly: a
+            # Hamiltonian with no scalar coefficient is not refused for a drift it does not have (#2977).
+            return 0.0 if drift_free else resolve_coupling_coefficient()
         return _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else 0.0
 
     # Get grid spacing and geometry

@@ -85,7 +85,7 @@ class TestFPFDMPotentialFieldDriftSource:
             f"{float(np.max(np.abs(m_potential - m_velocity))):.3e}."
         )
 
-    def test_potential_path_uses_control_cost_not_coupling(self):
+    def test_the_potential_path_drift_is_minus_grad_u_over_the_control_cost(self):
         """The potential-field drift equals α* = -∇U/control_cost at a second control cost. Before the
         G-017 fix (#1420) the two channels diverged ~20% here, when the problem-level scalar (0.5)
         was not 1/control_cost."""

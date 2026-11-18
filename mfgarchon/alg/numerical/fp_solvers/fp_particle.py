@@ -287,6 +287,8 @@ class FPParticleSolver(BaseFPSolver):
         # paths use), set by solve_fp_system instead of mutating the shared problem.
         # None => the problem's own volatility. Explicit init for object-shape stability (CLAUDE.md).
         self._effective_sigma_override: float | None = None
+        # True while a solve handed no drift (pure diffusion), set by solve_fp_system (#2977).
+        self._drift_free = False
 
         # Density mode for direct queries (Issue #489 Phase 2)
         self.density_mode = density_mode
@@ -434,7 +436,7 @@ class FPParticleSolver(BaseFPSolver):
             - bounds: list[tuple], bounds per dimension [(xmin, xmax), (ymin, ymax), ...]
             - coordinates: list[np.ndarray], 1D coordinate arrays per dimension
             - total_points: int, total number of grid points
-            - Nt, Dt, sigma, coupling_coefficient: time/physics parameters
+            - Nt, Dt, sigma: time/physics parameters
 
         For 1D backward compatibility, also includes:
             - Nx, Dx, xmin, xmax, Lx, xSpace (aliased from nD params)
@@ -531,7 +533,6 @@ class FPParticleSolver(BaseFPSolver):
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
         from mfgarchon.utils.pde_coefficients import (
             assert_quadratic_drift,
-            fp_drift_coefficient,
             resolve_diffusion_source,
         )
 
@@ -541,17 +542,11 @@ class FPParticleSolver(BaseFPSolver):
             sigma = float(self.problem.volatility)
         else:
             sigma = None
-        # Issue #1420 / G-017: the drift coefficient is the Hamiltonian's control cost's (single source). This params
-        # value flows to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
-        # #2900: a SeparableHamiltonian's particle drift is its own optimal_control (`_advective_drift`), so the scalar
-        # is asked for only for a Hamiltonian that is not separable, which fp_drift_coefficient refuses by name (#2977).
-        # #1542's quadratic guard still runs for a separable one, here rather than through the scalar, which refuses a
-        # Hamiltonian whose optimal_control is its own.
+        # #1542's quadratic guard runs here for a SeparableHamiltonian, whose particle drift is its own optimal_control
+        # (`_advective_drift`, #2900). Any other Hamiltonian is refused where a drift is formed from U, and only there
+        # (#2977): a callable or precomputed velocity, and pure diffusion, read no drift coefficient.
         if isinstance(getattr(self.problem, "hamiltonian_class", None), SeparableHamiltonian):
             assert_quadratic_drift(self.problem, context="FPParticleSolver")
-            coupling_coefficient = None
-        else:
-            coupling_coefficient = fp_drift_coefficient(self.problem, context="FPParticleSolver")
 
         result = {
             # nD parameters
@@ -567,7 +562,6 @@ class FPParticleSolver(BaseFPSolver):
             "Nt": n_time_points,  # Backward compatible alias (deprecated)
             "Dt": Dt,
             "volatility": sigma,
-            "coupling_coefficient": coupling_coefficient,
         }
 
         # 1D backward compatibility aliases
@@ -1868,7 +1862,7 @@ class FPParticleSolver(BaseFPSolver):
                 - Callable: Function alpha(t, x, m) -> drift (Phase 2)
             drift_is_precomputed: If True, drift_field is treated as precomputed drift vector α(t,x).
                                   If False (default), drift_field is treated as value function U(t,x) and
-                                  drift is computed as α = -coupling_coefficient * ∇U.
+                                  drift is the Hamiltonian's optimal control at ∇U.
                                   Use True to preserve high-precision gradients from GFDM or other meshfree methods.
             volatility: Volatility specification for SDE noise (optional). The SDE is
                 dX = v dt + Σ dW with dW ~ N(0, dt·I_d), giving diffusion tensor
@@ -1911,7 +1905,8 @@ class FPParticleSolver(BaseFPSolver):
         if M_initial is None and initial_particles is None:
             raise ValueError("Either M_initial or initial_particles is required")
 
-        # Handle drift_field parameter
+        # Handle drift_field parameter. No drift handed forms none: its zero U reads no drift coefficient (#2977).
+        self._drift_free = drift_field is None
         if drift_field is None:
             # Zero drift (pure diffusion): create zero U field for internal use
             params = self._get_grid_params()
@@ -2040,7 +2035,6 @@ class FPParticleSolver(BaseFPSolver):
         positions: np.ndarray,
         grad_at_particles: np.ndarray,
         t: float,
-        coupling_coefficient: float | None,
         m_at_particles: np.ndarray,
     ) -> np.ndarray:
         """FP advective drift alpha* at the particles, from the single owner (Issue #1528).
@@ -2059,11 +2053,12 @@ class FPParticleSolver(BaseFPSolver):
         ``_estimate_density_at_particles``: a subclass's own ``optimal_control`` may read either (#2903;
         docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives").
 
-        A problem with no Hamiltonian owner (H is None), or a non-separable one, still carries an
-        explicit scalar ``coupling_coefficient``; that legacy path keeps the hand scalar
-        ``-c * grad`` unchanged (and does not silently reinterpret a non-separable H's control law).
+        Any other Hamiltonian, or none, has no scalar c whose ``-c * grad`` is its drift, and
+        ``fp_drift_coefficient`` refuses it by name (#2977). This is the one place a particle drift is
+        formed from U, so the refusal reaches no other route.
         """
         from mfgarchon.core.hamiltonian import SeparableHamiltonian, checked_control
+        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
@@ -2076,7 +2071,9 @@ class FPParticleSolver(BaseFPSolver):
                 source=H,
                 m=m_at_particles,
             )
-        return -coupling_coefficient * grad_at_particles
+        if self._drift_free:
+            return np.zeros_like(np.asarray(grad_at_particles, dtype=float))
+        return -fp_drift_coefficient(self.problem, context="FPParticleSolver") * grad_at_particles
 
     def _solve_fp_system_cpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """CPU pipeline - existing NumPy implementation."""
@@ -2087,7 +2084,6 @@ class FPParticleSolver(BaseFPSolver):
         Dx = params["Dx"]
         Dt = params["Dt"]
         sigma = params["volatility"]
-        coupling_coefficient = params["coupling_coefficient"]
 
         # SDE: dX = alpha*dt + sigma*dW
         # Convention: params["volatility"] is the SDE volatility, used directly
@@ -2229,7 +2225,7 @@ class FPParticleSolver(BaseFPSolver):
                 particles_t.reshape(-1, 1), M_density_on_grid[n_time_idx], [x_grid], [(xmin, xmin + Lx)]
             )
             alpha_optimal_at_particles = self._advective_drift(
-                particles_t, dUdx_at_particles, n_time_idx * Dt, coupling_coefficient, m_at_particles
+                particles_t, dUdx_at_particles, n_time_idx * Dt, m_at_particles
             )
 
             # Generate Brownian motion for current particle count
@@ -2293,7 +2289,6 @@ class FPParticleSolver(BaseFPSolver):
         Nt = params["Nt"]
         Dt = params["Dt"]
         sigma = params["volatility"]
-        coupling_coefficient = params["coupling_coefficient"]
 
         if Nt == 0:
             return np.zeros((0, *tuple(grid_shape)))
@@ -2396,7 +2391,7 @@ class FPParticleSolver(BaseFPSolver):
                         drift_d, coordinates, bounds, particles_t
                     )
 
-                # Use precomputed drift directly (no coupling_coefficient multiplication)
+                # Use precomputed drift directly
                 drift = drift_at_particles
 
             else:
@@ -2419,9 +2414,7 @@ class FPParticleSolver(BaseFPSolver):
                 m_at_particles = self._estimate_density_at_particles(
                     particles_t, M_density_on_grid[t_idx], coordinates, bounds
                 )
-                drift = self._advective_drift(
-                    particles_t, grad_at_particles, t_idx * Dt, coupling_coefficient, m_at_particles
-                )
+                drift = self._advective_drift(particles_t, grad_at_particles, t_idx * Dt, m_at_particles)
 
             # Generate Brownian increments
             dW = self._generate_brownian_increment_nd(n_particles_t, dimension, Dt, sigma_sde)
@@ -2563,7 +2556,6 @@ class FPParticleSolver(BaseFPSolver):
         Dx = params["Dx"]
         Dt = params["Dt"]
         sigma_sde = params["volatility"]
-        coupling_coefficient = params["coupling_coefficient"]
         x_grid = params["xSpace"]
         xmin = params["xmin"]
         xmax = params["xmax"]
@@ -2624,7 +2616,7 @@ class FPParticleSolver(BaseFPSolver):
 
             # Compute drift via the single owner H.optimal_control (Issue #1528). optimal_control runs
             # on host NumPy (np.atleast_1d), so alpha* is computed on host once and uploaded. The
-            # host multiply/divide is IEEE-identical to the former on-device -coupling_coefficient*grad,
+            # host multiply/divide is IEEE-identical to the former on-device -c*grad,
             # and to_numpy/from_numpy are lossless, so this is byte-identical to the pre-#1528 GPU path.
             dUdx_host = self.backend.to_numpy(dUdx_particles_gpu)
             x_host = self.backend.to_numpy(X_particles_gpu[t, :])
@@ -2632,7 +2624,7 @@ class FPParticleSolver(BaseFPSolver):
             m_host = self._estimate_density_at_particles(
                 x_host.reshape(-1, 1), self.backend.to_numpy(M_density_gpu[t, :]), [x_grid], [(xmin, xmin + Lx)]
             )
-            drift_host = self._advective_drift(x_host, dUdx_host, t * Dt, coupling_coefficient, m_host)
+            drift_host = self._advective_drift(x_host, dUdx_host, t * Dt, m_host)
             drift_gpu = self.backend.from_numpy(np.asarray(drift_host, dtype=dUdx_host.dtype))
 
             # Random noise (GPU native RNG)

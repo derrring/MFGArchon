@@ -1068,14 +1068,14 @@ class HJBFDMSolver(BaseHJBSolver):
     def build_advection_matrix(
         self,
         U: NDArray,
+        *,
         time: float | None = None,
     ) -> sparse.csr_matrix:
         """
         Build upwind advection matrix from value function gradient.
 
         This matrix encodes the drift velocity v = -c ∇U, with c the Hamiltonian's (`fp_drift_coefficient`, #2977),
-        upwinded on the
-        sign of v. It is a velocity-mode operator, and its transpose is NOT the FP solver's own
+        upwinded on the sign of v. It is a velocity-mode operator, and its transpose is NOT the FP solver's own
         operator: on ``test_adjoint_verify_runs_2338``'s ``_problem(n=40)`` (no-flux, Nt=8, T=0.4,
         sigma=0.05) under the default ``engquist_osher`` Hamiltonian, at the first strict-adjoint
         sweep's U and over the interior window, max|A^T - B| reaches 245 (45 at the first step) with
@@ -1388,7 +1388,7 @@ class HJBFDMSolver(BaseHJBSolver):
         if H_class is None:
             raise ValueError(
                 "build_linearized_operator requires a Hamiltonian class with dp() method. "
-                "Set problem.hamiltonian_class or use build_advection_matrix() for quadratic H."
+                "Set problem.hamiltonian_class."
             )
 
         # One padding pass, then the owner: the momentum the residual evaluates and its derivatives come from the same

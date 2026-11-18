@@ -463,7 +463,26 @@ class TestFpDriftCoefficient:
             with pytest.raises(ValueError, match="holds no Hamiltonian"):
                 fp_drift_coefficient(problem)
 
-    def test_non_quadratic_separable_h_fails_loud_not_coupling_fallback(self):
+    @pytest.mark.parametrize("kind", ["congestion", "dual of a quadratic lagrangian"])
+    def test_a_hamiltonian_that_is_not_quadratic_separable_is_refused_by_name(self, kind):
+        # #2977: no scalar c makes -c*grad(U) the drift of these, and the problem holds no other place that decides one.
+        # The quadratic separable kind, which returns 1/lambda, is the control above. The dual of a quadratic Lagrangian
+        # has the same optimal control as its separable twin and is refused all the same: it is not the separable kind.
+        from mfgarchon.core.hamiltonian import CongestionHamiltonian, DualHamiltonian, SeparableLagrangian
+
+        cost = QuadraticControlCost(control_cost=2.0)
+        hamiltonian = {
+            "congestion": CongestionHamiltonian(cost, congestion_factor=lambda m: 1.0 + m),
+            "dual of a quadratic lagrangian": DualHamiltonian(SeparableLagrangian(cost)),
+        }[kind]
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+        comp = MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=hamiltonian)
+        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, volatility=0.1)
+        name = type(hamiltonian).__name__
+        with pytest.raises(NotImplementedError, match=rf"^the site, run on a 1-D problem: {name} is not a quadratic "):
+            fp_drift_coefficient(prob, context="the site")
+
+    def test_a_non_quadratic_separable_h_is_refused(self):
         # Issue #1542 / RFC #1574 Phase 0: a non-quadratic SeparableHamiltonian reaches this
         # function (the router gates on is_smooth() alone) but `-c*grad(U)` is the wrong FORM of
         # drift for it. It must fail loud, not return a scalar with no relation to the actual optimal

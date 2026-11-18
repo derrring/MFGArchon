@@ -272,8 +272,7 @@ on their own basis.
 3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
    not represent that optimal control.
 4. Any other Hamiltonian, and a problem with none → **raises** (#2977): no scalar $c$ is its drift, and nothing
-   else decides one. `MFGProblem` takes no `coupling_coefficient` or `lambda_`; the control cost is the
-   Hamiltonian's.
+   else decides one; the control cost is the Hamiltonian's.
 
 ### What optimal_control and dp return
 

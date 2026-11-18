@@ -110,8 +110,8 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     ``-c*grad(U)`` and the byte-identical ``H.optimal_control`` owner are both the true optimal
     control), and also for a non-separable Hamiltonian or no Hamiltonian at all (both outside this
     guard's quadratic-MINIMIZE-vs-not scope). What happens on that non-separable / no-Hamiltonian
-    no-op depends on the caller: :func:`fp_drift_coefficient`'s own callers fall through to the legacy
-    scalar ``coupling_coefficient``; FVM and the weak-form FEM / meshless-Galerkin family, which form
+    no-op depends on the caller: :func:`fp_drift_coefficient` refuses it itself (#2977); FVM and the weak-form
+    FEM / meshless-Galerkin family, which form
     ``alpha*`` from ``H.optimal_control`` themselves, do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
     non-separable Hamiltonian with their own ``NotImplementedError`` at the ``H.optimal_control`` call
     site (Issue #1528).
@@ -146,7 +146,7 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
 
 def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient") -> float:
     """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
-    control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
+    control law (Issue #1420 / gotcha G-017).
 
     For a smooth separable quadratic control cost ``H_control = |p|²/(2·control_cost)`` (MINIMIZE),
     the optimal feedback is ``α* = -∇U/control_cost``, so ``c = 1/control_cost``. ``control_cost`` is
@@ -168,7 +168,7 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     ``potential_field=U`` channel where the FP solver forms ``-c·∇U``. But the scalar ``-c·∇U`` form is
     the optimal control *only* for the quadratic-MINIMIZE case; the true drift is
     ``α* = H.optimal_control(...)`` (soft-thresholded for a regularized cost).
-    Returning ``coupling_coefficient`` here would advect with the wrong sign / wrong form silently, so
+    Returning a scalar here would advect with the wrong sign / wrong form silently, so
     this raises ``NotImplementedError`` instead — the caller must route the drift through the velocity
     channel (Phase 1). This enforces the invariant the docstring previously only asserted.
 
@@ -194,7 +194,11 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
             f"{context}: the problem holds no Hamiltonian, so there is no control cost to read the drift coefficient "
             f"c = 1/lambda from (#2977). {WHERE_OWN_CONTROLS_ARE_READ}"
         )
-    refuse_the_scalar_drift(h_class, context, f"a {getattr(problem, 'dimension', '?')}-D problem")
+    raise NotImplementedError(
+        f"{context}, run on a {getattr(problem, 'dimension', '?')}-D problem: {type(h_class).__name__} is not a "
+        f"quadratic SeparableHamiltonian, so no scalar c makes -c*grad(U) its drift, and {context} forms the drift from "
+        f"that scalar (#2977). {WHERE_OWN_CONTROLS_ARE_READ}"
+    )
 
 
 def scalar_volatility(volatility: Any, *, consumer: str) -> float:

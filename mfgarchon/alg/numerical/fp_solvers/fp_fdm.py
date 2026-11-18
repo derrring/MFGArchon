@@ -491,7 +491,7 @@ class FPFDMSolver(BaseFPSolver):
                     "Cannot specify both drift_field and potential_field: they are different "
                     "objects, not two names for one. drift_field is the velocity alpha*; "
                     "potential_field is the value function U, from which this solver forms "
-                    "alpha = -coupling_coefficient*grad(U) itself. Pass whichever you have."
+                    "alpha = -c*grad(U) itself, c = 1/lambda from the Hamiltonian. Pass whichever you have."
                 )
             # potential_field is U-potential — route through internal U path
             effective_U = potential_field
@@ -546,6 +546,8 @@ class FPFDMSolver(BaseFPSolver):
         # Resolve velocity for internal routing:
         # drift_field (after deprecation handling) is velocity when effective_U is None
         _internal_velocity = drift_field if (effective_U is None and isinstance(drift_field, np.ndarray)) else None
+        # No drift was handed: the zero U above forms no drift, so the step reads no drift coefficient (#2977).
+        drift_free = potential_field is None and drift_field is None
 
         # Route tensor volatility to tensor path
         if is_tensor:
@@ -567,6 +569,7 @@ class FPFDMSolver(BaseFPSolver):
                 progress_callback=progress_callback,
                 source_term=source_term,
                 velocity_field=_internal_velocity,
+                drift_free=drift_free,
                 outflow=self._fresh_outflow_record(),
             )
 
@@ -584,6 +587,7 @@ class FPFDMSolver(BaseFPSolver):
             progress_callback=progress_callback,
             source_term=source_term,
             velocity_field=_internal_velocity,
+            drift_free=drift_free,
             outflow=self._fresh_outflow_record(),
         )
 

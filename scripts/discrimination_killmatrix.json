@@ -716,7 +716,7 @@
       "drift_coefficient_2x",
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling": [
+    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_the_potential_path_drift_is_minus_grad_u_over_the_control_cost": [
       "drift_coefficient_2x",
       "optimal_control_sign"
     ],
@@ -4758,7 +4758,7 @@
         "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_1d]",
         "tests/unit/test_alg/test_fp_fdm_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_its_rate_level_and_wall[periodic_2d]",
         "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
-        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
+        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_the_potential_path_drift_is_minus_grad_u_over_the_control_cost",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_manufactured_solution_with_a_flux_on_every_face_converges[fdm]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_1d]",
         "tests/unit/test_alg/test_fp_flux_bc_2581.py::test_a_prescribed_flux_holds_the_steady_profile_at_its_order[fdm_2d]",
@@ -5735,7 +5735,7 @@
         "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[0.7]",
         "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[2.5]",
         "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
-        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
+        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_the_potential_path_drift_is_minus_grad_u_over_the_control_cost",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]",
         "tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]",

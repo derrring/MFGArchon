@@ -167,6 +167,7 @@ class FluxDiagnostics:
         self,
         m: NDArray,
         velocity_field: NDArray | None = None,
+        *,
         diffusion: float | NDArray = 0.0,
     ) -> BoundaryFluxResult:
         """Compute boundary flux for current density field.

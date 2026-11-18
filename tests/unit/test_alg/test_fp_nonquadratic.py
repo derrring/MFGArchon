@@ -105,8 +105,8 @@ class TestNonQuadraticHamiltonians:
         # With U = x^2 the optimal control is alpha* = -grad_U = -2x < 0 on (0, 1], so mass must
         # transport LEFT at every step.  A sign inversion in the potential-to-drift conversion --
         # the most consequential defect on this path -- passes all four assertions above.
-        # (coupling_coefficient=0.0 does not make this inert post-#1442: the FP drift comes from
-        # the Hamiltonian, 1/control_cost = 1.0, so this is a genuine advection-dominated solve.)
+        # (The FP drift comes from the Hamiltonian, 1/control_cost = 1.0, so this is a genuine
+        # advection-dominated solve.)
         com = (M_legacy * x).sum(axis=1) / M_legacy.sum(axis=1)
         assert np.all(np.diff(com) < 0), f"U = x^2 gives alpha* < 0, so mass must move left; com = {com}"
 
@@ -117,22 +117,20 @@ class TestNonQuadraticHamiltonians:
     def test_equivalence_quadratic_explicit(self, initial_density_1d):
         """Test that drift_field and potential_field give same result for quadratic H.
 
-        Uses coupling_coefficient=1.0 so that the internal potential path
-        (v = -coupling_coefficient * grad_U) matches the manually computed
-        drift alpha = -grad_U.
+        The Hamiltonian's control cost is 1.0, so the internal potential path
+        (v = -grad_U / control_cost) matches the manually computed drift alpha = -grad_U.
         """
-        # Need coupling_coefficient=1.0 for equivalence: internal drift = -1.0 * grad_U
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem_cc1 = MFGProblem(
+        problem = MFGProblem(
             geometry=geometry,
             T=1.0,
             Nt=20,
             volatility=0.1,
             components=_default_components(),
         )
-        solver_cc1 = FPFDMSolver(problem_cc1, boundary_conditions=no_flux_bc(dimension=1))
+        solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=1))
 
-        Nt, Nx = problem_cc1.Nt + 1, problem_cc1.geometry.get_grid_shape()[0]
+        Nt, Nx = problem.Nt + 1, problem.geometry.get_grid_shape()[0]
         x = np.linspace(0, 1, Nx)
         dx = x[1] - x[0]
 
@@ -153,13 +151,13 @@ class TestNonQuadraticHamiltonians:
         alpha_quadratic = -grad_U
 
         # Solve with potential_field (legacy U-potential path)
-        M_legacy = solver_cc1.solve_fp_system(
+        M_legacy = solver.solve_fp_system(
             M_initial=initial_density_1d,
             potential_field=U_hjb,
         )
 
         # Solve with drift_field (new velocity API)
-        M_new = solver_cc1.solve_fp_system(
+        M_new = solver.solve_fp_system(
             M_initial=initial_density_1d,
             drift_field=alpha_quadratic,
         )
@@ -341,6 +339,29 @@ class TestNonQuadraticHamiltonians:
 # ============================================================================
 # Issue #896: Non-quadratic drift through FixedPointIterator
 # ============================================================================
+
+
+@pytest.mark.parametrize("solver", ["FPFDMSolver", "FPParticleSolver"])
+def test_a_solve_handed_no_drift_runs_under_a_hamiltonian_with_no_scalar_drift(solver):
+    """#2977: a CongestionHamiltonian has no scalar c making -c*grad(U) its drift, and a solve that forms a drift from U
+    under it is refused. Pure diffusion forms none, so it runs, and equals the solve under the quadratic separable
+    Hamiltonian with the same control cost: no Hamiltonian enters a solve with no drift."""
+    from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+    from mfgarchon.core.hamiltonian import CongestionHamiltonian
+
+    cost = QuadraticControlCost(control_cost=1.0)
+    m0 = 1.0 + 0.3 * np.cos(np.pi * np.linspace(0.0, 1.0, 11))
+    results = []
+    for hamiltonian in (CongestionHamiltonian(cost, congestion_factor=lambda m: 1.0 + m), SeparableHamiltonian(cost)):
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+        comp = MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=hamiltonian)
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=5, volatility=0.2, components=comp)
+        if solver == "FPFDMSolver":
+            fp = FPFDMSolver(problem)
+        else:
+            fp = FPParticleSolver(problem, num_particles=200, seed=3)
+        results.append(fp.solve_fp_system(m0, show_progress=False))
+    np.testing.assert_array_equal(results[0], results[1])
 
 
 @pytest.mark.slow

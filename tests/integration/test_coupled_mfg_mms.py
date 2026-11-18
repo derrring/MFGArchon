@@ -225,8 +225,6 @@ def _build_problem(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float) -> MFGPro
         T=T,
         Nt=Nt,
         volatility=mfg.sigma,
-        # INERT on this solver path -- it aligns nothing. Kept only because MFGProblem's own
-        # default (0.5) would be equally inert and more confusing.
         components=components,
         source_term_hjb=lambda t, x: mfg.hjb_source(t=t, x=x[0], v=None, m=None),
         source_term_fp=lambda t, x: mfg.fp_source(t=t, x=x[0], v=None, m=None),

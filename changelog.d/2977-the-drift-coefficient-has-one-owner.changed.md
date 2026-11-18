@@ -1,8 +1,8 @@
 - **`fp_drift_coefficient` refuses every Hamiltonian that is not a quadratic `SeparableHamiltonian`, and a problem with none** (#2977). It used to return the problem's `coupling_coefficient` for them, a value no Hamiltonian decided (default 0.5). The scalar c in −c·∇U is a quadratic separable cost's alone. So the solvers that form −c·∇U themselves now refuse such a Hamiltonian by name where they did not:
-  - FP-FDM's `potential_field` route and `build_advection_operator`;
+  - FP-FDM's `potential_field` route and `build_advection_operator`, and through it `BlockIterator(adjoint_verify=True)`, whose check builds that operator;
   - HJB-FDM's `build_advection_matrix`;
-  - the semi-Lagrangian FP solver;
-  - the particle solver for a Hamiltonian that is not separable;
+  - the semi-Lagrangian FP solver's `potential_field` route;
+  - the particle solver's `potential_field` route, for a Hamiltonian that is not separable;
   - the meshless HJB's streamline diffusion.
 
-  The solvers that read `optimal_control` themselves are unaffected (`docs/user/CONVENTIONS.md`, "What the Fokker–Planck solver receives").
+  That includes the `DualHamiltonian` of a quadratic Lagrangian, whose drift is its separable twin's: build that twin instead. A solve handed a velocity, callable or precomputed, or no drift at all, forms no −c·∇U and is unaffected, as are the solvers that read `optimal_control` themselves (`docs/user/CONVENTIONS.md`, "What the Fokker–Planck solver receives").
