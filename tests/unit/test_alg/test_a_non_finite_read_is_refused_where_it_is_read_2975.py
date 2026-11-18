@@ -1006,6 +1006,25 @@ def test_each_fp_arm_names_a_source_that_entered_its_step(solver, names):
 
 
 @pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
+def test_fp_fdm_names_a_value_field_that_entered_its_step_by_its_argument():
+    """U handed as `potential_field` (the route `resolve_fp_drift_kwargs` takes for the quadratic separable class) is
+    read at t_k by step k. A NaN at one interior node of row 1 enters step 2, and is named by the argument it arrived
+    through, at its node (#2975)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: potential_field "
+        + OWN
+        + r": 1 of 11 values, the first nan, at time step 2 of 5, from t=0\.1 to t=0\.2, node \(5,\), where it "
+        r"entered the step",
+    ):
+        FPFDMSolver(_problem()).solve_fp_system(
+            np.ones(11), potential_field=_nan_at(np.zeros((6, 11)), (1, 5)), show_progress=False
+        )
+
+
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
 def test_a_volatility_nan_at_one_interior_node_takes_the_per_point_branch():
     """On the explicit arm (a callable drift), `np.ptp(sigma) > 1e-12` read an array holding a NaN as uniform, and the
     scalar branch kept entry 0 alone: a callable volatility NaN at one interior node was dropped. It now takes the
