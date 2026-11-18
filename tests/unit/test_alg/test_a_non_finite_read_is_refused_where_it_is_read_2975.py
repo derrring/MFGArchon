@@ -1739,21 +1739,31 @@ _READ_SET_GRIDS = {
     "2-D Dirichlet face against no-flux faces": (2, _mixed_2d_bc, 0, True),
     "1-D periodic": (1, lambda: bnd.periodic_bc(dimension=1, domain_bounds=np.array([[0.0, 1.0]])), 6, False),
 }
+# The explicit step (a callable drift) takes only no-flux and periodic walls, and reads every node but a periodic
+# repeated endpoint: (5, 5) is one on the 2-D periodic grid.
+_EXPLICIT_READ_SET_GRIDS = {
+    "1-D periodic": _READ_SET_GRIDS["1-D periodic"],
+    "2-D periodic": (2, lambda: bnd.periodic_bc(dimension=2, domain_bounds=np.array([[0.0, 1.0]] * 2)), 35, False),
+    "2-D no-flux": (2, lambda: bnd.no_flux_bc(dimension=2), 0, True),
+}
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
-@pytest.mark.parametrize("grid", list(_READ_SET_GRIDS))
-def test_the_implicit_steps_branch_choice_reads_exactly_the_volatility_its_kept_rows_read(grid, monkeypatch):
-    """F1 (a'): the implicit step's branch choice reads the volatility at the nodes whose value the step's kept rows
-    read, and nowhere else. The oracle is the assembled matrix: a node is read when perturbing its volatility moves
-    the matrix the step solves (only the kept rows read a volatility). So a 2-D Dirichlet corner no kept row reads is
-    left out, one a no-flux wall row reads stays in, and a periodic repeated endpoint is left out."""
+@pytest.mark.parametrize(
+    ("arm", "grid"), [("implicit", g) for g in _READ_SET_GRIDS] + [("explicit", g) for g in _EXPLICIT_READ_SET_GRIDS]
+)
+def test_the_fp_steps_branch_choice_reads_exactly_the_volatility_its_matrix_reads(arm, grid, monkeypatch):
+    """F1 (a'): each FP-FDM step's branch choice reads the volatility at the nodes whose value its matrix reads, and
+    nowhere else: the implicit step's kept rows, the explicit step's shared coefficient. The oracle is the assembled
+    matrix: a node is read when perturbing its volatility moves the matrix the step solves. So a 2-D Dirichlet corner
+    no kept row reads is left out, one a no-flux wall row reads stays in, and a periodic repeated endpoint is left out
+    by both steps."""
     import scipy.sparse.linalg
 
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
     from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping as stepping
 
-    dim, bc, node, read_there = _READ_SET_GRIDS[grid]
+    dim, bc, node, read_there = (_READ_SET_GRIDS if arm == "implicit" else _EXPLICIT_READ_SET_GRIDS)[grid]
     shape = (7,) if dim == 1 else (6, 6)
     problem = MFGProblem(
         model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
@@ -1763,7 +1773,11 @@ def test_the_implicit_steps_branch_choice_reads_exactly_the_volatility_its_kept_
     )
     axes = np.meshgrid(*[np.linspace(0.0, 1.0, n) for n in shape], indexing="ij")
     sigma = 0.2 + 0.1 * axes[0] + (0.05 * axes[1] if dim == 2 else 0.0)
-    U = np.zeros((2, *shape))
+    handed = (
+        {"potential_field": np.zeros((2, *shape))}
+        if arm == "implicit"
+        else {"drift_field": lambda t, x, m: np.zeros((dim, *shape)) if dim > 1 else np.zeros(shape)}
+    )
     matrices, reads = [], []
     solve = scipy.sparse.linalg.spsolve
     choose = stepping.volatility_varies
@@ -1777,7 +1791,7 @@ def test_the_implicit_steps_branch_choice_reads_exactly_the_volatility_its_kept_
     def matrix(field):
         matrices.clear()
         FPFDMSolver(problem).solve_fp_system(
-            np.ones(shape), potential_field=U, volatility=field, volatility_kind="field", show_progress=False
+            np.ones(shape), **handed, volatility=field, volatility_kind="field", show_progress=False
         )
         return matrices[0]
 
