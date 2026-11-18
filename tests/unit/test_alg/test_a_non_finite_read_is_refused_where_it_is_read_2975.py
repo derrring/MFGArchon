@@ -1072,3 +1072,41 @@ def test_the_network_fp_names_the_value_field_its_rates_are_read_from():
         FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(
             np.ones(network.num_nodes), potential_field=u
         )
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_the_nd_value_iteration_names_the_read_at_its_start_state():
+    """HJB-FDM's n-D value iteration (solver_type="fixed_point") fails on a NaN potential at one node and names it at the
+    step's start state, as Newton does; at 4ca7c9e0 it raised ConvergenceError after its budget (#2975)."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    def potential(t, x):
+        return _at(
+            x, lambda a: np.isclose(a, 0.8) & np.isclose(np.asarray(x[1], dtype=float), 0.2), NAN, lambda a: 0.1 * a
+        )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), potential=potential),
+                volatility=0.2,
+            ),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)] * 2, Nx_points=[6, 6], boundary_conditions=bnd.no_flux_bc(dimension=2)
+            ),
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.5 * np.asarray(x[0], dtype=float),
+                u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)),
+                T=0.1,
+            ),
+            Nt=5,
+        )
+    terminal = np.sin(np.pi * np.linspace(0.0, 1.0, 6))[:, None] * np.ones((6, 6))
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"HJBFDMSolver's fixed-point step: SeparableHamiltonian's potential " + OWN + r": .*, x=\[0\.8, 0\.2\]",
+    ):
+        HJBFDMSolver(problem, solver_type="fixed_point", max_newton_iterations=400).solve_hjb_system(
+            M_density=np.ones((6, 6, 6)), U_terminal=terminal, U_coupling_prev=np.zeros((6, 6, 6))
+        )
