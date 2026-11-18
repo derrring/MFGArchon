@@ -585,9 +585,11 @@ Where a value is judged:
     `segment_robin_coefficients`, `NodeBC.get_value`, `set_dirichlet_nodes`, `set_source_nodes`,
     `create_graph_applicator` (its `boundary_value` and `source_value`), `GraphApplicator.from_network_geometry`,
     `GraphApplicator.apply` and `apply_direct`, `PreallocatedGhostBuffer.update_ghosts`, `bc_to_topology_calculator`,
-    `ImplicitApplicator.apply`, `MeshfreeApplicator.apply`, `apply_field_bc` and `apply_particles`,
-    `segment_particle_action`, and the FEM's `assemble_robin_terms`. A value of a type the reader cannot read keeps its
-    `NotImplementedError`;
+    `ImplicitApplicator.apply`, `MeshfreeApplicator.apply`, `apply_field_bc` and `apply_particles`, the FEM's
+    `assemble_robin_terms`, and, reading a segment's Robin coefficients, HJB-FDM's `compute_hjb_residual`,
+    `compute_hjb_jacobian` and `solve_hjb_timestep_newton`, `HJBGFDMSolver.solve_hjb_system` and
+    `HJBHowardSolver.solve_hjb_system` (GFDM's Robin rows), and `FPResolver.resolve` and `HJBResolver.resolve` (a
+    provider's resolved coefficient). A value of a type the reader cannot read keeps its `NotImplementedError`;
   - a `volatility=` override array. It decides the diffusion branch before any step runs (scalar, field or tensor;
     diagonal or not; equal to the volatility the solver was built with or not), and that decision consumes every
     entry;
