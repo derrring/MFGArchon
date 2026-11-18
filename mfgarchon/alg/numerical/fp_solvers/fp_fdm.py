@@ -247,7 +247,7 @@ class FPFDMSolver(BaseFPSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
-    def build_advection_operator(self, U: np.ndarray, coupling_coefficient: float | None = None) -> sparse.csr_matrix:
+    def build_advection_operator(self, U: np.ndarray) -> sparse.csr_matrix:
         """This solver's own advection operator at ``U``, for checking it against the HJB linearisation (#2338).
 
         The FDM pair is advertised as discretely adjoint (#580, #622, #707): the FP operator should be the transpose
@@ -272,9 +272,6 @@ class FPFDMSolver(BaseFPSolver):
 
         Args:
             U: Value function at one time level, grid-shaped or flat.
-            coupling_coefficient: Drift coefficient ``c`` in ``alpha* = -c grad(U)``. Defaults to the problem's own,
-                the same `fp_drift_coefficient` the time-stepping resolves. Raises for a Hamiltonian whose scalar
-                drift is not ``-c grad(U)`` (#1542), which is a refusal to guess rather than a silent default.
 
         Returns:
             Sparse operator, ``(N, N)`` over the flattened grid, with unassembled rows empty.
@@ -306,8 +303,9 @@ class FPFDMSolver(BaseFPSolver):
         ndim = len(shape)
         total = int(np.prod(shape))
         u_flat = np.asarray(U, dtype=float).ravel()
-        if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem, context="FPFDMSolver.build_advection_operator")
+        # The drift coefficient c in alpha* = -c grad(U) is the Hamiltonian's, the one the time stepping reads, and
+        # nothing else decides it (#2977). It refuses a Hamiltonian whose drift is not -c grad(U) (#1542, #2900).
+        coupling_coefficient = fp_drift_coefficient(self.problem, context="FPFDMSolver.build_advection_operator")
         # `self.boundary_conditions` and not `geometry.get_boundary_conditions()`: the constructor resolves the BC
         # through components, geometry and the periodic convention (#527), and every real assembly call passes the
         # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the

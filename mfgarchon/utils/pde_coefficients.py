@@ -151,14 +151,15 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     For a smooth separable quadratic control cost ``H_control = |p|²/(2·control_cost)`` (MINIMIZE),
     the optimal feedback is ``α* = -∇U/control_cost``, so ``c = 1/control_cost``. ``control_cost`` is
     owned by the Hamiltonian (``problem.hamiltonian_class.control_cost.lambda_``) — the single source
-    also consumed by ``H.optimal_control`` and the HJB Jacobian. The legacy ``coupling_coefficient``
-    attribute is a private copy that must equal ``1/control_cost`` but silently diverged from it
-    (``MFGProblem`` default 0.5), making the coupled solve converge to the wrong fixed point
-    (G-017; exp16 Tier-2 had the Towel equilibrium ~4-5x too wide).
+    also consumed by ``H.optimal_control`` and the HJB Jacobian. A problem-level ``coupling_coefficient`` was a
+    private copy that had to equal ``1/control_cost`` and silently diverged from it (``MFGProblem`` default 0.5),
+    making the coupled solve converge to the wrong fixed point (G-017; exp16 Tier-2 had the Towel equilibrium ~4-5x too
+    wide); it is deleted (#2977).
 
-    Falls back to the legacy ``coupling_coefficient`` attribute when there is no ``SeparableHamiltonian``
-    at all: a non-``SeparableHamiltonian`` Hamiltonian (e.g. ``DualHamiltonian`` or
-    ``CongestionHamiltonian``) or a non-Hamiltonian direct solve.
+    Every other Hamiltonian is refused (#2977): a ``DualHamiltonian``, a ``CongestionHamiltonian``, any Hamiltonian that
+    is not a quadratic ``SeparableHamiltonian``, and a problem with none. The scalar ``c`` in ``-c·∇U`` is a quadratic
+    separable cost's alone, so the Hamiltonian is its one deciding place: the problem-level ``coupling_coefficient``
+    this read for those, a value no Hamiltonian decided (default 0.5), is deleted.
 
     Fail-loud on a *smooth-but-not-quadratic-MINIMIZE* ``SeparableHamiltonian`` (Issue #1542 / RFC #1574
     Phase 0): a ``SeparableHamiltonian`` whose control cost is non-quadratic
@@ -170,11 +171,6 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     Returning ``coupling_coefficient`` here would advect with the wrong sign / wrong form silently, so
     this raises ``NotImplementedError`` instead — the caller must route the drift through the velocity
     channel (Phase 1). This enforces the invariant the docstring previously only asserted.
-
-    Fail-loud (Issue #1420 V1): if there is neither a quadratic-MINIMIZE ``SeparableHamiltonian`` to
-    source ``1/control_cost`` from nor a ``coupling_coefficient`` on the problem, this raises rather
-    than silently returning ``1.0`` (the prior fallback masked a malformed/duck-typed problem getting
-    a wrong-temperature drift with no error — CLAUDE.md "NO silent fallbacks").
 
     Fail-loud on a ``SeparableHamiltonian`` that ``drift_is_the_control_costs`` does not hold for (#2900): ``-c·∇U`` is
     not its drift. ``context`` names the caller that forms the drift from the scalar, so the refusal says what was run,
@@ -189,19 +185,16 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
         refuse_the_scalar_drift(h_class, context, f"a {getattr(problem, 'dimension', '?')}-D problem")
     # A SeparableHamiltonian that fell past the quadratic branch has a non-quadratic (e.g.
     # regularized) control cost. The scalar drift `-c·∇U` does not represent its
-    # optimal control, so fail loud (single-sourced guard) rather than return `coupling_coefficient`
-    # and advect with the wrong physics (Issue #1542 / RFC #1574 Phase 0). The guard is a no-op for a
-    # non-separable / absent Hamiltonian, which falls through to the `coupling_coefficient` lookup.
+    # optimal control, so fail loud (single-sourced guard) rather than advect with the wrong physics
+    # (Issue #1542 / RFC #1574 Phase 0).
     assert_quadratic_drift(problem, context="fp_drift_coefficient")
-    cc = getattr(problem, "coupling_coefficient", None)
-    if cc is None:
+    # Every other Hamiltonian, and a problem with none: no scalar c is its drift, and nothing else decides one (#2977).
+    if h_class is None:
         raise ValueError(
-            "Cannot determine the FP drift coefficient: the problem has no quadratic "
-            "SeparableHamiltonian (to source 1/control_cost) and no `coupling_coefficient` attribute. "
-            "Set a quadratic control cost on the Hamiltonian, or set problem.coupling_coefficient. "
-            "(Issue #1420 V1: the prior silent fallback to 1.0 masked a malformed problem.)"
+            f"{context}: the problem holds no Hamiltonian, so there is no control cost to read the drift coefficient "
+            f"c = 1/lambda from (#2977). {WHERE_OWN_CONTROLS_ARE_READ}"
         )
-    return float(cc)
+    refuse_the_scalar_drift(h_class, context, f"a {getattr(problem, 'dimension', '?')}-D problem")
 
 
 def scalar_volatility(volatility: Any, *, consumer: str) -> float:

@@ -71,7 +71,6 @@ def test_particle_solver_multi_exit_1d():
         T=3.0,
         Nt=60,
         volatility=0.05,
-        coupling_coefficient=1.0,
         components=_default_components_1d(),
     )
 

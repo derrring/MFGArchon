@@ -88,7 +88,6 @@ class TestGradientBCOverrideThreaded:
             T=1.0,
             Nt=2,
             volatility=0.1,
-            coupling_coefficient=0.5,
             components=_default_components(),
         )
         # Solver overrides BC with periodic — priority-1 source per docs
@@ -435,7 +434,6 @@ class TestHyperrectangleTorusEndToEnd:
             T=0.1,
             Nt=3,
             volatility=0.1,
-            coupling_coefficient=0.5,
             components=components,
         )
         return problem

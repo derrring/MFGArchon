@@ -217,9 +217,10 @@ class TestNetworkSolverIntegration:
 
         # Closed form: the density is uniform over nodes and constant in time and the terminal cost
         # is zero, so no flow develops along the edges and the value function is spatially constant
-        # and decays linearly to zero at rate coupling_coefficient * m^2 (= 0.5 * 0.2^2 = 0.02 here).
+        # and decays linearly to zero at the default node congestion's rate, 0.5 * m^2 (= 0.5 * 0.2^2 = 0.02 here;
+        # NetworkMFGProblem.density_coupling). It matched MFGProblem's coupling_coefficient default only by chance (#2977).
         t_grid = np.linspace(0.0, problem.T, problem.Nt + 1)
-        decay = problem.coupling_coefficient * (1.0 / problem.num_nodes) ** 2 * (problem.T - t_grid)
+        decay = 0.5 * (1.0 / problem.num_nodes) ** 2 * (problem.T - t_grid)
         expected = np.tile(decay[:, None], (1, problem.num_nodes))
 
         solutions = {}

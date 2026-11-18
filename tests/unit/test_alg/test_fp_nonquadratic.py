@@ -48,7 +48,6 @@ class TestNonQuadraticHamiltonians:
             T=1.0,
             Nt=20,
             volatility=0.1,
-            coupling_coefficient=0.0,  # No coupling for unit tests
             components=_default_components(),
         )
 
@@ -129,7 +128,6 @@ class TestNonQuadraticHamiltonians:
             T=1.0,
             Nt=20,
             volatility=0.1,
-            coupling_coefficient=1.0,
             components=_default_components(),
         )
         solver_cc1 = FPFDMSolver(problem_cc1, boundary_conditions=no_flux_bc(dimension=1))

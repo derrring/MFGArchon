@@ -3,9 +3,8 @@
 Each of these was accepted and changed the default solve by 0.0 in U and in M, with nothing said: ``Model(drift_field=)``,
 ``drift=``, ``constraints=``, ``state_penalty_scale`` with no ``state_penalty``, ``suppress_warnings=True`` where no
 feasibility check runs, ``hamiltonian=`` beside ``components=``, ``obstacles=``, which only took ``fdm`` off a problem's
-compatible solvers, and two that are read on one route and dropped on another: ``spatial_discretization=`` off a grid
-built from ``spatial_bounds=``, and ``lambda_=`` on a grid. ``coupling_coefficient``, and ``lambda_`` where it is kept,
-are read by another Hamiltonian, and stay with #2681.
+compatible solvers, and one that is read on one route and dropped on another: ``spatial_discretization=`` off a grid
+built from ``spatial_bounds=``. ``MFGProblem``'s ``coupling_coefficient=`` and ``lambda_=`` are deleted (#2977).
 
 ``hamiltonian=`` and ``obstacles=`` are no longer parameters, and ``MFGProblem`` takes no ``**kwargs`` (the removal
 before 1.0), so either is Python's own ``TypeError``, which names it; it cannot be dropped in silence (#2563).
@@ -310,38 +309,6 @@ def test_the_advice_on_obstacles_holds_a_density_out_of_the_region():
     region = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0]])), Hyperrectangle(np.array([[0.4, 0.6]])))
     assert peak() > 0.5
     assert peak(implicit_domain=region) < 0.01
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("route", ["spatial_bounds", "the default domain"])
-def test_lambda_is_refused_on_a_grid_that_keeps_it_nowhere(route):
-    with pytest.raises(ValueError, match=r"lambda_=\.\.\.\) is refused on .*#2678.*control_cost= is the route"):
-        _on(route, lambda_=2.0)
-
-
-@pytest.mark.unit
-def test_a_lambda_of_zero_is_refused_on_a_grid_that_keeps_it_nowhere():
-    with pytest.raises(ValueError, match=r"lambda_=\.\.\.\) is refused on a grid built from spatial_bounds="):
-        _on("spatial_bounds", lambda_=0.0)
-
-
-@pytest.mark.unit
-@pytest.mark.filterwarnings("ignore:initial density mass")
-def test_what_the_refusal_of_lambda_names_moves_the_solve_beside_spatial_bounds():
-    def solve(control_cost):
-        hamiltonian = SeparableHamiltonian(
-            control_cost=QuadraticControlCost(control_cost=control_cost), coupling=lambda m: m
-        )
-        components = MFGComponents(hamiltonian=hamiltonian, m_initial=_m_initial, u_terminal=_u_terminal)
-        built = _ROUTES_BUILT["spatial_bounds"]
-        return MFGProblem(components=components, T=0.5, Nt=10, volatility=0.4, **built).solve(verbose=False)
-
-    assert np.abs(solve(1.0).U - solve(2.0).U).max() > 0.01
-
-
-@pytest.mark.unit
-def test_lambda_is_kept_on_a_geometry():
-    assert _on("a geometry", lambda_=2.0).lambda_ == 2.0
 
 
 @pytest.mark.unit

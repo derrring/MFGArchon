@@ -259,7 +259,6 @@ def main():
         T=1.0,
         Nt=50,
         volatility=0.1,  # Diffusion coefficient
-        coupling_coefficient=0.0,  # No coupling for this demo
     )
 
     x = np.linspace(0, 1, 101)

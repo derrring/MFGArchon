@@ -70,7 +70,6 @@ class TestMassConservation1D:
             T=1.0,
             Nt=20,
             volatility=0.1,
-            coupling_coefficient=1.0,
             components=_default_components(),
         )
 
@@ -324,7 +323,6 @@ class TestMassConservation1D:
                 T=1.0,
                 Nt=20,
                 volatility=0.1,
-                coupling_coefficient=1.0,
                 components=make_custom_components(center_frac, std_frac, L),
             )
 
@@ -388,7 +386,7 @@ class TestMassConservation1D:
             u_terminal=lambda x: 0.0 * np.asarray(x[0]),
             hamiltonian=H,
         )
-        prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, coupling_coefficient=1.0, components=comps)
+        prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
         mfg_solver = FixedPointIterator(prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob))
         result = mfg_solver.solve(max_iterations=3, tolerance=1e-4)
 

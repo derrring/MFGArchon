@@ -54,8 +54,7 @@ def diagnose_boundary_behavior(Nx: int = 21, x_stall: float = 0.3):
     fp_solver = FPFDMSolver(problem)
 
     # Build HJB advection matrix using actual codebase
-    coupling = getattr(problem, "coupling_coefficient", 0.5)
-    A_hjb = hjb_solver.build_advection_matrix(U, coupling_coefficient=coupling)
+    A_hjb = hjb_solver.build_advection_matrix(U)  # reads the drift coefficient from the Hamiltonian (#2977)
     A_hjb_T = A_hjb.T.tocsr()
 
     print("=" * 70)
@@ -184,8 +183,7 @@ def compare_with_explicit_fp(Nx: int = 21, x_stall: float = 0.3):
     hjb_solver = HJBFDMSolver(problem)
     fp_solver = FPFDMSolver(problem)
 
-    coupling = getattr(problem, "coupling_coefficient", 0.5)
-    A_hjb = hjb_solver.build_advection_matrix(U, coupling_coefficient=coupling)
+    A_hjb = hjb_solver.build_advection_matrix(U)  # reads the drift coefficient from the Hamiltonian (#2977)
 
     # Initial density
     M_initial = np.ones(Nx) / Nx

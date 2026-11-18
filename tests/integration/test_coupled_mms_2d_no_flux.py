@@ -242,7 +242,6 @@ def _build_problem(nx: int, nt: int):
         # never from this argument (see SIGN CONVENTIONS above). Measured: solves at
         # coupling_coefficient = 0.5 / 1.0 / 7.0 are bit-identical, max|dU| = max|dM| = 0.000e+00,
         # against a control where sigma=1.1 moves the same solve by 1.672e-02.
-        coupling_coefficient=1.0,
         components=components,
         source_term_hjb=lambda t, x: s_hjb(t, _points(x)).reshape(np.shape(x[0])),
         source_term_fp=lambda t, x: s_fp(t, _points(x)).reshape(np.shape(x[0])),

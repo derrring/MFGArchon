@@ -30,7 +30,7 @@ def _problem(n=41, nt=40):
         m_initial=lambda x: np.exp(-40 * (x[0] - 0.35) ** 2),
         u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
     )
-    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, volatility=0.3, coupling_coefficient=0.5)
+    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, volatility=0.3)
 
 
 def _mass(grid, field):

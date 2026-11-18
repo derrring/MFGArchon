@@ -88,7 +88,6 @@ def _problem(ne, nt):
         T=_T,
         Nt=nt,
         volatility=_SIGMA,
-        coupling_coefficient=0.0,
         components=MFGComponents(
             m_initial=lambda x: np.ones_like(np.asarray(x[0], dtype=float)),
             u_terminal=lambda x: np.asarray(x[0], dtype=float) * 0.0,

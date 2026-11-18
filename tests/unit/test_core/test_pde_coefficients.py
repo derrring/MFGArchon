@@ -435,8 +435,7 @@ class TestScalarVolatility:
 
 class TestFpDriftCoefficient:
     """Issue #1420: fp_drift_coefficient single-sources 1/control_cost from a quadratic-MINIMIZE
-    SeparableHamiltonian, falls back to coupling_coefficient otherwise, and fails loud when neither
-    is available (V1 — no silent 1.0 fallback for a malformed/duck-typed problem)."""
+    SeparableHamiltonian, and refuses every other Hamiltonian, and a problem with none (#2977)."""
 
     @pytest.mark.parametrize("control_cost", [0.5, 1.0, 2.0])
     def test_sources_inverse_control_cost_from_quadratic_hamiltonian(self, control_cost):
@@ -447,32 +446,28 @@ class TestFpDriftCoefficient:
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
         )
         prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, volatility=0.1)
-        # the quadratic-Sep-H path wins over the default coupling_coefficient (0.5)
+        # the Hamiltonian's control cost is the one source of c (#2977)
         assert fp_drift_coefficient(prob) == pytest.approx(1.0 / control_cost)
 
-    def test_falls_back_to_coupling_coefficient_without_quadratic_hamiltonian(self):
+    def test_a_problem_with_no_hamiltonian_is_refused_whatever_scalar_it_carries(self):
+        # #2977: a problem-level coupling_coefficient was read here for a problem with no Hamiltonian, a value no
+        # Hamiltonian decided; it is deleted, and such a problem is refused, carrying the old attribute or not.
         class _Obj:
             hamiltonian_class = None
             coupling_coefficient = 0.7
 
-        assert fp_drift_coefficient(_Obj()) == pytest.approx(0.7)
-
-    def test_fails_loud_when_no_hamiltonian_and_no_coupling(self):
-        # V1: a duck-typed problem with neither a quadratic SeparableHamiltonian nor
-        # coupling_coefficient must raise, not silently return 1.0.
         class _Bare:
             hamiltonian_class = None
 
-        with pytest.raises(ValueError, match="Cannot determine the FP drift coefficient"):
-            fp_drift_coefficient(_Bare())
+        for problem in (_Obj(), _Bare()):
+            with pytest.raises(ValueError, match="holds no Hamiltonian"):
+                fp_drift_coefficient(problem)
 
     def test_non_quadratic_separable_h_fails_loud_not_coupling_fallback(self):
         # Issue #1542 / RFC #1574 Phase 0: a non-quadratic SeparableHamiltonian reaches this
         # function (the router gates on is_smooth() alone) but `-c*grad(U)` is the wrong FORM of
-        # drift for it. It must fail loud, NOT silently fall back to coupling_coefficient (default
-        # 0.5 => a drift with no relation to the actual optimal control). The discriminating check:
-        # coupling_coefficient IS set, so a revert to the old fallback would return 0.5 and this
-        # test would catch it.
+        # drift for it. It must fail loud, not return a scalar with no relation to the actual optimal
+        # control.
         #
         # This was written against a MAXIMIZE-quadratic cost until #2373 removed the direction. The
         # guard's remaining arm is the non-quadratic one, which is the arm that was always about
@@ -486,7 +481,6 @@ class TestFpDriftCoefficient:
             hamiltonian=SeparableHamiltonian(control_cost=L1ControlCost(lambda_=2.0)),
         )
         prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, volatility=0.1)
-        assert getattr(prob, "coupling_coefficient", None) is not None  # the trap the old code fell into
         with pytest.raises(NotImplementedError, match="quadratic"):
             fp_drift_coefficient(prob)
 

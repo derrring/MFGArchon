@@ -128,7 +128,6 @@ from mfgarchon import MFGProblem
 def create_sharp_problem():
     return MFGProblem(
         T=1.0, Nx=64, volatility=0.01,  # Low diffusion = sharp features
-        coupling_coefficient=3.0  # High congestion = localized dynamics
     )
 
 # Evaluate AMR effectiveness

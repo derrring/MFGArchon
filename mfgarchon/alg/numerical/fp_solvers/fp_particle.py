@@ -541,17 +541,17 @@ class FPParticleSolver(BaseFPSolver):
             sigma = float(self.problem.volatility)
         else:
             sigma = None
-        # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
-        # (single source), not the independent coupling_coefficient field. This params value flows
-        # to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
+        # Issue #1420 / G-017: the drift coefficient is the Hamiltonian's control cost's (single source). This params
+        # value flows to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
         # #2900: a SeparableHamiltonian's particle drift is its own optimal_control (`_advective_drift`), so the scalar
-        # is built only for the non-separable fallback that reads it. #1542's quadratic guard still runs for a separable
-        # one, here rather than through the scalar, which refuses a Hamiltonian whose optimal_control is its own.
+        # is asked for only for a Hamiltonian that is not separable, which fp_drift_coefficient refuses by name (#2977).
+        # #1542's quadratic guard still runs for a separable one, here rather than through the scalar, which refuses a
+        # Hamiltonian whose optimal_control is its own.
         if isinstance(getattr(self.problem, "hamiltonian_class", None), SeparableHamiltonian):
             assert_quadratic_drift(self.problem, context="FPParticleSolver")
             coupling_coefficient = None
         else:
-            coupling_coefficient = fp_drift_coefficient(self.problem)
+            coupling_coefficient = fp_drift_coefficient(self.problem, context="FPParticleSolver")
 
         result = {
             # nD parameters

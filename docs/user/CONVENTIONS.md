@@ -271,12 +271,9 @@ on their own basis.
    not certified whatever it serves; a library class patched at run time is unsupported (#2917).
 3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
    not represent that optimal control.
-4. Any Hamiltonian that is not a `SeparableHamiltonian`, or none at all → the problem's
-   `coupling_coefficient`, a legacy scalar.
-5. Neither of the above → **raises**.
-
-`coupling_coefficient` is **not** an alternative spelling of the control cost and must never be set
-to stand in for one.
+4. Any other Hamiltonian, and a problem with none → **raises** (#2977): no scalar $c$ is its drift, and nothing
+   else decides one. `MFGProblem` takes no `coupling_coefficient` or `lambda_`; the control cost is the
+   Hamiltonian's.
 
 ### What optimal_control and dp return
 
@@ -612,9 +609,9 @@ A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or
 non-separable $H$, and the coupling layer refuses to route $u$ to one rather than let it advect with
 $-c\,\nabla u$. `FPGFDMSolver`, withdrawn in #2583, had no `potential_field`, and the coupling layer refused
-to hand it $u$ as a velocity; that refusal still guards any solver that takes only `drift_field`. *Not yet met (#2429): called directly, the semi-Lagrangian pair and the particle solver
-accept `potential_field=U` with a non-separable $H$ and advect with $-c\,\nabla u$, $c$ being the legacy
-`coupling_coefficient`.*
+to hand it $u$ as a velocity; that refusal still guards any solver that takes only `drift_field`. Called directly
+with a non-separable $H$, the semi-Lagrangian FP solver and the particle solver refuse `potential_field=U`, through
+`fp_drift_coefficient` (#2977).
 
 The semi-Lagrangian FP solver, the network solver and the weak-form family take no `drift_field=`. On the
 particle solver it is a live alias for `potential_field=`, and also takes a callable drift, or a precomputed

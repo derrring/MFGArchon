@@ -139,7 +139,7 @@ class TestSigmaToDiffusionAgreement:
                 control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
             ),
         )
-        prob = MFGProblem(geometry=geom, T=0.2, Nt=5, volatility=0.3, components=comp, coupling_coefficient=1.0)
+        prob = MFGProblem(geometry=geom, T=0.2, Nt=5, volatility=0.3, components=comp)
         solver = HJBFDMSolver(prob)
         xx, yy = np.meshgrid(np.linspace(0, 1, 11), np.linspace(0, 1, 11), indexing="ij")
         u = (xx**2 + 0.5 * yy**2).ravel()  # nonzero, unequal second derivatives per axis

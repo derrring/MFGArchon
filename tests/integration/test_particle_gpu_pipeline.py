@@ -71,7 +71,6 @@ class TestParticleGPUPipeline:
             Nt=20,
             T=1.0,
             volatility=0.1,
-            coupling_coefficient=1.0,
             components=_default_components(),
         )
 
