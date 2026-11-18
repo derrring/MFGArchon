@@ -170,7 +170,7 @@ def _solution_rows(door: str) -> set[str]:
 @pytest.mark.parametrize("door", sorted(_DOORS))
 def test_each_door_reads_the_solution_row_it_is_handed_and_nothing_else(door):
     """A door reads the solution's own row, its terminal value or its initial density; every other array it is handed is
-    judged by the step that reads it, where it entered (#2975, the approver's ruling 3 of 2026-11-18)."""
+    judged by the step that reads it, where it entered (#2975, the approver's ruling 3 of 2026-11-17)."""
     assert _door_reads(_DOORS[door]) == _solution_rows(door), door
 
 
@@ -646,7 +646,7 @@ def test_an_override_array_is_read_where_it_decides_the_diffusion_branch():
         )
 
 
-# --- Review 1's repros, each at its 4ca7c9e0 outcome (the approver's ruling 6 of 2026-11-18). ---
+# --- Review 1's repros, each at its 4ca7c9e0 outcome (the approver's ruling 6 of 2026-11-17). ---
 
 
 def test_the_per_point_residual_names_the_term_it_read():
