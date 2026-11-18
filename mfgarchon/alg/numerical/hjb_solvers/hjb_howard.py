@@ -868,11 +868,12 @@ class HJBHowardSolver:
         np.ndarray
             Value function `U(t, x)`, shape `(Nt+1, n)`. `U[Nt] == U_terminal`.
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_hjb_system",
             "its door",
-            {"U_terminal": U_terminal, "M_density": M_density},
+            {"U_terminal": U_terminal},
         )
         # Issue #1071: named explicitly so a multi-population cross-density trajectory fails loud
         # here rather than silently decoupling — it would never reach Howard's policy-iteration

@@ -926,11 +926,12 @@ class HJBWENOSolver(BaseHJBSolver):
         Returns:
             U_solved: Complete solution u(t,x) over time domain
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_hjb_system",
             "its door",
-            {"U_terminal": U_terminal, "M_density": M_density, "U_coupling_prev": U_coupling_prev},
+            {"U_terminal": U_terminal},
         )
         # Issue #1316: this solver takes one scalar volatility from the problem at construction
         # (self._volatility) and uses it in the diffusion CFL bound and in every sweep. A

@@ -432,18 +432,12 @@ class WeakFormHJBSolver(BaseHJBSolver):
         iterate freezes H at p = 0: the backward heat equation with source ``-H(x, m, 0)``, which for #2642's
         ``H = |p|^2 / 2`` is the heat equation itself.
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_hjb_system",
             "its door",
-            {
-                "U_terminal": U_terminal,
-                "M_density": M_density,
-                "U_coupling_prev": U_coupling_prev,
-                "U_final_condition_at_T": U_final_condition_at_T,
-                "M_density_evolution_from_FP": M_density_evolution_from_FP,
-                "U_from_prev_picard": U_from_prev_picard,
-            },
+            {"U_terminal": U_terminal, "U_final_condition_at_T": U_final_condition_at_T},
         )
         if use_newton is None:
             use_newton = self._use_newton_default

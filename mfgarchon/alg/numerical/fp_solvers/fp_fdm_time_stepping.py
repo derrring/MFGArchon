@@ -89,7 +89,7 @@ if TYPE_CHECKING:
 
 # Import from responsibility-based modules per issue #388
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, refuse_the_first_read_that_entered
 
 from .fp_fdm_advection import compute_advection_from_drift_nd, compute_advection_term_nd
 from .fp_fdm_alg_divergence_centered import (
@@ -806,7 +806,9 @@ def solve_timestep_explicit_with_drift(
         boundary_conditions = no_flux_bc(dimension=ndim)
 
     sigma_arr = np.asarray(volatility)
-    varying_sigma = sigma_arr.ndim > 0 and float(np.ptp(sigma_arr)) > 1e-12
+    # A non-finite entry takes the per-point branch, where each entry enters its own column; `ptp > 1e-12` read it as
+    # uniform, and the scalar branch kept entry 0 alone (#2975).
+    varying_sigma = sigma_arr.ndim > 0 and not float(np.ptp(sigma_arr)) <= 1e-12
 
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
     if varying_sigma:
@@ -1318,100 +1320,95 @@ def solve_fp_nd_full_system(
         M_current = M_solution[k]
         step_out: dict[str, float] | None = {} if steps_out is not None else None
 
-        # Evaluate source term at current timestep (implicit: evaluate at t_{k+1})
-        if source_term is not None:
-            t_next = (k + 1) * dt
-            source_values = np.ravel(evaluate_solver_source(source_term, t=t_next, x=x_grid, dimension=grid.dimension))
-            # The explicit steps add the whole source to M; the implicit step reads it where its rows keep it, and
-            # refuses it there (`solve_timestep_full_nd`), since a Dirichlet row discards it (#2975).
-            if use_tensor_diffusion or drift.is_callable():
-                refuse_a_non_finite_read(
-                    "FPFDMSolver", f"time step {k + 1} of {Nt - 1}, t={t_next:g}", {"source_term": source_values}
-                )
-        else:
-            source_values = None
-
-        # Determine drift source using _DriftDispatcher evaluator (Issue #641)
+        # What step k reads, in the order it reads it: the drift (a callable drift's output, U at t_k, or the velocity
+        # at t_k), the coefficient (the volatility at t_k, or its tensor), then the source at t_{k+1} (implicit). The
+        # step takes them from this mapping, so a non-finite result can be traced to the first of them that entered it
+        # (#2975). With a velocity handed, U is the zero-U dispatcher's, which is not a read.
+        reads: dict[str, Any] = {}
+        U_current = None
         if drift.is_callable():
-            # Callable drift: evaluate velocity directly
-            # Drift callable signature: (t, x_coords, m) -> drift_array
-            # For 1D: drift_array shape is (N,)
-            # For nD: drift_array shape is (ndim, N1, N2, ...) for vector drift
-            drift_values = drift.evaluate_velocity_at(k, _grid_axes(grid), M_current, dt)
-            U_current = None  # Not needed when drift is provided directly
+            # Drift callable signature: (t, x_coords, m) -> drift_array; (N,) in 1-D, (ndim, N1, N2, ...) in n-D.
+            reads["the drift callable"] = drift.evaluate_velocity_at(k, _grid_axes(grid), M_current, dt)
         else:
-            # Array/MFG drift: get U slice for gradient computation in solver
-            drift_values = None
             U_current = drift.get_U_at(k)
-
-        # Issue #919: velocity_field → face-centered interface velocity
-        vel_at_k = None
+            if _velocity_array is None:
+                reads["U"] = U_current
         if _velocity_array is not None:
-            vel_idx = min(k, _velocity_array.shape[0] - 1)
-            vel_slice = _velocity_array[vel_idx]
-            # Wrap in list for per-dimension indexing: interface_velocity[d][...]
-            if vel_slice.ndim == 1:
-                # 1D face-centered: (Nx-1,) → [array(Nx-1,)]
-                vel_at_k = [vel_slice]
-            elif vel_slice.ndim == len(shape):
-                # nD node-centered: (*shape) → [(shape,)] per dim (fallback)
-                vel_at_k = [vel_slice] * ndim
-            else:
-                # nD: (ndim, *face_shape) → list of per-dim arrays
-                vel_at_k = [vel_slice[d] for d in range(ndim)]
-
+            # Issue #919: velocity_field -> face-centered interface velocity
+            reads["the velocity"] = _velocity_array[min(k, _velocity_array.shape[0] - 1)]
         if use_tensor_diffusion:
-            # Tensor diffusion path - explicit timestepping
-            M_next = solve_timestep_tensor_explicit(
-                M_current,
-                U_current,
-                problem,
-                dt,
-                tensor_base,
-                # The tensor path has no interface_velocity parameter and derives its
-                # advection from U; with a velocity handed, U is zero (#2915).
-                coefficient_the_step_reads(),
-                spacing,
-                grid,
-                ndim,
-                shape,
-                boundary_conditions,
-                k,
-                drift=drift_values,
-                source_term=source_values,
-            )
-        elif drift.is_callable():
-            # Callable drift with scalar diffusion - use explicit Forward Euler
-            # This avoids the mathematically incorrect synthetic U approach
-            diffusion = problem.get_diffusion_coefficient_field(
-                override=sigma_base, field_name="volatility", dimension=ndim
-            )
-            sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=_grid_axes(grid), density=M_current, dt=dt)
-
-            M_next = solve_timestep_explicit_with_drift(
-                M_current,
-                drift_values,
-                dt,
-                sigma_at_k,
-                spacing,
-                ndim,
-                boundary_conditions,
-                source_term=source_values,
-                cached_laplacian=_cached_laplacian,  # Issue #927
-            )
+            reads["the volatility tensor"] = _tensor_at_step(tensor_base, k, dt, M_current, grid, shape, ndim)
         else:
-            # MFG-coupled mode: scalar diffusion + U/velocity-based drift - implicit solver
             diffusion = problem.get_diffusion_coefficient_field(
                 override=sigma_base, field_name="volatility", dimension=ndim
             )
-            sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=_grid_axes(grid), density=M_current, dt=dt)
+            reads["volatility"] = diffusion.evaluate_at(timestep_idx=k, grid=_grid_axes(grid), density=M_current, dt=dt)
+        if source_term is not None:
+            reads["source_term"] = np.ravel(
+                evaluate_solver_source(source_term, t=(k + 1) * dt, x=x_grid, dimension=grid.dimension)
+            )
 
-            M_next = solve_timestep_full_nd(
+        def step(
+            read: dict[str, Any],
+            out: dict[str, float] | None,
+            M_current: np.ndarray = M_current,
+            U_current: np.ndarray | None = U_current,
+            k: int = k,
+        ) -> np.ndarray:
+            """Step k on ``read``: the tensor's explicit step, the explicit step of a callable drift with scalar
+            diffusion, or the implicit step of the MFG-coupled mode (a velocity or U, scalar diffusion)."""
+            vel_at_k = None
+            vel_slice = read.get("the velocity")
+            if vel_slice is not None:
+                if vel_slice.ndim == 1:
+                    # 1D face-centered: (Nx-1,) -> [array(Nx-1,)]
+                    vel_at_k = [vel_slice]
+                elif vel_slice.ndim == len(shape):
+                    # nD node-centered: (*shape) -> [(shape,)] per dim (fallback)
+                    vel_at_k = [vel_slice] * ndim
+                else:
+                    # nD: (ndim, *face_shape) -> list of per-dim arrays
+                    vel_at_k = [vel_slice[d] for d in range(ndim)]
+            if use_tensor_diffusion:
+                return solve_timestep_tensor_explicit(
+                    M_current,
+                    read.get("U", U_current),
+                    problem,
+                    dt,
+                    read["the volatility tensor"],
+                    # The tensor path has no interface_velocity parameter and derives its
+                    # advection from U; with a velocity handed, U is zero (#2915).
+                    coefficient_the_step_reads(),
+                    spacing,
+                    grid,
+                    ndim,
+                    shape,
+                    boundary_conditions,
+                    k,
+                    drift=read.get("the drift callable"),
+                    source_term=read.get("source_term"),
+                )
+            if drift.is_callable():
+                # Callable drift with scalar diffusion - explicit Forward Euler, which avoids the
+                # mathematically incorrect synthetic U approach
+                return solve_timestep_explicit_with_drift(
+                    M_current,
+                    read["the drift callable"],
+                    dt,
+                    read["volatility"],
+                    spacing,
+                    ndim,
+                    boundary_conditions,
+                    source_term=read.get("source_term"),
+                    cached_laplacian=_cached_laplacian,  # Issue #927
+                )
+            # MFG-coupled mode: scalar diffusion + U/velocity-based drift - implicit solver
+            return solve_timestep_full_nd(
                 M_current,
-                U_current,
+                read.get("U", U_current),
                 problem,
                 dt,
-                sigma_at_k,
+                read["volatility"],
                 # Issue #1631: skip resolving a coefficient the handler will not read (#2915).
                 coefficient_the_step_reads(),
                 spacing,
@@ -1420,18 +1417,29 @@ def solve_fp_nd_full_system(
                 shape,
                 boundary_conditions,
                 advection_scheme=advection_scheme,
-                source_term=source_values,
+                source_term=read.get("source_term"),
                 interface_velocity=vel_at_k,
                 time=(k + 1) * dt,
-                outflow=step_out,
+                outflow=out,
             )
 
+        M_next = step(reads, step_out)
         M_solution[k + 1] = M_next
         if steps_out is not None:
             steps_out.append(step_out or {})
 
-        # Issue #881: NaN/Inf detection after each timestep
+        # Issue #881: NaN/Inf detection after each timestep. A non-finite read that entered the step is named first
+        # (#2975); what is left is a failure computed from finite reads.
         if not np.all(np.isfinite(M_next)):
+            refuse_the_first_read_that_entered(
+                "FPFDMSolver",
+                reads,
+                lambda read: step(read, None),
+                lambda name, i, k=k, reads=reads: (
+                    f"time step {k + 1} of {Nt - 1}, from t={k * dt:g} to t={(k + 1) * dt:g}, "
+                    + _where_in_a_read(reads[name], i, shape)
+                ),
+            )
             nan_count = np.sum(~np.isfinite(M_next))
             raise ValueError(
                 f"FP solver produced NaN/Inf at timestep {k + 1}/{Nt - 1} "
@@ -1490,6 +1498,36 @@ def solve_fp_nd_full_system(
         for name in names:
             outflow[name] = np.concatenate(([0.0], np.cumsum([step.get(name, 0.0) for step in steps_out])))
     return M_solution
+
+
+def _tensor_at_step(
+    tensor_field: Any, timestep_idx: int, dt: float, M_current: np.ndarray, grid: Any, shape: tuple, ndim: int
+) -> Any:
+    """The volatility tensor step ``timestep_idx`` reads: a callable Sigma(t, x, m) -> (d, d) evaluated at every node
+    (PSD-checked), as ``(*shape, d, d)``; an array is the step's as handed, and checked by the step."""
+    if not callable(tensor_field):
+        return tensor_field
+    t = timestep_idx * dt
+    Sigma = np.zeros((*shape, ndim, ndim))
+    axes = _grid_axes(grid)
+    bound = _remembered(tensor_field, VOLATILITY_SLOTS, "volatility")  # one state across the steps
+    for idx in np.ndindex(shape):
+        x_coords = tuple(axes[d][idx[d]] for d in range(ndim))
+        Sigma[idx] = bound(t=t, x=x_coords, m=M_current[idx])
+    CoefficientField(tensor_field, None, "volatility", dimension=ndim).validate_tensor_psd(Sigma)
+    return Sigma
+
+
+def _where_in_a_read(read: Any, i: int, shape: tuple) -> str:
+    """Where entry ``i`` (flat) of a step's read sits: the node, for a read with one value per node, else its index in
+    the read's own shape (a face, an axis component, a tensor entry) (#2975)."""
+    size = int(np.prod(shape))
+    array = np.asarray(read)
+    if array.size == size:
+        return f"node {tuple(int(j) for j in np.unravel_index(i, shape))}"
+    if array.ndim == 0:
+        return "its one value"
+    return f"entry {tuple(int(j) for j in np.unravel_index(i, array.shape))} of its {array.shape}"
 
 
 def solve_timestep_tensor_explicit(
@@ -1553,19 +1591,7 @@ def solve_timestep_tensor_explicit(
 
     # Evaluate tensor at current state
     if callable(tensor_field):
-        # Callable tensor: Sigma(t, x, m) -> (d, d) array
-        t = timestep_idx * dt
-        Sigma = np.zeros((*shape, ndim, ndim))
-        axes = _grid_axes(grid)
-        bound = _remembered(tensor_field, VOLATILITY_SLOTS, "volatility")  # one state across the steps
-        for idx in np.ndindex(shape):
-            x_coords = tuple(axes[d][idx[d]] for d in range(ndim))
-            m_at_point = M_current[idx]
-            Sigma[idx] = bound(t=t, x=x_coords, m=m_at_point)
-
-        # Validate PSD
-        coeff = CoefficientField(tensor_field, None, "volatility", dimension=ndim)
-        coeff.validate_tensor_psd(Sigma)
+        Sigma = _tensor_at_step(tensor_field, timestep_idx, dt, M_current, grid, shape, ndim)
     elif isinstance(tensor_field, np.ndarray):
         # Array tensor: constant or spatially varying
         if tensor_field.ndim == 2:
@@ -1937,19 +1963,16 @@ def solve_timestep_full_nd(
     # no-flux row: with the Dirichlet row in its place, its balance is the mass the exit takes, so the cap, the switch
     # and the outflow record all read the row the scheme already owns. The rows are built at the Dirichlet nodes alone.
     capped_exits = _capped_exit_nodes(boundary_conditions, dirichlet_nodes, shape, grid, spacing)
-    if source_term is not None:
-        # The source enters the rows that keep it: a Dirichlet row reads m = g and a repeated row m[i] = m[mirror], so a
-        # value there is discarded, unless a capped exit reads the balance at the Dirichlet nodes, which decides its
-        # switch below. It is refused where it enters, and a NaN only at a Dirichlet node solves as before (#2975). The
-        # private outflow record reads that balance too, and reaches no result.
-        keeps = np.ones(N_total, dtype=bool)
-        if not capped_exits:
-            keeps[dirichlet_nodes] = False
-        keeps[repeated_rows] = False
+    if source_term is not None and capped_exits:
+        # A capped exit's switch below reads the balance at its node, the source among it, and decides that node's row;
+        # the Dirichlet row it keeps otherwise discards the source, so a NaN there would leave the cap unenforced with
+        # the step finite. It is read at the decision, at the capped nodes alone (#2975); every other source entry is
+        # judged by the step's failure path. The private outflow record reads the balance too, and reaches no result.
+        nodes = sorted(capped_exits)
         refuse_a_non_finite_read(
             "FPFDMSolver",
-            f"t={time:g}, the rows the step keeps" if time is not None else "the rows the step keeps",
-            {"source_term": np.asarray(source_term, dtype=float).ravel()[keeps]},
+            (f"t={time:g}, " if time is not None else "") + f"the capped exits' nodes {nodes}",
+            {"source_term": np.asarray(source_term, dtype=float).ravel()[nodes]},
         )
     _refuse_a_cap_off_upwind([segment.name for segment, _ in capped_exits.values()], advection_scheme)
     A_step, b_step = A_matrix, b_rhs

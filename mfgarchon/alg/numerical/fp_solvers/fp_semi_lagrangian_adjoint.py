@@ -345,11 +345,12 @@ class FPSLSolver(BaseFPSolver):
         Returns:
             Density evolution M(t,x). Shape: (Nt+1, Nx)
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_fp_system",
             "its door",
-            {"M_initial": M_initial, "potential_field": None if callable(potential_field) else potential_field},
+            {"M_initial": M_initial},
         )
         if M_initial is None:
             raise ValueError("M_initial is required")

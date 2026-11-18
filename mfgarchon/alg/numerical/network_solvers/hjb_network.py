@@ -187,11 +187,12 @@ class NetworkHJBSolver(BaseHJBSolver):
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_hjb_system",
             "its door",
-            {"U_terminal": U_terminal, "M_density": M_density, "U_coupling_prev": U_coupling_prev},
+            {"U_terminal": U_terminal},
         )
         diffusion = _network_diffusion(
             volatility, volatility_kind, problem=self.network_problem, consumer="NetworkHJBSolver.solve_hjb_system"
@@ -370,11 +371,12 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Solve HJB using policy iteration; ``volatility`` as `NetworkHJBSolver.solve_hjb_system` reads it."""
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_hjb_system",
             "its door",
-            {"U_terminal": U_terminal, "M_density": M_density, "U_coupling_prev": U_coupling_prev},
+            {"U_terminal": U_terminal},
         )
         diffusion = _network_diffusion(
             volatility,

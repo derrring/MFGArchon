@@ -19,7 +19,6 @@ from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_con
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 logger = get_logger(__name__)
 
@@ -886,12 +885,6 @@ def compute_fp_velocity_field(
                     m=m_n,
                 )
             )
-            # The drift the FP advances, read where it is built, and refused if not finite (#2975).
-            refuse_a_non_finite_read(
-                "compute_fp_velocity_field",
-                f"t={n * dt:g}, the faces of the grid",
-                {"the optimal control": alpha_faces[n]},
-            )
 
         return alpha_faces
     else:
@@ -952,12 +945,6 @@ def compute_fp_velocity_field(
                     method="evaluate_optimal_control",
                     source=H_class,
                     m=m_batch,
-                )
-                # Component d is what this axis's drift takes; it is read here, and refused if not finite (#2975).
-                refuse_a_non_finite_read(
-                    "compute_fp_velocity_field",
-                    f"t={n * dt:g}, the faces of axis {d}",
-                    {f"the optimal control's component {d}": alpha_n[:, d]},
                 )
                 # The last node of an axis that does not wrap has no face along it and keeps 0; a node a wrapping
                 # axis repeats takes its twin's face, the same face.

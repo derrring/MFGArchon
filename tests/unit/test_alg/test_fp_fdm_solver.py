@@ -701,7 +701,7 @@ class TestFPFDMSolverCallableDiffusion:
             solver.solve_fp_system(m_initial, volatility=bad_diffusion)
 
     def test_callable_validation_nan(self, standard_problem):
-        """Test that callable returning NaN raises error."""
+        """A callable volatility returning NaN is named by the step it entered (#2975)."""
         solver = FPFDMSolver(standard_problem)
 
         (Nx_points,) = standard_problem.geometry.get_grid_shape()
@@ -717,7 +717,8 @@ class TestFPFDMSolverCallableDiffusion:
 
         with pytest.raises(
             NonFiniteReadError,
-            match=r"the callable volatility is non-finite where it reads it: .*, the first nan, at time step 0",
+            match=r"FPFDMSolver: volatility is non-finite where it reads it: .*, the first nan, at time step 1 of \d+, "
+            r"from t=0 to t=[0-9.]+, node \(0,\), where it entered the step",
         ):
             solver.solve_fp_system(m_initial, volatility=nan_diffusion)
 

@@ -1766,16 +1766,12 @@ class FPParticleSolver(BaseFPSolver):
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
         the same functional the library reports (#2145).
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_fp_system",
             "its door",
-            {
-                "M_initial": M_initial,
-                "drift_field": None if callable(drift_field) else drift_field,
-                "potential_field": None if callable(potential_field) else potential_field,
-                "initial_particles": initial_particles,
-            },
+            {"M_initial": M_initial, "initial_particles": initial_particles},
         )
         if source_term is not None:
             raise NotImplementedError(

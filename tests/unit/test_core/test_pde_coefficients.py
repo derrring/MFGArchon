@@ -15,7 +15,6 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     fp_drift_coefficient,
@@ -283,7 +282,7 @@ class TestCoefficientFieldCallable:
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
     def test_callable_nan_detection(self):
-        """Test callable returning NaN raises error."""
+        """A callable returning NaN is handed on as read: the step that reads it judges it, where it entered (#2975)."""
 
         def nan_diffusion(t, x, m):
             result = np.ones_like(m)
@@ -295,14 +294,12 @@ class TestCoefficientFieldCallable:
         grid = np.linspace(0, 1, 11)
         density = np.ones(11)
 
-        with pytest.raises(
-            NonFiniteReadError,
-            match=r"the callable diffusion is non-finite where it reads it: .*, the first nan, at time step 0",
-        ):
-            field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
+        read = field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
+        assert np.isnan(read[5])
+        assert np.all(np.isfinite(np.delete(read, 5)))
 
     def test_callable_inf_detection(self):
-        """Test callable returning Inf raises error."""
+        """A callable returning Inf is handed on as read, as a NaN is (#2975)."""
 
         def inf_diffusion(t, x, m):
             result = np.ones_like(m)
@@ -314,11 +311,9 @@ class TestCoefficientFieldCallable:
         grid = np.linspace(0, 1, 11)
         density = np.ones(11)
 
-        with pytest.raises(
-            NonFiniteReadError,
-            match=r"the callable diffusion is non-finite where it reads it: .*, the first inf, at time step 0",
-        ):
-            field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
+        read = field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
+        assert np.isposinf(read[3])
+        assert np.all(np.isfinite(np.delete(read, 3)))
 
 
 class TestGetSpatialGrid:

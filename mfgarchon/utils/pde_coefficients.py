@@ -583,13 +583,12 @@ class CoefficientField:
         TypeError
             If output is not float or ndarray
         ValueError
-            If output shape doesn't match expected or contains NaN/Inf
+            If output shape doesn't match expected
+
+        A non-finite value is not refused here: the step that reads it judges it, where it entered (#2975).
         """
-        # Handle scalar output: a scalar is read as one value at every point, and refused as the array is (#2975)
+        # Handle scalar output
         if isinstance(output, (int, float)):
-            refuse_a_non_finite_read(
-                f"the {self.name} field", f"time step {timestep_idx}", {f"the callable {self.name}": float(output)}
-            )
             return float(output)
 
         # Handle array output
@@ -600,10 +599,6 @@ class CoefficientField:
                     f"Callable {self.name} returned array with shape {output.shape}, "
                     f"expected {expected_shape} (matching density shape) at timestep {timestep_idx}"
                 )
-
-            refuse_a_non_finite_read(
-                f"the {self.name} field", f"time step {timestep_idx}", {f"the callable {self.name}": output}
-            )
 
             return output
 
@@ -726,8 +721,6 @@ class CoefficientField:
         # Array case
         if not isinstance(sigma_tensor, np.ndarray):
             raise TypeError(f"{self.name} must be float or ndarray, got {type(sigma_tensor)}")
-
-        refuse_a_non_finite_read(f"the {self.name} field", "its tensor", {self.name: sigma_tensor})
 
         # Determine tensor structure from shape
         shape = sigma_tensor.shape
@@ -1146,8 +1139,6 @@ class _DriftDispatcher:
             result = np.full(self.spatial_shape, float(result))
         elif not isinstance(result, np.ndarray):
             raise TypeError(f"Drift callable must return float or ndarray, got {type(result)}")
-
-        refuse_a_non_finite_read("the drift field", f"time step {timestep_idx}", {"the drift callable": result})
 
         return result
 

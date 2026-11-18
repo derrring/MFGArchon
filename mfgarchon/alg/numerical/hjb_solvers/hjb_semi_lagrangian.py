@@ -988,11 +988,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
-        # An array handed at the door is read before any work, and refused here if it is not finite (#2975).
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_hjb_system",
             "its door",
-            {"U_terminal": U_terminal, "M_density": M_density, "U_coupling_prev": U_coupling_prev},
+            {"U_terminal": U_terminal},
         )
         # The per-axis read (#1560) at its point of use, ahead of the first gradient: a BC set on the geometry
         # after construction otherwise meets `value_gradient`'s refusal first, whose message is about an axis,
@@ -2279,6 +2280,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         components = tuple(np.asarray(g, dtype=float) for g in grad)
         shape = components[0].shape
         vel = self._nd_foot_velocity_field(shape, components, np.asarray(m_values).reshape(shape), t)
+        if not np.all(np.isfinite(vel)):
+            axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: shape[ax]] for ax in range(self.dimension)]
+            mesh = np.meshgrid(*axes, indexing="ij")
+            self._name_a_non_finite_foot_velocity(
+                np.stack([g.ravel() for g in mesh], axis=1),
+                np.asarray(m_values, dtype=float).reshape(shape).ravel(),
+                np.stack([c.ravel() for c in components], axis=1),
+                vel.reshape(-1, self.dimension),
+                t,
+            )
         return float(np.max(np.sqrt(np.sum(vel**2, axis=-1)))) * dt / float(np.min(self.dx))
 
     def _warn_if_step_exceeds_one_cell(
@@ -2522,25 +2533,74 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         """The n-D value update's naming of a non-finite result (#2975), run where it would enter U_star.
 
         The update stored U at t_{n+1} in its place, and raised only past 10% of the points, so a non-finite read at a
-        few nodes gave a finite wrong U with ``converged`` True. It is named by the read behind it, each re-read as the
-        update reads it: the foot velocity (H's dp, as `_nd_foot_velocity_field` hands it), then the terms of H's value
-        (`_hamiltonian_terms_at`), then H's value (`eval_H_batch`). A result non-finite with every read finite is a
-        computed failure: it stays in U_star, and the check after the step reports it.
+        few nodes gave a finite wrong U with ``converged`` True. It is named by the first read behind it, each re-read as
+        the update reads it: the density where it entered ``dp`` or H's value (`_a_handed_density_that_entered`), the foot
+        velocity (H's ``dp``, as `_nd_foot_velocity_field` hands it), the terms of H's value that read x alone
+        (`_hamiltonian_terms_at`), the density terms H holds (`_hamiltonian_density_terms_at`), then H's value
+        (`eval_H_batch`). A result non-finite with every read finite is a computed failure: it stays in U_star, and the
+        check after the step reports it.
         """
-        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _hamiltonian_terms_at
+        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
+            _a_handed_density_that_entered,
+            _hamiltonian_density_terms_at,
+            _hamiltonian_terms_at,
+        )
 
         H = self.problem.hamiltonian_class
         x = np.asarray(x, dtype=float)
         p = np.atleast_1d(np.asarray(p, dtype=float))
         m_row = np.atleast_1d(np.asarray(m, dtype=float))
-        named: dict[str, object] = {f"{type(H).__name__}'s dp, the foot velocity": velocity}
-        named.update(_hamiltonian_terms_at(self.problem, t, tuple(np.atleast_1d(c) for c in x), m_row))
+
+        def read(m_given: np.ndarray, _cross: np.ndarray | None) -> np.ndarray:
+            m_at = np.asarray(m_given, dtype=float).reshape(np.shape(m))
+            return np.concatenate(
+                [np.ravel(eval_dH_dp_batch(H, x, m_at, p, t)), np.ravel(eval_H_batch(H, x, m_at, p, t))]
+            )
+
+        named: dict[str, object] = dict(_a_handed_density_that_entered(read, m_row, None))
+        named[f"{type(H).__name__}'s dp, the foot velocity"] = velocity
+        named.update(_hamiltonian_terms_at(self.problem, t, tuple(np.atleast_1d(c) for c in x)))
+        named.update(_hamiltonian_density_terms_at(self.problem, m_row))
         named[f"{type(H).__name__}'s value"] = eval_H_batch(H, x, np.asarray(m, dtype=float), p, t)
         refuse_a_non_finite_read(
             "HJBSemiLagrangianSolver's value update",
             f"t={t:g}, x={x.tolist()}, p={p.tolist()}, m={float(m_row[0]):.6g} (node {tuple(int(k) for k in node)})",
             named,
         )
+
+    def _name_a_non_finite_foot_velocity(
+        self, x: np.ndarray, m: np.ndarray, p: np.ndarray, velocity: np.ndarray, t: float
+    ) -> None:
+        """The foot velocity's naming where the CFL number reads it, ahead of the sub-step count it decides (#2975).
+
+        ``x``, ``m``, ``p`` and ``velocity`` are the nodes' rows, as `_characteristic_foot_velocity` took and returned
+        them. At the first node whose velocity is non-finite, the read behind it is named: the density where it entered
+        ``dp`` (`_a_handed_density_that_entered`), then H's ``dp``. A velocity non-finite with ``dp`` finite cannot
+        arise, since the velocity is ``dp`` as `checked_control` handed it."""
+        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _a_handed_density_that_entered
+
+        n = np.shape(m)[0]
+        rows = np.flatnonzero(~np.all(np.isfinite(np.asarray(velocity, dtype=float).reshape(n, -1)), axis=1))
+        if rows.size == 0:
+            return
+        H = self.problem.hamiltonian_class
+        named: dict[str, object] = dict(
+            _a_handed_density_that_entered(
+                lambda m_given, _c: eval_dH_dp_batch(H, x[rows], m_given, p[rows], t), m[rows], None
+            )
+        )
+        named[f"{type(H).__name__}'s dp, the foot velocity"] = np.asarray(velocity, dtype=float).reshape(n, -1)[rows]
+        for name, values in named.items():
+            per_row = np.all(np.isfinite(np.asarray(values, dtype=float).reshape(rows.size, -1)), axis=1)
+            if np.all(per_row):
+                continue
+            k = int(rows[np.flatnonzero(~per_row)[0]])
+            refuse_a_non_finite_read(
+                "HJBSemiLagrangianSolver's CFL number",
+                f"t={t:g}, x={x[k].tolist()}, p={p[k].tolist()}, m={float(m[k]):.6g} "
+                f"(the first of {rows.size} node(s) whose foot velocity is non-finite)",
+                {name: values},
+            )
 
     def _sl_value_update(
         self,
