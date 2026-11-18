@@ -277,6 +277,7 @@ def test_hjb_fdm_names_the_term_its_newton_step_read(build, names):
         build().solve(max_iterations=20, verbose=False)
 
 
+@pytest.mark.filterwarnings("ignore:Newton stopped:RuntimeWarning", "ignore::scipy.sparse.linalg.MatrixRankWarning")
 def test_hjb_fdm_in_two_dimensions_names_the_term():
     """The n-D residual HJB-FDM hands NewtonSolver: at 4ca7c9e0, "Matrix is exactly singular" 315 times and a finite
     wrong U."""
@@ -294,6 +295,7 @@ def test_hjb_fdm_in_two_dimensions_names_the_term():
 # --- Sites 2 and 3: FP-FDM and FP-FVM read the drift and the source before a step advances them. ---
 
 
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
 @pytest.mark.parametrize(
     ("scheme", "names"),
     [
@@ -505,6 +507,7 @@ _CALLED_DOORS = [
 ]
 
 
+@pytest.mark.filterwarnings("ignore:HJBGFDMSolver:UserWarning")
 @pytest.mark.parametrize("solver", _CALLED_DOORS)
 def test_a_door_refuses_a_non_finite_solution_row_by_name(solver):
     """At 4ca7c9e0 the HJB doors returned a non-finite U for a NaN U_terminal, and the FP doors blamed the CFL condition
@@ -607,6 +610,7 @@ def test_an_inconclusive_density_test_does_not_name_the_density():
     assert "M_density" not in str(raised.value)
 
 
+@pytest.mark.filterwarnings("ignore:Newton stopped:RuntimeWarning", "ignore::scipy.sparse.linalg.MatrixRankWarning")
 def test_the_nd_hjb_fdm_step_names_the_iterate_it_starts_from():
     """In n-D, Newton starts from the previous Picard pass's U at t_n, so a NaN in it is the first value the step reads
     (design call A, 2026-11-18)."""
@@ -663,6 +667,7 @@ def test_the_per_point_residual_names_the_term_it_read():
         )
 
 
+@pytest.mark.filterwarnings("ignore:Newton stopped:RuntimeWarning", "ignore::scipy.sparse.linalg.MatrixRankWarning")
 @pytest.mark.parametrize("dimension", [1, 2])
 def test_a_source_that_returns_one_number_is_named(dimension):
     """A2: a source returning one number at t_0 raised IndexError inside the naming."""
@@ -727,6 +732,7 @@ class _NaNOnlyWhereAnIterateGoes(SeparableHamiltonian):
         return out
 
 
+@pytest.mark.filterwarnings("ignore:HJB inner Newton did not converge:RuntimeWarning")
 def test_a_non_finite_h_only_at_a_newton_iterate_goes_to_the_inner_failure_policy():
     """Ruling 4's stated limit. With the potential 3 cos(pi x) and U = 0 at T, every start state at t = 0.3 has |p| at
     most 0.875 and Newton's iterates reach 1.657 (measured at 4ca7c9e0), so only an iterate meets the NaN. It is not
@@ -770,6 +776,7 @@ class _OwnDpNaNAtOneNode(SeparableHamiltonian):
         return out
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning:mfgarchon.core.mfg_problem")
 def test_hjb_sl_names_an_own_dp_read_by_the_foot_through_the_solve():
     """An own dp NaN at one node, through problem.solve(): the CFL number reads the foot velocity, H's dp, ahead of the
     sub-step count and of the update's interpolation, and names it (census rows 2526 and 2539 at 4ca7c9e0)."""
@@ -922,6 +929,7 @@ def test_a_multi_population_coupling_is_named_as_the_coupling():
             iterator.solve(max_iterations=6, tolerance=1e-10)
 
 
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
 @pytest.mark.parametrize("kind", ["scalar", "array"])
 def test_a_callable_volatility_is_named_by_the_step_that_reads_it(kind):
     """C4: a callable volatility returning a NaN at t = 0.2, one number or one per point, is named by the HJB's Newton
@@ -997,6 +1005,7 @@ def test_each_fp_arm_names_a_source_that_entered_its_step(solver, names):
         solve()
 
 
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
 def test_a_volatility_nan_at_one_interior_node_takes_the_per_point_branch():
     """On the explicit arm (a callable drift), `np.ptp(sigma) > 1e-12` read an array holding a NaN as uniform, and the
     scalar branch kept entry 0 alone: a callable volatility NaN at one interior node was dropped. It now takes the
@@ -1020,3 +1029,21 @@ def test_a_volatility_nan_at_one_interior_node_takes_the_per_point_branch():
             volatility=volatility,
             show_progress=False,
         )
+
+
+def test_a_dual_hamiltonians_dp_is_non_finite_where_its_value_is():
+    """The dual of a Lagrangian searches a grid of controls: its value, `np.max`, is NaN when the Lagrangian is NaN at a
+    control the search reads, and its dp took `np.argmax`'s first NaN as the maximiser, a finite grid point. A step that
+    read that dp, an FP's velocity, went on with it. dp is now NaN where the value is (#2975)."""
+    from mfgarchon.core.hamiltonian import DualHamiltonian, SeparableLagrangian
+
+    class _NaNAtATrial(SeparableLagrangian):
+        def __call__(self, t, x, alpha, m):
+            out = np.array(super().__call__(t=t, x=x, alpha=alpha, m=m), dtype=float, copy=True)
+            a = np.asarray(alpha, dtype=float)
+            return np.where(a.max(axis=-1) > 5.0 if a.ndim else a > 5.0, NAN, out)
+
+    dual = DualHamiltonian(_NaNAtATrial(QuadraticControlCost(control_cost=1.0)))
+    x, p, m = (np.array([0.5]),), np.array([0.3]), 1.0
+    assert np.isnan(dual(t=0.0, x=x, p=p, m=m))
+    assert np.all(np.isnan(dual.dp(t=0.0, x=x, p=p, m=m)))

@@ -676,19 +676,15 @@ class FPFVMSolver(BaseFPSolver):
             if not np.all(np.isfinite(m)):
                 # A non-finite read that entered the step is named first (#2975); what is left is computed from finite
                 # reads.
-                refuse_the_first_read_that_entered(
-                    "FPFVMSolver",
-                    reads,
-                    lambda read, m_before=m_before: step(read, m_before),
-                    lambda name, i, k=k, reads=reads: (
-                        f"time step {k + 1} of {n_steps}, t={k * dt:g}, "
-                        + (
-                            f"node {tuple(int(j) for j in np.unravel_index(i, shape))}"
-                            if name == "source_term"
-                            else f"face {tuple(int(j) for j in np.unravel_index(i, np.shape(reads[name])))}"
-                        )
-                    ),
-                )
+                def rerun(read: dict[str, Any], m_before: np.ndarray = m_before) -> np.ndarray:
+                    return step(read, m_before)
+
+                def where(name: str, i: int, k: int = k, reads: dict[str, Any] = reads) -> str:
+                    at = np.unravel_index(i, shape if name == "source_term" else np.shape(reads[name]))
+                    kind = "node" if name == "source_term" else "face"
+                    return f"time step {k + 1} of {n_steps}, t={k * dt:g}, {kind} {tuple(int(j) for j in at)}"
+
+                refuse_the_first_read_that_entered("FPFVMSolver", reads, rerun, where)
                 n_bad = int(np.sum(~np.isfinite(m)))
                 raise ValueError(
                     f"FP FVM solver produced {n_bad} non-finite values at timestep {k + 1}/{n_steps}. "

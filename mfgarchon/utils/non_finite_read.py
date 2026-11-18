@@ -17,6 +17,7 @@ Construction's own reads are #2974's owner, `utils.validation.functions._refuse_
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -76,7 +77,8 @@ def refuse_the_first_read_that_entered(
     restoring more entries cannot make it finite again. It is: a NaN or an infinity does not cancel through the step's
     sums, products and linear solves, and #2975's census removed or reads at every decision on the step that dropped
     one. The entry is refused through `refuse_a_non_finite_read`, with that read's earlier non-finite entries, which the
-    bisection found discarded, given as 0.0, so the first it reports is the one that entered.
+    bisection found discarded, given as 0.0, so the first it reports is the one that entered. The re-runs' warnings are
+    not reported: they repeat the step's own.
 
     Returns without raising when no read is non-finite, or when the result stays non-finite with every non-finite entry
     set to 0.0. That is a computed failure, and the caller reports it; a NaN that entered beside it is then not named
@@ -97,7 +99,10 @@ def refuse_the_first_read_that_entered(
         return mapping
 
     def non_finite(count: int) -> bool:
-        return not bool(np.all(np.isfinite(np.asarray(step(with_restored(count)), dtype=float))))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = step(with_restored(count))
+        return not bool(np.all(np.isfinite(np.asarray(result, dtype=float))))
 
     if non_finite(0):
         return

@@ -700,6 +700,7 @@ class TestFPFDMSolverCallableDiffusion:
         with pytest.raises(ValueError, match="returned array with shape"):
             solver.solve_fp_system(m_initial, volatility=bad_diffusion)
 
+    @pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
     def test_callable_validation_nan(self, standard_problem):
         """A callable volatility returning NaN is named by the step it entered (#2975)."""
         solver = FPFDMSolver(standard_problem)

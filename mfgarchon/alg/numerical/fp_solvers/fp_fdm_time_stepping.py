@@ -1431,15 +1431,13 @@ def solve_fp_nd_full_system(
         # Issue #881: NaN/Inf detection after each timestep. A non-finite read that entered the step is named first
         # (#2975); what is left is a failure computed from finite reads.
         if not np.all(np.isfinite(M_next)):
-            refuse_the_first_read_that_entered(
-                "FPFDMSolver",
-                reads,
-                lambda read: step(read, None),
-                lambda name, i, k=k, reads=reads: (
-                    f"time step {k + 1} of {Nt - 1}, from t={k * dt:g} to t={(k + 1) * dt:g}, "
-                    + _where_in_a_read(reads[name], i, shape)
-                ),
-            )
+
+            def where(name: str, i: int, k: int = k, reads: dict[str, Any] = reads) -> str:
+                return f"time step {k + 1} of {Nt - 1}, from t={k * dt:g} to t={(k + 1) * dt:g}, " + _where_in_a_read(
+                    reads[name], i, shape
+                )
+
+            refuse_the_first_read_that_entered("FPFDMSolver", reads, lambda read: step(read, None), where)
             nan_count = np.sum(~np.isfinite(M_next))
             raise ValueError(
                 f"FP solver produced NaN/Inf at timestep {k + 1}/{Nt - 1} "

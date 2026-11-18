@@ -2281,10 +2281,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         shape = components[0].shape
         vel = self._nd_foot_velocity_field(shape, components, np.asarray(m_values).reshape(shape), t)
         if not np.all(np.isfinite(vel)):
-            axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: shape[ax]] for ax in range(self.dimension)]
-            mesh = np.meshgrid(*axes, indexing="ij")
             self._name_a_non_finite_foot_velocity(
-                np.stack([g.ravel() for g in mesh], axis=1),
+                self._nd_node_points(shape),
                 np.asarray(m_values, dtype=float).reshape(shape).ravel(),
                 np.stack([c.ravel() for c in components], axis=1),
                 vel.reshape(-1, self.dimension),
@@ -2380,12 +2378,19 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         loops perform -- including the reduced ``n-1`` shape the periodic nD path uses.
         """
         d = self.dimension
-        coord_axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: grid_shape[ax]] for ax in range(d)]
-        mesh = np.meshgrid(*coord_axes, indexing="ij")
-        x_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        x_flat = self._nd_node_points(grid_shape)
         p_flat = np.stack([np.asarray(grad_components[ax]).ravel() for ax in range(d)], axis=1)
         vel_flat = self._characteristic_foot_velocity(x_flat, np.asarray(m_shaped).ravel(), p_flat, t)
         return vel_flat.reshape((*tuple(grid_shape), d))
+
+    def _nd_node_points(self, grid_shape: tuple[int, ...]) -> np.ndarray:
+        """The nodes of an nD grid as ``(N, d)`` points, from ``self.grid.coordinates`` truncated to ``grid_shape`` per
+        axis, which reproduces the ``self.grid.coordinates[ax][multi_idx[ax]]`` lookup of the nD loops, the reduced
+        ``n-1`` shape of the periodic path included."""
+        d = self.dimension
+        coord_axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: grid_shape[ax]] for ax in range(d)]
+        mesh = np.meshgrid(*coord_axes, indexing="ij")
+        return np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
 
     def _trace_characteristic_backward(
         self, x_current: np.ndarray | float, p_optimal: np.ndarray | float, dt: float
