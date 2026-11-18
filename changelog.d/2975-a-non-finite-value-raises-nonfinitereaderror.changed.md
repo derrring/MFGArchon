@@ -15,8 +15,9 @@
 - **A callable volatility's or drift's output and a volatility tensor are no longer refused where they are read**
   (#2975). The step that reads them judges them where they entered, so an entry the step discards, such as a periodic
   repeated endpoint, no longer raises, and one that enters raises `NonFiniteReadError` naming the step and the node. A
-  volatility's NaN at a Dirichlet node enters the step through D·g, so it still raises, now naming the step and the
-  node.
+  volatility's NaN at a Dirichlet node a kept row reads enters the step through D·g, so it still raises, now naming the
+  step and the node; at a Dirichlet node no kept row reads, such as the corner of a 2-D grid whose walls are all
+  Dirichlet, it is discarded, and no longer raises.
 
   The message gives the count of non-finite entries and the first of them, `nan`, `inf` or `-inf`, as the old messages
   that printed the value did.

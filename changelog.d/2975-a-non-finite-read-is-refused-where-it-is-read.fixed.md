@@ -15,10 +15,12 @@
     CFL condition only for a result computed from finite reads. Both FP-FDM steps take a volatility that varies, or
     holds a NaN, to the Ito branch; a NaN chose the row-scaled branch, which dropped it with a finite wrong M. A capped
     exit's switch is part of the step, so a NaN its outflow reads, in the capped node's wall row or the source, is
-    named; `> cap` read it as under the cap, with a finite wrong M. A NaN volatility at a Dirichlet node reaches the
-    step through D·g and is named, as it was refused before. A NaN at a periodic repeated endpoint, and a NaN
-    `M_initial` at the wall of a 1-D BC whose segments are all Dirichlet, where level 0 holds g, are read and
-    discarded, and solve as before. A volatility tensor's NaN is named as non-finite, not under a PSD message;
+    named; `> cap` read it as under the cap, with a finite wrong M. A callable volatility's NaN at a Dirichlet node a
+    kept row reads reaches the step through D·g and is named, as it was refused before; at a Dirichlet node no kept row
+    reads, such as the corner of a 2-D grid whose walls are all Dirichlet, it is discarded and solves, where it was
+    refused before. A NaN at a periodic repeated endpoint, and a NaN `M_initial` at the wall of a 1-D BC whose
+    segments are all Dirichlet, where level 0 holds g, are read and discarded, and solve as before. A volatility
+    tensor's NaN is named as non-finite, not under a PSD message;
   - **HJB-SL on a grid of two or more dimensions**: a non-finite value update was replaced by U at the next time, and
     the step raised only past 10% of the points, so a NaN at a few nodes gave a finite wrong U with `converged` True.
     The fill and the threshold are deleted, and the update names the read behind it;

@@ -559,8 +559,12 @@ Where a value is judged:
   and the values it was formed from. A result still non-finite with every entry at 0 was computed from finite reads,
   and only that check names the CFL condition. Within the step:
   - both FP-FDM steps take a volatility array that varies, or holds a non-finite entry, to the Ito branch, where each
-    entry enters its own column, read over every node but a periodic repeated endpoint, which neither branch reads
-    (`volatility_varies`). `ptp > 1e-12` read a NaN as uniform, and the row-scaled branch dropped it;
+    entry enters its own column. The test reads the volatility only where the step's matrix reads it
+    (`volatility_varies`): at the implicit step, the nodes its kept rows read, which leaves out a periodic repeated
+    endpoint and a Dirichlet node no kept row reads, such as the corner of a 2-D grid whose walls are all Dirichlet; at
+    the explicit step, every node but a periodic repeated endpoint. `ptp > 1e-12` read a NaN as uniform, and the
+    row-scaled branch dropped it. A finite volatility that varies only at nodes the step does not read takes the
+    row-scaled branch, which differs from the Ito branch there by rounding;
   - FP-FDM's capped exit switches a node's row by its outflow, which reads that node's wall row (the volatility, $U$
     or the face velocities), $m$ and the source. The switch is part of the step: a non-finite outflow is the step's to
     name, where `> cap` read it as under the cap;

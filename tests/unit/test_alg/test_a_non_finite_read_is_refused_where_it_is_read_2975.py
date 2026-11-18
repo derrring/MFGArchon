@@ -1459,8 +1459,8 @@ _U_FIELD = np.array([np.sin(np.pi * _X) * (1 + 0.1 * k) for k in range(6)])
 @pytest.mark.parametrize("varying", [True, False], ids=["varying twin", "uniform twin"])
 def test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin(varying):
     """F1: the implicit step's choice of the Ito branch reads a non-finite entry as varying, as the explicit step does,
-    so a NaN at a Dirichlet node reaches the step through D * g and is named, under a uniform twin as under a varying
-    one. With `ptp > 1e-12`, a NaN chose the row-scaled branch, which drops it: a varying twin's solve came back finite
+    so a NaN at a Dirichlet node a kept row reads (row 1 reads node 0) reaches the step through D * g and is named,
+    under a uniform twin as under a varying one. With `ptp > 1e-12`, a NaN chose the row-scaled branch, which drops it: a varying twin's solve came back finite
     and unlike its twin (max |dM| 0.142), with no error (review 2's F1)."""
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 
