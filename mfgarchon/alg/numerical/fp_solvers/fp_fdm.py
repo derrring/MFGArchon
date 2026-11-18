@@ -546,7 +546,7 @@ class FPFDMSolver(BaseFPSolver):
         # Resolve velocity for internal routing:
         # drift_field (after deprecation handling) is velocity when effective_U is None
         _internal_velocity = drift_field if (effective_U is None and isinstance(drift_field, np.ndarray)) else None
-        # No drift was handed: the zero U above forms no drift, so the step reads no drift coefficient (#2977).
+        # No drift was handed: the zero U above forms none, so #2977's refusal does not reach the step (#2977).
         drift_free = potential_field is None and drift_field is None
 
         # Route tensor volatility to tensor path

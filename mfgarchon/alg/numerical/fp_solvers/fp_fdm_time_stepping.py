@@ -1046,7 +1046,7 @@ def solve_fp_nd_full_system(
           where ndim is spatial dimension.
     drift_free : bool
         The caller handed no drift, so ``U_solution_for_drift`` is zero and forms none: no drift coefficient is
-        resolved from the Hamiltonian (#2977).
+        resolved for a Hamiltonian that is not separable, or for none (#2977).
 
     Returns
     -------
@@ -1111,9 +1111,14 @@ def solve_fp_nd_full_system(
         dispatcher's, and 0.0 gives the drift exactly. Without a velocity the drift comes from U, and c is resolved.
         """
         if velocity_field is None:
-            # A solve handed no drift (``drift_free``) forms none from its zero U, and 0.0 gives it exactly: a
-            # Hamiltonian with no scalar coefficient is not refused for a drift it does not have (#2977).
-            return 0.0 if drift_free else resolve_coupling_coefficient()
+            # A solve handed no drift (``drift_free``) forms none from its zero U, so #2977's refusal of a Hamiltonian
+            # that is not separable, or of none, does not reach it, and 0.0 gives that drift exactly. A separable one
+            # is resolved as before, #1542's and #2900's refusals included.
+            from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+            if drift_free and not isinstance(getattr(problem, "hamiltonian_class", None), SeparableHamiltonian):
+                return 0.0
+            return resolve_coupling_coefficient()
         return _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else 0.0
 
     # Get grid spacing and geometry
