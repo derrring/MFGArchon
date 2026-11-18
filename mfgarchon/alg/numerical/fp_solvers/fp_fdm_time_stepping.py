@@ -510,20 +510,20 @@ def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray
     return np.array([axes[d][multi_idx[d]] for d in range(len(multi_idx))], dtype=float)
 
 
-def volatility_varies(volatility: Any, boundary_conditions: Any, shape: tuple[int, ...]) -> bool:
+def volatility_varies(volatility: Any, read: np.ndarray) -> bool:
     """Whether a per-point volatility takes the Ito branch, Delta(D m), of an FP-FDM step: the one test both the explicit
-    and the implicit step read (#2841, #2975). It reads every node but a periodic repeated endpoint, which neither
-    branch reads: it holds the value of the node it repeats (`shared_at_repeated_endpoints`). A non-finite entry reads
-    as varying, so it takes the branch where each entry enters its own column and the step names it if it enters;
-    `ptp > 1e-12` read a NaN as uniform, and the row-scaled branch dropped it with the step finite and unlike its
-    twin (review 2 of #2981). For every finite volatility the branch is the one `ptp > 1e-12` over every node chose,
-    apart from a volatility that varies at a repeated endpoint alone."""
+    and the implicit step read (#2841, #2975). It reads the volatility at ``read`` alone, the flat nodes whose own value
+    the step reads, each step handing the set it reads (the implicit step, the column support of its kept rows' unit
+    stencil; the explicit step, every node `shared_at_repeated_endpoints` keeps). A non-finite entry there reads as
+    varying, so it takes the branch where each entry enters its own column and the step names it; `ptp > 1e-12` read a
+    NaN as uniform, and the row-scaled branch dropped it with the step finite and unlike its twin (review 2 of #2981).
+    For a finite volatility the branch is the one `ptp > 1e-12` over every node chose, apart from one that varies only
+    at nodes the step does not read (a periodic repeated endpoint, a Dirichlet node no kept row reads), where the two
+    branches differ by rounding alone."""
     arr = np.asarray(volatility, dtype=float)
     if arr.ndim == 0:
         return False
-    if arr.shape[: len(shape)] == tuple(shape):
-        arr = shared_at_repeated_endpoints(arr, boundary_conditions, shape)
-    return not float(np.ptp(arr)) <= 1e-12
+    return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12
 
 
 def initial_density_as_held(m_initial: Any, boundary_conditions: Any, grid: Any, ndim: int) -> np.ndarray:
@@ -836,7 +836,14 @@ def solve_timestep_explicit_with_drift(
         boundary_conditions = no_flux_bc(dimension=ndim)
 
     sigma_arr = np.asarray(volatility)
-    varying_sigma = volatility_varies(sigma_arr, boundary_conditions, shape)
+    # The nodes whose own volatility this step reads: every node its shared coefficient keeps, which is all but a
+    # periodic repeated endpoint (it takes the value of the node it repeats, below).
+    if sigma_arr.ndim > 0 and sigma_arr.shape[: len(shape)] == tuple(shape):
+        nodes = np.arange(int(np.prod(shape)), dtype=float).reshape(shape)
+        kept = shared_at_repeated_endpoints(nodes, boundary_conditions, shape).reshape(-1) == nodes.reshape(-1)
+        varying_sigma = volatility_varies(sigma_arr, np.flatnonzero(kept))
+    else:
+        varying_sigma = volatility_varies(sigma_arr, np.arange(sigma_arr.size))
 
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
     if varying_sigma:
@@ -1804,12 +1811,75 @@ def solve_timestep_full_nd(
     # They get a constraint row instead of a stencil row: they are not unknowns.
     repeated_rows: list[int] = []
 
+    # Determine BC type (Issue #859: fail on unknown; an object without is_uniform is refused, #1559)
+    # Issue #1250 2026-06-10 audit: uniform 'neumann' is homogeneous-Neumann, identical
+    # to 'no_flux' for the FP equation; the operator paths already treat them identically
+    # (laplacian.py:307, advection.py:316).  Route to the same no-flux boundary handler.
+    try:
+        # A FLUX wall is the no-flux row with its flux on the right-hand side (`_flux_sources`, #2581).
+        is_no_flux = boundary_conditions.is_uniform and boundary_conditions.type in ("no_flux", "neumann", "flux")
+        is_uniform = boundary_conditions.is_uniform
+    except AttributeError:
+        # An object FP-FDM cannot honour fails loud, whatever it carries (#1559): the legacy fdm_bc_1d class,
+        # which this branch once routed per type, is removed, and nothing else without `is_uniform` is read.
+        raise TypeError(
+            f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
+            "Expected BoundaryConditions from mfgarchon.geometry.boundary (periodic_bc, dirichlet_bc, no_flux_bc)."
+        ) from None
+
+    def row_kind(multi_idx: tuple[int, ...]) -> tuple[str, int | None]:
+        """What a node's row is: "repeated" (with the node it repeats), "dirichlet", "wall" or "interior". The one
+        classification the assembly below makes, and the unit stencil's pass before it."""
+        # On an endpoint-inclusive periodic grid the last node along a wrapping axis IS the first
+        # one. Assembling a stencil row for it solves for one cell too many on a torus one cell too
+        # long, and the duplicated pair drifts apart because their neighbourhoods differ -- the
+        # #1822 seam. Constrain it to the node it repeats.
+        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape, grid)
+        if mirror is not None:
+            return "repeated", grid.get_index(tuple(mirror))
+        is_boundary = is_boundary_point(multi_idx, shape, ndim)
+        if is_boundary and _is_dirichlet_at_point(boundary_conditions, multi_idx, shape, grid):
+            return "dirichlet", None
+        if (is_no_flux or not is_uniform) and is_boundary and not wraps_everywhere:
+            return "wall", None
+        return "interior", None
+
+    kinds = [row_kind(grid.get_multi_index(flat_idx)) for flat_idx in range(N_total)]
+
     # A volatility that varies in space is Ito diffusion, Delta(D m) (#2841): the rows below are then assembled with
-    # D = 0, and the handlers assemble their own unit stencil a second time (sigma = 1, so D = 1/2, with no time
-    # derivative and no advection), which `ito_diffusion` scales by D column by column. A row scaled by its own D_i
-    # was D Delta m, which does not conserve mass. The scalar and uniform-array paths are left as they were.
-    varying_sigma = isinstance(volatility, np.ndarray) and volatility_varies(volatility, boundary_conditions, shape)
+    # D = 0, and the handlers' unit stencil (sigma = 1, so D = 1/2, with no time derivative and no advection) is scaled
+    # by D column by column (`ito_diffusion`). A row scaled by its own D_i was D Delta m, which does not conserve mass.
+    # The unit stencil is assembled at the kept rows (neither Dirichlet nor repeated) before the branch is chosen: its
+    # column support is the set of nodes whose volatility the Ito branch reads, which is all the choice reads (review 2
+    # of #2981), and the same rows are the Ito branch's. The scalar path assembles none.
     unit_rows: tuple[list[int], list[int], list[float]] = ([], [], [])
+    if isinstance(volatility, np.ndarray):
+        unit_u = np.zeros_like(u_flat)
+        for flat_idx, (kind, _) in enumerate(kinds):
+            multi_idx = grid.get_multi_index(flat_idx)
+            if kind == "wall":
+                _refuse_provider_wall_coefficients(boundary_conditions)
+                _BOUNDARY_HANDLERS[advection_scheme](
+                    *unit_rows, flat_idx, multi_idx, shape, ndim, np.inf, 1.0, 0.0, spacing, unit_u, grid
+                )
+            elif kind == "interior":
+                _INTERIOR_HANDLERS[advection_scheme](
+                    *unit_rows,
+                    flat_idx,
+                    multi_idx,
+                    shape,
+                    ndim,
+                    np.inf,
+                    1.0,
+                    0.0,
+                    spacing,
+                    unit_u,
+                    grid,
+                    boundary_conditions,
+                )
+        varying_sigma = volatility_varies(volatility, np.unique(np.asarray(unit_rows[1], dtype=int)))
+    else:
+        varying_sigma = False
     zero_u = np.zeros_like(u_flat) if varying_sigma else u_flat
 
     def local_sigma(multi_idx: tuple[int, ...]) -> float:
@@ -1838,7 +1908,7 @@ def solve_timestep_full_nd(
             grid,
             interface_velocity=interface_velocity,
         )
-        if varying_sigma:
+        if varying_sigma and unit is not unit_rows:  # the kept rows' unit stencil is assembled once, above
             _BOUNDARY_HANDLERS[advection_scheme](
                 *unit, flat_idx, multi_idx, shape, ndim, np.inf, 1.0, 0.0, spacing, zero_u, grid
             )
@@ -1851,57 +1921,26 @@ def solve_timestep_full_nd(
         d_field = diffusion_from_volatility(np.asarray(volatility), kind="field")
         return (matrix - ito_diffusion({"laplacian": unit_laplacian.tocsr()}, {"laplacian": d_field})).tocsr()
 
-    # Build matrix by iterating over all grid points
-    for flat_idx in range(N_total):
+    # Build matrix by iterating over all grid points, each row by its kind (`row_kind`)
+    for flat_idx, (kind, mirror_flat) in enumerate(kinds):
         # Convert flat index to multi-index (i, j, k, ...)
         multi_idx = grid.get_multi_index(flat_idx)
 
-        # On an endpoint-inclusive periodic grid the last node along a wrapping axis IS the first
-        # one. Assembling a stencil row for it solves for one cell too many on a torus one cell too
-        # long, and the duplicated pair drifts apart because their neighbourhoods differ -- the
-        # #1822 seam. Constrain it to the node it repeats and move on.
-        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape, grid)
-        if mirror is not None:
-            mirror_flat = grid.get_index(tuple(mirror))
+        if kind == "repeated":
             row_indices.extend((flat_idx, flat_idx))
             col_indices.extend((flat_idx, mirror_flat))
             data_values.extend((1.0, -1.0))
             repeated_rows.append(flat_idx)
             continue
 
-        sigma_local = local_sigma(multi_idx)
-
-        # Check if this is a boundary point
-        is_boundary = is_boundary_point(multi_idx, shape, ndim)
-
-        # Determine BC type (Issue #859: fail on unknown; an object without is_uniform is refused, #1559)
-        # Issue #1250 2026-06-10 audit: uniform 'neumann' is homogeneous-Neumann, identical
-        # to 'no_flux' for the FP equation; the operator paths already treat them identically
-        # (laplacian.py:307, advection.py:316).  Route to the same no-flux boundary handler.
-        try:
-            # A FLUX wall is the no-flux row with its flux on the right-hand side (`_flux_sources`, #2581).
-            is_no_flux = boundary_conditions.is_uniform and boundary_conditions.type in (
-                "no_flux",
-                "neumann",
-                "flux",
-            )
-            is_uniform = boundary_conditions.is_uniform
-        except AttributeError:
-            # An object FP-FDM cannot honour fails loud, whatever it carries (#1559): the legacy fdm_bc_1d class,
-            # which this branch once routed per type, is removed, and nothing else without `is_uniform` is read.
-            raise TypeError(
-                f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
-                "Expected BoundaryConditions from mfgarchon.geometry.boundary (periodic_bc, dirichlet_bc, no_flux_bc)."
-            ) from None
-
         # Dispatch to scheme-specific assembly function (Issue #859)
-        if is_boundary and _is_dirichlet_at_point(boundary_conditions, multi_idx, shape, grid):
+        if kind == "dirichlet":
             # Dirichlet BC: row becomes identity (m = prescribed value)
             bc_value = _get_dirichlet_value_at_point(
                 boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx), geometry=grid
             )
             _add_boundary_dirichlet_entries(row_indices, col_indices, data_values, flat_idx, dt, bc_value)
-        elif (is_no_flux or not is_uniform) and is_boundary and not wraps_everywhere:
+        elif kind == "wall":
             # No-flux or mixed BC at boundary: scheme-specific assembly
             _refuse_provider_wall_coefficients(boundary_conditions)
             add_wall_rows((row_indices, col_indices, data_values), unit_rows, flat_idx, multi_idx)
@@ -1916,7 +1955,7 @@ def solve_timestep_full_nd(
                 shape,
                 ndim,
                 dt,
-                sigma_local,
+                local_sigma(multi_idx),
                 coupling_coefficient,
                 spacing,
                 u_flat,
@@ -1924,21 +1963,6 @@ def solve_timestep_full_nd(
                 boundary_conditions,
                 interface_velocity=interface_velocity,
             )
-            if varying_sigma:
-                _INTERIOR_HANDLERS[advection_scheme](
-                    *unit_rows,
-                    flat_idx,
-                    multi_idx,
-                    shape,
-                    ndim,
-                    np.inf,
-                    1.0,
-                    0.0,
-                    spacing,
-                    zero_u,
-                    grid,
-                    boundary_conditions,
-                )
 
     # Assemble sparse matrix
     A_matrix = with_ito(

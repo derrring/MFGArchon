@@ -1714,3 +1714,131 @@ def test_a_nan_only_at_the_per_point_jacobians_trials_solves_as_at_4ca7c9e0():
     U = _solve_with_trial_nans(True)
     assert np.all(np.isfinite(U))
     assert float(np.max(np.abs(U - _solve_with_trial_nans(False)))) < 1e-7
+
+
+def _mixed_2d_bc():
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    return BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+            BCSegment(name="right", bc_type=BCType.NO_FLUX, boundary="x_max"),
+            BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
+            BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
+        ],
+    )
+
+
+# grid -> (dimension, BC, a node and whether the kept rows read it): row 1 reads a 1-D Dirichlet node through D * g;
+# no kept row reads a 2-D all-Dirichlet corner; the no-flux wall row beside it reads a corner on a Dirichlet face;
+# neither branch reads a periodic repeated endpoint.
+_READ_SET_GRIDS = {
+    "1-D Dirichlet": (1, lambda: bnd.dirichlet_bc(value=0.0, dimension=1), 0, True),
+    "2-D all Dirichlet": (2, lambda: bnd.dirichlet_bc(value=0.0, dimension=2), 0, False),
+    "2-D Dirichlet face against no-flux faces": (2, _mixed_2d_bc, 0, True),
+    "1-D periodic": (1, lambda: bnd.periodic_bc(dimension=1, domain_bounds=np.array([[0.0, 1.0]])), 6, False),
+}
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.parametrize("grid", list(_READ_SET_GRIDS))
+def test_the_implicit_steps_branch_choice_reads_exactly_the_volatility_its_kept_rows_read(grid, monkeypatch):
+    """F1 (a'): the implicit step's branch choice reads the volatility at the nodes whose value the step's kept rows
+    read, and nowhere else. The oracle is the assembled matrix: a node is read when perturbing its volatility moves
+    the matrix the step solves (only the kept rows read a volatility). So a 2-D Dirichlet corner no kept row reads is
+    left out, one a no-flux wall row reads stays in, and a periodic repeated endpoint is left out."""
+    import scipy.sparse.linalg
+
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+    from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping as stepping
+
+    dim, bc, node, read_there = _READ_SET_GRIDS[grid]
+    shape = (7,) if dim == 1 else (6, 6)
+    problem = MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=list(shape), boundary_conditions=bc()),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1),
+        Nt=1,
+    )
+    axes = np.meshgrid(*[np.linspace(0.0, 1.0, n) for n in shape], indexing="ij")
+    sigma = 0.2 + 0.1 * axes[0] + (0.05 * axes[1] if dim == 2 else 0.0)
+    U = np.zeros((2, *shape))
+    matrices, reads = [], []
+    solve = scipy.sparse.linalg.spsolve
+    choose = stepping.volatility_varies
+    monkeypatch.setattr(
+        scipy.sparse.linalg, "spsolve", lambda A, b, *a, **k: (matrices.append(A.toarray()), solve(A, b, *a, **k))[1]
+    )
+    monkeypatch.setattr(
+        stepping, "volatility_varies", lambda v, read: (reads.append({int(i) for i in read}), choose(v, read))[1]
+    )
+
+    def matrix(field):
+        matrices.clear()
+        FPFDMSolver(problem).solve_fp_system(
+            np.ones(shape), potential_field=U, volatility=field, volatility_kind="field", show_progress=False
+        )
+        return matrices[0]
+
+    base = matrix(sigma)
+    moved = set()
+    for j in range(sigma.size):
+        perturbed = sigma.copy()
+        perturbed.flat[j] *= 1.5
+        if not np.array_equal(matrix(perturbed), base):
+            moved.add(j)
+    assert reads[0] == moved, (sorted(reads[0] - moved), sorted(moved - reads[0]))
+    assert (node in moved) is read_there
+    assert 0 < len(moved) < sigma.size or read_there
+
+
+def test_a_volatility_nan_at_a_corner_no_kept_row_reads_solves_as_its_twin():
+    """F1 (a'): on an all-Dirichlet 2-D grid no kept row reads the corner's volatility, so its NaN neither enters the
+    step nor chooses the branch, and the solve is its twin's, bit for bit. Read by the choice, as under (a), it took the
+    Ito branch while the uniform twin kept the row-scaled one, 4.4e-16 apart under FDM_UPWIND (the outcome census)."""
+
+    def solve(nan):
+        volatility = (lambda t, x: np.where(_at_point(x, (0.0, 0.0)), NAN, 0.2)) if nan else 0.2
+        return _problem(
+            dimension=2, bc=bnd.dirichlet_bc(value=0.0, dimension=2), model_kw={"volatility": volatility}
+        ).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=20, verbose=False)
+
+    nan, twin = solve(True), solve(False)
+    assert np.array_equal(nan.U, twin.U)
+    assert np.array_equal(nan.M, twin.M)
+
+
+class _MassOfAStackNonFinite(TensorProductGrid):
+    """A user geometry whose measure answers a stack of densities, one per time level, with a non-finite first mass,
+    while it answers one density finitely: construction's own mass check passes, and the iterator's read is reached."""
+
+    def integrate(self, field, *args, **kwargs):
+        out = np.array(super().integrate(field, *args, **kwargs), dtype=float)
+        if out.ndim == 1 and out.size == np.asarray(field).shape[0] and np.asarray(field).ndim > self.dimension:
+            out[0] = NAN
+        return out
+
+
+def test_the_iterator_names_a_non_finite_initial_mass_its_geometry_reports():
+    """The iterator reads the initial mass, the first of the per-step masses the geometry's measure gives, through the
+    owner. Every density entry is finite, so only a geometry the user hands in reaches it (review 1's p8, as a
+    subclass; review 2's mutant INITIAL_MASS_UNREAD)."""
+    grid = _MassOfAStackNonFinite(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=bnd.no_flux_bc(dimension=1))
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
+        problem = MFGProblem(
+            model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.0 * np.asarray(x[0]), u_terminal=lambda x: 0.0 * np.asarray(x[0]), T=0.5
+            ),
+            Nt=5,
+        )
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FixedPointIterator: the initial mass "
+        + OWN
+        + r": 1 of 1 values, the first nan, at the initial density's total mass",
+    ):
+        problem.solve(max_iterations=3, verbose=False)
