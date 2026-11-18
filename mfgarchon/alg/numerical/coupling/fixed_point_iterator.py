@@ -881,7 +881,7 @@ class FixedPointIterator(BaseCouplingIterator):
                         )
                         if initial_mass <= 0.0:
                             raise ValueError(
-                                f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
+                                f"initial density has non-positive total mass ({initial_mass!r}); "
                                 "mass conservation is undefined and the solve that produced it is already wrong"
                             )
                         mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))

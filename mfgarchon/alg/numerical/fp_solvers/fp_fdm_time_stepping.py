@@ -89,7 +89,7 @@ if TYPE_CHECKING:
 
 # Import from responsibility-based modules per issue #388
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, refuse_the_first_read_that_entered
+from mfgarchon.utils.non_finite_read import refuse_the_first_read_that_entered
 
 from .fp_fdm_advection import compute_advection_from_drift_nd, compute_advection_term_nd
 from .fp_fdm_alg_divergence_centered import (
@@ -510,6 +510,36 @@ def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray
     return np.array([axes[d][multi_idx[d]] for d in range(len(multi_idx))], dtype=float)
 
 
+def volatility_varies(volatility: Any, boundary_conditions: Any, shape: tuple[int, ...]) -> bool:
+    """Whether a per-point volatility takes the Ito branch, Delta(D m), of an FP-FDM step: the one test both the explicit
+    and the implicit step read (#2841, #2975). It reads every node but a periodic repeated endpoint, which neither
+    branch reads: it holds the value of the node it repeats (`shared_at_repeated_endpoints`). A non-finite entry reads
+    as varying, so it takes the branch where each entry enters its own column and the step names it if it enters;
+    `ptp > 1e-12` read a NaN as uniform, and the row-scaled branch dropped it with the step finite and unlike its
+    twin (review 2 of #2981). For every finite volatility the branch is the one `ptp > 1e-12` over every node chose,
+    apart from a volatility that varies at a repeated endpoint alone."""
+    arr = np.asarray(volatility, dtype=float)
+    if arr.ndim == 0:
+        return False
+    if arr.shape[: len(shape)] == tuple(shape):
+        arr = shared_at_repeated_endpoints(arr, boundary_conditions, shape)
+    return not float(np.ptp(arr)) <= 1e-12
+
+
+def initial_density_as_held(m_initial: Any, boundary_conditions: Any, grid: Any, ndim: int) -> np.ndarray:
+    """Level 0 as the FP-FDM step holds it. A 1-D BC whose segments are all Dirichlet holds its Dirichlet walls at g(0)
+    at level 0 too, read at the wall node; a BC with a non-Dirichlet segment keeps the caller's initial density there
+    (#1258's pin). Every later level is the implicit step's, whose rows hold g(t_{k+1}); the explicit steps refuse a
+    Dirichlet wall. A post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone
+    (#2535). The solver's door reads this row, so an entry the BC overwrites is read and discarded, not judged (#2975,
+    ruling 3 as amended after review 2 of #2981); the time loop starts from it."""
+    held = np.array(m_initial, dtype=np.float64, copy=True)
+    if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
+        for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
+            held[index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node, geometry=grid)
+    return held
+
+
 def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, BoundaryFace, np.ndarray]]:
     """The walls of a 1-D grid whose own BC holds a Dirichlet value, as ``(index, face, wall node)``. Each wall by its
     own type: a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535). A capped exit
@@ -806,9 +836,7 @@ def solve_timestep_explicit_with_drift(
         boundary_conditions = no_flux_bc(dimension=ndim)
 
     sigma_arr = np.asarray(volatility)
-    # A non-finite entry takes the per-point branch, where each entry enters its own column; `ptp > 1e-12` read it as
-    # uniform, and the scalar branch kept entry 0 alone (#2975).
-    varying_sigma = sigma_arr.ndim > 0 and not float(np.ptp(sigma_arr)) <= 1e-12
+    varying_sigma = volatility_varies(sigma_arr, boundary_conditions, shape)
 
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
     if varying_sigma:
@@ -1255,15 +1283,7 @@ def solve_fp_nd_full_system(
 
     # Allocate solution array
     M_solution = np.zeros((Nt, *shape), dtype=np.float64)
-    M_solution[0] = m_initial_condition.copy()
-
-    # A 1-D BC whose segments are all Dirichlet holds its Dirichlet walls at g(0) at level 0 too, read at the wall
-    # node; a BC with a non-Dirichlet segment keeps the caller's initial density there (#1258's pin). Every later
-    # level is the implicit step's, whose rows hold g(t_{k+1}); the explicit steps refuse a Dirichlet wall. A
-    # post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
-    if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
-        for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
-            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node, geometry=grid)
+    M_solution[0] = initial_density_as_held(m_initial_condition, boundary_conditions, grid, ndim)
 
     # Edge cases
     if Nt <= 1:
@@ -1438,7 +1458,17 @@ def solve_fp_nd_full_system(
                     reads[name], i, shape
                 )
 
-            refuse_the_first_read_that_entered("FPFDMSolver", reads, lambda read: step(read, None), where)
+            tensor = reads.get("the volatility tensor")
+            refuse_the_first_read_that_entered(
+                "FPFDMSolver",
+                reads,
+                lambda read: step(read, None),
+                where,
+                # A tensor's diagonal set to 0.0 is not PSD, and the step refuses it; the identity's entries are.
+                substitutes=None
+                if tensor is None
+                else {"the volatility tensor": np.broadcast_to(np.eye(ndim), np.shape(tensor))},
+            )
             nan_count = np.sum(~np.isfinite(M_next))
             raise ValueError(
                 f"FP solver produced NaN/Inf at timestep {k + 1}/{Nt - 1} "
@@ -1502,8 +1532,10 @@ def solve_fp_nd_full_system(
 def _tensor_at_step(
     tensor_field: Any, timestep_idx: int, dt: float, M_current: np.ndarray, grid: Any, shape: tuple, ndim: int
 ) -> Any:
-    """The volatility tensor step ``timestep_idx`` reads: a callable Sigma(t, x, m) -> (d, d) evaluated at every node
-    (PSD-checked), as ``(*shape, d, d)``; an array is the step's as handed, and checked by the step."""
+    """The volatility tensor step ``timestep_idx`` reads: a callable Sigma(t, x, m) -> (d, d) evaluated at every node, as
+    ``(*shape, d, d)``, PSD-checked; an array is the step's as handed, and checked by the step. The PSD check judges the
+    finite matrices only, so a non-finite one reaches the step as read, whose failure path names an entry that enters
+    the result, and one the step discards (a periodic repeated endpoint) is not judged (#2975)."""
     if not callable(tensor_field):
         return tensor_field
     t = timestep_idx * dt
@@ -1776,7 +1808,7 @@ def solve_timestep_full_nd(
     # D = 0, and the handlers assemble their own unit stencil a second time (sigma = 1, so D = 1/2, with no time
     # derivative and no advection), which `ito_diffusion` scales by D column by column. A row scaled by its own D_i
     # was D Delta m, which does not conserve mass. The scalar and uniform-array paths are left as they were.
-    varying_sigma = isinstance(volatility, np.ndarray) and float(np.ptp(volatility)) > 1e-12
+    varying_sigma = isinstance(volatility, np.ndarray) and volatility_varies(volatility, boundary_conditions, shape)
     unit_rows: tuple[list[int], list[int], list[float]] = ([], [], [])
     zero_u = np.zeros_like(u_flat) if varying_sigma else u_flat
 
@@ -1962,17 +1994,6 @@ def solve_timestep_full_nd(
     # no-flux row: with the Dirichlet row in its place, its balance is the mass the exit takes, so the cap, the switch
     # and the outflow record all read the row the scheme already owns. The rows are built at the Dirichlet nodes alone.
     capped_exits = _capped_exit_nodes(boundary_conditions, dirichlet_nodes, shape, grid, spacing)
-    if source_term is not None and capped_exits:
-        # A capped exit's switch below reads the balance at its node, the source among it, and decides that node's row;
-        # the Dirichlet row it keeps otherwise discards the source, so a NaN there would leave the cap unenforced with
-        # the step finite. It is read at the decision, at the capped nodes alone (#2975); every other source entry is
-        # judged by the step's failure path. The private outflow record reads the balance too, and reaches no result.
-        nodes = sorted(capped_exits)
-        refuse_a_non_finite_read(
-            "FPFDMSolver",
-            (f"t={time:g}, " if time is not None else "") + f"the capped exits' nodes {nodes}",
-            {"source_term": np.asarray(source_term, dtype=float).ravel()[nodes]},
-        )
     _refuse_a_cap_off_upwind([segment.name for segment, _ in capped_exits.values()], advection_scheme)
     A_step, b_step = A_matrix, b_rhs
     walls = None
@@ -1996,6 +2017,15 @@ def solve_timestep_full_nd(
         m_flux = sparse.linalg.spsolve(A_step, flux_sources) if has_flux else None
         m_full = m_next_flat + m_flux if has_flux else m_next_flat
         through = (balance - walls @ m_full) * weights  # mass per unit time through each Dirichlet node's walls
+        # The switch is part of the step (#2975). Its outflow at a capped node reads that node's wall row (sigma, U or
+        # the face velocities), m and the balance with the source, and `> cap` would read a NaN there as under the
+        # cap, keeping the Dirichlet row with the step finite. Such a node's entry of the result takes the NaN, so the
+        # step's failure path names the read it came from, as it names any read that enters the result.
+        unread_caps = [i for i in capped_exits if not np.isfinite(through[i])]
+        if unread_caps:
+            m_next_flat = np.array(m_next_flat, dtype=float, copy=True)
+            m_next_flat[unread_caps] = np.nan
+            break
         over = [
             i
             for i, (segment, half) in capped_exits.items()

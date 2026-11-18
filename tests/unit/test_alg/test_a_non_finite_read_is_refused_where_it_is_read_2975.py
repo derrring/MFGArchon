@@ -81,8 +81,20 @@ def _reads_its_door_first(function: ast.FunctionDef) -> bool:
     )
 
 
+def _the_handed_row(name: str, value: ast.expr) -> bool:
+    """Whether a door's read maps ``name`` to the argument handed under that name: the parameter itself, or the row as
+    the solver holds it at level 0, built from it (`initial_density_as_held`, ruling 3 as amended after review 2), in a
+    conditional that passes None through. A value such as None, or another array, maps the name to something else."""
+    if isinstance(value, ast.IfExp):
+        return _the_handed_row(name, value.orelse)
+    if isinstance(value, ast.Call) and _named(value.func, "initial_density_as_held"):
+        return bool(value.args) and _named(value.args[0], name)
+    return _named(value, name)
+
+
 def _door_reads(function: ast.FunctionDef) -> set[str]:
-    """The names a door's read at "its door" maps, read from its first statement's mapping."""
+    """The names a door's read at "its door" maps, read from its first statement's mapping: each name whose value is the
+    argument handed under it (`_the_handed_row`), so a door that maps the name to something else does not read it."""
     body = (
         function.body[1:]
         if isinstance(function.body[0], ast.Expr) and isinstance(function.body[0].value, ast.Constant)
@@ -90,7 +102,11 @@ def _door_reads(function: ast.FunctionDef) -> set[str]:
     )
     mapping = body[0].value.args[2]
     assert isinstance(mapping, ast.Dict)
-    return {key.value for key in mapping.keys if isinstance(key, ast.Constant)}
+    return {
+        key.value
+        for key, value in zip(mapping.keys, mapping.values, strict=True)
+        if isinstance(key, ast.Constant) and _the_handed_row(key.value, value)
+    }
 
 
 def _doors() -> dict[str, ast.FunctionDef]:
@@ -165,6 +181,27 @@ def _solution_rows(door: str) -> set[str]:
     if door.endswith(".solve_fp_system"):
         return {"M_initial", "initial_particles"} if "FPParticleSolver" in door else {"M_initial"}
     return {"U_terminal", "U_final_condition_at_T"} if "WeakFormHJBSolver" in door else {"U_terminal"}
+
+
+_READ_SHAPES = {
+    "the parameter": ('{"M_initial": M_initial}', {"M_initial"}),
+    "the row as held": (
+        '{"M_initial": None if M_initial is None else initial_density_as_held(M_initial, bc, grid, 1)}',
+        {"M_initial"},
+    ),
+    "None": ('{"M_initial": None}', set()),
+    "another array": ('{"M_initial": m}', set()),
+}
+
+
+@pytest.mark.parametrize(("mapping", "reads"), list(_READ_SHAPES.values()), ids=list(_READ_SHAPES))
+def test_the_door_read_predicate_tells_the_handed_row_from_another_value(mapping, reads):
+    """The control for the test below: a door that maps its row's name to None, or to another array, reads nothing
+    (review 2 of #2981 found a key-only reading passed those)."""
+    tree = ast.parse(
+        f'class A:\n    def solve_fp_system(self, M_initial):\n        refuse_a_non_finite_read("S", "its door", {mapping})\n'
+    )
+    assert _door_reads(tree.body[0].body[0]) == reads
 
 
 @pytest.mark.parametrize("door", sorted(_DOORS))
@@ -307,7 +344,8 @@ def test_hjb_fdm_in_two_dimensions_names_the_term():
             NumericalScheme.FVM_UPWIND,
             r"FPFVMSolver's advection sub-step count: the optimal control at the faces of axis 0 "
             + OWN
-            + r": .*, the first nan, at time step \d+ of 5, .*, face \(\d+,\), where it entered",
+            + r": .*, the first nan, at time step \d+ of 5, .*, face \(\d+,\), formed from potential_field at nodes "
+            r"\(\d+,\) and \(\d+,\), handed as [-0-9.e]+ and [-0-9.e]+, where it entered",
         ),
     ],
     ids=["FDM_UPWIND", "FVM_UPWIND"],
@@ -349,7 +387,8 @@ def test_fp_fdm_does_not_judge_a_source_at_a_dirichlet_node_whose_row_discards_i
 def test_fp_fdm_refuses_a_source_at_a_capped_exit_whose_cap_reads_it():
     """A capped exit reads the balance at its Dirichlet nodes, source included, to decide its switch (#2581), so the
     source there reaches the solution: at 4ca7c9e0 a NaN only at the capped exit node returned a finite M unlike its
-    twin's (max |M - M_twin| 1.66) with no error. A coupled solve refuses a capped exit, so the FP is solved alone."""
+    twin's (max |M - M_twin| 1.66) with no error. The switch is part of the step, so the step's failure path names it
+    where it entered (review 2 of #2981). A coupled solve refuses a capped exit, so the FP is solved alone."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
     from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
@@ -364,7 +403,8 @@ def test_fp_fdm_refuses_a_source_at_a_capped_exit_whose_cap_reads_it():
     solver = FPFDMSolver(_problem(), boundary_conditions=capped)
     with pytest.raises(
         NonFiniteReadError,
-        match=r"FPFDMSolver: source_term " + OWN + r": .*, the first nan, at t=.*, the capped exits' nodes \[10\]",
+        match=r"FPFDMSolver: source_term " + OWN + r": 1 of 11 values, the first nan, at time step 1 of 5, from t=0 to "
+        r"t=0\.1, node \(10,\), where it entered the step",
     ):
         solver.solve_fp_system(
             np.exp(0.5 * x),
@@ -426,9 +466,9 @@ def test_the_network_fp_refuses_a_non_finite_transition_rate(monkeypatch):
     u = np.tile(np.linspace(0.0, 1.0, network.num_nodes), (6, 1))
     with pytest.raises(
         NonFiniteReadError,
-        match=r"FPNetworkSolver: the transition rates out of node \d+ "
+        match=r"FPNetworkSolver: the transition rate out of node 1 into node 4 "
         + OWN
-        + r": .*, the first nan, at t=.*, node \d+",
+        + r": 1 of 1 values, the first nan, at t=0 ",
     ):
         FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(
             np.ones(network.num_nodes), potential_field=u
@@ -446,7 +486,10 @@ def _door_calls():
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
     from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBSemiLagrangianSolver
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
     from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
+    from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+    from mfgarchon.alg.numerical.meshless_galerkin.hjb_solver import MeshlessGalerkinHJBSolver
     from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
     from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver, NetworkPolicyIterationHJBSolver
     from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
@@ -463,6 +506,20 @@ def _door_calls():
         problem = _problem()
         return HJBGFDMSolver(problem, collocation_points=problem.geometry.get_spatial_grid().reshape(-1, 1), delta=0.3)
 
+    def howard():
+        problem = _problem()
+        points = problem.geometry.get_spatial_grid().reshape(-1, 1)
+        return HJBHowardSolver(
+            problem,
+            stencil_provider=HJBGFDMSolver(problem, collocation_points=points, delta=0.3),
+            alpha_star=lambda t_idx, x, p, m: -p,
+            max_iter=15,
+        )
+
+    def meshless(solver):
+        problem = _problem()
+        return solver(problem, collocation_points=problem.geometry.get_spatial_grid().reshape(-1, 1), delta=0.35)
+
     hjb = {"M_density": np.ones((6, 11)), "U_terminal": np.zeros(11), "U_coupling_prev": np.zeros((6, 11))}
     fp = {"M_initial": np.ones(11), "potential_field": np.zeros((6, 11))}
     return {
@@ -470,6 +527,13 @@ def _door_calls():
         "HJBSemiLagrangianSolver": (lambda: HJBSemiLagrangianSolver(_problem()), "solve_hjb_system", hjb),
         "HJBWENOSolver": (lambda: HJBWENOSolver(_problem()), "solve_hjb_system", hjb),
         "HJBGFDMSolver": (gfdm, "solve_hjb_system", hjb),
+        "HJBHowardSolver": (
+            howard,
+            "solve_hjb_system",
+            {"M_density": hjb["M_density"], "U_terminal": hjb["U_terminal"]},
+        ),
+        "MeshlessGalerkinHJBSolver": (lambda: meshless(MeshlessGalerkinHJBSolver), "solve_hjb_system", hjb),
+        "MeshlessGalerkinFPSolver": (lambda: meshless(MeshlessGalerkinFPSolver), "solve_fp_system", fp),
         "NetworkHJBSolver": (
             lambda: NetworkHJBSolver(on_network),
             "solve_hjb_system",
@@ -497,6 +561,9 @@ _CALLED_DOORS = [
     "HJBSemiLagrangianSolver",
     "HJBWENOSolver",
     "HJBGFDMSolver",
+    "HJBHowardSolver",
+    "MeshlessGalerkinHJBSolver",
+    "MeshlessGalerkinFPSolver",
     "NetworkHJBSolver",
     "NetworkPolicyIterationHJBSolver",
     "FPFDMSolver",
@@ -508,10 +575,12 @@ _CALLED_DOORS = [
 
 
 @pytest.mark.filterwarnings("ignore:HJBGFDMSolver:UserWarning")
+@pytest.mark.filterwarnings("ignore:HJBHowardSolver:UserWarning")
 @pytest.mark.parametrize("solver", _CALLED_DOORS)
 def test_a_door_refuses_a_non_finite_solution_row_by_name(solver):
     """At 4ca7c9e0 the HJB doors returned a non-finite U for a NaN U_terminal, and the FP doors blamed the CFL condition
-    (#2976, folded here). The weak forms' and Howard's doors are read by the AST tests above."""
+    (#2976, folded here). Howard's and the weak forms' doors are called too, through the meshless solvers, which take
+    the weak forms' doors as they are (review 2 of #2981: a door mapping its row to None passed the AST tests alone)."""
     build, method, handed = _door_calls()[solver]
     row = "U_terminal" if method == "solve_hjb_system" else "M_initial"
     args = dict(handed)
@@ -1070,7 +1139,8 @@ def test_a_dual_hamiltonians_dp_is_non_finite_where_its_value_is():
 
 def test_the_network_fp_names_the_value_field_its_rates_are_read_from():
     """The door no longer reads potential_field, so a NaN in it reaches the rates the step reads from it: the value field
-    at the node and its neighbours is named first, ahead of the rates computed from it (#2975)."""
+    is named first, ahead of the rates computed from it, by its own node and the rate that reads it. Node 1's rates are
+    the first that read node 4, so the two nodes differ (review 2 of #2981)."""
     from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
     from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
     from mfgarchon.geometry.graph.network_geometry import GridNetwork
@@ -1084,9 +1154,9 @@ def test_the_network_fp_names_the_value_field_its_rates_are_read_from():
     u[0, 4] = NAN
     with pytest.raises(
         NonFiniteReadError,
-        match=r"FPNetworkSolver: potential_field at node \d+ and its neighbours "
+        match=r"FPNetworkSolver: potential_field at node 4, read for the rate out of node 1 into node 4 "
         + OWN
-        + r": .*, the first nan, at t=0, ",
+        + r": 1 of 1 values, the first nan, at t=0 ",
     ):
         FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(
             np.ones(network.num_nodes), potential_field=u
@@ -1129,3 +1199,518 @@ def test_the_nd_value_iteration_names_the_read_at_its_start_state():
         HJBFDMSolver(problem, solver_type="fixed_point", max_newton_iterations=400).solve_hjb_system(
             M_density=np.ones((6, 6, 6)), U_terminal=terminal, U_coupling_prev=np.zeros((6, 6, 6))
         )
+
+
+# --- Review 2 of #2981: the pins its mutants showed missing, and F0, F1, F2. Each docstring names what it pins. ---
+
+
+class _DpReadsM(SeparableHamiltonian):
+    """H's value does not read m; its dp is dp * (m / m), NaN where m is NaN, so only the Jacobian reads the density."""
+
+    def dp(self, t, x, p, m):
+        out = np.array(super().dp(t=t, x=x, p=p, m=m), dtype=float, copy=True)
+        fac = np.asarray(m, dtype=float) / np.asarray(m, dtype=float)
+        return out * (fac.reshape(fac.shape + (1,) * (out.ndim - fac.ndim)) if out.ndim > fac.ndim else fac)
+
+
+def _at_point(x, point):
+    hit = np.ones(np.shape(np.asarray(x[0], dtype=float)), dtype=bool)
+    for k, c in enumerate(point):
+        hit &= np.isclose(np.asarray(x[k], dtype=float), c, rtol=0, atol=1e-9)
+    return hit
+
+
+# The step fails on the NaN before its naming runs, as it must: Newton's line search and its singular Jacobian warn.
+@pytest.mark.filterwarnings("ignore:Newton stopped:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
+def test_the_nd_newton_step_names_a_callable_volatility():
+    """n-D HJB-FDM's naming hands the volatility to the start state's terms first. A run with it left out names the
+    Hamiltonian's value instead (review 2's MK); at 4ca7c9e0 CoefficientField refused it at its read."""
+    volatility = lambda t, x: np.where(_at_point(x, (0.6, 0.4)) & (abs(float(t) - 0.2) < 1e-9), NAN, 0.2)  # noqa: E731
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"HJBFDMSolver's Newton step: volatility " + OWN + r": 1 of 1 values, the first nan, at t=0\.2, x=\[0\.6",
+    ):
+        _problem(dimension=2, model_kw={"volatility": volatility}).solve(max_iterations=20, verbose=False)
+
+
+def test_the_jacobian_names_a_density_only_its_dp_reads():
+    """The Jacobian's naming tests the handed density before H's dp, for an H whose value ignores m. Without that test it
+    names H's dp (review 2's MG); at 4ca7c9e0 the solve returned a non-finite U."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"HJBFDMSolver's Newton step: M_density "
+        + OWN
+        + r": 1 of 1 values, the first nan, at t=0\.4, x=\[0\.4\],"
+        r".*\(of the 1 non-finite row\(s\) the Jacobian keeps\)",
+    ):
+        HJBFDMSolver(_problem(_DpReadsM(QuadraticControlCost(control_cost=1.0)))).solve_hjb_system(
+            **_hjb_door_args(M_density=_nan_at(np.tile(1.0 + 0.5 * _X, (6, 1)), (slice(None), 4)))
+        )
+
+
+_SL_TERM = 0.2 * np.sin(np.pi * np.linspace(0.0, 1.0, 6))[:, None] * np.ones((6, 6))
+
+
+@pytest.mark.parametrize(
+    ("hamiltonian", "where"),
+    [
+        ({"coupling": lambda m: 0.5 * np.asarray(m, dtype=float)}, r"value update: M_density " + OWN),
+        (_DpReadsM(QuadraticControlCost(control_cost=1.0)), r"CFL number: M_density " + OWN),
+    ],
+    ids=["value update, a coupling", "CFL number, an H whose dp reads m"],
+)
+def test_hjb_sl_names_a_density_where_it_enters(hamiltonian, where):
+    """HJB-SL's value update and its CFL number each test the handed density before the terms read from it. Without
+    those tests they name the coupling, or H's dp (review 2's MH and MI); at 4ca7c9e0 the first returned a finite wrong
+    U and the second raised "cfl_substeps got a non-finite CFL number"."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
+
+    M = _nan_at(np.ones((6, 6, 6)), (slice(None), 2, 3))
+    with pytest.raises(NonFiniteReadError, match=rf"HJBSemiLagrangianSolver's {where}: 1 of 1 values, the first nan"):
+        HJBSemiLagrangianSolver(_problem(hamiltonian, dimension=2)).solve_hjb_system(
+            M_density=M, U_terminal=_SL_TERM, U_coupling_prev=np.tile(_SL_TERM, (6, 1, 1))
+        )
+
+
+def test_hjb_fdm_names_the_other_populations_row():
+    """The residual's naming reads the other population's row, beside the own density. Without it the coupling is named
+    (review 2's MQ); at 4ca7c9e0 the solve raised a ConvergenceError."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    def coupling(m, cross_density):
+        return 2.0 * np.asarray(cross_density[1], dtype=float) if len(cross_density) > 1 else 0.0 * np.asarray(m)
+
+    hamiltonian = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=coupling,
+        coupling_dm=lambda m: np.zeros_like(np.asarray(m, dtype=float)),
+        population_index=0,
+    )
+    stack = np.concatenate([np.tile(1.0 + 0.5 * _X, (6, 1)), np.tile(0.5 + 0.0 * _X, (6, 1))], axis=1)
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"HJBFDMSolver's Newton step: cross_density "
+        + OWN
+        + r": 1 of 1 values, the first nan, at t=0\.4, x=\[0\.4\]",
+    ):
+        HJBFDMSolver(_problem(hamiltonian)).solve_hjb_system(
+            **_hjb_door_args(), cross_density=_nan_at(stack, (slice(None), 15))
+        )
+
+
+def _nan_near(c, finite):
+    return lambda t, x: np.where(np.isclose(np.asarray(x[0], dtype=float), c, rtol=0, atol=1e-9), NAN, finite)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "named"),
+    [
+        ({"model_kw": {"volatility": _nan_near(0.3, 0.2)}}, "volatility"),
+        ({"hamiltonian": {"potential": _nan_near(0.3, 0.1)}}, "SeparableHamiltonian's potential"),
+    ],
+    ids=["the volatility before the source", "H's terms before the source"],
+)
+def test_hjb_fdm_names_in_its_stated_order(kwargs, named):
+    """Two reads non-finite at one node: the residual names them in the order the body states, the volatility first,
+    then H's terms, the source last. Named in another order, the source comes first (review 2's MA and MB)."""
+    with pytest.raises(NonFiniteReadError, match=rf"HJBFDMSolver's Newton step: {named} {OWN}: 1 of 1 values"):
+        _problem(source_term_hjb=_nan_near(0.3, 0.0), **kwargs).solve(max_iterations=20, verbose=False)
+
+
+def _source_nan_at(nodes):
+    return lambda t, x: np.where(np.isin(np.round(np.asarray(x[0], dtype=float), 9), np.round(_X[nodes], 9)), NAN, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("nodes", "bc", "named"),
+    [([3, 7], None, 3), ([5, 10], "dirichlet", 5)],
+    ids=["two that enter", "one that enters before one a Dirichlet row discards"],
+)
+def test_the_fp_failure_path_names_the_first_read_that_entered(nodes, bc, named):
+    """The bisection restores the entries in reading order and names the first whose restoration makes the step non-
+    finite. A bisection that never restores names the last non-finite entry: node 7, or the discarded node 10 as if it
+    had entered (review 2's mutant BISECT_NO_RESTORE)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    problem = _problem(bc=bnd.dirichlet_bc(value=0.0, dimension=1) if bc else None)
+    with pytest.raises(
+        NonFiniteReadError,
+        match=rf"FPFDMSolver: source_term {OWN}: 2 of 11 values, the first nan, at time step 1 of 5, .*, node \({named},\), "
+        r"where it entered the step",
+    ):
+        FPFDMSolver(problem).solve_fp_system(
+            np.ones(11), potential_field=np.zeros((6, 11)), source_term=_source_nan_at(nodes), show_progress=False
+        )
+
+
+# The overflow from finite reads is the input: it warns where the step divides.
+@pytest.mark.filterwarnings("ignore:overflow encountered:RuntimeWarning")
+def test_a_computed_failure_beside_a_discarded_nan_names_nothing():
+    """A NaN only at a Dirichlet node, which the step discards, beside an overflow from finite reads: the failure is
+    computed, so the step's own message stands. Without the computed-failure branch the bisection names the discarded
+    source as having entered (review 2's mutant NO_COMPUTED_FAILURE_BRANCH)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    problem = _problem(bc=bnd.dirichlet_bc(value=0.0, dimension=1))
+    with pytest.raises(ValueError, match=r"FP solver produced NaN/Inf at timestep 1/5") as caught:
+        FPFDMSolver(problem).solve_fp_system(
+            np.full(11, 1e308), drift_field=np.full((6, 11), 1e3), source_term=_source_nan_at([0]), show_progress=False
+        )
+    assert not isinstance(caught.value, NonFiniteReadError)
+
+
+def _drift_nan_at(node):
+    def drift(t, x, m):
+        out = 0.1 * np.ones_like(np.asarray(m, dtype=float))
+        if node is not None and abs(float(t) - 0.2) < 1e-9:
+            out = out.copy()
+            out[node] = NAN
+        return out
+
+    return drift
+
+
+def test_a_drift_callable_is_named_where_it_enters_and_not_read_where_it_is_discarded():
+    """A drift callable's output is handed to the step as read (#2975): named where it enters, at node 5, and not judged
+    at the periodic repeated endpoint, which the step discards. Refused where CoefficientField reads it, as at
+    4ca7c9e0, the repeated endpoint is refused too (review 2's mutant DRIFT_CALLABLE_READ_AGAIN)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: the drift callable " + OWN + r": 1 of 11 values, the first nan, at time step 3 of 5, .*, "
+        r"node \(5,\), where it entered the step",
+    ):
+        FPFDMSolver(_problem()).solve_fp_system(np.ones(11), drift_field=_drift_nan_at(5), show_progress=False)
+    periodic = _problem(bc=bnd.periodic_bc(dimension=1, domain_bounds=np.array([[0.0, 1.0]])))
+    m0 = 1.0 + 0.5 * np.sin(2 * np.pi * _X)
+    twin = FPFDMSolver(periodic).solve_fp_system(m0.copy(), drift_field=_drift_nan_at(None), show_progress=False)
+    nan = FPFDMSolver(periodic).solve_fp_system(m0.copy(), drift_field=_drift_nan_at(10), show_progress=False)
+    assert np.array_equal(nan, twin)
+
+
+def _tensor_problem(bc):
+    return MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[7, 7], boundary_conditions=bc),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.05),
+        Nt=4,
+    )
+
+
+def _tensor_nan_at(point):
+    def tensor(t, x, m):
+        S = np.array([[0.2, 0.05], [0.05, 0.25]])
+        if point is not None and np.allclose(x, point):
+            S = S.copy()
+            S[0, 0] = NAN
+        return S
+
+    return tensor
+
+
+def _solve_tensor(bc, point):
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    xs = np.linspace(0.0, 1.0, 7)
+    U = np.tile((0.1 * np.add.outer(xs, xs))[None], (5, 1, 1))
+    return FPFDMSolver(_tensor_problem(bc)).solve_fp_system(
+        np.ones((7, 7)),
+        potential_field=U,
+        volatility=_tensor_nan_at(point),
+        volatility_kind="tensor",
+        show_progress=False,
+    )
+
+
+def test_a_callable_tensor_is_named_as_non_finite_where_it_enters_and_not_where_it_is_discarded():
+    """A non-finite tensor entry is named as non-finite by the step, not under the PSD message its meaningless
+    eigenvalues gave (review 2's F3), and the periodic repeated endpoint, which the step discards, is not judged.
+    Refused where it is read, as at 4ca7c9e0, the repeated endpoint is refused too (review 2's mutant
+    TENSOR_READ_AGAIN)."""
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: the volatility tensor "
+        + OWN
+        + r": 1 of 196 values, the first nan, .*, entry \(3, 3, 0, 0\) "
+        r"of its \(7, 7, 2, 2\), where it entered the step",
+    ):
+        _solve_tensor(bnd.no_flux_bc(dimension=2), (0.5, 0.5))
+    periodic = bnd.periodic_bc(dimension=2)
+    assert np.array_equal(_solve_tensor(periodic, (1.0, 0.5)), _solve_tensor(periodic, None))
+
+
+def _volatility_nan_at(node, varying):
+    def volatility(t, x):
+        a = np.asarray(x[0], dtype=float)
+        out = 0.2 + 0.3 * a if varying else np.full(a.shape, 0.2)
+        return out if node is None else np.where(np.isclose(a, node, rtol=0, atol=1e-9), NAN, out)
+
+    return volatility
+
+
+_U_FIELD = np.array([np.sin(np.pi * _X) * (1 + 0.1 * k) for k in range(6)])
+
+
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
+@pytest.mark.parametrize("varying", [True, False], ids=["varying twin", "uniform twin"])
+def test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin(varying):
+    """F1: the implicit step's choice of the Ito branch reads a non-finite entry as varying, as the explicit step does,
+    so a NaN at a Dirichlet node reaches the step through D * g and is named, under a uniform twin as under a varying
+    one. With `ptp > 1e-12`, a NaN chose the row-scaled branch, which drops it: a varying twin's solve came back finite
+    and unlike its twin (max |dM| 0.142), with no error (review 2's F1)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    problem = _problem(
+        model_kw={"volatility": _volatility_nan_at(0.0, varying)}, bc=bnd.dirichlet_bc(value=0.0, dimension=1)
+    )
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: volatility "
+        + OWN
+        + r": 1 of 11 values, the first nan, at time step 1 of 5, .*, node \(0,\), "
+        r"where it entered the step",
+    ):
+        FPFDMSolver(problem).solve_fp_system(1.0 + 0.5 * _X, potential_field=_U_FIELD, show_progress=False)
+
+
+def _periodic_endpoint_solve(nan, varying):
+    """FP-FDM's implicit step on a 1-D endpoint-inclusive periodic grid, the volatility NaN only at x = 1 (review 2's p3)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    def volatility(t, x):
+        a = np.asarray(x[0], dtype=float)
+        out = 0.2 + 0.1 * np.sin(2 * np.pi * a) + 0.05 * a * (1 - a) if varying else np.full(a.shape, 0.2)
+        return np.where(np.isclose(a, 1.0) & nan, NAN, out)
+
+    periodic = bnd.periodic_bc(dimension=1, domain_bounds=np.array([[0.0, 1.0]]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=volatility
+            ),
+            domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=periodic),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+            Nt=5,
+        )
+    U = np.array([0.1 * np.sin(2 * np.pi * _X) * (1 + 0.1 * k) for k in range(6)])
+    return FPFDMSolver(problem).solve_fp_system(
+        1.0 + 0.3 * np.cos(2 * np.pi * _X), potential_field=U, show_progress=False
+    )
+
+
+@pytest.mark.parametrize("varying", [True, False], ids=["varying twin", "uniform twin"])
+def test_a_volatility_nan_at_the_periodic_repeated_endpoint_does_not_choose_the_branch(varying):
+    """F1: the repeated endpoint holds the value of the node it repeats, so neither branch reads its own entry, and the
+    branch choice does not read it either: its NaN solves as the twin, bit for bit. Read there, a NaN under a uniform
+    twin takes the Ito branch while the twin keeps the row-scaled one, 2.2e-16 apart; with `ptp > 1e-12` over every
+    node, a NaN there moved a varying twin onto the row-scaled branch (max |dM| 1.39, the value-level census)."""
+    assert np.array_equal(_periodic_endpoint_solve(True, varying), _periodic_endpoint_solve(False, varying))
+
+
+def _capped_bc(capped):
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    return BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="entry", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+            BCSegment(
+                name="exit",
+                bc_type=BCType.DIRICHLET,
+                value=0.0,
+                boundary="x_max",
+                **({"flux_capacity": 0.5} if capped else {}),
+            ),
+        ],
+    )
+
+
+@pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
+def test_the_capped_switch_is_part_of_the_step_and_its_wall_row_is_named():
+    """F2: the capped exit's switch reads the wall row at its node (sigma, U, the face velocities), not only the source,
+    and `> cap` read a NaN there as under the cap: a NaN volatility at the capped node gave a finite M 1.655 from its
+    twin's. The switch is part of the step, so the step's failure path names the read (review 2's F2)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    x = np.linspace(0.0, 1.0, 21)
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)),
+            volatility=_volatility_nan_at(1.0, False),
+        ),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=bnd.no_flux_bc(dimension=1)),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=20,
+    )
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: volatility "
+        + OWN
+        + r": 1 of 21 values, the first nan, at time step 1 of 20, .*, node \(20,\), "
+        r"where it entered the step",
+    ):
+        FPFDMSolver(problem, boundary_conditions=_capped_bc(True)).solve_fp_system(
+            np.exp(0.5 * x), potential_field=np.broadcast_to(-0.5 * x, (21, 21)).copy(), show_progress=False
+        )
+
+
+def _capped_column(capped, nan):
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    nx, ny, nt = 11, 9, 10
+    problem = MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.8),
+        domain=TensorProductGrid(
+            bounds=[(0.0, 1.0)] * 2, Nx_points=[nx, ny], boundary_conditions=bnd.no_flux_bc(dimension=2)
+        ),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=nt,
+    )
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(
+                name="exit",
+                bc_type=BCType.DIRICHLET,
+                value=0.0,
+                boundary="x_max",
+                **({"flux_capacity": 0.5} if capped else {}),
+            ),
+            BCSegment(name="walls", bc_type=BCType.NO_FLUX, boundary="x_min"),
+            BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
+            BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
+        ],
+    )
+    v = np.zeros((nt + 1, 2, nx, ny))
+    v[:, 0] = 2.0
+    if nan:
+        v[:, 1, nx - 1, ny // 2] = NAN
+    x = np.linspace(0.0, 1.0, nx)[:, None] * np.ones((1, ny))
+    return FPFDMSolver(problem, boundary_conditions=bc).solve_fp_system(
+        np.exp(0.5 * x), drift_field=v, show_progress=False
+    )
+
+
+def test_a_tangential_velocity_along_a_capped_column_is_named_and_solves_as_its_twin_uncapped():
+    """F2's 2-D case, present at 4ca7c9e0 too: a NaN tangential velocity on a face along the capped column enters only
+    the capped nodes' wall rows. Capped, the switch read it as under the cap (max |dM| 4.52 at both shas); it is named
+    now. Uncapped, the Dirichlet rows discard it, and the solve is its twin's."""
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPFDMSolver: drift_field " + OWN + r": 1 of 198 values, the first nan, .*, "
+        r"entry \(1, 10, 4\) of its \(2, 11, 9\), where it entered the step",
+    ):
+        _capped_column(True, True)
+    assert np.array_equal(_capped_column(False, True), _capped_column(False, False))
+
+
+def test_fp_fdm_door_does_not_judge_an_initial_density_entry_its_dirichlet_wall_overwrites():
+    """F0, ruling 3 as amended: a 1-D BC whose segments are all Dirichlet holds level 0 at g at the wall node, so an
+    M_initial entry there is read and discarded. The door reads the row as the step holds it, and the solve is the
+    twin's, bit for bit, as at 4ca7c9e0, where a door reading the handed row refused it (review 2's F0)."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    problem = _problem(bc=bnd.dirichlet_bc(value=0.0, dimension=1))
+    m0 = 1.0 + 0.5 * _X
+    nan = FPFDMSolver(problem).solve_fp_system(_nan_at(m0, 0), potential_field=_U_FIELD, show_progress=False)
+    twin = FPFDMSolver(problem).solve_fp_system(m0, potential_field=_U_FIELD, show_progress=False)
+    assert np.array_equal(nan, twin)
+    assert nan[0, 0] == 0.0
+
+
+def test_cfl_substeps_names_a_non_finite_cfl_number():
+    """`cfl_substeps` reads its CFL number through the owner before `math.ceil`, which raised "cannot convert float NaN to
+    integer". It is reached through HJB-SL's stage-2 paths, so it is pinned where it is read (review 2's mutant
+    CFL_SUBSTEPS_UNREAD)."""
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import cfl_substeps
+
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"cfl_substeps: the CFL number of the foot's velocity "
+        + OWN
+        + r": 1 of 1 values, the first nan, at its sub-step count",
+    ):
+        cfl_substeps(NAN)
+
+
+def test_the_particle_fps_door_refuses_non_finite_initial_particles_by_name():
+    """The particle FP's door reads the initial particles it is handed beside M_initial (review 2's door value mutant
+    mapped them to None and passed)."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    particles = np.linspace(0.05, 0.95, 50).reshape(-1, 1)
+    particles[7, 0] = NAN
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPParticleSolver\.solve_fp_system: initial_particles "
+        + OWN
+        + r": 1 of 50 values, the first nan, at its door",
+    ):
+        FPParticleSolver(_problem(), num_particles=50).solve_fp_system(
+            initial_particles=particles, potential_field=np.zeros((6, 11))
+        )
+
+
+class _NaNAtTheTrialsOnly(SeparableHamiltonian):
+    """NaN at x = 0.3, t = 0, where p lies within (5e-7, 5e-5) of the start state's momentum there: the per-point
+    Jacobian's trials (U +- eps moves p by about 1e-6 at dx 0.1), never the start state."""
+
+    p_start = None
+    active = True
+
+    def __call__(self, t, x, p, m):
+        out = super().__call__(t=t, x=x, p=p, m=m)
+        xs = np.ravel(np.asarray(x[0] if isinstance(x, tuple) else x, dtype=float))
+        if (
+            not self.active
+            or self.p_start is None
+            or xs.size != 1
+            or abs(float(np.ravel(t)[0])) > 1e-12
+            or abs(xs[0] - 0.3) > 1e-9
+        ):
+            return out
+        return NAN if 5e-7 < abs(float(np.ravel(p)[0]) - self.p_start) < 5e-5 else out
+
+
+def _solve_with_trial_nans(active):
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _compute_gradient_array_1d
+
+    hamiltonian = _NaNAtTheTrialsOnly(QuadraticControlCost(control_cost=1.0))
+    hamiltonian.active = active
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=bnd.no_flux_bc(dimension=1))
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
+        problem = MFGProblem(
+            model=Model(hamiltonian=hamiltonian, volatility=0.2),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.5 * np.asarray(x[0], dtype=float),
+                u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)),
+                T=0.1,
+            ),
+            Nt=1,
+        )
+    solver = HJBFDMSolver(problem, analytic_jacobian=False)
+    U_T = np.sin(np.pi * _X)
+    momentum = _compute_gradient_array_1d(U_T, 0.1, bc=solver.get_boundary_conditions(), upwind=True, time=0.0)
+    problem.hamiltonian_class.p_start = float(momentum[3])
+    return solver.solve_hjb_system(
+        M_density=np.tile(1.0 + 0.5 * _X, (2, 1)), U_terminal=U_T, U_coupling_prev=np.tile(U_T, (2, 1))
+    )
+
+
+def test_a_nan_only_at_the_per_point_jacobians_trials_solves_as_at_4ca7c9e0():
+    """Ruling 4's edge on the per-point path (design call C): the Jacobian's per-point fill is 0.0, as at 4ca7c9e0, so
+    a NaN only at its trial momenta leaves a finite U, 6.99e-9 from the twin; at 4ca7c9e0 the U had the same sha256,
+    11199f8e. A fill of NaN instead stops the Newton step with a ConvergenceError (review 2's M15, which the body had
+    said no pin could tell from 0.0)."""
+    U = _solve_with_trial_nans(True)
+    assert np.all(np.isfinite(U))
+    assert float(np.max(np.abs(U - _solve_with_trial_nans(False)))) < 1e-7

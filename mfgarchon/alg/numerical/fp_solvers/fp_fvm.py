@@ -108,6 +108,26 @@ Reconstruction = Literal["upwind", "muscl"]
 _CFL_TARGET = {"upwind": 0.8, "muscl": 0.4}
 
 
+def _from_the_handed_field(handed: np.ndarray | None, name: str, i: int, face_shape: tuple[int, ...]) -> str:
+    """Where a face velocity formed from ``potential_field`` came from, as the caller handed it: the two nodes along
+    the face's axis, and their values (#2975). A face between nodes j and j + 1 of axis d is formed from U at both; a
+    seam face, from the axis' last node and its first. Empty for a velocity the caller handed as such."""
+    if handed is None:
+        return ""
+    axis = int(name.rsplit("axis ", 1)[1])
+    face = tuple(int(j) for j in np.unravel_index(i, face_shape))
+    U = np.asarray(handed, dtype=float)
+    if "seam" in name:  # the seam holds one face per transverse index; its two nodes are the axis' last and first
+        low = (*face[:axis], U.shape[axis] - 1, *face[axis:])
+        high = (*face[:axis], 0, *face[axis:])
+    else:
+        low = face
+        high = (*face[:axis], face[axis] + 1, *face[axis + 1 :])
+    return (
+        f", formed from potential_field at nodes {low} and {high}, handed as {float(U[low])!r} and {float(U[high])!r}"
+    )
+
+
 class FPFVMSolver(BaseFPSolver):
     """Conservative finite-volume Fokker-Planck solver (1D/2D, upwind or MUSCL).
 
@@ -441,11 +461,13 @@ class FPFVMSolver(BaseFPSolver):
         k: int,
         n_steps: int,
         dt: float,
+        handed: np.ndarray | None = None,
     ) -> None:
         """The advection's sub-step count (`_advect`) reads every cell's outflow rate, a decision a non-finite face
         velocity enters before the step has a result: `math.ceil` of a NaN rate raised "cannot convert float NaN to
         integer", naming nothing. It is read here, ahead of that decision, on the same rates, and the first face
-        velocity whose NaN or infinity reaches a rate is named (#2975)."""
+        velocity whose NaN or infinity reaches a rate is named (#2975). ``handed`` is the ``potential_field`` row the
+        face velocities were formed from, named beside them as the caller handed it."""
         faces = [reads[f"{origin} at the faces of axis {d}"] for d in range(len(shape))]
         if not any(bool(np.any(a != 0.0)) for a in faces):
             return
@@ -471,6 +493,7 @@ class FPFVMSolver(BaseFPSolver):
             lambda name, i: (
                 f"time step {k + 1} of {n_steps}, t={k * dt:g}, "
                 f"face {tuple(int(j) for j in np.unravel_index(i, np.shape(velocities[name])))}"
+                + _from_the_handed_field(handed, name, i, np.shape(velocities[name]))
             ),
         )
 
@@ -669,7 +692,8 @@ class FPFVMSolver(BaseFPSolver):
                     m_next = m_next + dt * read["source_term"].reshape(shape)
                 return m_next
 
-            self._name_a_non_finite_outflow_rate(reads, origin, m.shape, spacing, k, n_steps, dt)
+            handed = field[idx] if velocity_mode == "potential" else None
+            self._name_a_non_finite_outflow_rate(reads, origin, m.shape, spacing, k, n_steps, dt, handed)
             m_before = m
             m = step(reads)
 
@@ -679,10 +703,12 @@ class FPFVMSolver(BaseFPSolver):
                 def rerun(read: dict[str, Any], m_before: np.ndarray = m_before) -> np.ndarray:
                     return step(read, m_before)
 
-                def where(name: str, i: int, k: int = k, reads: dict[str, Any] = reads) -> str:
+                def where(name: str, i: int, k: int = k, reads: dict[str, Any] = reads, handed: Any = handed) -> str:
                     at = np.unravel_index(i, shape if name == "source_term" else np.shape(reads[name]))
                     kind = "node" if name == "source_term" else "face"
-                    return f"time step {k + 1} of {n_steps}, t={k * dt:g}, {kind} {tuple(int(j) for j in at)}"
+                    return f"time step {k + 1} of {n_steps}, t={k * dt:g}, {kind} {tuple(int(j) for j in at)}" + (
+                        "" if name == "source_term" else _from_the_handed_field(handed, name, i, np.shape(reads[name]))
+                    )
 
                 refuse_the_first_read_that_entered("FPFVMSolver", reads, rerun, where)
                 n_bad = int(np.sum(~np.isfinite(m)))

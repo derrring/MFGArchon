@@ -533,16 +533,19 @@ class FPNetworkSolver(BaseFPSolver):
                 m=m,
             )
             # A NaN rate failed `alpha[j] > 0` and was dropped, read as no transition, so a NaN value field gave a
-            # finite M (#2975). The rates the step uses are refused here if one is not finite, after the value field at
-            # the node and its neighbours, which the rates are read from.
-            refuse_a_non_finite_read(
-                "FPNetworkSolver",
-                f"t={t:g}, node {i}",
+            # finite M (#2975). The rates the step uses are refused here if one is not finite, after the value field
+            # they are read from: at the node, which every rate out of it reads, and at each neighbour, which the rate
+            # into it reads. Each is named by its own node and the rate that reads it.
+            values = np.asarray(u, dtype=float)
+            reads = {f"potential_field at node {i}, read for the rates out of node {i}": values[i]}
+            reads.update(
                 {
-                    f"potential_field at node {i} and its neighbours": np.asarray(u, dtype=float)[[i, *neighbors]],
-                    f"the transition rates out of node {i}": alpha[neighbors],
-                },
+                    f"potential_field at node {j}, read for the rate out of node {i} into node {j}": values[j]
+                    for j in neighbors
+                }
             )
+            reads.update({f"the transition rate out of node {i} into node {j}": alpha[j] for j in neighbors})
+            refuse_a_non_finite_read("FPNetworkSolver", f"t={t:g}", reads)
             rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 

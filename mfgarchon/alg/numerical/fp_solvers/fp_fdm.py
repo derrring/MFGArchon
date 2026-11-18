@@ -19,6 +19,7 @@ from .fp_fdm_time_stepping import (
     _refuse_a_cap_off_upwind,
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
+    initial_density_as_held,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -474,12 +475,19 @@ class FPFDMSolver(BaseFPSolver):
         >>> alpha_quartic = -np.sign(grad_U) * np.abs(grad_U) ** (1/3)  # α* = -(∇U)^(1/3)
         >>> M = solver.solve_fp_system(m0, drift_field=alpha_quartic)
         """
-        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
-        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        # The solution's row handed at the door, its initial density, is read before any work as the step will hold it,
+        # and refused here if it is not finite: an entry the BC overwrites at level 0 is read and discarded, not judged
+        # (#2975, ruling 3 as amended). Every other array is judged by the step that reads it.
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_fp_system",
             "its door",
-            {"M_initial": M_initial},
+            {
+                "M_initial": None
+                if M_initial is None
+                else initial_density_as_held(
+                    M_initial, self.boundary_conditions, self.problem.geometry, self.problem.geometry.dimension
+                )
+            },
         )
         # Validate required parameter
         if M_initial is None:

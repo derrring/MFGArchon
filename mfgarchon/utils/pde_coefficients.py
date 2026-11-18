@@ -700,7 +700,9 @@ class CoefficientField:
         Raises
         ------
         ValueError
-            If tensor contains NaN/Inf, is not symmetric, or has negative eigenvalues
+            If a finite tensor is not symmetric, or has negative eigenvalues. A matrix with a non-finite entry is not
+            judged here: its eigenvalues mean nothing, and the step that reads the entry names it if it enters the
+            result (#2975).
 
         Examples
         --------
@@ -733,7 +735,8 @@ class CoefficientField:
 
         # Single tensor: shape (d, d)
         if sigma_tensor.ndim == 2:
-            self._check_single_tensor_psd(sigma_tensor, tolerance)
+            if np.all(np.isfinite(sigma_tensor)):
+                self._check_single_tensor_psd(sigma_tensor, tolerance)
             return
 
         # Spatially varying or spatiotemporal: shape (..., d, d)
@@ -745,6 +748,8 @@ class CoefficientField:
 
             # Check each tensor at each grid point
             for idx in range(num_tensors):
+                if not np.all(np.isfinite(reshaped[idx])):
+                    continue
                 try:
                     self._check_single_tensor_psd(reshaped[idx], tolerance)
                 except ValueError as e:
