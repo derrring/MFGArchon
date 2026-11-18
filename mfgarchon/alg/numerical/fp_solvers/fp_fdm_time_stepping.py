@@ -1323,7 +1323,8 @@ def solve_fp_nd_full_system(
         # What step k reads, in the order it reads it: the drift (a callable drift's output, U at t_k, or the velocity
         # at t_k), the coefficient (the volatility at t_k, or its tensor), then the source at t_{k+1} (implicit). The
         # step takes them from this mapping, so a non-finite result can be traced to the first of them that entered it
-        # (#2975). With a velocity handed, U is the zero-U dispatcher's, which is not a read.
+        # (#2975). U and the velocity are named by the argument FPFDMSolver.solve_fp_system took them under,
+        # potential_field and drift_field. With a velocity handed, U is the zero-U dispatcher's, which is not a read.
         reads: dict[str, Any] = {}
         U_current = None
         if drift.is_callable():
@@ -1332,10 +1333,10 @@ def solve_fp_nd_full_system(
         else:
             U_current = drift.get_U_at(k)
             if _velocity_array is None:
-                reads["U"] = U_current
+                reads["potential_field"] = U_current
         if _velocity_array is not None:
             # Issue #919: velocity_field -> face-centered interface velocity
-            reads["the velocity"] = _velocity_array[min(k, _velocity_array.shape[0] - 1)]
+            reads["drift_field"] = _velocity_array[min(k, _velocity_array.shape[0] - 1)]
         if use_tensor_diffusion:
             reads["the volatility tensor"] = _tensor_at_step(tensor_base, k, dt, M_current, grid, shape, ndim)
         else:
@@ -1358,7 +1359,7 @@ def solve_fp_nd_full_system(
             """Step k on ``read``: the tensor's explicit step, the explicit step of a callable drift with scalar
             diffusion, or the implicit step of the MFG-coupled mode (a velocity or U, scalar diffusion)."""
             vel_at_k = None
-            vel_slice = read.get("the velocity")
+            vel_slice = read.get("drift_field")
             if vel_slice is not None:
                 if vel_slice.ndim == 1:
                     # 1D face-centered: (Nx-1,) -> [array(Nx-1,)]
@@ -1372,7 +1373,7 @@ def solve_fp_nd_full_system(
             if use_tensor_diffusion:
                 return solve_timestep_tensor_explicit(
                     M_current,
-                    read.get("U", U_current),
+                    read.get("potential_field", U_current),
                     problem,
                     dt,
                     read["the volatility tensor"],
@@ -1405,7 +1406,7 @@ def solve_fp_nd_full_system(
             # MFG-coupled mode: scalar diffusion + U/velocity-based drift - implicit solver
             return solve_timestep_full_nd(
                 M_current,
-                read.get("U", U_current),
+                read.get("potential_field", U_current),
                 problem,
                 dt,
                 read["volatility"],

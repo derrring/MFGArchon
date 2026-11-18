@@ -562,7 +562,8 @@ Where a value is judged:
 - **HJB-SL's value update on a grid of two or more dimensions** (`diffusion_method="adi"`, the default): a non-finite
   update is named by the read behind it: the density where it entered, the foot velocity, the wall and the potentials,
   the density terms, the value;
-- **the network FP's transition rates** out of each node;
+- **the network FP's transition rates** out of each node, after the value field (`potential_field`) at the node and its
+  neighbours, which the rates are read from;
 - **where it is read**, for three reads that enter by definition, or whose decision consumes every entry:
   - a boundary value, through `_read_constant`, at construction (`BCSegment`, `MFGProblem`) and during the solve. The
     public functions that call its readers are `boundary_value`, `segment_value`, `segment_robin_coefficients`,

@@ -301,7 +301,7 @@ def test_hjb_fdm_in_two_dimensions_names_the_term():
     [
         (
             NumericalScheme.FDM_UPWIND,
-            r"FPFDMSolver: the velocity " + OWN + r": .*, the first nan, at time step \d+ of 5, .*, where it entered",
+            r"FPFDMSolver: drift_field " + OWN + r": .*, the first nan, at time step \d+ of 5, .*, where it entered",
         ),
         (
             NumericalScheme.FVM_UPWIND,
@@ -1047,3 +1047,28 @@ def test_a_dual_hamiltonians_dp_is_non_finite_where_its_value_is():
     x, p, m = (np.array([0.5]),), np.array([0.3]), 1.0
     assert np.isnan(dual(t=0.0, x=x, p=p, m=m))
     assert np.all(np.isnan(dual.dp(t=0.0, x=x, p=p, m=m)))
+
+
+def test_the_network_fp_names_the_value_field_its_rates_are_read_from():
+    """The door no longer reads potential_field, so a NaN in it reaches the rates the step reads from it: the value field
+    at the node and its neighbours is named first, ahead of the rates computed from it (#2975)."""
+    from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
+    from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    network = GridNetwork(width=3, height=3)
+    network.create_network()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=5, components=NetworkMFGComponents())
+    u = np.tile(np.linspace(0.0, 1.0, network.num_nodes), (6, 1))
+    u[0, 4] = NAN
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"FPNetworkSolver: potential_field at node \d+ and its neighbours "
+        + OWN
+        + r": .*, the first nan, at t=0, ",
+    ):
+        FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(
+            np.ones(network.num_nodes), potential_field=u
+        )
