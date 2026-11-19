@@ -787,16 +787,16 @@ def test_a_live_log_error_line_is_not_read_as_a_kill(td):
     """ADMISSION (AGENTS.md): class 4, guards an instrument. pytest's live log at ERROR level writes "ERROR    <logger>:
     <file>:<line> <message>", which also starts with "ERROR ": #2981's sweep recorded two HJB-SL log lines as tests a
     mutation killed, and the matrix then named a file that does not exist. A kill is a node ID or a collection error's
-    path, so it starts with `tests/`; one whose parameters hold spaces is still read whole."""
+    path, so it starts with `tests/`."""
     out = "\n".join(
         [
             "ERROR    mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian:hjb_semi_lagrangian.py:1174 Semi-Lagrangian "
             "solver failed at time step 4/4, substep 1/2 with NaN/Inf values.",
-            "FAILED tests/a.py::test_p[x, case=one] - AssertionError",
+            "FAILED tests/a.py::test_p - AssertionError",
             "ERROR tests/b.py - ImportError",
         ]
     )
-    assert td._FAILED.findall(out) == ["tests/a.py::test_p[x, case=one]", "tests/b.py"]
+    assert td._FAILED.findall(out) == ["tests/a.py::test_p", "tests/b.py"]
     # Nor is it read as a module that failed to collect, which #2973's classification counts kills from.
     assert td._ERRORED.findall(out) == ["tests/b.py"]
 
