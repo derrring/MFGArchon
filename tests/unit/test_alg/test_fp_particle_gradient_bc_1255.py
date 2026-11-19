@@ -177,7 +177,6 @@ class TestImplicitGeometryGradientNoTypeError:
             T = 1.0
             Nt = 2
             sigma = 0.1
-            coupling_coefficient = 0.5
             dimension = 1
 
             def get_components(self):

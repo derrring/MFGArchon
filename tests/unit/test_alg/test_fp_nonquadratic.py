@@ -343,9 +343,10 @@ class TestNonQuadraticHamiltonians:
 
 @pytest.mark.parametrize("solver", ["FPFDMSolver", "FPParticleSolver"])
 def test_a_solve_handed_no_drift_runs_under_a_hamiltonian_with_no_scalar_drift(solver):
-    """#2977: a CongestionHamiltonian has no scalar c making -c*grad(U) its drift, and a solve that forms a drift from U
-    under it is refused. Pure diffusion forms none, so it runs, and equals the solve under the quadratic separable
-    Hamiltonian with the same control cost: no Hamiltonian enters a solve with no drift."""
+    """#2977: c is read from a quadratic SeparableHamiltonian alone, so a solve that forms a drift from U under a
+    CongestionHamiltonian is refused. Pure diffusion forms none, so it runs, and equals the solve under the quadratic
+    separable Hamiltonian with the same control cost: no Hamiltonian enters a solve with no drift. The refusal of the
+    route that forms one is checked beside it, so a guard that widened to it would show."""
     from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
     from mfgarchon.core.hamiltonian import CongestionHamiltonian
 
@@ -361,6 +362,9 @@ def test_a_solve_handed_no_drift_runs_under_a_hamiltonian_with_no_scalar_drift(s
         else:
             fp = FPParticleSolver(problem, num_particles=200, seed=3)
         results.append(fp.solve_fp_system(m0, show_progress=False))
+        if isinstance(hamiltonian, CongestionHamiltonian):
+            with pytest.raises(NotImplementedError, match="is not a quadratic SeparableHamiltonian"):
+                fp.solve_fp_system(m0, potential_field=np.tile(-0.5 * np.linspace(0.0, 1.0, 11), (6, 1)))
     np.testing.assert_array_equal(results[0], results[1])
 
 

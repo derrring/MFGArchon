@@ -1388,7 +1388,7 @@ class HJBFDMSolver(BaseHJBSolver):
         if H_class is None:
             raise ValueError(
                 "build_linearized_operator requires a Hamiltonian class with dp() method. "
-                "Set problem.hamiltonian_class."
+                "Give the problem a Hamiltonian: Model(hamiltonian=...) or MFGComponents(hamiltonian=...)."
             )
 
         # One padding pass, then the owner: the momentum the residual evaluates and its derivatives come from the same

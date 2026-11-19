@@ -196,7 +196,7 @@ class FPParticleSolver(BaseFPSolver):
     _scheme_family = SchemeFamily.GENERIC  # Particle methods don't fit standard families
 
     # Issue #1043: the default body is VALUE_FUNCTION — it takes the value function U via
-    # `drift_field` and computes alpha = -coupling * grad(U) (see _solve_fp_system_cpu_1d/_nd).
+    # `drift_field` and forms the drift from grad(U) in `_advective_drift`.
     # The nD path honours `drift_is_precomputed=True` (VELOCITY mode: interpolate precomputed α).
     # The 1D CPU/GPU paths do NOT honour it and raise NotImplementedError if it is set (Issue
     # #1256 2026-06-10 audit).  The class trait records the default; the per-call exception lives
@@ -2053,9 +2053,9 @@ class FPParticleSolver(BaseFPSolver):
         ``_estimate_density_at_particles``: a subclass's own ``optimal_control`` may read either (#2903;
         docs/user/CONVENTIONS.md, "What the Fokker–Planck solver receives").
 
-        Any other Hamiltonian, or none, has no scalar c whose ``-c * grad`` is its drift, and
-        ``fp_drift_coefficient`` refuses it by name (#2977). This is the one place a particle drift is
-        formed from U, so the refusal reaches no other route.
+        For any other Hamiltonian, or none, ``fp_drift_coefficient`` refuses by name (#2977): it reads c only from a
+        quadratic ``SeparableHamiltonian``, which took the branch above, so the last line is a refusal and never
+        multiplies. This is the one place a particle drift is formed from U, so the refusal reaches no other route.
         """
         from mfgarchon.core.hamiltonian import SeparableHamiltonian, checked_control
         from mfgarchon.utils.pde_coefficients import fp_drift_coefficient

@@ -111,10 +111,9 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     control), and also for a non-separable Hamiltonian or no Hamiltonian at all (both outside this
     guard's quadratic-MINIMIZE-vs-not scope). What happens on that non-separable / no-Hamiltonian
     no-op depends on the caller: :func:`fp_drift_coefficient` refuses it itself (#2977); FVM and the weak-form
-    FEM / meshless-Galerkin family, which form
-    ``alpha*`` from ``H.optimal_control`` themselves, do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
-    non-separable Hamiltonian with their own ``NotImplementedError`` at the ``H.optimal_control`` call
-    site (Issue #1528).
+    FEM / meshless-Galerkin family form ``alpha*`` from ``H.optimal_control`` themselves and do NOT fall through to a
+    scalar (Issue #1528). Which Hamiltonians each of them accepts is stated in docs/user/CONVENTIONS.md, "What the
+    Fokker-Planck solver receives".
 
     Parameters
     ----------
@@ -157,9 +156,9 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     wide); it is deleted (#2977).
 
     Every other Hamiltonian is refused (#2977): a ``DualHamiltonian``, a ``CongestionHamiltonian``, any Hamiltonian that
-    is not a quadratic ``SeparableHamiltonian``, and a problem with none. The scalar ``c`` in ``-c·∇U`` is a quadratic
-    separable cost's alone, so the Hamiltonian is its one deciding place: the problem-level ``coupling_coefficient``
-    this read for those, a value no Hamiltonian decided (default 0.5), is deleted.
+    is not a quadratic ``SeparableHamiltonian``, and a problem with none. The library reads the scalar ``c`` in ``-c·∇U``
+    from a quadratic separable cost alone, so that Hamiltonian is its one deciding place: the problem-level
+    ``coupling_coefficient`` this read for the others, a value no Hamiltonian decided (default 0.5), is deleted.
 
     Fail-loud on a *smooth-but-not-quadratic-MINIMIZE* ``SeparableHamiltonian`` (Issue #1542 / RFC #1574
     Phase 0): a ``SeparableHamiltonian`` whose control cost is non-quadratic
@@ -188,7 +187,8 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
     # optimal control, so fail loud (single-sourced guard) rather than advect with the wrong physics
     # (Issue #1542 / RFC #1574 Phase 0).
     assert_quadratic_drift(problem, context="fp_drift_coefficient")
-    # Every other Hamiltonian, and a problem with none: no scalar c is its drift, and nothing else decides one (#2977).
+    # Every other Hamiltonian, and a problem with none: c is read from a quadratic SeparableHamiltonian alone, and nothing
+    # else decides one (#2977).
     if h_class is None:
         raise ValueError(
             f"{context}: the problem holds no Hamiltonian, so there is no control cost to read the drift coefficient "
@@ -196,8 +196,8 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
         )
     raise NotImplementedError(
         f"{context}, run on a {getattr(problem, 'dimension', '?')}-D problem: {type(h_class).__name__} is not a "
-        f"quadratic SeparableHamiltonian, so no scalar c makes -c*grad(U) its drift, and {context} forms the drift from "
-        f"that scalar (#2977). {WHERE_OWN_CONTROLS_ARE_READ}"
+        f"quadratic SeparableHamiltonian, the one kind whose drift coefficient c = 1/lambda the library reads, and "
+        f"{context} forms the drift from that scalar (#2977). {WHERE_OWN_CONTROLS_ARE_READ}"
     )
 
 

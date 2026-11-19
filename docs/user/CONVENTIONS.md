@@ -271,8 +271,8 @@ on their own basis.
    not certified whatever it serves; a library class patched at run time is unsupported (#2917).
 3. A `SeparableHamiltonian` that is *not* quadratic → **raises**. The scalar form $-c\,\nabla u$ does
    not represent that optimal control.
-4. Any other Hamiltonian, and a problem with none → **raises** (#2977): no scalar $c$ is its drift, and nothing
-   else decides one; the control cost is the Hamiltonian's.
+4. Any other Hamiltonian, and a problem with none → **raises** (#2977): $c$ is read from a quadratic
+   `SeparableHamiltonian`'s control cost alone, and nothing else decides one.
 
 ### What optimal_control and dp return
 

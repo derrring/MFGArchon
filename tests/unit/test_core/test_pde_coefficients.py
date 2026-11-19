@@ -465,7 +465,8 @@ class TestFpDriftCoefficient:
 
     @pytest.mark.parametrize("kind", ["congestion", "dual of a quadratic lagrangian"])
     def test_a_hamiltonian_that_is_not_quadratic_separable_is_refused_by_name(self, kind):
-        # #2977: no scalar c makes -c*grad(U) the drift of these, and the problem holds no other place that decides one.
+        # #2977: c is read from a quadratic SeparableHamiltonian alone, and the problem holds no other place that decides
+        # one.
         # The quadratic separable kind, which returns 1/lambda, is the control above. The dual of a quadratic Lagrangian
         # has the same optimal control as its separable twin and is refused all the same: it is not the separable kind.
         from mfgarchon.core.hamiltonian import CongestionHamiltonian, DualHamiltonian, SeparableLagrangian

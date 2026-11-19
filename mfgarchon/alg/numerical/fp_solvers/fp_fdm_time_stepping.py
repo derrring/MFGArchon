@@ -1046,7 +1046,8 @@ def solve_fp_nd_full_system(
           where ndim is spatial dimension.
     drift_free : bool
         The caller handed no drift, so ``U_solution_for_drift`` is zero and forms none: no drift coefficient is
-        resolved for a Hamiltonian that is not separable, or for none (#2977).
+        resolved for a Hamiltonian that is not separable, or for none (#2977). A non-zero ``U_solution_for_drift`` with it
+        is refused.
 
     Returns
     -------
@@ -1087,6 +1088,13 @@ def solve_fp_nd_full_system(
         volatility, volatility_kind, problem=problem, consumer="solve_fp_nd_full_system"
     )
     use_tensor_diffusion = volatility_kind == "tensor"
+    # `drift_free` is the caller's word that U forms no drift, so a U that would form one is refused, not dropped.
+    if drift_free and U_solution_for_drift is not None and np.any(np.asarray(U_solution_for_drift, dtype=float) != 0.0):
+        raise ValueError(
+            "solve_fp_nd_full_system: drift_free=True says no drift was handed, but U_solution_for_drift is not zero and "
+            "would form one, with no drift coefficient read for it (#2977). Pass drift_free=False with a U that forms a "
+            "drift."
+        )
     # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
     # (the single source α* = -∇U/control_cost).
     #
