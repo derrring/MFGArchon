@@ -687,7 +687,7 @@ def test_the_reader_uses_the_key_main_writes(td):
     """
     writer = inspect.getsource(td.main)
     reader = inspect.getsource(td._compare_killers)
-    assert '"killed": sorted(run.failed)' in writer, "main() no longer writes the killer list as 'killed'"
+    assert '"killed": sorted(killed)' in writer, "main() no longer writes the killer list as 'killed'"
     assert 'now["killed"]' in reader, "the killer-set reader is not reading the key main() writes"
     assert 'now.get("failed"' not in reader, "the reader still reads the results dict under 'failed'"
     assert 'now["failed"]' not in reader, "the reader still reads the results dict under 'failed'"
@@ -783,6 +783,106 @@ def test_the_failure_parser_keeps_whole_node_ids(td):
     assert td._FAILED.findall("ERROR tests/a.py::test_e - boom") == ["tests/a.py::test_e"]
 
 
+def test_a_captured_log_error_line_is_not_read_as_a_kill(td, monkeypatch):
+    """ADMISSION (AGENTS.md): class 4, guards an instrument. A failing test's captured log (pytest's "Captured log call"
+    section) writes a record at ERROR level as "ERROR    <logger>:<file>:<line> <message>", which also starts with
+    "ERROR ": #2981's sweep recorded two HJB-SL log lines as tests a mutation killed, and the matrix then named a file
+    that does not exist. A kill is a node ID or a collection error's path, so it starts with `tests/`. Read through
+    `_pytest`, so the run the sweep classifies carries the module that failed to collect (#2973)."""
+    out = "\n".join(
+        [
+            "ERROR    mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian:hjb_semi_lagrangian.py:1174 Semi-Lagrangian "
+            "solver failed at time step 4/4, substep 1/2 with NaN/Inf values.",
+            "FAILED tests/a.py::test_p - AssertionError",
+            "ERROR tests/b.py - ImportError",
+        ]
+    )
+
+    class _Proc:
+        stdout = out
+        returncode = 1
+
+    monkeypatch.setattr(td.subprocess, "run", lambda cmd, **kwargs: _Proc())
+    run = td._pytest(["tests"])
+    assert run.failed == {"tests/a.py::test_p", "tests/b.py"}
+    # Nor is it read as a module that failed to collect, which #2973's classification counts kills from.
+    assert run.errored == {"tests/b.py"}
+
+
+#: The baseline node IDs of the modules the `classify` pins below read; their baseline run counts 10 tests (#2973).
+_BASELINE_IDS = {"tests/m.py": ["tests/m.py::test_a", "tests/m.py::test_b"], "tests/x.py": ["tests/x.py::test_k"]}
+
+
+def _short_run(td, collected, returncode=1):
+    """A mutated run where tests/m.py failed to collect, tests/y.py::test_e errored at setup, tests/x.py::test_k failed."""
+    return td.Run(
+        failed={"tests/x.py::test_k", "tests/m.py", "tests/y.py::test_e"},
+        returncode=returncode,
+        collected=collected,
+        errored={"tests/m.py", "tests/y.py::test_e"},
+    )
+
+
+def test_a_module_that_fails_to_collect_is_read_as_its_baseline_tests_when_the_shortfall_is_exact(
+    td, monkeypatch, tmp_path, capsys
+):
+    """ADMISSION (AGENTS.md): class 4, guards an instrument. Under `optimal_control_sign`, #2901's check refuses a
+    sign-flipped control while a problem is built: a module that builds problems at import fails to collect, tests
+    whose fixtures build one error at setup, and the run fell short by 1% or more, so the sweep called the mutation
+    INEFFECTIVE although thousands of tests failed (#2973). Driven through `main()` with the baseline's node IDs: short
+    by 3 of 4, which tests/m.py's 2 baseline tests and 1 setup error account for. The mutation is ok, and the module's
+    tests are its kills in place of the path."""
+    name = td.MUTATIONS[0].name
+    matrix = tmp_path / "matrix.json"
+    ids = {
+        "tests/m.py": ["tests/m.py::test_a", "tests/m.py::test_b"],
+        "tests/x.py": ["tests/x.py::test_k"],
+        "tests/y.py": ["tests/y.py::test_e"],
+    }
+    short = td.Run(
+        failed={"tests/x.py::test_k", "tests/m.py", "tests/y.py::test_e"},
+        returncode=1,
+        collected=1,
+        errored={"tests/m.py", "tests/y.py::test_e"},
+    )
+    code = _drive_main(
+        td, monkeypatch, ["--only", name, "--json", str(matrix)], [td.Run(collected=4), short], baseline_ids=ids
+    )
+    out = capsys.readouterr().out
+    row = json.loads(matrix.read_text())["mutations"][name]
+    assert (code, row["status"]) == (0, "ok"), out[-600:]
+    assert row["killed"] == ["tests/m.py::test_a", "tests/m.py::test_b", "tests/x.py::test_k", "tests/y.py::test_e"]
+    assert "short by 3: 2 baseline tests of 1 module(s) that failed to collect, counted as killed, and 1 test(s)" in out
+
+
+@pytest.mark.parametrize(("collected", "returncode"), [(6, 1), (7, 2)], ids=["unexplained_shortfall", "exit_2"])
+def test_a_short_run_the_errored_modules_do_not_account_for_stays_ineffective(td, collected, returncode):
+    """Short by 4 against the 3 the errored module and the setup error account for, or pytest exiting 2: no survivor
+    may be counted from a run it was not in, so the mutation stays INEFFECTIVE (#2973)."""
+    status, _, _ = td.classify(True, _short_run(td, collected=collected, returncode=returncode), 10, _BASELINE_IDS)
+    assert status == "INEFFECTIVE"
+
+
+def test_setup_errors_alone_are_read_when_they_account_for_the_shortfall(td):
+    """ADMISSION (AGENTS.md): class 4, guards an instrument. A test whose fixture builds a problem errors at setup under
+    #2901's check and has no outcome: 111 did under `optimal_control_sign`, past the 1% line on their own, and a module
+    that stops building at import moves its tests to this kind (#2973). Short by 2 of 10, which the 2 setup errors
+    account for, with no module and no baseline node IDs: ok, and the errored tests are the kills."""
+    errored = {"tests/y.py::test_e", "tests/y.py::test_f"}
+    run = td.Run(failed=set(errored), returncode=1, collected=8, errored=set(errored))
+    assert td.classify(True, run, 10, {}) == (
+        "ok",
+        errored,
+        "  (short by 2: 2 test(s) that errored outside their body)",
+    )
+
+
+def test_a_run_with_no_shortfall_is_classified_as_before(td):
+    """The control: no module failed to collect, nothing short; the kills are the run's own (#2973)."""
+    run = td.Run(failed={"tests/x.py::test_k"}, returncode=1, collected=10, errored=set())
+    assert td.classify(True, run, 10, _BASELINE_IDS) == ("ok", {"tests/x.py::test_k"}, "")
+
+
 def test_no_committed_killer_id_is_truncated(td):
     """The matrix is the gate's identity table now; a truncated entry is a silent collision."""
     matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
@@ -852,15 +952,17 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
 # ---------------------------------------------------------------------------
 
 
-def _drive_main(td, monkeypatch, argv, runs, applied=None):
+def _drive_main(td, monkeypatch, argv, runs, applied=None, baseline_ids=None):
     """Run `main()` over fabricated pytest runs, with every step that touches the tree stubbed.
 
     The mutation is never applied and nothing is restored, so this cannot mutate the checkout under
     `-n auto`. What remains real is the part under test: argument handling, where the reference is
-    read, and the verdict. `applied`, when given, records which mutations the run selected.
+    read, and the verdict. `applied`, when given, records which mutations the run selected; `baseline_ids` is the
+    baseline collection's node IDs per module, empty unless given.
     """
     runs = iter(runs)
     monkeypatch.setattr(td, "_pytest", lambda paths: next(runs))
+    monkeypatch.setattr(td, "_baseline_node_ids", lambda paths: baseline_ids or {})
     monkeypatch.setattr(td, "_assert_clean_tree", lambda: None)
     monkeypatch.setattr(td, "_assert_import_is_the_mutated_tree", lambda: None)
     monkeypatch.setattr(
