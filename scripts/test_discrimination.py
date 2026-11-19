@@ -414,9 +414,10 @@ MUTATIONS: list[Mutation] = [
 # harmless once these strings are compared as identities, because three params sharing a
 # prefix collapse into one set member. Found by review (#1903); the two affected entries were
 # repaired mechanically (each truncation resolved to exactly one collected node ID).
-# And a node ID, or a collection error's path, starts with `tests/`: pytest's live-log line at
-# ERROR level ("ERROR    mfgarchon.module:file.py:1174 message") also starts with "ERROR ", and two
-# such lines entered a kill set as killed tests on #2981's sweep.
+# And a node ID, or a collection error's path, starts with `tests/`: a failing test's captured log
+# (pytest's "Captured log call" section) writes a record at ERROR level as "ERROR    mfgarchon.module:
+# file.py:1174 message", which also starts with "ERROR ", and two such lines entered a kill set as
+# killed tests on #2981's sweep.
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (tests/.+?)(?: - |$)", re.MULTILINE)
 # The ERROR half alone: a node ID is a test that errored outside its body (setup or teardown), a bare path a module that
 # failed to collect. `classify` reads the two apart (#2973).
@@ -509,13 +510,16 @@ def classify(
 ) -> tuple[str, set[str], str]:
     """A mutated run's status, the tests it killed, and a note for the log.
 
-    A mutation that breaks collection shrinks the population, so a survivor would have "survived" a run it was never
-    in: a run that collected under 99% of the baseline is INEFFECTIVE. Except where the shortfall is accounted for
-    exactly (#2973): the modules that failed to collect enter the run as bare paths, and when their baseline node IDs,
-    with the tests that errored outside those modules, number exactly the tests the run is short of, the mutation is
-    what stopped them. Those IDs are its kills, in place of the paths. #2901's consistency check refuses
-    `optimal_control_sign` while a problem is built, and a module that builds one at import fails to collect; 67 test
-    modules made such a call at import at d8af309a, so this is read here rather than module by module.
+    A run short of the baseline lost tests, so a survivor would have "survived" a run it was never in: a run short by
+    1% or more is INEFFECTIVE. Except where the shortfall is accounted for exactly (#2973): a module that failed to
+    collect enters the run as a bare path, and a test that errored at setup has no outcome. When the errored modules'
+    baseline node IDs, with the tests that errored outside those modules, number exactly the tests the run is short
+    of, the mutation is what stopped them, and those IDs are its kills in place of the paths. A run short by less than
+    1% and not accounted for keeps the old reading, a module's bare path among its kills.
+
+    #2901's consistency check refuses `optimal_control_sign` while a problem is built. Under it, at d8af309a, one
+    module that builds problems at import fails to collect (80 tests) and 111 tests error at setup: short by 191. 67
+    test modules made a call into the library at import at d8af309a, so this is read here, not module by module.
     """
     if not live:
         return "INEFFECTIVE", set(), "  <-- mutation not observable; its zeros mean nothing"
@@ -1085,7 +1089,9 @@ def main() -> None:
         )
     print(f"  clean, {base.collected} ran, {base.seconds}s\n", flush=True)
     # The baseline's node IDs per module, to read a mutation that stops a module collecting (#2973). A collection that
-    # does not number the baseline's tests reads nothing, and such a mutation stays INEFFECTIVE.
+    # does not number the baseline's tests reads nothing: such a mutation is then read as before #2973, INEFFECTIVE
+    # when it leaves the run short by 1% or more. A module skipped at collection (a module-level `importorskip`) is one
+    # outcome and no node ID, so an environment that lacks an optional dependency lands here.
     baseline_ids = _baseline_node_ids(paths)
     if sum(len(v) for v in baseline_ids.values()) != base.collected:
         print(
