@@ -180,7 +180,7 @@ def test_weak_form_fem_fp_diffusion_magnitude():
         u_terminal=lambda x: np.asarray(x[0]) * 0.0,
         hamiltonian=H,
     )
-    prob = MFGProblem(geometry=geom, T=T, Nt=nt, volatility=sigma, components=comps, coupling_coefficient=0.0)
+    prob = MFGProblem(geometry=geom, T=T, Nt=nt, volatility=sigma, components=comps)
     solver = FPFEMSolver(prob, order=1)
     x = solver._disc.dof_coordinates[:, 0]
     m0 = 1.0 + 0.4 * np.cos(_K * x)

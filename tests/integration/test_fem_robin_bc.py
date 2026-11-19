@@ -79,7 +79,7 @@ def _robin_problem_1d(num_elements: int, sigma: float, g_left: float, g_right: f
     if hamiltonian is None:
         hamiltonian = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: 0.0)
     components = MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=hamiltonian)
-    return MFGProblem(geometry=geom, T=0.1, Nt=2, volatility=sigma, components=components, coupling_coefficient=0.0)
+    return MFGProblem(geometry=geom, T=0.1, Nt=2, volatility=sigma, components=components)
 
 
 def _l2(err: np.ndarray, M: sparse.spmatrix) -> float:
@@ -166,9 +166,7 @@ class TestRobinConvergence:
                     control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: 0.0
                 ),
             )
-            problem = MFGProblem(
-                geometry=geom, T=0.1, Nt=2, volatility=sigma, components=components, coupling_coefficient=0.0
-            )
+            problem = MFGProblem(geometry=geom, T=0.1, Nt=2, volatility=sigma, components=components)
             solver = HJBFEMSolver(problem, order=1)
             X = solver._disc.dof_coordinates
             A_robin, rhs_robin = solver._robin_operator_terms(D)
@@ -387,9 +385,7 @@ class TestRobinHookIsNoOpWithoutRobin:
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: 0.0),
         )
-        problem = MFGProblem(
-            geometry=geom, T=0.1, Nt=2, volatility=1.0, components=components, coupling_coefficient=0.0
-        )
+        problem = MFGProblem(geometry=geom, T=0.1, Nt=2, volatility=1.0, components=components)
         for solver in (HJBFEMSolver(problem), FPFEMSolver(problem)):
             assert solver._robin_operator_terms(0.5) == (None, None)
 

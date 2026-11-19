@@ -237,7 +237,6 @@ def _lq_problem_1d():
         T=0.3,
         Nt=12,
         volatility=0.4,
-        coupling_coefficient=coupling,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-((np.asarray(x[0]) - 0.4) ** 2) / (2 * 0.13**2)),
             u_terminal=lambda x: 0.2 * (np.asarray(x[0]) - 0.6) ** 2,

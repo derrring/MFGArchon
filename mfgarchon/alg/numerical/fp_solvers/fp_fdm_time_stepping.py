@@ -986,6 +986,7 @@ def solve_fp_nd_full_system(
     velocity_field: np.ndarray | None = None,
     volatility_kind: str | None = None,
     outflow: dict[str, np.ndarray] | None = None,
+    drift_free: bool = False,
 ) -> np.ndarray:
     """
     Solve multi-dimensional FP equation using full-dimensional sparse linear system.
@@ -1043,6 +1044,10 @@ def solve_fp_nd_full_system(
           Signature: (t: float, x: list[ndarray], m: ndarray) -> ndarray
           Returns drift vector field, shape (ndim, N1, N2, ..., Nd)
           where ndim is spatial dimension.
+    drift_free : bool
+        The caller handed no drift, so ``U_solution_for_drift`` is zero and forms none: no drift coefficient is
+        resolved for a Hamiltonian that is not separable, or for none (#2977). A non-zero ``U_solution_for_drift`` with it
+        is refused.
 
     Returns
     -------
@@ -1083,8 +1088,15 @@ def solve_fp_nd_full_system(
         volatility, volatility_kind, problem=problem, consumer="solve_fp_nd_full_system"
     )
     use_tensor_diffusion = volatility_kind == "tensor"
+    # `drift_free` is the caller's word that U forms no drift, so a U that would form one is refused, not dropped.
+    if drift_free and U_solution_for_drift is not None and np.any(np.asarray(U_solution_for_drift, dtype=float) != 0.0):
+        raise ValueError(
+            "solve_fp_nd_full_system: drift_free=True says no drift was handed, but U_solution_for_drift is not zero and "
+            "would form one, with no drift coefficient read for it (#2977). Pass drift_free=False with a U that forms a "
+            "drift."
+        )
     # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
-    # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
+    # (the single source α* = -∇U/control_cost).
     #
     # Issue #1528 phase 2: resolve it lazily, at the point of use. fp_drift_coefficient
     # raises for any Hamiltonian whose optimal control is not -∇U/control_cost
@@ -1107,6 +1119,13 @@ def solve_fp_nd_full_system(
         dispatcher's, and 0.0 gives the drift exactly. Without a velocity the drift comes from U, and c is resolved.
         """
         if velocity_field is None:
+            # A solve handed no drift (``drift_free``) forms none from its zero U, so #2977's refusal of a Hamiltonian
+            # that is not separable, or of none, does not reach it, and 0.0 gives that drift exactly. A separable one
+            # is resolved as before, #1542's and #2900's refusals included.
+            from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+            if drift_free and not isinstance(getattr(problem, "hamiltonian_class", None), SeparableHamiltonian):
+                return 0.0
             return resolve_coupling_coefficient()
         return _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else 0.0
 

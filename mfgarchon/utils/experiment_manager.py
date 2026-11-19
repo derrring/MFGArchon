@@ -75,7 +75,6 @@ def save_experiment_data(
         f"Nx{Nx_intervals}",
         f"Nt{problem.Nt}",
         f"sig{volatility_tag}",
-        f"ct{problem.coupling_coefficient:.1e}",
         solver_name.replace("/", "-"),  # Replace slashes if any
         timestamp,
     ]
@@ -98,7 +97,6 @@ def save_experiment_data(
         # the whole save. The kind says how an array is read.
         "volatility": "callable" if callable(volatility) else volatility,
         "volatility_kind": problem.volatility_kind,
-        "coupling_coefficient": problem.coupling_coefficient,
         # Add other problem-specific parameters if they exist and are relevant
         # e.g., "potential_type": problem.potential_type if hasattr(problem, 'potential_type') else "default"
     }

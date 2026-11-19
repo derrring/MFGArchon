@@ -200,9 +200,7 @@ def _fem_newton(h):
     mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=10)
     mesh.generate_mesh()
     mesh.boundary_conditions = no_flux_bc(dimension=1)
-    problem = MFGProblem(
-        geometry=mesh, T=T, Nt=NT, volatility=SIGMA, coupling_coefficient=0.0, components=_components(h)
-    )
+    problem = MFGProblem(geometry=mesh, T=T, Nt=NT, volatility=SIGMA, components=_components(h))
     _arm(h)
     solver = HJBFEMSolver(problem, order=1)
     x = np.asarray(solver._disc.dof_coordinates, dtype=float).ravel()

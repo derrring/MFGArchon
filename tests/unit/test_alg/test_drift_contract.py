@@ -51,7 +51,7 @@ def _problem(sigma=0.3, n=15):
     comp = MFGComponents(
         hamiltonian=H, m_initial=lambda x: np.exp(-20 * (x[0] - 0.5) ** 2), u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2
     )
-    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=sigma, coupling_coefficient=0.5)
+    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=sigma)
 
 
 @pytest.mark.parametrize("control_cost", [0.5, 1.0, 2.5])
@@ -71,14 +71,13 @@ def test_fp_scalar_drift_matches_hamiltonian_optimal_control(control_cost):
     comp = MFGComponents(
         hamiltonian=H, m_initial=lambda x: np.ones_like(x[0]), u_terminal=lambda x: np.zeros_like(x[0])
     )
-    # coupling_coefficient is a deliberately-wrong legacy copy; fp_drift_coefficient must ignore it and
-    # source 1/control_cost from the Hamiltonian (Issue #1420 / G-017) so the two paths stay in sync.
-    problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=0.3, coupling_coefficient=99.0)
+    # fp_drift_coefficient sources 1/control_cost from the Hamiltonian (Issue #1420 / G-017), so the two paths stay
+    # in sync.
+    problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=0.3)
 
     c = fp_drift_coefficient(problem)
     assert c == pytest.approx(1.0 / control_cost), (
-        "fp_drift_coefficient must be 1/control_cost sourced from the Hamiltonian, not the "
-        "coupling_coefficient copy (Issue #1420)"
+        "fp_drift_coefficient must be 1/control_cost sourced from the Hamiltonian (Issue #1420)"
     )
 
     x = np.array([0.5])

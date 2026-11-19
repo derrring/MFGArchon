@@ -338,6 +338,19 @@ class TestQuadraticMFGHamiltonian:
 
         assert abs(dm - (-0.6)) < 1e-10
 
+    @pytest.mark.parametrize("c", [0.0, -1.0])
+    @pytest.mark.parametrize(
+        "build",
+        [QuadraticMFGHamiltonian, lambda c: create_hamiltonian("default", coupling_coefficient=c)],
+        ids=["constructor", "create_hamiltonian"],
+    )
+    def test_a_non_positive_coupling_coefficient_is_refused(self, build, c):
+        """#2980: c <= 0 built lambda = 1, so the solve read c = 1 while ``coupling_coefficient`` reported c. c = 0.5
+        is the control: it builds lambda = 2."""
+        assert build(0.5).control_cost.lambda_ == 2.0
+        with pytest.raises(ValueError, match=r"coupling_coefficient must be positive, got -?\d.*\(#2980\)"):
+            build(c)
+
 
 class TestCreateHamiltonian:
     """Tests for create_hamiltonian factory function."""

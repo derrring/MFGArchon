@@ -5,8 +5,8 @@
   - a multi-population run composes each population's source;
   - a regime adds its source to the cross-regime term, with the FP side under the regime's integrating factor;
   - each noise path's conditional problem is the parent rebuilt through `MFGProblem._rebuilt`, which now keeps a
-    record of the `components=` form's inputs too. So the conditional problem also carries the parent's `lambda_`,
-    `coupling_coefficient`, `obstacles` and `drift`, which the hand-built path reset to their defaults.
+    record of the `components=` form's inputs too. So the conditional problem also carries the parent's `obstacles` and
+    `drift`, which the hand-built path reset to their defaults.
 - **Two refusals where there were silent drops.**
   - `BaseHJBSolver.solve()`, the standalone HJB entry, passes no source, so it now raises on a problem that
     declares one, naming the coupled solvers and `solve_hjb_system(source_term=)` as the routes.

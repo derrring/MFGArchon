@@ -128,7 +128,7 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
         hamiltonian=HAMILTONIAN,
     )
     volatility = {"volatility": sigma, "volatility_kind": "tensor"} if sigma_kind == "tensor" else {"volatility": sigma}
-    problem = MFGProblem(geometry=grid, T=T, Nt=nt, components=components, coupling_coefficient=1.0, **volatility)
+    problem = MFGProblem(geometry=grid, T=T, Nt=nt, components=components, **volatility)
     points = problem.geometry.get_spatial_grid()
     shape = tuple(problem.geometry.Nx_points)
     solver = HJBSemiLagrangianSolver(problem)
@@ -162,9 +162,7 @@ def test_the_three_other_sl_variants_refuse_the_source():
     the wrong place verifies a different equation while still converging."""
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[11] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(m_initial=lambda x: M_CONST, u_terminal=lambda x: 0.0, hamiltonian=HAMILTONIAN)
-    problem = MFGProblem(
-        geometry=grid, T=T, Nt=4, volatility=SIGMA_SCALAR, components=components, coupling_coefficient=1.0
-    )
+    problem = MFGProblem(geometry=grid, T=T, Nt=4, volatility=SIGMA_SCALAR, components=components)
     shape = (11, 11)
     kwargs = {
         "M_density": np.full((5, *shape), M_CONST),

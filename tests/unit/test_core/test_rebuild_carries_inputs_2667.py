@@ -97,8 +97,6 @@ def test_every_rebuild_carries_every_input_the_constructor_took():
         "nonlocal_operator": 0.3 * np.eye(21),
         "state_penalty": lambda x: np.maximum(0.0, np.asarray(x[0]) - 0.5),
         "state_penalty_scale": 3.0,
-        "lambda_": 2.0,
-        "coupling_coefficient": 0.9,
     }
     problem = _problem(**inputs)
     real_solve = MFGProblem.solve
@@ -154,8 +152,6 @@ def test_the_conditional_problem_carries_every_input_of_the_components_form():
         "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(len(x)),
         "source_term_fp": lambda t, x, v, m: np.zeros(len(x)),
         "nonlocal_operator": 0.3 * np.eye(21),
-        "lambda_": 2.0,
-        "coupling_coefficient": 0.9,
     }
 
     def conditional_of(**given):

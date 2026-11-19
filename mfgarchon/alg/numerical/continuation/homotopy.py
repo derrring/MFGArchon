@@ -120,7 +120,7 @@ class HomotopyContinuation:
     Example
     -------
     >>> def problem_factory(lam):
-    ...     return MFGProblem(..., coupling_coefficient=lam)
+    ...     return MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=lam))), ...)
     >>> def solver_factory(problem):
     ...     return FixedPointIterator(problem, hjb, fp)
     >>> def extract(result):

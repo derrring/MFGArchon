@@ -72,7 +72,7 @@ def _meshless_pair(n=21, sd_scale=1.0):
         m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2),
         u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
     )
-    problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3, coupling_coefficient=0.5)
+    problem = MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3)
     cloud = _np.linspace(0.0, 1.0, n)[:, None]
     return create_paired_solvers(
         problem,
@@ -221,7 +221,7 @@ def test_recipe_coupled_matches_fdm_on_wellposed_problem(use_newton, sd_scale):
             m_initial=lambda x: _np.exp(-40 * (x[0] - 0.35) ** 2),
             u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2,
         )
-        return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3, coupling_coefficient=0.5)
+        return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=20, volatility=0.3)
 
     x = _np.linspace(0.0, 1.0, 21)
     dx = x[1] - x[0]

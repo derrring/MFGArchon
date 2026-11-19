@@ -61,7 +61,6 @@ class SimpleLQMFG2D(MFGProblem):
             T=1.0,
             Nt=20,
             volatility=0.2,
-            coupling_coefficient=0.5,
             components=_default_components_2d(),
         )
         # GFDM solver expects problem.d for spatial dimension

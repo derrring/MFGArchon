@@ -50,7 +50,6 @@ def create_challenging_mfg_problem() -> MFGProblem:
         T=1.0,
         Nt=200,
         volatility=0.05,
-        coupling_coefficient=2.0,
     )
 
     # Create sharp initial condition with discontinuous derivative
@@ -68,7 +67,7 @@ def create_challenging_mfg_problem() -> MFGProblem:
     logger.info("Created challenging MFG problem with sharp features")
     Nx_intervals = problem.geometry.get_grid_shape()[0] - 1
     logger.info(f"Grid: {Nx_intervals} intervals, Time steps: {problem.Nt}")
-    logger.info(f"Diffusion σ = {problem.diffusion}, Congestion = {problem.coupling_coefficient}")
+    logger.info(f"Diffusion σ = {problem.diffusion}")
 
     return problem
 

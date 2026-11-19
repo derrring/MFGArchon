@@ -167,7 +167,6 @@ def _problem(**source_fields):
         domain=grid,
         conditions=Conditions(m_initial=_m_initial, u_terminal=_u_terminal, T=0.2),
         Nt=5,
-        coupling_coefficient=0.0,
         **source_fields,
     )
 

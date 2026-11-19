@@ -44,7 +44,6 @@ def _solve(dim, n, nt):
         T=0.2,
         Nt=nt,
         volatility=0.3,
-        coupling_coefficient=0.0,
         components=MFGComponents(
             m_initial=lambda x: 1.0,
             u_terminal=lambda x: 0.0,

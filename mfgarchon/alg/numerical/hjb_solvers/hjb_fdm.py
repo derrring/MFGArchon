@@ -1068,14 +1068,14 @@ class HJBFDMSolver(BaseHJBSolver):
     def build_advection_matrix(
         self,
         U: NDArray,
-        coupling_coefficient: float | None = None,
+        *,
         time: float | None = None,
     ) -> sparse.csr_matrix:
         """
         Build upwind advection matrix from value function gradient.
 
-        This matrix encodes the drift velocity v = -coupling_coefficient * ∇U, upwinded on the
-        sign of v. It is a velocity-mode operator, and its transpose is NOT the FP solver's own
+        This matrix encodes the drift velocity v = -c ∇U, with c the Hamiltonian's (`fp_drift_coefficient`, #2977),
+        upwinded on the sign of v. It is a velocity-mode operator, and its transpose is NOT the FP solver's own
         operator: on ``test_adjoint_verify_runs_2338``'s ``_problem(n=40)`` (no-flux, Nt=8, T=0.4,
         sigma=0.05) under the default ``engquist_osher`` Hamiltonian, at the first strict-adjoint
         sweep's U and over the interior window, max|A^T - B| reaches 245 (45 at the first step) with
@@ -1093,8 +1093,6 @@ class HJBFDMSolver(BaseHJBSolver):
 
         Args:
             U: Value function at current timestep, shape (*spatial_shape)
-            coupling_coefficient: Drift coupling coefficient.
-                If None, uses fp_drift_coefficient(problem)
             time: Current time for time-dependent BCs
 
         Returns:
@@ -1117,14 +1115,13 @@ class HJBFDMSolver(BaseHJBSolver):
             - build_linearized_operator(): the exact derivative, whose transpose the strict-adjoint FP step uses
         """
         if self.dimension == 1:
-            return self._build_advection_matrix_1d(U, coupling_coefficient, time=time)
+            return self._build_advection_matrix_1d(U, time=time)
         else:
-            return self._build_advection_matrix_nd(U, coupling_coefficient, time=time)
+            return self._build_advection_matrix_nd(U, time=time)
 
     def _build_advection_matrix_1d(
         self,
         U: NDArray,
-        coupling_coefficient: float | None = None,
         *,
         time: float,
     ) -> sparse.csr_matrix:
@@ -1147,8 +1144,7 @@ class HJBFDMSolver(BaseHJBSolver):
         dx = self.problem.geometry.get_grid_spacing()[0]
 
         # Get coupling coefficient
-        if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
+        coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
 
         # Compute gradient ∂U/∂x using BC-aware computation
         bc = self.get_boundary_conditions()
@@ -1209,7 +1205,6 @@ class HJBFDMSolver(BaseHJBSolver):
     def _build_advection_matrix_nd(
         self,
         U: NDArray,
-        coupling_coefficient: float | None = None,
         *,
         time: float,
     ) -> sparse.csr_matrix:
@@ -1225,8 +1220,7 @@ class HJBFDMSolver(BaseHJBSolver):
         import scipy.sparse as sparse
 
         # Get coupling coefficient
-        if coupling_coefficient is None:
-            coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
+        coupling_coefficient = fp_drift_coefficient(self.problem, context="HJBFDMSolver.build_advection_matrix")
 
         # Compute gradients using trait-based operators
         gradients = self._compute_gradients_nd(U, time=time)
@@ -1394,7 +1388,7 @@ class HJBFDMSolver(BaseHJBSolver):
         if H_class is None:
             raise ValueError(
                 "build_linearized_operator requires a Hamiltonian class with dp() method. "
-                "Set problem.hamiltonian_class or use build_advection_matrix() for quadratic H."
+                "Give the problem a Hamiltonian: Model(hamiltonian=...) or MFGComponents(hamiltonian=...)."
             )
 
         # One padding pass, then the owner: the momentum the residual evaluates and its derivatives come from the same

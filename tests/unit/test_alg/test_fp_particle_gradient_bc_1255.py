@@ -88,7 +88,6 @@ class TestGradientBCOverrideThreaded:
             T=1.0,
             Nt=2,
             volatility=0.1,
-            coupling_coefficient=0.5,
             components=_default_components(),
         )
         # Solver overrides BC with periodic — priority-1 source per docs
@@ -178,7 +177,6 @@ class TestImplicitGeometryGradientNoTypeError:
             T = 1.0
             Nt = 2
             sigma = 0.1
-            coupling_coefficient = 0.5
             dimension = 1
 
             def get_components(self):
@@ -435,7 +433,6 @@ class TestHyperrectangleTorusEndToEnd:
             T=0.1,
             Nt=3,
             volatility=0.1,
-            coupling_coefficient=0.5,
             components=components,
         )
         return problem

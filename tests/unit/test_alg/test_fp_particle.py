@@ -61,7 +61,6 @@ class Simple2DMFGProblem(MFGProblem):
             T=1.0,
             Nt=10,
             volatility=0.1,
-            coupling_coefficient=0.5,
             components=_default_components_2d(),
         )
 
@@ -90,7 +89,6 @@ class TestFPParticleSolverBasic:
             T=1.0,
             Nt=10,
             volatility=0.1,
-            coupling_coefficient=0.5,
             components=_default_components_2d(),
         )
         solver = FPParticleSolver(problem, num_particles=50)
