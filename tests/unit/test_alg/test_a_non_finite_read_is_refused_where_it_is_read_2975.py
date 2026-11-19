@@ -49,7 +49,7 @@ def test_the_owner_names_the_first_non_finite_value_whatever_it_is(bad):
         refuse_a_non_finite_read("S", "w", {"a": [1.0, bad, NAN]})
 
 
-# --- Site 6: every concrete door reads its arrays through the owner first, read from source. ---
+# --- Site 6: what every concrete door reads at its door, read from source. ---
 
 _PACKAGE = pathlib.Path(mfgarchon.__file__).parent
 _DOOR_NAMES = ("solve_hjb_system", "solve_fp_system")
@@ -57,24 +57,6 @@ _DOOR_NAMES = ("solve_hjb_system", "solve_fp_system")
 
 def _named(node: ast.expr, name: str) -> bool:
     return (isinstance(node, ast.Name) and node.id == name) or (isinstance(node, ast.Attribute) and node.attr == name)
-
-
-def _reads_its_door_first(function: ast.FunctionDef) -> bool:
-    """Whether the first statement after the docstring is the owner's call at "its door": a door reads what it is
-    handed before any work. A call anywhere in the body is not enough, since a door whose loop also calls the owner, as
-    FP-FVM's does, would pass with its own read deleted."""
-    body = function.body
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-        body = body[1:]
-    if not body or not isinstance(body[0], ast.Expr) or not isinstance(body[0].value, ast.Call):
-        return False
-    call = body[0].value
-    return (
-        _named(call.func, "refuse_a_non_finite_read")
-        and len(call.args) >= 2
-        and isinstance(call.args[1], ast.Constant)
-        and call.args[1].value == "its door"
-    )
 
 
 def _the_handed_row(name: str, value: ast.expr) -> bool:
@@ -102,14 +84,24 @@ def _the_handed_row(name: str, value: ast.expr) -> bool:
 
 
 def _door_reads(function: ast.FunctionDef) -> set[str]:
-    """The names a door's read at "its door" maps, read from its first statement's mapping: each name whose value is the
-    argument handed under it (`_the_handed_row`), so a door that maps the name to something else does not read it."""
-    body = (
-        function.body[1:]
-        if isinstance(function.body[0], ast.Expr) and isinstance(function.body[0].value, ast.Constant)
-        else function.body
-    )
-    mapping = body[0].value.args[2]
+    """The names a door's read at "its door" maps: each name whose value is the argument handed under it
+    (`_the_handed_row`), so a door that maps the name to something else does not read it. The read is the door's
+    statement that calls the owner with "its door", wherever the door makes it; a door with none reads nothing. That
+    each door refuses a NaN row before its work is the behavioural test's, which calls every door
+    (`test_a_door_refuses_a_non_finite_solution_row_by_name`)."""
+    calls = [
+        stmt.value
+        for stmt in function.body
+        if isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and _named(stmt.value.func, "refuse_a_non_finite_read")
+        and len(stmt.value.args) >= 3
+        and isinstance(stmt.value.args[1], ast.Constant)
+        and stmt.value.args[1].value == "its door"
+    ]
+    if not calls:
+        return set()
+    mapping = calls[0].args[2]
     assert isinstance(mapping, ast.Dict)
     return {
         key.value
@@ -140,7 +132,7 @@ _DOORS = _doors()
 
 
 def test_the_walk_finds_the_doors_known_to_exist():
-    """The control: a walk that lost a directory or a class would pass the test below vacuously."""
+    """The control: a walk that lost a directory or a class would pass the door-read test vacuously."""
     classes = {key.split(":")[1] for key in _DOORS}
     known = {
         "HJBFDMSolver.solve_hjb_system",
@@ -158,32 +150,6 @@ def test_the_walk_finds_the_doors_known_to_exist():
     }
     assert known <= classes, sorted(known - classes)
     assert not any(key.endswith((":BaseHJBSolver.solve_hjb_system", ":BaseFPSolver.solve_fp_system")) for key in _DOORS)
-
-
-_DOOR_SHAPES = {
-    "reads first": (
-        '"""Doc."""\nrefuse_a_non_finite_read("S", "its door", {"M_initial": M_initial})\nreturn M_initial',
-        True,
-    ),
-    "no call": ('"""Doc."""\nreturn M_initial', False),
-    "a call in its loop only": (
-        'm = M_initial\nfor k in range(3):\n    refuse_a_non_finite_read("S", "step", {"m": m})\nreturn m',
-        False,
-    ),
-    "a call after work": ('m = 2 * M_initial\nrefuse_a_non_finite_read("S", "its door", {"m": m})\nreturn m', False),
-}
-
-
-@pytest.mark.parametrize(("body", "reads"), list(_DOOR_SHAPES.values()), ids=list(_DOOR_SHAPES))
-def test_the_door_predicate_tells_a_door_read_from_the_others(body, reads):
-    indented = "".join(f"        {line}\n" for line in body.splitlines())
-    tree = ast.parse(f"class A:\n    def solve_fp_system(self, M_initial):\n{indented}")
-    assert _reads_its_door_first(tree.body[0].body[0]) is reads
-
-
-@pytest.mark.parametrize("door", sorted(_DOORS))
-def test_each_concrete_door_reads_its_arrays_through_the_owner_first(door):
-    assert _reads_its_door_first(_DOORS[door]), f"{door} does not read the arrays it is handed through the owner first"
 
 
 def _solution_rows(door: str) -> set[str]:
@@ -211,6 +177,22 @@ def test_the_door_read_predicate_tells_the_handed_row_from_another_value(mapping
     tree = ast.parse(
         f'class A:\n    def solve_fp_system(self, M_initial):\n        refuse_a_non_finite_read("S", "its door", {mapping})\n'
     )
+    assert _door_reads(tree.body[0].body[0]) == reads
+
+
+@pytest.mark.parametrize(
+    ("body", "reads"),
+    [
+        ('log("S")\nrefuse_a_non_finite_read("S", "its door", {"M_initial": M_initial})', {"M_initial"}),
+        ('refuse_a_non_finite_read("S", "step", {"M_initial": M_initial})', set()),
+    ],
+    ids=["a statement ahead of the read", "no read at its door"],
+)
+def test_the_door_read_is_found_wherever_the_door_makes_it(body, reads):
+    """The control for the test below on where the read sits: a statement ahead of it changes nothing, and a door with no
+    read at its door reads nothing (#2981's review 3; the approver's ruling of 2026-11-19)."""
+    indented = "".join(f"        {line}\n" for line in body.splitlines())
+    tree = ast.parse(f"class A:\n    def solve_fp_system(self, M_initial):\n{indented}")
     assert _door_reads(tree.body[0].body[0]) == reads
 
 
