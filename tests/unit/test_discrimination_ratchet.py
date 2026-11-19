@@ -687,7 +687,7 @@ def test_the_reader_uses_the_key_main_writes(td):
     """
     writer = inspect.getsource(td.main)
     reader = inspect.getsource(td._compare_killers)
-    assert '"killed": sorted(run.failed)' in writer, "main() no longer writes the killer list as 'killed'"
+    assert '"killed": sorted(killed)' in writer, "main() no longer writes the killer list as 'killed'"
     assert 'now["killed"]' in reader, "the killer-set reader is not reading the key main() writes"
     assert 'now.get("failed"' not in reader, "the reader still reads the results dict under 'failed'"
     assert 'now["failed"]' not in reader, "the reader still reads the results dict under 'failed'"
@@ -797,6 +797,50 @@ def test_a_live_log_error_line_is_not_read_as_a_kill(td):
         ]
     )
     assert td._FAILED.findall(out) == ["tests/a.py::test_p[x, case=one]", "tests/b.py"]
+    # Nor is it read as a module that failed to collect, which #2973's classification counts kills from.
+    assert td._ERRORED.findall(out) == ["tests/b.py"]
+
+
+#: A baseline of 10 tests, two of them in tests/m.py (#2973).
+_BASELINE_IDS = {"tests/m.py": ["tests/m.py::test_a", "tests/m.py::test_b"], "tests/x.py": ["tests/x.py::test_k"]}
+
+
+def _short_run(td, collected, returncode=1):
+    """A mutated run where tests/m.py failed to collect, tests/y.py::test_e errored at setup, tests/x.py::test_k failed."""
+    return td.Run(
+        failed={"tests/x.py::test_k", "tests/m.py", "tests/y.py::test_e"},
+        returncode=returncode,
+        collected=collected,
+        errored={"tests/m.py", "tests/y.py::test_e"},
+    )
+
+
+def test_a_module_that_fails_to_collect_is_read_as_its_baseline_tests_when_the_shortfall_is_exact(td):
+    """ADMISSION (AGENTS.md): class 4, guards an instrument. A mutation that stops a module collecting (#2901's check
+    refuses `optimal_control_sign` while a problem is built at import) shrank the run, and the sweep called the mutation
+    INEFFECTIVE although thousands of tests failed (#2973). Short by 3: tests/m.py's 2 baseline tests and 1 setup error.
+    The mutation is ok, and the module's tests are its kills in place of the path."""
+    status, killed, note = td.classify(True, _short_run(td, collected=7), 10, _BASELINE_IDS)
+    assert status == "ok"
+    assert killed == {"tests/x.py::test_k", "tests/y.py::test_e", "tests/m.py::test_a", "tests/m.py::test_b"}
+    assert (
+        "short by 3: 2 baseline tests of 1 module(s) that failed to collect, counted as killed, and 1 test(s) that errored"
+        in note
+    )
+
+
+@pytest.mark.parametrize(("collected", "returncode"), [(6, 1), (7, 2)], ids=["unexplained_shortfall", "exit_2"])
+def test_a_short_run_the_errored_modules_do_not_account_for_stays_ineffective(td, collected, returncode):
+    """Short by 4 against the 3 the errored module and the setup error account for, or pytest exiting 2: no survivor
+    may be counted from a run it was not in, so the mutation stays INEFFECTIVE (#2973)."""
+    status, _, _ = td.classify(True, _short_run(td, collected=collected, returncode=returncode), 10, _BASELINE_IDS)
+    assert status == "INEFFECTIVE"
+
+
+def test_a_run_with_no_shortfall_is_classified_as_before(td):
+    """The control: no module failed to collect, nothing short; the kills are the run's own (#2973)."""
+    run = td.Run(failed={"tests/x.py::test_k"}, returncode=1, collected=10, errored=set())
+    assert td.classify(True, run, 10, _BASELINE_IDS) == ("ok", {"tests/x.py::test_k"}, "")
 
 
 def test_no_committed_killer_id_is_truncated(td):

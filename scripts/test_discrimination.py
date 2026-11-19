@@ -418,6 +418,9 @@ MUTATIONS: list[Mutation] = [
 # ERROR level ("ERROR    mfgarchon.module:file.py:1174 message") also starts with "ERROR ", and two
 # such lines entered a kill set as killed tests on #2981's sweep.
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (tests/.+?)(?: - |$)", re.MULTILINE)
+# The ERROR half alone: a node ID is a test that errored outside its body (setup or teardown), a bare path a module that
+# failed to collect. `classify` reads the two apart (#2973).
+_ERRORED = re.compile(r"^ERROR (tests/.+?)(?: - |$)", re.MULTILINE)
 
 
 @dataclass
@@ -427,6 +430,7 @@ class Run:
     collected: int = 0
     seconds: float = 0.0
     output: str = ""
+    errored: set[str] = field(default_factory=set)
 
 
 def _pytest(paths: list[str], timeout: int = 3600) -> Run:
@@ -463,7 +467,80 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
         collected=_collected(proc.stdout),
         seconds=round(time.perf_counter() - t0, 1),
         output=proc.stdout,
+        errored=set(_ERRORED.findall(proc.stdout)),
     )
+
+
+def _baseline_node_ids(paths: list[str]) -> dict[str, list[str]]:
+    """The baseline's node IDs per test module, from one collection over the sweep's own paths and markers (#2973).
+
+    `--verbosity=-1` and not `-q -q`: pytest prints node IDs at -1 and per-file counts at -2, and `-q` only subtracts
+    from pytest.ini's `--verbose`, so `-q -q` reads node IDs only while that line is there.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "pytest",
+            *paths,
+            "--collect-only",
+            "--verbosity=-1",
+            "-p",
+            "no:cacheprovider",
+            "-m",
+            MARKERS,
+            f"--ignore={SELF_TESTS}",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**_env()},
+    )
+    by_module: dict[str, list[str]] = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith("tests/") and "::" in line:
+            by_module.setdefault(line.split("::")[0], []).append(line.strip())
+    return by_module
+
+
+def classify(
+    live: bool, run: Run, base_collected: int, baseline_ids: dict[str, list[str]]
+) -> tuple[str, set[str], str]:
+    """A mutated run's status, the tests it killed, and a note for the log.
+
+    A mutation that breaks collection shrinks the population, so a survivor would have "survived" a run it was never
+    in: a run that collected under 99% of the baseline is INEFFECTIVE. Except where the shortfall is accounted for
+    exactly (#2973): the modules that failed to collect enter the run as bare paths, and when their baseline node IDs,
+    with the tests that errored outside those modules, number exactly the tests the run is short of, the mutation is
+    what stopped them. Those IDs are its kills, in place of the paths. #2901's consistency check refuses
+    `optimal_control_sign` while a problem is built, and a module that builds one at import fails to collect; 67 test
+    modules made such a call at import at d8af309a, so this is read here rather than module by module.
+    """
+    if not live:
+        return "INEFFECTIVE", set(), "  <-- mutation not observable; its zeros mean nothing"
+    killed = set(run.failed)
+    shortfall = base_collected - run.collected
+    modules = sorted(e for e in run.errored if "::" not in e)
+    note = ""
+    if run.returncode in (0, 1) and shortfall > 0 and modules:
+        stopped = {nid for module in modules for nid in baseline_ids.get(module, ())}
+        errored_tests = {e for e in run.errored if "::" in e} - stopped
+        if stopped and shortfall == len(stopped) + len(errored_tests):
+            killed = (killed - set(modules)) | stopped
+            note = (
+                f"  (short by {shortfall}: {len(stopped)} baseline tests of {len(modules)} module(s) that failed to "
+                f"collect, counted as killed, and {len(errored_tests)} test(s) that errored outside their body)"
+            )
+    if run.returncode not in (0, 1) or (run.collected < base_collected * 0.99 and not note):
+        return (
+            "INEFFECTIVE",
+            killed,
+            f"  <-- pytest exited {run.returncode} having run {run.collected} (baseline {base_collected})",
+        )
+    if killed:
+        return "ok", killed, note
+    return "UNCOVERED", killed, "  <-- mutation IS live and no test noticed"
 
 
 def _failure_excerpt(output: str, limit: int = 120) -> str:
@@ -1007,6 +1084,16 @@ def main() -> None:
             f"\n\n--- baseline pytest output ---\n{_failure_excerpt(base.output)}"
         )
     print(f"  clean, {base.collected} ran, {base.seconds}s\n", flush=True)
+    # The baseline's node IDs per module, to read a mutation that stops a module collecting (#2973). A collection that
+    # does not number the baseline's tests reads nothing, and such a mutation stays INEFFECTIVE.
+    baseline_ids = _baseline_node_ids(paths)
+    if sum(len(v) for v in baseline_ids.values()) != base.collected:
+        print(
+            f"  baseline collection numbers {sum(len(v) for v in baseline_ids.values())} tests, not {base.collected}: "
+            "a module that fails to collect under a mutation will not be read",
+            flush=True,
+        )
+        baseline_ids = {}
 
     results: dict[str, dict] = {}
     backups: dict[str, str] = {}
@@ -1020,27 +1107,16 @@ def main() -> None:
             finally:
                 restore(backups)
 
-            shrank = live and run.collected < base.collected * 0.99
-            if not live:
-                status, note = "INEFFECTIVE", "  <-- mutation not observable; its zeros mean nothing"
-            elif run.returncode not in (0, 1) or shrank:
-                # A mutation that breaks collection silently shrinks the population, so
-                # every survivor "survived" a run it was never in.
-                status = "INEFFECTIVE"
-                note = f"  <-- pytest exited {run.returncode} having run {run.collected} (baseline {base.collected})"
-            elif run.failed:
-                status, note = "ok", ""
-            else:
-                status, note = "UNCOVERED", "  <-- mutation IS live and no test noticed"
+            status, killed, note = classify(live, run, base.collected, baseline_ids)
             results[mut.name] = {
                 "owner": mut.owner,
                 "status": status,
-                "killed": sorted(run.failed),
-                "kill_count": len(run.failed),
+                "killed": sorted(killed),
+                "kill_count": len(killed),
                 "seconds": run.seconds,
                 "verify": mut.verify,
             }
-            print(f"  killed {len(run.failed):4d}  [{status}]  {run.seconds}s{note}\n", flush=True)
+            print(f"  killed {len(killed):4d}  [{status}]  {run.seconds}s{note}\n", flush=True)
     finally:
         restore(backups)
 
