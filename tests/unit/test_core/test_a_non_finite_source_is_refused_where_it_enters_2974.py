@@ -81,6 +81,7 @@ from mfgarchon.geometry.graph.network_geometry import GridNetwork
 from mfgarchon.operators.interaction import kernels
 from mfgarchon.types.callable_protocols import Slots
 from mfgarchon.types.schemes import NumericalScheme
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.validation import ValidationError
 from mfgarchon.utils.validation.functions import _refuse_a_non_finite_source
 
@@ -313,26 +314,26 @@ GRID_REFUSALS = [
     (
         "a Dirichlet value g(t) NaN",
         lambda d: _problem(d, bc=bnd.dirichlet_bc(value=lambda t: NAN, dimension=d)),
-        NotImplementedError,
-        r"BCSegment 'uniform' \(what its callable returned at t=0\) has a non-finite value nan",
+        NonFiniteReadError,
+        r"BCSegment 'uniform' \(what its callable returned at t=0\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a Dirichlet value NaN",
         lambda d: _problem(d, bc=bnd.dirichlet_bc(value=NAN, dimension=d)),
-        NotImplementedError,
-        r"BCSegment 'uniform' has a non-finite value nan",
+        NonFiniteReadError,
+        r"BCSegment 'uniform' is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a Robin alpha NaN",
         lambda d: _problem(d, bc=bnd.robin_bc(value=0.0, alpha=NAN, beta=1.0, dimension=d)),
-        NotImplementedError,
-        r"BCSegment 'uniform' \(its alpha\) has a non-finite value nan",
+        NonFiniteReadError,
+        r"BCSegment 'uniform' \(its alpha\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a flux value +inf",
         lambda d: _problem(d, bc=bnd.flux_bc(value=INF, dimension=d)),
-        NotImplementedError,
-        r"BCSegment 'uniform' has a non-finite value inf",
+        NonFiniteReadError,
+        r"BCSegment 'uniform' is non-finite where it reads it: .*, the first inf, at the value it would impose",
     ),
 ]
 
@@ -387,7 +388,8 @@ def test_a_node_bcs_callable_value_is_refused_by_name():
     """Read at its nodes at the HJB side's times, which policy iteration hands it, as the graph applicator reads it."""
     exit_bc = NodeBC(nodes=[0], value=lambda t, node: NAN, name="exit")
     with pytest.raises(
-        NotImplementedError, match=r"NodeBC 'exit': value \(what its callable returned at node 0, t=0\)"
+        NonFiniteReadError,
+        match=r"NodeBC 'exit': value \(what its callable returned at node 0, t=0\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ):
         _network_problem(node_bcs=[exit_bc])
 
@@ -398,15 +400,23 @@ def test_a_node_bcs_callable_value_is_refused_by_name():
         (
             "hjb",
             NAN,
-            r"HJB-FDM \(solve_hjb_system_backward\): a scalar volatility must be finite and non-negative, got nan",
+            r"HJB-FDM \(solve_hjb_system_backward\): volatility is non-finite where it reads it: .*, the first nan, at its volatility= override",
         ),
         (
             "hjb",
             INF,
-            r"HJB-FDM \(solve_hjb_system_backward\): a scalar volatility must be finite and non-negative, got inf",
+            r"HJB-FDM \(solve_hjb_system_backward\): volatility is non-finite where it reads it: .*, the first inf, at its volatility= override",
         ),
-        ("fp", NAN, r"FPFDMSolver\.solve_fp_system: a scalar volatility must be finite and non-negative, got nan"),
-        ("fp", np.where(np.arange(11) == 4, NAN, 0.2), r"the volatility= array holds 1 non-finite values of 11"),
+        (
+            "fp",
+            NAN,
+            r"FPFDMSolver\.solve_fp_system: volatility is non-finite where it reads it: .*, the first nan, at its volatility= override",
+        ),
+        (
+            "fp",
+            np.where(np.arange(11) == 4, NAN, 0.2),
+            r"FPFDMSolver\.solve_fp_system: volatility is non-finite where it reads it: .*, the first nan, at its volatility= override",
+        ),
     ],
     ids=["HJB scalar NaN", "HJB scalar +inf", "FP scalar NaN", "FP array, one NaN"],
 )
@@ -421,7 +431,7 @@ def test_a_non_finite_volatility_override_is_refused_by_name(solve, given, names
         run = lambda: FPFDMSolver(problem).solve_fp_system(  # noqa: E731
             np.ones(11), drift_field=np.zeros((6, 11)), volatility=given
         )
-    with pytest.raises(ValueError, match=names):
+    with pytest.raises(NonFiniteReadError, match=names):
         run()
 
 
@@ -454,7 +464,10 @@ def test_a_segment_refuses_a_nan_constant_in_a_field_its_type_reads_and_nowhere_
 
     if name in _READ_BY_ITS_READERS[bc_type]:
         label = "" if name == "value" else rf" \(its {name}\)"
-        with pytest.raises(NotImplementedError, match=rf"BCSegment 'wall'{label} has a non-finite value nan"):
+        with pytest.raises(
+            NonFiniteReadError,
+            match=rf"BCSegment 'wall'{label} is non-finite where it reads it: .*, the first nan, at the value it would impose",
+        ):
             build()
     else:
         build()
@@ -697,16 +710,16 @@ LOWER_BOUND = [
         lambda: _problem(
             1, bc=bnd.dirichlet_bc(value=lambda t: NAN if abs(float(t) - 0.2) < 1e-12 else 0.0, dimension=1)
         ),
-        NotImplementedError,
-        r"BCSegment 'uniform' \(what its callable returned at t=0.2\) has a non-finite value nan",
+        NonFiniteReadError,
+        r"BCSegment 'uniform' \(what its callable returned at t=0.2\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
     (
         "a NodeBC's callable value NaN only at an interior time",
         lambda: _network_problem(
             node_bcs=[NodeBC(nodes=[8], value=lambda t, node: NAN if abs(float(t) - 0.2) < 1e-12 else 0.5, name="exit")]
         ),
-        NotImplementedError,
-        r"NodeBC 'exit': value \(what its callable returned at node 8, t=0.2\) has a non-finite value nan",
+        NonFiniteReadError,
+        r"NodeBC 'exit': value \(what its callable returned at node 8, t=0.2\) is non-finite where it reads it: .*, the first nan, at the value it would impose",
     ),
 ]
 

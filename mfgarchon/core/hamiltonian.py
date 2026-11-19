@@ -2612,7 +2612,9 @@ class DualHamiltonian(HamiltonianBase):
                 [-float(p_flat[0]) * a - float(self.lagrangian(x=x, alpha=np.array([a]), m=m, t=t)) for a in alpha_grid]
             )
             best_idx = np.argmax(values)
-            return -np.array([alpha_grid[best_idx]])
+            # np.argmax takes the first NaN as the maximum. The maximiser is then undefined, as H's value (np.max) is, so
+            # dp is NaN with it rather than a grid point (#2975).
+            return -np.array([alpha_grid[best_idx] if np.isfinite(values[best_idx]) else np.nan])
 
         # Higher dimensions: scipy or grid
         try:
@@ -2798,7 +2800,8 @@ class DualLagrangian(LagrangianBase):
                 ]
             )
             best_idx = np.argmax(values)
-            return -np.array([p_grid[best_idx]])
+            # As in `DualHamiltonian._find_optimal_alpha`: the maximiser of a NaN value is undefined (#2975).
+            return -np.array([p_grid[best_idx] if np.isfinite(values[best_idx]) else np.nan])
 
         # Higher dimensions: scipy or grid
         try:

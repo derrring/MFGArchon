@@ -21,6 +21,7 @@ import numpy as np
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, read_region
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1140,11 +1141,8 @@ def _read_constant(
         raise NotImplementedError(
             f"{kind} has a value of type {type(value).__name__} no float holds, which {where} cannot read: {advice} (#2861)."
         ) from None
-    if not np.isfinite(constant):
-        raise NotImplementedError(
-            f"{kind} has a non-finite value {constant}; {where} would impose it and return a non-finite solution: "
-            f"{advice} (#2593)."
-        )
+    # A non-finite value is the one owner's to refuse, naming the value and its reader (#2975; #2593 before).
+    refuse_a_non_finite_read(where, f"the value it would impose; {advice}", {kind: constant})
     return constant
 
 

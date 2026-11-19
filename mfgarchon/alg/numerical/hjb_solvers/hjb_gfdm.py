@@ -38,6 +38,7 @@ from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, s
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
 from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_diffusion_source, resolve_volatility_override
 
@@ -3039,6 +3040,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             (Nt, *spatial_shape) solution array
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal},
+        )
         # Clear the previous solve's override and normalized value before validating this solve.
         self._volatility_override = None
         self._solve_sigma = None

@@ -61,6 +61,7 @@ from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 
 _G = 5.0
 
@@ -404,8 +405,14 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
         assert np.isfinite(rhs).all(), f"{value!r} assembled a non-finite load: {rhs.sum()}"
     else:
         # The value is read by the one owner (#2512 row B2), which names what it cannot read: a non-finite number
-        # where the segment is built (#2974), anything else here.
-        with pytest.raises(NotImplementedError, match=r"has a (value of type|non-finite)"):
+        # where the segment is built (#2974), refused as a non-finite read (#2975), anything else here.
+        finite_or_not_a_number = not isinstance(value, float) or np.isfinite(value)
+        with pytest.raises(
+            NotImplementedError if finite_or_not_a_number else NonFiniteReadError,
+            match=r"has a value of type"
+            if finite_or_not_a_number
+            else rf"BCSegment 'L' is non-finite where it reads it: .*, the first {float(value)}, at the value it would impose",
+        ):
             assemble()
 
 

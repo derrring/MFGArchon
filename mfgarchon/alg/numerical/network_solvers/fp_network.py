@@ -32,6 +32,7 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
@@ -257,6 +258,13 @@ class FPNetworkSolver(BaseFPSolver):
         Returns:
             (Nt+1, num_nodes) density evolution.
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {"M_initial": M_initial},
+        )
         # Validate required parameter
         if M_initial is None:
             raise ValueError("M_initial is required")
@@ -524,6 +532,22 @@ class FPNetworkSolver(BaseFPSolver):
                 source=H_class,
                 m=m,
             )
+            # A NaN rate failed `alpha[j] > 0` and was dropped, read as no transition, so a NaN value field gave a
+            # finite M (#2975). The rates the step uses are refused here if one is not finite, after the value field
+            # they are read from: at the node, which every rate out of it reads, and at each neighbour, which the rate
+            # into it reads. Each is named by its own node and the rate that reads it. A node with no neighbours has no
+            # rate out of it, so nothing reads its value there (#2981's review 3).
+            if neighbors:
+                values = np.asarray(u, dtype=float)
+                reads = {f"potential_field at node {i}, read for the rates out of node {i}": values[i]}
+                reads.update(
+                    {
+                        f"potential_field at node {j}, read for the rate out of node {i} into node {j}": values[j]
+                        for j in neighbors
+                    }
+                )
+                reads.update({f"the transition rate out of node {i} into node {j}": alpha[j] for j in neighbors})
+                refuse_a_non_finite_read("FPNetworkSolver", f"t={t:g}", reads)
             rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 

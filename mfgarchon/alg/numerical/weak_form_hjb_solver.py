@@ -28,6 +28,7 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSol
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override, scalar_volatility
 
@@ -431,6 +432,18 @@ class WeakFormHJBSolver(BaseHJBSolver):
         iterate freezes H at p = 0: the backward heat equation with source ``-H(x, m, 0)``, which for #2642's
         ``H = |p|^2 / 2`` is the heat equation itself.
         """
+        # The solution's row handed at the door, its terminal value, is read before any work and refused here if it is
+        # not finite; every other array is judged by the step that reads it (#2975). The deprecated alias is the row only
+        # where U_terminal is None, the solver's own precedence below; beside U_terminal it is discarded, and not judged
+        # (#2981's review 3).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {
+                "U_terminal": U_terminal,
+                "U_final_condition_at_T": None if U_terminal is not None else U_final_condition_at_T,
+            },
+        )
         if use_newton is None:
             use_newton = self._use_newton_default
         # Only the Newton branch iterates within a step, so only it keeps a record of inner failures (#2644).

@@ -39,6 +39,7 @@ import scipy.sparse as sparse
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 from mfgarchon.utils.solver_result import SolverResult
 
@@ -554,7 +555,9 @@ class BlockIterator(BaseCouplingIterator):
                 self._windowed_to_interior(A_jac), self._windowed_to_interior(A_fp_own), geometry=geometry
             )
 
-        except NotImplementedError:
+        except (NotImplementedError, NonFiniteReadError):
+            # A non-finite read named on the way raised NotImplementedError at 4ca7c9e0, re-raised here; as a
+            # NonFiniteReadError, a ValueError, it would become a warning below (#2981's review 3).
             raise
         except Exception as e:
             logger.warning(f"Failed to generate adjoint report: {e}")

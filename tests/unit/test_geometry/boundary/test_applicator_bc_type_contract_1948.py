@@ -47,6 +47,7 @@ from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationAp
 from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
 from mfgarchon.geometry.implicit.hypersphere import Hypersphere
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1136,8 +1137,8 @@ def _gate_cases():
         (
             "NodeBC[value=inf]",
             lambda: NodeBC(nodes=[1], value=math.inf),
-            NotImplementedError,
-            "non-finite value inf",
+            NonFiniteReadError,
+            "NodeBC 'boundary': value is non-finite where it reads it: .*, the first inf, at the value it would impose",
         )
     )
     refuses.append(

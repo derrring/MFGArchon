@@ -9,10 +9,11 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
-from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
+from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf, to_numpy
 from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import NonFiniteReadError, refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -821,8 +822,10 @@ def compute_hjb_residual(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification: pre-evaluated S(t, x)
+    source_callable: Callable | None = None,  # #2975: what source_term was evaluated from, to name a non-finite part
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
+    name_a_non_finite_term: bool = False,  # #2975: a failed step's start state, where a non-finite read is named
 ) -> np.ndarray:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -958,9 +961,26 @@ def compute_hjb_residual(
         if source_term is not None:
             Phi_U -= source_term
 
-        return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
+        residual = _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
+        if name_a_non_finite_term:
+            _refuse_a_non_finite_hjb_term(
+                residual,
+                problem,
+                current_time,
+                x_grid,
+                p_grid,
+                m_grid,
+                H_values,
+                source_term,
+                source_callable,
+                cross_grid,
+                volatility=sigma,
+            )
+        return residual
 
     # Fallback: per-point loop for backend != None or missing precomputed_grad
+    H_point = np.full(Nx, np.nan)  # each point's H and p, so a non-finite term can be named (#2975)
+    p_point = np.full(Nx, np.nan)
     for i in range(Nx):
         # Backend compatibility - tensor to scalar conversion (Issue #543 acceptable)
         phi_val = Phi_U[i].item() if hasattr(Phi_U[i], "item") else float(Phi_U[i])
@@ -980,6 +1000,7 @@ def compute_hjb_residual(
         if np.any(np.isnan(list(derivs.values()))):
             Phi_U[i] = float("nan")
             continue
+        p_point[i] = float(derivs[(1,)])
 
         # Backend compatibility - tensor to scalar conversion (Issue #543 acceptable)
         m_val = (
@@ -988,6 +1009,7 @@ def compute_hjb_residual(
             else float(M_density_at_n_plus_1[i])
         )
         hamiltonian_val = problem.H(x_idx=i, m_at_x=m_val, derivs=derivs, t_idx=t_idx_n)
+        H_point[i] = hamiltonian_val
         if np.isnan(hamiltonian_val) or np.isinf(hamiltonian_val):
             Phi_U[i] = float("nan")
             continue
@@ -1008,7 +1030,209 @@ def compute_hjb_residual(
     if source_term is not None:
         Phi_U -= source_term
 
-    return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
+    residual = _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
+    if name_a_non_finite_term:
+        # The per-point path is the one `HJBFDMSolver(analytic_jacobian=False)` takes on NumPyBackend; its arrays are
+        # named as numpy reads them (#2975).
+        _refuse_a_non_finite_hjb_term(
+            to_numpy(residual, backend),
+            problem,
+            current_time,
+            problem.geometry.get_spatial_grid(),
+            p_point,
+            np.asarray(to_numpy(M_density_at_n_plus_1, backend), dtype=float),
+            H_point,
+            None if source_term is None else to_numpy(source_term, backend),
+            source_callable,
+            volatility=sigma,
+        )
+    return residual
+
+
+def _refuse_a_non_finite_hjb_term(
+    residual: np.ndarray,
+    problem: MFGProblem,
+    current_time: float,
+    x_grid: np.ndarray | list[np.ndarray],
+    p_grid: np.ndarray,
+    m_grid: np.ndarray,
+    H_values: np.ndarray | None,
+    source_values: np.ndarray | None,
+    source_callable: Callable | None,
+    cross_rows: np.ndarray | None = None,
+    solver: str = "HJBFDMSolver's Newton step",
+    volatility: Any = None,
+) -> None:
+    """The HJB-FDM residual's naming of a non-finite read (#2975), run on a step that failed, at its start state.
+
+    A row the residual keeps, its Dirichlet rows imposed, that is non-finite at the start state comes from a value the
+    step read there. The first such value is named, in the order the residual assembles them, each re-read as the
+    residual reads it:
+
+    - the volatility of the diffusion term, a number or one per row;
+    - the terms of H that read x alone: the wall (`wall_values`), then each potential H holds (`_hamiltonian_terms_at`);
+    - the density handed to the step, and the population rows beside it, where they entered H's value
+      (`_a_handed_density_that_entered`): a density H does not read at that row is discarded there, and not named;
+    - the density terms H holds (`_hamiltonian_density_terms_at`), then H's value itself, which is what an own
+      ``__call__`` gives;
+    - the source, by its part when it is the problem's composed source (`ComposedHJBSource.parts`), else as
+      ``source_term``.
+
+    The first value non-finite at a row the residual keeps is named at the first such row, with its (t, x, p, m). A part
+    that returns one number holds at every row. A row non-finite with every read finite is left to the Newton step's
+    policy (#2644).
+    """
+    bad = np.flatnonzero(~np.isfinite(np.asarray(residual, dtype=float)))
+    if bad.size == 0:
+        return
+    from mfgarchon.alg.numerical.coupling.source_composition import ComposedHJBSource
+
+    n = np.shape(residual)[0]
+    points = _grid_points(x_grid, n)
+    momenta = np.asarray(p_grid, dtype=float).reshape(n, -1)
+    densities = np.asarray(m_grid, dtype=float).ravel()
+
+    def refuse(terms: dict[str, Any]) -> None:
+        for name, values in terms.items():
+            at_bad = _per_row(values, bad.size)
+            non_finite = np.flatnonzero(~np.isfinite(at_bad))
+            if non_finite.size == 0:
+                continue
+            row = int(bad[non_finite[0]])
+            state = f"t={current_time:g}, x={points[row].tolist()}, p={momenta[row].tolist()}"
+            state += f", m={float(densities[row]):.6g}"
+            refuse_a_non_finite_read(
+                solver, f"{state} (of the {bad.size} non-finite row(s) the residual keeps)", {name: at_bad}
+            )
+
+    if volatility is not None:
+        refuse({"volatility": _per_row(volatility, n)[bad]})
+    if H_values is not None and not np.all(np.isfinite(_per_row(H_values, n)[bad])):
+        H = problem.hamiltonian_class
+        rows = tuple(points[bad, k] for k in range(points.shape[1]))
+        cross = None if cross_rows is None else np.asarray(cross_rows, dtype=float)[:, bad]
+        refuse(_hamiltonian_terms_at(problem, current_time, rows))
+        refuse(
+            _a_handed_density_that_entered(
+                lambda m, c: H.evaluate_H(
+                    HEvalState(x=points[bad], p=momenta[bad], m=m, t=current_time, cross_density=c)
+                ),
+                densities[bad],
+                cross,
+            )
+        )
+        named = _hamiltonian_density_terms_at(problem, densities[bad], cross)
+        named[f"{type(H).__name__}'s value"] = _per_row(H_values, n)[bad]
+        refuse(named)
+    if source_values is not None and not np.all(np.isfinite(_per_row(source_values, n)[bad])):
+        if isinstance(source_callable, ComposedHJBSource):
+            # Read as the step read the sum: `evaluate_solver_source` calls a closure the library composed with the
+            # solver's own x.
+            parts = source_callable.parts(current_time, x_grid)
+            refuse({name: _per_row(value, n)[bad] for name, value in parts.items()})
+        refuse({"source_term": _per_row(source_values, n)[bad]})
+
+
+def _a_handed_density_that_entered(
+    evaluate: Callable[[np.ndarray, np.ndarray | None], Any],
+    m_rows: np.ndarray,
+    cross_rows: np.ndarray | None,
+) -> dict[str, np.ndarray]:
+    """The density handed to a step, and the population rows beside it (``cross_rows``, one row per population), at the
+    rows where a value the step computed from them is non-finite, kept non-finite only where they entered that value
+    (#2975). ``evaluate(m, cross)`` is the value at those rows. It is finite with both given a finite density in place
+    of a non-finite one (1.0) where the handed densities are the cause; then the density is named where the value with
+    only the populations' rows replaced is still non-finite, and the populations' rows where the value with only the
+    density replaced is. Elsewhere the entry is 0.0: a density the value does not read at that row is discarded, and
+    not named. An evaluation that fails with anything but a `NonFiniteReadError` (a `ValueError`, `RuntimeError` or
+    `ArithmeticError`) leaves the test inconclusive: nothing is named, and the caller's order goes on (#2981's review
+    3)."""
+    m = np.asarray(m_rows, dtype=float).ravel()
+    cross = None if cross_rows is None else np.asarray(cross_rows, dtype=float)
+    m_bad = ~np.isfinite(m)
+    cross_bad = np.zeros(m.size, dtype=bool) if cross is None else ~np.all(np.isfinite(cross), axis=0)
+    if not (m_bad.any() or cross_bad.any()):
+        return {}
+    m_in_place = np.where(m_bad, 1.0, m)
+    cross_in_place = None if cross is None else np.where(np.isfinite(cross), cross, 1.0)
+
+    def finite(m_given: np.ndarray, cross_given: np.ndarray | None) -> np.ndarray | None:
+        try:
+            value = np.asarray(evaluate(m_given, cross_given), dtype=float).reshape(m.size, -1)
+        except NonFiniteReadError:
+            raise
+        except (ValueError, RuntimeError, ArithmeticError):  # a substitution that fails decides nothing
+            return None
+        return np.all(np.isfinite(value), axis=1)
+
+    caused = finite(m_in_place, cross_in_place)
+    if caused is None:
+        return {}
+    m_still = finite(m, cross_in_place)
+    named = {"M_density": np.zeros(m.size) if m_still is None else np.where(m_bad & caused & ~m_still, m, 0.0)}
+    if cross is not None:
+        first = np.array(
+            [cross[np.flatnonzero(~np.isfinite(cross[:, j]))[0], j] if cross_bad[j] else 0.0 for j in range(m.size)]
+        )
+        cross_still = finite(m_in_place, cross)
+        named["cross_density"] = (
+            np.zeros(m.size) if cross_still is None else np.where(cross_bad & caused & ~cross_still, first, 0.0)
+        )
+    return named
+
+
+def _per_row(value: Any, n: int) -> np.ndarray:
+    """``value`` as ``n`` rows: a term that returns one number holds at every row (#2975)."""
+    flat = np.asarray(value, dtype=float).ravel()
+    return np.full(n, flat[0]) if flat.size == 1 else flat
+
+
+def _grid_points(x_grid: np.ndarray | list[np.ndarray], n: int) -> np.ndarray:
+    """The ``n`` points of a geometry's grid, one row each: as `get_spatial_grid` hands an array of points, or, from a
+    geometry that hands one array per axis, the rows of their columns. For the naming of a non-finite term (#2975)."""
+    if isinstance(x_grid, list):
+        return np.column_stack([np.ravel(axis) for axis in x_grid]).reshape(n, -1)
+    return np.asarray(x_grid, dtype=float).reshape(n, -1)
+
+
+def _hamiltonian_terms_at(
+    problem: MFGProblem,
+    current_time: float,
+    rows: tuple[np.ndarray, ...],
+) -> dict[str, object]:
+    """The terms of H's value that read x alone, at the points ``rows`` (one array per axis), each re-read through the
+    function H's evaluation reads it with (#2975): the wall (`wall_values`), then each potential H holds
+    (`_read_of_the_potential`). The wall, which is composed into H's potential, is named as itself."""
+    from mfgarchon.core.hamiltonian import _read_of_the_potential, held_sources
+    from mfgarchon.core.mfg_problem import wall_values
+    from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS
+
+    H = problem.hamiltonian_class
+    named: dict[str, object] = {}
+    if callable(problem.state_penalty):
+        named["state_penalty"] = wall_values(problem.state_penalty, rows)
+    for parameter, (attr, slots) in held_sources(H).items():
+        if getattr(H, attr, None) is not None and slots == POTENTIAL_SLOTS:
+            named[f"{type(H).__name__}'s {parameter}"] = _read_of_the_potential(H, attr, rows, current_time)
+    return named
+
+
+def _hamiltonian_density_terms_at(
+    problem: MFGProblem, m_rows: np.ndarray, cross_rows: np.ndarray | None = None
+) -> dict[str, object]:
+    """The density terms H holds, at the densities ``m_rows``, each re-read as H's evaluation reads it
+    (`_read_of_the_density`): with the population rows the step handed (``cross_rows``, #2335), else the own row
+    (#2975). H's value is the caller's to add, read as it read it."""
+    from mfgarchon.core.hamiltonian import _own_rows, _read_of_the_density, held_sources
+    from mfgarchon.types.callable_protocols import DENSITY_SLOTS
+
+    H = problem.hamiltonian_class
+    named: dict[str, object] = {}
+    for parameter, (attr, slots) in held_sources(H).items():
+        if getattr(H, attr, None) is not None and slots == DENSITY_SLOTS:
+            cross = _own_rows(m_rows) if cross_rows is None else cross_rows
+            named[f"{type(H).__name__}'s {parameter}"] = _read_of_the_density(H, attr, m_rows, cross, m_rows.size)
+    return named
 
 
 def _impose_dirichlet_rows(
@@ -1257,6 +1481,7 @@ def compute_hjb_jacobian(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
+    name_a_non_finite_term: bool = False,  # #2975: a failed step's start state, where a non-finite dp is named
 ) -> sparse.csr_matrix:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -1350,6 +1575,7 @@ def compute_hjb_jacobian(
             "(backend=None, Nx>1); the per-point problem.H() fallback cannot honor the "
             "cross-density coupling and would silently decouple (Issue #1071)."
         )
+    read_dp = None
     if backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1:
         # Compute BC-aware gradient for stencil direction
         precomputed_grad = _compute_gradient_array_1d(
@@ -1378,6 +1604,7 @@ def compute_hjb_jacobian(
             m=m_grid,
             method="evaluate_dp",
         ).ravel()  # the checked (Nx, 1), as (Nx,)
+        read_dp = (dH_dp, x_grid, p_grid, m_grid, cross_grid)  # named if a row the Jacobian keeps is non-finite (#2975)
 
         # dp_i/dU_j: row i of the SAME gradient operator the residual applied, extracted rather than
         # restated. Restating it wrote the interior stencil into the wall rows, which are one-sided
@@ -1483,7 +1710,52 @@ def compute_hjb_jacobian(
             Jac[idx, :] = 0.0
             Jac[idx, idx] = 1.0
 
-    return Jac.tocsr()
+    Jac = Jac.tocsr()
+    if name_a_non_finite_term and read_dp is not None:
+        _refuse_a_non_finite_jacobian_term(Jac, problem, current_time, read_dp)
+    return Jac
+
+
+def _refuse_a_non_finite_jacobian_term(
+    jacobian: sparse.csr_matrix,
+    problem: MFGProblem,
+    current_time: float,
+    read_dp: tuple[np.ndarray, np.ndarray | list[np.ndarray], np.ndarray, np.ndarray, np.ndarray | None],
+) -> None:
+    """The 1-D HJB-FDM Jacobian's naming of a non-finite read (#2975), on the batch path, run on a step that failed, at
+    its start state, after the Dirichlet rows are imposed. A row it keeps that holds a non-finite entry is named by what
+    the step read for it: the handed density where it entered ``dp`` (`_a_handed_density_that_entered`), then H's
+    ``dp`` as `checked_control` handed it. One non-finite with ``dp`` finite is left to the Newton step's policy
+    (#2644). The per-point path's difference reads H at perturbed states, which are trials, so it is not named."""
+    rows = np.repeat(np.arange(jacobian.shape[0]), np.diff(jacobian.indptr))
+    bad = np.unique(rows[~np.isfinite(jacobian.data)])
+    if bad.size == 0:
+        return
+    dp, x_grid, p_grid, m_grid, cross_grid = read_dp
+    dp = np.asarray(dp, dtype=float)
+    if np.all(np.isfinite(dp[bad])):
+        return
+    H = problem.hamiltonian_class
+    points = _grid_points(x_grid, jacobian.shape[0])
+    momenta = np.asarray(p_grid, dtype=float).reshape(points.shape[0], -1)
+    densities = np.asarray(m_grid, dtype=float).ravel()
+    cross = None if cross_grid is None else np.asarray(cross_grid, dtype=float)[:, bad]
+    named = _a_handed_density_that_entered(
+        lambda m, c: H.evaluate_dp(HEvalState(x=points[bad], p=momenta[bad], m=m, t=current_time, cross_density=c)),
+        densities[bad],
+        cross,
+    )
+    named[f"{type(H).__name__}'s dp"] = dp[bad]
+    for name, values in named.items():
+        non_finite = np.flatnonzero(~np.isfinite(values))
+        if non_finite.size == 0:
+            continue
+        row = int(bad[non_finite[0]])
+        where = (
+            f"t={current_time:g}, x={points[row].tolist()}, p={momenta[row].tolist()}, m={float(densities[row]):.6g} "
+            f"(of the {bad.size} non-finite row(s) the Jacobian keeps)"
+        )
+        refuse_a_non_finite_read("HJBFDMSolver's Newton step", where, {name: values})
 
 
 def hjb_residual_norm(residual: np.ndarray, dx: float) -> float:
@@ -1521,6 +1793,7 @@ def newton_hjb_step(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574
     source_term: np.ndarray | None = None,  # MMS verification
+    source_callable: Callable | None = None,  # #2975: what source_term was evaluated from, to name a non-finite part
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
 ) -> tuple[np.ndarray, float, float]:
@@ -1544,6 +1817,7 @@ def newton_hjb_step(
         current_time=current_time,
         bc_values=bc_values,  # Issue #574
         source_term=source_term,
+        source_callable=source_callable,
         cross_density_at_n=cross_density_at_n,  # Issue #1071
         numerical_hamiltonian=numerical_hamiltonian,
     )
@@ -1635,6 +1909,7 @@ def solve_hjb_timestep_newton(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification
+    source_callable: Callable | None = None,  # #2975: what source_term was evaluated from, to name a non-finite part
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects this step if it does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
@@ -1700,6 +1975,7 @@ def solve_hjb_timestep_newton(
             current_time=current_time,
             bc_values=bc_values,  # Issue #574
             source_term=source_term,
+            source_callable=source_callable,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
             numerical_hamiltonian=numerical_hamiltonian,
         )
@@ -1753,6 +2029,34 @@ def solve_hjb_timestep_newton(
     # nothing said so -- `converged` is local and never returned, so no caller could see it, and
     # the outer Picard loop treated a failed HJB solve exactly like a successful one.
     if not converged:
+        # A value the step read at its start state, U at t_{n+1} with the data and the density, that is non-finite
+        # makes the step fail; it is named here, at the decision it enters, by the residual and then the Jacobian
+        # re-assembled there. A non-finite value only at a state Newton's own iterates reach is not named: the failure
+        # goes to the owner's policy below, as before (#2975).
+        start_state: dict[str, Any] = {
+            "backend": backend,
+            "volatility_at_n": volatility_at_n,
+            "use_upwind": use_upwind,
+            "bc": bc,
+            "domain_bounds": domain_bounds,
+            "current_time": current_time,
+            "cross_density_at_n": cross_density_at_n,
+            "numerical_hamiltonian": numerical_hamiltonian,
+            "name_a_non_finite_term": True,
+        }
+        U_start = backend_aware_copy(U_n_plus_1_from_hjb_step, backend)
+        compute_hjb_residual(
+            U_start,
+            U_n_plus_1_from_hjb_step,
+            M_density_at_n_plus_1,
+            problem,
+            t_idx_n,
+            bc_values=bc_values,
+            source_term=source_term,
+            source_callable=source_callable,
+            **start_state,
+        )
+        compute_hjb_jacobian(U_start, U_k_n_from_prev_picard, M_density_at_n_plus_1, problem, t_idx_n, **start_state)
         # The step count is the steps the returned iterate actually took. This printed
         # `max_newton_iterations`, so a solve the guard stopped one step from its start read "after 30
         # iterations" (#1878). What follows is the owner's: raise, or record and warn (#2644).
@@ -1947,6 +2251,13 @@ def solve_hjb_system_backward(
     Nt = problem.Nt + 1
     Nx = problem.geometry.get_grid_shape()[0]
 
+    # The terminal row is read before any work, and refused if not finite (#2975); HJBFDMSolver's door, which calls
+    # this, refuses it already, and a direct call meets the same rule. The density is judged by the step that reads it,
+    # and U_from_prev_picard is not read by the 1-D step.
+    refuse_a_non_finite_read(
+        "solve_hjb_system_backward", "its entry", {"U_terminal": to_numpy(U_final_condition_at_T, backend)}
+    )
+
     # Use backend.zeros() instead of xp.zeros() to ensure correct device
     if backend is not None:
         U_solution_this_picard_iter = backend.zeros((Nt, Nx))
@@ -1955,11 +2266,7 @@ def solve_hjb_system_backward(
     if Nt == 0:
         return U_solution_this_picard_iter
 
-    # Use backend-aware nan/inf checking and assignment
-    if has_nan_or_inf(U_final_condition_at_T, backend):
-        backend_aware_assign(U_solution_this_picard_iter, (Nt - 1, slice(None)), float("nan"), backend)
-    else:
-        backend_aware_assign(U_solution_this_picard_iter, (Nt - 1, slice(None)), U_final_condition_at_T, backend)
+    backend_aware_assign(U_solution_this_picard_iter, (Nt - 1, slice(None)), U_final_condition_at_T, backend)
 
     if Nt == 1:
         return U_solution_this_picard_iter
@@ -1977,9 +2284,6 @@ def solve_hjb_system_backward(
         # BUG #7 FIX: Use M at the same time index as we're solving for U
         # Previously used M[n+1], now correctly uses M[n] to match HJB equation structure
         M_n_prev_picard = M_density_from_prev_picard[n_idx_hjb, :]  # M_k[n] - FIXED from n_idx_hjb+1
-        if has_nan_or_inf(M_n_prev_picard, backend):
-            backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), float("nan"), backend)
-            continue
 
         # Issue #1071: index the stacked cross-density trajectory at the SAME integer timestep as
         # the own density above (n_idx_hjb) — an honest integer row-pick (no reverse-engineered
@@ -1987,9 +2291,6 @@ def solve_hjb_system_backward(
         cross_density_at_n = cross_density[n_idx_hjb, :] if cross_density is not None else None
 
         U_n_prev_picard = U_from_prev_picard[n_idx_hjb, :]  # U_k[n] from notebook
-        if has_nan_or_inf(U_n_prev_picard, backend):
-            backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), float("nan"), backend)
-            continue
 
         # Extract or evaluate diffusion using CoefficientField abstraction (Issue #1412: route
         # through the single-source factory so a None override falls back to the problem's
@@ -1999,11 +2300,6 @@ def solve_hjb_system_backward(
         volatility_at_n = diffusion.evaluate_at(
             timestep_idx=n_idx_hjb, grid=grid, density=M_n_prev_picard, dt=problem.dt
         )
-
-        # Handle backend compatibility for NaN/Inf checking in callable results
-        if diffusion.is_callable() and isinstance(volatility_at_n, np.ndarray):
-            if has_nan_or_inf(volatility_at_n, backend):
-                raise ValueError(f"Callable volatility returned NaN/Inf at timestep {n_idx_hjb}")
 
         # Compute current time for time-dependent BCs
         current_time = n_idx_hjb * problem.dt
@@ -2033,6 +2329,7 @@ def solve_hjb_system_backward(
             current_time=current_time,
             bc_values=bc_values,  # Issue #574: Per-boundary BC values
             source_term=source_at_n,
+            source_callable=source_term,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
             failures=failures,
             on_failure=on_failure,

@@ -45,6 +45,7 @@ from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override, scalar_volatility
 
@@ -925,6 +926,13 @@ class HJBWENOSolver(BaseHJBSolver):
         Returns:
             U_solved: Complete solution u(t,x) over time domain
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal},
+        )
         # Issue #1316: this solver takes one scalar volatility from the problem at construction
         # (self._volatility) and uses it in the diffusion CFL bound and in every sweep. A
         # volatility that differs from it is refused, not accepted and ignored, which would

@@ -509,13 +509,109 @@ Not seen here:
 - **a source whose read raises, a `None` from a source read as it returns (`source_term_hjb`, a callable volatility,
   `node_potential_func`), and a boundary condition its owner refuses**, which are left to their readers at use.
 
-What the solve reaches is the point-of-use checks' fact (#2975, #2976):
-- the callable volatility's output check;
-- the boundary ghost layer's reading of a callable value at each time;
-- the graph applicator's reading of a `NodeBC`'s callable;
-- the FP solver's non-finite check.
+What the solve reaches is the next section's fact (#2975, #2976).
 
-Their messages name what they read, which need not be the source.
+### What the solve refuses as non-finite
+
+A non-finite value a solver reads makes the solve raise at the step whose result it reaches, or at the decision it
+enters, naming the first non-finite value that step read and where. A value the step reads and discards is not judged:
+a Dirichlet row its condition overwrites, the repeated endpoint of a periodic grid, a time level no step reads. An entry
+is discarded when the step's result does not depend on it for any value, NaN included: a zero weight discards a finite
+value but not a NaN, so a NaN multiplied by a boundary value of 0 reaches the result and is named. One
+function decides it, `refuse_a_non_finite_read` (`mfgarchon.utils.non_finite_read`), and it raises one error,
+`NonFiniteReadError`, a `ValueError`: "{solver}: {name} is non-finite where it reads it: {bad} of {n} values, the
+first {value}, at {where} (#2975)", where the value is `nan`, `inf` or `-inf`.
+
+Where a value is judged:
+
+- **at the door, the solution's own row**: each concrete `solve_hjb_system` reads `U_terminal` (the weak form its
+  deprecated `U_final_condition_at_T` where `U_terminal` is None, which is then the row), and each `solve_fp_system` reads `M_initial` (the particle FP also `initial_particles`),
+  before any work (#2976), as the solver will hold it. FP-FDM's level 0 holds g at the walls of a 1-D BC whose segments
+  are all Dirichlet, so an `M_initial` entry there is read and discarded (`initial_density_as_held`). Every other array a
+  door is handed, `M_density`, `U_coupling_prev`, an array `drift_field` or `potential_field`, is judged by the step
+  that reads it;
+- **HJB-FDM's Newton step** (`FDM_UPWIND`, and FVM's HJB half), on a step that fails: the residual and the Jacobian
+  are assembled again at the state the step's first residual reads, its start state, and the first non-finite row they
+  keep is named by the value the step read there. In 1-D the start state is $U$ at $t_{n+1}$. On two or more
+  dimensions it is the iterate Newton starts from, the previous Picard pass's $U$ at $t_n$, which is named first, as
+  `U_coupling_prev`. The reads, in the order the residual assembles them:
+  - the volatility;
+  - the wall, `state_penalty`, and each potential the Hamiltonian holds;
+  - the density handed to the step, `M_density`, and the populations' rows beside it, where they entered the
+    Hamiltonian's value: that value is finite with 1.0 in place of the non-finite density. A density the Hamiltonian
+    does not read at that row is discarded, and not named;
+  - each density term the Hamiltonian holds, then its value, which is what an own `__call__` gives;
+  - the source by its part: `source_term_hjb`, `coupling_cost`, `nonlocal_operator`;
+  - for the Jacobian, the density where it entered `dp`, then the Hamiltonian's `dp`.
+
+  A row non-finite with every read finite is a failed step, and #2644's policy reports it;
+- **FP-FDM's and FP-FVM's time step**, on a step whose result is non-finite. The step's reads, in the order it reads
+  them: the velocity (`drift_field`, or the optimal control the coupling hands), $U$ (`potential_field`) or a callable
+  drift's output; the volatility or its tensor; the source. The step runs again with every non-finite entry set to 0,
+  and the smallest prefix of those entries, in reading order, that makes the result non-finite again is found by
+  bisection. A re-run asks only whether a non-finite read reaches the result, so it runs none of the step's checks of
+  whether the solution is admissible (the tensor's PSD check, the flux check, the capped-node check): 0 can make a
+  solution inadmissible where the read's value would not, and such a check's refusal would leave in place of the
+  naming. A new re-run keeps to this (`refuse_the_first_read_that_entered`). A NaN or an infinity does not cancel
+  through the step's sums, products and linear solves, so that prefix ends at the first entry that entered, and the
+  entry is named at its node or face; FP-FVM names a face velocity formed from `potential_field` beside the two nodes
+  and the values it was formed from. A result still non-finite with every entry at 0 was computed from finite reads,
+  and only that check names the CFL condition. Within the step:
+  - both FP-FDM steps take a volatility array that varies, or holds a non-finite entry, to the Ito branch, where each
+    entry enters its own column. The test reads the volatility only where the step's matrix reads it
+    (`volatility_varies`): at the implicit step, the nodes its kept rows read, which leaves out a periodic repeated
+    endpoint and a Dirichlet node no kept row reads, such as the corner of a 2-D grid whose walls are all Dirichlet; at
+    the explicit step, every node but a periodic repeated endpoint. `ptp > 1e-12` read a NaN as uniform, and the
+    row-scaled branch dropped it. A finite volatility that varies only at nodes the step does not read takes the
+    row-scaled branch, which differs from the Ito branch there by rounding;
+  - FP-FDM's capped exit switches a node's row by its outflow, which reads that node's wall row (the volatility, $U$
+    or the face velocities), $m$ and the source. The switch is part of the step: a non-finite outflow is the step's to
+    name, where `> cap` read it as under the cap;
+  - a volatility tensor's PSD check judges its finite matrices only; a non-finite entry is the step's to name;
+- **at a decision a value enters before the step has a result**:
+  - FP-FVM's sub-step count reads each face velocity's outflow rate;
+  - HJB-SL's CFL number on a grid of two or more dimensions reads the foot velocity, the Hamiltonian's `dp`, naming the
+    density first where it entered;
+- **HJB-SL's value update on a grid of two or more dimensions**, under each `diffusion_method` but `stochastic`, whose
+  n-D step is in stage 2: a non-finite
+  update is named by the read behind it: the density where it entered, the foot velocity, the wall and the potentials,
+  the density terms, the value;
+- **the network FP's transition rates** out of each node, after the value field (`potential_field`) they are read from,
+  each entry named by its own node and the rate that reads it ("at node 4, read for the rate out of node 1 into node
+  4"). A node with no neighbours has no rate out of it, and its value is not read;
+- **where it is read**, for three reads that enter by definition, or whose decision consumes every entry:
+  - a boundary value, through `_read_constant`, at construction (`BCSegment`, `NodeBC`, and `MFGProblem` through them)
+    and during the solve. The public functions that call its readers are `boundary_value`, `segment_value`,
+    `segment_robin_coefficients`, `NodeBC.get_value`, `set_dirichlet_nodes`, `set_source_nodes`,
+    `create_graph_applicator` (its `boundary_value` and `source_value`), `GraphApplicator.from_network_geometry`,
+    `GraphApplicator.apply` and `apply_direct`, `PreallocatedGhostBuffer.update_ghosts`, `bc_to_topology_calculator`,
+    `ImplicitApplicator.apply`, `MeshfreeApplicator.apply`, `apply_field_bc` and `apply_particles`, the FEM's
+    `assemble_robin_terms`, and, reading a segment's Robin coefficients, HJB-FDM's `compute_hjb_residual`,
+    `compute_hjb_jacobian` and `solve_hjb_timestep_newton`, `HJBGFDMSolver.solve_hjb_system` and
+    `HJBHowardSolver.solve_hjb_system` (GFDM's Robin rows), and `FPResolver.resolve` and `HJBResolver.resolve` (a
+    provider's resolved coefficient). A value of a type the reader cannot read keeps its `NotImplementedError`;
+  - a `volatility=` override array. It decides the diffusion branch before any step runs (scalar, field or tensor;
+    diagonal or not; equal to the volatility the solver was built with or not), and that decision consumes every
+    entry;
+  - the iterator's initial mass, a sum that every entry enters.
+
+Stated limits:
+
+- a non-finite Hamiltonian only at a state the Newton step's own iterates or trials reach goes to #2644's policy, and
+  is not named: the start state reads it finite;
+- on the FP's step, a NaN that entered beside a failure computed from finite reads is not named: the result stays
+  non-finite with every non-finite entry at 0, and the CFL message reports the step;
+- where the Hamiltonian's value is non-finite with 1.0 in place of the density too, or the Hamiltonian raises there, the
+  test cannot tell whether the density entered, so the density is not named, and the next read in the order is;
+- a naming that re-evaluates a callable lets out a `NonFiniteReadError`, and a programming error: a computation's
+  failure the callable raises there (a `ValueError`, `RuntimeError` or `ArithmeticError`) leaves the step's own failure
+  standing, #2644's `ConvergenceError` for a failed Newton step.
+
+Not read here yet (#2975, stage 2): FP-SL, HJB-FEM, the weak-form FP, WENO, GFDM, Howard and the meshless solvers
+beyond their doors; HJB-SL's source in either dimension (`_source_increment`, added after the value update), its
+one-dimensional path and its stochastic, Carlini–Silva and DPP steps; and a constraint's obstacle, which HJB-FDM's
+projection reads after the step. There a non-finite value reaches the solution and comes back non-finite, or the solve
+raises naming something else.
 
 ### What the Fokker–Planck solver receives
 

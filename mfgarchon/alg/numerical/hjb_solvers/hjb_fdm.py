@@ -29,6 +29,7 @@ from mfgarchon.operators.stencils.finite_difference import (
 from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import NonFiniteReadError, refuse_a_non_finite_read
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
@@ -490,6 +491,13 @@ class HJBFDMSolver(BaseHJBSolver):
             FixedPointIterator via problem.using_resolved_bc(state).
             See mfgarchon/geometry/boundary/providers.py for details.
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal},
+        )
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
@@ -506,13 +514,8 @@ class HJBFDMSolver(BaseHJBSolver):
         # caller's data and is returned as given, so it must already lie in the set. One that does not is refused,
         # rather than returned infeasible (the nD path before #2036) or silently projected (the 1-D path).
         if self.constraint is not None:
+            # A non-finite U_terminal is refused at the door above (#2975), so whether it lies in the set can be checked.
             u_terminal = np.asarray(U_terminal, dtype=float)
-            if not np.all(np.isfinite(u_terminal)):
-                raise ValueError(
-                    f"U_terminal has {int(np.size(u_terminal) - np.count_nonzero(np.isfinite(u_terminal)))} non-finite "
-                    f"entries, so whether it lies in the constraint set of {type(self.constraint).__name__} cannot be "
-                    f"checked (Issue #2036)."
-                )
             violation = float(np.max(np.abs(np.asarray(self.constraint.project(u_terminal), dtype=float) - u_terminal)))
             if violation > 1e-12 * max(1.0, float(np.max(np.abs(u_terminal)))):
                 raise ValueError(
@@ -714,6 +717,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 time=t_current,
                 constraint=self.constraint,
                 source_term=source_at_n,
+                source_callable=source_term,
                 t_idx=n,
             )
 
@@ -734,6 +738,7 @@ class HJBFDMSolver(BaseHJBSolver):
         time: float,
         constraint: ConstraintProtocol | None = None,
         source_term: NDArray | None = None,
+        source_callable: Callable | None = None,  # #2975: what source_term was evaluated from, to name a part
         t_idx: int = -1,
     ) -> NDArray:
         """
@@ -765,6 +770,49 @@ class HJBFDMSolver(BaseHJBSolver):
         # refuses is refused here before the solve, and one it accepts gives the ghosts' faces (#2512 row B1).
         wall, g_wall = dirichlet_wall_rows(bc, self.shape, time, self.problem.geometry)
 
+        def name_a_non_finite_read_at_the_start() -> None:
+            # A value the step read at its start state -- the iterate it starts from (the previous Picard pass's U at
+            # t_n), with U at t_{n+1}, the data and the density -- that is non-finite makes the step fail; it is named
+            # here, at the decision it enters, by the 1-D residual's naming, each term re-read as it is assembled. A
+            # non-finite value only at a state the solver's own iterates or trials reach is not named: the failure goes
+            # to the owner's policy, as before (#2975).
+            solver = f"HJBFDMSolver's {'Newton' if self.solver_type == 'newton' else 'fixed-point'} step"
+            refuse_a_non_finite_read(solver, f"the iterate it starts from, at t={time:g}", {"U_coupling_prev": U_guess})
+            try:
+                name_the_terms_at_the_start(solver)
+            except NonFiniteReadError:
+                raise
+            except (ValueError, RuntimeError, ArithmeticError):
+                # The naming re-evaluates; a computation's failure it raises leaves the step's own failure standing,
+                # to the owner's policy below (#2644; #2981's review 3). A programming error is let out.
+                return
+
+        def name_the_terms_at_the_start(solver: str) -> None:
+            from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _refuse_a_non_finite_hjb_term
+
+            gradients = self._compute_gradients_nd(U_guess, time=time)
+            H_values = self._evaluate_hamiltonian_nd(
+                U_guess, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time
+            )
+            rhs = H_values if source_term is None else H_values - source_term
+            momenta = np.stack(
+                [np.ravel(gradients[d]) if d in gradients else np.zeros(U_guess.size) for d in range(self.dimension)],
+                axis=-1,
+            )
+            _refuse_a_non_finite_hjb_term(
+                np.where(wall, 0.0, rhs).ravel(),
+                self.problem,
+                time,
+                self.problem.geometry.get_spatial_grid(),
+                momenta,
+                np.asarray(M_next, dtype=float).ravel(),
+                np.asarray(H_values, dtype=float).ravel(),
+                None if source_term is None else np.asarray(source_term, dtype=float).ravel(),
+                source_callable,
+                solver=solver,
+                volatility=None if volatility_at_n is None else np.asarray(volatility_at_n, dtype=float).ravel(),
+            )
+
         used_fallback = False
         if self.solver_type == "fixed_point":
             # Define fixed-point map G: u → u
@@ -781,6 +829,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 return np.where(wall, g_wall, U_next - self.dt * rhs)
 
             U_solution, info = self.nonlinear_solver.solve(G, U_guess)
+            if not info.converged:
+                name_a_non_finite_read_at_the_start()
 
         else:  # newton
             # Define residual F: u → residual
@@ -809,6 +859,11 @@ class HJBFDMSolver(BaseHJBSolver):
                 # An inner solve that already went through the owner: its answer stands. A ConvergenceError is a
                 # RuntimeError, so the clause below would turn it into a fallback, or into a second error (#2644).
                 raise
+            except NonFiniteReadError:
+                # A value read inside the residual is non-finite, refused by name where it is read (a boundary value,
+                # a coefficient field): an input's fault, not a failed Newton solve, so neither a fallback nor a
+                # ConvergenceError (#2975).
+                raise
             except (np.linalg.LinAlgError, ValueError, RuntimeError) as e:
                 newton_failed = True
                 newton_error = e
@@ -817,6 +872,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 info = SolverInfo(converged=False, iterations=0, residual=float("inf"), residual_history=[])
 
             if newton_failed:
+                name_a_non_finite_read_at_the_start()
                 if self.on_inner_failure == "fallback":
                     # Define fixed-point map G for fallback (same computation as FP path)
                     def G_fallback(U: NDArray) -> NDArray:

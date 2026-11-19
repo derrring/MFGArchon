@@ -20,6 +20,7 @@ from mfgarchon.types.callable_protocols import (
     coordinate_tuple,
     point_tuple,
 )
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -269,17 +270,12 @@ def resolve_volatility_override(
                 "was given with a scalar volatility=, where it would be read by nothing."
             )
         value = float(volatility)
-        if not np.isfinite(value) or value < 0:
-            raise ValueError(
-                f"{consumer}: a scalar volatility must be finite and non-negative, got {value} (#2618, #2974)."
-            )
+        refuse_a_non_finite_read(consumer, "its volatility= override", {"volatility": value})
+        if value < 0:
+            raise ValueError(f"{consumer}: a scalar volatility must be finite and non-negative, got {value} (#2618).")
         return value, None
     array = np.asarray(volatility, dtype=float)
-    if not np.all(np.isfinite(array)):
-        raise ValueError(
-            f"{consumer}: the volatility= array holds {int(np.sum(~np.isfinite(array)))} non-finite values of "
-            f"{array.size} (#2618, #2974)."
-        )
+    refuse_a_non_finite_read(consumer, "its volatility= override", {"volatility": array})
     dimension = getattr(problem, "dimension", None)
     per_axis = isinstance(dimension, int) and dimension >= 2 and array.shape == (dimension,)
     if per_axis and volatility_kind != "field":
@@ -584,7 +580,9 @@ class CoefficientField:
         TypeError
             If output is not float or ndarray
         ValueError
-            If output shape doesn't match expected or contains NaN/Inf
+            If output shape doesn't match expected
+
+        A non-finite value is not refused here: the step that reads it judges it, where it entered (#2975).
         """
         # Handle scalar output
         if isinstance(output, (int, float)):
@@ -597,13 +595,6 @@ class CoefficientField:
                 raise ValueError(
                     f"Callable {self.name} returned array with shape {output.shape}, "
                     f"expected {expected_shape} (matching density shape) at timestep {timestep_idx}"
-                )
-
-            # Check for NaN/Inf
-            if np.any(np.isnan(output)) or np.any(np.isinf(output)):
-                raise ValueError(
-                    f"Callable {self.name} returned NaN or Inf values at timestep {timestep_idx}. "
-                    f"Check your coefficient function implementation."
                 )
 
             return output
@@ -706,7 +697,9 @@ class CoefficientField:
         Raises
         ------
         ValueError
-            If tensor contains NaN/Inf, is not symmetric, or has negative eigenvalues
+            If a finite tensor is not symmetric, or has negative eigenvalues. A matrix with a non-finite entry is not
+            judged here: its eigenvalues mean nothing, and the step that reads the entry names it if it enters the
+            result (#2975).
 
         Examples
         --------
@@ -728,10 +721,6 @@ class CoefficientField:
         if not isinstance(sigma_tensor, np.ndarray):
             raise TypeError(f"{self.name} must be float or ndarray, got {type(sigma_tensor)}")
 
-        # Check for NaN/Inf
-        if not np.all(np.isfinite(sigma_tensor)):
-            raise ValueError(f"{self.name} contains NaN or Inf values")
-
         # Determine tensor structure from shape
         shape = sigma_tensor.shape
 
@@ -743,7 +732,8 @@ class CoefficientField:
 
         # Single tensor: shape (d, d)
         if sigma_tensor.ndim == 2:
-            self._check_single_tensor_psd(sigma_tensor, tolerance)
+            if np.all(np.isfinite(sigma_tensor)):
+                self._check_single_tensor_psd(sigma_tensor, tolerance)
             return
 
         # Spatially varying or spatiotemporal: shape (..., d, d)
@@ -755,6 +745,8 @@ class CoefficientField:
 
             # Check each tensor at each grid point
             for idx in range(num_tensors):
+                if not np.all(np.isfinite(reshaped[idx])):
+                    continue
                 try:
                     self._check_single_tensor_psd(reshaped[idx], tolerance)
                 except ValueError as e:
@@ -1149,10 +1141,6 @@ class _DriftDispatcher:
             result = np.full(self.spatial_shape, float(result))
         elif not isinstance(result, np.ndarray):
             raise TypeError(f"Drift callable must return float or ndarray, got {type(result)}")
-
-        # Check for NaN/Inf
-        if np.any(np.isnan(result)) or np.any(np.isinf(result)):
-            raise ValueError(f"Drift callable returned NaN or Inf at timestep {timestep_idx}")
 
         return result
 
