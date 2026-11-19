@@ -5,4 +5,4 @@
   - the particle solver's `potential_field` route, for a Hamiltonian that is not separable;
   - the meshless HJB's streamline diffusion.
 
-  That includes the `DualHamiltonian` of a quadratic Lagrangian, whose drift is its separable twin's: build that twin instead. A solve handed a velocity, callable or precomputed, or no drift at all, forms no −c·∇U and is unaffected, as are the solvers that read `optimal_control` themselves (`docs/user/CONVENTIONS.md`, "What the Fokker–Planck solver receives").
+  That includes the `DualHamiltonian` of a quadratic Lagrangian, whose drift is its separable twin's: build that twin instead. Called directly before, such a solve took the problem's `coupling_coefficient` (default 0.5) as its c, so it agreed with the twin only where 1/λ = 0.5: with L = (λ/2)|α|², FP-FDM's density from `potential_field=U` matched the twin's at λ = 2 and differed by up to 1.89 at λ = 1 and 1.16 at λ = 4. A solve handed a velocity, callable or precomputed, or no drift at all, forms no −c·∇U and is unaffected, as are the solvers that read `optimal_control` themselves (`docs/user/CONVENTIONS.md`, "What the Fokker–Planck solver receives").

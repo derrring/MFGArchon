@@ -3376,7 +3376,8 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
     Parameters
     ----------
     coupling_coefficient : float
-        Coefficient c in ½c|p|² (default: 1.0)
+        Coefficient c > 0 in ½c|p|² (default: 1.0). The control cost is λ = 1/c; c ≤ 0 describes no quadratic
+        control cost and is refused (#2980).
     potential : Callable | None
         Potential V(t, x) (default: None, meaning V=0)
 
@@ -3398,9 +3399,15 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
             raise ValueError(
                 f"QuadraticMFGHamiltonian: coupling_coefficient must be finite, got {coupling_coefficient} (#2974)"
             )
+        if not coupling_coefficient > 0:
+            # c = 0 is no control cost, and c < 0 makes ½c|p|² concave in p (#2980).
+            raise ValueError(
+                f"QuadraticMFGHamiltonian: coupling_coefficient must be positive, got {coupling_coefficient}: c in "
+                f"½c|p|² is 1/λ, the control cost's reciprocal, and no control cost has c ≤ 0 (#2980)"
+            )
         super().__init__(
             control_cost=QuadraticControlCost(
-                control_cost=1.0 / coupling_coefficient if coupling_coefficient > 0 else 1.0,
+                control_cost=1.0 / coupling_coefficient,
             ),
             potential=potential,
             coupling=lambda m: m**2,
