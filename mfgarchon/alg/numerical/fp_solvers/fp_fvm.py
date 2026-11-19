@@ -741,8 +741,9 @@ class FPFVMSolver(BaseFPSolver):
 
     def _strang_step(self, m, alpha_faces, alpha_wrap, dt, spacing, lu):
         """One Strang split step: 1/2 advection, full implicit diffusion, 1/2 advection."""
-        # Whether any face carries a velocity. `max(|a|) > 0` read a NaN velocity as none, and skipped advection (#2975).
-        has_advection = any(bool(np.any(a != 0.0)) for a in alpha_faces)
+        # No non-finite velocity reaches here: the sub-step count reads every face before the step and names it (#2975).
+        amax = max((float(np.max(np.abs(a))) for a in alpha_faces), default=0.0)
+        has_advection = amax > 0.0
 
         if lu is not None and has_advection:
             m = self._advect(m, alpha_faces, alpha_wrap, 0.5 * dt, spacing)

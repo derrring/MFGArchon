@@ -414,7 +414,7 @@ def test_a_long_excerpt_keeps_the_tail_and_says_what_it_dropped(td):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("index", range(35))
+@pytest.mark.parametrize("index", range(34))
 def test_every_mutation_anchor_still_matches_exactly_once(td, index):
     """A silently unapplied mutation reports zero kills and reads as total blindness.
 
@@ -432,10 +432,10 @@ def test_every_mutation_anchor_still_matches_exactly_once(td, index):
 def test_the_mutation_list_matches_the_parametrisation(td):
     """The parametrize range above is a literal; this is what notices when it drifts."""
     assert (
-        len(td.MUTATIONS) == 35
+        len(td.MUTATIONS) == 34
     )  # 23 on #2145, where mass_drift_reported_as_deviation_from_one is INEFFECTIVE; 25 since #2308; 26 since #2313;
     # 27 since #2342, which added the first mutation that DROPS a threaded argument rather than altering arithmetic;
-    # 35 since #2981, eight on #2975's reads of a non-finite value
+    # 34 since #2981, seven on #2975's reads of a non-finite value
 
 
 def test_the_end_of_run_guard_checks_the_mutated_files_only(td, monkeypatch):

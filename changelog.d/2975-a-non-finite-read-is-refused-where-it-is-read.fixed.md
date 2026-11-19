@@ -8,8 +8,8 @@
     wrong U. Now a step that fails is assembled again at its start state, and the value it read there is named. A NaN
     the Hamiltonian meets only at Newton's own iterates goes to the inner-failure policy, as before;
   - **FP-FVM given a NaN optimal control**: a wrong M with `converged` True and no warning, since `max|a| > 0` read a
-    NaN velocity as no advection. The mask reads a velocity as present when any face is nonzero, and the sub-step
-    count names a non-finite face velocity, beside the `potential_field` nodes and values it was formed from;
+    NaN velocity as no advection. The sub-step count, which reads every face velocity before the step, names a
+    non-finite one, beside the `potential_field` nodes and values it was formed from;
   - **FP-FDM**: "Check CFL condition" for a NaN drift, volatility or source. A step whose result is non-finite now
     names the first value it read that entered it, found by running the step again; the check after the step names the
     CFL condition only for a result computed from finite reads. Both FP-FDM steps take a volatility that varies, or

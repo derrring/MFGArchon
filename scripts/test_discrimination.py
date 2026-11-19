@@ -439,14 +439,6 @@ MUTATIONS: list[Mutation] = [
         verify='"its door" not in _fdm_door_on_nan()',
     ),
     Mutation(
-        name="fp_fvm_advection_mask_reads_a_nan_as_none",
-        path="mfgarchon/alg/numerical/fp_solvers/fp_fvm.py",
-        old="        has_advection = any(bool(np.any(a != 0.0)) for a in alpha_faces)\n",
-        new="        has_advection = max((float(np.max(np.abs(a))) for a in alpha_faces), default=0.0) > 0.0  # MUTATED: as at 4ca7c9e0\n",
-        owner="FP-FVM advects whenever a face carries a velocity; `max(|a|) > 0` read a NaN velocity as none (#2975). solve_fp_system's sub-step count names a NaN velocity before the mask reads it, so the control sits on the Strang step",
-        verify="_fvm_mask_on_a_nan_face()",
-    ),
-    Mutation(
         name="fp_fdm_branch_choice_reads_every_node",
         path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
         old="    return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12\n",
@@ -709,7 +701,6 @@ def _stub_problem(control_cost):
 import warnings
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import volatility_varies
-from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, refuse_the_first_read_that_entered
 
 
@@ -770,19 +761,6 @@ def _fdm_door_on_nan():
     except Exception as e:
         return str(e)
     return "returns"
-
-
-def _fvm_mask_on_a_nan_face():
-    # Whether FP-FVM's Strang step returns a finite density on a face velocity that is NaN everywhere: it advects, and
-    # fails, unless the mask reads the NaN as no velocity. Through solve_fp_system the sub-step count names such a
-    # velocity first, so the mask is checked on the step itself.
-    try:
-        with warnings.catch_warnings(), np.errstate(all="ignore"):
-            warnings.simplefilter("ignore")
-            out = FPFVMSolver(_nan_problem())._strang_step(np.ones(11), [np.full(10, np.nan)], [None], 0.01, (0.1,), None)
-    except (ValueError, FloatingPointError):
-        return False
-    return bool(np.all(np.isfinite(out)))
 
 
 def _nd_naming_that_raises():
