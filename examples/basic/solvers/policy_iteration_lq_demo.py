@@ -123,7 +123,6 @@ def solve_lq_mfg_with_value_iteration():
         Nt=50,
         T=1.0,
         volatility=0.1,
-        coupling_coefficient=0.5,
     )
 
     print("\nProblem setup:")
@@ -133,7 +132,7 @@ def solve_lq_mfg_with_value_iteration():
     print(f"  Grid: {grid_shape[0]} spatial points")
     print(f"  Time: {problem.Nt + 1} time steps")
     print(f"  Volatility: σ = {problem.volatility}")
-    print(f"  Control cost: {problem.coupling_coefficient}")
+    print(f"  Control cost: {problem.hamiltonian_class.control_cost.lambda_}")
 
     # Create HJB solver with fixed-point iteration
     solver = HJBFDMSolver(

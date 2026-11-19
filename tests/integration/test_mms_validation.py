@@ -581,7 +581,6 @@ class TestMassConservationStress:
             T=T,
             Nt=Nt,
             volatility=sigma,
-            coupling_coefficient=0.1,  # Weak coupling
             components=_default_components(),
         )
 

@@ -46,11 +46,9 @@ S_HJB = -d_t u + H(x, m, ∇u) - (σ²/2)Δu   with H = |p|²/(2λ) + f(m), λ =
 S_FP  =  d_t m + div(α m) - (σ²/2)Δm      with α = -c·∇U, c = 1
      => identical to the paper's r_m.
 
-c is NOT `problem.coupling_coefficient`. It comes from `fp_drift_coefficient`
-(`utils/pde_coefficients.py:118`), which for a quadratic-MINIMIZE SeparableHamiltonian returns
-1/control_cost.lambda_ and never reaches the `coupling_coefficient` fallback (#1420 / G-017). Here
-λ = 1, so c = 1. An earlier version of this file credited the value to the `coupling_coefficient=1.0`
-argument below -- wrong source, right number, which is exactly why the misattribution left no trace.
+c comes from `fp_drift_coefficient`, which for a quadratic SeparableHamiltonian returns
+1/control_cost.lambda_ (#1420 / G-017), the problem holding no other source of it (#2977). Here
+λ = 1, so c = 1.
 
 WHAT THIS STUDY CANNOT SEE
 --------------------------
@@ -237,12 +235,6 @@ def _build_problem(nx: int, nt: int):
         T=T,
         Nt=nt,
         volatility=SIGMA,
-        # INERT here, and kept only because MFGProblem's own default (0.5) would be equally
-        # inert and more confusing. The drift scale comes from `fp_drift_coefficient` = 1/lambda,
-        # never from this argument (see SIGN CONVENTIONS above). Measured: solves at
-        # coupling_coefficient = 0.5 / 1.0 / 7.0 are bit-identical, max|dU| = max|dM| = 0.000e+00,
-        # against a control where sigma=1.1 moves the same solve by 1.672e-02.
-        coupling_coefficient=1.0,
         components=components,
         source_term_hjb=lambda t, x: s_hjb(t, _points(x)).reshape(np.shape(x[0])),
         source_term_fp=lambda t, x: s_fp(t, _points(x)).reshape(np.shape(x[0])),

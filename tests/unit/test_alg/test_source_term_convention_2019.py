@@ -43,7 +43,6 @@ def _problem(dim, n, nt):
         T=_T,
         Nt=nt,
         volatility=_SIGMA,
-        coupling_coefficient=0.0,
         components=MFGComponents(
             # Per-point callables returning a float: what the 2-D validator accepts.
             m_initial=lambda x: 1.0,

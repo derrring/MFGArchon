@@ -150,7 +150,6 @@ def test_mfg_problem_default_initialization():
 
     # Physical parameters (None → 0 for volatility)
     assert problem.volatility == 0.0
-    assert problem.coupling_coefficient == 0.5
 
     # Custom components (now required)
     assert problem.components is not None  # Must have components now
@@ -187,10 +186,9 @@ def test_mfg_problem_custom_time():
 def test_mfg_problem_custom_coefficients():
     """Test MFGProblem with custom coefficients (Issue #811 convention)."""
     # volatility= provides the SDE volatility directly
-    problem = create_test_problem(volatility=0.5, coupling_coefficient=0.8)
+    problem = create_test_problem(volatility=0.5)
 
     assert problem.volatility == 0.5
-    assert problem.coupling_coefficient == 0.8
 
 
 @pytest.mark.unit
@@ -425,7 +423,7 @@ def test_mfg_problem_zero_volatility_is_allowed_and_reconstruction_safe():
 @pytest.mark.unit
 def test_hamiltonian_h_default():
     """Test default Hamiltonian H computation."""
-    problem = create_test_problem(volatility=1.0, coupling_coefficient=0.5)
+    problem = create_test_problem(volatility=1.0)
 
     x_idx = 5
     m_at_x = 1.0
@@ -578,7 +576,7 @@ def test_get_initial_m():
 def test_get_problem_info():
     """Test get_problem_info returns comprehensive info dict."""
     geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[51])  # Nx=50 intervals
-    problem = create_test_problem(geometry=geometry, T=1.0, Nt=100, volatility=0.5, coupling_coefficient=0.8)
+    problem = create_test_problem(geometry=geometry, T=1.0, Nt=100, volatility=0.5)
 
     info = problem.get_problem_info()
 
@@ -595,8 +593,7 @@ def test_get_problem_info():
     assert info["domain"]["Nx"] == 50  # Intervals, from legacy info
     assert info["time"]["T"] == 1.0
     assert info["time"]["Nt"] == 100
-    assert info["coefficients"]["volatility"] == 0.5
-    assert info["coefficients"]["coupling_coefficient"] == 0.8
+    assert info["coefficients"] == {"volatility": 0.5}
 
 
 # ===================================================================

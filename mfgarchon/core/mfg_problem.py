@@ -326,9 +326,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         volatility: float | NDArray[np.floating] | Callable | None = None,  # SDE volatility Sigma
         volatility_kind: str | None = None,  # "field" | "tensor"; required for an array
         drift: float | NDArray[np.floating] | Callable | None = None,  # Refused when given (#2678)
-        coupling_coefficient: float = 0.5,
-        # MFG coupling parameters
-        lambda_: float | None = None,  # Control cost (H uses |p|²/(2λ))
         # Advanced
         components: MFGComponents | None = None,
         suppress_warnings: bool = False,
@@ -388,7 +385,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 the same ``volatility_kind`` rule for an array. Mutually exclusive with volatility=.
             constraints: Refused when given: no solve reads it (#2678).
             drift: Refused when given: no solver reads a problem-level drift (#2678). The refusal names the routes.
-            coupling_coefficient: Control cost coefficient
             components: Optional MFGComponents for custom problem definition
             suppress_warnings: Skip the computational-feasibility check, which runs only when the library builds the
                 grid itself, from spatial_bounds= or the default domain. True is refused on a geometry or a network,
@@ -504,12 +500,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
             # Every input this form was given beside model, domain, conditions and Nt, as given: the one record the
             # rebuilds read (`_rebuilt`), so solve(Nt=) and with_* do not drop what the constructor accepted (#2667).
-            # lambda_ has no reader since #2901 deleted BaseHJBSolver._control_cost_lambda's fallback to it, and
-            # coupling_coefficient is the one fp_drift_coefficient reads for any Hamiltonian that is not a quadratic
-            # SeparableHamiltonian (#2681); whether they should exist is decided where those readers are repaired.
             self._v1_inputs: dict[str, Any] = {
-                "lambda_": lambda_,
-                "coupling_coefficient": coupling_coefficient,
                 "source_term_hjb": source_term_hjb,
                 "source_term_fp": source_term_fp,
                 "nonlocal_operator": nonlocal_operator,
@@ -564,8 +555,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "diffusion": diffusion,
                 "volatility": volatility,
                 "volatility_kind": volatility_kind,
-                "coupling_coefficient": coupling_coefficient,
-                "lambda_": lambda_,
                 "components": components,
                 "suppress_warnings": suppress_warnings,
                 "source_term_hjb": source_term_hjb,
@@ -793,7 +782,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             drift=drift,
             suppress_warnings=suppress_warnings,
             spatial_discretization=spatial_discretization,
-            lambda_=lambda_,
         )
 
         # Dispatch to appropriate initializer
@@ -804,7 +792,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 spatial_discretization,
                 T,
                 Nt,
-                coupling_coefficient,
                 suppress_warnings,
                 components.boundary_conditions if components is not None else None,
             )
@@ -815,8 +802,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 final_hjb_geometry,
                 T,
                 Nt,
-                coupling_coefficient,
-                lambda_,
             )
             # For dual geometry mode, store both geometries explicitly
             if self.geometry_projector is not None:
@@ -825,7 +810,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         elif mode == "network":
             # Mode 3: Network MFG
-            self._init_network(network, T, Nt, coupling_coefficient, lambda_)
+            self._init_network(network, T, Nt)
 
         elif mode == "default":
             # Default: 1D unit interval with 51 grid points
@@ -839,7 +824,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 [51],
                 T,
                 Nt,
-                coupling_coefficient,
                 suppress_warnings,
                 components.boundary_conditions if components is not None else None,
             )
@@ -908,7 +892,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         spatial_discretization: list[int] | None,
         T: float,
         Nt: int,
-        coupling_coefficient: float,
         suppress_warnings: bool,
         boundary_conditions: BoundaryConditions | None = None,
     ) -> None:
@@ -929,7 +912,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 dimension when None.
             T: Terminal time.
             Nt: Number of time intervals.
-            coupling_coefficient: Control cost coefficient.
             suppress_warnings: Skip the computational-feasibility check.
             boundary_conditions: The components BC, or None.
         """
@@ -984,9 +966,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.Nt: int = Nt
         self.dt: float = T / Nt if Nt > 0 else 0.0
         self.tSpace: np.ndarray = np.linspace(0, T, Nt + 1, endpoint=True)
-
-        # Coefficients
-        self.coupling_coefficient: float = coupling_coefficient
 
         # Check computational feasibility and warn if needed
         if not suppress_warnings:
@@ -1056,7 +1035,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         drift: Any,
         suppress_warnings: bool,
         spatial_discretization: list[int] | None,
-        lambda_: float | None,
     ) -> None:
         """Refuse an input no solve on this construction would read, by name (#2678). Accepted, each changed U and M by
         0.0 on the default solve, with nothing said. An input read on one route and dropped on another is refused on the
@@ -1082,11 +1060,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 f"MFGProblem(spatial_discretization=...) is refused on {_MODE_NAMES[mode]} (#2678): it sets the points of "
                 "a grid built from spatial_bounds=, so nothing reads it here."
-            )
-        if lambda_ is not None and mode in ("nd_grid", "default"):
-            raise ValueError(
-                f"MFGProblem(lambda_=...) is refused on {_MODE_NAMES[mode]} (#2678): a grid built here does not keep it, "
-                "so nothing reads it. A Hamiltonian's control_cost= is the route."
             )
 
     def _detect_init_mode(
@@ -1143,8 +1116,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         geometry: GeometryProtocol,
         T: float,
         Nt: int,
-        coupling_coefficient: float,
-        lambda_: float | None,
     ) -> None:
         """
         Initialize problem with geometry object implementing GeometryProtocol.
@@ -1155,8 +1126,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Args:
             geometry: Any object implementing GeometryProtocol
             T, Nt: Time domain parameters
-            coupling_coefficient: Physical parameters
-            lambda_: control cost parameter
         """
         from mfgarchon.geometry import GeometryProtocol, validate_geometry
 
@@ -1179,12 +1148,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.Nt = Nt
         self.dt = T / Nt if Nt > 0 else 0.0  # Lowercase (official naming convention)
         self.tSpace = np.linspace(0, T, Nt + 1, endpoint=True)
-
-        # Physical parameters
-        self.coupling_coefficient = coupling_coefficient
-
-        # MFG coupling parameters (for custom Hamiltonians)
-        self.lambda_ = lambda_
 
         # Initialize spatial discretization based on geometry type
         from mfgarchon.geometry import GeometryType
@@ -1243,8 +1206,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         network: Any,
         T: float,
         Nt: int,
-        coupling_coefficient: float,
-        lambda_: float | None,
     ) -> None:
         """
         Initialize problem on network/graph.
@@ -1252,7 +1213,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Args:
             network: NetworkGraph or networkx.Graph
             T, Nt: Time domain parameters
-            coupling_coefficient: Physical parameters
         """
         # Import CustomNetwork for geometry-first API
         from mfgarchon.geometry.graph import CustomNetwork
@@ -1291,12 +1251,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.Nt = Nt
         self.dt = T / Nt if Nt > 0 else 0.0  # Lowercase (official naming convention)
         self.tSpace = np.linspace(0, T, Nt + 1, endpoint=True)
-
-        # Physical parameters
-        self.coupling_coefficient = coupling_coefficient
-
-        # MFG coupling parameters (for custom Hamiltonians)
-        self.lambda_ = lambda_
 
         # Spatial discretization (nodes)
         self.spatial_shape = (self.num_nodes,)
@@ -2564,7 +2518,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "parameters": self.components.parameters,
                 "domain": domain_info,
                 "time": {"T": self.T, "Nt": self.Nt},
-                "coefficients": {"volatility": self._volatility, "coupling_coefficient": self.coupling_coefficient},
+                "coefficients": {"volatility": self._volatility},
             }
         else:
             return {
@@ -2579,7 +2533,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "parameters": {},
                 "domain": domain_info,
                 "time": {"T": self.T, "Nt": self.Nt},
-                "coefficients": {"volatility": self._volatility, "coupling_coefficient": self.coupling_coefficient},
+                "coefficients": {"volatility": self._volatility},
             }
 
     # ============================================================================

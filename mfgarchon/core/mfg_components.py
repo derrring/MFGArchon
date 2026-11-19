@@ -234,7 +234,6 @@ class HamiltonianMixin:
     Required attributes from the inheriting class:
     - components: MFGComponents | None
     - is_custom: bool
-    - coupling_coefficient: float
     - tSpace: np.ndarray
     - spatial_shape: tuple
     - dimension: int
@@ -246,7 +245,6 @@ class HamiltonianMixin:
     # Type hints for attributes expected from MFGProblem
     components: MFGComponents | None
     is_custom: bool
-    coupling_coefficient: float
     tSpace: np.ndarray
     spatial_shape: tuple
     dimension: int

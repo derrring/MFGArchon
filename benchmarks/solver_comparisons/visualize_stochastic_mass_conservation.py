@@ -32,7 +32,6 @@ def main():
         T=1.0,
         Nt=51,
         volatility=1.0,
-        coupling_coefficient=0.5,
     )
     bc = no_flux_bc(dimension=1)
 

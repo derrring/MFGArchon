@@ -4,6 +4,9 @@
 through it), so a deleted keyword would otherwise be accepted in silence: `return_tuple=True` returned a
 `SolverResult` and `Niter_max=2` was ignored. Each of the five is refused by name, and a fourth positional argument,
 where `return_tuple` stood, is Python's own `TypeError`.
+
+The two methods whose `coupling_coefficient` parameter #2977 deleted take every later parameter by keyword, so a
+positional value meant for it is Python's own `TypeError` rather than the next parameter's value.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.numerical.flux_diagnostics import FluxDiagnostics
 
 ITERATORS = [FixedPointIterator, FictitiousPlayIterator]
 
@@ -57,3 +61,14 @@ def test_each_retired_keyword_is_refused_by_name(cls, name, value, replacement):
         TypeError, match=rf"{cls.__name__}\.solve\(\) no longer takes {name}=: {re.escape(replacement)}"
     ):
         _iterator(cls).solve(**{name: value})
+
+
+def test_a_positional_value_cannot_slide_past_a_deleted_coupling_coefficient():
+    """#2977: `build_advection_matrix(U, 2.0)` bound 2.0 to the deleted coefficient, and `compute_boundary_flux(m,
+    None, u)` read u as the deleted field's; neither may now land in `time` or `diffusion`."""
+    problem = _iterator(FixedPointIterator).problem
+    grid = np.linspace(0.0, 1.0, 11)
+    with pytest.raises(TypeError, match=r"takes 2 positional arguments but 3 were given"):
+        HJBFDMSolver(problem).build_advection_matrix(grid**2, 2.0)
+    with pytest.raises(TypeError, match=r"takes from 2 to 3 positional arguments but 4 were given"):
+        FluxDiagnostics(dimension=1, spacing=(0.1,)).compute_boundary_flux(1.0 + grid, None, grid)

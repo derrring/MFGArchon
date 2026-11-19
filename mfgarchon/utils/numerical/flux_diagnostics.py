@@ -29,7 +29,7 @@ Usage:
     for t in range(Nt):
         flux_info = diag.compute_boundary_flux(
             m=M[t],
-            velocity_field=alpha,  # or gradient of u
+            velocity_field=alpha,
             diffusion=sigma**2/2
         )
         print(f"Net flux: {flux_info.net_flux:.2e}")
@@ -167,8 +167,7 @@ class FluxDiagnostics:
         self,
         m: NDArray,
         velocity_field: NDArray | None = None,
-        u_field: NDArray | None = None,
-        coupling_coefficient: float = 1.0,
+        *,
         diffusion: float | NDArray = 0.0,
     ) -> BoundaryFluxResult:
         """Compute boundary flux for current density field.
@@ -178,22 +177,16 @@ class FluxDiagnostics:
 
         Args:
             m: Density field, shape (Nx+1,) for 1D, (Nx+1, Ny+1) for 2D
-            velocity_field: Precomputed velocity α, same shape as m
-                If None, computed from u_field as α = -coupling * ∇u
-            u_field: Value function u(x), used to compute velocity if velocity_field is None
-            coupling_coefficient: Coefficient λ in α = -∇u/λ
+            velocity_field: The velocity α, same shape as m; None is zero velocity. A velocity is the caller's, from
+                the Hamiltonian's own control: this module holds no problem, so it decides no drift coefficient of
+                its own (#2977, which deleted a u path whose coefficient, default 1.0, no Hamiltonian decided)
             diffusion: Diffusion coefficient D = σ²/2, scalar or spatially varying
 
         Returns:
             BoundaryFluxResult with flux breakdown
         """
-        # Compute velocity field if not provided
         if velocity_field is None:
-            if u_field is not None:
-                velocity_field = self._compute_velocity_from_u(u_field, coupling_coefficient)
-            else:
-                # Zero velocity
-                velocity_field = np.zeros_like(m)
+            velocity_field = np.zeros_like(m)
 
         # Compute fluxes based on dimension
         if self.dimension == 1:
@@ -210,60 +203,6 @@ class FluxDiagnostics:
             self._initial_mass = result.total_mass
 
         return result
-
-    def _compute_velocity_from_u(self, u: NDArray, coupling: float) -> NDArray:
-        """Compute velocity field α = -∇u / coupling from value function.
-
-        Uses central differences in the interior and one-sided differences at boundaries.
-        Returns velocity as array with shape (*u.shape, dimension) for dimension >= 2,
-        or same shape as u for 1D.
-        """
-        if self.dimension == 1:
-            dx = self.spacing[0]
-            # Central difference for interior, one-sided at boundaries
-            alpha = np.zeros_like(u)
-            alpha[1:-1] = -(u[2:] - u[:-2]) / (2 * dx * coupling)
-            alpha[0] = -(u[1] - u[0]) / (dx * coupling)
-            alpha[-1] = -(u[-1] - u[-2]) / (dx * coupling)
-            return alpha
-        else:
-            # General nD implementation (dimension >= 2)
-            alpha_components = []
-
-            for d in range(self.dimension):
-                h = self.spacing[d]
-                alpha_d = np.zeros_like(u)
-
-                # Build slices for this dimension
-                # Interior: central difference
-                interior_slice = [slice(None)] * self.dimension
-                interior_slice[d] = slice(1, -1)
-                forward_slice = [slice(None)] * self.dimension
-                forward_slice[d] = slice(2, None)
-                backward_slice = [slice(None)] * self.dimension
-                backward_slice[d] = slice(None, -2)
-
-                alpha_d[tuple(interior_slice)] = -(u[tuple(forward_slice)] - u[tuple(backward_slice)]) / (
-                    2 * h * coupling
-                )
-
-                # Low boundary: forward one-sided difference
-                lo_slice = [slice(None)] * self.dimension
-                lo_slice[d] = 0
-                lo_next_slice = [slice(None)] * self.dimension
-                lo_next_slice[d] = 1
-                alpha_d[tuple(lo_slice)] = -(u[tuple(lo_next_slice)] - u[tuple(lo_slice)]) / (h * coupling)
-
-                # High boundary: backward one-sided difference
-                hi_slice = [slice(None)] * self.dimension
-                hi_slice[d] = -1
-                hi_prev_slice = [slice(None)] * self.dimension
-                hi_prev_slice[d] = -2
-                alpha_d[tuple(hi_slice)] = -(u[tuple(hi_slice)] - u[tuple(hi_prev_slice)]) / (h * coupling)
-
-                alpha_components.append(alpha_d)
-
-            return np.stack(alpha_components, axis=-1)
 
     def _axis_coordinates(self, axis: int, n: int) -> NDArray:
         """The ``n`` node coordinates along ``axis``, which both weight readers below take.

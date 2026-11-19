@@ -28,7 +28,7 @@ def _problem(sigma, n=15):
     comp = MFGComponents(
         hamiltonian=H, m_initial=lambda x: np.exp(-20 * (x[0] - 0.5) ** 2), u_terminal=lambda x: 0.5 * (x[0] - 0.5) ** 2
     )
-    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=sigma, coupling_coefficient=0.5)
+    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=sigma)
 
 
 def _cloud(n=15):

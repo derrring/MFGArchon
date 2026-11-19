@@ -101,6 +101,7 @@ class CapacityConstrainedMFGProblem(MFGProblem):
         capacity_field: CapacityField,
         congestion_model: CongestionModel,
         congestion_weight: float = 1.0,
+        coupling_strength: float = 0.5,
         **kwargs: Any,
     ):
         """
@@ -111,6 +112,8 @@ class CapacityConstrainedMFGProblem(MFGProblem):
             congestion_model: CongestionModel providing congestion cost g(ρ)
             congestion_weight: Weight γ for congestion term (default: 1.0)
                               Higher values → stronger congestion avoidance
+            coupling_strength: α in the linear density coupling α·m (default: 0.5, the value this class read from
+                              MFGProblem's coupling_coefficient default before that was deleted, #2977)
             **kwargs: Additional arguments passed to MFGProblem.__init__()
                      Common args: spatial_bounds, spatial_discretization, T, Nt, sigma
 
@@ -137,6 +140,7 @@ class CapacityConstrainedMFGProblem(MFGProblem):
         self.capacity_field = capacity_field
         self.congestion_model = congestion_model
         self.congestion_weight = congestion_weight
+        self.coupling_strength = coupling_strength
 
         # Validate dimension compatibility
         if hasattr(self, "dimension"):
@@ -177,9 +181,8 @@ class CapacityConstrainedMFGProblem(MFGProblem):
         p_array = np.atleast_1d(p)
         H_base = 0.5 * np.sum(p_array**2)  # Kinetic energy
 
-        # Add coupling term if present
-        if hasattr(self, "coupling_coefficient"):
-            H_base += self.coupling_coefficient * m
+        # The linear density coupling
+        H_base += self.coupling_strength * m
 
         # Get capacity at this position
         # Convert x to array format for interpolation
@@ -223,7 +226,7 @@ class CapacityConstrainedMFGProblem(MFGProblem):
             The congestion model provides ∂g/∂m = g'(m/C) / C
         """
         # Base derivative: coupling coefficient α
-        H_dm_base = self.coupling_coefficient if hasattr(self, "coupling_coefficient") else 0.0
+        H_dm_base = self.coupling_strength
 
         # Get capacity at this position
         x_array = np.atleast_1d(x)

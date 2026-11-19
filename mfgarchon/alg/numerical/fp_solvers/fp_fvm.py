@@ -134,7 +134,7 @@ class FPFVMSolver(BaseFPSolver):
     Parameters
     ----------
     problem : MFGProblem
-        Problem definition (provides geometry, ``dt``, ``Nt``, ``sigma``, ``coupling_coefficient``).
+        Problem definition (provides geometry, ``dt``, ``Nt``, ``sigma``).
     boundary_conditions : BoundaryConditions | None
         Explicit BC override. If ``None``, resolved from the problem/geometry (default no-flux).
     reconstruction : {"upwind", "muscl"}
@@ -323,9 +323,9 @@ class FPFVMSolver(BaseFPSolver):
         # which is single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
-        # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
-        # keep no-op'ing for non-separable H so fp_drift_coefficient's coupling_coefficient fallback stays
-        # intact. Ordered before the #1542 assert so a non-quadratic Separable still hits it below.
+        # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which no-ops for a
+        # non-separable H (fp_drift_coefficient refuses one by name, #2977). Ordered before the #1542 assert
+        # so a non-quadratic Separable still hits it below.
         from mfgarchon.core.hamiltonian import SeparableHamiltonian, checked_control
 
         if not isinstance(H, SeparableHamiltonian):

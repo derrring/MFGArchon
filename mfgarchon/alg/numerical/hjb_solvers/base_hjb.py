@@ -504,7 +504,7 @@ class BaseHJBSolver(BaseNumericalSolver):
         a ``SeparableHamiltonian`` or ``QuadraticMFGHamiltonian`` and a ``QuadraticControlCost`` exactly as the library
         ships them, which ``why_the_drift_is_not_the_control_costs`` decides (#2914). Any other Hamiltonian is refused,
         since its own methods may describe another one, and the cost's answer would then be returned with no error
-        (#2901). A problem always carries a Hamiltonian (#670), so there is no fallback to ``problem.lambda_``.
+        (#2901). A problem always carries a Hamiltonian (#670), and holds no control cost of its own (#2977).
         """
         from mfgarchon.utils.pde_coefficients import why_the_drift_is_not_the_control_costs
 
