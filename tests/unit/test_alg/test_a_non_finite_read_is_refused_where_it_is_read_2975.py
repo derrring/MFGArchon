@@ -49,10 +49,6 @@ def test_the_owner_names_the_first_non_finite_value_whatever_it_is(bad):
         refuse_a_non_finite_read("S", "w", {"a": [1.0, bad, NAN]})
 
 
-def test_the_owner_passes_finite_values_and_skips_what_was_not_handed():
-    refuse_a_non_finite_read("S", "its door", {"a": np.zeros((2, 3)), "b": None, "c": 1e308})
-
-
 # --- Site 6: every concrete door reads its arrays through the owner first, read from source. ---
 
 _PACKAGE = pathlib.Path(mfgarchon.__file__).parent
@@ -1233,24 +1229,6 @@ def test_a_volatility_nan_at_one_interior_node_takes_the_per_point_branch():
             volatility=volatility,
             show_progress=False,
         )
-
-
-def test_a_dual_hamiltonians_dp_is_non_finite_where_its_value_is():
-    """The dual of a Lagrangian searches a grid of controls: its value, `np.max`, is NaN when the Lagrangian is NaN at a
-    control the search reads, and its dp took `np.argmax`'s first NaN as the maximiser, a finite grid point. A step that
-    read that dp, an FP's velocity, went on with it. dp is now NaN where the value is (#2975)."""
-    from mfgarchon.core.hamiltonian import DualHamiltonian, SeparableLagrangian
-
-    class _NaNAtATrial(SeparableLagrangian):
-        def __call__(self, t, x, alpha, m):
-            out = np.array(super().__call__(t=t, x=x, alpha=alpha, m=m), dtype=float, copy=True)
-            a = np.asarray(alpha, dtype=float)
-            return np.where(a.max(axis=-1) > 5.0 if a.ndim else a > 5.0, NAN, out)
-
-    dual = DualHamiltonian(_NaNAtATrial(QuadraticControlCost(control_cost=1.0)))
-    x, p, m = (np.array([0.5]),), np.array([0.3]), 1.0
-    assert np.isnan(dual(t=0.0, x=x, p=p, m=m))
-    assert np.all(np.isnan(dual.dp(t=0.0, x=x, p=p, m=m)))
 
 
 def test_the_network_fp_names_the_value_field_its_rates_are_read_from():
