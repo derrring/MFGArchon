@@ -776,10 +776,20 @@ class HJBFDMSolver(BaseHJBSolver):
             # here, at the decision it enters, by the 1-D residual's naming, each term re-read as it is assembled. A
             # non-finite value only at a state the solver's own iterates or trials reach is not named: the failure goes
             # to the owner's policy, as before (#2975).
-            from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _refuse_a_non_finite_hjb_term
-
             solver = f"HJBFDMSolver's {'Newton' if self.solver_type == 'newton' else 'fixed-point'} step"
             refuse_a_non_finite_read(solver, f"the iterate it starts from, at t={time:g}", {"U_coupling_prev": U_guess})
+            try:
+                name_the_terms_at_the_start(solver)
+            except NonFiniteReadError:
+                raise
+            except (ValueError, RuntimeError, ArithmeticError):
+                # The naming re-evaluates; a computation's failure it raises leaves the step's own failure standing,
+                # to the owner's policy below (#2644; #2981's review 3). A programming error is let out.
+                return
+
+        def name_the_terms_at_the_start(solver: str) -> None:
+            from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _refuse_a_non_finite_hjb_term
+
             gradients = self._compute_gradients_nd(U_guess, time=time)
             H_values = self._evaluate_hamiltonian_nd(
                 U_guess, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time

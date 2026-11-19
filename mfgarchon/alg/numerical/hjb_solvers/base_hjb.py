@@ -13,7 +13,7 @@ from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, 
 from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
+from mfgarchon.utils.non_finite_read import NonFiniteReadError, refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -1144,7 +1144,9 @@ def _a_handed_density_that_entered(
     of a non-finite one (1.0) where the handed densities are the cause; then the density is named where the value with
     only the populations' rows replaced is still non-finite, and the populations' rows where the value with only the
     density replaced is. Elsewhere the entry is 0.0: a density the value does not read at that row is discarded, and
-    not named."""
+    not named. An evaluation that fails with anything but a `NonFiniteReadError` (a `ValueError`, `RuntimeError` or
+    `ArithmeticError`) leaves the test inconclusive: nothing is named, and the caller's order goes on (#2981's review
+    3)."""
     m = np.asarray(m_rows, dtype=float).ravel()
     cross = None if cross_rows is None else np.asarray(cross_rows, dtype=float)
     m_bad = ~np.isfinite(m)
@@ -1154,17 +1156,28 @@ def _a_handed_density_that_entered(
     m_in_place = np.where(m_bad, 1.0, m)
     cross_in_place = None if cross is None else np.where(np.isfinite(cross), cross, 1.0)
 
-    def finite(m_given: np.ndarray, cross_given: np.ndarray | None) -> np.ndarray:
-        value = np.asarray(evaluate(m_given, cross_given), dtype=float).reshape(m.size, -1)
+    def finite(m_given: np.ndarray, cross_given: np.ndarray | None) -> np.ndarray | None:
+        try:
+            value = np.asarray(evaluate(m_given, cross_given), dtype=float).reshape(m.size, -1)
+        except NonFiniteReadError:
+            raise
+        except (ValueError, RuntimeError, ArithmeticError):  # a substitution that fails decides nothing
+            return None
         return np.all(np.isfinite(value), axis=1)
 
     caused = finite(m_in_place, cross_in_place)
-    named = {"M_density": np.where(m_bad & caused & ~finite(m, cross_in_place), m, 0.0)}
+    if caused is None:
+        return {}
+    m_still = finite(m, cross_in_place)
+    named = {"M_density": np.zeros(m.size) if m_still is None else np.where(m_bad & caused & ~m_still, m, 0.0)}
     if cross is not None:
         first = np.array(
             [cross[np.flatnonzero(~np.isfinite(cross[:, j]))[0], j] if cross_bad[j] else 0.0 for j in range(m.size)]
         )
-        named["cross_density"] = np.where(cross_bad & caused & ~finite(m_in_place, cross), first, 0.0)
+        cross_still = finite(m_in_place, cross)
+        named["cross_density"] = (
+            np.zeros(m.size) if cross_still is None else np.where(cross_bad & caused & ~cross_still, first, 0.0)
+        )
     return named
 
 

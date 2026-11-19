@@ -84,9 +84,22 @@ def _reads_its_door_first(function: ast.FunctionDef) -> bool:
 def _the_handed_row(name: str, value: ast.expr) -> bool:
     """Whether a door's read maps ``name`` to the argument handed under that name: the parameter itself, or the row as
     the solver holds it at level 0, built from it (`initial_density_as_held`, ruling 3 as amended after review 2), in a
-    conditional that passes None through. A value such as None, or another array, maps the name to something else."""
+    conditional that passes None through, ``None if name is None else ...``. A value such as None, another array, or a
+    conditional on another argument (the weak-form alias read only where ``U_terminal`` is None, #2981's review 3)
+    maps the name to something else, at least on one branch."""
     if isinstance(value, ast.IfExp):
-        return _the_handed_row(name, value.orelse)
+        test = value.test
+        passes_none_through = (
+            isinstance(test, ast.Compare)
+            and _named(test.left, name)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Is)
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+            and isinstance(value.body, ast.Constant)
+            and value.body.value is None
+        )
+        return passes_none_through and _the_handed_row(name, value.orelse)
     if isinstance(value, ast.Call) and _named(value.func, "initial_density_as_held"):
         return bool(value.args) and _named(value.args[0], name)
     return _named(value, name)
@@ -180,7 +193,7 @@ def test_each_concrete_door_reads_its_arrays_through_the_owner_first(door):
 def _solution_rows(door: str) -> set[str]:
     if door.endswith(".solve_fp_system"):
         return {"M_initial", "initial_particles"} if "FPParticleSolver" in door else {"M_initial"}
-    return {"U_terminal", "U_final_condition_at_T"} if "WeakFormHJBSolver" in door else {"U_terminal"}
+    return {"U_terminal"}
 
 
 _READ_SHAPES = {
@@ -191,6 +204,7 @@ _READ_SHAPES = {
     ),
     "None": ('{"M_initial": None}', set()),
     "another array": ('{"M_initial": m}', set()),
+    "a conditional on another argument": ('{"M_initial": None if m is not None else M_initial}', set()),
 }
 
 
@@ -209,6 +223,32 @@ def test_each_door_reads_the_solution_row_it_is_handed_and_nothing_else(door):
     """A door reads the solution's own row, its terminal value or its initial density; every other array it is handed is
     judged by the step that reads it, where it entered (#2975, the approver's ruling 3 of 2026-11-17)."""
     assert _door_reads(_DOORS[door]) == _solution_rows(door), door
+
+
+def test_the_weak_form_door_reads_the_deprecated_alias_only_where_it_is_the_row():
+    """The weak-form HJB takes ``U_final_condition_at_T`` only where ``U_terminal`` is None. Beside a finite
+    ``U_terminal`` a NaN alias is discarded and solves bit for bit as the twin, as at 4ca7c9e0; alone it is the row, and
+    refused at the door (#2981's review 3)."""
+    from mfgarchon.alg.numerical.meshless_galerkin.hjb_solver import MeshlessGalerkinHJBSolver
+
+    problem = _problem()
+    points = np.asarray(problem.geometry.get_spatial_grid()).reshape(-1, 1)
+    x = points.ravel()
+    terminal = np.sin(np.pi * x)
+    alias = terminal.copy()
+    alias[3] = NAN
+
+    def solve(**handed):
+        solver = MeshlessGalerkinHJBSolver(problem, collocation_points=points, delta=0.35)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return solver.solve_hjb_system(
+                M_density=np.tile(1.0 + 0.5 * x, (6, 1)), U_coupling_prev=np.tile(terminal, (6, 1)), **handed
+            )
+
+    assert np.array_equal(solve(U_terminal=terminal, U_final_condition_at_T=alias), solve(U_terminal=terminal))
+    with pytest.raises(NonFiniteReadError, match=r"\.solve_hjb_system: U_final_condition_at_T " + OWN + r": 1 of 11 "):
+        solve(U_final_condition_at_T=alias)
 
 
 # --- The problems: 1-D, 11 nodes, T 0.5, Nt 5, u_terminal sin(pi x), whose gradient reaches pi. ---
@@ -473,6 +513,30 @@ def test_the_network_fp_refuses_a_non_finite_transition_rate(monkeypatch):
         FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(
             np.ones(network.num_nodes), potential_field=u
         )
+
+
+def test_the_network_fp_solves_a_non_finite_value_at_a_node_with_no_edges_as_its_twin():
+    """A node with no edges has no rate out of it or into it, so no step reads its value: a NaN there solves bit for bit
+    as the finite twin, as at 4ca7c9e0 (#2981's review 3), at the first level and the last."""
+    from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
+    from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import CustomNetwork
+
+    adjacency = np.zeros((5, 5))
+    for i, j in ((0, 1), (1, 2), (2, 3)):
+        adjacency[i, j] = adjacency[j, i] = 1.0
+    network = CustomNetwork(adjacency)
+
+    def solve(row):
+        problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=5, components=NetworkMFGComponents())
+        u = np.tile(np.linspace(0.0, 1.0, 5), (6, 1))
+        if row is not None:
+            u[row, 4] = NAN
+        return FPNetworkSolver(problem, diffusion_coefficient=0.1).solve_fp_system(np.ones(5), potential_field=u)
+
+    twin = solve(None)
+    for row in (0, 5):
+        assert np.array_equal(solve(row), twin)
 
 
 # --- A door reads the solution's row it is handed; each other array is judged by the step that reads it. ---
@@ -788,6 +852,58 @@ def test_a_value_iteration_that_diverges_from_finite_inputs_is_not_named(policy)
             solve()
     else:
         assert not np.all(np.isfinite(solve()))
+
+
+class _RaisesWhereSteepAt04(SeparableHamiltonian):
+    """An own value that raises a plain ValueError at t = 0.4 where |p| > 2, a state only the step's trials reach."""
+
+    def __call__(self, t, x, p, m):
+        if abs(float(np.ravel(t)[0]) - 0.4) < 1e-9 and np.max(np.abs(np.asarray(p, dtype=float))) > 2.0:
+            raise ValueError("_RaisesWhereSteepAt04: |p| > 2 is outside its domain")
+        return super().__call__(t=t, x=x, p=p, m=m)
+
+
+class _RaisesAtUnitDensityAt04(SeparableHamiltonian):
+    """An own value that raises a plain ValueError at t = 0.4 where m == 1, the density design call B's test substitutes
+    for a non-finite one."""
+
+    def __call__(self, t, x, p, m):
+        if abs(float(np.ravel(t)[0]) - 0.4) < 1e-9 and np.any(np.asarray(m, dtype=float) == 1.0):
+            raise ValueError("_RaisesAtUnitDensityAt04: m == 1 is outside its domain")
+        return super().__call__(t=t, x=x, p=p, m=m)
+
+
+@pytest.mark.parametrize("policy", ["raise", "record"])
+def test_a_naming_that_raises_something_else_leaves_the_steps_own_failure(policy):
+    """Only a NonFiniteReadError leaves a failure-path naming (#2981's review 3). The n-D Newton step's start-state
+    naming re-evaluates H; an H that raises a ValueError there let it out, where 4ca7c9e0 gave #2644's ConvergenceError,
+    which stands again."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+    from mfgarchon.utils.exceptions import ConvergenceError
+
+    problem = _problem(_RaisesWhereSteepAt04(QuadraticControlCost(control_cost=1.0)), dimension=2)
+    x = np.linspace(0.0, 1.0, 6)
+    terminal = np.outer(np.sin(np.pi * x), np.sin(np.pi * x))
+    with pytest.raises(ConvergenceError, match="Newton solver failed: _RaisesWhereSteepAt04"):
+        HJBFDMSolver(problem, on_inner_failure=policy).solve_hjb_system(
+            np.ones((6, 6, 6)), terminal, np.tile(terminal, (6, 1, 1))
+        )
+
+
+def test_a_density_test_whose_substitute_raises_names_nothing_and_the_order_goes_on():
+    """Design call B's density test substitutes 1.0 for a non-finite density; an H that raises there makes the test
+    inconclusive, so it names nothing and the order goes on to the coupling the density entered (#2981's review 3).
+    3e283757 let the ValueError out; 4ca7c9e0 returned a non-finite U without an error."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    x = np.linspace(0.0, 1.0, 11)
+    density = np.tile(0.5 + 0.3 * x, (6, 1))
+    density[:, 4] = NAN
+    problem = _problem(
+        _RaisesAtUnitDensityAt04(QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.5 * np.asarray(m))
+    )
+    with pytest.raises(NonFiniteReadError, match=r"_RaisesAtUnitDensityAt04's coupling " + OWN + r": .*, m=nan "):
+        HJBFDMSolver(problem).solve_hjb_system(density, np.sin(np.pi * x), np.tile(np.sin(np.pi * x), (6, 1)))
 
 
 class _NaNOnlyWhereAnIterateGoes(SeparableHamiltonian):
@@ -1441,6 +1557,31 @@ def test_a_callable_tensor_is_named_as_non_finite_where_it_enters_and_not_where_
         _solve_tensor(bnd.no_flux_bc(dimension=2), (0.5, 0.5))
     periodic = bnd.periodic_bc(dimension=2)
     assert np.array_equal(_solve_tensor(periodic, (1.0, 0.5)), _solve_tensor(periodic, None))
+
+
+@pytest.mark.parametrize(
+    ("matrix", "entry"),
+    [([[0.2, NAN], [0.05, 0.25]], "3, 3, 0, 1"), ([[NAN, 0.9], [0.9, 0.25]], "3, 3, 0, 0")],
+    ids=["asymmetric if replaced alone", "indefinite if replaced alone"],
+)
+def test_a_non_finite_tensor_entry_is_named_where_its_matrix_replaced_entry_by_entry_is_refused(matrix, entry):
+    """The failure path set the non-finite entry alone to the identity's, so its re-run read a matrix the step refuses,
+    asymmetric or not PSD, and that refusal left in place of the naming (#2981's review 3). It now sets the whole matrix
+    at that node to the identity."""
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    def tensor(t, x, m):
+        return np.array(matrix) if np.allclose(x, (0.5, 0.5)) else np.array([[0.2, 0.05], [0.05, 0.25]])
+
+    xs = np.linspace(0.0, 1.0, 7)
+    with pytest.raises(NonFiniteReadError, match=rf"the volatility tensor {OWN}: .*, entry \({entry}\) of its"):
+        FPFDMSolver(_tensor_problem(bnd.no_flux_bc(dimension=2))).solve_fp_system(
+            np.ones((7, 7)),
+            potential_field=np.tile((0.1 * np.add.outer(xs, xs))[None], (5, 1, 1)),
+            volatility=tensor,
+            volatility_kind="tensor",
+            show_progress=False,
+        )
 
 
 def _volatility_nan_at(node, varying):

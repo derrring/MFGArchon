@@ -1382,9 +1382,11 @@ def solve_fp_nd_full_system(
             M_current: np.ndarray = M_current,
             U_current: np.ndarray | None = U_current,
             k: int = k,
+            judge: bool = True,
         ) -> np.ndarray:
             """Step k on ``read``: the tensor's explicit step, the explicit step of a callable drift with scalar
-            diffusion, or the implicit step of the MFG-coupled mode (a velocity or U, scalar diffusion)."""
+            diffusion, or the implicit step of the MFG-coupled mode (a velocity or U, scalar diffusion). ``judge`` is
+            False on a failure-path re-run, which skips the step's admissibility checks."""
             vel_at_k = None
             vel_slice = read.get("drift_field")
             if vel_slice is not None:
@@ -1415,6 +1417,7 @@ def solve_fp_nd_full_system(
                     k,
                     drift=read.get("the drift callable"),
                     source_term=read.get("source_term"),
+                    judge=judge,
                 )
             if drift.is_callable():
                 # Callable drift with scalar diffusion - explicit Forward Euler, which avoids the
@@ -1449,6 +1452,7 @@ def solve_fp_nd_full_system(
                 interface_velocity=vel_at_k,
                 time=(k + 1) * dt,
                 outflow=out,
+                judge=judge,
             )
 
         M_next = step(reads, step_out)
@@ -1465,16 +1469,13 @@ def solve_fp_nd_full_system(
                     reads[name], i, shape
                 )
 
-            tensor = reads.get("the volatility tensor")
             refuse_the_first_read_that_entered(
                 "FPFDMSolver",
                 reads,
-                lambda read: step(read, None),
+                # A re-run asks only whether a non-finite read reaches the result, so it skips the step's checks of
+                # whether the solution is admissible (#2981's review 3, class (i)).
+                lambda read: step(read, None, judge=False),
                 where,
-                # A tensor's diagonal set to 0.0 is not PSD, and the step refuses it; the identity's entries are.
-                substitutes=None
-                if tensor is None
-                else {"the volatility tensor": np.broadcast_to(np.eye(ndim), np.shape(tensor))},
             )
             nan_count = np.sum(~np.isfinite(M_next))
             raise ValueError(
@@ -1583,6 +1584,7 @@ def solve_timestep_tensor_explicit(
     timestep_idx: int,
     drift: np.ndarray | None = None,
     source_term: np.ndarray | None = None,
+    judge: bool = True,
 ) -> np.ndarray:
     """
     Solve one timestep with tensor diffusion using explicit Forward Euler.
@@ -1619,6 +1621,9 @@ def solve_timestep_tensor_explicit(
         Current timestep index
     drift : np.ndarray or None
         Direct drift field (for standalone FP). If provided, U_current is ignored.
+    judge : bool
+        False on a failure-path re-run, which asks only whether a non-finite read reaches the result: the step's checks
+        of whether its solution is admissible do not run (#2981's review 3, class (i)).
 
     Returns
     -------
@@ -1645,8 +1650,8 @@ def solve_timestep_tensor_explicit(
             )
 
         # Validate PSD
-        coeff = CoefficientField(tensor_field, None, "volatility", dimension=ndim)
-        coeff.validate_tensor_psd(Sigma)
+        if judge:
+            CoefficientField(tensor_field, None, "volatility", dimension=ndim).validate_tensor_psd(Sigma)
     else:
         raise TypeError(f"tensor_field must be np.ndarray or callable, got {type(tensor_field)}")
 
@@ -1723,6 +1728,7 @@ def solve_timestep_full_nd(
     interface_velocity: np.ndarray | None = None,
     time: float | None = None,
     outflow: dict[str, float] | None = None,
+    judge: bool = True,
 ) -> np.ndarray:
     """
     Solve one timestep of the full nD FP equation, for the level at ``time``: the time at which a Dirichlet value
@@ -1765,6 +1771,9 @@ def solve_timestep_full_nd(
         When given, each DIRICHLET segment's name gains the mass that left through it over this step, negative where
         mass came in: read off the no-flux row the capped exit uses, at every Dirichlet node (#2581, PR 2a). Internal,
         as on `solve_fp_nd_full_system`.
+    judge : bool
+        False on a failure-path re-run, which asks only whether a non-finite read reaches the result: the step's checks
+        of whether its solution is admissible do not run (#2981's review 3, class (i)).
 
     Returns
     -------
@@ -2062,7 +2071,9 @@ def solve_timestep_full_nd(
 
     if m_next_flat is None:
         m_next_flat = sparse.linalg.spsolve(A_step, b_step)
-    if has_flux:
+    if has_flux and not judge:
+        m_next_flat = m_next_flat + (sparse.linalg.spsolve(A_step, flux_sources) if m_flux is None else m_flux)
+    elif has_flux:
         if m_flux is None:
             m_flux = sparse.linalg.spsolve(A_step, flux_sources)
         m_next_flat = refuse_what_a_flux_takes_negative(
@@ -2089,7 +2100,7 @@ def solve_timestep_full_nd(
         )
 
     if walls is not None:
-        if capped:
+        if capped and judge:
             _refuse_a_capped_node_negative(m_next_flat, capped, capped_exits, weights, grid, time)
         if outflow is not None:
             through = (balance - walls @ m_next_flat) * weights

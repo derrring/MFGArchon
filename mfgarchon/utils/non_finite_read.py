@@ -67,7 +67,6 @@ def refuse_the_first_read_that_entered(
     reads: Mapping[str, Any],
     step: Callable[[dict[str, Any]], Any],
     where: Callable[[str, int], str],
-    substitutes: Mapping[str, Any] | None = None,
 ) -> None:
     """A step's result is non-finite: refuse the first value it read, in reading order, whose NaN or infinity entered it.
 
@@ -75,9 +74,11 @@ def refuse_the_first_read_that_entered(
     ``step`` re-runs the step on such a mapping and returns its result. ``where(name, i)`` says where entry ``i`` of
     ``name`` (its flat index) was read.
 
-    The non-finite entries are listed in reading order, each read's in its flat order, and set to 0.0, or to the
-    read's entry in ``substitutes`` where the step would refuse 0.0 there (a volatility tensor whose diagonal 0.0 is
-    not PSD takes the identity's entries). The smallest
+    The non-finite entries are listed in reading order, each read's in its flat order, and set to 0.0. A re-run asks
+    only whether a non-finite read reaches the result, so ``step`` must not run the step's checks of whether its
+    solution is admissible: 0.0 can make it inadmissible where the read's value would not (a volatility tensor whose
+    diagonal 0.0 is not PSD), and such a check's refusal would leave in place of the naming (#2981's review 3). The
+    smallest
     prefix of that list whose restoration makes the result non-finite again ends at the first entry that entered, and
     is found by bisection, in O(log n) re-runs. That needs the result to be monotone in the restored set, so that
     restoring more entries cannot make it finite again. It is: a NaN or an infinity does not cancel through the step's
@@ -95,13 +96,8 @@ def refuse_the_first_read_that_entered(
     if not entries:
         return
 
-    fills = {
-        name: np.broadcast_to(np.asarray((substitutes or {}).get(name, 0.0), dtype=float), array.shape)
-        for name, array in arrays.items()
-    }
-
     def with_restored(count: int) -> dict[str, Any]:
-        trial = {name: np.where(np.isfinite(array), array, fills[name]) for name, array in arrays.items()}
+        trial = {name: np.where(np.isfinite(array), array, 0.0) for name, array in arrays.items()}
         for name, i in entries[:count]:
             trial[name].flat[i] = arrays[name].flat[i]
         mapping = dict(reads)
@@ -128,5 +124,5 @@ def refuse_the_first_read_that_entered(
     values = arrays[name].copy()
     for earlier, j in entries[: low - 1]:
         if earlier == name:
-            values.flat[j] = fills[name].flat[j]
+            values.flat[j] = 0.0
     refuse_a_non_finite_read(solver, f"{where(name, i)}, where it entered the step", {name: values})
