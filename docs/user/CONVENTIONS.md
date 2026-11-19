@@ -528,8 +528,8 @@ first {value}, at {where} (#2975)", where the value is `nan`, `inf` or `-inf`.
 
 Where a value is judged:
 
-- **at the door, the solution's own row**: each concrete `solve_hjb_system` reads `U_terminal` (the weak form also
-  `U_final_condition_at_T`), and each `solve_fp_system` reads `M_initial` (the particle FP also `initial_particles`),
+- **at the door, the solution's own row**: each concrete `solve_hjb_system` reads `U_terminal` (the weak form its
+  deprecated `U_final_condition_at_T` where `U_terminal` is None, which is then the row), and each `solve_fp_system` reads `M_initial` (the particle FP also `initial_particles`),
   before any work (#2976), as the solver will hold it. FP-FDM's level 0 holds g at the walls of a 1-D BC whose segments
   are all Dirichlet, so an `M_initial` entry there is read and discarded (`initial_density_as_held`). Every other array a
   door is handed, `M_density`, `U_coupling_prev`, an array `drift_field` or `potential_field`, is judged by the step
@@ -551,9 +551,12 @@ Where a value is judged:
   A row non-finite with every read finite is a failed step, and #2644's policy reports it;
 - **FP-FDM's and FP-FVM's time step**, on a step whose result is non-finite. The step's reads, in the order it reads
   them: the velocity (`drift_field`, or the optimal control the coupling hands), $U$ (`potential_field`) or a callable
-  drift's output; the volatility or its tensor; the source. The step runs again with every non-finite entry set to 0
-  (a volatility tensor's entries to the identity's, which the step accepts), and the smallest prefix of those entries,
-  in reading order, that makes the result non-finite again is found by bisection. A NaN or an infinity does not cancel
+  drift's output; the volatility or its tensor; the source. The step runs again with every non-finite entry set to 0,
+  and the smallest prefix of those entries, in reading order, that makes the result non-finite again is found by
+  bisection. A re-run asks only whether a non-finite read reaches the result, so it runs none of the step's checks of
+  whether the solution is admissible (the tensor's PSD check, the flux check, the capped-node check): 0 can make a
+  solution inadmissible where the read's value would not, and such a check's refusal would leave in place of the
+  naming. A new re-run keeps to this (`refuse_the_first_read_that_entered`). A NaN or an infinity does not cancel
   through the step's sums, products and linear solves, so that prefix ends at the first entry that entered, and the
   entry is named at its node or face; FP-FVM names a face velocity formed from `potential_field` beside the two nodes
   and the values it was formed from. A result still non-finite with every entry at 0 was computed from finite reads,
@@ -573,12 +576,13 @@ Where a value is judged:
   - FP-FVM's sub-step count reads each face velocity's outflow rate;
   - HJB-SL's CFL number on a grid of two or more dimensions reads the foot velocity, the Hamiltonian's `dp`, naming the
     density first where it entered;
-- **HJB-SL's value update on a grid of two or more dimensions**, under each `diffusion_method`: a non-finite
+- **HJB-SL's value update on a grid of two or more dimensions**, under each `diffusion_method` but `stochastic`, whose
+  n-D step is in stage 2: a non-finite
   update is named by the read behind it: the density where it entered, the foot velocity, the wall and the potentials,
   the density terms, the value;
 - **the network FP's transition rates** out of each node, after the value field (`potential_field`) they are read from,
   each entry named by its own node and the rate that reads it ("at node 4, read for the rate out of node 1 into node
-  4");
+  4"). A node with no neighbours has no rate out of it, and its value is not read;
 - **where it is read**, for three reads that enter by definition, or whose decision consumes every entry:
   - a boundary value, through `_read_constant`, at construction (`BCSegment`, `NodeBC`, and `MFGProblem` through them)
     and during the solve. The public functions that call its readers are `boundary_value`, `segment_value`,
@@ -601,8 +605,11 @@ Stated limits:
   is not named: the start state reads it finite;
 - on the FP's step, a NaN that entered beside a failure computed from finite reads is not named: the result stays
   non-finite with every non-finite entry at 0, and the CFL message reports the step;
-- where the Hamiltonian's value is non-finite with 1.0 in place of the density too, the test cannot tell whether the
-  density entered, so the density is not named, and the next read in the order is.
+- where the Hamiltonian's value is non-finite with 1.0 in place of the density too, or the Hamiltonian raises there, the
+  test cannot tell whether the density entered, so the density is not named, and the next read in the order is;
+- a naming that re-evaluates a callable lets out a `NonFiniteReadError`, and a programming error: a computation's
+  failure the callable raises there (a `ValueError`, `RuntimeError` or `ArithmeticError`) leaves the step's own failure
+  standing, #2644's `ConvergenceError` for a failed Newton step.
 
 Not read here yet (#2975, stage 2): FP-SL, HJB-FEM, the weak-form FP, WENO, GFDM, Howard and the meshless solvers
 beyond their doors; HJB-SL's source in either dimension (`_source_increment`, added after the value update), its
