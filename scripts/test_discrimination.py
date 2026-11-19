@@ -414,7 +414,10 @@ MUTATIONS: list[Mutation] = [
 # harmless once these strings are compared as identities, because three params sharing a
 # prefix collapse into one set member. Found by review (#1903); the two affected entries were
 # repaired mechanically (each truncation resolved to exactly one collected node ID).
-_FAILED = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - |$)", re.MULTILINE)
+# And a node ID, or a collection error's path, starts with `tests/`: pytest's live-log line at
+# ERROR level ("ERROR    mfgarchon.module:file.py:1174 message") also starts with "ERROR ", and two
+# such lines entered a kill set as killed tests on #2981's sweep.
+_FAILED = re.compile(r"^(?:FAILED|ERROR) (tests/.+?)(?: - |$)", re.MULTILINE)
 
 
 @dataclass

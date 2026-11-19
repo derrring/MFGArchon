@@ -783,6 +783,22 @@ def test_the_failure_parser_keeps_whole_node_ids(td):
     assert td._FAILED.findall("ERROR tests/a.py::test_e - boom") == ["tests/a.py::test_e"]
 
 
+def test_a_live_log_error_line_is_not_read_as_a_kill(td):
+    """ADMISSION (AGENTS.md): class 4, guards an instrument. pytest's live log at ERROR level writes "ERROR    <logger>:
+    <file>:<line> <message>", which also starts with "ERROR ": #2981's sweep recorded two HJB-SL log lines as tests a
+    mutation killed, and the matrix then named a file that does not exist. A kill is a node ID or a collection error's
+    path, so it starts with `tests/`; one whose parameters hold spaces is still read whole."""
+    out = "\n".join(
+        [
+            "ERROR    mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian:hjb_semi_lagrangian.py:1174 Semi-Lagrangian "
+            "solver failed at time step 4/4, substep 1/2 with NaN/Inf values.",
+            "FAILED tests/a.py::test_p[x, case=one] - AssertionError",
+            "ERROR tests/b.py - ImportError",
+        ]
+    )
+    assert td._FAILED.findall(out) == ["tests/a.py::test_p[x, case=one]", "tests/b.py"]
+
+
 def test_no_committed_killer_id_is_truncated(td):
     """The matrix is the gate's identity table now; a truncated entry is a silent collision."""
     matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
