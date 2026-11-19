@@ -511,15 +511,17 @@ def classify(
     """A mutated run's status, the tests it killed, and a note for the log.
 
     A run short of the baseline lost tests, so a survivor would have "survived" a run it was never in: a run short by
-    1% or more is INEFFECTIVE. Except where the shortfall is accounted for exactly (#2973): a module that failed to
-    collect enters the run as a bare path, and a test that errored at setup has no outcome. When the errored modules'
-    baseline node IDs, with the tests that errored outside those modules, number exactly the tests the run is short
-    of, the mutation is what stopped them, and those IDs are its kills in place of the paths. A run short by less than
-    1% and not accounted for keeps the old reading, a module's bare path among its kills.
+    1% or more is INEFFECTIVE. Except where the shortfall is accounted for exactly (#2973). A baseline test has no
+    outcome in a mutated run when its module failed to collect, which enters the run as a bare path, or when it
+    errored outside its body, which enters as its node ID. When the errored modules' baseline node IDs, with the
+    tests that errored outside those modules, number exactly the tests the run is short of, the mutation is what
+    stopped them: those IDs are its kills in place of the paths. A run short by less than 1% and not accounted for
+    keeps the old reading, a module's bare path among its kills.
 
     #2901's consistency check refuses `optimal_control_sign` while a problem is built. Under it, at d8af309a, one
-    module that builds problems at import fails to collect (80 tests) and 111 tests error at setup: short by 191. 67
-    test modules made a call into the library at import at d8af309a, so this is read here, not module by module.
+    module that builds problems at import fails to collect (80 tests) and 111 tests in 11 modules error at setup:
+    short by 191, and either part alone is past the 1% line in the weekly run's population. A module that stops
+    building at import moves its tests from the first kind to the second, so both are read here.
     """
     if not live:
         return "INEFFECTIVE", set(), "  <-- mutation not observable; its zeros mean nothing"
@@ -527,15 +529,19 @@ def classify(
     shortfall = base_collected - run.collected
     modules = sorted(e for e in run.errored if "::" not in e)
     note = ""
-    if run.returncode in (0, 1) and shortfall > 0 and modules:
+    if run.returncode in (0, 1) and shortfall > 0:
         stopped = {nid for module in modules for nid in baseline_ids.get(module, ())}
         errored_tests = {e for e in run.errored if "::" in e} - stopped
-        if stopped and shortfall == len(stopped) + len(errored_tests):
+        if shortfall == len(stopped) + len(errored_tests):
             killed = (killed - set(modules)) | stopped
-            note = (
-                f"  (short by {shortfall}: {len(stopped)} baseline tests of {len(modules)} module(s) that failed to "
-                f"collect, counted as killed, and {len(errored_tests)} test(s) that errored outside their body)"
-            )
+            parts = []
+            if modules:
+                parts.append(
+                    f"{len(stopped)} baseline tests of {len(modules)} module(s) that failed to collect, counted as killed"
+                )
+            if errored_tests:
+                parts.append(f"{len(errored_tests)} test(s) that errored outside their body")
+            note = f"  (short by {shortfall}: {', and '.join(parts)})"
     if run.returncode not in (0, 1) or (run.collected < base_collected * 0.99 and not note):
         return (
             "INEFFECTIVE",
@@ -1089,7 +1095,7 @@ def main() -> None:
         )
     print(f"  clean, {base.collected} ran, {base.seconds}s\n", flush=True)
     # The baseline's node IDs per module, to read a mutation that stops a module collecting (#2973). A collection that
-    # does not number the baseline's tests reads nothing: such a mutation is then read as before #2973, INEFFECTIVE
+    # does not number the baseline's tests reads no module: a mutation that stops one collecting is then INEFFECTIVE
     # when it leaves the run short by 1% or more. A module skipped at collection (a module-level `importorskip`) is one
     # outcome and no node ID, so an environment that lacks an optional dependency lands here.
     baseline_ids = _baseline_node_ids(paths)

@@ -863,6 +863,20 @@ def test_a_short_run_the_errored_modules_do_not_account_for_stays_ineffective(td
     assert status == "INEFFECTIVE"
 
 
+def test_setup_errors_alone_are_read_when_they_account_for_the_shortfall(td):
+    """ADMISSION (AGENTS.md): class 4, guards an instrument. A test whose fixture builds a problem errors at setup under
+    #2901's check and has no outcome: 111 did under `optimal_control_sign`, past the 1% line on their own, and a module
+    that stops building at import moves its tests to this kind (#2973). Short by 2 of 10, which the 2 setup errors
+    account for, with no module and no baseline node IDs: ok, and the errored tests are the kills."""
+    errored = {"tests/y.py::test_e", "tests/y.py::test_f"}
+    run = td.Run(failed=set(errored), returncode=1, collected=8, errored=set(errored))
+    assert td.classify(True, run, 10, {}) == (
+        "ok",
+        errored,
+        "  (short by 2: 2 test(s) that errored outside their body)",
+    )
+
+
 def test_a_run_with_no_shortfall_is_classified_as_before(td):
     """The control: no module failed to collect, nothing short; the kills are the run's own (#2973)."""
     run = td.Run(failed={"tests/x.py::test_k"}, returncode=1, collected=10, errored=set())
