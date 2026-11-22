@@ -497,7 +497,10 @@ class Run:
     setup_errors: int = 0
 
 
-def _pytest(paths: list[str], timeout: int = 3600) -> Run:
+# The per-run limit holds the costliest suite run a runner has shown with a margin, derived beside
+# discrimination.yml's `timeout-minutes` in #2990's class line. The per-test limit is pytest.ini's `timeout`,
+# which the gate reads too.
+def _pytest(paths: list[str], timeout: int = 4500) -> Run:
     import time
 
     t0 = time.perf_counter()
@@ -517,7 +520,6 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
             "-m",
             MARKERS,
             f"--ignore={SELF_TESTS}",
-            "--timeout=900",
             "--tb=short",
         ],
         cwd=REPO,

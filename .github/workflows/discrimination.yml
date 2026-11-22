@@ -52,14 +52,23 @@ jobs:
     # times 21 mutations on the tree whose committed matrix was measured at 27d45c19: 2.37x the
     # matrix's local seconds (2.22-2.44 per mutation), and 2.40x for the baseline. `--shard K/N`
     # takes every N-th mutation starting at K, which partitions the list for any N, so a mutation
-    # added later needs no assignment. At N = 5 that matrix's largest slice is 2225 s and each shard
-    # also pays the 332 s baseline: ~102 min on a runner against 180. Change N by editing the list;
-    # `strategy.job-total` carries it to `--shard` and to the job name.
+    # added later needs no assignment. A shard runs the full suite 1 + k times, k its mutations, on
+    # whichever runner it is given, and the runner sets most of a run's cost: derive a shard's time
+    # from a runner's own kill-matrix artifacts (`baseline_seconds` and each mutation's `seconds`), or
+    # from the per-run seconds in the log of a shard the cap cut off, which uploads none -- not from
+    # the committed matrix, which is measured locally. `timeout-minutes` holds the largest shard,
+    # at the slowest per-run cost a runner has shown and with the costliest mutation in it, under the
+    # cap with a stated margin; `_pytest`'s per-run `timeout` in the script holds the costliest run a
+    # runner has shown with at least that margin. The arithmetic, and the mutation count at which
+    # this N stops fitting, are #2990's class line: re-derive both from the latest runner artifacts
+    # when a shard nears the cap. A job on a GitHub-hosted runner is limited to 360 minutes, so past
+    # that N grows. Change N by editing the list; `strategy.job-total` carries it to `--shard` and to
+    # the job name.
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5]
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
     - uses: actions/checkout@v7
 
