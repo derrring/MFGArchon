@@ -423,9 +423,10 @@ _FAILED = re.compile(r"^(?:FAILED|ERROR) (tests/.+?)(?: - |$)", re.MULTILINE)
 # failed to collect. `classify` reads the two apart (#2973).
 _ERRORED = re.compile(r"^ERROR (tests/.+?)(?: - |$)", re.MULTILINE)
 # One header per setup error in pytest's ERRORS section ("____ ERROR at setup of test_x[p] ____"); a teardown error's
-# reads "ERROR at teardown of". A test that has an outcome and then errors at teardown is also an ERROR node ID, so the
-# headers are what tell `classify` which errored tests have no outcome (#2973). They are printed at `--tb=short`, which
-# `_pytest` passes; at `--tb=no` there are none, and the account then never holds.
+# reads "ERROR at teardown of". A test that has an outcome and then errors at teardown is also an ERROR node ID, so
+# `classify` counts these headers to know how many errored tests have no outcome (#2973). They are printed at
+# `--tb=short`, which `_pytest` passes. At `--tb=no` there are none: a run with any errored node ID then has no account,
+# while an account of modules alone needs no header.
 _SETUP_ERROR = re.compile(r"^_+ ERROR at setup of ", re.MULTILINE)
 
 
@@ -522,9 +523,11 @@ def classify(
     more than 1% is INEFFECTIVE. Except where the shortfall is accounted for exactly (#2973). A baseline test has no
     outcome in a mutated run when its module failed to collect, which enters the run as a bare path, or when it
     errored at setup, which enters as its node ID. A test that has an outcome and then errors at teardown also enters
-    as its node ID, so the account holds only when every errored node ID has a setup-error header (`_SETUP_ERROR`).
-    When it does, and the errored modules' baseline node IDs with those tests number exactly the tests the run is
-    short of, the mutation is what stopped them: those IDs are its kills in place of the paths. A module with no
+    as its node ID, and is not missing from the run. So the account holds only when the setup-error headers
+    (`_SETUP_ERROR`) number the errored node IDs, and the errored modules' baseline node IDs with those tests number
+    exactly the tests the run is short of. The headers count the setup errors, so together the two counts leave no
+    test missing beyond the modules' baseline tests and the setup errors; the mutation is what stopped them, and the
+    modules' IDs are its kills in place of the paths. The check compares counts, not tests. A module with no
     baseline test (every one deselected) adds none, and its path leaves the kills. A run short by 1% or less and not
     accounted for keeps the old reading, a module's bare path among its kills.
 

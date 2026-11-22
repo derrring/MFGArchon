@@ -10,8 +10,8 @@
     that failed to collect and the tests that errored at setup. When the modules' baseline tests and those errored
     tests number exactly the tests the run is short of, the mutation is `ok`, with the modules' baseline tests among
     its kills in place of their paths, and the log prints the account. A test that has an outcome and then errors at
-    teardown is not one of them: the account holds only when every errored test has a setup-error header in pytest's
-    report, which the sweep's own `--tb=short` prints. Any other run short by more than 1%, and any run where pytest
+    teardown is not missing from the run: the account holds only when pytest's setup-error headers, which the sweep's
+    own `--tb=short` prints, number the errored tests. Any other run short by more than 1%, and any run where pytest
     exits other than 0 or 1, stays INEFFECTIVE.
   - A module that stops building at import moves its tests from failing to collect to erroring at setup, so the fix
     reads both kinds in the classification, not in that module.

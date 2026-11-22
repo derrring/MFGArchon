@@ -789,7 +789,8 @@ def test_a_captured_log_error_line_is_not_read_as_a_kill(td, monkeypatch):
     "ERROR ": #2981's sweep recorded two HJB-SL log lines as tests a mutation killed, and the matrix then named a file
     that does not exist. A kill is a node ID or a collection error's path, so it starts with `tests/`. Read through
     `_pytest`, so the run the sweep classifies carries the module that failed to collect and the count of setup-error
-    headers, which pytest prints at the `--tb=short` `_pytest` passes (#2973)."""
+    headers, which pytest prints at the `--tb=short` `_pytest` passes; a teardown error's header is not one of them
+    (#2973)."""
     out = "\n".join(
         [
             "ERROR    mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian:hjb_semi_lagrangian.py:1174 Semi-Lagrangian "
@@ -797,7 +798,9 @@ def test_a_captured_log_error_line_is_not_read_as_a_kill(td, monkeypatch):
             "FAILED tests/a.py::test_p - AssertionError",
             "ERROR tests/b.py - ImportError",
             "_____________________ ERROR at setup of test_q _____________________",
+            "____________________ ERROR at teardown of test_t ____________________",
             "ERROR tests/c.py::test_q - RuntimeError",
+            "ERROR tests/c.py::test_t - RuntimeError",
         ]
     )
     seen = {}
@@ -812,9 +815,9 @@ def test_a_captured_log_error_line_is_not_read_as_a_kill(td, monkeypatch):
 
     monkeypatch.setattr(td.subprocess, "run", fake_run)
     run = td._pytest(["tests"])
-    assert run.failed == {"tests/a.py::test_p", "tests/b.py", "tests/c.py::test_q"}
+    assert run.failed == {"tests/a.py::test_p", "tests/b.py", "tests/c.py::test_q", "tests/c.py::test_t"}
     # Nor is it read as a module that failed to collect, which #2973's classification counts kills from.
-    assert run.errored == {"tests/b.py", "tests/c.py::test_q"}
+    assert run.errored == {"tests/b.py", "tests/c.py::test_q", "tests/c.py::test_t"}
     assert (run.setup_errors, "--tb=short" in seen["cmd"]) == (1, True)
 
 
