@@ -422,6 +422,11 @@ _FAILED = re.compile(r"^(?:FAILED|ERROR) (tests/.+?)(?: - |$)", re.MULTILINE)
 # The ERROR half alone: a node ID is a test that errored outside its body (setup or teardown), a bare path a module that
 # failed to collect. `classify` reads the two apart (#2973).
 _ERRORED = re.compile(r"^ERROR (tests/.+?)(?: - |$)", re.MULTILINE)
+# One header per setup error in pytest's ERRORS section ("____ ERROR at setup of test_x[p] ____"); a teardown error's
+# reads "ERROR at teardown of". A test that has an outcome and then errors at teardown is also an ERROR node ID, so the
+# headers are what tell `classify` which errored tests have no outcome (#2973). They are printed at `--tb=short`, which
+# `_pytest` passes; at `--tb=no` there are none, and the account then never holds.
+_SETUP_ERROR = re.compile(r"^_+ ERROR at setup of ", re.MULTILINE)
 
 
 @dataclass
@@ -432,6 +437,7 @@ class Run:
     seconds: float = 0.0
     output: str = ""
     errored: set[str] = field(default_factory=set)
+    setup_errors: int = 0
 
 
 def _pytest(paths: list[str], timeout: int = 3600) -> Run:
@@ -455,6 +461,7 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
             MARKERS,
             f"--ignore={SELF_TESTS}",
             "--timeout=900",
+            "--tb=short",
         ],
         cwd=REPO,
         capture_output=True,
@@ -469,6 +476,7 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
         seconds=round(time.perf_counter() - t0, 1),
         output=proc.stdout,
         errored=set(_ERRORED.findall(proc.stdout)),
+        setup_errors=len(_SETUP_ERROR.findall(proc.stdout)),
     )
 
 
@@ -511,17 +519,19 @@ def classify(
     """A mutated run's status, the tests it killed, and a note for the log.
 
     A run short of the baseline lost tests, so a survivor would have "survived" a run it was never in: a run short by
-    1% or more is INEFFECTIVE. Except where the shortfall is accounted for exactly (#2973). A baseline test has no
+    more than 1% is INEFFECTIVE. Except where the shortfall is accounted for exactly (#2973). A baseline test has no
     outcome in a mutated run when its module failed to collect, which enters the run as a bare path, or when it
-    errored outside its body, which enters as its node ID. When the errored modules' baseline node IDs, with the
-    tests that errored outside those modules, number exactly the tests the run is short of, the mutation is what
-    stopped them: those IDs are its kills in place of the paths. A run short by less than 1% and not accounted for
-    keeps the old reading, a module's bare path among its kills.
+    errored at setup, which enters as its node ID. A test that has an outcome and then errors at teardown also enters
+    as its node ID, so the account holds only when every errored node ID has a setup-error header (`_SETUP_ERROR`).
+    When it does, and the errored modules' baseline node IDs with those tests number exactly the tests the run is
+    short of, the mutation is what stopped them: those IDs are its kills in place of the paths. A module with no
+    baseline test (every one deselected) adds none, and its path leaves the kills. A run short by 1% or less and not
+    accounted for keeps the old reading, a module's bare path among its kills.
 
     #2901's consistency check refuses `optimal_control_sign` while a problem is built. Under it, at d8af309a, one
     module that builds problems at import fails to collect (80 tests) and 111 tests in 11 modules error at setup:
-    short by 191, and either part alone is past the 1% line in the weekly run's population. A module that stops
-    building at import moves its tests from the first kind to the second, so both are read here.
+    short by 191. A module that stops building at import moves its tests from the first kind to the second, so both
+    are read here.
     """
     if not live:
         return "INEFFECTIVE", set(), "  <-- mutation not observable; its zeros mean nothing"
@@ -532,15 +542,17 @@ def classify(
     if run.returncode in (0, 1) and shortfall > 0:
         stopped = {nid for module in modules for nid in baseline_ids.get(module, ())}
         errored_tests = {e for e in run.errored if "::" in e} - stopped
-        if shortfall == len(stopped) + len(errored_tests):
+        if shortfall == len(stopped) + len(errored_tests) and run.setup_errors == len(errored_tests):
             killed = (killed - set(modules)) | stopped
             parts = []
-            if modules:
+            if stopped:
                 parts.append(
                     f"{len(stopped)} baseline tests of {len(modules)} module(s) that failed to collect, counted as killed"
                 )
+            elif modules:
+                parts.append(f"{len(modules)} module(s) that failed to collect, with no baseline test")
             if errored_tests:
-                parts.append(f"{len(errored_tests)} test(s) that errored outside their body")
+                parts.append(f"{len(errored_tests)} test(s) that errored at setup")
             note = f"  (short by {shortfall}: {', and '.join(parts)})"
     if run.returncode not in (0, 1) or (run.collected < base_collected * 0.99 and not note):
         return (
@@ -1096,8 +1108,9 @@ def main() -> None:
     print(f"  clean, {base.collected} ran, {base.seconds}s\n", flush=True)
     # The baseline's node IDs per module, to read a mutation that stops a module collecting (#2973). A collection that
     # does not number the baseline's tests reads no module: a mutation that stops one collecting is then INEFFECTIVE
-    # when it leaves the run short by 1% or more. A module skipped at collection (a module-level `importorskip`) is one
-    # outcome and no node ID, so an environment that lacks an optional dependency lands here.
+    # when it leaves the run short by more than 1%. A module skipped at collection (a module-level `importorskip`) is one
+    # outcome and no node ID, so an environment that lacks such a module's dependency (cvxpy is an optional extra;
+    # skfem and igraph are core) lands here.
     baseline_ids = _baseline_node_ids(paths)
     if sum(len(v) for v in baseline_ids.values()) != base.collected:
         print(
