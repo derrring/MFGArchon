@@ -21,11 +21,14 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, Model
+from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
 from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc
 
@@ -127,8 +130,11 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
     iterations; with one level 0 it converges (in 22). This pins that the two level-0 rows agree; a residual that
     skipped level 0 would converge as well.
 
+    A route that keeps FP-FDM's row and writes nothing back, `MultiPopulationIterator`, holds the planted walls at
+    level 0 as well; at `3f362150` they held 0.875 after three sweeps, decaying toward the prescribed 0.
+
     In 2-D a direct call on the FP's own all-Dirichlet BC holds the planted walls at level 0 too. Main held them
-    there already; this is the fact's other layouts, which no other test pins."""
+    there already; this pins the 2-D own all-Dirichlet layout."""
 
     def m_initial(x):
         a = np.asarray(x[0], dtype=float)
@@ -155,6 +161,13 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
     assert result.converged
     # The exit lets the wall's content out in the first step: the later levels hold the prescribed 0 there.
     assert np.all(direct[1:, [0, -1]] == 0.0)
+    multi = MultiPopulationIterator(
+        MultiPopulationProblem(populations=[problem], population_names=["the one"]),
+        [HJBFDMSolver(problem)],
+        [FPFDMSolver(problem)],
+        relaxation=0.5,
+    ).solve(max_iterations=3, tolerance=1e-6)
+    assert np.array_equal(np.asarray(multi.M[0])[0], planted)
     n = 9
     planted_2d = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)[:, None] + 0.25 * np.linspace(0.0, 1.0, n)[None, :]
     on_wall = np.zeros((n, n), dtype=bool)
