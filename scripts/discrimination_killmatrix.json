@@ -897,7 +897,9 @@
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_refuses_an_initial_density_entry_at_a_dirichlet_wall": [
-      "optimal_control_sign"
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "fp_fdm_door_reads_nothing"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_names_a_non_finite_source": [
       "optimal_control_sign",
@@ -2418,6 +2420,12 @@
       "diffusion_scalar_2x",
       "optimal_control_sign",
       "grid_spacing_uses_point_count",
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges": [
+      "optimal_control_sign",
+      "engquist_osher_derivative_drops_the_forward_branch",
+      "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_fp_fdm_mixed_bc_dirichlet.py::TestMixedBCDirichletNotFrozen::test_dirichlet_wall_reaches_prescribed_value": [
@@ -13928,7 +13936,7 @@
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 132,
+      "kill_count": 133,
       "killed": [
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversNumericalProperties::test_terminal_condition_satisfaction",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
@@ -13972,6 +13980,7 @@
         "tests/unit/test_alg/test_fp_drift_from_optimal_control_2900.py::test_on_the_widened_set_an_own_control_solves_as_the_library_hamiltonian_it_describes[1-D periodic]",
         "tests/unit/test_alg/test_fp_drift_from_optimal_control_2900.py::test_particle_still_reads_an_own_optimal_control",
         "tests/unit/test_alg/test_fp_drift_from_optimal_control_2900.py::test_the_set_reads_the_walls_the_solver_was_handed",
+        "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges",
         "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_full_solve_invocation_split",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[41]",
@@ -14197,10 +14206,11 @@
       "verify": "not volatility_varies(np.array([0.2, np.nan, 0.2]), np.array([0, 1, 2]))"
     },
     "fp_fdm_door_reads_nothing": {
-      "kill_count": 2,
+      "kill_count": 3,
       "killed": [
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_door_refuses_a_non_finite_solution_row_by_name[FPFDMSolver]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_each_door_reads_the_solution_row_it_is_handed_and_nothing_else[mfgarchon/alg/numerical/fp_solvers/fp_fdm.py:FPFDMSolver.solve_fp_system]"
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_each_door_reads_the_solution_row_it_is_handed_and_nothing_else[mfgarchon/alg/numerical/fp_solvers/fp_fdm.py:FPFDMSolver.solve_fp_system]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_refuses_an_initial_density_entry_at_a_dirichlet_wall"
       ],
       "owner": "A solver's door reads the solution's row it is handed, as it will hold it, before any work (#2975, ruling 3 as amended)",
       "seconds": 258.2,
@@ -14220,7 +14230,7 @@
       "verify": "_tensor_naming() == \"ValueError\""
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 219,
+      "kill_count": 220,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -14296,6 +14306,7 @@
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[1]",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]",
+        "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges",
         "tests/unit/test_alg/test_fp_fdm_mixed_bc_dirichlet.py::TestMixedBCDirichletNotFrozen::test_dirichlet_wall_reaches_prescribed_value",
         "tests/unit/test_alg/test_fp_fdm_mixed_bc_dirichlet.py::TestMixedBCDirichletNotFrozen::test_no_flux_wall_uses_no_flux_assembly",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_array_diffusion_mass_conservation",
@@ -15059,7 +15070,7 @@
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
     "non_finite_read_owner_passes_a_nan": {
-      "kill_count": 169,
+      "kill_count": 170,
       "killed": [
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_callable_tensor_is_named_as_non_finite_where_it_enters_and_not_where_it_is_discarded",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_callable_volatility_is_named_by_the_step_that_reads_it[array]",
@@ -15109,6 +15120,7 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_cfl_substeps_names_a_non_finite_cfl_number",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_each_fp_arm_names_a_source_that_entered_its_step[FDM's explicit arm]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_each_fp_arm_names_a_source_that_entered_its_step[FVM's Strang step]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_refuses_an_initial_density_entry_at_a_dirichlet_wall",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_names_a_non_finite_source",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_names_a_value_field_that_entered_its_step_by_its_argument",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_refuses_a_source_at_a_capped_exit_whose_cap_reads_it",
@@ -15237,7 +15249,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3246,
+      "kill_count": 3247,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -15842,6 +15854,7 @@
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[1]",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_a_time_dependent_dirichlet_wall_is_read_at_each_level[2]",
+        "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges",
         "tests/unit/test_alg/test_fp_fdm_mixed_bc_dirichlet.py::TestMixedBCDirichletNotFrozen::test_dirichlet_wall_reaches_prescribed_value",
         "tests/unit/test_alg/test_fp_fdm_mixed_bc_dirichlet.py::TestMixedBCDirichletNotFrozen::test_interior_not_globally_frozen",
         "tests/unit/test_alg/test_fp_fdm_mixed_bc_dirichlet.py::TestMixedBCDirichletNotFrozen::test_no_flux_wall_uses_no_flux_assembly",
@@ -19207,7 +19220,7 @@
       "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 37,
+      "kill_count": 38,
       "killed": [
         "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_every_conditional_problem_carries_the_source[source_term_hjb]",
         "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
@@ -19221,6 +19234,7 @@
         "tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py::test_single_pair_iterators_stop_and_attribute[BlockIterator]",
         "tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py::test_single_pair_iterators_stop_and_attribute[FictitiousPlayIterator]",
         "tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py::test_the_diverged_iterate_is_published_with_its_terminal_row_restored",
+        "tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py::test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges",
         "tests/unit/test_alg/test_fp_keeps_the_negative_2845.py::test_a_coupled_solve_reports_the_negative_it_returns_and_one_warning",
         "tests/unit/test_alg/test_fp_keeps_the_negative_2845.py::test_a_polynomial_coupling_reads_the_negative_and_converges",
         "tests/unit/test_alg/test_fp_keeps_the_negative_2845.py::test_a_subclass_may_clip_what_it_returns[2]",
