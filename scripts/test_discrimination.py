@@ -401,9 +401,9 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="fp_initial_condition_written_at_final_index",
         path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
-        old="    M_solution[0] = initial_density_as_held(m_initial_condition, boundary_conditions, grid, ndim)",
-        new="    M_solution[-1] = initial_density_as_held(m_initial_condition, boundary_conditions, grid, ndim)  # MUTATED: forward march anchored at t=T, not t=0",
-        owner='The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: "- Forward time evolution: k=0 -> Nt-1". No issue n',
+        old="    M_solution[0] = initial_density_as_held(m_initial_condition)",
+        new="    M_solution[-1] = initial_density_as_held(m_initial_condition)  # MUTATED: forward march anchored at t=T, not t=0",
+        owner='The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, `solve_fp_nd_full_system` in fp_fdm_time_stepping.py, whose own docstring states the convention: "- Forward time evolution: k=0 -> Nt-1". No issue n',
         verify="float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x[0], m_initial=lambda x: 1.0 + 0.0 * x[0], T=0.1), Nt=2))[0])) == 0.0",
     ),
     Mutation(
@@ -433,8 +433,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="fp_fdm_door_reads_nothing",
         path="mfgarchon/alg/numerical/fp_solvers/fp_fdm.py",
-        old='            {\n                "M_initial": None\n                if M_initial is None\n                else initial_density_as_held(',
-        new='            {\n                "M_initial": None  # MUTATED: the door reads nothing\n                if True\n                else initial_density_as_held(',
+        old='            {"M_initial": None if M_initial is None else initial_density_as_held(M_initial)},',
+        new='            {"M_initial": None if True else initial_density_as_held(M_initial)},  # MUTATED: the door reads nothing',
         owner="A solver's door reads the solution's row it is handed, as it will hold it, before any work (#2975, ruling 3 as amended)",
         verify='"its door" not in _fdm_door_on_nan()',
     ),

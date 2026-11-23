@@ -20,11 +20,20 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, Model
+from mfgarchon.alg.numerical.coupling import NewtonMFGSolver
+from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc
 
@@ -83,20 +92,20 @@ def test_a_time_dependent_dirichlet_wall_is_read_at_each_level(d, monkeypatch):
     idx = np.indices(shape)
     on_wall = np.any((idx == 0) | (idx == n - 1), axis=0)
     assert np.abs(M[:, on_wall] - exact_levels[:, on_wall]).max() < 1e-12
-    # Every level after the first is read at its own time, and only there; the first, at t = 0, only in 1-D.
+    # Every level after the first is read at its own time, and only there; level 0 is the caller's density and reads
+    # no value (#2984).
     step_times = {round(k * T / NT, 12) for k in range(1, NT + 1)}
     read = {round(t, 12) for t in times}
     assert None not in times
-    assert step_times <= read, sorted(step_times - read)
-    assert read <= step_times | {0.0}, sorted(read - step_times)
+    assert read == step_times, sorted(read ^ step_times)
 
 
 def test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density():
     """A BC whose only segment is Dirichlet, on x_min, leaves x_max to its no-flux default. The 1-D overwrite, at
     t = 0 and after every step, wrote both walls, since every segment was Dirichlet, and x_max read the BC's default
     value: the no-flux wall was held at 0.0 from level 0 on, at `76d8b1dc` (#2535). The post-step overwrite is gone,
-    as the implicit step's rows hold g and the explicit steps refuse a Dirichlet wall. The level-0 write is by
-    each wall's own type."""
+    as the implicit step's rows hold g and the explicit steps refuse a Dirichlet wall. Level 0 is the caller's density
+    at both walls (#2984)."""
     bc = BoundaryConditions(
         dimension=1,
         segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=2.0, boundary="x_min")],
@@ -108,6 +117,103 @@ def test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density():
             np.ones(n), drift_field=np.zeros((NT + 1, n)), volatility=SIGMA
         )
     )
-    assert np.all(M[:, 0] == 2.0)
+    assert M[0, 0] == 1.0
+    assert np.all(M[1:, 0] == 2.0)
     # Mass flows in from the wall held at 2: the no-flux wall never drops below its initial density.
     assert np.all(M[:, -1] >= 1.0), M[:, -1]
+
+
+@pytest.mark.filterwarnings("ignore:initial density mass:UserWarning")  # the planted walls give mass 1.825, reported
+def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges():
+    """Level 0 is the caller's m_initial at a Dirichlet wall, on a direct FP-FDM call and in a coupled solve, which then
+    agree there (#2984). At `3f362150` the direct call held g = 0 at the walls of a 1-D BC whose segments are all
+    Dirichlet, while the coupled solve's iterator wrote the caller's density over the FP's row. The problem's own BC,
+    which FP-FDM reads as an absorbing exit (#2512). The oracle is the planted wall value, 7.0.
+
+    The coupled solve's Picard residual reads the FP's returned row, level 0 included, before the iterator writes
+    m_initial over it. At `3f362150` the wall gap held the M residual at 0.700 and the solve did not converge in 50
+    iterations; with one level 0 it converges (in 22). This pins that the two level-0 rows agree; a residual that
+    skipped level 0 would converge as well.
+
+    The routes that keep FP-FDM's row and write nothing back hold the planted walls at level 0 as well:
+    `MultiPopulationIterator` and `GraphMFGSolver`, which at `3f362150` held 0.875 after three sweeps, decaying toward the
+    prescribed 0; `RegimeSwitchingIterator`, which held 0; and Newton's phase (no Picard warm-up, which writes m_initial
+    back), which held about 2e-08, on a 5-node problem so that it runs in under a second.
+
+    In 2-D a direct call on the FP's own all-Dirichlet BC holds the planted walls at level 0 too. Main held them
+    there already; this pins the 2-D own all-Dirichlet layout."""
+
+    def m_initial(x):
+        a = np.asarray(x[0], dtype=float)
+        return np.where(np.isclose(a, 0.0) | np.isclose(a, 1.0), 7.0, 1.0 + 0.5 * a)
+
+    def planted_problem(n, nt):
+        return MFGProblem(
+            model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=dirichlet_bc(value=0.0, dimension=1)
+            ),
+            conditions=Conditions(
+                m_initial=m_initial, u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)), T=0.5
+            ),
+            Nt=nt,
+        )
+
+    def planted_row(n):
+        row = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)
+        row[[0, -1]] = 7.0
+        return row
+
+    problem = planted_problem(11, 5)
+    planted = planted_row(11)
+    direct = np.asarray(
+        FPFDMSolver(problem).solve_fp_system(planted, potential_field=np.zeros((6, 11)), show_progress=False)
+    )
+    result = problem.solve(max_iterations=50, verbose=False)
+    assert np.array_equal(direct[0], planted)
+    assert np.array_equal(np.asarray(result.M)[0], planted)
+    assert result.converged
+    # The exit lets the wall's content out in the first step: the later levels hold the prescribed 0 there.
+    assert np.all(direct[1:, [0, -1]] == 0.0)
+    multi = MultiPopulationIterator(
+        MultiPopulationProblem(populations=[problem], population_names=["the one"]),
+        [HJBFDMSolver(problem)],
+        [FPFDMSolver(problem)],
+        relaxation=0.5,
+    ).solve(max_iterations=3, tolerance=1e-6)
+    assert np.array_equal(np.asarray(multi.M[0])[0], planted)
+    graph = GraphMFGSolver(
+        [problem],
+        AdjacencyCoupling(np.zeros((1, 1)), alpha=0.05, beta=0.02),
+        [HJBFDMSolver(problem)],
+        [FPFDMSolver(problem)],
+        max_iterations=3,
+        tolerance=1e-6,
+        damping=0.5,
+    ).solve()
+    assert np.array_equal(np.asarray(graph.densities[0])[0], planted)
+    regimes = [planted_problem(11, 5), planted_problem(11, 5)]
+    regime = RegimeSwitchingIterator(
+        regimes,
+        RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
+        [HJBFDMSolver(q) for q in regimes],
+        [FPFDMSolver(q) for q in regimes],
+        max_iterations=3,
+        tolerance=1e-6,
+        damping=0.5,
+    ).solve()
+    assert all(np.array_equal(np.asarray(density)[0], planted) for density in regime.densities)
+    small = planted_problem(5, 2)
+    _, newton_m, _ = NewtonMFGSolver(
+        small, HJBFDMSolver(small), FPFDMSolver(small), picard_warmup=0, newton_max_iterations=1
+    ).solve(max_iterations=1, verbose=False)
+    assert np.array_equal(np.asarray(newton_m)[0], planted_row(5))
+    n = 9
+    planted_2d = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)[:, None] + 0.25 * np.linspace(0.0, 1.0, n)[None, :]
+    on_wall = np.zeros((n, n), dtype=bool)
+    on_wall[[0, -1], :] = on_wall[:, [0, -1]] = True
+    planted_2d[on_wall] = 7.0
+    direct_2d = FPFDMSolver(_problem(2, n), boundary_conditions=dirichlet_bc(value=0.0, dimension=2)).solve_fp_system(
+        planted_2d, drift_field=np.zeros((NT + 1, n, n)), volatility=SIGMA
+    )
+    assert np.array_equal(np.asarray(direct_2d)[0], planted_2d)

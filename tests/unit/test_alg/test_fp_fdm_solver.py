@@ -250,8 +250,10 @@ class TestFPFDMSolverBoundaryConditions:
 
         m_result = solver.solve_fp_system(m_initial, U_solution)
 
-        # Boundary values should be enforced at all time steps
-        for t in range(Nt_points):
+        # Level 0 is the caller's density at the walls (#2984); the step's rows hold the values from level 1 on.
+        assert m_result[0, 0] == m_initial[0]
+        assert m_result[0, -1] == m_initial[-1]
+        for t in range(1, Nt_points):
             assert np.isclose(m_result[t, 0], 0.1, atol=1e-10)
             assert np.isclose(m_result[t, -1], 0.2, atol=1e-10)
 

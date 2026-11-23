@@ -19,9 +19,10 @@
     kept row reads reaches the step through D·g and is named, as it was refused before; at a Dirichlet node no kept row
     reads, such as the corner of a 2-D grid whose walls are all Dirichlet or an edge or corner of such a 3-D grid, it
     is discarded and solves, where it was refused before. A NaN at a periodic repeated endpoint where the step drops
-    it, and a NaN `M_initial` at the wall of a 1-D BC whose segments are all Dirichlet, where level 0 holds g, are read
-    and discarded: an array solves as before, and a callable volatility, drift or tensor, refused before where it was
-    read, now solves. The explicit step reads its source at that endpoint, and names a NaN there. A
+    it is read and discarded: an array solves as before, and a callable volatility, drift or tensor, refused before
+    where it was read, now solves. A NaN `M_initial` at the wall of a 1-D BC whose segments are all Dirichlet, where
+    level 0 held g, was read and discarded too, until #2984, which holds the caller's density there and refuses it at
+    the door. The explicit step reads its source at that endpoint, and names a NaN there. A
     volatility tensor's NaN is named as non-finite, not under a PSD message;
   - **HJB-SL on a grid of two or more dimensions** (#1641): a non-finite value update was replaced by U at the next time, and
     the step raised only past 10% of the points, so a NaN at a few nodes gave a finite wrong U with `converged` True.

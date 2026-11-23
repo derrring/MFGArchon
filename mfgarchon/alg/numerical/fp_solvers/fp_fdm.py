@@ -474,18 +474,13 @@ class FPFDMSolver(BaseFPSolver):
         >>> M = solver.solve_fp_system(m0, drift_field=alpha_quartic)
         """
         # The solution's row handed at the door, its initial density, is read before any work as the step will hold it,
-        # and refused here if it is not finite: an entry the BC overwrites at level 0 is read and discarded, not judged
-        # (#2975, ruling 3 as amended). Every other array is judged by the step that reads it.
+        # and refused here if it is not finite (#2975): level 0 is that density at every node, a Dirichlet wall's
+        # included, and an uncapped exit lets that content out in the first step (#2984). Every other array is judged
+        # by the step that reads it.
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_fp_system",
             "its door",
-            {
-                "M_initial": None
-                if M_initial is None
-                else initial_density_as_held(
-                    M_initial, self.boundary_conditions, self.problem.geometry, self.problem.geometry.dimension
-                )
-            },
+            {"M_initial": None if M_initial is None else initial_density_as_held(M_initial)},
         )
         # Validate required parameter
         if M_initial is None:

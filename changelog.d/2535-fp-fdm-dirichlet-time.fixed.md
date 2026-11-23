@@ -3,7 +3,7 @@
   `FPFDMSolver(problem, boundary_conditions=bc)`. On the shared route, `fp_view_of_shared_bc` makes every Dirichlet
   wall absorbing, m = 0, by design, so there is no value to read. The overwrite's removal reaches both routes.
   - **A callable Dirichlet value is honoured.** Level k + 1 reads it at t_{k+1}, at the node, in every dimension.
-    In 1-D, level 0 reads it at t = 0.
+    In 1-D, level 0 read it at t = 0, until #2984, where level 0 is the caller's density.
     - Measured with the exact solution m = 1 + 0.5 (|x|² + 2dDt) of the zero-drift equation (σ = 0.6, T = 0.5,
       Nt = 10, walls held at m), at 76d8b1dc:
       - in 1-D with a per-face `g(t)`, the error at T was 9.000e-2, which is 2dDbT: the walls were held at g(0);
@@ -20,10 +20,12 @@
     - The implicit step's Dirichlet rows hold g(t_{k+1}) without the overwrite, and the oracle above is exact
       without it. The explicit steps refuse a Dirichlet wall.
     - Level 0 is written as before, only for a BC whose segments are all Dirichlet, but now only on its Dirichlet
-      walls. A BC with a non-Dirichlet segment keeps the caller's initial density there.
+      walls. A BC with a non-Dirichlet segment keeps the caller's initial density there. #2984 deletes the write.
     - **A wall no segment covers, with `default_bc` unset, is refused.** Measured on the own channel at 76d8b1dc:
       a lone Dirichlet segment on x_min held x_max at 0.0. Level 0 now asks each wall its type, and that wall
-      raises #1100's `ValueError`, which asks for an explicit `default_bc`.
+      raises #1100's `ValueError`, which asks for an explicit `default_bc`. Since #2984 the first step refuses it:
+      the implicit step with #1100's message, the explicit callable-drift step with `LaplacianOperator`'s, which
+      names no face.
   - **The n-D Dirichlet value read has no fallbacks.** It returned 0.0:
     - for any callable value on a uniform BC;
     - on an `AttributeError`, `ValueError` or `IndexError`;
