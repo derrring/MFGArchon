@@ -54,6 +54,7 @@ from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
@@ -344,6 +345,13 @@ class FPSLSolver(BaseFPSolver):
         Returns:
             Density evolution M(t,x). Shape: (Nt+1, Nx)
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {"M_initial": M_initial},
+        )
         if M_initial is None:
             raise ValueError("M_initial is required")
 

@@ -88,6 +88,7 @@ from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, refuse_the_first_read_that_entered
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift, resolve_volatility_override
@@ -105,6 +106,26 @@ Reconstruction = Literal["upwind", "muscl"]
 # Fractions of the forward-Euler positivity bound `dt * advective_outflow_rate <= 1` for the explicit advection
 # sub-steps. A minmod MUSCL face value is at most 1.5 times its cell's density, so MUSCL's bound is 2/3 (#2323).
 _CFL_TARGET = {"upwind": 0.8, "muscl": 0.4}
+
+
+def _from_the_handed_field(handed: np.ndarray | None, name: str, i: int, face_shape: tuple[int, ...]) -> str:
+    """Where a face velocity formed from ``potential_field`` came from, as the caller handed it: the two nodes along
+    the face's axis, and their values (#2975). A face between nodes j and j + 1 of axis d is formed from U at both; a
+    seam face, from the axis' last node and its first. Empty for a velocity the caller handed as such."""
+    if handed is None:
+        return ""
+    axis = int(name.rsplit("axis ", 1)[1])
+    face = tuple(int(j) for j in np.unravel_index(i, face_shape))
+    U = np.asarray(handed, dtype=float)
+    if "seam" in name:  # the seam holds one face per transverse index; its two nodes are the axis' last and first
+        low = (*face[:axis], U.shape[axis] - 1, *face[axis:])
+        high = (*face[:axis], 0, *face[axis:])
+    else:
+        low = face
+        high = (*face[:axis], face[axis] + 1, *face[axis + 1 :])
+    return (
+        f", formed from potential_field at nodes {low} and {high}, handed as {float(U[low])!r} and {float(U[high])!r}"
+    )
 
 
 class FPFVMSolver(BaseFPSolver):
@@ -431,6 +452,51 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     # Sub-operators
     # ------------------------------------------------------------------
+    def _name_a_non_finite_outflow_rate(
+        self,
+        reads: dict[str, Any],
+        origin: str,
+        shape: tuple[int, ...],
+        spacing: list[float],
+        k: int,
+        n_steps: int,
+        dt: float,
+        handed: np.ndarray | None = None,
+    ) -> None:
+        """The advection's sub-step count (`_advect`) reads every cell's outflow rate, a decision a non-finite face
+        velocity enters before the step has a result: `math.ceil` of a NaN rate raised "cannot convert float NaN to
+        integer", naming nothing. It is read here, ahead of that decision, on the same rates, and the first face
+        velocity whose NaN or infinity reaches a rate is named (#2975). ``handed`` is the ``potential_field`` row the
+        face velocities were formed from, named beside them as the caller handed it."""
+        faces = [reads[f"{origin} at the faces of axis {d}"] for d in range(len(shape))]
+        if not any(bool(np.any(a != 0.0)) for a in faces):
+            return
+        spans = [periodic_axis_span(self.boundary_conditions, n, len(shape), self.problem.geometry) for n in shape]
+
+        def rates(read: dict[str, Any]) -> np.ndarray:
+            return advective_outflow_rate(
+                [read[f"{origin} at the faces of axis {d}"] for d in range(len(shape))],
+                [read.get(f"{origin} at the seam of axis {d}") for d in range(len(shape))],
+                spacing,
+                self._bc_types,
+                shape,
+                spans,
+            )
+
+        velocities = {name: value for name, value in reads.items() if name != "source_term"}
+        if np.all(np.isfinite(rates(velocities))):
+            return
+        refuse_the_first_read_that_entered(
+            "FPFVMSolver's advection sub-step count",
+            velocities,
+            rates,
+            lambda name, i: (
+                f"time step {k + 1} of {n_steps}, t={k * dt:g}, "
+                f"face {tuple(int(j) for j in np.unravel_index(i, np.shape(velocities[name])))}"
+                + _from_the_handed_field(handed, name, i, np.shape(velocities[name]))
+            ),
+        )
+
     def _advect(self, m, alpha_faces, alpha_wrap, dt_adv, spacing):
         """Explicit (CFL-bounded, sub-cycled forward Euler) advection over ``dt_adv``."""
         spans = [periodic_axis_span(self.boundary_conditions, n, m.ndim, self.problem.geometry) for n in m.shape]
@@ -497,6 +563,13 @@ class FPFVMSolver(BaseFPSolver):
         np.ndarray
             Density evolution, shape ``(Nt+1, *spatial_shape)``.
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {"M_initial": M_initial},
+        )
         if M_initial is None:
             M_initial = self.problem.get_initial_density()
         m0 = np.asarray(M_initial, dtype=float)
@@ -565,6 +638,8 @@ class FPFVMSolver(BaseFPSolver):
         grid = cast("TensorProductGrid", self.problem.geometry)
         control_volumes = grid.measure_weights()
 
+        # What a step's face velocities are named by (#2975).
+        origin = {"potential": "the optimal control", "drift": "drift_field", "zero": "the zero drift"}[velocity_mode]
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
             if velocity_mode == "potential":
@@ -577,7 +652,11 @@ class FPFVMSolver(BaseFPSolver):
                 alpha_faces = [np.zeros(_face_shape(shape, d), dtype=float) for d in range(len(shape))]
                 alpha_wrap = [None] * len(shape)
 
-            m = self._strang_step(m, alpha_faces, alpha_wrap, dt, spacing, lu)
+            # What step k reads, in the order it reads it: the face velocities and the seams the Strang step advances,
+            # then the source. The step takes them from this mapping, so a non-finite result can be traced to the first
+            # of them that entered it (#2975).
+            reads: dict[str, Any] = {f"{origin} at the faces of axis {d}": a for d, a in enumerate(alpha_faces)}
+            reads.update({f"{origin} at the seam of axis {d}": w for d, w in enumerate(alpha_wrap) if w is not None})
 
             if source_term is not None:
                 # `.reshape(shape)` for the same reason: FDM ravels the return and reshapes it
@@ -602,9 +681,36 @@ class FPFVMSolver(BaseFPSolver):
                         f"called with an (N, d) point array from geometry.get_spatial_grid() and "
                         f"must return one value per point (#2019)."
                     )
-                m = m + dt * s_vals.reshape(shape)
+                reads["source_term"] = s_vals
+
+            def step(read: dict[str, Any], m: np.ndarray = m) -> np.ndarray:
+                """Step k on ``read``: the Strang step on its face velocities and seams, then the source."""
+                faces = [read[f"{origin} at the faces of axis {d}"] for d in range(len(shape))]
+                seams = [read.get(f"{origin} at the seam of axis {d}") for d in range(len(shape))]
+                m_next = self._strang_step(m, faces, seams, dt, spacing, lu)
+                if source_term is not None:
+                    m_next = m_next + dt * read["source_term"].reshape(shape)
+                return m_next
+
+            handed = field[idx] if velocity_mode == "potential" else None
+            self._name_a_non_finite_outflow_rate(reads, origin, m.shape, spacing, k, n_steps, dt, handed)
+            m_before = m
+            m = step(reads)
 
             if not np.all(np.isfinite(m)):
+                # A non-finite read that entered the step is named first (#2975); what is left is computed from finite
+                # reads.
+                def rerun(read: dict[str, Any], m_before: np.ndarray = m_before) -> np.ndarray:
+                    return step(read, m_before)
+
+                def where(name: str, i: int, k: int = k, reads: dict[str, Any] = reads, handed: Any = handed) -> str:
+                    at = np.unravel_index(i, shape if name == "source_term" else np.shape(reads[name]))
+                    kind = "node" if name == "source_term" else "face"
+                    return f"time step {k + 1} of {n_steps}, t={k * dt:g}, {kind} {tuple(int(j) for j in at)}" + (
+                        "" if name == "source_term" else _from_the_handed_field(handed, name, i, np.shape(reads[name]))
+                    )
+
+                refuse_the_first_read_that_entered("FPFVMSolver", reads, rerun, where)
                 n_bad = int(np.sum(~np.isfinite(m)))
                 raise ValueError(
                     f"FP FVM solver produced {n_bad} non-finite values at timestep {k + 1}/{n_steps}. "
@@ -635,6 +741,7 @@ class FPFVMSolver(BaseFPSolver):
 
     def _strang_step(self, m, alpha_faces, alpha_wrap, dt, spacing, lu):
         """One Strang split step: 1/2 advection, full implicit diffusion, 1/2 advection."""
+        # No non-finite velocity reaches here: the sub-step count reads every face before the step and names it (#2975).
         amax = max((float(np.max(np.abs(a))) for a in alpha_faces), default=0.0)
         has_advection = amax > 0.0
 

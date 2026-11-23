@@ -28,6 +28,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.alg.numerical.weak_form_discretization import time_mass
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.mass_fabrication_gate import (
     MAX_CLIP_MASS_FABRICATION,
     negative_density_report,
@@ -214,6 +215,13 @@ class WeakFormFPSolver(BaseFPSolver):
         not take the base's ``progress_callback``, which it would never call. A keyword this signature does
         not name raises (#2419).
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {"M_initial": M_initial},
+        )
         self.last_negative_density = None
         if M_initial is None:
             raise ValueError("M_initial is required")

@@ -32,6 +32,8 @@ import warnings
 import numpy as np
 from scipy.integrate import solve_ivp
 
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
+
 # How finely a semi-Lagrangian step is cut when its CFL number exceeds max(1, cfl_target). Both halves of the SL pair
 # (HJBSemiLagrangianSolver and FPSLSolver) share this function; each measures the CFL number on its own
 # velocity and time level (#1880).
@@ -105,8 +107,7 @@ def cfl_substeps(
     destabilises the pair as well.
     """
     _refuse_meaningless_substep_settings(cfl_target, max_substeps)
-    if not np.isfinite(cfl):
-        raise ValueError(f"cfl_substeps got a non-finite CFL number ({cfl}): the velocity field is not finite")
+    refuse_a_non_finite_read("cfl_substeps", "its sub-step count", {"the CFL number of the foot's velocity": cfl})
     if cfl <= 1.0:
         return 1
     needed = int(np.ceil(cfl / cfl_target))

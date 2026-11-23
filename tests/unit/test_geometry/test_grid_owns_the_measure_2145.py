@@ -295,7 +295,7 @@ class TestWhatTheRefusalDoesToCallers:
 
         wrong = _fresh()
         wrong.geometry.integrate = _reports_zero_mass
-        with pytest.raises(ValueError, match="non-positive or non-finite total mass"):
+        with pytest.raises(ValueError, match="non-positive total mass"):
             wrong.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
 
 

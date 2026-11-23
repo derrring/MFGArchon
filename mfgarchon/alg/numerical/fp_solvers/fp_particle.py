@@ -34,6 +34,7 @@ from mfgarchon.types.callable_protocols import (
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.particle import (
     interpolate_grid_to_particles,
     sample_from_density,
@@ -1759,6 +1760,13 @@ class FPParticleSolver(BaseFPSolver):
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
         the same functional the library reports (#2145).
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {"M_initial": M_initial, "initial_particles": initial_particles},
+        )
         if source_term is not None:
             raise NotImplementedError(
                 "FPParticleSolver: `source_term` is not wired here, and the reason is a "
@@ -2120,12 +2128,7 @@ class FPParticleSolver(BaseFPSolver):
         # uniform sample (that solves a different problem with no error). A NaN/Inf density would
         # otherwise route to the uniform `else` below (because `NaN > 1e-9` is False); a negative
         # density makes np.random.choice raise, which was previously swallowed to uniform.
-        if not np.all(np.isfinite(m_initial_condition)):
-            raise ValueError(
-                "FPParticleSolver: m_initial contains NaN/Inf — cannot sample initial particles. "
-                "Provide a finite, non-negative initial density; it will not be silently replaced "
-                "by a uniform sample (Issue #1071, fail-fast)."
-            )
+        # A non-finite initial density is refused at the door, solve_fp_system, before sampling (#2975).
         if Dx > 1e-14 and np.sum(m_initial_condition * Dx) > 1e-9:
             m0_probs_unnormalized = m_initial_condition * Dx
             m0_probs = m0_probs_unnormalized / np.sum(m0_probs_unnormalized)

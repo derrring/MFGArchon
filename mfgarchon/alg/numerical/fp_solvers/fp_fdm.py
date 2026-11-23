@@ -9,6 +9,7 @@ from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
@@ -18,6 +19,7 @@ from .fp_fdm_time_stepping import (
     _refuse_a_cap_off_upwind,
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
+    initial_density_as_held,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -471,6 +473,20 @@ class FPFDMSolver(BaseFPSolver):
         >>> alpha_quartic = -np.sign(grad_U) * np.abs(grad_U) ** (1/3)  # α* = -(∇U)^(1/3)
         >>> M = solver.solve_fp_system(m0, drift_field=alpha_quartic)
         """
+        # The solution's row handed at the door, its initial density, is read before any work as the step will hold it,
+        # and refused here if it is not finite: an entry the BC overwrites at level 0 is read and discarded, not judged
+        # (#2975, ruling 3 as amended). Every other array is judged by the step that reads it.
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_fp_system",
+            "its door",
+            {
+                "M_initial": None
+                if M_initial is None
+                else initial_density_as_held(
+                    M_initial, self.boundary_conditions, self.problem.geometry, self.problem.geometry.dimension
+                )
+            },
+        )
         # Validate required parameter
         if M_initial is None:
             raise ValueError("M_initial is required")

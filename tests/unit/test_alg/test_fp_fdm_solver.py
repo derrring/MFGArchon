@@ -25,6 +25,7 @@ from mfgarchon.geometry.boundary import (
     no_flux_bc,
     periodic_bc,
 )
+from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
@@ -699,8 +700,9 @@ class TestFPFDMSolverCallableDiffusion:
         with pytest.raises(ValueError, match="returned array with shape"):
             solver.solve_fp_system(m_initial, volatility=bad_diffusion)
 
+    @pytest.mark.filterwarnings("ignore::scipy.sparse.linalg.MatrixRankWarning")
     def test_callable_validation_nan(self, standard_problem):
-        """Test that callable returning NaN raises error."""
+        """A callable volatility returning NaN is named by the step it entered (#2975)."""
         solver = FPFDMSolver(standard_problem)
 
         (Nx_points,) = standard_problem.geometry.get_grid_shape()
@@ -714,8 +716,11 @@ class TestFPFDMSolverCallableDiffusion:
 
         m_initial = np.ones(Nx_points) / Nx_points
 
-        # Should raise ValueError about NaN
-        with pytest.raises(ValueError, match="NaN or Inf"):
+        with pytest.raises(
+            NonFiniteReadError,
+            match=r"FPFDMSolver: volatility is non-finite where it reads it: .*, the first nan, at time step 1 of \d+, "
+            r"from t=0 to t=[0-9.]+, node \(0,\), where it entered the step",
+        ):
             solver.solve_fp_system(m_initial, volatility=nan_diffusion)
 
 

@@ -1,17 +1,22 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) or a test stops killing a mutation; a count that RISES and a new killer are listed, not failed, and the monthly re-baseline records them. Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 7024,
-    "commit": "d98d4b64",
+    "collected": 8473,
+    "commit": "ab479342",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
     ],
     "reproduce": "the `commit` key above is a pre-merge branch sha and does not survive the squash merge that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` and check out its FIRST entry -- squash merges here are single-parent, so there is no merge commit to find. That yields the tree this artifact SHIPPED in, which is not necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` if the difference matters",
-    "swept_on": "2026-11-03"
+    "swept_on": "2026-11-22"
   },
   "mutations": {
+    "a_naming_read_lets_every_exception_out": {
+      "kill_count": 15,
+      "owner": "Only a NonFiniteReadError leaves a failure-path naming: a read it makes that fails with a computation's error is not named, and the order goes on (run_a_naming_read; #2981's reviews 3 and 4)",
+      "status": "ok"
+    },
     "bc_default_reads_as_reflect": {
       "kill_count": 4,
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
@@ -33,22 +38,22 @@
       "status": "ok"
     },
     "diffusion_field_2x": {
-      "kill_count": 19,
+      "kill_count": 21,
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 312,
+      "kill_count": 333,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 72,
+      "kill_count": 123,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 99,
+      "kill_count": 132,
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
       "status": "ok"
     },
@@ -57,8 +62,33 @@
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
       "status": "ok"
     },
+    "fp_failure_path_names_nothing": {
+      "kill_count": 22,
+      "owner": "A step whose result is non-finite names the first read whose NaN entered it, refuse_the_first_read_that_entered (#2975)",
+      "status": "ok"
+    },
+    "fp_fdm_branch_choice_reads_every_node": {
+      "kill_count": 2,
+      "owner": "FP-FDM's diffusion branch reads the volatility only where the step's matrix reads it (#2975, F1 (a'))",
+      "status": "ok"
+    },
+    "fp_fdm_branch_choice_takes_a_nan_as_uniform": {
+      "kill_count": 4,
+      "owner": "FP-FDM's diffusion branch takes a non-finite volatility entry as varying, so the entry enters its own column and the step names it (#2975, F1)",
+      "status": "ok"
+    },
+    "fp_fdm_door_reads_nothing": {
+      "kill_count": 2,
+      "owner": "A solver's door reads the solution's row it is handed, as it will hold it, before any work (#2975, ruling 3 as amended)",
+      "status": "ok"
+    },
+    "fp_fdm_rerun_judges_its_solution": {
+      "kill_count": 3,
+      "owner": "A failure-path re-run asks only whether a non-finite read reaches the result, and skips the admissibility checks (#2981's review 3, class (i))",
+      "status": "ok"
+    },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 205,
+      "kill_count": 219,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -78,12 +108,17 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 145,
+      "kill_count": 216,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
+    "hjb_fdm_start_state_naming_off": {
+      "kill_count": 5,
+      "owner": "HJB-FDM's n-D step names a non-finite value it read at its start state, at the decision it enters (#2975)",
+      "status": "ok"
+    },
     "hjb_marches_forward_in_time": {
-      "kill_count": 52,
+      "kill_count": 64,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -102,8 +137,13 @@
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
       "status": "ok"
     },
+    "non_finite_read_owner_passes_a_nan": {
+      "kill_count": 169,
+      "owner": "A non-finite value a solver reads is refused, by name, through one owner, refuse_a_non_finite_read (#2975)",
+      "status": "ok"
+    },
     "optimal_control_sign": {
-      "kill_count": 91,
+      "kill_count": 3246,
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
       "status": "ok"
     },
@@ -113,22 +153,22 @@
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 38,
+      "kill_count": 104,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:354), and so do `bind_periodic_convention` and `periodic_axis_spans`, the layout owner (#2910). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 64,
+      "kill_count": 121,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 90,
+      "kill_count": 103,
       "owner": "The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 183,
+      "kill_count": 262,
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },
@@ -138,7 +178,7 @@
       "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 32,
+      "kill_count": 37,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },

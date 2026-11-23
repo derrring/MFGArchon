@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
 from mfgarchon.core.derivatives import DerivativeTensors
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 logger = get_logger(__name__)
 
@@ -987,6 +988,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
+        # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
+        # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
+        refuse_a_non_finite_read(
+            f"{type(self).__name__}.solve_hjb_system",
+            "its door",
+            {"U_terminal": U_terminal},
+        )
         # The per-axis read (#1560) at its point of use, ahead of the first gradient: a BC set on the geometry
         # after construction otherwise meets `value_gradient`'s refusal first, whose message is about an axis,
         # not about which BC this solver can honour (#2467).
@@ -1217,10 +1225,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         node. That substitution is finite by construction, so the NaN/Inf guard in
         solve_hjb_system could not see it and the solver returned a plausible, silently
         wrong value function with no machine-readable trace. The nD siblings catch no
-        exceptions at all; they do still substitute a stale value on NaN/Inf, counting the
-        affected nodes and escalating to a raise past a 10% threshold -- though the with-dt
-        sibling logs nothing below it, leaving that path as invisible as this one was.
-        Tracked in #1641.
+        exceptions either: a non-finite update stays in U_star, and the step's result
+        checks in solve_hjb_system refuse it where it reaches the result; a sub-step's
+        no-flux write can overwrite one at a wall (#2975; naming the read is #2993).
         """
         Nx = len(U_next)
         # Issue #1547: dH/dp from the Hamiltonian, batched once per sweep rather than a hardcoded
@@ -1401,10 +1408,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 time=time_idx * self.dt,
             )
 
-            # Track errors for diagnostics
-            error_count = 0
-            total_points = int(np.prod(grid_shape))
-
             # Issue #1413: hoist the time value for the Lax-Oleinik update in the loop.
             t_val = time_idx * self.dt
             # Issue #1547: dH/dp from the Hamiltonian, batched once per step (see
@@ -1426,28 +1429,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, self.dt)
 
-                # Check for numerical issues
-                if np.isnan(u_star_val) or np.isinf(u_star_val):
-                    error_count += 1
-                    if error_count <= 5:
-                        logger.warning(f"NaN/Inf at grid point {multi_idx}: u_departure={u_departure:.3e}")
-                    U_star[multi_idx] = U_next_shaped[multi_idx]  # Fallback
-                else:
-                    U_star[multi_idx] = u_star_val
-
-            # Report error summary if any occurred in advection
-            if error_count > 0:
-                error_pct = 100 * error_count / total_points
-                if error_pct > 10:
-                    raise ValueError(
-                        f"Semi-Lagrangian advection failed: {error_count}/{total_points} points ({error_pct:.1f}%) "
-                        f"had NaN/Inf values at time step {time_idx}. Check grid resolution and time step."
-                    )
-                else:
-                    logger.warning(
-                        f"Semi-Lagrangian advection: {error_count}/{total_points} points ({error_pct:.1f}%) "
-                        f"had NaN/Inf values at time step {time_idx}"
-                    )
+                U_star[multi_idx] = u_star_val
 
             # Step 2: Diffusion pass (using configured method)
             U_current_shaped = self._apply_diffusion(U_star, self.dt)
@@ -1538,9 +1520,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 U_next_shaped, check_cfl=False, t_idx=time_idx, m_density=M_next_shaped, time=time_idx * self.dt
             )
 
-            error_count = 0
-            total_points = int(np.prod(grid_shape))
-
             t_val = time_idx * self.dt
             # Issue #1547: dH/dp from the Hamiltonian, batched once (see _nd_foot_velocity_field).
             vel_grid = self._nd_foot_velocity_field(grid_shape, grad_components, M_next_shaped, t_val)
@@ -1555,19 +1534,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, dt)
 
-                if np.isnan(u_star_val) or np.isinf(u_star_val):
-                    error_count += 1
-                    U_star[multi_idx] = U_next_shaped[multi_idx]
-                else:
-                    U_star[multi_idx] = u_star_val
-
-            if error_count > 0:
-                error_pct = 100 * error_count / total_points
-                if error_pct > 10:
-                    raise ValueError(
-                        f"Semi-Lagrangian advection failed: {error_count}/{total_points} points ({error_pct:.1f}%) "
-                        f"had NaN/Inf values at time step {time_idx}."
-                    )
+                U_star[multi_idx] = u_star_val
 
             # ADI diffusion with custom dt
             U_current_shaped = self._apply_diffusion(U_star, dt)
@@ -2310,6 +2277,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         components = tuple(np.asarray(g, dtype=float) for g in grad)
         shape = components[0].shape
         vel = self._nd_foot_velocity_field(shape, components, np.asarray(m_values).reshape(shape), t)
+        if not np.all(np.isfinite(vel)):
+            self._name_a_non_finite_foot_velocity(
+                self._nd_node_points(shape),
+                np.asarray(m_values, dtype=float).reshape(shape).ravel(),
+                np.stack([c.ravel() for c in components], axis=1),
+                vel.reshape(-1, self.dimension),
+                t,
+            )
         return float(np.max(np.sqrt(np.sum(vel**2, axis=-1)))) * dt / float(np.min(self.dx))
 
     def _warn_if_step_exceeds_one_cell(
@@ -2400,12 +2375,19 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         loops perform -- including the reduced ``n-1`` shape the periodic nD path uses.
         """
         d = self.dimension
-        coord_axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: grid_shape[ax]] for ax in range(d)]
-        mesh = np.meshgrid(*coord_axes, indexing="ij")
-        x_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        x_flat = self._nd_node_points(grid_shape)
         p_flat = np.stack([np.asarray(grad_components[ax]).ravel() for ax in range(d)], axis=1)
         vel_flat = self._characteristic_foot_velocity(x_flat, np.asarray(m_shaped).ravel(), p_flat, t)
         return vel_flat.reshape((*tuple(grid_shape), d))
+
+    def _nd_node_points(self, grid_shape: tuple[int, ...]) -> np.ndarray:
+        """The nodes of an nD grid as ``(N, d)`` points, from ``self.grid.coordinates`` truncated to ``grid_shape`` per
+        axis, which reproduces the ``self.grid.coordinates[ax][multi_idx[ax]]`` lookup of the nD loops, the reduced
+        ``n-1`` shape of the periodic path included."""
+        d = self.dimension
+        coord_axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: grid_shape[ax]] for ax in range(d)]
+        mesh = np.meshgrid(*coord_axes, indexing="ij")
+        return np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
 
     def _trace_characteristic_backward(
         self, x_current: np.ndarray | float, p_optimal: np.ndarray | float, dt: float
@@ -2546,6 +2528,40 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     grid_coords,
                     grid_shape,
                 )
+
+    def _name_a_non_finite_foot_velocity(
+        self, x: np.ndarray, m: np.ndarray, p: np.ndarray, velocity: np.ndarray, t: float
+    ) -> None:
+        """The foot velocity's naming where the CFL number reads it, ahead of the sub-step count it decides (#2975).
+
+        ``x``, ``m``, ``p`` and ``velocity`` are the nodes' rows, as `_characteristic_foot_velocity` took and returned
+        them. At the first node whose velocity is non-finite, the read behind it is named: the density where it entered
+        ``dp`` (`_a_handed_density_that_entered`), then H's ``dp``. A velocity non-finite with ``dp`` finite cannot
+        arise, since the velocity is ``dp`` as `checked_control` handed it."""
+        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _a_handed_density_that_entered
+
+        n = np.shape(m)[0]
+        rows = np.flatnonzero(~np.all(np.isfinite(np.asarray(velocity, dtype=float).reshape(n, -1)), axis=1))
+        if rows.size == 0:
+            return
+        H = self.problem.hamiltonian_class
+        named: dict[str, object] = dict(
+            _a_handed_density_that_entered(
+                lambda m_given, _c: eval_dH_dp_batch(H, x[rows], m_given, p[rows], t), m[rows], None
+            )
+        )
+        named[f"{type(H).__name__}'s dp, the foot velocity"] = np.asarray(velocity, dtype=float).reshape(n, -1)[rows]
+        for name, values in named.items():
+            per_row = np.all(np.isfinite(np.asarray(values, dtype=float).reshape(rows.size, -1)), axis=1)
+            if np.all(per_row):
+                continue
+            k = int(rows[np.flatnonzero(~per_row)[0]])
+            refuse_a_non_finite_read(
+                "HJBSemiLagrangianSolver's CFL number",
+                f"t={t:g}, x={x[k].tolist()}, p={p[k].tolist()}, m={float(m[k]):.6g} "
+                f"(the first of {rows.size} node(s) whose foot velocity is non-finite)",
+                {name: values},
+            )
 
     def _sl_value_update(
         self,

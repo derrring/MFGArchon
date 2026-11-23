@@ -401,10 +401,76 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="fp_initial_condition_written_at_final_index",
         path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
-        old="    M_solution[0] = m_initial_condition.copy()",
-        new="    M_solution[-1] = m_initial_condition.copy()  # MUTATED: forward march anchored at t=T, not t=0",
+        old="    M_solution[0] = initial_density_as_held(m_initial_condition, boundary_conditions, grid, ndim)",
+        new="    M_solution[-1] = initial_density_as_held(m_initial_condition, boundary_conditions, grid, ndim)  # MUTATED: forward march anchored at t=T, not t=0",
         owner='The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: "- Forward time evolution: k=0 -> Nt-1". No issue n',
         verify="float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x[0], m_initial=lambda x: 1.0 + 0.0 * x[0], T=0.1), Nt=2))[0])) == 0.0",
+    ),
+    Mutation(
+        name="non_finite_read_owner_passes_a_nan",
+        path="mfgarchon/utils/non_finite_read.py",
+        old="        if bool(np.all(finite)):\n            continue\n        bad = int(array.size - np.count_nonzero(finite))",
+        new="        if True:  # MUTATED: the owner passes every value\n            continue\n        bad = int(array.size - np.count_nonzero(finite))",
+        owner="A non-finite value a solver reads is refused, by name, through one owner, refuse_a_non_finite_read (#2975)",
+        verify='_owner_on_nan() == "returns"',
+    ),
+    Mutation(
+        name="fp_failure_path_names_nothing",
+        path="mfgarchon/utils/non_finite_read.py",
+        old="    arrays = {name: np.array(value, dtype=float) for name, value in reads.items() if value is not None}\n",
+        new="    return  # MUTATED: the failure path names nothing\n    arrays = {name: np.array(value, dtype=float) for name, value in reads.items() if value is not None}\n",
+        owner="A step whose result is non-finite names the first read whose NaN entered it, refuse_the_first_read_that_entered (#2975)",
+        verify='_failure_path_on_nan() == "returns"',
+    ),
+    Mutation(
+        name="hjb_fdm_start_state_naming_off",
+        path="mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
+        old='            refuse_a_non_finite_read(solver, f"the iterate it starts from, at t={time:g}", {"U_coupling_prev": U_guess})\n',
+        new="            return  # MUTATED: the start-state naming is off\n",
+        owner="HJB-FDM's n-D step names a non-finite value it read at its start state, at the decision it enters (#2975)",
+        verify='_nd_start_on_a_nan_iterate() != "NonFiniteReadError"',
+    ),
+    Mutation(
+        name="fp_fdm_door_reads_nothing",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_fdm.py",
+        old='            {\n                "M_initial": None\n                if M_initial is None\n                else initial_density_as_held(',
+        new='            {\n                "M_initial": None  # MUTATED: the door reads nothing\n                if True\n                else initial_density_as_held(',
+        owner="A solver's door reads the solution's row it is handed, as it will hold it, before any work (#2975, ruling 3 as amended)",
+        verify='"its door" not in _fdm_door_on_nan()',
+    ),
+    # F1 and (a') share one line of `volatility_varies`, and each is reverted alone (#2981's review 4, F2): reverting
+    # both at once, as at 4ca7c9e0, left one of them with no mutation of its own.
+    Mutation(
+        name="fp_fdm_branch_choice_reads_every_node",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
+        old="    return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12\n",
+        new="    return not float(np.ptp(arr)) <= 1e-12  # MUTATED: (a') reverted, every node read; a NaN still varies\n",
+        owner="FP-FDM's diffusion branch reads the volatility only where the step's matrix reads it (#2975, F1 (a'))",
+        verify="bool(volatility_varies(np.array([0.2, 0.2, 0.9]), np.array([0, 1])))",
+    ),
+    Mutation(
+        name="fp_fdm_branch_choice_takes_a_nan_as_uniform",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
+        old="    return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12\n",
+        new="    return float(np.ptp(arr.reshape(-1)[read])) > 1e-12  # MUTATED: F1 reverted, a NaN reads as uniform\n",
+        owner="FP-FDM's diffusion branch takes a non-finite volatility entry as varying, so the entry enters its own column and the step names it (#2975, F1)",
+        verify="not volatility_varies(np.array([0.2, np.nan, 0.2]), np.array([0, 1, 2]))",
+    ),
+    Mutation(
+        name="a_naming_read_lets_every_exception_out",
+        path="mfgarchon/utils/non_finite_read.py",
+        old="    except NonFiniteReadError:\n        raise\n    except (ValueError, RuntimeError, ArithmeticError):\n        return None\n",
+        new="    except NonFiniteReadError:\n        raise\n    except ZeroDivisionError:  # MUTATED: every other exception leaves the naming\n        return None\n",
+        owner="Only a NonFiniteReadError leaves a failure-path naming: a read it makes that fails with a computation's error is not named, and the order goes on (run_a_naming_read; #2981's reviews 3 and 4)",
+        verify='_nd_naming_that_raises() == "ValueError"',
+    ),
+    Mutation(
+        name="fp_fdm_rerun_judges_its_solution",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
+        old="                lambda read: step(read, None, judge=False),\n",
+        new="                lambda read: step(read, None),  # MUTATED: the re-run runs the admissibility checks\n",
+        owner="A failure-path re-run asks only whether a non-finite read reaches the result, and skips the admissibility checks (#2981's review 3, class (i))",
+        verify='_tensor_naming() == "ValueError"',
     ),
 ]
 
@@ -441,7 +507,10 @@ class Run:
     setup_errors: int = 0
 
 
-def _pytest(paths: list[str], timeout: int = 3600) -> Run:
+# The per-run limit holds the costliest suite run a runner has shown with a margin, derived beside
+# discrimination.yml's `timeout-minutes` in #2990's class line. The per-test limit is pytest.ini's `timeout`,
+# which the gate reads too.
+def _pytest(paths: list[str], timeout: int = 4500) -> Run:
     import time
 
     t0 = time.perf_counter()
@@ -461,7 +530,6 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
             "-m",
             MARKERS,
             f"--ignore={SELF_TESTS}",
-            "--timeout=900",
             "--tb=short",
         ],
         cwd=REPO,
@@ -744,6 +812,90 @@ def _stub_problem(control_cost):
             control_cost=QuadraticControlCost(control_cost=control_cost),
             coupling=lambda m: m, coupling_dm=lambda m: 1.0)
     return P()
+
+
+# #2975's mutations (#2981's review 3): each control reads the outcome the mutation changes.
+import warnings
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import volatility_varies
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, refuse_the_first_read_that_entered
+
+
+def _outcome(run):
+    # What `run` raised, by type, or "returns": the outcome #2975's mutations change (#2981's review 3).
+    try:
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore")
+            run()
+    except Exception as e:
+        return type(e).__name__
+    return "returns"
+
+
+def _nan_problem(hamiltonian=None, dimension=1):
+    H = hamiltonian if hamiltonian is not None else SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return MFGProblem(
+            model=Model(hamiltonian=H, volatility=0.2),
+            domain=TensorProductGrid(bounds=[(0.0, 1.0)] * dimension, Nx_points=[11] if dimension == 1 else [6, 6], boundary_conditions=no_flux_bc(dimension=dimension)),
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+            Nt=5,
+        )
+
+
+class _RaisesWhereSteepAt04(SeparableHamiltonian):
+    # An own value that raises a plain ValueError at t = 0.4 where |p| > 2. The step's start state there already has
+    # |p| > 2, so the step's own first evaluation raises and Newton's handler takes it as a failed step; the start-state
+    # naming's re-evaluation then raises the same error, which `run_a_naming_read` must not let out.
+    def __call__(self, t, x, p, m):
+        if abs(float(np.ravel(t)[0]) - 0.4) < 1e-9 and np.max(np.abs(np.asarray(p, dtype=float))) > 2.0:
+            raise ValueError("|p| > 2 is outside this Hamiltonian's domain")
+        return super().__call__(t=t, x=x, p=p, m=m)
+
+
+def _owner_on_nan():
+    return _outcome(lambda: refuse_a_non_finite_read("S", "here", {"v": np.array([np.nan])}))
+
+
+def _failure_path_on_nan():
+    return _outcome(lambda: refuse_the_first_read_that_entered("S", {"v": np.array([np.nan])}, lambda read: np.asarray(read["v"]) * 1.0, lambda name, i: "here"))
+
+
+def _nd_start_on_a_nan_iterate():
+    x = np.linspace(0.0, 1.0, 6)
+    terminal = np.outer(np.sin(np.pi * x), np.sin(np.pi * x))
+    start = np.tile(terminal, (6, 1, 1))
+    start[:, 2, 2] = np.nan
+    return _outcome(lambda: HJBFDMSolver(_nan_problem(dimension=2)).solve_hjb_system(np.ones((6, 6, 6)), terminal, start))
+
+
+def _fdm_door_on_nan():
+    m0 = np.ones(11)
+    m0[5] = np.nan
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            FPFDMSolver(_nan_problem()).solve_fp_system(m0, show_progress=False)
+    except Exception as e:
+        return str(e)
+    return "returns"
+
+
+def _nd_naming_that_raises():
+    x = np.linspace(0.0, 1.0, 6)
+    terminal = np.outer(np.sin(np.pi * x), np.sin(np.pi * x))
+    problem = _nan_problem(_RaisesWhereSteepAt04(control_cost=QuadraticControlCost(control_cost=1.0)), dimension=2)
+    return _outcome(lambda: HJBFDMSolver(problem).solve_hjb_system(np.ones((6, 6, 6)), terminal, np.tile(terminal, (6, 1, 1))))
+
+
+def _tensor_naming():
+    def tensor(t, x, m):
+        return np.array([[0.2, np.nan], [0.05, 0.25]]) if np.allclose(x, (0.4, 0.4)) else np.array([[0.2, 0.05], [0.05, 0.25]])
+
+    x = np.linspace(0.0, 1.0, 6)
+    U = np.tile((0.1 * np.add.outer(x, x))[None], (6, 1, 1))
+    return _outcome(lambda: FPFDMSolver(_nan_problem(dimension=2)).solve_fp_system(np.ones((6, 6)), potential_field=U, volatility=tensor, volatility_kind="tensor", show_progress=False))
 """
 
 
