@@ -527,9 +527,9 @@ Where a value is judged:
 
 - **at the door, the solution's own row**: each concrete `solve_hjb_system` reads `U_terminal` (the weak form its
   deprecated `U_final_condition_at_T` where `U_terminal` is None, which is then the row), and each `solve_fp_system` reads `M_initial` (the particle FP also `initial_particles`),
-  before any work (#2976), as the solver will hold it. FP-FDM's level 0 holds g at the walls of a 1-D BC whose segments
-  are all Dirichlet, so an `M_initial` entry there is read and discarded (`initial_density_as_held`). Every other array a
-  door is handed, `M_density`, `U_coupling_prev`, an array `drift_field` or `potential_field`, is judged by the step
+  before any work (#2976), as the solver will hold it. FP-FDM's level 0 is `M_initial` at every node, a Dirichlet
+  wall's included, whose content leaves as the first step's outflow (`initial_density_as_held`, #2984). Every other
+  array a door is handed, `M_density`, `U_coupling_prev`, an array `drift_field` or `potential_field`, is judged by the step
   that reads it;
 - **HJB-FDM's Newton step** (`FDM_UPWIND`, and FVM's HJB half), on a step that fails: the residual is assembled again
   at the state the step's first residual reads, its start state, and the first non-finite row it keeps is named by the
@@ -1591,8 +1591,8 @@ its own `boundary_conditions`, on `divergence_upwind`, as an active set within e
 starts absorbing; a node whose outflow over the step would exceed $c\,|\text{face}|\,\Delta t$ takes the `FLUX(c)` row,
 and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, the
 one the scheme already assembles at a no-flux wall, so the trapezoid mass plus what the exits let out is the mass at
-the returned level 0 plus what a source added and a `FLUX` wall let in. (In 1-D a BC whose segments are all
-`DIRICHLET` holds its uncapped walls at $g(0)$ at level 0, #2535; a capped wall keeps the caller's density there.)
+the returned level 0 plus what a source added and a `FLUX` wall let in. (Level 0 is the caller's density at every
+wall, capped or not, and an uncapped exit lets its level-0 content out in the first step, #2984.)
 A cap on the shared BC, on another type, on a `DIRICHLET(g \ne 0)`, on `divergence_centered` (where the
 complementarity can have two roots at a node), on a face that meets a face not governed by a `NO_FLUX` segment, or on
 any other solver is refused by name (#2581, #2575). That rule is read on the faces, so which segment governs a corner,

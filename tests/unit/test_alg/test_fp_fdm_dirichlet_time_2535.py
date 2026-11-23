@@ -20,6 +20,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, Model
 from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -83,20 +84,20 @@ def test_a_time_dependent_dirichlet_wall_is_read_at_each_level(d, monkeypatch):
     idx = np.indices(shape)
     on_wall = np.any((idx == 0) | (idx == n - 1), axis=0)
     assert np.abs(M[:, on_wall] - exact_levels[:, on_wall]).max() < 1e-12
-    # Every level after the first is read at its own time, and only there; the first, at t = 0, only in 1-D.
+    # Every level after the first is read at its own time, and only there; level 0 is the caller's density and reads
+    # no value (#2984).
     step_times = {round(k * T / NT, 12) for k in range(1, NT + 1)}
     read = {round(t, 12) for t in times}
     assert None not in times
-    assert step_times <= read, sorted(step_times - read)
-    assert read <= step_times | {0.0}, sorted(read - step_times)
+    assert read == step_times, sorted(read ^ step_times)
 
 
 def test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density():
     """A BC whose only segment is Dirichlet, on x_min, leaves x_max to its no-flux default. The 1-D overwrite, at
     t = 0 and after every step, wrote both walls, since every segment was Dirichlet, and x_max read the BC's default
     value: the no-flux wall was held at 0.0 from level 0 on, at `76d8b1dc` (#2535). The post-step overwrite is gone,
-    as the implicit step's rows hold g and the explicit steps refuse a Dirichlet wall. The level-0 write is by
-    each wall's own type."""
+    as the implicit step's rows hold g and the explicit steps refuse a Dirichlet wall. Level 0 is the caller's density
+    at both walls (#2984)."""
     bc = BoundaryConditions(
         dimension=1,
         segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=2.0, boundary="x_min")],
@@ -108,6 +109,45 @@ def test_a_no_flux_wall_beside_a_dirichlet_one_keeps_its_density():
             np.ones(n), drift_field=np.zeros((NT + 1, n)), volatility=SIGMA
         )
     )
-    assert np.all(M[:, 0] == 2.0)
+    assert M[0, 0] == 1.0
+    assert np.all(M[1:, 0] == 2.0)
     # Mass flows in from the wall held at 2: the no-flux wall never drops below its initial density.
     assert np.all(M[:, -1] >= 1.0), M[:, -1]
+
+
+@pytest.mark.filterwarnings("ignore:initial density mass:UserWarning")  # the planted walls give mass 1.825, reported
+def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_the_coupled_solve_converges():
+    """Level 0 is the caller's m_initial at a Dirichlet wall, on a direct FP-FDM call and in a coupled solve, which then
+    agree there (#2984). At `3f362150` the direct call held g = 0 at the walls of a 1-D BC whose segments are all
+    Dirichlet, while the coupled solve's iterator wrote the caller's density over the FP's row. The problem's own BC,
+    which FP-FDM reads as an absorbing exit (#2512). The oracle is the planted wall value, 7.0.
+
+    The coupled solve's Picard residual reads the FP's returned row, level 0 included, before the iterator writes
+    m_initial over it. At `3f362150` the wall gap held the M residual at 0.700 and the solve did not converge in 50
+    iterations; with one level 0 it converges (in 22)."""
+
+    def m_initial(x):
+        a = np.asarray(x[0], dtype=float)
+        return np.where(np.isclose(a, 0.0) | np.isclose(a, 1.0), 7.0, 1.0 + 0.5 * a)
+
+    problem = MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+        domain=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=dirichlet_bc(value=0.0, dimension=1)
+        ),
+        conditions=Conditions(
+            m_initial=m_initial, u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)), T=0.5
+        ),
+        Nt=5,
+    )
+    planted = 1.0 + 0.5 * np.linspace(0.0, 1.0, 11)
+    planted[[0, -1]] = 7.0
+    direct = np.asarray(
+        FPFDMSolver(problem).solve_fp_system(planted, potential_field=np.zeros((6, 11)), show_progress=False)
+    )
+    result = problem.solve(max_iterations=50, verbose=False)
+    assert np.array_equal(direct[0], planted)
+    assert np.array_equal(np.asarray(result.M)[0], planted)
+    assert result.converged
+    # The exit lets the wall's content out in the first step: the later levels hold the prescribed 0 there.
+    assert np.all(direct[1:, [0, -1]] == 0.0)

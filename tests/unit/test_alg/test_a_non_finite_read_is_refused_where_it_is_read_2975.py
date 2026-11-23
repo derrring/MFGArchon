@@ -161,7 +161,7 @@ def _solution_rows(door: str) -> set[str]:
 _READ_SHAPES = {
     "the parameter": ('{"M_initial": M_initial}', {"M_initial"}),
     "the row as held": (
-        '{"M_initial": None if M_initial is None else initial_density_as_held(M_initial, bc, grid, 1)}',
+        '{"M_initial": None if M_initial is None else initial_density_as_held(M_initial)}',
         {"M_initial"},
     ),
     "None": ('{"M_initial": None}', set()),
@@ -1958,18 +1958,20 @@ def test_a_tangential_velocity_along_a_capped_column_is_named_and_solves_as_its_
     assert np.array_equal(_capped_column(False, True), _capped_column(False, False))
 
 
-def test_fp_fdm_door_does_not_judge_an_initial_density_entry_its_dirichlet_wall_overwrites():
-    """F0, ruling 3 as amended: a 1-D BC whose segments are all Dirichlet holds level 0 at g at the wall node, so an
-    M_initial entry there is read and discarded. The door reads the row as the step holds it, and the solve is the
-    twin's, bit for bit, as at 4ca7c9e0, where a door reading the handed row refused it (review 2's F0)."""
+def test_fp_fdm_door_refuses_an_initial_density_entry_at_a_dirichlet_wall():
+    """F0, ruling 3 as amended: the door reads the row as the step holds it. Level 0 is the caller's M_initial at every
+    node, the wall of a 1-D BC whose segments are all Dirichlet included, and the first step lets that content out
+    (#2984), so a NaN there is read and refused at the door. Before #2984 level 0 held g at that wall, and the entry was
+    read and discarded."""
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 
     problem = _problem(bc=bnd.dirichlet_bc(value=0.0, dimension=1))
     m0 = 1.0 + 0.5 * _X
-    nan = FPFDMSolver(problem).solve_fp_system(_nan_at(m0, 0), potential_field=_U_FIELD, show_progress=False)
-    twin = FPFDMSolver(problem).solve_fp_system(m0, potential_field=_U_FIELD, show_progress=False)
-    assert np.array_equal(nan, twin)
-    assert nan[0, 0] == 0.0
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"M_initial is non-finite where it reads it: 1 of 11 values, the first nan, at its door",
+    ):
+        FPFDMSolver(problem).solve_fp_system(_nan_at(m0, 0), potential_field=_U_FIELD, show_progress=False)
 
 
 def test_cfl_substeps_names_a_non_finite_cfl_number():

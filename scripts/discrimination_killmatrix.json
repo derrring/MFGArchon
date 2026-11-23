@@ -896,7 +896,7 @@
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_does_not_judge_a_source_at_a_dirichlet_node_whose_row_discards_it": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_does_not_judge_an_initial_density_entry_its_dirichlet_wall_overwrites": [
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_refuses_an_initial_density_entry_at_a_dirichlet_wall": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_names_a_non_finite_source": [
@@ -15451,7 +15451,7 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_each_fp_arm_names_a_source_that_entered_its_step[FDM's explicit arm]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_each_fp_arm_names_a_source_that_entered_its_step[FVM's Strang step]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_does_not_judge_a_source_at_a_dirichlet_node_whose_row_discards_it",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_does_not_judge_an_initial_density_entry_its_dirichlet_wall_overwrites",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_door_refuses_an_initial_density_entry_at_a_dirichlet_wall",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_names_a_non_finite_source",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_names_a_value_field_that_entered_its_step_by_its_argument",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_fp_fdm_refuses_a_source_at_a_capped_exit_whose_cap_reads_it",

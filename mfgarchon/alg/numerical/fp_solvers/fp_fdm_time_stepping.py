@@ -526,30 +526,12 @@ def volatility_varies(volatility: Any, read: np.ndarray) -> bool:
     return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12
 
 
-def initial_density_as_held(m_initial: Any, boundary_conditions: Any, grid: Any, ndim: int) -> np.ndarray:
-    """Level 0 as the FP-FDM step holds it. A 1-D BC whose segments are all Dirichlet holds its Dirichlet walls at g(0)
-    at level 0 too, read at the wall node; a BC with a non-Dirichlet segment keeps the caller's initial density there
-    (#1258's pin). Every later level is the implicit step's, whose rows hold g(t_{k+1}); the explicit steps refuse a
-    Dirichlet wall. A post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone
-    (#2535). The solver's door reads this row, so an entry the BC overwrites is read and discarded, not judged (#2975,
-    ruling 3 as amended after review 2 of #2981); the time loop starts from it."""
-    held = np.array(m_initial, dtype=np.float64, copy=True)
-    if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
-        for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
-            held[index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node, geometry=grid)
-    return held
-
-
-def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, BoundaryFace, np.ndarray]]:
-    """The walls of a 1-D grid whose own BC holds a Dirichlet value, as ``(index, face, wall node)``. Each wall by its
-    own type: a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535). A capped exit
-    holds no value: its node keeps its density, which queues at the cap (#2581, PR 2a)."""
-    walls = []
-    for index, side in ((0, "min"), (-1, "max")):
-        segment = boundary_conditions.segment_for_face(BoundaryFace(0, side), grid)
-        if segment.bc_type == BCType.DIRICHLET and segment.flux_capacity is None:
-            walls.append((index, BoundaryFace(0, side), _node(grid, (index,))))
-    return walls
+def initial_density_as_held(m_initial: Any) -> np.ndarray:
+    """Level 0 as the FP-FDM step holds it: the caller's initial density at every node, in every BC layout, a node
+    whose BC prescribes a value included (#2984). The step's rows hold the prescribed value from level 1 on, so an
+    exit's level-0 content leaves in the first step and is counted in its outflow record. The solver's door reads this
+    row, and the time loop starts from it (#2975)."""
+    return np.array(m_initial, dtype=np.float64, copy=True)
 
 
 def _get_bc_type(boundary_conditions: Any) -> str | None:
@@ -582,23 +564,6 @@ def _get_bc_type(boundary_conditions: Any) -> str | None:
         except (AttributeError, TypeError):
             pass
         return None
-
-
-def _get_bc_value(
-    boundary_conditions: Any,
-    face: BoundaryFace,
-    *,
-    time: float | None = None,
-    point: np.ndarray | None = None,
-    geometry: Any = None,
-) -> float:
-    """
-    Get BC value at a specific boundary, through `BoundaryConditions.get_bc_value_at_boundary`, at ``time`` and
-    at the wall node ``point`` (#2512 row B2).
-
-    Issue #946: Uses BoundaryFace instead of string identifiers for internal dispatch.
-    """
-    return boundary_conditions.get_bc_value_at_boundary(face, time=time, point=point, geometry=geometry)
 
 
 if TYPE_CHECKING:
@@ -1309,7 +1274,7 @@ def solve_fp_nd_full_system(
 
     # Allocate solution array
     M_solution = np.zeros((Nt, *shape), dtype=np.float64)
-    M_solution[0] = initial_density_as_held(m_initial_condition, boundary_conditions, grid, ndim)
+    M_solution[0] = initial_density_as_held(m_initial_condition)
 
     # Edge cases
     if Nt <= 1:

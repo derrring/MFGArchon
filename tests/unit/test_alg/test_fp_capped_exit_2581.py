@@ -182,9 +182,8 @@ def test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges():
 
 def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     """The trapezoid mass plus the record is the mass at level 0 plus what came in. In 1-D a capped exit beside a free
-    one, both in the record, under a field volatility, whose Itô diffusion the wall rows carry: a BC of DIRICHLET
-    segments alone holds its walls at g(0) at level 0 (#2535), and the capped wall keeps the caller's density there,
-    which queues. In 2-D a capped exit across from a FLUX inflow into a nearly empty domain, whose q gives what came in:
+    one, both in the record, under a field volatility, whose Itô diffusion the wall rows carry: level 0 is the caller's
+    density at both walls (#2984); the free exit lets it out in the first step, and the capped one queues it. In 2-D a capped exit across from a FLUX inflow into a nearly empty domain, whose q gives what came in:
     the inflow alone takes the exit to its cap, so the switch must read the flux's part of the step, and the exit never
     lets out more than c |exit| dt in a step."""
     problem, grid = _problem(1, 21, 20, 1.0)
@@ -208,7 +207,7 @@ def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
         )
     )
     weights = grid.measure_weights()
-    assert m[0][0] == 0.0
+    assert m[0][0] == m0[0]
     assert m[0][-1] == m0[-1]
     out = solver._boundary_outflow
     assert np.max(np.abs(m @ weights + out["free"] + out["exit"] - m[0] @ weights)) < 1e-12
