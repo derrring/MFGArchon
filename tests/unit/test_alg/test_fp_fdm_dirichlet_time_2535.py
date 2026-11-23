@@ -21,7 +21,11 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, Model
+from mfgarchon.alg.numerical.coupling import NewtonMFGSolver
+from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
@@ -29,6 +33,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc
 
@@ -130,8 +135,10 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
     iterations; with one level 0 it converges (in 22). This pins that the two level-0 rows agree; a residual that
     skipped level 0 would converge as well.
 
-    A route that keeps FP-FDM's row and writes nothing back, `MultiPopulationIterator`, holds the planted walls at
-    level 0 as well; at `3f362150` they held 0.875 after three sweeps, decaying toward the prescribed 0.
+    The routes that keep FP-FDM's row and write nothing back hold the planted walls at level 0 as well:
+    `MultiPopulationIterator` and `GraphMFGSolver`, which at `3f362150` held 0.875 after three sweeps, decaying toward the
+    prescribed 0; `RegimeSwitchingIterator`, which held 0; and Newton's phase (no Picard warm-up, which writes m_initial
+    back), which held about 2e-08, on a 5-node problem so that it runs in under a second.
 
     In 2-D a direct call on the FP's own all-Dirichlet BC holds the planted walls at level 0 too. Main held them
     there already; this pins the 2-D own all-Dirichlet layout."""
@@ -140,18 +147,25 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         a = np.asarray(x[0], dtype=float)
         return np.where(np.isclose(a, 0.0) | np.isclose(a, 1.0), 7.0, 1.0 + 0.5 * a)
 
-    problem = MFGProblem(
-        model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
-        domain=TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=dirichlet_bc(value=0.0, dimension=1)
-        ),
-        conditions=Conditions(
-            m_initial=m_initial, u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)), T=0.5
-        ),
-        Nt=5,
-    )
-    planted = 1.0 + 0.5 * np.linspace(0.0, 1.0, 11)
-    planted[[0, -1]] = 7.0
+    def planted_problem(n, nt):
+        return MFGProblem(
+            model=Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=dirichlet_bc(value=0.0, dimension=1)
+            ),
+            conditions=Conditions(
+                m_initial=m_initial, u_terminal=lambda x: np.sin(np.pi * np.asarray(x[0], dtype=float)), T=0.5
+            ),
+            Nt=nt,
+        )
+
+    def planted_row(n):
+        row = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)
+        row[[0, -1]] = 7.0
+        return row
+
+    problem = planted_problem(11, 5)
+    planted = planted_row(11)
     direct = np.asarray(
         FPFDMSolver(problem).solve_fp_system(planted, potential_field=np.zeros((6, 11)), show_progress=False)
     )
@@ -168,6 +182,32 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         relaxation=0.5,
     ).solve(max_iterations=3, tolerance=1e-6)
     assert np.array_equal(np.asarray(multi.M[0])[0], planted)
+    graph = GraphMFGSolver(
+        [problem],
+        AdjacencyCoupling(np.zeros((1, 1)), alpha=0.05, beta=0.02),
+        [HJBFDMSolver(problem)],
+        [FPFDMSolver(problem)],
+        max_iterations=3,
+        tolerance=1e-6,
+        damping=0.5,
+    ).solve()
+    assert np.array_equal(np.asarray(graph.densities[0])[0], planted)
+    regimes = [planted_problem(11, 5), planted_problem(11, 5)]
+    regime = RegimeSwitchingIterator(
+        regimes,
+        RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
+        [HJBFDMSolver(q) for q in regimes],
+        [FPFDMSolver(q) for q in regimes],
+        max_iterations=3,
+        tolerance=1e-6,
+        damping=0.5,
+    ).solve()
+    assert all(np.array_equal(np.asarray(density)[0], planted) for density in regime.densities)
+    small = planted_problem(5, 2)
+    _, newton_m, _ = NewtonMFGSolver(
+        small, HJBFDMSolver(small), FPFDMSolver(small), picard_warmup=0, newton_max_iterations=1
+    ).solve(max_iterations=1, verbose=False)
+    assert np.array_equal(np.asarray(newton_m)[0], planted_row(5))
     n = 9
     planted_2d = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)[:, None] + 0.25 * np.linspace(0.0, 1.0, n)[None, :]
     on_wall = np.zeros((n, n), dtype=bool)
