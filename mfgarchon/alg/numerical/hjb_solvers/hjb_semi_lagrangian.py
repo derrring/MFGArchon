@@ -1225,8 +1225,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         node. That substitution is finite by construction, so the NaN/Inf guard in
         solve_hjb_system could not see it and the solver returned a plausible, silently
         wrong value function with no machine-readable trace. The nD siblings catch no
-        exceptions either, and name a non-finite update by the read behind it
-        (`_name_a_non_finite_value_update`, #2975).
+        exceptions either: a non-finite update stays in U_star, and the step's result
+        checks in solve_hjb_system refuse it (#2975; naming the read behind it is #2993).
         """
         Nx = len(U_next)
         # Issue #1547: dH/dp from the Hamiltonian, batched once per sweep rather than a hardcoded
@@ -1428,8 +1428,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, self.dt)
 
-                if not np.isfinite(u_star_val):
-                    self._name_a_non_finite_value_update(x_current, m_current, p_optimal, vel, t_val, multi_idx)
                 U_star[multi_idx] = u_star_val
 
             # Step 2: Diffusion pass (using configured method)
@@ -1535,8 +1533,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, dt)
 
-                if not np.isfinite(u_star_val):
-                    self._name_a_non_finite_value_update(x_current, m_current, p_optimal, vel, t_val, multi_idx)
                 U_star[multi_idx] = u_star_val
 
             # ADI diffusion with custom dt
@@ -2531,47 +2527,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     grid_coords,
                     grid_shape,
                 )
-
-    def _name_a_non_finite_value_update(
-        self, x: np.ndarray, m: np.ndarray | float, p: np.ndarray, velocity: np.ndarray, t: float, node: tuple[int, ...]
-    ) -> None:
-        """The n-D value update's naming of a non-finite result (#2975), run where it would enter U_star.
-
-        The update stored U at t_{n+1} in its place, and raised only past 10% of the points, so a non-finite read at a
-        few nodes gave a finite wrong U with ``converged`` True. It is named by the first read behind it, each re-read as
-        the update reads it: the density where it entered ``dp`` or H's value (`_a_handed_density_that_entered`), the foot
-        velocity (H's ``dp``, as `_nd_foot_velocity_field` hands it), the terms of H's value that read x alone
-        (`_hamiltonian_terms_at`), the density terms H holds (`_hamiltonian_density_terms_at`), then H's value
-        (`eval_H_batch`). A result non-finite with every read finite is a computed failure: it stays in U_star, and the
-        check after the step reports it.
-        """
-        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
-            _a_handed_density_that_entered,
-            _hamiltonian_density_terms_at,
-            _hamiltonian_terms_at,
-        )
-
-        H = self.problem.hamiltonian_class
-        x = np.asarray(x, dtype=float)
-        p = np.atleast_1d(np.asarray(p, dtype=float))
-        m_row = np.atleast_1d(np.asarray(m, dtype=float))
-
-        def read(m_given: np.ndarray, _cross: np.ndarray | None) -> np.ndarray:
-            m_at = np.asarray(m_given, dtype=float).reshape(np.shape(m))
-            return np.concatenate(
-                [np.ravel(eval_dH_dp_batch(H, x, m_at, p, t)), np.ravel(eval_H_batch(H, x, m_at, p, t))]
-            )
-
-        named: dict[str, object] = dict(_a_handed_density_that_entered(read, m_row, None))
-        named[f"{type(H).__name__}'s dp, the foot velocity"] = velocity
-        named.update(_hamiltonian_terms_at(self.problem, t, tuple(np.atleast_1d(c) for c in x)))
-        named.update(_hamiltonian_density_terms_at(self.problem, m_row))
-        named[f"{type(H).__name__}'s value"] = eval_H_batch(H, x, np.asarray(m, dtype=float), p, t)
-        refuse_a_non_finite_read(
-            "HJBSemiLagrangianSolver's value update",
-            f"t={t:g}, x={x.tolist()}, p={p.tolist()}, m={float(m_row[0]):.6g} (node {tuple(int(k) for k in node)})",
-            named,
-        )
 
     def _name_a_non_finite_foot_velocity(
         self, x: np.ndarray, m: np.ndarray, p: np.ndarray, velocity: np.ndarray, t: float

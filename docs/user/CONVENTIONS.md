@@ -515,7 +515,8 @@ What the solve reaches is the next section's fact (#2975, #2976).
 
 A non-finite value a solver reads makes the solve raise at the step whose result it reaches, or at the decision it
 enters, naming the first non-finite value that step read and where. A value the step reads and discards is not judged:
-a Dirichlet row its condition overwrites, the repeated endpoint of a periodic grid, a time level no step reads. An entry
+a Dirichlet row its condition overwrites, the repeated endpoint of a periodic grid where the step drops it, a time level
+no step reads. An entry
 is discarded when the step's result does not depend on it for any value, NaN included: a zero weight discards a finite
 value but not a NaN, so a NaN multiplied by a boundary value of 0 reaches the result and is named. One
 function decides it, `refuse_a_non_finite_read` (`mfgarchon.utils.non_finite_read`), and it raises one error,
@@ -572,10 +573,6 @@ Where a value is judged:
   - FP-FVM's sub-step count reads each face velocity's outflow rate;
   - HJB-SL's CFL number on a grid of two or more dimensions reads the foot velocity, the Hamiltonian's `dp`, naming the
     density first where it entered;
-- **HJB-SL's value update on a grid of two or more dimensions**, under each `diffusion_method` but `stochastic`, whose
-  n-D step is in stage 2: a non-finite
-  update is named by the read behind it: the density where it entered, the foot velocity, the wall and the potentials,
-  the density terms, the value;
 - **the network FP's transition rates** out of each node, after the value field (`potential_field`) they are read from,
   each entry named by its own node and the rate that reads it ("at node 4, read for the rate out of node 1 into node
   4"). A node with no neighbours has no rate out of it, and its value is not read;
@@ -603,15 +600,23 @@ Stated limits:
   non-finite with every non-finite entry at 0, and the CFL message reports the step;
 - where the Hamiltonian's value is non-finite with 1.0 in place of the density too, or the Hamiltonian raises there, the
   test cannot tell whether the density entered, so the density is not named, and the next read in the order is;
-- a naming that re-evaluates a callable lets out a `NonFiniteReadError`, and a programming error: a computation's
-  failure the callable raises there (a `ValueError`, `RuntimeError` or `ArithmeticError`) leaves the step's own failure
-  standing, #2644's `ConvergenceError` for a failed Newton step.
+- a read a naming makes that fails with a computation's error (a `ValueError`, `RuntimeError` or `ArithmeticError`),
+  such as a callable it re-evaluates, is not named, and the order goes on to the next read; with none named, the step's
+  own failure stands, #2644's `ConvergenceError` for a failed Newton step. A `NonFiniteReadError` and a programming
+  error are let out (`run_a_naming_read`).
 
 Not read here yet (#2975, stage 2): FP-SL, HJB-FEM, the weak-form FP, WENO, GFDM, Howard and the meshless solvers
 beyond their doors; HJB-SL's source in either dimension (`_source_increment`, added after the value update), its
 one-dimensional path and its stochastic, Carlini–Silva and DPP steps; and a constraint's obstacle, which HJB-FDM's
 projection reads after the step. There a non-finite value reaches the solution and comes back non-finite, or the solve
 raises naming something else.
+
+HJB-SL's step on a grid of two or more dimensions, under each `diffusion_method` but `stochastic`, judges its result
+and not the read: after the diffusion solve, the boundary write and the source, a non-finite result raises a
+`ValueError`, "Semi-Lagrangian solver failed at time step n/N, substep k/K with NaN/Inf values. …" after a sub-step,
+or "Semi-Lagrangian solver failed at time step n/N with NaN/Inf values. Possible causes: …" after a whole step. A value
+the step discards does not reach it, such as a wall row a sub-step's no-flux write overwrites after the update. Naming
+the read behind it is #2993.
 
 ### What the Fokker–Planck solver receives
 

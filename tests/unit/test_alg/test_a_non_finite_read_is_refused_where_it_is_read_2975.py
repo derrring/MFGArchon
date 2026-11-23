@@ -442,22 +442,18 @@ def test_fp_fdm_still_names_the_cfl_condition_for_a_step_that_overflows_from_fin
     assert not isinstance(caught.value, NonFiniteReadError)
 
 
-# --- Site 4, HJB half: HJB-SL's n-D value update names the read behind a non-finite result. ---
+# --- Site 4, HJB half: HJB-SL's n-D step refuses a non-finite result; naming the read behind it is #2993. ---
 
 
-def test_hjb_sl_names_the_read_where_its_fallback_stood():
+def test_hjb_sl_refuses_a_non_finite_step_where_its_fallback_stood():
     """At 4ca7c9e0 the update stored U at t_{n+1} for the one node and raised only past 10% of the points: max |U -
-    U_twin| 0.0117 with `converged` True, and 95 log warnings."""
+    U_twin| 0.0117 with `converged` True, and 95 log warnings. The fill and the threshold are deleted, so the NaN stays
+    in the step's result, and the check after the sub-step refuses it."""
     problem = _problem(
         {"potential": lambda t, x: _at(x, lambda a: np.isclose(a, 0.4) & np.isclose(np.asarray(x[1]), 0.6), NAN)},
         dimension=2,
     )
-    with pytest.raises(
-        NonFiniteReadError,
-        match=r"HJBSemiLagrangianSolver's value update: SeparableHamiltonian's potential "
-        + OWN
-        + r": .*, the first nan, at t=",
-    ):
+    with pytest.raises(ValueError, match=r"Semi-Lagrangian solver failed at time step 4/4, substep 1/2 with NaN/Inf"):
         problem.solve(scheme=NumericalScheme.SL_LINEAR, max_iterations=20, verbose=False)
 
 
@@ -495,7 +491,8 @@ def test_the_network_fp_refuses_a_non_finite_transition_rate(monkeypatch):
 
 def test_the_network_fp_solves_a_non_finite_value_at_a_node_with_no_edges_as_its_twin():
     """A node with no edges has no rate out of it or into it, so no step reads its value: a NaN there solves bit for bit
-    as the finite twin, as at 4ca7c9e0 (#2981's review 3), at the first level and the last."""
+    as the finite twin, as at 4ca7c9e0 (#2981's review 3). The NaN sits in time rows 0 and 5; only row 0 tells, since
+    3e283757 solved row 5 as its twin too."""
     from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
     from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
     from mfgarchon.geometry.graph.network_geometry import CustomNetwork
@@ -884,6 +881,257 @@ def test_a_density_test_whose_substitute_raises_names_nothing_and_the_order_goes
         HJBFDMSolver(problem).solve_hjb_system(density, np.sin(np.pi * x), np.tile(np.sin(np.pi * x), (6, 1)))
 
 
+# --- Class (iv), what a failure-path naming lets out (#2981's review 4). ---
+
+_ARMED = {"on": False}
+
+
+def _armed(name):
+    if _ARMED["on"]:
+        raise ValueError(f"{name} raised")
+
+
+def _potential_armed(t, x):
+    _armed("the potential")
+    return 0.0 * np.asarray(x[0], dtype=float)
+
+
+def _coupling_armed(m):
+    _armed("the coupling")
+    return 0.0 * np.asarray(m, dtype=float)
+
+
+def _coupling_dm_armed(m):
+    _armed("the coupling's dm")
+    return 0.0 * np.asarray(m, dtype=float)
+
+
+def _state_penalty_armed(x):
+    _armed("the state penalty")
+    return 0.0 * np.asarray(x[0], dtype=float)
+
+
+class _OwnValueNaNAt06(SeparableHamiltonian):
+    """An own value that ignores every source H holds, NaN at x = 0.6 (and y = 0) at t = 0.4, found by its coordinates
+    whatever batch the solver evaluates: a point, a block of rows or the grid."""
+
+    def __call__(self, t, x, p, m):
+        value = np.array(
+            SeparableHamiltonian(QuadraticControlCost(control_cost=1.0))(t=t, x=x, p=p, m=m), dtype=float, copy=True
+        )
+        if abs(float(np.ravel(t)[0]) - 0.4) > 1e-9:
+            return value
+        if isinstance(x, (tuple, list)):
+            coords = [np.asarray(c, dtype=float) for c in x]
+        else:
+            a = np.asarray(x, dtype=float)
+            coords = [a[..., k] for k in range(a.shape[-1])] if a.ndim >= 1 and a.shape[-1] in (1, 2) else [a]
+        hit = np.isclose(coords[0], 0.6)
+        for c in coords[1:]:
+            hit = hit & np.isclose(c, 0.0)
+        hit = np.broadcast_to(hit, np.shape(value)) if np.ndim(value) else bool(np.any(hit))
+        return np.where(hit, NAN, value)
+
+
+@pytest.mark.filterwarnings(
+    "ignore:Newton stopped:RuntimeWarning",
+    "ignore:JAX autodiff failed:RuntimeWarning",
+    "ignore::scipy.sparse.linalg.MatrixRankWarning",
+)
+@pytest.mark.parametrize(
+    "slot",
+    [None, "potential", "density term", "state penalty"],
+    ids=["control", "a held potential", "a held density term", "the state penalty"],
+)
+@pytest.mark.parametrize(
+    ("dimension", "policy"), [(1, "raise"), (1, "record"), (2, "raise"), (2, "record")], ids=lambda v: str(v)
+)
+def test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on(slot, dimension, policy, monkeypatch):
+    """Class (iv), what a failure-path naming lets out (#2981's review 4). H's own value ignores the sources it holds and
+    is NaN at x = 0.6 at t = 0.4, so the step reads that value and only the naming reads the sources. Each source raises
+    a ValueError once armed, after construction. A naming read that raises decides nothing: it is not named, the order
+    goes on, and H's value is named, as in the control (`run_a_naming_read`). At 1bbf2428 the 1-D naming let the
+    ValueError out, and the 2-D naming's catch around the whole order returned a ConvergenceError or a finite U before
+    reaching H's value; at c20b23e3 every route gave one of those."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    held = {
+        None: {},
+        "potential": {"potential": _potential_armed},
+        "density term": {"coupling": _coupling_armed, "coupling_dm": _coupling_dm_armed},
+        "state penalty": {},
+    }[slot]
+    problem = _problem(
+        _OwnValueNaNAt06(QuadraticControlCost(control_cost=1.0), **held),
+        dimension=dimension,
+        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x[0], dtype=float),
+        **({"state_penalty": _state_penalty_armed} if slot == "state penalty" else {}),
+    )
+    shape = (11,) if dimension == 1 else (6, 6)
+    x = np.linspace(0.0, 1.0, shape[0])
+    terminal = np.sin(np.pi * x) if dimension == 1 else np.outer(np.sin(np.pi * x), np.sin(np.pi * x))
+    monkeypatch.setitem(_ARMED, "on", True)
+    with pytest.raises(NonFiniteReadError, match=r"_OwnValueNaNAt06's value " + OWN + r": .*, at t=0.4, x=\[0\.6"):
+        HJBFDMSolver(problem, on_inner_failure=policy).solve_hjb_system(
+            np.ones((6, *shape)), terminal, np.tile(terminal, (6,) + (1,) * dimension)
+        )
+
+
+# --- Class 2, a naming does not refuse what main returned (#2981's review 4: B-1, X14, X20, WENO_DOOR_EXTRA). ---
+
+
+def _sl_wall_nan(method, bc, amplitude):
+    """HJB-SL's n-D door, V = 0.1 (x + 1) y NaN at the wall node (0, 0.6) at t = 0.4. V is not 0 at x = 0, so main's
+    replacement value, U at t_{n+1}, does not coincide with the update there, and the twin's bytes cannot come from it
+    (#2993). U at T is A sin(pi x): A = 2 cuts step 4 into sub-steps, A = 0.1 takes whole steps."""
+
+    def solve(nan):
+        from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
+
+        def potential(t, x):
+            a, b = np.asarray(x[0], dtype=float), np.asarray(x[1], dtype=float)
+            hit = nan & np.isclose(a, 0.0) & np.isclose(b, 0.6) & bool(np.isclose(np.ravel(t)[0], 0.4))
+            return np.where(hit, NAN, 0.1 * (a + 1.0) * b)
+
+        problem = _problem(
+            {"potential": potential},
+            dimension=2,
+            bc=bnd.no_flux_bc(dimension=2) if bc == "no-flux" else bnd.periodic_bc(dimension=2),
+            m_initial=lambda x: 1.0 + 0.0 * np.asarray(x[0], dtype=float),
+        )
+        terminal = (amplitude * np.sin(np.pi * np.linspace(0.0, 1.0, 6)))[:, None] * np.ones((6, 6))
+        return HJBSemiLagrangianSolver(problem, diffusion_method=method).solve_hjb_system(
+            np.ones((6, 6, 6)), terminal, np.tile(terminal, (6, 1, 1))
+        )
+
+    return solve
+
+
+def _x14(overflow):
+    """The per-point Newton path (`analytic_jacobian=False`), whose start-state residual overflows from finite reads: U at
+    T a zigzag, so -D U_xx is 1e308 at every other row, and a constant potential 1e308 against its twin's 0. Under
+    "record" both return the same U."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    sigma = 10.0
+    level = 1e308 if overflow else 0.0
+    problem = _problem(
+        {"potential": lambda t, x: np.full(np.shape(np.asarray(x[0], dtype=float)), level)},
+        model_kw={"volatility": sigma},
+        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x[0], dtype=float),
+    )
+    terminal = 1e308 * 0.1**2 / (4 * sigma**2 / 2) * (-1.0) ** np.arange(11)
+    solver = HJBFDMSolver(
+        problem, analytic_jacobian=False, advection_scheme="gradient_centered", on_inner_failure="record"
+    )
+    return solver.solve_hjb_system(M_density=np.ones((6, 11)), U_terminal=terminal, U_coupling_prev=np.zeros((6, 11)))
+
+
+def _x20(nan):
+    """2-D HJB-FDM with all-Dirichlet walls, a potential NaN at the wall node (0, 0.6), which the residual's wall row
+    u - g discards, and Newton capped at one step, so the step fails and the naming runs."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    def potential(t, x):
+        a, b = np.asarray(x[0], dtype=float), np.asarray(x[1], dtype=float)
+        return np.where(nan & np.isclose(a, 0.0) & np.isclose(b, 0.6), NAN, 0.1 * a * b)
+
+    problem = _problem(
+        {"potential": potential},
+        dimension=2,
+        bc=bnd.dirichlet_bc(dimension=2, value=0.0),
+        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x[0], dtype=float),
+    )
+    terminal = 0.2 * np.sin(np.pi * np.linspace(0.0, 1.0, 6))[:, None] * np.ones((6, 6))
+    solver = HJBFDMSolver(problem, on_inner_failure="record", max_newton_iterations=1, newton_tolerance=1e-14)
+    return solver.solve_hjb_system(np.ones((6, 6, 6)), terminal, np.tile(terminal, (6, 1, 1)))
+
+
+def _weno(nan):
+    """HJB-WENO's door handed `U_coupling_prev` with a NaN, which WENO does not read."""
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
+
+    problem = _problem(
+        {"coupling": lambda m: 0.5 * np.asarray(m, dtype=float)},
+        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x[0], dtype=float),
+        u_terminal=lambda x: 0.1 * np.cos(np.pi * np.asarray(x[0], dtype=float)),
+    )
+    terminal = 0.1 * np.cos(np.pi * _X)
+    previous = np.tile(terminal, (6, 1))
+    if nan:
+        previous[2, 3] = NAN
+    return HJBWENOSolver(problem).solve_hjb_system(
+        M_density=np.ones((6, 11)), U_terminal=terminal, U_coupling_prev=previous
+    )
+
+
+@pytest.mark.filterwarnings(
+    "ignore:HJB inner Newton did not converge:RuntimeWarning",
+    "ignore:HJBFDMSolver did not converge:RuntimeWarning",
+    "ignore:Newton stopped:RuntimeWarning",
+    "ignore:JAX autodiff failed:RuntimeWarning",
+    "ignore:overflow encountered:RuntimeWarning",
+    "ignore::scipy.sparse.linalg.MatrixRankWarning",
+)
+@pytest.mark.parametrize(
+    ("solve", "refusal"),
+    [
+        pytest.param(_sl_wall_nan("none", "no-flux", 2.0), None, id="B-1: SL none, no-flux, sub-steps"),
+        pytest.param(_x14, None, id="X14: the per-point path's overflow"),
+        pytest.param(_x20, None, id="X20: a Dirichlet wall's potential"),
+        pytest.param(_weno, None, id="WENO_DOOR_EXTRA: U_coupling_prev"),
+        pytest.param(_sl_wall_nan("none", "no-flux", 0.1), "time step 4/4 with", id="SL none, no-flux, whole steps"),
+        pytest.param(
+            _sl_wall_nan("adi", "no-flux", 2.0), "time step 4/4, substep 1/4 with", id="SL adi, no-flux, sub-steps"
+        ),
+        pytest.param(
+            _sl_wall_nan("adi", "periodic", 2.0), "time step 4/4, substep 1/3 with", id="SL adi, periodic, sub-steps"
+        ),
+        pytest.param(_sl_wall_nan("adi", "periodic", 0.1), "time step 4/4 with", id="SL adi, periodic, whole steps"),
+    ],
+)
+def test_a_naming_does_not_refuse_what_main_returned(solve, refusal):
+    """Class 2, a naming does not refuse what main returned (#2981's review 4). Where the step discards the NaN, the
+    solve returns its twin's bytes, as c20b23e3 did. A naming that judged it first refused instead: HJB-SL's per-node
+    value update before the sub-step's no-flux boundary write overwrote the wall row (B-1), the per-point path's naming
+    without H's value recorded (X14), the n-D naming without the Dirichlet wall rows masked (X20), and a WENO door that
+    reads `U_coupling_prev` (WENO_DOOR_EXTRA). Where the NaN enters HJB-SL's result -- a whole step makes no boundary
+    write, ADI reads both periodic copies through their mean -- the step's result check refuses it, and c20b23e3
+    returned a finite U that is not its twin's. Naming the read behind it is #2993."""
+    if refusal is None:
+        assert np.array_equal(solve(True), solve(False))
+    else:
+        with pytest.raises(ValueError, match=rf"Semi-Lagrangian solver failed at {refusal}"):
+            solve(True)
+
+
+# --- Class 2, a finite result: the composed HJB source's one order (#2981's review 4, B-2). ---
+
+
+def test_the_composed_source_sums_its_three_parts_in_one_order():
+    """`ComposedHJBSource` sums source, coupling and nonlocal in one order, the primitive's, and `parts` reads the same
+    parts by name. Summed in another order the value moves in its last bits, and two parts are the same either way, so
+    only three parts can tell: X17, the sum reversed, changed U and M through problem.solve() at FDM_UPWIND. The reversed
+    order differs here, so the pin can see it."""
+    from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
+
+    weights = np.random.default_rng(3).normal(scale=0.37, size=(11, 11))
+    problem = _problem(
+        model_kw={"coupling_cost": PotentialCost(lambda x: 0.7 * np.cos(2.3 * np.asarray(x[0], dtype=float)) + 0.1)},
+        source_term_hjb=lambda t, x: 0.1 * np.sin(3.1 * np.asarray(x[0], dtype=float) + t) + 1.0 / 3.0,
+        nonlocal_operator=LinearOperator((11, 11), matvec=lambda v: weights @ np.asarray(v, dtype=float), dtype=float),
+    )
+    source = compose_hjb_source(problem, np.tile(1.0 + 0.5 * _X, (6, 1)), np.tile(np.sin(np.pi * _X), (6, 1)))
+    nodes = problem.geometry.get_spatial_grid()
+    for t in (0.0, 0.2, 0.4):
+        parts = source.parts(t, nodes)
+        assert list(parts) == ["source_term_hjb", "coupling_cost", "nonlocal_operator"]
+        s, c, n = (np.asarray(parts[name], dtype=float) for name in parts)
+        value = np.asarray(source(t, nodes), dtype=float)
+        assert np.array_equal(value, (s + c) + n), f"t={t}"
+        assert not np.array_equal(value, (n + c) + s), f"t={t}: the reversed order is the same here"
+
+
 class _NaNOnlyWhereAnIterateGoes(SeparableHamiltonian):
     """An own value NaN at t = 0.3 where |p| > 1.2: past every start state at that time and short of Newton's iterates."""
 
@@ -918,16 +1166,15 @@ def _potential_nan_at_04_06(t, x):
 
 
 @pytest.mark.parametrize("scheme", [NumericalScheme.SL_LINEAR, NumericalScheme.SL_CUBIC], ids=lambda s: s.name)
-def test_hjb_sl_names_the_read_on_its_loop_without_sub_steps(scheme):
-    """A4: U at T 0.2 sin(pi x) keeps every step's CFL number at most 1, so the loop without sub-steps runs."""
+def test_hjb_sl_refuses_a_non_finite_step_on_its_loop_without_sub_steps(scheme):
+    """A4: U at T 0.2 sin(pi x) keeps every step's CFL number at most 1, so the loop without sub-steps runs, and the
+    check after the step refuses the result."""
     problem = _problem(
         {"potential": _potential_nan_at_04_06},
         dimension=2,
         u_terminal=lambda x: 0.2 * np.sin(np.pi * np.asarray(x[0], dtype=float)),
     )
-    with pytest.raises(
-        NonFiniteReadError, match=r"HJBSemiLagrangianSolver's value update: SeparableHamiltonian's potential " + OWN
-    ):
+    with pytest.raises(ValueError, match=r"Semi-Lagrangian solver failed at time step 4/4 with NaN/Inf"):
         problem.solve(scheme=scheme, max_iterations=20, verbose=False)
 
 
@@ -1330,22 +1577,17 @@ def test_the_jacobian_names_a_density_only_its_dp_reads():
 _SL_TERM = 0.2 * np.sin(np.pi * np.linspace(0.0, 1.0, 6))[:, None] * np.ones((6, 6))
 
 
-@pytest.mark.parametrize(
-    ("hamiltonian", "where"),
-    [
-        ({"coupling": lambda m: 0.5 * np.asarray(m, dtype=float)}, r"value update: M_density " + OWN),
-        (_DpReadsM(QuadraticControlCost(control_cost=1.0)), r"CFL number: M_density " + OWN),
-    ],
-    ids=["value update, a coupling", "CFL number, an H whose dp reads m"],
-)
-def test_hjb_sl_names_a_density_where_it_enters(hamiltonian, where):
-    """HJB-SL's value update and its CFL number each test the handed density before the terms read from it. Without
-    those tests they name the coupling, or H's dp (review 2's MH and MI); at 4ca7c9e0 the first returned a finite wrong
-    U and the second raised "cfl_substeps got a non-finite CFL number"."""
+def test_hjb_sl_names_a_density_where_it_enters():
+    """HJB-SL's CFL number tests the handed density before H's dp read from it. Without that test it names H's dp
+    (review 2's MI); at 4ca7c9e0 it raised "cfl_substeps got a non-finite CFL number"."""
     from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
 
     M = _nan_at(np.ones((6, 6, 6)), (slice(None), 2, 3))
-    with pytest.raises(NonFiniteReadError, match=rf"HJBSemiLagrangianSolver's {where}: 1 of 1 values, the first nan"):
+    hamiltonian = _DpReadsM(QuadraticControlCost(control_cost=1.0))
+    with pytest.raises(
+        NonFiniteReadError,
+        match=r"HJBSemiLagrangianSolver's CFL number: M_density " + OWN + r": 1 of 1 values, the first nan",
+    ):
         HJBSemiLagrangianSolver(_problem(hamiltonian, dimension=2)).solve_hjb_system(
             M_density=M, U_terminal=_SL_TERM, U_coupling_prev=np.tile(_SL_TERM, (6, 1, 1))
         )
@@ -1526,8 +1768,8 @@ def test_a_callable_tensor_is_named_as_non_finite_where_it_enters_and_not_where_
 )
 def test_a_non_finite_tensor_entry_is_named_where_its_matrix_replaced_entry_by_entry_is_refused(matrix, entry):
     """The failure path set the non-finite entry alone to the identity's, so its re-run read a matrix the step refuses,
-    asymmetric or not PSD, and that refusal left in place of the naming (#2981's review 3). It now sets the whole matrix
-    at that node to the identity."""
+    asymmetric or not PSD, and that refusal left in place of the naming (#2981's review 3). The re-run now sets the entry
+    to 0.0 and runs none of the step's admissibility checks (`judge=False`), so the entry is named."""
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 
     def tensor(t, x, m):

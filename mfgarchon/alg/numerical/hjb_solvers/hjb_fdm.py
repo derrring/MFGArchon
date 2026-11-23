@@ -29,7 +29,7 @@ from mfgarchon.operators.stencils.finite_difference import (
 from mfgarchon.types.callable_protocols import evaluate_solver_source, point_tuple
 from mfgarchon.utils.exceptions import ConvergenceError  # the one class; exported from hjb_solvers too (#2673)
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import NonFiniteReadError, refuse_a_non_finite_read
+from mfgarchon.utils.non_finite_read import NonFiniteReadError, refuse_a_non_finite_read, run_a_naming_read
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volatility_override
@@ -778,22 +778,25 @@ class HJBFDMSolver(BaseHJBSolver):
             # to the owner's policy, as before (#2975).
             solver = f"HJBFDMSolver's {'Newton' if self.solver_type == 'newton' else 'fixed-point'} step"
             refuse_a_non_finite_read(solver, f"the iterate it starts from, at t={time:g}", {"U_coupling_prev": U_guess})
-            try:
-                name_the_terms_at_the_start(solver)
-            except NonFiniteReadError:
-                raise
-            except (ValueError, RuntimeError, ArithmeticError):
-                # The naming re-evaluates; a computation's failure it raises leaves the step's own failure standing,
-                # to the owner's policy below (#2644; #2981's review 3). A programming error is let out.
-                return
+            name_the_terms_at_the_start(solver)
 
         def name_the_terms_at_the_start(solver: str) -> None:
             from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _refuse_a_non_finite_hjb_term
 
-            gradients = self._compute_gradients_nd(U_guess, time=time)
-            H_values = self._evaluate_hamiltonian_nd(
-                U_guess, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time
-            )
+            def start_state() -> tuple[dict[int, NDArray], NDArray]:
+                gradients = self._compute_gradients_nd(U_guess, time=time)
+                return gradients, self._evaluate_hamiltonian_nd(
+                    U_guess, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time
+                )
+
+            # The step's own evaluation at its start state, run again: Newton's handler below takes a ValueError or
+            # RuntimeError from it as a failed step, so the same error here decides nothing, and the step's own failure
+            # stands, to the owner's policy (#2644). Each read only the naming makes runs through the same owner, in
+            # `_refuse_a_non_finite_hjb_term` (#2981's reviews 3 and 4).
+            evaluated = run_a_naming_read(start_state)
+            if evaluated is None:
+                return
+            gradients, H_values = evaluated
             rhs = H_values if source_term is None else H_values - source_term
             momenta = np.stack(
                 [np.ravel(gradients[d]) if d in gradients else np.zeros(U_guess.size) for d in range(self.dimension)],

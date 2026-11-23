@@ -599,7 +599,8 @@
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_density_test_whose_substitute_raises_names_nothing_and_the_order_goes_on": [
       "optimal_control_sign",
       "hjb_marches_forward_in_time",
-      "non_finite_read_owner_passes_a_nan"
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_door_refuses_a_non_finite_solution_row_by_name[FPFDMSolver]": [
       "optimal_control_sign",
@@ -666,13 +667,113 @@
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan"
     ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[B-1: SL none, no-flux, sub-steps]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, no-flux, sub-steps]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, sub-steps]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, whole steps]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL none, no-flux, whole steps]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[WENO_DOOR_EXTRA: U_coupling_prev]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X14: the per-point path's overflow]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X20: a Dirichlet wall's potential]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held density term]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held potential]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-control]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-the state penalty]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held density term]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held potential]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-control]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-the state penalty]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held density term]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held potential]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-control]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-the state penalty]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held density term]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held potential]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-control]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-the state penalty]": [
+      "optimal_control_sign",
+      "non_finite_read_owner_passes_a_nan",
+      "a_naming_read_lets_every_exception_out"
+    ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[raise]": [
       "optimal_control_sign",
-      "hjb_fdm_naming_lets_every_exception_out"
+      "a_naming_read_lets_every_exception_out"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[record]": [
       "optimal_control_sign",
-      "hjb_fdm_naming_lets_every_exception_out"
+      "a_naming_read_lets_every_exception_out"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_nan_only_at_the_per_point_jacobians_trials_solves_as_at_4ca7c9e0": [
       "optimal_control_sign"
@@ -719,24 +820,26 @@
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_a_corner_no_kept_row_reads_solves_as_its_twin": [
       "diffusion_scalar_2x",
       "diffusion_field_2x",
-      "optimal_control_sign"
+      "optimal_control_sign",
+      "fp_fdm_branch_choice_reads_every_node"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_one_interior_node_takes_the_per_point_branch": [
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan",
       "fp_failure_path_names_nothing",
-      "fp_fdm_branch_choice_reads_every_node"
+      "fp_fdm_branch_choice_takes_a_nan_as_uniform"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_the_periodic_repeated_endpoint_does_not_choose_the_branch[uniform twin]": [
       "optimal_control_sign",
       "periodic_endpoint_convention_inverted",
-      "periodic_wrap_endpoint_inverted"
+      "periodic_wrap_endpoint_inverted",
+      "fp_fdm_branch_choice_reads_every_node"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_the_periodic_repeated_endpoint_does_not_choose_the_branch[varying twin]": [
       "optimal_control_sign",
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted",
-      "fp_fdm_branch_choice_reads_every_node"
+      "fp_fdm_branch_choice_takes_a_nan_as_uniform"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_an_inconclusive_density_test_does_not_name_the_density": [
       "optimal_control_sign",
@@ -862,11 +965,7 @@
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan"
     ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters[CFL number, an H whose dp reads m]": [
-      "optimal_control_sign",
-      "non_finite_read_owner_passes_a_nan"
-    ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters[value update, a coupling]": [
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters": [
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan"
     ],
@@ -874,17 +973,14 @@
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan"
     ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_on_its_loop_without_sub_steps[SL_CUBIC]": [
-      "optimal_control_sign",
-      "non_finite_read_owner_passes_a_nan"
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_refuses_a_non_finite_step_on_its_loop_without_sub_steps[SL_CUBIC]": [
+      "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_on_its_loop_without_sub_steps[SL_LINEAR]": [
-      "optimal_control_sign",
-      "non_finite_read_owner_passes_a_nan"
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_refuses_a_non_finite_step_on_its_loop_without_sub_steps[SL_LINEAR]": [
+      "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_where_its_fallback_stood": [
-      "optimal_control_sign",
-      "non_finite_read_owner_passes_a_nan"
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_refuses_a_non_finite_step_where_its_fallback_stood": [
+      "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_1d_hjb_fdm_door_hands_on_what_its_step_does_not_read[M_density at T]": [
       "optimal_control_sign",
@@ -902,6 +998,9 @@
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan",
       "fp_failure_path_names_nothing"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_composed_source_sums_its_three_parts_in_one_order": [
+      "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_fp_failure_path_names_the_first_read_that_entered[one that enters before one a Dirichlet row discards]": [
       "optimal_control_sign",
@@ -962,13 +1061,13 @@
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan",
       "fp_failure_path_names_nothing",
-      "fp_fdm_branch_choice_reads_every_node"
+      "fp_fdm_branch_choice_takes_a_nan_as_uniform"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[varying twin]": [
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan",
       "fp_failure_path_names_nothing",
-      "fp_fdm_branch_choice_reads_every_node"
+      "fp_fdm_branch_choice_takes_a_nan_as_uniform"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_iterator_names_a_non_finite_initial_mass_its_geometry_reports": [
       "optimal_control_sign",
@@ -13219,6 +13318,30 @@
   },
   "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
   "mutations": {
+    "a_naming_read_lets_every_exception_out": {
+      "kill_count": 15,
+      "killed": [
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_density_test_whose_substitute_raises_names_nothing_and_the_order_goes_on",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[raise]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[record]"
+      ],
+      "owner": "Only a NonFiniteReadError leaves a failure-path naming: a read it makes that fails with a computation's error is not named, and the order goes on (run_a_naming_read; #2981's reviews 3 and 4)",
+      "seconds": 548.6,
+      "status": "ok",
+      "verify": "_nd_naming_that_raises() == \"ValueError\""
+    },
     "bc_default_reads_as_reflect": {
       "kill_count": 4,
       "killed": [
@@ -14053,6 +14176,17 @@
       "verify": "_failure_path_on_nan() == \"returns\""
     },
     "fp_fdm_branch_choice_reads_every_node": {
+      "kill_count": 2,
+      "killed": [
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_a_corner_no_kept_row_reads_solves_as_its_twin",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_the_periodic_repeated_endpoint_does_not_choose_the_branch[uniform twin]"
+      ],
+      "owner": "FP-FDM's diffusion branch reads the volatility only where the step's matrix reads it (#2975, F1 (a'))",
+      "seconds": 448.5,
+      "status": "ok",
+      "verify": "bool(volatility_varies(np.array([0.2, 0.2, 0.9]), np.array([0, 1])))"
+    },
+    "fp_fdm_branch_choice_takes_a_nan_as_uniform": {
       "kill_count": 4,
       "killed": [
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_volatility_nan_at_one_interior_node_takes_the_per_point_branch",
@@ -14060,10 +14194,10 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[uniform twin]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[varying twin]"
       ],
-      "owner": "FP-FDM's diffusion branch reads the volatility only where the step's matrix reads it (#2975, F1 (a'))",
-      "seconds": 259.8,
+      "owner": "FP-FDM's diffusion branch takes a non-finite volatility entry as varying, so the entry enters its own column and the step names it (#2975, F1)",
+      "seconds": 457.2,
       "status": "ok",
-      "verify": "bool(volatility_varies(np.array([0.2, 0.2, 0.9]), np.array([0, 1])))"
+      "verify": "not volatility_varies(np.array([0.2, np.nan, 0.2]), np.array([0, 1, 2]))"
     },
     "fp_fdm_door_reads_nothing": {
       "kill_count": 2,
@@ -14766,17 +14900,6 @@
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11"
     },
-    "hjb_fdm_naming_lets_every_exception_out": {
-      "kill_count": 2,
-      "killed": [
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[raise]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[record]"
-      ],
-      "owner": "Only a NonFiniteReadError leaves a failure-path naming; anything else leaves the step's own failure (#2981's review 3)",
-      "seconds": 266.9,
-      "status": "ok",
-      "verify": "_nd_naming_that_raises() == \"ValueError\""
-    },
     "hjb_fdm_start_state_naming_off": {
       "kill_count": 5,
       "killed": [
@@ -14940,7 +15063,7 @@
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
     "non_finite_read_owner_passes_a_nan": {
-      "kill_count": 159,
+      "kill_count": 171,
       "killed": [
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_callable_tensor_is_named_as_non_finite_where_it_enters_and_not_where_it_is_discarded",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_callable_volatility_is_named_by_the_step_that_reads_it[array]",
@@ -14963,6 +15086,22 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_door_refuses_a_non_finite_solution_row_by_name[NetworkPolicyIterationHJBSolver]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_drift_callable_is_named_where_it_enters_and_not_read_where_it_is_discarded",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_multi_population_coupling_is_named_as_the_coupling",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-the state penalty]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_non_finite_tensor_entry_is_named_where_its_matrix_replaced_entry_by_entry_is_refused[asymmetric if replaced alone]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_non_finite_tensor_entry_is_named_where_its_matrix_replaced_entry_by_entry_is_refused[indefinite if replaced alone]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_source_that_returns_one_number_is_named[1]",
@@ -14989,12 +15128,8 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the coupling where m < 1]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the potential at x = 0.3]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the wall at x = 0]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters[CFL number, an H whose dp reads m]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters[value update, a coupling]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_an_own_dp_read_by_the_foot_through_the_solve",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_on_its_loop_without_sub_steps[SL_CUBIC]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_on_its_loop_without_sub_steps[SL_LINEAR]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_where_its_fallback_stood",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_capped_switch_is_part_of_the_step_and_its_wall_row_is_named",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_fp_failure_path_names_the_first_read_that_entered[one that enters before one a Dirichlet row discards]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_fp_failure_path_names_the_first_read_that_entered[two that enter]",
@@ -15108,7 +15243,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3222,
+      "kill_count": 3246,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -15269,6 +15404,30 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_door_refuses_a_non_finite_solution_row_by_name[MeshlessGalerkinHJBSolver]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_drift_callable_is_named_where_it_enters_and_not_read_where_it_is_discarded",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_multi_population_coupling_is_named_as_the_coupling",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[B-1: SL none, no-flux, sub-steps]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, no-flux, sub-steps]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, sub-steps]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, whole steps]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL none, no-flux, whole steps]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[WENO_DOOR_EXTRA: U_coupling_prev]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X14: the per-point path's overflow]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X20: a Dirichlet wall's potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-record-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-raise-the state penalty]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held density term]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-a held potential]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-control]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[2-record-the state penalty]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[raise]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_that_raises_something_else_leaves_the_steps_own_failure[record]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_nan_only_at_the_per_point_jacobians_trials_solves_as_at_4ca7c9e0",
@@ -15313,16 +15472,16 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the coupling where m < 1]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the potential at x = 0.3]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the wall at x = 0]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters[CFL number, an H whose dp reads m]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters[value update, a coupling]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_a_density_where_it_enters",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_an_own_dp_read_by_the_foot_through_the_solve",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_on_its_loop_without_sub_steps[SL_CUBIC]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_on_its_loop_without_sub_steps[SL_LINEAR]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_names_the_read_where_its_fallback_stood",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_refuses_a_non_finite_step_on_its_loop_without_sub_steps[SL_CUBIC]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_refuses_a_non_finite_step_on_its_loop_without_sub_steps[SL_LINEAR]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_sl_refuses_a_non_finite_step_where_its_fallback_stood",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_1d_hjb_fdm_door_hands_on_what_its_step_does_not_read[M_density at T]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_1d_hjb_fdm_door_hands_on_what_its_step_does_not_read[U_coupling_prev at T]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_1d_hjb_fdm_door_hands_on_what_its_step_does_not_read[U_coupling_prev whole]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_capped_switch_is_part_of_the_step_and_its_wall_row_is_named",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_composed_source_sums_its_three_parts_in_one_order",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_fp_failure_path_names_the_first_read_that_entered[one that enters before one a Dirichlet row discards]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_fp_failure_path_names_the_first_read_that_entered[two that enter]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_fp_fdm_door_hands_on_a_velocity_row_its_steps_do_not_read",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numbers
 from abc import abstractmethod
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -13,7 +14,7 @@ from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, 
 from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import NonFiniteReadError, refuse_a_non_finite_read
+from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, run_a_naming_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -1080,7 +1081,8 @@ def _refuse_a_non_finite_hjb_term(
 
     The first value non-finite at a row the residual keeps is named at the first such row, with its (t, x, p, m). A part
     that returns one number holds at every row. A row non-finite with every read finite is left to the Newton step's
-    policy (#2644).
+    policy (#2644). Each read is run through `run_a_naming_read`, one at a time: one that fails with a computation's
+    error is not named, and the order goes on (#2981's review 4).
     """
     bad = np.flatnonzero(~np.isfinite(np.asarray(residual, dtype=float)))
     if bad.size == 0:
@@ -1092,9 +1094,17 @@ def _refuse_a_non_finite_hjb_term(
     momenta = np.asarray(p_grid, dtype=float).reshape(n, -1)
     densities = np.asarray(m_grid, dtype=float).ravel()
 
-    def refuse(terms: dict[str, Any]) -> None:
-        for name, values in terms.items():
-            at_bad = _per_row(values, bad.size)
+    def at_rows(read: Callable[[], Any]) -> np.ndarray:
+        return _per_row(read(), bad.size)
+
+    def at_bad_rows(value: Any) -> np.ndarray:
+        return _per_row(value, n)[bad]
+
+    def refuse(reads: dict[str, Callable[[], Any]]) -> None:
+        for name, read in reads.items():
+            at_bad = run_a_naming_read(partial(at_rows, read))
+            if at_bad is None:
+                continue
             non_finite = np.flatnonzero(~np.isfinite(at_bad))
             if non_finite.size == 0:
                 continue
@@ -1106,31 +1116,28 @@ def _refuse_a_non_finite_hjb_term(
             )
 
     if volatility is not None:
-        refuse({"volatility": _per_row(volatility, n)[bad]})
+        refuse({"volatility": lambda: _per_row(volatility, n)[bad]})
     if H_values is not None and not np.all(np.isfinite(_per_row(H_values, n)[bad])):
         H = problem.hamiltonian_class
         rows = tuple(points[bad, k] for k in range(points.shape[1]))
         cross = None if cross_rows is None else np.asarray(cross_rows, dtype=float)[:, bad]
         refuse(_hamiltonian_terms_at(problem, current_time, rows))
-        refuse(
-            _a_handed_density_that_entered(
-                lambda m, c: H.evaluate_H(
-                    HEvalState(x=points[bad], p=momenta[bad], m=m, t=current_time, cross_density=c)
-                ),
-                densities[bad],
-                cross,
-            )
+        entered = _a_handed_density_that_entered(
+            lambda m, c: H.evaluate_H(HEvalState(x=points[bad], p=momenta[bad], m=m, t=current_time, cross_density=c)),
+            densities[bad],
+            cross,
         )
+        refuse({name: partial(np.asarray, values) for name, values in entered.items()})
         named = _hamiltonian_density_terms_at(problem, densities[bad], cross)
-        named[f"{type(H).__name__}'s value"] = _per_row(H_values, n)[bad]
+        named[f"{type(H).__name__}'s value"] = lambda: _per_row(H_values, n)[bad]
         refuse(named)
     if source_values is not None and not np.all(np.isfinite(_per_row(source_values, n)[bad])):
         if isinstance(source_callable, ComposedHJBSource):
             # Read as the step read the sum: `evaluate_solver_source` calls a closure the library composed with the
             # solver's own x.
-            parts = source_callable.parts(current_time, x_grid)
-            refuse({name: _per_row(value, n)[bad] for name, value in parts.items()})
-        refuse({"source_term": _per_row(source_values, n)[bad]})
+            parts = run_a_naming_read(lambda: source_callable.parts(current_time, x_grid)) or {}
+            refuse({name: partial(at_bad_rows, value) for name, value in parts.items()})
+        refuse({"source_term": lambda: _per_row(source_values, n)[bad]})
 
 
 def _a_handed_density_that_entered(
@@ -1144,9 +1151,8 @@ def _a_handed_density_that_entered(
     of a non-finite one (1.0) where the handed densities are the cause; then the density is named where the value with
     only the populations' rows replaced is still non-finite, and the populations' rows where the value with only the
     density replaced is. Elsewhere the entry is 0.0: a density the value does not read at that row is discarded, and
-    not named. An evaluation that fails with anything but a `NonFiniteReadError` (a `ValueError`, `RuntimeError` or
-    `ArithmeticError`) leaves the test inconclusive: nothing is named, and the caller's order goes on (#2981's review
-    3)."""
+    not named. Each evaluation is a naming read (`run_a_naming_read`): one that fails with a computation's error leaves
+    the test inconclusive, so nothing is named and the caller's order goes on (#2981's reviews 3 and 4)."""
     m = np.asarray(m_rows, dtype=float).ravel()
     cross = None if cross_rows is None else np.asarray(cross_rows, dtype=float)
     m_bad = ~np.isfinite(m)
@@ -1157,13 +1163,8 @@ def _a_handed_density_that_entered(
     cross_in_place = None if cross is None else np.where(np.isfinite(cross), cross, 1.0)
 
     def finite(m_given: np.ndarray, cross_given: np.ndarray | None) -> np.ndarray | None:
-        try:
-            value = np.asarray(evaluate(m_given, cross_given), dtype=float).reshape(m.size, -1)
-        except NonFiniteReadError:
-            raise
-        except (ValueError, RuntimeError, ArithmeticError):  # a substitution that fails decides nothing
-            return None
-        return np.all(np.isfinite(value), axis=1)
+        value = run_a_naming_read(lambda: np.asarray(evaluate(m_given, cross_given), dtype=float).reshape(m.size, -1))
+        return None if value is None else np.all(np.isfinite(value), axis=1)
 
     caused = finite(m_in_place, cross_in_place)
     if caused is None:
@@ -1199,40 +1200,47 @@ def _hamiltonian_terms_at(
     problem: MFGProblem,
     current_time: float,
     rows: tuple[np.ndarray, ...],
-) -> dict[str, object]:
-    """The terms of H's value that read x alone, at the points ``rows`` (one array per axis), each re-read through the
-    function H's evaluation reads it with (#2975): the wall (`wall_values`), then each potential H holds
-    (`_read_of_the_potential`). The wall, which is composed into H's potential, is named as itself."""
+) -> dict[str, Callable[[], object]]:
+    """The terms of H's value that read x alone, at the points ``rows`` (one array per axis), each a read for the naming
+    to run, through the function H's evaluation reads it with (#2975): the wall (`wall_values`), then each potential H
+    holds (`_read_of_the_potential`). The wall, which is composed into H's potential, is named as itself. A read is run
+    only when the naming reaches it, so one that fails does not stop the others (#2981's review 4)."""
     from mfgarchon.core.hamiltonian import _read_of_the_potential, held_sources
     from mfgarchon.core.mfg_problem import wall_values
     from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS
 
     H = problem.hamiltonian_class
-    named: dict[str, object] = {}
+    reads: dict[str, Callable[[], object]] = {}
     if callable(problem.state_penalty):
-        named["state_penalty"] = wall_values(problem.state_penalty, rows)
+        reads["state_penalty"] = lambda: wall_values(problem.state_penalty, rows)
     for parameter, (attr, slots) in held_sources(H).items():
         if getattr(H, attr, None) is not None and slots == POTENTIAL_SLOTS:
-            named[f"{type(H).__name__}'s {parameter}"] = _read_of_the_potential(H, attr, rows, current_time)
-    return named
+            reads[f"{type(H).__name__}'s {parameter}"] = partial(_read_of_the_potential, H, attr, rows, current_time)
+    return reads
 
 
 def _hamiltonian_density_terms_at(
     problem: MFGProblem, m_rows: np.ndarray, cross_rows: np.ndarray | None = None
-) -> dict[str, object]:
-    """The density terms H holds, at the densities ``m_rows``, each re-read as H's evaluation reads it
-    (`_read_of_the_density`): with the population rows the step handed (``cross_rows``, #2335), else the own row
-    (#2975). H's value is the caller's to add, read as it read it."""
+) -> dict[str, Callable[[], object]]:
+    """The density terms H holds, at the densities ``m_rows``, each a read for the naming to run, as H's evaluation
+    reads it (`_read_of_the_density`): with the population rows the step handed (``cross_rows``, #2335), else the own
+    row (#2975). H's value is the caller's to add, read as it read it. A read is run only when the naming reaches it
+    (#2981's review 4)."""
     from mfgarchon.core.hamiltonian import _own_rows, _read_of_the_density, held_sources
     from mfgarchon.types.callable_protocols import DENSITY_SLOTS
 
     H = problem.hamiltonian_class
-    named: dict[str, object] = {}
+
+    def density_term(attr: str) -> object:
+        return _read_of_the_density(
+            H, attr, m_rows, _own_rows(m_rows) if cross_rows is None else cross_rows, m_rows.size
+        )
+
+    reads: dict[str, Callable[[], object]] = {}
     for parameter, (attr, slots) in held_sources(H).items():
         if getattr(H, attr, None) is not None and slots == DENSITY_SLOTS:
-            cross = _own_rows(m_rows) if cross_rows is None else cross_rows
-            named[f"{type(H).__name__}'s {parameter}"] = _read_of_the_density(H, attr, m_rows, cross, m_rows.size)
-    return named
+            reads[f"{type(H).__name__}'s {parameter}"] = partial(density_term, attr)
+    return reads
 
 
 def _impose_dirichlet_rows(

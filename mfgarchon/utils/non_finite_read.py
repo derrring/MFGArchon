@@ -2,16 +2,17 @@
 
 A non-finite value a solver reads makes the solve raise at the step whose result it reaches, or at the decision it
 enters, naming the first non-finite value that step read and where. A value the step reads and discards is not judged:
-a Dirichlet row its boundary condition overwrites, a repeated periodic endpoint. An entry is discarded when the step's
-result does not depend on it for any value, NaN included: a zero weight discards a finite value but not a NaN, so a NaN
-multiplied by a boundary value of 0 reaches the result and is named. Without this, such a value reached the
-solution and came back as a finite wrong answer, a non-finite one returned without an error, or an error that named the
-time step, the CFL condition or a linear solve (docs/user/CONVENTIONS.md, "What the solve refuses as non-finite").
+a Dirichlet row its boundary condition overwrites, a repeated periodic endpoint the step drops. An entry is discarded
+when the step's result does not depend on it for any value, NaN included: a zero weight discards a finite value but not
+a NaN, so a NaN multiplied by a boundary value of 0 reaches the result and is named. Without this, such a value reached
+the solution and came back as a finite wrong answer, a non-finite one returned without an error, or an error that named
+the time step, the CFL condition or a linear solve (docs/user/CONVENTIONS.md, "What the solve refuses as non-finite").
 
 `refuse_a_non_finite_read` is the one function that decides it, and `NonFiniteReadError` the one error it raises. A
 reader calls it on its failure path, naming the read behind a non-finite result, or at a decision a read value enters;
-`refuse_the_first_read_that_entered` is the failure path of a step that can re-run on what it read. A few reads are
-refused where they are read, because what they decide consumes every entry or because they enter by definition: the
+`refuse_the_first_read_that_entered` is the failure path of a step that can re-run on what it read, and
+`run_a_naming_read` runs each read a failure-path naming makes that the step did not make on those inputs. A few reads
+are refused where they are read, because what they decide consumes every entry or because they enter by definition: the
 arrays a door is handed as the solution's own row, read as the solver will hold it, a boundary value, a volatility
 override, the iterator's initial mass.
 
@@ -60,6 +61,24 @@ def refuse_a_non_finite_read(solver: str, where: str, values: Mapping[str, Any])
             f"{solver}: {name} is non-finite where it reads it: {bad} of {array.size} values, the first {first}, at "
             f"{where} (#2975)."
         )
+
+
+def run_a_naming_read(read: Callable[[], Any]) -> Any | None:
+    """Run one read a failure-path naming makes, and return what it read, or ``None`` when the read decides nothing.
+
+    A naming re-reads, after its step failed, values the step may not have read on those inputs: a term only the
+    naming evaluates (the state penalty, a potential or a density term H holds, a composed source's parts), H at a
+    substitute density, or the step's own evaluation at a state whose failure the step's handler took. A computation's
+    failure there (`ValueError`, `RuntimeError`, `ArithmeticError`) says nothing about which value entered: the read is
+    not named, the naming goes on to its next read, and with none named the step's own failure stands. A
+    `NonFiniteReadError` is a naming and leaves; anything else is a programming error and leaves too (#2981's review 4).
+    """
+    try:
+        return read()
+    except NonFiniteReadError:
+        raise
+    except (ValueError, RuntimeError, ArithmeticError):
+        return None
 
 
 def refuse_the_first_read_that_entered(

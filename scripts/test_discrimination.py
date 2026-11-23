@@ -438,20 +438,30 @@ MUTATIONS: list[Mutation] = [
         owner="A solver's door reads the solution's row it is handed, as it will hold it, before any work (#2975, ruling 3 as amended)",
         verify='"its door" not in _fdm_door_on_nan()',
     ),
+    # F1 and (a') share one line of `volatility_varies`, and each is reverted alone (#2981's review 4, F2): reverting
+    # both at once, as at 4ca7c9e0, left one of them with no mutation of its own.
     Mutation(
         name="fp_fdm_branch_choice_reads_every_node",
         path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
         old="    return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12\n",
-        new="    return float(np.ptp(arr)) > 1e-12  # MUTATED: as at 4ca7c9e0, over every node\n",
+        new="    return not float(np.ptp(arr)) <= 1e-12  # MUTATED: (a') reverted, every node read; a NaN still varies\n",
         owner="FP-FDM's diffusion branch reads the volatility only where the step's matrix reads it (#2975, F1 (a'))",
         verify="bool(volatility_varies(np.array([0.2, 0.2, 0.9]), np.array([0, 1])))",
     ),
     Mutation(
-        name="hjb_fdm_naming_lets_every_exception_out",
-        path="mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
-        old="            except NonFiniteReadError:\n                raise\n            except (ValueError, RuntimeError, ArithmeticError):\n                # The naming re-evaluates;",
-        new="            except NonFiniteReadError:\n                raise\n            except ZeroDivisionError:  # MUTATED: every other exception leaves the naming\n                # The naming re-evaluates;",
-        owner="Only a NonFiniteReadError leaves a failure-path naming; anything else leaves the step's own failure (#2981's review 3)",
+        name="fp_fdm_branch_choice_takes_a_nan_as_uniform",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
+        old="    return not float(np.ptp(arr.reshape(-1)[read])) <= 1e-12\n",
+        new="    return float(np.ptp(arr.reshape(-1)[read])) > 1e-12  # MUTATED: F1 reverted, a NaN reads as uniform\n",
+        owner="FP-FDM's diffusion branch takes a non-finite volatility entry as varying, so the entry enters its own column and the step names it (#2975, F1)",
+        verify="not volatility_varies(np.array([0.2, np.nan, 0.2]), np.array([0, 1, 2]))",
+    ),
+    Mutation(
+        name="a_naming_read_lets_every_exception_out",
+        path="mfgarchon/utils/non_finite_read.py",
+        old="    except NonFiniteReadError:\n        raise\n    except (ValueError, RuntimeError, ArithmeticError):\n        return None\n",
+        new="    except NonFiniteReadError:\n        raise\n    except ZeroDivisionError:  # MUTATED: every other exception leaves the naming\n        return None\n",
+        owner="Only a NonFiniteReadError leaves a failure-path naming: a read it makes that fails with a computation's error is not named, and the order goes on (run_a_naming_read; #2981's reviews 3 and 4)",
         verify='_nd_naming_that_raises() == "ValueError"',
     ),
     Mutation(
