@@ -475,8 +475,8 @@ class FPFDMSolver(BaseFPSolver):
         """
         # The solution's row handed at the door, its initial density, is read before any work as the step will hold it,
         # and refused here if it is not finite (#2975): level 0 is that density at every node, a Dirichlet wall's
-        # included, whose content the first step lets out (#2984). Every other array is judged by the step that
-        # reads it.
+        # included, and an uncapped exit lets that content out in the first step (#2984). Every other array is judged
+        # by the step that reads it.
         refuse_a_non_finite_read(
             f"{type(self).__name__}.solve_fp_system",
             "its door",

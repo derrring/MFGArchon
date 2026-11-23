@@ -528,7 +528,8 @@ Where a value is judged:
 - **at the door, the solution's own row**: each concrete `solve_hjb_system` reads `U_terminal` (the weak form its
   deprecated `U_final_condition_at_T` where `U_terminal` is None, which is then the row), and each `solve_fp_system` reads `M_initial` (the particle FP also `initial_particles`),
   before any work (#2976), as the solver will hold it. FP-FDM's level 0 is `M_initial` at every node, a Dirichlet
-  wall's included, whose content leaves as the first step's outflow (`initial_density_as_held`, #2984). Every other
+  wall's included; an uncapped exit lets that content out as the first step's outflow (`initial_density_as_held`,
+  #2984). Every other
   array a door is handed, `M_density`, `U_coupling_prev`, an array `drift_field` or `potential_field`, is judged by the step
   that reads it;
 - **HJB-FDM's Newton step** (`FDM_UPWIND`, and FVM's HJB half), on a step that fails: the residual is assembled again

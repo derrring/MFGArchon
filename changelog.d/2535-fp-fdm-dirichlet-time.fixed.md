@@ -23,7 +23,9 @@
       walls. A BC with a non-Dirichlet segment keeps the caller's initial density there. #2984 deletes the write.
     - **A wall no segment covers, with `default_bc` unset, is refused.** Measured on the own channel at 76d8b1dc:
       a lone Dirichlet segment on x_min held x_max at 0.0. Level 0 now asks each wall its type, and that wall
-      raises #1100's `ValueError`, which asks for an explicit `default_bc`; since #2984 the first step raises it.
+      raises #1100's `ValueError`, which asks for an explicit `default_bc`. Since #2984 the first step refuses it:
+      the implicit step with #1100's message, the explicit callable-drift step with `LaplacianOperator`'s, which
+      names no face.
   - **The n-D Dirichlet value read has no fallbacks.** It returned 0.0:
     - for any callable value on a uniform BC;
     - on an `AttributeError`, `ValueError` or `IndexError`;

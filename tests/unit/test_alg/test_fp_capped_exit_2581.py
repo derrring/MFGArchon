@@ -13,9 +13,7 @@ The oracles, without symmetry that would let a rival branch agree:
   c |exit| at every step; the same solve with the exit absorbing misses by O(1);
 - the release: a queue that drains frees the exit, and the switch time converges under refinement;
 - the mass identity: the trapezoid mass plus the recorded outflow is the mass at level 0 plus what came in;
-- a cap past every outflow (1e300; an infinite one is refused) is the absorbing exit, bit for bit, except in a 1-D BC
-  whose segments are all DIRICHLET: there the capped wall keeps the caller's density at level 0, and the cumulative
-  record is offset at every level >= 1 by that node's level-0 mass, m0 dx/2 (the approver's ruling, RULE 3, amended);
+- a cap past every outflow (1e300; an infinite one is refused) is the absorbing exit, bit for bit;
 - the cap's measure is the half cell normal to the exit face, on whichever axis that face lies.
 """
 
@@ -183,7 +181,8 @@ def test_the_cap_releases_as_its_queue_drains_and_the_switch_time_converges():
 def test_the_record_closes_the_mass_beside_a_free_exit_and_a_flux_wall():
     """The trapezoid mass plus the record is the mass at level 0 plus what came in. In 1-D a capped exit beside a free
     one, both in the record, under a field volatility, whose Itô diffusion the wall rows carry: level 0 is the caller's
-    density at both walls (#2984); the free exit lets it out in the first step, and the capped one queues it. In 2-D a capped exit across from a FLUX inflow into a nearly empty domain, whose q gives what came in:
+    density at both walls (#2984); the free exit lets it out in the first step, and the capped one queues it. In 2-D a
+    capped exit across from a FLUX inflow into a nearly empty domain, whose q gives what came in:
     the inflow alone takes the exit to its cap, so the switch must read the flux's part of the step, and the exit never
     lets out more than c |exit| dt in a step."""
     problem, grid = _problem(1, 21, 20, 1.0)

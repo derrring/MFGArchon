@@ -529,8 +529,9 @@ def volatility_varies(volatility: Any, read: np.ndarray) -> bool:
 def initial_density_as_held(m_initial: Any) -> np.ndarray:
     """Level 0 as the FP-FDM step holds it: the caller's initial density at every node, in every BC layout, a node
     whose BC prescribes a value included (#2984). The step's rows hold the prescribed value from level 1 on, so an
-    exit's level-0 content leaves in the first step and is counted in its outflow record. The solver's door reads this
-    row, and the time loop starts from it (#2975)."""
+    uncapped exit's level-0 content leaves in the first step and is counted in its outflow record; a capped exit's
+    queues. A coefficient that reads the density reads this row at step 0. The solver's door reads it, and the time
+    loop starts from it (#2975)."""
     return np.array(m_initial, dtype=np.float64, copy=True)
 
 
@@ -1077,8 +1078,7 @@ def solve_fp_nd_full_system(
     - A: advection operator (full multi-D upwind discretization)
     - D: diffusion operator (full multi-D Laplacian)
     """
-    # Checked before level 0 is written: a run with one time level takes no step, and the 1-D level-0 exemption
-    # reads the cap (review 2 of #2849).
+    # Checked before level 0 is written: a run with one time level takes no step (review 2 of #2849).
     _refuse_an_inadmissible_cap(boundary_conditions)
     # Get problem dimensions
     ndim = problem.geometry.dimension

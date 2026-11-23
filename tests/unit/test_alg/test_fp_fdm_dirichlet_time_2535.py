@@ -124,7 +124,11 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
 
     The coupled solve's Picard residual reads the FP's returned row, level 0 included, before the iterator writes
     m_initial over it. At `3f362150` the wall gap held the M residual at 0.700 and the solve did not converge in 50
-    iterations; with one level 0 it converges (in 22)."""
+    iterations; with one level 0 it converges (in 22). This pins that the two level-0 rows agree; a residual that
+    skipped level 0 would converge as well.
+
+    In 2-D a direct call on the FP's own all-Dirichlet BC holds the planted walls at level 0 too. Main held them
+    there already; this is the fact's other layouts, which no other test pins."""
 
     def m_initial(x):
         a = np.asarray(x[0], dtype=float)
@@ -151,3 +155,12 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
     assert result.converged
     # The exit lets the wall's content out in the first step: the later levels hold the prescribed 0 there.
     assert np.all(direct[1:, [0, -1]] == 0.0)
+    n = 9
+    planted_2d = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)[:, None] + 0.25 * np.linspace(0.0, 1.0, n)[None, :]
+    on_wall = np.zeros((n, n), dtype=bool)
+    on_wall[[0, -1], :] = on_wall[:, [0, -1]] = True
+    planted_2d[on_wall] = 7.0
+    direct_2d = FPFDMSolver(_problem(2, n), boundary_conditions=dirichlet_bc(value=0.0, dimension=2)).solve_fp_system(
+        planted_2d, drift_field=np.zeros((NT + 1, n, n)), volatility=SIGMA
+    )
+    assert np.array_equal(np.asarray(direct_2d)[0], planted_2d)
