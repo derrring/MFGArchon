@@ -494,6 +494,32 @@ def _get_dirichlet_value_at_point(
     return float(segment_value(segment, t=time, x=point, where=where, time_keyword="time"))
 
 
+def prescribed_nodes_and_values(
+    boundary_conditions: Any, shape: tuple[int, ...], grid: Any, time: float | None
+) -> tuple[list[int], list[float]]:
+    """The nodes whose rows the implicit step holds at a prescribed density, flat, and the values it holds there at
+    ``time``: each boundary node the per-point resolver answers Dirichlet, read through the BC's value owner. The step's
+    right-hand side writes these, and `FPFDMSolver.prescribed_density` returns them, so a coupled route's cold start
+    holds at a later level what the step holds there (#2991)."""
+    nodes: list[int] = []
+    values: list[float] = []
+    if not _declares_dirichlet(boundary_conditions):
+        return nodes, values
+    ndim = len(shape)
+    for idx in range(int(np.prod(shape))):
+        multi_idx = np.unravel_index(idx, shape)
+        if is_boundary_point(multi_idx, shape, ndim) and _is_dirichlet_at_point(
+            boundary_conditions, multi_idx, shape, grid
+        ):
+            nodes.append(idx)
+            values.append(
+                _get_dirichlet_value_at_point(
+                    boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx), geometry=grid
+                )
+            )
+    return nodes, values
+
+
 def _grid_axes(grid: Any) -> tuple[np.ndarray, ...]:
     """The grid's node axes, read only from `CartesianGrid`, the type that declares them and their order (#2490)."""
     if not isinstance(grid, CartesianGrid):
@@ -1974,19 +2000,10 @@ def solve_timestep_full_nd(
     # source: a Dirichlet row reads m = g, a constraint rather than a balance, and a source added to it
     # put g + dt*S into the solve -- an absorbing exit held at dt*S, 0.025 for S = 1 at dt = 0.025 under
     # problem.solve (#2531). The rows themselves come from the per-point resolver above, so the values
-    # must be written wherever it can answer Dirichlet; `_declares_dirichlet` is that test, cheap.
-    dirichlet_nodes: list[int] = []
-    if _declares_dirichlet(boundary_conditions):
-        for idx in range(N_total):
-            multi_idx = np.unravel_index(idx, shape)
-            if is_boundary_point(multi_idx, shape, ndim) and _is_dirichlet_at_point(
-                boundary_conditions, multi_idx, shape, grid
-            ):
-                bc_value = _get_dirichlet_value_at_point(
-                    boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx), geometry=grid
-                )
-                b_rhs[idx] = bc_value / dt
-                dirichlet_nodes.append(idx)
+    # must be written wherever it can answer Dirichlet: `prescribed_nodes_and_values`, which a cold start asks too.
+    dirichlet_nodes, dirichlet_values = prescribed_nodes_and_values(boundary_conditions, shape, grid, time)
+    for idx, bc_value in zip(dirichlet_nodes, dirichlet_values, strict=True):
+        b_rhs[idx] = bc_value / dt
 
     # The repeated-endpoint rows assembled above read `m[i] - m[mirror] = 0`. Zeroed last so a
     # source term cannot re-enter a row that carries a constraint rather than a balance.

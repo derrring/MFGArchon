@@ -123,6 +123,17 @@ class FPFEMSolver(WeakFormFPSolver):
 
         return get_dirichlet_dofs_and_values(self._basis, self._bc, t=t)
 
+    def prescribed_density(self, level: int) -> tuple[NDArray, NDArray] | None:
+        """The dofs the step condenses at level ``level`` and their values at t_level: `_dirichlet_dofs_and_values`, the
+        read the step writes them from (`WeakFormFPSolver.solve_fp_system`, its condensing branch). None when the BC is
+        pure Neumann, where the step condenses nothing, or condenses no dof (#2991)."""
+        if self._is_pure_neumann():
+            return None
+        dofs, values = self._dirichlet_dofs_and_values(level * self.problem.dt)
+        if dofs.size == 0:
+            return None
+        return dofs, values
+
     def _apply_bc_to_system(
         self, matrix: sparse.csr_matrix, rhs: NDArray, t: float | None = None
     ) -> tuple[sparse.csr_matrix, NDArray]:

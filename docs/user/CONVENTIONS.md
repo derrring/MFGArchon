@@ -422,10 +422,15 @@ these states, and a test holds the reads inside them for every member. A solver 
   NO_FLUX or REFLECTING segment's is not read, as its constant is not;
 - **$m$ and $v$**: the first Picard iteration hands the HJB the initial density at every $t_n$, and $v$ the terminal
   value at it, `terminal_value(get_m_init())`: `u_terminal`, plus the terminal coupling's derivative where one is
-  declared. It hands the FP the initial density, with $v$ only at $T$. So a callable that takes them is read with those
-  values at its nodes. A `source_term_fp` that takes $v$ is not read, since no finite-volume scheme reads it at $T$;
-  and where a terminal coupling is declared off a grid, which the problem does not bind, $v$ is the HJB solver's
-  binding's, and nothing that takes $v$ is read;
+  declared. From $t_1$ on, a node the FP solver's step prescribes holds that value instead
+  (`BaseFPSolver.prescribed_density`, #2991); under `problem.solve` that is a node of a Dirichlet face, which the FP
+  reads as an exit, so 0. No probe node on a grid lies there. One can on a mesh whose boundary is not the box, and
+  there, as for a callable that reads the density beyond its own node, such as a nonlocal `coupling_cost` or
+  `terminal_coupling` and what takes the $v$ the latter makes, the owner reads the initial density where the first
+  iteration hands 0. It hands the FP the initial density, with $v$ only at $T$. So a callable that takes them is read
+  with those values at its nodes. A `source_term_fp` that takes $v$ is not read, since no finite-volume scheme reads it
+  at $T$; and where a terminal coupling is declared off a grid, which the problem does not bind, $v$ is the HJB
+  solver's binding's, and nothing that takes $v$ is read;
 - `coupling_cost` as its derivative at the initial density (`_coupling_part`), and `nonlocal_operator` applied to that
   $v$, each evaluated on the whole grid and judged at the probe nodes off the boundary, as above; `terminal_coupling`
   through `terminal_value`, at $T$, at every node, since at $T$ the terminal value is the solution;

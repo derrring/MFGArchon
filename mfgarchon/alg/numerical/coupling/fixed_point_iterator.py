@@ -392,7 +392,9 @@ class FixedPointIterator(BaseCouplingIterator):
                     self.U[num_time_steps - 1] = U_terminal
 
                 # Initialize interior with boundary conditions
-                self.U, self.M = initialize_cold_start(self.U, self.M, M_initial, U_terminal, num_time_steps)
+                self.U, self.M = initialize_cold_start(
+                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
+                )
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)
@@ -827,8 +829,9 @@ class FixedPointIterator(BaseCouplingIterator):
         if not fp_output_available:
             # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
             # density. Two ways to get here, and the number would be wrong differently in each:
-            # from a cold start, initialize_cold_start writes M_initial into every row, so mass
-            # is constant by construction and measures as exactly 0.0 -- the best possible value
+            # from a cold start, self.M is initialize_cold_start's construction -- M_initial in every
+            # row, except where the FP prescribes a value (#2991) -- so its mass describes that
+            # construction, and with nothing prescribed measures as exactly 0.0, the best possible value
             # for a solve that never ran; from a warm start, self.M is some other solve's output,
             # so any number describes that solve rather than this one. Neither is a measurement
             # of this solve, and the None sentinel exists so that cannot masquerade as one.

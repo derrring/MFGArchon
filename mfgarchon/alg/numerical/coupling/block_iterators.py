@@ -664,7 +664,9 @@ class BlockIterator(BaseCouplingIterator):
             self.U[-1] = self._U_terminal
 
             # Initialize interior
-            self.U, self.M = initialize_cold_start(self.U, self.M, self._M_initial, self._U_terminal, num_time_steps)
+            self.U, self.M = initialize_cold_start(
+                self.U, self.M, self._M_initial, self._U_terminal, num_time_steps, fp_solver=self.fp_solver
+            )
 
         # Reset tracking
         self.error_history_U = []

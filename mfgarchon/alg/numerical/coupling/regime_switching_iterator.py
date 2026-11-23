@@ -40,6 +40,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
+    cold_start_iterate,
     diverged_value_function,
     fp_solver_sig_params,
     hjb_solver_sig_params,
@@ -497,7 +498,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 M_k = (
                     Ms[k]
                     if isinstance(Ms[k], np.ndarray) and Ms[k].ndim == 2
-                    else np.tile(Ms[k], (self._problems[k].Nt + 1, 1))
+                    else cold_start_iterate(Ms[k], self._fp[k], self._problems[k].Nt)
                 )
                 # Issue #2666: regime k's own source, composed from the iterates this solve starts from.
                 hjb_source = self._make_hjb_source(
@@ -555,7 +556,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                         densities=[
                             Ms[j]
                             if isinstance(Ms[j], np.ndarray) and Ms[j].ndim == 2
-                            else np.tile(Ms[j], (self._problems[j].Nt + 1, 1))
+                            else cold_start_iterate(Ms[j], self._fp[j], self._problems[j].Nt)
                             for j in range(K)
                         ],
                         converged=False,
@@ -568,8 +569,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             # --- FP step: solve K forward equations with mass transfer ---
             for k in range(K):
                 # Issue #2666: regime k's own FP source, composed from the density this solve replaces
-                # (tiled at iteration 0, when `Ms[k]` is still m_initial) and the U it consumes.
-                M_k = Ms[k] if Ms[k].ndim == 2 else np.tile(Ms[k], (self._problems[k].Nt + 1, 1))
+                # (the cold start's iterate at iteration 0, when `Ms[k]` is still m_initial) and the U it consumes.
+                M_k = Ms[k] if Ms[k].ndim == 2 else cold_start_iterate(Ms[k], self._fp[k], self._problems[k].Nt)
                 fp_source = self._make_fp_source(k, K, Q, Ms, compose_fp_source(self._problems[k], M_k, Us_new[k]))
 
                 m0_k = Ms[k][0] if Ms[k].ndim == 2 else Ms[k]

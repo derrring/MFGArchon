@@ -323,7 +323,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                     self.M[0] = M_initial
                     self.U[num_time_steps - 1] = U_terminal
 
-                self.U, self.M = initialize_cold_start(self.U, self.M, M_initial, U_terminal, num_time_steps)
+                self.U, self.M = initialize_cold_start(
+                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
+                )
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)

@@ -292,6 +292,15 @@ class BaseFPSolver(BaseNumericalSolver):
         m0 = self.problem.get_initial_density()
         return self.solve_fp_system(m0)
 
+    def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """The density this solver's step holds at time level ``level`` (1, ..., Nt) whatever it is handed: the flat
+        indices into one level's array, and the values there. None when the step prescribes no value, which is this
+        default: a solver that imposes a boundary weakly (meshless Galerkin's Nitsche terms, #2992) or not at all
+        prescribes none. A coupled route's cold start asks this, so its later levels hold what the step will hold
+        rather than the caller's initial density (#2991). A solver that prescribes a value returns the read its own step
+        makes, never a second derivation of it."""
+        return None
+
     def validate_solution(self) -> dict[str, float]:
         """
         Validate the computed solution.

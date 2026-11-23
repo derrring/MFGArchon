@@ -20,6 +20,7 @@ from .fp_fdm_time_stepping import (
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
     initial_density_as_held,
+    prescribed_nodes_and_values,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -337,6 +338,30 @@ class FPFDMSolver(BaseFPSolver):
                 _NO_TIME_DERIVATIVE, 0.0, coupling_coefficient, spacing, u_flat, geometry, boundary_conditions,
             )  # fmt: skip
         return sparse.coo_matrix((values, (rows, cols)), shape=(total, total)).tocsr()
+
+    def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """The density the implicit step holds at level ``level``: its Dirichlet rows' nodes and values at t_level, read
+        by `prescribed_nodes_and_values`, the function the step's right-hand side reads them with (#2991). On the
+        problem's shared BC a Dirichlet face is an absorbing exit, 0 (#2512); on the solver's own DIRICHLET(g), g. None
+        when the step holds no node. A capped exit is refused: its later levels follow each step's active set (#2581),
+        so no value is prescribed there."""
+        capped = [
+            seg.name
+            for seg in getattr(self.boundary_conditions, "segments", None) or ()
+            if seg.flux_capacity is not None
+        ]
+        if capped:
+            raise NotImplementedError(
+                f"{type(self).__name__}.prescribed_density: segment(s) {capped} carry a flux_capacity, whose density "
+                "at a later level each step's active set decides (#2581); no value is prescribed there."
+            )
+        geometry = self.problem.geometry
+        nodes, values = prescribed_nodes_and_values(
+            self.boundary_conditions, tuple(geometry.get_grid_shape()), geometry, level * self.problem.dt
+        )
+        if not nodes:
+            return None
+        return np.asarray(nodes, dtype=np.intp), np.asarray(values, dtype=np.float64)
 
     def solve_fp_system(
         self,
