@@ -11,8 +11,8 @@ the time step, the CFL condition or a linear solve (docs/user/CONVENTIONS.md, "W
 `refuse_a_non_finite_read` is the one function that decides it, and `NonFiniteReadError` the one error it raises. A
 reader calls it on its failure path, naming the read behind a non-finite result, or at a decision a read value enters;
 `refuse_the_first_read_that_entered` is the failure path of a step that can re-run on what it read, and
-`run_a_naming_read` runs each read a failure-path naming makes that the step did not make on those inputs. A few reads
-are refused where they are read, because what they decide consumes every entry or because they enter by definition: the
+`run_a_naming_read` runs each read an HJB-FDM failure-path naming makes that the step did not make on those inputs. A
+few reads are refused where they are read, because what they decide consumes every entry or because they enter by definition: the
 arrays a door is handed as the solution's own row, read as the solver will hold it, a boundary value, a volatility
 override, the iterator's initial mass.
 

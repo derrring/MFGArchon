@@ -118,7 +118,7 @@
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 65,
+      "kill_count": 64,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -138,7 +138,7 @@
       "status": "ok"
     },
     "non_finite_read_owner_passes_a_nan": {
-      "kill_count": 171,
+      "kill_count": 169,
       "owner": "A non-finite value a solver reads is refused, by name, through one owner, refuse_a_non_finite_read (#2975)",
       "status": "ok"
     },

@@ -25,8 +25,9 @@
     volatility tensor's NaN is named as non-finite, not under a PSD message;
   - **HJB-SL on a grid of two or more dimensions** (#1641): a non-finite value update was replaced by U at the next time, and
     the step raised only past 10% of the points, so a NaN at a few nodes gave a finite wrong U with `converged` True.
-    The fill and the threshold are deleted: the NaN stays in the step's result, and the step's existing checks refuse
-    it, a `ValueError` naming the time step, not the read (#2993);
+    The fill and the threshold are deleted: a NaN that reaches the step's result stays there, and the step's existing
+    checks refuse it, a `ValueError` naming the time step, not the read (#2993). One that a sub-step's no-flux write
+    overwrites does not reach it, and solves as its twin;
   - **the network FP**: a NaN transition rate failed `alpha > 0` and was dropped, read as no transition, so a NaN value
     field gave a finite M. The rates are refused, and a NaN value field is named by its node and the rate that reads it;
     a node with no neighbours has no rate, and its value is not read;

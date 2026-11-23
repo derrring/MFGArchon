@@ -845,7 +845,9 @@ def _nan_problem(hamiltonian=None, dimension=1):
 
 
 class _RaisesWhereSteepAt04(SeparableHamiltonian):
-    # An own value that raises a plain ValueError at t = 0.4 where |p| > 2, a state only Newton's trials reach.
+    # An own value that raises a plain ValueError at t = 0.4 where |p| > 2. The step's start state there already has
+    # |p| > 2, so the step's own first evaluation raises and Newton's handler takes it as a failed step; the start-state
+    # naming's re-evaluation then raises the same error, which `run_a_naming_read` must not let out.
     def __call__(self, t, x, p, m):
         if abs(float(np.ravel(t)[0]) - 0.4) < 1e-9 and np.max(np.abs(np.asarray(p, dtype=float))) > 2.0:
             raise ValueError("|p| > 2 is outside this Hamiltonian's domain")

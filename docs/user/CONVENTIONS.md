@@ -531,9 +531,9 @@ Where a value is judged:
   are all Dirichlet, so an `M_initial` entry there is read and discarded (`initial_density_as_held`). Every other array a
   door is handed, `M_density`, `U_coupling_prev`, an array `drift_field` or `potential_field`, is judged by the step
   that reads it;
-- **HJB-FDM's Newton step** (`FDM_UPWIND`, and FVM's HJB half), on a step that fails: the residual and the Jacobian
-  are assembled again at the state the step's first residual reads, its start state, and the first non-finite row they
-  keep is named by the value the step read there. In 1-D the start state is $U$ at $t_{n+1}$. On two or more
+- **HJB-FDM's Newton step** (`FDM_UPWIND`, and FVM's HJB half), on a step that fails: the residual is assembled again
+  at the state the step's first residual reads, its start state, and the first non-finite row it keeps is named by the
+  value the step read there. In 1-D the start state is $U$ at $t_{n+1}$. On two or more
   dimensions it is the iterate Newton starts from, the previous Picard pass's $U$ at $t_n$, which is named first, as
   `U_coupling_prev`. The reads, in the order the residual assembles them:
   - the volatility;
@@ -542,8 +542,7 @@ Where a value is judged:
     Hamiltonian's value: that value is finite with 1.0 in place of the non-finite density. A density the Hamiltonian
     does not read at that row is discarded, and not named;
   - each density term the Hamiltonian holds, then its value, which is what an own `__call__` gives;
-  - the source by its part: `source_term_hjb`, `coupling_cost`, `nonlocal_operator`;
-  - for the Jacobian, the density where it entered `dp`, then the Hamiltonian's `dp`.
+  - the source by its part: `source_term_hjb`, `coupling_cost`, `nonlocal_operator`.
 
   A row non-finite with every read finite is a failed step, and #2644's policy reports it;
 - **FP-FDM's and FP-FVM's time step**, on a step whose result is non-finite. The step's reads, in the order it reads
@@ -603,7 +602,10 @@ Stated limits:
 - a read a naming makes that fails with a computation's error (a `ValueError`, `RuntimeError` or `ArithmeticError`),
   such as a callable it re-evaluates, is not named, and the order goes on to the next read; with none named, the step's
   own failure stands, #2644's `ConvergenceError` for a failed Newton step. A `NonFiniteReadError` and a programming
-  error are let out (`run_a_naming_read`).
+  error are let out (`run_a_naming_read`);
+- in 1-D, a non-finite value that enters only the Newton step's Jacobian, the Hamiltonian's `dp`, is not named: the
+  step's own failure stands under #2644's policy, as before. The naming does not build a Jacobian the step did not
+  build; how the HJB namings ask the step is #2993's.
 
 Not read here yet (#2975, stage 2): FP-SL, HJB-FEM, the weak-form FP, WENO, GFDM, Howard and the meshless solvers
 beyond their doors; HJB-SL's source in either dimension (`_source_increment`, added after the value update), its
@@ -612,9 +614,10 @@ projection reads after the step. There a non-finite value reaches the solution a
 raises naming something else.
 
 HJB-SL's step on a grid of two or more dimensions, under each `diffusion_method` but `stochastic`, judges its result
-and not the read: after the diffusion solve, the boundary write and the source, a non-finite result raises a
-`ValueError`, "Semi-Lagrangian solver failed at time step n/N, substep k/K with NaN/Inf values. …" after a sub-step,
-or "Semi-Lagrangian solver failed at time step n/N with NaN/Inf values. Possible causes: …" after a whole step. A value
+and not the read: after the diffusion solve and the source, and on a sub-step after its boundary write, a non-finite
+result raises a `ValueError`, "Semi-Lagrangian solver failed at time step n/N, substep k/K with NaN/Inf values. …"
+after a sub-step, or "Semi-Lagrangian solver failed at time step n/N with NaN/Inf values. Possible causes: …" after a
+whole step. A value
 the step discards does not reach it, such as a wall row a sub-step's no-flux write overwrites after the update. Naming
 the read behind it is #2993.
 

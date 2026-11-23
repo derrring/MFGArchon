@@ -1226,7 +1226,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         solve_hjb_system could not see it and the solver returned a plausible, silently
         wrong value function with no machine-readable trace. The nD siblings catch no
         exceptions either: a non-finite update stays in U_star, and the step's result
-        checks in solve_hjb_system refuse it (#2975; naming the read behind it is #2993).
+        checks in solve_hjb_system refuse it where it reaches the result; a sub-step's
+        no-flux write can overwrite one at a wall (#2975; naming the read is #2993).
         """
         Nx = len(U_next)
         # Issue #1547: dH/dp from the Hamiltonian, batched once per sweep rather than a hardcoded

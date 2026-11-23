@@ -673,6 +673,9 @@
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, no-flux, sub-steps]": [
       "optimal_control_sign"
     ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, no-flux, whole steps, an infinite potential at t = 0]": [
+      "optimal_control_sign"
+    ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, sub-steps]": [
       "optimal_control_sign"
     ],
@@ -686,6 +689,9 @@
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X14: the per-point path's overflow]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X20: a Dirichlet wall's potential, x_min only]": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X20: a Dirichlet wall's potential]": [
@@ -934,10 +940,6 @@
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan"
     ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[an own dp where |p| > 1]": [
-      "optimal_control_sign",
-      "non_finite_read_owner_passes_a_nan"
-    ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[nonlocal_operator in row 0]": [
       "optimal_control_sign",
       "non_finite_read_owner_passes_a_nan"
@@ -1071,11 +1073,6 @@
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_iterator_names_a_non_finite_initial_mass_its_geometry_reports": [
       "optimal_control_sign",
-      "non_finite_read_owner_passes_a_nan"
-    ],
-    "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_jacobian_names_a_density_only_its_dp_reads": [
-      "optimal_control_sign",
-      "hjb_marches_forward_in_time",
       "non_finite_read_owner_passes_a_nan"
     ],
     "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_hjb_fdm_step_names_the_iterate_it_starts_from": [
@@ -14915,7 +14912,7 @@
       "verify": "_nd_start_on_a_nan_iterate() != \"NonFiniteReadError\""
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 65,
+      "kill_count": 64,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_pre_fix_drift_field_produces_wrong_M",
         "tests/integration/test_coupling_source_reaches_every_loop_2207.py::test_each_population_solves_with_its_own_source[source_term_hjb]",
@@ -14928,7 +14925,6 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_non_finite_h_only_at_a_newton_iterate_goes_to_the_inner_failure_policy",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_other_populations_row",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the coupling where m < 1]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_jacobian_names_a_density_only_its_dp_reads",
         "tests/unit/test_alg/test_constraint_projected_per_step_2036.py::test_a_y_independent_2d_solve_reproduces_the_1d_solve",
         "tests/unit/test_alg/test_constraint_projected_per_step_2036.py::test_each_returned_step_is_the_projection_of_one_step_from_the_next",
         "tests/unit/test_alg/test_fp_drift_from_optimal_control_2900.py::test_on_the_widened_set_an_own_control_solves_as_the_library_hamiltonian_it_describes[1-D FLUX 0.2 on x_max]",
@@ -15063,7 +15059,7 @@
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
     "non_finite_read_owner_passes_a_nan": {
-      "kill_count": 171,
+      "kill_count": 169,
       "killed": [
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_callable_tensor_is_named_as_non_finite_where_it_enters_and_not_where_it_is_discarded",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_callable_volatility_is_named_by_the_step_that_reads_it[array]",
@@ -15121,7 +15117,6 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_in_its_stated_order[the volatility before the source]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_other_populations_row",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[an own __call__ where |p| > 1]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[an own dp where |p| > 1]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[nonlocal_operator in row 0]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the HJB source at x = 0]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the coupling cost at x = 0.3]",
@@ -15139,7 +15134,6 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[uniform twin]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[varying twin]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_iterator_names_a_non_finite_initial_mass_its_geometry_reports",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_jacobian_names_a_density_only_its_dp_reads",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_hjb_fdm_step_names_the_iterate_it_starts_from",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_newton_step_names_a_callable_volatility",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_value_iteration_names_the_read_at_its_start_state",
@@ -15406,11 +15400,13 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_multi_population_coupling_is_named_as_the_coupling",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[B-1: SL none, no-flux, sub-steps]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, no-flux, sub-steps]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, no-flux, whole steps, an infinite potential at t = 0]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, sub-steps]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL adi, periodic, whole steps]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[SL none, no-flux, whole steps]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[WENO_DOOR_EXTRA: U_coupling_prev]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X14: the per-point path's overflow]",
+        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X20: a Dirichlet wall's potential, x_min only]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_does_not_refuse_what_main_returned[X20: a Dirichlet wall's potential]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held density term]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_a_naming_read_that_raises_is_not_named_and_the_order_goes_on[1-raise-a held potential]",
@@ -15465,7 +15461,6 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_in_its_stated_order[the volatility before the source]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_other_populations_row",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[an own __call__ where |p| > 1]",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[an own dp where |p| > 1]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[nonlocal_operator in row 0]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the HJB source at x = 0]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_hjb_fdm_names_the_term_its_newton_step_read[the coupling cost at x = 0.3]",
@@ -15498,7 +15493,6 @@
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[uniform twin]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_implicit_step_names_a_volatility_nan_at_a_dirichlet_node_whatever_its_twin[varying twin]",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_iterator_names_a_non_finite_initial_mass_its_geometry_reports",
-        "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_jacobian_names_a_density_only_its_dp_reads",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_hjb_fdm_step_names_the_iterate_it_starts_from",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_newton_step_names_a_callable_volatility",
         "tests/unit/test_alg/test_a_non_finite_read_is_refused_where_it_is_read_2975.py::test_the_nd_value_iteration_names_the_read_at_its_start_state",

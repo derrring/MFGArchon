@@ -1489,7 +1489,6 @@ def compute_hjb_jacobian(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
-    name_a_non_finite_term: bool = False,  # #2975: a failed step's start state, where a non-finite dp is named
 ) -> sparse.csr_matrix:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -1583,7 +1582,6 @@ def compute_hjb_jacobian(
             "(backend=None, Nx>1); the per-point problem.H() fallback cannot honor the "
             "cross-density coupling and would silently decouple (Issue #1071)."
         )
-    read_dp = None
     if backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1:
         # Compute BC-aware gradient for stencil direction
         precomputed_grad = _compute_gradient_array_1d(
@@ -1612,7 +1610,6 @@ def compute_hjb_jacobian(
             m=m_grid,
             method="evaluate_dp",
         ).ravel()  # the checked (Nx, 1), as (Nx,)
-        read_dp = (dH_dp, x_grid, p_grid, m_grid, cross_grid)  # named if a row the Jacobian keeps is non-finite (#2975)
 
         # dp_i/dU_j: row i of the SAME gradient operator the residual applied, extracted rather than
         # restated. Restating it wrote the interior stencil into the wall rows, which are one-sided
@@ -1719,51 +1716,7 @@ def compute_hjb_jacobian(
             Jac[idx, idx] = 1.0
 
     Jac = Jac.tocsr()
-    if name_a_non_finite_term and read_dp is not None:
-        _refuse_a_non_finite_jacobian_term(Jac, problem, current_time, read_dp)
     return Jac
-
-
-def _refuse_a_non_finite_jacobian_term(
-    jacobian: sparse.csr_matrix,
-    problem: MFGProblem,
-    current_time: float,
-    read_dp: tuple[np.ndarray, np.ndarray | list[np.ndarray], np.ndarray, np.ndarray, np.ndarray | None],
-) -> None:
-    """The 1-D HJB-FDM Jacobian's naming of a non-finite read (#2975), on the batch path, run on a step that failed, at
-    its start state, after the Dirichlet rows are imposed. A row it keeps that holds a non-finite entry is named by what
-    the step read for it: the handed density where it entered ``dp`` (`_a_handed_density_that_entered`), then H's
-    ``dp`` as `checked_control` handed it. One non-finite with ``dp`` finite is left to the Newton step's policy
-    (#2644). The per-point path's difference reads H at perturbed states, which are trials, so it is not named."""
-    rows = np.repeat(np.arange(jacobian.shape[0]), np.diff(jacobian.indptr))
-    bad = np.unique(rows[~np.isfinite(jacobian.data)])
-    if bad.size == 0:
-        return
-    dp, x_grid, p_grid, m_grid, cross_grid = read_dp
-    dp = np.asarray(dp, dtype=float)
-    if np.all(np.isfinite(dp[bad])):
-        return
-    H = problem.hamiltonian_class
-    points = _grid_points(x_grid, jacobian.shape[0])
-    momenta = np.asarray(p_grid, dtype=float).reshape(points.shape[0], -1)
-    densities = np.asarray(m_grid, dtype=float).ravel()
-    cross = None if cross_grid is None else np.asarray(cross_grid, dtype=float)[:, bad]
-    named = _a_handed_density_that_entered(
-        lambda m, c: H.evaluate_dp(HEvalState(x=points[bad], p=momenta[bad], m=m, t=current_time, cross_density=c)),
-        densities[bad],
-        cross,
-    )
-    named[f"{type(H).__name__}'s dp"] = dp[bad]
-    for name, values in named.items():
-        non_finite = np.flatnonzero(~np.isfinite(values))
-        if non_finite.size == 0:
-            continue
-        row = int(bad[non_finite[0]])
-        where = (
-            f"t={current_time:g}, x={points[row].tolist()}, p={momenta[row].tolist()}, m={float(densities[row]):.6g} "
-            f"(of the {bad.size} non-finite row(s) the Jacobian keeps)"
-        )
-        refuse_a_non_finite_read("HJBFDMSolver's Newton step", where, {name: values})
 
 
 def hjb_residual_norm(residual: np.ndarray, dx: float) -> float:
@@ -2038,9 +1991,10 @@ def solve_hjb_timestep_newton(
     # the outer Picard loop treated a failed HJB solve exactly like a successful one.
     if not converged:
         # A value the step read at its start state, U at t_{n+1} with the data and the density, that is non-finite
-        # makes the step fail; it is named here, at the decision it enters, by the residual and then the Jacobian
-        # re-assembled there. A non-finite value only at a state Newton's own iterates reach is not named: the failure
-        # goes to the owner's policy below, as before (#2975).
+        # makes the step fail; it is named here, at the decision it enters, by the residual re-assembled there. A
+        # non-finite value only at a state Newton's own iterates reach is not named, and neither is one that enters
+        # only the Jacobian, which the step does not build where its start residual is non-finite: the failure goes to
+        # the owner's policy below, as before (#2975; naming those is #2993).
         start_state: dict[str, Any] = {
             "backend": backend,
             "volatility_at_n": volatility_at_n,
@@ -2064,7 +2018,6 @@ def solve_hjb_timestep_newton(
             source_callable=source_callable,
             **start_state,
         )
-        compute_hjb_jacobian(U_start, U_k_n_from_prev_picard, M_density_at_n_plus_1, problem, t_idx_n, **start_state)
         # The step count is the steps the returned iterate actually took. This printed
         # `max_newton_iterations`, so a solve the guard stopped one step from its start read "after 30
         # iterations" (#1878). What follows is the owner's: raise, or record and warn (#2644).
