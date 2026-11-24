@@ -34,6 +34,7 @@ from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwi
 from mfgarchon.alg.numerical.fem import FPFEMSolver, HJBFEMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import CongestionHamiltonian, QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -127,11 +128,11 @@ def _solve(route, arm, iterations):
     if route in ("FixedPoint", "FictitiousPlay", "BlockGaussSeidel", "BlockJacobi"):
         q = problem()
         cls, kw = {
-            "FixedPoint": (FixedPointIterator, {"relaxation": 0.5}),
+            "FixedPoint": (FixedPointIterator, {"damping": DampingPolicy.constant(0.5)}),
             # Its learning rate is alpha_0 / (j + 1): the default alpha_0 = 1 takes the first FP row whole.
-            "FictitiousPlay": (FictitiousPlayIterator, {"initial_learning_rate": 0.5}),
-            "BlockGaussSeidel": (BlockGaussSeidelIterator, {"relaxation": 0.5}),
-            "BlockJacobi": (BlockJacobiIterator, {"relaxation": 0.5}),
+            "FictitiousPlay": (FictitiousPlayIterator, {"damping": DampingPolicy.fictitious_play(0.5)}),
+            "BlockGaussSeidel": (BlockGaussSeidelIterator, {"damping": DampingPolicy.constant(0.5)}),
+            "BlockJacobi": (BlockJacobiIterator, {"damping": DampingPolicy.constant(0.5)}),
         }[route]
         return np.asarray(cls(q, hjb_cls(q), fp(q), **kw).solve(max_iterations=iterations, verbose=False).M)
     if route == "MultiPopulation":
@@ -165,7 +166,7 @@ CASES = [
     *[(route, arm) for arm in list(ARMS)[:1] for route in [*ROUTES, "problem.solve"]],
     # RegimeSwitchingIterator refuses an FP's own BC; problem.solve has no FP-own-BC arm.
     *[(route, list(ARMS)[1]) for route in ROUTES if route != "Regime"],
-    # The coupled FEM routes go through `initialize_cold_start`.
+    # The coupled FEM routes start from the iterate's owner, `IterationState.start` (#2997).
     *[(route, list(ARMS)[2]) for route in ("FixedPoint", "BlockGaussSeidel")],
 ]
 
@@ -241,7 +242,7 @@ def test_a_2d_cold_start_holds_the_value_on_the_face_the_fp_prescribes():
 
     hjb.solve_hjb_system = recording
     M = np.asarray(
-        FixedPointIterator(q, hjb, FPFDMSolver(q, boundary_conditions=bc), relaxation=0.5)
+        FixedPointIterator(q, hjb, FPFDMSolver(q, boundary_conditions=bc), damping=DampingPolicy.constant(0.5))
         .solve(max_iterations=1, verbose=False)
         .M
     )
@@ -549,7 +550,9 @@ def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
     with pytest.raises(TypeError, match=refusal):
         cold_start_density_at_level(m0, on_the_instance, 1)
     with pytest.raises(TypeError, match=refusal):
-        FixedPointIterator(q, HJBFDMSolver(q), _Bare(), relaxation=0.5).solve(max_iterations=1, verbose=False)
+        FixedPointIterator(q, HJBFDMSolver(q), _Bare(), damping=DampingPolicy.constant(0.5)).solve(
+            max_iterations=1, verbose=False
+        )
 
     class _Forwards:
         """Forwards every attribute it lacks, ``prescribed_density`` included, through ``__getattr__``."""
@@ -603,7 +606,7 @@ def test_a_wrapper_over_a_capped_fp_forwards_the_protocol_and_solves():
 
     with pytest.raises(TypeError, match=r"_Hides does not define `prescribed_density`.*forward it"):
         FixedPointIterator(
-            q, HJBFDMSolver(q), _Hides(FPFDMSolver(q, boundary_conditions=capped)), relaxation=0.5
+            q, HJBFDMSolver(q), _Hides(FPFDMSolver(q, boundary_conditions=capped)), damping=DampingPolicy.constant(0.5)
         ).solve(max_iterations=1, verbose=False)
     handed: list[np.ndarray] = []
     hjb = HJBFDMSolver(q)
@@ -617,7 +620,9 @@ def test_a_wrapper_over_a_capped_fp_forwards_the_protocol_and_solves():
     hjb.solve_hjb_system = recording
     fp = _Forwards(FPFDMSolver(q, boundary_conditions=capped))
     assert all(fp.prescribed_density(n) is None for n in range(1, NT + 1))
-    M = np.asarray(FixedPointIterator(q, hjb, fp, relaxation=0.5).solve(max_iterations=1, verbose=False).M)
+    M = np.asarray(
+        FixedPointIterator(q, hjb, fp, damping=DampingPolicy.constant(0.5)).solve(max_iterations=1, verbose=False).M
+    )
     assert np.all(np.isfinite(M))
     assert np.all(handed[0][1:, -1] == PLANT), handed[0][1:, -1].tolist()
 
@@ -625,8 +630,8 @@ def test_a_wrapper_over_a_capped_fp_forwards_the_protocol_and_solves():
 def test_the_cold_start_holds_the_prescribed_values_whatever_the_initial_densitys_memory_layout():
     """The protocol's indices are C-order flat positions in one level's array. An initial density handed in Fortran order,
     or as a transposed view, gets the same values at the same nodes as a C-order one: on the 9 x 7 grid whose x_min holds
-    0.4 and y_min 0.9, through the level helper, the exported `initialize_cold_start` and `cold_start_iterate`."""
-    from mfgarchon.alg.numerical.coupling import initialize_cold_start
+    0.4 and y_min 0.9, through the level helper, which the iterate's owner (`IterationState.start`, #2997) reads at each
+    later level, and `cold_start_iterate`."""
     from mfgarchon.alg.numerical.coupling.fixed_point_utils import cold_start_density_at_level, cold_start_iterate
 
     fp, shape = LAYOUTS["FP-FDM, 9 x 7, its own DIRICHLET 0.4 on x_min and 0.9 on y_min, no-flux elsewhere"]()
@@ -642,10 +647,6 @@ def test_the_cold_start_holds_the_prescribed_values_whatever_the_initial_density
         ):
             np.testing.assert_array_equal(cold_start_density_at_level(m0, fp, level), expected, err_msg=layout)
             np.testing.assert_array_equal(cold_start_iterate(m0, fp, NT)[level], expected, err_msg=layout)
-            _, M = initialize_cold_start(
-                np.zeros((NT + 1, *shape)), np.zeros((NT + 1, *shape)), m0, np.zeros(shape), NT + 1, fp_solver=fp
-            )
-            np.testing.assert_array_equal(M[level], expected, err_msg=layout)
 
 
 def test_each_population_and_graph_node_asks_its_own_fp():
@@ -725,7 +726,7 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
         damping=1.0,
     ).solve()
     for k, q in enumerate(qs):
-        fixed = FixedPointIterator(q, HJBFDMSolver(q), FPFDMSolver(q), relaxation=1.0).solve(
+        fixed = FixedPointIterator(q, HJBFDMSolver(q), FPFDMSolver(q), damping=DampingPolicy.constant(1.0)).solve(
             max_iterations=1, verbose=False
         )
         np.testing.assert_allclose(np.asarray(regime.densities[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)

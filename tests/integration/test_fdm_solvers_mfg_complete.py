@@ -13,6 +13,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -81,7 +82,9 @@ class TestFDMSolversMFGIntegration:
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+        )
 
         result = mfg_solver.solve(max_iterations=8, tolerance=1e-4)
 
@@ -125,7 +128,9 @@ class TestFDMSolversMFGIntegration:
         fp_solver = FPFDMSolver(problem, boundary_conditions=bc)
         hjb_solver = HJBFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+        )
 
         result = mfg_solver.solve(max_iterations=8, tolerance=1e-4)
 
@@ -172,7 +177,9 @@ class TestFDMSolversMFGIntegration:
         fp_solver = FPFDMSolver(problem, boundary_conditions=bc)
         hjb_solver = HJBFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+        )
 
         result = mfg_solver.solve(max_iterations=8, tolerance=1e-4)
 
@@ -198,7 +205,9 @@ class TestFDMSolversCoupling:
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+        )
 
         result = mfg_solver.solve(max_iterations=15, tolerance=1e-5)
 
@@ -238,7 +247,9 @@ class TestFDMSolversNumericalProperties:
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+        )
 
         # Use 15 iterations for sufficient convergence (Issue #600)
         # With 8 iterations: max_jump=2281 (oscillates)

@@ -27,6 +27,7 @@ from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
 from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver
 
 if TYPE_CHECKING:
+    from mfgarchon.config.damping import DampingPolicy
     from mfgarchon.extensions.topology import NetworkMFGProblem
 
 
@@ -35,7 +36,7 @@ def create_network_mfg_solver(
     solver_type: str = "fixed_point",
     hjb_solver_type: str | type = "RK45",
     fp_solver_type: str = "explicit",  # FP network solver not yet refactored
-    relaxation: float = 0.5,
+    damping: DampingPolicy | None = None,
     hjb_kwargs: dict[str, Any] | None = None,
     fp_kwargs: dict[str, Any] | None = None,
     **solver_kwargs,
@@ -48,13 +49,11 @@ def create_network_mfg_solver(
         solver_type: Type of MFG solver ("fixed_point" currently supported)
         hjb_solver_type: HJB scheme ("explicit", "implicit", "semi_implicit")
         fp_solver_type: FP scheme ("explicit", "implicit", "upwind", "flow")
-        relaxation: Fixed-point iteration under-relaxation factor (0.5 = balanced)
+        damping: The iterator's damping, a `DampingPolicy` (#2997); None is ``DampingPolicy.constant(0.5)``.
+            Anderson acceleration is its ``anderson`` option.
         hjb_kwargs: Additional arguments for NetworkHJBSolver
         fp_kwargs: Additional arguments for FPNetworkSolver
-        **solver_kwargs: Additional arguments for FixedPointIterator
-            - use_anderson: bool = False (Anderson acceleration)
-            - anderson_depth: int = 5 (Anderson memory depth)
-            - backend: str = None (computational backend)
+        **solver_kwargs: Additional arguments for FixedPointIterator, such as ``backend``
 
     Returns:
         Configured MFG solver for network problems
@@ -69,7 +68,7 @@ def create_network_mfg_solver(
         ...     problem,
         ...     hjb_solver_type="implicit",
         ...     fp_solver_type="implicit",
-        ...     relaxation=0.7,
+        ...     damping=DampingPolicy.constant(0.7),
         ... )
         >>> # Solve
         >>> U, M, info = solver.solve(max_iterations=50, tolerance=1e-6)
@@ -98,7 +97,7 @@ def create_network_mfg_solver(
             problem=problem,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
-            relaxation=relaxation,
+            damping=damping,
             **solver_kwargs,
         )
     else:
@@ -110,7 +109,7 @@ def create_network_mfg_solver(
 def create_simple_network_solver(
     problem: NetworkMFGProblem,
     scheme: str | type = "RK45",
-    relaxation: float = 0.5,
+    damping: DampingPolicy | None = None,
 ) -> FixedPointIterator:
     """
     Create a simple network MFG solver with minimal configuration.
@@ -118,7 +117,7 @@ def create_simple_network_solver(
     Args:
         problem: NetworkMFGProblem instance
         scheme: Any scipy solve_ivp method for HJB. FP uses "explicit".
-        relaxation: Fixed-point under-relaxation factor.
+        damping: The iterator's damping, a `DampingPolicy`; None is ``DampingPolicy.constant(0.5)``.
 
     Returns:
         Configured network MFG solver
@@ -131,5 +130,5 @@ def create_simple_network_solver(
         problem=problem,
         hjb_solver_type=scheme,
         fp_solver_type="explicit",  # FP network solver not yet refactored
-        relaxation=relaxation,
+        damping=damping,
     )

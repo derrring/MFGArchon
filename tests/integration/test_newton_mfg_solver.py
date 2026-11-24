@@ -37,6 +37,7 @@ from mfgarchon import Conditions, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -174,7 +175,7 @@ class TestNewtonMFGSolverHybrid:
             hjb_solver,
             fp_solver,
             picard_warmup=5,
-            picard_damping=0.5,
+            damping=DampingPolicy.constant(0.5),
             newton_max_iterations=5,
         )
 
@@ -244,10 +245,7 @@ class TestNewtonVsPicard:
 
         # Picard solver
         picard_solver = FixedPointIterator(
-            comparison_problem,
-            hjb_solver=hjb_picard,
-            fp_solver=fp_picard,
-            relaxation=0.5,
+            comparison_problem, hjb_solver=hjb_picard, fp_solver=fp_picard, damping=DampingPolicy.constant(0.5)
         )
 
         # Solve
@@ -407,7 +405,7 @@ class TestMFGResidualComputation:
             residual_test_problem,
             HJBFDMSolver(residual_test_problem),
             FPFDMSolver(residual_test_problem),
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
         ).solve(max_iterations=80, tolerance=1e-6)
 
         residual_at_fixed_point = residual_computer.residual_function(residual_computer.pack_state(picard.U, picard.M))

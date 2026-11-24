@@ -2623,7 +2623,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             verbose: Show solver progress (default: from config or True)
             config: Optional MFGSolverConfig for advanced configuration.
                 ``config.picard`` drives iteration parameters (max_iterations,
-                tolerance, relaxation, anderson_memory).  ``config.hjb`` /
+                tolerance, damping).  ``config.hjb`` /
                 ``config.fp`` non-default fields are translated to solver
                 constructor kwargs (Issue #1155).  Fields with no mapping raise
                 NotImplementedError (fail-loud, Refs #1155).  Use Expert Mode

@@ -28,6 +28,7 @@ from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.measure import ParticleMeasure
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -270,7 +271,7 @@ def test_the_result_reports_the_density_it_returns_not_the_last_sweeps_step():
     """A coupler damps, so the array it returns is not the last FP solve's. The last solve's own record is the control."""
     problem = _coupled(2, coupling=lambda m: m, coupling_dm=lambda m: 1.0)
     fp = FPFEMSolver(problem)
-    result = BlockIterator(problem, HJBFEMSolver(problem), fp, relaxation=0.5).solve(
+    result = BlockIterator(problem, HJBFEMSolver(problem), fp, damping=DampingPolicy.constant(0.5)).solve(
         max_iterations=4, tolerance=1e-12, verbose=False
     )
     report = result.metadata["fp_negative_density"]
@@ -344,7 +345,7 @@ def _on_meshless(coupling, coupling_dm):
 def _fixed_point(f, df):
     problem = _coupled(2, coupling=f, coupling_dm=df)
     hjb, fp = _fem_pair(problem)
-    return FixedPointIterator(problem, hjb, fp, relaxation=0.5).solve(
+    return FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5)).solve(
         max_iterations=30, tolerance=1e-6, verbose=False
     ), [fp]
 
@@ -501,7 +502,7 @@ def test_the_sweep_guard_names_the_array_and_the_density_the_sweep_read(mfg_capl
         mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_iterator"),
         np.errstate(invalid="ignore", divide="ignore"),
     ):
-        result = FixedPointIterator(problem, hjb, fp, relaxation=0.5).solve(
+        result = FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5)).solve(
             max_iterations=30, tolerance=1e-6, verbose=False
         )
     assert not result.converged
@@ -583,7 +584,7 @@ def _tracked_meshless(sigma):
         hjb_config={"collocation_points": np.linspace(0.0, 1.0, 21)[:, None], "delta": 0.18},
         fp_config={},
     )
-    return FixedPointIterator(problem, hjb, fp, relaxation=0.5)
+    return FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5))
 
 
 def test_tracking_a_solve_refuses_the_negative_and_the_advice_runs():
@@ -636,7 +637,7 @@ def test_a_raise_keeps_its_exception_restores_the_policy_and_reports_no_earlier_
     flag, body = _flag_after_the_first_solve()
     problem = _coupled(2, coupling=body, coupling_dm=lambda m: 1.0)
     hjb, fp = _fem_pair(problem)
-    iterator = FixedPointIterator(problem, hjb, fp, relaxation=0.5)
+    iterator = FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5))
     with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
         iterator.solve(max_iterations=30, tolerance=1e-6, verbose=False)
     assert any("time levels hold a negative value" in m for m in mfg_caplog.messages)
@@ -703,7 +704,9 @@ def test_the_validators_density_check_is_off_only_where_the_solver_reports_it(bu
     else:
         problem = _coupled(3)
         hjb, fp = build(problem)
-    FixedPointIterator(problem, hjb, fp, relaxation=0.5).solve(max_iterations=3, tolerance=1e-6, verbose=False)
+    FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5)).solve(
+        max_iterations=3, tolerance=1e-6, verbose=False
+    )
     assert seen == [checked]
 
 
@@ -805,9 +808,9 @@ def test_a_subclass_may_clip_what_it_returns(refine):
         problem = _coupled(
             refine, coupling=lambda m: np.log(np.maximum(m, floor)), coupling_dm=lambda m: 1 / np.maximum(m, floor)
         )
-        return FixedPointIterator(problem, HJBFEMSolver(problem), fp_type(problem), relaxation=0.5).solve(
-            max_iterations=100, tolerance=1e-6, verbose=False
-        )
+        return FixedPointIterator(
+            problem, HJBFEMSolver(problem), fp_type(problem), damping=DampingPolicy.constant(0.5)
+        ).solve(max_iterations=100, tolerance=1e-6, verbose=False)
 
     assert not run(FPFEMSolver).converged
     assert run(_ClipsWhatItReturns).converged

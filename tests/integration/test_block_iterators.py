@@ -22,6 +22,7 @@ from mfgarchon.alg.numerical.coupling import (
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -118,12 +119,7 @@ class TestBlockIteratorBasic:
         """Test that Gauss-Seidel iterator runs without errors."""
         hjb_solver, fp_solver = solvers
 
-        solver = BlockGaussSeidelIterator(
-            simple_problem,
-            hjb_solver,
-            fp_solver,
-            relaxation=0.5,
-        )
+        solver = BlockGaussSeidelIterator(simple_problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5))
 
         result = solver.solve(max_iterations=5, tolerance=1e-4, verbose=False)
 
@@ -140,7 +136,7 @@ class TestBlockIteratorBasic:
         assert abs(mass[0] - 1.0) < 1e-12, f"initial density not normalized: mass {mass[0]!r}"
 
         # The damping actually used, not the one requested (sibling pin of test_high_damping).
-        assert result.metadata["relaxation"] == 0.5
+        assert result.metadata["damping"] == DampingPolicy.constant(0.5)
 
     def test_jacobi_executes(self, simple_problem, solvers):
         """Test that Jacobi iterator runs without errors.
@@ -151,12 +147,7 @@ class TestBlockIteratorBasic:
         """
         hjb_solver, fp_solver = solvers
 
-        solver = BlockJacobiIterator(
-            simple_problem,
-            hjb_solver,
-            fp_solver,
-            relaxation=0.5,
-        )
+        solver = BlockJacobiIterator(simple_problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5))
 
         result = solver.solve(max_iterations=5, tolerance=1e-4, verbose=False)
 
@@ -176,10 +167,7 @@ class TestBlockIteratorBasic:
         # At 5 iterations the two iterates are nowhere near each other: measured relative
         # separation 0.95 in U and 0.68 in M, so 1e-3 is three orders below what must be seen.
         gs_result = BlockGaussSeidelIterator(
-            simple_problem,
-            hjb_solver,
-            fp_solver,
-            relaxation=0.5,
+            simple_problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5)
         ).solve(max_iterations=5, tolerance=1e-4, verbose=False)
         u_separation = np.max(np.abs(result.U - gs_result.U)) / np.max(np.abs(gs_result.U))
         assert u_separation > 1e-3, f"Jacobi reproduced the Gauss-Seidel iterate: separation {u_separation:.2e}"
@@ -189,11 +177,7 @@ class TestBlockIteratorBasic:
         hjb_solver, fp_solver = solvers
 
         solver = BlockIterator(
-            simple_problem,
-            hjb_solver,
-            fp_solver,
-            method="gauss_seidel",
-            relaxation=0.5,
+            simple_problem, hjb_solver, fp_solver, method="gauss_seidel", damping=DampingPolicy.constant(0.5)
         )
 
         result = solver.solve(max_iterations=5, tolerance=1e-4, verbose=False)
@@ -206,11 +190,7 @@ class TestBlockIteratorBasic:
         hjb_solver, fp_solver = solvers
 
         solver = BlockIterator(
-            simple_problem,
-            hjb_solver,
-            fp_solver,
-            method=BlockMethod.JACOBI,
-            relaxation=0.5,
+            simple_problem, hjb_solver, fp_solver, method=BlockMethod.JACOBI, damping=DampingPolicy.constant(0.5)
         )
 
         result = solver.solve(max_iterations=5, tolerance=1e-4, verbose=False)
@@ -236,10 +216,7 @@ class TestBlockIteratorConvergence:
         fp_solver = FPFDMSolver(convergence_problem)
 
         solver = BlockGaussSeidelIterator(
-            convergence_problem,
-            hjb_solver,
-            fp_solver,
-            relaxation=0.5,
+            convergence_problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5)
         )
 
         result = solver.solve(max_iterations=50, tolerance=1e-5, verbose=False)
@@ -261,8 +238,10 @@ class TestBlockIteratorConvergence:
         hjb_jacobi = HJBFDMSolver(convergence_problem)
         fp_jacobi = FPFDMSolver(convergence_problem)
 
-        gs_solver = BlockGaussSeidelIterator(convergence_problem, hjb_gs, fp_gs, relaxation=0.5)
-        jacobi_solver = BlockJacobiIterator(convergence_problem, hjb_jacobi, fp_jacobi, relaxation=0.5)
+        gs_solver = BlockGaussSeidelIterator(convergence_problem, hjb_gs, fp_gs, damping=DampingPolicy.constant(0.5))
+        jacobi_solver = BlockJacobiIterator(
+            convergence_problem, hjb_jacobi, fp_jacobi, damping=DampingPolicy.constant(0.5)
+        )
 
         result_gs = gs_solver.solve(max_iterations=20, tolerance=1e-6, verbose=False)
         result_jacobi = jacobi_solver.solve(max_iterations=20, tolerance=1e-6, verbose=False)
@@ -293,7 +272,7 @@ class TestBlockIteratorParameters:
         return problem
 
     def test_no_damping(self, param_problem):
-        """Test with relaxation=1.0 (no damping)."""
+        """Test with damping=DampingPolicy.constant(1.0) (no damping)."""
         hjb_solver = HJBFDMSolver(param_problem)
         fp_solver = FPFDMSolver(param_problem)
 
@@ -301,7 +280,7 @@ class TestBlockIteratorParameters:
             param_problem,
             hjb_solver,
             fp_solver,
-            relaxation=1.0,  # No damping
+            damping=DampingPolicy.constant(1.0),  # No damping
         )
 
         result = solver.solve(max_iterations=5, tolerance=1e-4, verbose=False)
@@ -318,7 +297,7 @@ class TestBlockIteratorParameters:
         assert abs(mass[0] - 1.0) < 1e-12, f"initial density not normalized: mass {mass[0]!r}"
 
         # A constructor that clamped relaxation to a default would pass everything above.
-        assert result.metadata["relaxation"] == 1.0
+        assert result.metadata["damping"] == DampingPolicy.constant(1.0)
 
     def test_high_damping(self, param_problem):
         """Test with high damping (conservative)."""
@@ -329,26 +308,21 @@ class TestBlockIteratorParameters:
             param_problem,
             hjb_solver,
             fp_solver,
-            relaxation=0.3,  # High damping
+            damping=DampingPolicy.constant(0.3),  # High damping
         )
 
         result = solver.solve(max_iterations=5, tolerance=1e-4, verbose=False)
 
         assert np.all(np.isfinite(result.U))
         assert np.all(np.isfinite(result.M))
-        assert result.metadata["relaxation"] == 0.3
+        assert result.metadata["damping"] == DampingPolicy.constant(0.3)
 
     def test_density_nonnegative(self, param_problem):
         """Test that density remains non-negative."""
         hjb_solver = HJBFDMSolver(param_problem)
         fp_solver = FPFDMSolver(param_problem)
 
-        solver = BlockGaussSeidelIterator(
-            param_problem,
-            hjb_solver,
-            fp_solver,
-            relaxation=0.5,
-        )
+        solver = BlockGaussSeidelIterator(param_problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5))
 
         result = solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
 
@@ -383,8 +357,10 @@ class TestBlockVsFixedPoint:
         hjb_fp = HJBFDMSolver(comparison_problem)
         fp_fp = FPFDMSolver(comparison_problem)
 
-        gs_solver = BlockGaussSeidelIterator(comparison_problem, hjb_gs, fp_gs, relaxation=0.5)
-        fp_solver = FixedPointIterator(comparison_problem, hjb_solver=hjb_fp, fp_solver=fp_fp, relaxation=0.5)
+        gs_solver = BlockGaussSeidelIterator(comparison_problem, hjb_gs, fp_gs, damping=DampingPolicy.constant(0.5))
+        fp_solver = FixedPointIterator(
+            comparison_problem, hjb_solver=hjb_fp, fp_solver=fp_fp, damping=DampingPolicy.constant(0.5)
+        )
 
         result_gs = gs_solver.solve(max_iterations=15, tolerance=1e-5, verbose=False)
         result_fp = fp_solver.solve(max_iterations=15, tolerance=1e-5, verbose=False)

@@ -28,6 +28,7 @@ from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_sour
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.config import MFGSolverConfig, PicardConfig
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.coupling_costs import InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import _coupling_part
@@ -83,7 +84,9 @@ def _plumbing_problem(where, n=41, nt=20):
 
 
 # Five sweeps, not a converged solve: both forms take the same iterates, so they agree at every sweep.
-_PICARD = MFGSolverConfig(picard=PicardConfig(max_iterations=5, tolerance=1e-6, relaxation=0.5, verbose=False))
+_PICARD = MFGSolverConfig(
+    picard=PicardConfig(max_iterations=5, tolerance=1e-6, damping=DampingPolicy.constant(0.5), verbose=False)
+)
 
 
 def _picard(where, **kwargs):
@@ -205,7 +208,9 @@ def test_an_m_dependent_coupling_cost_solves_the_linear_quadratic_game():
         Nt=50,
     )
     result = problem.solve(
-        config=MFGSolverConfig(picard=PicardConfig(max_iterations=60, tolerance=1e-6, relaxation=0.7, verbose=False))
+        config=MFGSolverConfig(
+            picard=PicardConfig(max_iterations=60, tolerance=1e-6, damping=DampingPolicy.constant(0.7), verbose=False)
+        )
     )
     assert result.converged
     k, tau = np.sqrt(2 * c), T
@@ -761,7 +766,9 @@ def test_a_terminal_coupling_solves_the_linear_quadratic_game():
         f"u(T) at m_0 is not (k/2) x^2 - k c z x up to a constant: spread {np.ptp(offset):.3e}"
     )
     result = problem.solve(
-        config=MFGSolverConfig(picard=PicardConfig(max_iterations=80, tolerance=1e-6, relaxation=0.7, verbose=False))
+        config=MFGSolverConfig(
+            picard=PicardConfig(max_iterations=80, tolerance=1e-6, damping=DampingPolicy.constant(0.7), verbose=False)
+        )
     )
     assert result.converged
     mT = np.asarray(result.M, dtype=float)[-1]

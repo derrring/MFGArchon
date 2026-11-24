@@ -25,6 +25,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIter
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import ConvergenceError, HJBFDMSolver, HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import InnerSolveFailure
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
@@ -59,7 +60,9 @@ def test_a_coupled_solve_is_not_converged_over_a_failed_inner_step(coupler, budg
     hjb = HJBFDMSolver(p, max_newton_iterations=budget)
     build = {
         "fixed point": lambda: FixedPointIterator(p, hjb, FPFDMSolver(p)),
-        "block gauss-seidel": lambda: BlockIterator(p, hjb, FPFDMSolver(p), method="gauss_seidel", relaxation=0.5),
+        "block gauss-seidel": lambda: BlockIterator(
+            p, hjb, FPFDMSolver(p), method="gauss_seidel", damping=DampingPolicy.constant(0.5)
+        ),
     }[coupler]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -212,9 +215,9 @@ def test_a_solver_in_one_slot_is_read_by_its_report():
     hjb = _ReportsOnSomeSolves(problem, lambda call: True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        result = BlockIterator(problem, hjb, FPFDMSolver(problem), method="gauss_seidel", relaxation=0.5).solve(
-            max_iterations=150, tolerance=1e-3, verbose=False
-        )
+        result = BlockIterator(
+            problem, hjb, FPFDMSolver(problem), method="gauss_seidel", damping=DampingPolicy.constant(0.5)
+        ).solve(max_iterations=150, tolerance=1e-3, verbose=False)
     assert not result.converged
     assert "inner_hjb_not_converged" in result.metadata["convergence_reason"], result.metadata["convergence_reason"]
 

@@ -25,6 +25,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.base_mfg import hjb_solve_kwargs
 from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
 from mfgarchon.config import MFGSolverConfig, PicardConfig
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.coupling_costs import InteractionCost, PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -99,7 +100,9 @@ def _frozen(hjb, problem):
     return M, U
 
 
-_PICARD = MFGSolverConfig(picard=PicardConfig(max_iterations=5, tolerance=1e-12, relaxation=0.5, verbose=False))
+_PICARD = MFGSolverConfig(
+    picard=PicardConfig(max_iterations=5, tolerance=1e-12, damping=DampingPolicy.constant(0.5), verbose=False)
+)
 
 
 def test_the_p1_measure_is_the_dofs_with_the_lumped_mass():
@@ -214,7 +217,9 @@ def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost
         return -1.5 * np.cos(3 * np.pi * np.asarray(x, dtype=float))
 
     def fpi(solved, hjb, fp):
-        U, *_ = FixedPointIterator(solved, hjb, fp, relaxation=0.5).solve(max_iterations=3, tolerance=1e-12)
+        U, *_ = FixedPointIterator(solved, hjb, fp, damping=DampingPolicy.constant(0.5)).solve(
+            max_iterations=3, tolerance=1e-12
+        )
         return np.asarray(U)
 
     logging.disable(logging.WARNING)
@@ -694,9 +699,9 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
     from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
 
     solved = _g_problem("G")
-    fixed_point = FixedPointIterator(solved, HJBFEMSolver(solved), FPFEMSolver(solved), relaxation=0.5).solve(
-        max_iterations=200, tolerance=1e-8, verbose=False
-    )
+    fixed_point = FixedPointIterator(
+        solved, HJBFEMSolver(solved), FPFEMSolver(solved), damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=200, tolerance=1e-8, verbose=False)
     newton_problem = _g_problem("G")
     U, _, info = NewtonMFGSolver(
         newton_problem, HJBFEMSolver(newton_problem), FPFEMSolver(newton_problem), picard_warmup=200

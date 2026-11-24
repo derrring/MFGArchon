@@ -24,6 +24,7 @@ from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopu
 from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -114,10 +115,10 @@ def _solve(
                 p = _problem(data)
                 hjb, fp = HJBFDMSolver(p), FPFDMSolver(p)
                 if kind == "fixed_point":
-                    it = FixedPointIterator(p, hjb, fp, relaxation=relaxation)
+                    it = FixedPointIterator(p, hjb, fp, damping=DampingPolicy.constant(relaxation))
                     r = it.solve(max_iterations=sweeps, tolerance=tolerance, absolute_tolerance=absolute_tolerance)
                 elif kind == "block":
-                    it = BlockIterator(p, hjb, fp, method="gauss_seidel", relaxation=relaxation)
+                    it = BlockIterator(p, hjb, fp, method="gauss_seidel", damping=DampingPolicy.constant(relaxation))
                     r = it.solve(
                         max_iterations=sweeps, tolerance=tolerance, absolute_tolerance=absolute_tolerance, verbose=False
                     )
@@ -314,7 +315,7 @@ def test_problem_solve_threads_the_absolute_bound(route):
             ),
             Nt=_NT,
         )
-        picard = {"max_iterations": 3, "tolerance": 0.5, "relaxation": 1.0, "verbose": False}
+        picard = {"max_iterations": 3, "tolerance": 0.5, "damping": DampingPolicy.constant(1.0), "verbose": False}
         if route == "config":
             return problem.solve(
                 config=MFGSolverConfig(picard=PicardConfig(**picard, absolute_tolerance=absolute_tolerance))
@@ -345,7 +346,7 @@ def test_the_absolute_bound_reaches_the_callback_and_config_paths():
 
     def aborted(absolute_tolerance):
         p = _problem("heavy")
-        it = FixedPointIterator(p, HJBFDMSolver(p), FPFDMSolver(p), relaxation=1.0)
+        it = FixedPointIterator(p, HJBFDMSolver(p), FPFDMSolver(p), damping=DampingPolicy.constant(1.0))
         return it.solve(
             max_iterations=3,
             tolerance=0.5,
@@ -356,7 +357,11 @@ def test_the_absolute_bound_reaches_the_callback_and_config_paths():
     def configured(absolute_tolerance):
         p = _problem("heavy")
         picard = PicardConfig(
-            max_iterations=2, tolerance=0.5, relaxation=1.0, absolute_tolerance=absolute_tolerance, verbose=False
+            max_iterations=2,
+            tolerance=0.5,
+            damping=DampingPolicy.constant(1.0),
+            absolute_tolerance=absolute_tolerance,
+            verbose=False,
         )
         return (
             FictitiousPlayIterator(p, HJBFDMSolver(p), FPFDMSolver(p))

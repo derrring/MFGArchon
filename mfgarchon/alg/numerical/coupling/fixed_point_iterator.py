@@ -501,7 +501,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 # "we stopped moving" with "we reached the fixed point" -- and at theta -> 0 the
                 # first happens without the second (Issue #1684 item 7, the same shape as item 6
                 # one level up). Measured on a 21-point no-flux fixture, iteration 2: the reported
-                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as relaxation went 1.0 -> 0.1, a factor
+                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as theta went 1.0 -> 0.1, a factor
                 # of 7.3 bought by the damping factor rather than by progress toward the fixed
                 # point. Convergence is a property of the map; damping is a property of the path.
                 metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)

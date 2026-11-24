@@ -45,6 +45,7 @@ from mfgarchon.alg.numerical.coupling import (
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import resolve_fp_drift_kwargs
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -280,7 +281,7 @@ class TestBlockIteratorFPDriftConvention:
             problem,
             hjb_solver=HJBFDMSolver(problem),
             fp_solver=FPFDMSolver(problem),
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
         )
         result = solver.solve(max_iterations=10, tolerance=1e-10, verbose=False)
         assert result.M is not None
@@ -424,10 +425,7 @@ class TestBlockIteratorFPDriftConvention:
 
         spy_fp = _DriftOnlySpySolver()
         solver = BlockGaussSeidelIterator(
-            problem_l1,
-            hjb_solver=HJBFDMSolver(problem_l1),
-            fp_solver=spy_fp,
-            relaxation=0.5,
+            problem_l1, hjb_solver=HJBFDMSolver(problem_l1), fp_solver=spy_fp, damping=DampingPolicy.constant(0.5)
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -477,10 +475,7 @@ class TestBlockIteratorFPDriftConvention:
             return original_solve_fp(*args, **kwargs)
 
         solver = BlockGaussSeidelIterator(
-            problem,
-            hjb_solver=HJBFDMSolver(problem),
-            fp_solver=fp_solver,
-            relaxation=0.5,
+            problem, hjb_solver=HJBFDMSolver(problem), fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
         )
 
         with patch.object(fp_solver, "solve_fp_system", side_effect=spy_solve_fp):

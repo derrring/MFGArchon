@@ -13,6 +13,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -69,7 +70,7 @@ class TestMFGCallableCoefficients:
             problem,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
             volatility=porous_medium_diffusion,
         )
 
@@ -107,7 +108,7 @@ class TestMFGCallableCoefficients:
             problem,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
             volatility=crowd_diffusion,
         )
 
@@ -141,7 +142,7 @@ class TestMFGCallableCoefficients:
             problem,
             hjb_solver=hjb_solver_callable,
             fp_solver=fp_solver_callable,
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
             volatility=constant_diffusion,
         )
         result_callable = mfg_solver_callable.solve(max_iterations=5, tolerance=1e-3, verbose=False)
@@ -153,7 +154,7 @@ class TestMFGCallableCoefficients:
             problem,
             hjb_solver=hjb_solver_constant,
             fp_solver=fp_solver_constant,
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
             volatility=None,  # Use problem.volatility
         )
         result_constant = mfg_solver_constant.solve(max_iterations=5, tolerance=1e-3, verbose=False)
@@ -194,7 +195,7 @@ class TestMFGCallableCoefficients:
             problem,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
             volatility=volatility_field,
             volatility_kind="field",
         )
@@ -213,7 +214,7 @@ class TestMFGCallableCoefficients:
                 problem,
                 hjb_solver=HJBFDMSolver(problem),
                 fp_solver=FPFDMSolver(problem),
-                relaxation=0.5,
+                damping=DampingPolicy.constant(0.5),
                 volatility=field,
                 volatility_kind=None if field is None else "field",
             )

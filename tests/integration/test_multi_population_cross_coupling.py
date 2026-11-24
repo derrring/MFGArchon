@@ -26,6 +26,7 @@ from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -119,9 +120,9 @@ def test_k1_matches_single_population_fp_convention():
     from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 
     prob = _make_problem(0, cross=0.0, K=1)
-    sp = FixedPointIterator(prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob), relaxation=0.5).solve(
-        max_iterations=120, tolerance=1e-6, verbose=False
-    )
+    sp = FixedPointIterator(
+        prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob), damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=120, tolerance=1e-6, verbose=False)
     U_sp, M_sp = sp[0], sp[1]
 
     mp = _solve(1, cross=0.0, max_iterations=200)

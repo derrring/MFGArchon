@@ -19,6 +19,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -44,7 +45,7 @@ def benchmark_scalar_diffusion(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, relaxation=0.5)
+        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5))
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)
@@ -79,7 +80,12 @@ def benchmark_array_diffusion_spatial(Nx=100, Nt=100, num_runs=3):
         fp_solver = FPFDMSolver(problem)
 
         mfg_solver = FixedPointIterator(
-            problem, hjb_solver, fp_solver, relaxation=0.5, volatility=sigma_array, volatility_kind="field"
+            problem,
+            hjb_solver,
+            fp_solver,
+            damping=DampingPolicy.constant(0.5),
+            volatility=sigma_array,
+            volatility_kind="field",
         )
 
         start = time.perf_counter()
@@ -117,7 +123,12 @@ def benchmark_array_diffusion_spatiotemporal(Nx=100, Nt=100, num_runs=3):
         fp_solver = FPFDMSolver(problem)
 
         mfg_solver = FixedPointIterator(
-            problem, hjb_solver, fp_solver, relaxation=0.5, volatility=sigma_array, volatility_kind="field"
+            problem,
+            hjb_solver,
+            fp_solver,
+            damping=DampingPolicy.constant(0.5),
+            volatility=sigma_array,
+            volatility_kind="field",
         )
 
         start = time.perf_counter()
@@ -151,7 +162,9 @@ def benchmark_callable_diffusion_scalar(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, relaxation=0.5, volatility=constant_diffusion)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5), volatility=constant_diffusion
+        )
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)
@@ -184,7 +197,9 @@ def benchmark_callable_diffusion_porous_medium(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, relaxation=0.5, volatility=porous_medium)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5), volatility=porous_medium
+        )
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)
@@ -218,7 +233,9 @@ def benchmark_callable_diffusion_crowd_dynamics(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, relaxation=0.5, volatility=crowd_diffusion)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5), volatility=crowd_diffusion
+        )
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)

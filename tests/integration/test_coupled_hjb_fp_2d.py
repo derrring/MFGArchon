@@ -27,6 +27,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -148,12 +149,7 @@ def _create_2d_mfg_solver(problem, damping=0.3):
         max_newton_iterations=50,
     )
     fp = FPFDMSolver(problem)
-    return FixedPointIterator(
-        problem,
-        hjb_solver=hjb,
-        fp_solver=fp,
-        relaxation=damping,
-    )
+    return FixedPointIterator(problem, hjb_solver=hjb, fp_solver=fp, damping=DampingPolicy.constant(damping))
 
 
 # ---------------------------------------------------------------------------

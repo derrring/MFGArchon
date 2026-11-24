@@ -28,7 +28,7 @@ class BaseConfig(BaseModel):
 
     Inherit from this, not from ``BaseModel``. Pydantic ignores extras by default, so a config
     class that inherited ``BaseModel`` would let ``PicardConfig(anderson_acceleration=True)``
-    construct cleanly, drop the field, and leave ``anderson_memory`` at 0 -- Anderson off while
+    construct cleanly, drop the field, and leave ``damping`` without Anderson -- Anderson off while
     the caller just asked for it, nothing raised. Under ``BaseConfig`` it raises, which is what
     ``test_unknown_fields_are_rejected_1766.py`` pins. Same fail-fast rule as dead solver knobs
     (#1426, #1766).

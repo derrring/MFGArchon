@@ -88,6 +88,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -235,16 +236,13 @@ def _solve_coupled(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float):
     problem = _build_problem(mfg, Nx, Nt, T)
     hjb_solver = HJBFDMSolver(problem)
     fp_solver = FPFDMSolver(problem)
-    # relaxation=1.0 (undamped Picard): empirically converges in 10 outer
-    # iterations for the parameters used here. relaxation=0.5/0.8 reach the SAME
+    # Damping theta 1.0 (undamped Picard): empirically converges in 10 outer
+    # iterations for the parameters used here. theta 0.5/0.8 reach the SAME
     # fixed point but take far more iterations (>100), making the test
-    # impractically slow; the converged (u_h, m_h) is relaxation-independent
+    # impractically slow; the converged (u_h, m_h) is theta-independent
     # (verified relax in {0.8,1.0} give byte-identical eu/em), so 1.0 is correct.
     iterator = FixedPointIterator(
-        problem,
-        hjb_solver=hjb_solver,
-        fp_solver=fp_solver,
-        relaxation=1.0,
+        problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(1.0)
     )
     # Converge Picard hard (tol = the inner HJB Newton floor, 1e-6, with ample
     # max_iterations) so the OUTER residual floor does not mask the discretization

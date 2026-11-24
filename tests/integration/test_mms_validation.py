@@ -25,6 +25,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -878,10 +879,7 @@ class TestCoupledHJBFPValidation:
         fp_solver = FPFDMSolver(problem)
 
         mfg_solver = FixedPointIterator(
-            problem,
-            hjb_solver=hjb_solver,
-            fp_solver=fp_solver,
-            relaxation=0.5,
+            problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
         )
 
         result = mfg_solver.solve(max_iterations=5, tolerance=1e-3, verbose=False)
