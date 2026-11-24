@@ -3,6 +3,7 @@ memory on U. The policy itself, and the arithmetic of its schedules, is `mfgarch
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from mfgarchon.config.damping import DampingPolicy, scheduled_theta
@@ -21,7 +22,7 @@ class DampingRun:
         if policy.anderson is not None:
             from .anderson_acceleration import AndersonAccelerator
 
-            self._anderson = AndersonAccelerator(depth=policy.anderson.depth, beta=policy.anderson.beta)
+            self._anderson = AndersonAccelerator(**asdict(policy.anderson))  # AndersonOptions' fields are its keywords
 
     def base(self, name: str) -> float:
         """Field ``name``'s base theta now: the initial one, or where adaptation has moved it."""

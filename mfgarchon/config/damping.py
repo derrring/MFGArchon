@@ -35,7 +35,7 @@ SCHEDULES = ("none", "constant", "harmonic", "sqrt", "polynomial", "exponential"
 
 def scheduled_theta(schedule: str | Callable[[int], float], theta: float, k: int, floor: float) -> float:
     """``theta_k`` for a base ``theta`` at sweep ``k`` under ``schedule``, before the first-sweep rule."""
-    if callable(schedule):
+    if not isinstance(schedule, str):  # a callable k -> factor, the one other form FieldDamping admits
         return max(theta * float(schedule(k)), floor)
     if schedule == "none":
         return 1.0

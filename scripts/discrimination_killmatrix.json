@@ -5234,9 +5234,6 @@
     "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[HJB-FEM P2]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[MFGResidual]": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[MultiPopulationIterator]": [
       "optimal_control_sign"
     ],
@@ -15249,7 +15246,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3247,
+      "kill_count": 3246,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -16576,7 +16573,6 @@
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_reader_that_passes_no_binding_refuses_by_its_name[RegimeSwitchingIterator]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[GraphMFGSolver]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[HJB-FEM P2]",
-        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[MFGResidual]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[MultiPopulationIterator]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[RegimeSwitchingIterator]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[a binding on other points]",
@@ -19261,7 +19257,7 @@
         "tests/unit/test_core/test_rebuild_carries_inputs_2667.py::test_every_rebuild_solves_as_the_fresh_build_of_its_inputs",
         "tests/unit/test_utils/test_runtime_validation.py::test_terminal_condition_survives_an_hjb_divergence"
       ],
-      "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
+      "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, two callers: IterationState.write_back after every sweep of the routes it owns (#2997), and diverged_value_function's restore. No issue ",
       "seconds": 306.3,
       "status": "ok",
       "verify": "preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0"
