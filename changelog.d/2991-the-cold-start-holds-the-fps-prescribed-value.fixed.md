@@ -19,3 +19,6 @@
     list, are in #2991.
   - A non-finite or raising g(t_n) on the FP's own BC fails in the cold start, by the name the FP's step fails by.
     Where the HJB reads that g too, the solve now fails there, before the HJB, by the FP's name.
+  - An FP solver whose class does not define `prescribed_density` (one that does not subclass `BaseFPSolver`) is
+    refused by name in the cold start, a TypeError: define it, or subclass `BaseFPSolver`, whose default is None. Main
+    ran it with `m_initial` at every later level. Every FP solver the library ships subclasses `BaseFPSolver`.

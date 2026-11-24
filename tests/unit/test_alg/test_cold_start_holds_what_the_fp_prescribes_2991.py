@@ -44,6 +44,14 @@ from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 
 NT, PLANT = 5, 7.0
 
+# The fixtures' initial densities are planted, not normalised; the oracle's random inputs and potentials can take FP-FEM's
+# Galerkin step negative; the network fixture leaves FPNetworkSolver's diffusion at its default.
+pytestmark = [
+    pytest.mark.filterwarnings("ignore:initial density mass:UserWarning"),
+    pytest.mark.filterwarnings("ignore:FPFEMSolver. .* time levels hold a negative value:UserWarning"),
+    pytest.mark.filterwarnings("ignore:FPNetworkSolver. network diffusion default:UserWarning"),
+]
+
 
 def _model():
     return Model(hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0)), volatility=0.2)
@@ -387,7 +395,6 @@ LAYOUTS = {
 
 
 @pytest.mark.parametrize("layout", list(LAYOUTS))
-@pytest.mark.filterwarnings("ignore::UserWarning")
 def test_the_fp_names_exactly_the_nodes_its_step_holds_and_their_values(layout):
     """`prescribed_density(n)` returns the step's own read: the nodes the direct call holds whatever it is handed, at
     every level, with the values it holds there. A second derivation of p could disagree on a corner, a face, the node
@@ -459,3 +466,42 @@ def test_a_solver_whose_step_prescribes_nothing_names_nothing():
     held = _held_by_the_step(fp, shape)
     assert not any(len(held[n][0]) for n in held)
     assert all(fp.prescribed_density(n) is None for n in range(1, NT + 1))
+
+
+def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
+    """The cold start reads ``prescribed_density`` off the FP's class (``__class__``, which ``isinstance`` reads) and
+    refuses by name, under the user's ruling of 2026-11-24, an FP whose class does not define it, where main solved
+    with ``m_initial`` at every later level. A class that defines it without subclassing BaseFPSolver is asked."""
+    from unittest.mock import Mock
+
+    from mfgarchon.alg.numerical.coupling.fixed_point_utils import cold_start_density_at_level
+
+    q = _problem(dirichlet_bc(value=0.0, dimension=1))
+    m0 = _m_initial(np.linspace(0.0, 1.0, 11))
+
+    class _Bare:
+        problem = q
+
+        def solve_fp_system(self, M_initial, drift_field=None, **kw):
+            return np.stack([M_initial] * (NT + 1))
+
+    class _Defines(_Bare):
+        def prescribed_density(self, level):
+            return np.array([0]), np.array([0.25])
+
+    refusal = r"_Bare does not define `prescribed_density`.*subclass `BaseFPSolver`, whose default is None \(#2991\)"
+    with pytest.raises(TypeError, match=refusal):
+        cold_start_density_at_level(m0, _Bare(), 1)
+    on_the_instance = _Bare()
+    on_the_instance.prescribed_density = lambda level: None
+    with pytest.raises(TypeError, match=refusal):
+        cold_start_density_at_level(m0, on_the_instance, 1)
+    with pytest.raises(TypeError, match=refusal):
+        FixedPointIterator(q, HJBFDMSolver(q), _Bare(), relaxation=0.5).solve(max_iterations=1, verbose=False)
+
+    held = cold_start_density_at_level(m0, _Defines(), 1)
+    assert held[0] == 0.25
+    np.testing.assert_array_equal(held[1:], m0[1:])
+    spec_mock = Mock(spec=FPFDMSolver)
+    spec_mock.prescribed_density.return_value = None
+    assert cold_start_density_at_level(m0, spec_mock, 1) is m0

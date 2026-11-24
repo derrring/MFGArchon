@@ -67,7 +67,18 @@ def cold_start_density_at_level(M_initial: np.ndarray, fp_solver: BaseFPSolver, 
     """A cold start's density at the later level ``level`` (1, ..., Nt): ``M_initial``, except at a node the FP
     solver's step prescribes, which holds the step's value at that level (`BaseFPSolver.prescribed_density`). Each
     sweep blends the FP's row into the iterate, so a node started off the prescribed value p kept a remnant
-    prod(1 - theta_j)(M_initial - p) there after any finite number of sweeps (#2991)."""
+    prod(1 - theta_j)(M_initial - p) there after any finite number of sweeps (#2991).
+
+    Raises:
+        TypeError: ``fp_solver``'s class (``__class__``, the class ``isinstance`` reads) does not define
+            ``prescribed_density``.
+    """
+    if getattr(fp_solver.__class__, "prescribed_density", None) is None:
+        raise TypeError(
+            f"{fp_solver.__class__.__name__} does not define `prescribed_density`, which a cold start asks for the "
+            "density the FP's step holds at a node: define `prescribed_density`, or subclass `BaseFPSolver`, whose "
+            "default is None (#2991)"
+        )
     prescribed = fp_solver.prescribed_density(level)
     if prescribed is None:
         return M_initial
