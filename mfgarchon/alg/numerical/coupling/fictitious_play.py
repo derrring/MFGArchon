@@ -208,8 +208,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 Signature: (iteration, U, M, error_U, error_M) -> bool | None
                 Return True to stop early, None/False to continue.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: ``verbose`` (default True). A keyword this method no longer takes (``RETIRED_SOLVE_KEYWORDS``)
-                is refused by name.
+            **kwargs: ``verbose`` (default True). A keyword this method no longer takes (``RETIRED_SOLVE_KEYWORDS``),
+                or one that is the constructor's (``CONSTRUCTOR_KEYWORDS``), is refused by name.
 
         Returns:
             SolverResult object

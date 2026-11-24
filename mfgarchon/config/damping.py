@@ -94,6 +94,11 @@ class AndersonOptions:
     def __post_init__(self) -> None:
         if isinstance(self.depth, bool) or not isinstance(self.depth, numbers.Integral) or self.depth < 1:
             raise ValueError(f"AndersonOptions: depth must be an int >= 1, got {self.depth!r}")
+        self._check_mixing()
+
+    def _check_mixing(self) -> None:
+        """``beta``, the accelerator's mixing, in (0, 1]. It is named like a Robin coefficient, so #2512's coefficient scan
+        allows this method by name, and only this one."""
         if not 0.0 < self.beta <= 1.0:
             raise ValueError(f"AndersonOptions: beta must be in (0, 1], got {self.beta!r}")
 

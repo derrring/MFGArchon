@@ -215,7 +215,8 @@ class FixedPointIterator(BaseCouplingIterator):
                 Each snapshot stores (ParticleMeasure from M_k, U_k). Default False.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
             **kwargs: Not read: ``problem.solve()`` passes ``verbose=`` here. A keyword this method no longer takes
-                (``RETIRED_SOLVE_KEYWORDS``) is refused by name.
+                (``RETIRED_SOLVE_KEYWORDS``), or one that is the constructor's (``CONSTRUCTOR_KEYWORDS``), is refused by
+                name.
 
         Returns:
             SolverResult object

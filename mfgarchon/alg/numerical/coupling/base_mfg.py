@@ -86,7 +86,12 @@ RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
     "min_learning_rate": _DAMPING,
     "damp_value_function": _DAMPING,
     "picard_damping": _DAMPING,
-    "damping": "damping is the constructor's damping= or a config's PicardConfig.damping, not solve()'s (#2997)",
+}
+
+#: Keywords a ``solve()`` never took, which belong to the constructor or the config: refused by name, saying where to
+#: pass the value instead, since those ``**kwargs`` would accept them in silence (#2997).
+CONSTRUCTOR_KEYWORDS: dict[str, str] = {
+    "damping": "pass it as the constructor's damping=, or set PicardConfig.damping in the solve's config (#2997)",
 }
 
 
@@ -118,11 +123,12 @@ def damping_for_the_solve(
 
 
 def refuse_retired_solve_keywords(kwargs: dict[str, Any], where: str) -> None:
-    """Refuse a keyword `RETIRED_SOLVE_KEYWORDS` names, saying what replaces it."""
-    retired = [name for name in kwargs if name in RETIRED_SOLVE_KEYWORDS]
-    if retired:
-        name = retired[0]
-        raise TypeError(f"{where}() no longer takes {name}=: {RETIRED_SOLVE_KEYWORDS[name]}.")
+    """Refuse a keyword `RETIRED_SOLVE_KEYWORDS` or `CONSTRUCTOR_KEYWORDS` names, saying what to pass instead."""
+    for name in kwargs:
+        if name in RETIRED_SOLVE_KEYWORDS:
+            raise TypeError(f"{where}() no longer takes {name}=: {RETIRED_SOLVE_KEYWORDS[name]}.")
+        if name in CONSTRUCTOR_KEYWORDS:
+            raise TypeError(f"{where}() does not take {name}=: {CONSTRUCTOR_KEYWORDS[name]}.")
 
 
 def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
