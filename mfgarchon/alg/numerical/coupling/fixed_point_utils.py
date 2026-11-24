@@ -231,13 +231,10 @@ def negative_density_recorded(fp_solvers: Iterable[Any]) -> Iterator[None]:
 
 def _report_negative_density(result: Any, fp_solvers: list[Any]) -> None:
     """One warning per solver, and ``fp_negative_density`` in the result's record, for the density the result returns
-    rather than the last sweep's step, since a coupler can damp it (#2845). Newton returns ``(U, M, info)``."""
-    if isinstance(result, tuple):
-        densities, record = result[1], result[2]
-    else:
-        densities = getattr(result, "densities", None)
-        densities = result.M if densities is None else densities
-        record = getattr(result, "metadata", None)
+    rather than the last sweep's step, since a coupler can damp it (#2845)."""
+    densities = getattr(result, "densities", None)
+    densities = result.M if densities is None else densities
+    record = getattr(result, "metadata", None)
     per_solver = [densities] if len(fp_solvers) == 1 else list(densities)
     reports: list[dict[str, Any] | None] = []
     for solver, density in zip(fp_solvers, per_solver, strict=True):

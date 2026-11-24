@@ -407,8 +407,6 @@ _COUPLERS = {
 
 
 def _density_and_record(result):
-    if isinstance(result, tuple):  # Newton's (U, M, info)
-        return result[1], result[2]
     densities = getattr(result, "densities", None)
     return (result.M if densities is None else densities), result.metadata
 
@@ -439,10 +437,7 @@ def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_was_handed
         np.errstate(invalid="ignore", divide="ignore"),
     ):
         result, _ = _COUPLERS[coupler](lambda m: np.log(m), lambda m: 1 / m)
-    if isinstance(result, tuple):
-        assert not result[2]["converged"]
-    else:
-        assert not result.converged
+    assert not result.converged
     lines = [m for m in mfg_caplog.messages if "NaN/Inf in the value function" in m]
     assert lines, "the guard must fire on this row"
     assert coupler in lines[0]

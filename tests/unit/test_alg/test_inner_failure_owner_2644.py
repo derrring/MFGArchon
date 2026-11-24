@@ -83,9 +83,10 @@ def test_newtons_result_lists_its_inner_failures_as_every_coupler_does():
     hjb = HJBFDMSolver(p, max_newton_iterations=1)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        _, _, info = NewtonMFGSolver(p, hjb, FPFDMSolver(p), picard_warmup=1).solve(
+        newton_result = NewtonMFGSolver(p, hjb, FPFDMSolver(p), picard_warmup=1).solve(
             max_iterations=2, tolerance=1e-4, verbose=False
         )
+        _, _, info = newton_result.U, newton_result.M, newton_result.metadata
     assert isinstance(info["inner_hjb_failures"], list), info
     assert info["inner_hjb_failures"], info["convergence_reason"]
 
@@ -117,9 +118,10 @@ def test_newtons_reason_says_how_it_stopped(stop, max_iterations, monkeypatch):
     p = _problem(n=5, nt=3)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _, _, info = NewtonMFGSolver(
+        newton_result = NewtonMFGSolver(
             p, HJBFDMSolver(p, max_newton_iterations=1), FPFDMSolver(p), picard_warmup=3
         ).solve(max_iterations=max_iterations, tolerance=1e-3, verbose=False)
+        _, _, info = newton_result.U, newton_result.M, newton_result.metadata
     stops = {
         str(w.message).split(".")[0].removeprefix("Newton stopped: ")
         for w in caught

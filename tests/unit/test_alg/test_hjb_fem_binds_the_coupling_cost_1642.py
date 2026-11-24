@@ -708,9 +708,10 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
         solved, HJBFEMSolver(solved), FPFEMSolver(solved), damping=DampingPolicy.constant(0.5)
     ).solve(max_iterations=200, tolerance=1e-8, verbose=False)
     newton_problem = _g_problem("G")
-    U, _, info = NewtonMFGSolver(
+    newton_result = NewtonMFGSolver(
         newton_problem, HJBFEMSolver(newton_problem), FPFEMSolver(newton_problem), picard_warmup=200
     ).solve(max_iterations=200, tolerance=1e-8, verbose=False)
+    U, _, info = newton_result.U, newton_result.M, newton_result.metadata
     assert fixed_point.converged
     assert info["convergence_reason"] == "Converged during Picard warm-up"
     gap = float(np.max(np.abs(U - fixed_point.U)))
@@ -727,9 +728,10 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
         return inner(M, U_terminal, *args, **kwargs)
 
     hjb.solve_hjb_system = recording
-    _, _, info = NewtonMFGSolver(coarse, hjb, FPFEMSolver(coarse), picard_warmup=0, newton_max_iterations=1).solve(
+    newton_result = NewtonMFGSolver(coarse, hjb, FPFEMSolver(coarse), picard_warmup=0, newton_max_iterations=1).solve(
         max_iterations=1, tolerance=1e-12, verbose=False
     )
+    _, _, info = newton_result.U, newton_result.M, newton_result.metadata
     assert info["newton_iterations"] == 1
     assert len(handed) > 2 * coarse.num_spatial_points, "the Newton phase's Jacobian must have made HJB solves"
     binding = hjb.terminal_binding()

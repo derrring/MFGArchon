@@ -18,3 +18,5 @@
 - **`FixedPointIterator.set_warm_start_data(U, M)` and `FictitiousPlayIterator.set_warm_start_data(U, M)`** (#2997),
   with their `get` and `clear` overrides: the base class's `set_warm_start_data((U, M), metadata=None)` replaces them,
   and checks the shapes.
+- **`NewtonMFGSolver.solve()`'s `(U, M, info)` tuple** (#2997 ruling 4): it returns a `SolverResult`, as every route does,
+  whose `metadata` is the former `info` and whose error histories are the absolute change per measured sweep.

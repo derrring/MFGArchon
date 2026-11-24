@@ -104,9 +104,10 @@ def _newton_residual(where):
 def _newton(where):
     """One Newton step from the cold start, on an 11 x 5 grid: its Jacobian is by finite differences."""
     problem = _plumbing_problem(where, n=11, nt=5)
-    U, _, _ = NewtonMFGSolver(
+    newton_result = NewtonMFGSolver(
         problem, HJBFDMSolver(problem), FPFDMSolver(problem), picard_warmup=0, newton_max_iterations=1
     ).solve(max_iterations=1, tolerance=1e-14, verbose=False)
+    U, _, _ = newton_result.U, newton_result.M, newton_result.metadata
     return np.asarray(U, dtype=float)
 
 
@@ -856,7 +857,8 @@ def _run_loop(name, calls, diverge_at=None):
         )
         M_w = np.tile(_unit_mass(lambda x: np.exp(-40 * (x - 0.7) ** 2), 11)((_x(problem),)), (problem.Nt + 1, 1))
         solver.set_warm_start_data((np.zeros_like(M_w), M_w))
-        U, _, info = solver.solve(max_iterations=1, tolerance=1e30, verbose=False)
+        newton_result = solver.solve(max_iterations=1, tolerance=1e30, verbose=False)
+        U, _, info = newton_result.U, newton_result.M, newton_result.metadata
         reason = "diverged_nan" if diverge_at is not None else "Converged during Picard warm-up"
         assert info["convergence_reason"] == reason, info["convergence_reason"]
         return np.asarray(U, dtype=float)[-1], np.asarray(problem.terminal_value(M_w[-1]), dtype=float)

@@ -204,9 +204,10 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
     ).solve()
     assert all(np.array_equal(np.asarray(density)[0], planted) for density in regime.densities)
     small = planted_problem(5, 2)
-    _, newton_m, _ = NewtonMFGSolver(
+    newton_result = NewtonMFGSolver(
         small, HJBFDMSolver(small), FPFDMSolver(small), picard_warmup=0, newton_max_iterations=1
     ).solve(max_iterations=1, verbose=False)
+    _, newton_m, _ = newton_result.U, newton_result.M, newton_result.metadata
     assert np.array_equal(np.asarray(newton_m)[0], planted_row(5))
     n = 9
     planted_2d = 1.0 + 0.5 * np.linspace(0.0, 1.0, n)[:, None] + 0.25 * np.linspace(0.0, 1.0, n)[None, :]

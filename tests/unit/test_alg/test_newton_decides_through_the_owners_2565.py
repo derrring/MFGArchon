@@ -49,7 +49,8 @@ def _problem() -> MFGProblem:
 def _solve(solve_kw: dict, **ctor_kw):
     problem = _problem()
     solver = NewtonMFGSolver(problem, HJBFDMSolver(problem), FPFDMSolver(problem), **ctor_kw)
-    U, M, info = solver.solve(max_iterations=30, verbose=False, **solve_kw)
+    newton_result = solver.solve(max_iterations=30, verbose=False, **solve_kw)
+    U, M, info = newton_result.U, newton_result.M, newton_result.metadata
     _, F_HJB, F_FP = solver.mfg_residual.compute_residual(U, M, return_components=True)
     change = sweep_change(U + F_HJB, U, M + F_FP, M, problem.spatial_measure().integrate, problem.dt)
     return U, M, info, max(change["l2distu_rel"], change["l2distm_rel"])

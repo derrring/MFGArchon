@@ -104,7 +104,8 @@ class TestNewtonMFGSolverBasic:
             newton_max_iterations=5,
         )
 
-        U, M, info = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
+        U, M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         # Basic shape checks
         expected_shape = (simple_1d_problem.Nt + 1, 21)
@@ -129,7 +130,8 @@ class TestNewtonMFGSolverBasic:
             newton_max_iterations=10,
         )
 
-        _U, M, _info = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        _U, M, _info = newton_result.U, newton_result.M, newton_result.metadata
 
         # Allow small numerical noise (same tolerance as other MFG tests)
         assert np.all(M >= -1e-6), f"M has negative values: min={np.min(M)}"
@@ -160,7 +162,8 @@ class TestNewtonMFGSolverHybrid:
             newton_max_iterations=10,
         )
 
-        _U, _M, info = newton_solver.solve(max_iterations=20, tolerance=1e-6, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=20, tolerance=1e-6, verbose=False)
+        _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         assert info["picard_iterations"] == 5, f"Picard iterations: {info['picard_iterations']}"
         assert len(info.get("picard_residuals", [])) > 0, "No Picard residuals recorded"
@@ -179,7 +182,8 @@ class TestNewtonMFGSolverHybrid:
             newton_max_iterations=5,
         )
 
-        _U, _M, info = newton_solver.solve(max_iterations=12, tolerance=1e-6, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=12, tolerance=1e-6, verbose=False)
+        _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         picard_residuals = info.get("picard_residuals", [])
         if len(picard_residuals) >= 2:
@@ -202,7 +206,8 @@ class TestNewtonMFGSolverHybrid:
             newton_max_iterations=15,
         )
 
-        U, M, info = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        U, M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         assert info["picard_iterations"] == 0
         assert np.all(np.isfinite(U))
@@ -249,7 +254,8 @@ class TestNewtonVsPicard:
         )
 
         # Solve
-        U_newton, M_newton, _info_newton = newton_solver.solve(max_iterations=20, tolerance=1e-5, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=20, tolerance=1e-5, verbose=False)
+        U_newton, M_newton, _info_newton = newton_result.U, newton_result.M, newton_result.metadata
         result_picard = picard_solver.solve(max_iterations=50, tolerance=1e-5, verbose=False)
         U_picard, M_picard = result_picard[:2]
 
@@ -288,7 +294,8 @@ class TestNewtonMFGSolverParameters:
         )
 
         # Tight relative and absolute bounds; absolute_tolerance replaces the deprecated newton_tolerance (#2565).
-        _U, _M, info = newton_solver.solve(max_iterations=25, tolerance=1e-8, absolute_tolerance=1e-8, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=25, tolerance=1e-8, absolute_tolerance=1e-8, verbose=False)
+        _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         # Should complete (converged or max iterations)
         assert info["total_iterations"] > 0
@@ -345,7 +352,8 @@ def test_one_newton_step_reduces_the_mfg_residual():
     initial_u, initial_m = solver.mfg_residual.state.start()
     initial_residual = solver.mfg_residual.compute_residual_norm(initial_u, initial_m)
 
-    U, M, info = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
+    newton_result = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
+    U, M, info = newton_result.U, newton_result.M, newton_result.metadata
     final_residual = solver.mfg_residual.compute_residual_norm(U, M)
     # On the geometry's own measure (#2145). `M.sum(axis=1)` is the counting measure, which gives
     # both wall nodes a full cell on an endpoint-inclusive grid -- and at Nx_points=5 the two wall

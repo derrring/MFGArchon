@@ -94,7 +94,8 @@ def test_newton_matches_picard_small():
         newton_max_iterations=3,
         line_search=True,
     )
-    U_newton, M_newton, _info = newton.solve(max_iterations=8, tolerance=1e-5, verbose=False)
+    newton_result = newton.solve(max_iterations=8, tolerance=1e-5, verbose=False)
+    U_newton, M_newton, _info = newton_result.U, newton_result.M, newton_result.metadata
 
     u_diff = np.linalg.norm(U_newton - U_picard) / (np.linalg.norm(U_picard) + 1e-10)
     m_diff = np.linalg.norm(M_newton - M_picard) / (np.linalg.norm(M_picard) + 1e-10)

@@ -309,7 +309,8 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     FPFDMSolver.solve_fp_system = spy
     try:
         solver = NewtonMFGSolver(problem, _DivergingHJB(problem), FPFDMSolver(problem), picard_warmup=2)
-        U, _M, info = _run_to_completion(lambda: solver.solve(max_iterations=3, tolerance=1e-8, verbose=False))
+        newton_result = _run_to_completion(lambda: solver.solve(max_iterations=3, tolerance=1e-8, verbose=False))
+        U, info = newton_result.U, newton_result.metadata
     finally:
         FPFDMSolver.solve_fp_system = original
 

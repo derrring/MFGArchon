@@ -29,10 +29,13 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
+from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
@@ -143,7 +146,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
     Example:
         >>> solver = NewtonMFGSolver(problem, hjb_solver, fp_solver)
-        >>> U, M, info = solver.solve(max_iterations=30)
+        >>> result = solver.solve(max_iterations=30)  # result.U, result.M, result.metadata
         >>> print(f"Converged: {info['converged']}, iterations: {info['iterations']}")
     """
 
@@ -202,6 +205,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self.picard_residuals: list[float] = []
         self.newton_residuals: list[float] = []
         self.total_iterations = 0
+        # The absolute L2 change of the map's output against its input, U's and M's, at each sweep measured: the
+        # warm-up's sweeps, then each iterate the Newton phase's verdict judges (#2997 ruling 7).
+        self._changes: tuple[list[float], list[float]] = ([], [])
 
     def _run_picard_warmup(
         self,
@@ -258,6 +264,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
             # FP solve: M_new = FP(U_new)
             M_new = self.mfg_residual.compute_fp_output(U_new, M_old)
+            change = sweep_change(U_new, U_old, M_new, M_old, self.problem.spatial_measure().integrate, self.problem.dt)
+            self._changes[0].append(change["l2distu_abs"])
+            self._changes[1].append(change["l2distm_abs"])
 
             # Apply damping
             U, M = run.update(i, U_old, U_new, M_old, M_new)
@@ -282,7 +291,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         verbose: bool = True,
         absolute_tolerance: float | None = None,
         **kwargs: Any,
-    ) -> tuple[NDArray, NDArray, dict[str, Any]]:
+    ) -> SolverResult:
         """
         Solve MFG system using Newton's method.
 
@@ -299,10 +308,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
             **kwargs: Additional solver parameters
 
         Returns:
-            (U, M, info): Solution and convergence information
+            SolverResult (#2997 ruling 4): U, M, the absolute change per measured sweep, and the convergence information
+            in its metadata (convergence_reason, total_iterations, picard and newton residuals, ...)
         """
         refuse_retired_solve_keywords(kwargs, "NewtonMFGSolver.solve")
         start_time = time.time()
+        self._changes = ([], [])
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
         last_reason = [""]
@@ -310,7 +321,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # The 0-based index of the sweep the next verdict judges: the warm-up's sweeps come first, then one per iterate.
         judged = [self.picard_warmup]
 
-        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
+        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray, record: bool = True) -> tuple[bool, str]:
             # The verdict reads the map's change, and U + F_HJB is the map's HJB output: the shared guard sees it first,
             # as on every other route, so a non-finite one stops the solve instead of reaching #2578's refusal of a
             # non-finite change (#2997 ruling 10).
@@ -323,7 +334,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 raise _MapDivergedError(published, M, sweep)
             # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
             # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
-            converged, reason = outer_verdict(U, M, F_HJB, F_FP)
+            converged, reason, metrics = outer_verdict(U, M, F_HJB, F_FP)
+            if record:
+                self._changes[0].append(metrics["l2distu_abs"])
+                self._changes[1].append(metrics["l2distm_abs"])
             self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
             converged, last_reason[0] = refuse_convergence_over_failed_inner_solves(
                 converged, reason, self._verdict_inner_failures
@@ -368,7 +382,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # Check if already converged after Picard: the outer verdict on the Picard residual (#2565)
         _, F_HJB, F_FP = self.mfg_residual.compute_residual(U, M, return_components=True)
         try:
-            converged_after_warmup = verdict(U, M, F_HJB, F_FP)[0]
+            # Not recorded: the Newton phase's first verdict judges this same iterate.
+            converged_after_warmup = verdict(U, M, F_HJB, F_FP, record=False)[0]
         except _MapDivergedError as stop:
             return self._stop_on_a_diverged_map(stop, start_time)
         if converged_after_warmup:
@@ -455,8 +470,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
     def _outer_verdict(
         self, tolerance: float, absolute_tolerance: float | None
-    ) -> Callable[[NDArray, NDArray, NDArray, NDArray], tuple[bool, str]]:
-        """``(U, M, F_HJB, F_FP) -> (converged, reason)``: the owners' verdict on the Picard residual (#2565).
+    ) -> Callable[[NDArray, NDArray, NDArray, NDArray], tuple[bool, str, dict[str, float]]]:
+        """``(U, M, F_HJB, F_FP) -> (converged, reason, metrics)``: the owners' verdict on the Picard residual (#2565), and
+        the change it read.
 
         The residual ``F = Phi(x) - x`` is the map's output against its input, the kind of pair `sweep_change`
         measures for every other coupling iterator; so ``U + F_HJB`` and ``M + F_FP`` are the map's output.
@@ -466,9 +482,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
         integrate = self.problem.spatial_measure().integrate
         dt = self.problem.dt
 
-        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
+        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str, dict[str, float]]:
             metrics = sweep_change(U + F_HJB, U, M + F_FP, M, integrate, dt)
-            return check_convergence_criteria(
+            converged, reason = check_convergence_criteria(
                 metrics["l2distu_rel"],
                 metrics["l2distm_rel"],
                 metrics["l2distu_abs"],
@@ -476,15 +492,14 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 tolerance,
                 absolute_tolerance,
             )
+            return converged, reason, metrics
 
         return verdict
 
     def _iteration_state(self) -> IterationState:
         return self.mfg_residual.state
 
-    def _stop_on_a_diverged_map(
-        self, stop: _MapDivergedError, start_time: float
-    ) -> tuple[NDArray, NDArray, dict[str, Any]]:
+    def _stop_on_a_diverged_map(self, stop: _MapDivergedError, start_time: float) -> SolverResult:
         """Publish what the guard published and stop: the iterate the verdict judged, with the map's non-finite HJB
         output as U (#1718's contract), after ``stop.sweep - picard_warmup`` Newton iterations."""
         self.U, self.M = stop.U, stop.M
@@ -502,9 +517,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
         elapsed: float,
         newton_info: SolverInfo | None = None,
         newton_iterations: int | None = None,
-    ) -> tuple[NDArray, NDArray, dict[str, Any]]:
-        """Create result tuple with convergence information. ``newton_iterations`` overrides the count read from
-        ``newton_residuals``, for a stop that has no residual history."""
+    ) -> SolverResult:
+        """The one result type (#2997 ruling 4), its metadata the convergence information. ``newton_iterations``
+        overrides the count read from ``newton_residuals``, for a stop that has no residual history. Its error histories
+        are the absolute change at each sweep measured, so a warm-up that diverged at sweep i reports i iterations."""
         info = {
             "converged": converged,
             "convergence_reason": reason,
@@ -528,7 +544,17 @@ class NewtonMFGSolver(BaseCouplingIterator):
             failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
         info["inner_hjb_failures"] = list(failures) if isinstance(failures, tuple) else None
 
-        return self.U, self.M, info
+        changes_U, changes_M = self._changes
+        return SolverResult(
+            U=self.U,
+            M=self.M,
+            iterations=min(self.total_iterations, len(changes_U)),
+            error_history_U=np.asarray(changes_U, dtype=float),
+            error_history_M=np.asarray(changes_M, dtype=float),
+            solver_name="NewtonMFGSolver",
+            converged=converged,
+            metadata=info,
+        )
 
     def get_results(self) -> tuple[NDArray, NDArray]:
         """Get computed solution arrays."""
