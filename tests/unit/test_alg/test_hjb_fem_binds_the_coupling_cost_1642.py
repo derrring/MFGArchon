@@ -12,6 +12,7 @@ mass matrix's row sums, and the couplers hand that binding to the HJB source.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import logging
 import warnings
@@ -695,7 +696,11 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
     """Off a grid the problem binds no G, and a route reads it through the HJB solver's binding. Newton's residual
     handed ``terminal_value`` none and refused G; through the iterate's owner it hands the binding (#2997 ruling 11),
     and its fixed point is FixedPoint's. On this mesh they are 3.7e-9 apart at tolerance 1e-8, where G itself moves
-    U by 0.26. Newton stops inside its warm-up, so no finite-difference Jacobian is built."""
+    U by 0.26. Newton stops inside its warm-up there, so the Newton phase is covered by recording instead: on a coarse
+    mesh (refine 1, Nt = 2), with no warm-up and one Newton step, every one of its 304 HJB solves, the
+    finite-difference Jacobian's among them, is handed u(T) read through the binding at its own m(T). G is an
+    interaction cost there, whose derivative K * m(T) moves with m(T), so the level read is seen: u(T) read at m(0)
+    instead is 5.9e-2 away, and g alone 0.18. A linear G (``PotentialCost``) would not see the level at all."""
     from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
 
     solved = _g_problem("G")
@@ -710,6 +715,27 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
     assert info["convergence_reason"] == "Converged during Picard warm-up"
     gap = float(np.max(np.abs(U - fixed_point.U)))
     assert gap < 1e-6, f"Newton's fixed point is {gap:.3e} from FixedPoint's on an off-grid G"
+
+    coarse = _g_problem(g=InteractionCost(GaussianKernel(amplitude=1.0, length_scale=0.3)), nt=2, refine=1)
+    hjb = HJBFEMSolver(coarse)
+    handed = []
+    inner = hjb.solve_hjb_system
+
+    @functools.wraps(inner)
+    def recording(M, U_terminal, *args, **kwargs):
+        handed.append((np.array(M, copy=True), np.array(U_terminal, copy=True)))
+        return inner(M, U_terminal, *args, **kwargs)
+
+    hjb.solve_hjb_system = recording
+    _, _, info = NewtonMFGSolver(coarse, hjb, FPFEMSolver(coarse), picard_warmup=0, newton_max_iterations=1).solve(
+        max_iterations=1, tolerance=1e-12, verbose=False
+    )
+    assert info["newton_iterations"] == 1
+    assert len(handed) > 2 * coarse.num_spatial_points, "the Newton phase's Jacobian must have made HJB solves"
+    binding = hjb.terminal_binding()
+    for M, u_terminal in handed:
+        expected = np.asarray(coarse.terminal_value(M[-1], binding=binding)).reshape(u_terminal.shape)
+        np.testing.assert_array_equal(u_terminal, expected)
 
 
 def test_a_network_problem_refuses_a_terminal_binding():
