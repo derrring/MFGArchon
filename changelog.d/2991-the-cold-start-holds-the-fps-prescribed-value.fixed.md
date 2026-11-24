@@ -26,7 +26,7 @@
     under `problem.solve`). The first iteration read it at the caller's density there, and later ones at the remnant,
     so the value read depended on the iteration count.
   - **API.** `initialize_cold_start` takes the FP solver as a required keyword, `fp_solver=`. An FP solver whose class
-    does not define `prescribed_density` is refused by name in the cold start, a TypeError: define it, or forward it to
-    the solver it wraps, as a wrapper over a capped FP-FDM must on a cold start, which then names no capped node;
-    subclassing `BaseFPSolver` gives None, which is right only where the step holds no node. Every FP solver class the
-    library ships subclasses `BaseFPSolver`.
+    does not define `prescribed_density` is refused by name in the cold start, a TypeError: define it on the class, or
+    forward it there to the solver it wraps (an instance attribute or `__getattr__` is not read), as a wrapper over a
+    capped FP-FDM must on a cold start, which then names no capped node; subclassing `BaseFPSolver` gives None, which
+    is right only where the step holds no node. Every FP solver class the library ships subclasses `BaseFPSolver`.

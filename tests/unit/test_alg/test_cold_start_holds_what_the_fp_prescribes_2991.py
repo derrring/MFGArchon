@@ -538,8 +538,9 @@ def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
             return np.array([0]), np.array([0.25])
 
     refusal = (
-        r"_Bare does not define `prescribed_density`.*forward it to the solver it wraps.*subclassing `BaseFPSolver` "
-        r"gives None, which is right only where its step holds no node \(#2991\)"
+        r"_Bare does not define `prescribed_density`.*define it on the class, or forward it there to the solver it wraps "
+        r"\(an instance attribute or `__getattr__` is not read\).*subclassing `BaseFPSolver` gives None, which is right "
+        r"only where its step holds no node \(#2991\)"
     )
     with pytest.raises(TypeError, match=refusal):
         cold_start_density_at_level(m0, _Bare(), 1)
@@ -549,6 +550,20 @@ def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
         cold_start_density_at_level(m0, on_the_instance, 1)
     with pytest.raises(TypeError, match=refusal):
         FixedPointIterator(q, HJBFDMSolver(q), _Bare(), relaxation=0.5).solve(max_iterations=1, verbose=False)
+
+    class _Forwards:
+        """Forwards every attribute it lacks, ``prescribed_density`` included, through ``__getattr__``."""
+
+        def __init__(self, inner):
+            object.__setattr__(self, "_inner", inner)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    forwarder = _Forwards(FPFDMSolver(q))
+    assert forwarder.prescribed_density(1) is not None  # the instance answers; the class does not define it
+    with pytest.raises(TypeError, match=r"_Forwards does not define `prescribed_density`.*`__getattr__` is not read"):
+        cold_start_density_at_level(m0, forwarder, 1)
 
     held = cold_start_density_at_level(m0, _Defines(), 1)
     assert held[0] == 0.25
