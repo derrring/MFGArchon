@@ -603,7 +603,7 @@ def _g_refused(case):
         problem = _g_problem("G")
         points = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
         return lambda: MeshlessGalerkinHJBSolver(problem, collocation_points=points, delta=0.3)
-    if case in ("GraphMFGSolver", "RegimeSwitchingIterator", "MFGResidual"):
+    if case in ("GraphMFGSolver", "RegimeSwitchingIterator"):
         problems = [_g_problem("G"), _g_problem("G")]
         hjbs, fps = [HJBFEMSolver(p) for p in problems], [FPFEMSolver(p) for p in problems]
         if case == "GraphMFGSolver":
@@ -617,10 +617,7 @@ def _g_refused(case):
             from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 
             config = RegimeSwitchingConfig(transition_matrix=np.array([[-1.0, 1.0], [1.0, -1.0]]))
-            return lambda: RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=2).solve()
-        from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-        return lambda: MFGResidual(problems[0], hjbs[0], fps[0])
+        return lambda: RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=2).solve()
     if case == "MultiPopulationIterator":
         from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
         from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -666,7 +663,6 @@ _G_REFUSALS = {
     r"Model\(terminal_coupling=\.\.\.\)",
     "GraphMFGSolver": r"GraphMFGSolver has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
     "RegimeSwitchingIterator": r"RegimeSwitchingIterator has no binding of Model\(terminal_coupling=\.\.\.\) on this",
-    "MFGResidual": r"MFGResidual has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
     "MultiPopulationIterator": r"population\(s\) \[0\] set Model\(terminal_coupling=\.\.\.\)",
     "no binding": r"MFGProblem.terminal_value has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
     "a binding on other points": r"on 81 points that are not this problem's 81, in their order, compared bitwise",
@@ -679,7 +675,7 @@ _G_REFUSALS = {
 def test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name(case):
     """Off a grid the problem declares G and binds none, and every reader that cannot read it refuses it by name (#1642,
     stage 1b's G line): a solver with no point measure, P2 and the meshless solver, at construction; the routes that
-    hand ``terminal_value`` no binding (graph, regime switching, the Newton residual), as they refuse F; the
+    hand ``terminal_value`` no binding (graph, regime switching), as they refuse F; the
     multi-population iterator, where G is single-population (the user's ruling 5); and ``terminal_value`` itself, for
     no binding, a binding on other points, a binding of another problem's G, and a binding beside the problem's own on
     a grid, one G with two bindings."""
@@ -688,6 +684,27 @@ def test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name(case):
         call = _g_refused(case)
         with pytest.raises((NotImplementedError, ValueError), match=_G_REFUSALS[case]):
             call()
+
+
+def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_binding():
+    """Off a grid the problem binds no G, and a route reads it through the HJB solver's binding. Newton's residual
+    handed ``terminal_value`` none and refused G; through the iterate's owner it hands the binding (#2997 ruling 11),
+    and its fixed point is FixedPoint's. On this mesh they are 3.7e-9 apart at tolerance 1e-8, where G itself moves
+    U by 0.26. Newton stops inside its warm-up, so no finite-difference Jacobian is built."""
+    from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
+
+    solved = _g_problem("G")
+    fixed_point = FixedPointIterator(solved, HJBFEMSolver(solved), FPFEMSolver(solved), relaxation=0.5).solve(
+        max_iterations=200, tolerance=1e-8, verbose=False
+    )
+    newton_problem = _g_problem("G")
+    U, _, info = NewtonMFGSolver(
+        newton_problem, HJBFEMSolver(newton_problem), FPFEMSolver(newton_problem), picard_warmup=200
+    ).solve(max_iterations=200, tolerance=1e-8, verbose=False)
+    assert fixed_point.converged
+    assert info["convergence_reason"] == "Converged during Picard warm-up"
+    gap = float(np.max(np.abs(U - fixed_point.U)))
+    assert gap < 1e-6, f"Newton's fixed point is {gap:.3e} from FixedPoint's on an off-grid G"
 
 
 def test_a_network_problem_refuses_a_terminal_binding():
