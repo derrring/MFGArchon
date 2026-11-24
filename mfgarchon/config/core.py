@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, field_validator, model_validator
+
+from .damping import DEFAULT_DAMPING, DampingPolicy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -123,29 +125,10 @@ class PicardConfig(BaseConfig):
     absolute_tolerance : float | None
         If set, the absolute L2 change must also fall below it. None (default) compares no absolute
         quantity (#2555).
-    relaxation : float
-        Relaxation (under-relaxation) factor omega in (0, 1] for the update:
-        u^{n+1} = omega * u_new + (1 - omega) * u^n.
-        - 1.0: No relaxation (faster but may diverge)
-        - 0.5: Moderate relaxation (balanced, default)
-        - <0.3: Heavy relaxation (slower but more stable)
-    relaxation_M : float | None
-        Separate relaxation factor for M (None = use `relaxation` for both).
-        Issue #719: Per-variable relaxation support.
-    relaxation_schedule : str
-        Iteration-based relaxation schedule for U: "constant", "harmonic",
-        "sqrt", or "exponential". Issue #719 Phase 2. FixedPointIterator floors
-        the decaying schedules at its ``adaptive_relaxation_min`` (default 0.05)
-        whether or not ``adaptive_relaxation`` is on, so "harmonic" becomes
-        constant relaxation from the sweep where relaxation/(k+1) falls below
-        it. That is damped Picard, fast where Picard contracts; it is not
-        fictitious play, which is FictitiousPlayIterator (#2415).
-    relaxation_schedule_M : str | None
-        Separate schedule for M (None = follow U schedule).
-    adaptive_relaxation : bool
-        Enable error-reactive adaptive relaxation (Issue #583).
-    anderson_memory : int
-        Anderson acceleration memory depth (0 = disabled, default: 0)
+    damping : DampingPolicy
+        How U and M are damped, one policy per field (#2997): their base thetas, schedules, floors, adaptation and
+        first sweep, and Anderson acceleration on U. The default is ``DampingPolicy.constant(0.5)``, one shared frozen
+        instance. ``mfgarchon.config.damping`` states the rule.
     verbose : bool
         Print iteration progress (default: True)
     """
@@ -153,22 +136,14 @@ class PicardConfig(BaseConfig):
     max_iterations: int = Field(default=100, ge=1)
     tolerance: float = Field(default=1e-6, gt=0)
     absolute_tolerance: float | None = Field(default=None, gt=0)
-    relaxation: float = Field(default=0.5, gt=0, le=1.0)
-    relaxation_M: float | None = Field(default=None, gt=0, le=1.0)
-    relaxation_schedule: Literal["constant", "harmonic", "sqrt", "exponential"] = "constant"
-    relaxation_schedule_M: Literal["constant", "harmonic", "sqrt", "exponential"] | None = None
-    adaptive_relaxation: bool = False
-    anderson_memory: int = Field(default=0, ge=0)
+    damping: InstanceOf[DampingPolicy] = DEFAULT_DAMPING
     verbose: bool = True
 
-    @model_validator(mode="after")
-    def validate_anderson(self) -> PicardConfig:
-        """Validate Anderson acceleration parameters."""
-        if self.anderson_memory < 0:
-            raise ValueError("anderson_memory must be non-negative")
-        if self.anderson_memory > self.max_iterations:
-            raise ValueError("anderson_memory cannot exceed max_iterations")
-        return self
+    @field_validator("damping", mode="before")
+    @classmethod
+    def _damping_from_a_mapping(cls, value: object) -> object:
+        """A YAML or dict config states the policy as the mapping ``to_yaml`` writes (#2997)."""
+        return DampingPolicy.from_mapping(value) if isinstance(value, dict) else value
 
 
 class MFGSolverConfig(BaseConfig):

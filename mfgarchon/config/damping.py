@@ -1,5 +1,8 @@
 """How a coupling route damps its iterate: one policy per field, set by the user on every route (#2997, stage 1).
 
+The policy is data and lives here, in the configuration layer, so that ``PicardConfig.damping`` can hold it; the
+coupling package applies it to a solve (`mfgarchon.alg.numerical.coupling.damping_run.DampingRun`).
+
 A sweep maps the iterate ``(U_old, M_old)`` to the map's output ``(U_new, M_new)``; the next iterate of each field is
 ``theta_k * new + (1 - theta_k) * old``. `FieldDamping` decides ``theta_k`` for one field, and `DampingPolicy` holds
 one for U and one for M, with Anderson acceleration as an option on U. The two fields are independent: what U's policy
@@ -30,7 +33,7 @@ if TYPE_CHECKING:
 SCHEDULES = ("none", "constant", "harmonic", "sqrt", "polynomial", "exponential")
 
 
-def _scheduled(schedule: str | Callable[[int], float], theta: float, k: int, floor: float) -> float:
+def scheduled_theta(schedule: str | Callable[[int], float], theta: float, k: int, floor: float) -> float:
     """``theta_k`` for a base ``theta`` at sweep ``k`` under ``schedule``, before the first-sweep rule."""
     if callable(schedule):
         return max(theta * float(schedule(k)), floor)
@@ -38,12 +41,14 @@ def _scheduled(schedule: str | Callable[[int], float], theta: float, k: int, flo
         return 1.0
     if schedule == "constant":
         return theta
+    # theta times the schedule's factor, each written as the factor itself is, so the arithmetic is the rounding the
+    # routes had: FixedPoint's base * schedule(k) and FictitiousPlay's alpha0 * schedule(k).
     if schedule == "harmonic":
-        value = theta / (k + 1)
+        value = theta * (1.0 / (k + 1))
     elif schedule == "sqrt":
-        value = theta / np.sqrt(k + 1)
+        value = theta * (1.0 / np.sqrt(k + 1))
     elif schedule == "polynomial":
-        value = theta / (k + 1) ** 0.6
+        value = theta * (1.0 / (k + 1) ** 0.6)
     elif schedule == "exponential":
         value = theta ** (k + 1)
     else:
@@ -98,6 +103,23 @@ class DampingPolicy:
     anderson: AndersonOptions | None = None
 
     @classmethod
+    def from_mapping(cls, mapping: dict[str, Any]) -> DampingPolicy:
+        """The policy a mapping states, as ``PicardConfig.to_yaml`` writes it: ``U`` and ``M`` each a `FieldDamping`'s
+        keywords, and ``anderson`` an `AndersonOptions`' keywords or null. A key outside these is refused by name."""
+        unknown = sorted(set(mapping) - {"U", "M", "anderson"})
+        if unknown:
+            raise ValueError(f"DampingPolicy: a policy states U, M and anderson, not {unknown}")
+        try:
+            anderson = mapping.get("anderson")
+            return cls(
+                U=FieldDamping(**mapping.get("U", {})),
+                M=FieldDamping(**mapping.get("M", {})),
+                anderson=None if anderson is None else AndersonOptions(**anderson),
+            )
+        except TypeError as exc:
+            raise ValueError(f"DampingPolicy: {exc}") from exc
+
+    @classmethod
     def constant(cls, theta: float = 0.5, theta_M: float | None = None) -> DampingPolicy:
         """``theta`` on U, and ``theta_M`` (``theta`` when None) on M, every sweep: FixedPoint's default at 0.5."""
         return cls(U=FieldDamping(theta=theta), M=FieldDamping(theta=theta if theta_M is None else theta_M))
@@ -116,63 +138,6 @@ class DampingPolicy:
         belief = FieldDamping(theta=alpha0, schedule=schedule, floor=floor)
         return cls(U=belief if damp_value_function else FieldDamping(schedule="none"), M=belief)
 
-    def run(self) -> DampingRun:
-        """The per-solve state that applies this policy: the adapted bases, the histories and the accelerator."""
-        return DampingRun(self)
 
-
-class DampingRun:
-    """One solve's application of a `DampingPolicy`: the per-field adapted base, change history and theta history."""
-
-    def __init__(self, policy: DampingPolicy) -> None:
-        self.policy = policy
-        self._base = {"U": policy.U.theta, "M": policy.M.theta}
-        self._changes: dict[str, list[float]] = {"U": [], "M": []}
-        self.thetas: dict[str, list[float]] = {"U": [], "M": []}
-        self.adapted: list[dict[str, Any]] = []
-        self._anderson = None
-        if policy.anderson is not None:
-            from .anderson_acceleration import AndersonAccelerator
-
-            self._anderson = AndersonAccelerator(depth=policy.anderson.depth, beta=policy.anderson.beta)
-
-    def theta(self, name: str, k: int) -> float:
-        """``theta_k`` of field ``name`` ("U" or "M") at sweep ``k``."""
-        spec = self.policy.U if name == "U" else self.policy.M
-        if k == 0 and spec.first_sweep == "whole":
-            return 1.0
-        return _scheduled(spec.schedule, self._base[name], k, spec.floor)
-
-    def update(self, k: int, U_old: Any, U_new: Any, M_old: Any, M_new: Any) -> tuple[Any, Any]:
-        """The next iterate after sweep ``k``: each field blended by its ``theta_k``, U through Anderson when set."""
-        theta_U, theta_M = self.theta("U", k), self.theta("M", k)
-        self.thetas["U"].append(theta_U)
-        self.thetas["M"].append(theta_M)
-        if self._anderson is not None:
-            U = self._anderson.update(U_old.flatten(), U_new.flatten(), method="type1").reshape(U_old.shape)
-        else:
-            U = theta_U * U_new + (1 - theta_U) * U_old
-        M = theta_M * M_new + (1 - theta_M) * M_old
-        return U, M
-
-    def observe(self, k: int, change_U: float, change_M: float) -> list[str]:
-        """Record sweep ``k``'s relative change of each field; each adaptive field adapts its base on its own history.
-        Returns a message per decay, for the caller to log."""
-        messages = []
-        for name, change in (("U", change_U), ("M", change_M)):
-            history = self._changes[name]
-            history.append(float(change))
-            spec = self.policy.U if name == "U" else self.policy.M
-            if not spec.adaptive or len(history) < 2:
-                continue
-            ratio = history[-1] / history[-2] if history[-2] > 0 else 1.0
-            if ratio > 1.2:
-                self._base[name] = max(self._base[name] * spec.adaptive_decay, spec.floor)
-                messages.append(
-                    f"Adaptive damping: {name} change grew {ratio:.2f}x; its base theta is now {self._base[name]:.4f}."
-                )
-            elif len(history) >= 3 and all(history[-(i + 1)] < history[-(i + 2)] for i in range(2)):
-                self._base[name] = min(self._base[name] * 1.05, spec.theta)
-        if self.policy.U.adaptive or self.policy.M.adaptive:
-            self.adapted.append({"iteration": k + 1, "theta_U": self._base["U"], "theta_M": self._base["M"]})
-        return messages
+# The default every route without its own and every PicardConfig share: frozen, so one instance serves all.
+DEFAULT_DAMPING = DampingPolicy.constant(0.5)

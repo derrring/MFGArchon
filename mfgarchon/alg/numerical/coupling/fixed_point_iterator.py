@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.solver_result import SolverResult
@@ -29,6 +30,7 @@ from .base_mfg import (
     refuse_retired_solve_keywords,
     resolve_backend,
 )
+from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -77,9 +79,8 @@ class FixedPointIterator(BaseCouplingIterator):
         hjb_solver: HJB solver instance (must be trait-validated)
         fp_solver: FP solver instance (must be trait-validated)
         config: Configuration object (preferred modern approach)
-        use_anderson: Enable Anderson acceleration
-        anderson_depth: Anderson acceleration memory depth
-        anderson_beta: Anderson acceleration mixing parameter
+        damping: U's and M's damping, a `DampingPolicy` (#2997), Anderson acceleration on U among its options;
+            None is ``DampingPolicy.constant(0.5)``
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
             torch are refused at allocation, naming #1922 (see ``iteration_state.allocate_iterate``).
@@ -103,28 +104,16 @@ class FixedPointIterator(BaseCouplingIterator):
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         config: MFGSolverConfig | None = None,
-        relaxation: float = 0.5,
-        relaxation_M: float | None = None,
-        use_anderson: bool = False,
-        anderson_depth: int = 5,
-        anderson_beta: float = 1.0,
+        damping: DampingPolicy | None = None,
         backend: str | BaseBackend | None = None,
         volatility: float | np.ndarray | Any | None = None,  # Phase 2.3
         drift_field: np.ndarray | Any | None = None,  # Phase 2.3
-        adaptive_relaxation: bool = False,
-        adaptive_relaxation_decay: float = 0.5,
-        adaptive_relaxation_min: float = 0.05,
-        relaxation_schedule: str = "constant",
-        relaxation_schedule_M: str | None = None,
         volatility_kind: str | None = None,
     ):
         """
         Args:
-            relaxation: Under-relaxation factor for U (omega_U) in (0, 1]. Default 0.5.
-            relaxation_M: Under-relaxation factor for M (omega_M). If None, uses `relaxation`
-                for both. Issue #719: Per-variable relaxation support.
-                Recommended for MFG: relaxation=1.0, relaxation_M=0.2 (U adapts fully,
-                M filters particle noise).
+            damping: How U and M are damped, one `DampingPolicy` per field (#2997); None is
+                ``DampingPolicy.constant(0.5)``. A solve's config, when given, decides it instead (``PicardConfig.damping``).
         """
         super().__init__(problem)
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
@@ -162,27 +151,7 @@ class FixedPointIterator(BaseCouplingIterator):
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator", problem=problem, override=volatility)
         assert_paired_solver_geometry(hjb_solver, fp_solver, "FixedPointIterator", problem=problem)
 
-        # Anderson acceleration support
-        self.use_anderson = use_anderson
-        self.anderson_accelerator = None
-        if use_anderson:
-            from mfgarchon.alg.numerical.coupling.anderson_acceleration import AndersonAccelerator
-
-            self.anderson_accelerator = AndersonAccelerator(depth=anderson_depth, beta=anderson_beta)
-
-        # Canonical relaxation state (config can override at solve() time)
-        # Issue #719: Per-variable relaxation support
-        self.relaxation = relaxation
-        self.relaxation_M = relaxation_M  # None = use `relaxation` for both
-
-        # Issue #583: Adaptive Picard relaxation
-        self.adaptive_relaxation = adaptive_relaxation
-        self.adaptive_relaxation_decay = adaptive_relaxation_decay
-        self.adaptive_relaxation_min = adaptive_relaxation_min
-
-        # Issue #719 Phase 2: Relaxation schedules
-        self.relaxation_schedule = relaxation_schedule
-        self.relaxation_schedule_M = relaxation_schedule_M
+        self.damping = damping if damping is not None else DampingPolicy.constant(0.5)
 
         # State arrays (initialized in solve)
         self.U: np.ndarray | None = None
@@ -266,23 +235,13 @@ class FixedPointIterator(BaseCouplingIterator):
             final_max_iterations = solve_config.picard.max_iterations
             final_tolerance = solve_config.picard.tolerance
             final_absolute_tolerance = solve_config.picard.absolute_tolerance
-            final_damping_factor = solve_config.picard.relaxation
-            # Issue #719: Per-variable relaxation and schedules from config
-            # relaxation_M / relaxation_schedule_M use `or` because None means "follow U"
-            final_damping_factor_M = solve_config.picard.relaxation_M or self.relaxation_M
-            final_schedule = solve_config.picard.relaxation_schedule
-            final_schedule_M = solve_config.picard.relaxation_schedule_M or self.relaxation_schedule_M
-            final_adaptive_damping = solve_config.picard.adaptive_relaxation or self.adaptive_relaxation
+            policy = solve_config.picard.damping
             verbose = solve_config.picard.verbose
         else:
             final_max_iterations = max_iterations or 100
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
-            final_damping_factor = self.relaxation
-            final_damping_factor_M = self.relaxation_M  # Issue #719
-            final_schedule = self.relaxation_schedule  # Issue #719 Phase 2
-            final_schedule_M = self.relaxation_schedule_M
-            final_adaptive_damping = self.adaptive_relaxation
+            policy = self.damping
             from mfgarchon.utils.progress import should_show_progress
 
             verbose = should_show_progress()
@@ -334,16 +293,8 @@ class FixedPointIterator(BaseCouplingIterator):
         self.l2distm_rel = np.ones(final_max_iterations)
         self.iterations_run = 0
 
-        # Issue #583: Adaptive damping state
-        _error_history_U: list[float] = []
-        _error_history_M: list[float] = []
-        _damping_history: list[dict] = []
-        _theta_U_initial = final_damping_factor
-        _theta_M_initial = final_damping_factor_M if final_damping_factor_M is not None else final_damping_factor
-
-        # Reset Anderson accelerator if using it
-        if self.anderson_accelerator is not None:
-            self.anderson_accelerator.reset()
+        # The damping this solve applies, with its own adapted bases, histories and Anderson memory (#2997)
+        run = DampingRun(policy)
 
         # Layer 2: Initialize MeasureField for sensitivity tracking (#956)
         measure_field = None
@@ -483,37 +434,8 @@ class FixedPointIterator(BaseCouplingIterator):
                 else:
                     M_new = self.fp_solver.solve_fp_system(M_initial, U_new)
 
-                # 3. Apply damping or Anderson acceleration
-                # Issue #719: Per-variable damping + Phase 2 schedule support
-                from .fixed_point_utils import compute_scheduled_damping
-
-                base_theta_M = final_damping_factor_M if final_damping_factor_M is not None else final_damping_factor
-                effective_theta_U = compute_scheduled_damping(
-                    iiter,
-                    final_damping_factor,
-                    final_schedule,
-                    self.adaptive_relaxation_min,
-                )
-                effective_theta_M = compute_scheduled_damping(
-                    iiter,
-                    base_theta_M,
-                    final_schedule_M if final_schedule_M is not None else final_schedule,
-                    self.adaptive_relaxation_min,
-                )
-
-                if self.use_anderson and self.anderson_accelerator is not None:
-                    # Anderson acceleration on U only (M uses standard damping)
-                    x_current_U = U_old.flatten()
-                    f_current_U = U_new.flatten()
-                    x_next_U = self.anderson_accelerator.update(x_current_U, f_current_U, method="type1")
-                    self.U = x_next_U.reshape(U_old.shape)
-
-                    # Standard damping for M, a convex combination, which keeps a mass the two densities share
-                    self.M = effective_theta_M * M_new + (1 - effective_theta_M) * M_old
-                else:
-                    # Standard damping for both - Issue #719: separate factors + schedules
-                    self.U = effective_theta_U * U_new + (1 - effective_theta_U) * U_old
-                    self.M = effective_theta_M * M_new + (1 - effective_theta_M) * M_old
+                # 3. Damping, per field, or Anderson acceleration on U (the policy, #2997)
+                self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
 
                 # self.M now carries a density this solve's FP produced, so the end-of-solve
                 # mass measurement has something real to measure -- including if a later
@@ -600,38 +522,9 @@ class FixedPointIterator(BaseCouplingIterator):
                     time=f"{iter_time:.1f}s",
                 )
 
-                # Issue #583: Adaptive damping — adjust based on error behavior
-                _error_history_U.append(self.l2distu_rel[iiter])
-                _error_history_M.append(self.l2distm_rel[iiter])
-
-                if final_adaptive_damping and iiter >= 1:
-                    from .fixed_point_utils import adapt_damping
-
-                    final_damping_factor, theta_M_adapted, warning_msg = adapt_damping(
-                        theta_U=final_damping_factor,
-                        theta_M=base_theta_M,
-                        error_history_U=_error_history_U,
-                        error_history_M=_error_history_M,
-                        theta_U_initial=_theta_U_initial,
-                        theta_M_initial=_theta_M_initial,
-                        decay=self.adaptive_relaxation_decay,
-                        min_damping=self.adaptive_relaxation_min,
-                    )
-                    # Update base M damping for next iteration
-                    if final_damping_factor_M is not None:
-                        final_damping_factor_M = theta_M_adapted
-                    # else: base_theta_M follows final_damping_factor via fallback
-
-                    if warning_msg:
-                        logger.warning(warning_msg)
-
-                    _damping_history.append(
-                        {
-                            "iteration": iiter + 1,
-                            "theta_U": final_damping_factor,
-                            "theta_M": theta_M_adapted,
-                        }
-                    )
+                # Issue #583: an adaptive field adapts its base on its own relative change (#2997 ruling (i))
+                for message in run.observe(iiter, self.l2distu_rel[iiter], self.l2distm_rel[iiter]):
+                    logger.warning(message)
 
                 # Issue #614: Invoke user callback if provided
                 if iteration_callback is not None:
@@ -691,27 +584,23 @@ class FixedPointIterator(BaseCouplingIterator):
             "inner_hjb_failures": list(inner_failures) if isinstance(inner_failures, tuple) else None,
             "l2distu_rel": self.l2distu_rel[: self.iterations_run],
             "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-            "anderson_used": self.use_anderson,
+            "anderson_used": policy.anderson is not None,
         }
 
         # Issue #719 Phase 2: Record schedule info
-        if final_schedule != "constant" or (final_schedule_M is not None and final_schedule_M != "constant"):
-            metadata["damping_schedule"] = {
-                "schedule_U": final_schedule,
-                "schedule_M": final_schedule_M if final_schedule_M is not None else final_schedule,
-            }
+        if policy.U.schedule != "constant" or policy.M.schedule != "constant":
+            metadata["damping_schedule"] = {"schedule_U": policy.U.schedule, "schedule_M": policy.M.schedule}
 
         # Layer 2: Attach MeasureField to metadata (#956)
         if measure_field is not None:
             metadata["measure_field"] = measure_field
 
-        if final_adaptive_damping:
-            _final_base_theta_M = final_damping_factor_M if final_damping_factor_M is not None else final_damping_factor
+        if policy.U.adaptive or policy.M.adaptive:
             metadata["adaptive_damping"] = {
                 "enabled": True,
-                "damping_history": _damping_history,
-                "final_theta_U": final_damping_factor,
-                "final_theta_M": _final_base_theta_M,
+                "damping_history": run.adapted,
+                "final_theta_U": run.base("U"),
+                "final_theta_M": run.base("M"),
             }
 
         # Issue #688: Validate final solver output

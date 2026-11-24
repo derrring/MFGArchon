@@ -2814,14 +2814,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # ─────────────────────────────────────────────────────────────────────
         # Create fixed-point iterator with selected/validated solvers
         # ─────────────────────────────────────────────────────────────────────
-        # Issue #1155: thread anderson_memory and backend from config to iterator.
+        # Issue #1155: thread the backend from config to the iterator; its damping, Anderson included, is config.picard's
+        # policy, which the iterator reads from the config itself (#2997).
         from mfgarchon.config.translator import (
             backend_config_to_kwargs,
             check_logging_config,
-            picard_config_to_iterator_kwargs,
         )
 
-        _iterator_extra_kw = picard_config_to_iterator_kwargs(config.picard)
         _backend_kw = backend_config_to_kwargs(config.backend)
         check_logging_config(config.logging)
 
@@ -2835,7 +2834,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # (#1248, #2376). Until #2378 part 2a this forwarded self._volatility without the kind,
             # and ten sites told it apart from a user override by identity. A pair built from another
             # problem's volatility is refused by the iterator's pairing guard (#2420 review).
-            **_iterator_extra_kw,
             **_backend_kw,
         )
 
