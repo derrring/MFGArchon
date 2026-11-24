@@ -2,14 +2,14 @@
 
 The class: the iterate's later levels disagreeing with the FP's rows at the nodes the FP prescribes. FP-FDM's implicit
 Dirichlet rows, and FP-FEM's condensed dofs, hold a value p at every later level whatever they are handed: 0 at the
-problem's Dirichlet face, which the FP reads as an exit (#2512), and g(t_n) on the FP's own DIRICHLET(g). Each sweep
-blends the FP's row into the iterate with a weight theta < 1, so a cold start that put m_initial there kept
-prod(1 - theta_j)(m_initial - p) after any number of sweeps, and its first sweep handed the HJB m_initial there.
+problem's Dirichlet face, which the FP reads as an exit (#2512), and g(t_n) on the FP's own DIRICHLET(g). A cold start
+put m_initial there, so its first sweep handed the HJB m_initial there, and a route that blends the FP's row into the
+iterate with a weight theta < 1 kept prod(1 - theta_j)(m_initial - p) there after any number of sweeps.
 
 The cold start now asks the FP (`BaseFPSolver.prescribed_density`), which answers with the read its own step makes. At
 f9a41a31, with the walls planted at 7.0, the density the first sweep hands the HJB held 7.0 there on every route below,
-and the density returned after one sweep at relaxation 0.5 held 3.5 = (1 - 0.5)(7 - 0) (3.3 against g(t_n) = 0.3 + t_n
-at the first level), except RegimeSwitching's, whose first sweep takes the FP's row whole.
+and the density returned after one sweep at relaxation 0.5 held 3.5 = (1 - 0.5)(7 - 0), and 3.7 at the first level
+against g(t_1) = 0.4 (3.3 off it), except RegimeSwitching's, whose first sweep takes the FP's row whole.
 """
 
 from __future__ import annotations
@@ -477,8 +477,9 @@ def test_fp_fdm_names_the_uncapped_dirichlet_node_and_not_the_capped_exit():
 def test_the_network_fp_refuses_to_name_what_its_step_holds_at_a_node_bc():
     """FPNetworkSolver's step holds an ABSORBING node at 0 whatever it is handed (#1478), and the protocol refuses to name
     it, by #2991, rather than answer None: a real answer would need the step's SOURCE time, its CUSTOM rules' reading of
-    the field and its order of conditions. Without a node BC the step holds nothing and the protocol answers None. No
-    cold-start route reaches a network with node BCs today (#2568, #2923)."""
+    the field and its order of conditions. Without a node BC the step holds nothing and the protocol answers None.
+    GraphMFGSolver reaches a network with node BCs, with NetworkPolicyIterationHJBSolver, and this refusal fires there;
+    the other cold-start routes refuse one before their cold start (#2568, #2923)."""
     from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
     from mfgarchon.extensions.topology import NetworkMFGProblem
     from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
@@ -557,11 +558,12 @@ def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
     assert cold_start_density_at_level(m0, spec_mock, 1) is m0
 
 
-def test_a_wrapper_over_a_capped_fp_forwards_the_protocol_and_its_cap_is_honoured():
+def test_a_wrapper_over_a_capped_fp_forwards_the_protocol_and_solves():
     """A user's wrapper that hides a capped FP-FDM's ``boundary_conditions`` is not seen by the coupled route's cap
-    refusal, and the cap is honoured inside the solve (user ruling 2026-11-01). Under the user's ruling of 2026-11-24 it
-    defines or forwards ``prescribed_density``: forwarded, FP-FDM names no capped node, so the cold start keeps the
-    caller's density there and the solve runs; a wrapper that does neither is refused by name."""
+    refusal (user ruling 2026-11-01). Under the user's ruling of 2026-11-24, on a cold start it defines or forwards
+    ``prescribed_density``: forwarded, FP-FDM names no capped node, so the cold start keeps the caller's density there
+    and the solve runs; a wrapper that does neither is refused by name by the cold start. This checks the solve and the
+    cold start, not the cap."""
     q = _problem(dirichlet_bc(value=0.0, dimension=1))
     capped = BoundaryConditions(
         dimension=1,

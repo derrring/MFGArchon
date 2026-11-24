@@ -22,10 +22,11 @@
   - A non-finite or raising g(t_n) on the FP's own BC fails in the cold start, by the name the FP's step fails by.
     Where the HJB reads that g too, the solve now fails there, before the HJB, by the FP's name.
   - A `terminal_coupling` that is non-finite at the prescribed value, such as G'(m) = log m + 1 at an exit, passes
-    construction and is refused where the HJB reads the terminal value on the first iteration. The first iteration read
-    it at the caller's density there, and later ones at the remnant, so the value read depended on the iteration count.
+    construction and is refused where the HJB reads the terminal value on the first iteration (measured with HJB-FDM
+    under `problem.solve`). The first iteration read it at the caller's density there, and later ones at the remnant,
+    so the value read depended on the iteration count.
   - **API.** `initialize_cold_start` takes the FP solver as a required keyword, `fp_solver=`. An FP solver whose class
     does not define `prescribed_density` is refused by name in the cold start, a TypeError: define it, or forward it to
-    the solver it wraps, as a wrapper over a capped FP-FDM must, which then names no capped node; subclassing
-    `BaseFPSolver` gives None, which is right only where the step holds no node. Every FP solver class the library ships
-    subclasses `BaseFPSolver`.
+    the solver it wraps, as a wrapper over a capped FP-FDM must on a cold start, which then names no capped node;
+    subclassing `BaseFPSolver` gives None, which is right only where the step holds no node. Every FP solver class the
+    library ships subclasses `BaseFPSolver`.

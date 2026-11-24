@@ -436,7 +436,8 @@ class FixedPointIterator(BaseCouplingIterator):
         convergence_reason = "Maximum iterations reached"
         # True once self.M holds a density this solve's FP produced. The mass-conservation
         # measurement below is meaningful only then: before that, self.M is the cold start
-        # (constant mass by construction, so it measures as exactly 0.0) or a warm start
+        # (which no solve produced; with nothing prescribed its mass is constant and measures as
+        # exactly 0.0, #2991) or a warm start
         # (some other solve's output). Set where self.M is assigned, not at the exits, so
         # that a break after a completed FP step still reports its real number (Issue #1717).
         fp_output_available = False

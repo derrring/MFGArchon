@@ -496,8 +496,9 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
       (``_read_of_the_density``). A held source declared with any other slots is the check's own error, and raises. A
       boundary segment's callable value is read at the boundary probe nodes it governs (``segment_for_point``), where
       its type reads its value (``FIELDS_READ``): a NO_FLUX or REFLECTING segment's is not read, as its constant is not;
-    - m and v: the first Picard iteration hands the HJB the initial density at every t_n, and v the terminal value at
-      it, ``terminal_value(get_m_init())``, which is ``u_terminal`` without a terminal coupling; the FP is handed the
+    - m and v: the first Picard iteration hands the HJB the initial density at every t_n, but from t_1 on the FP's value
+      at a node it prescribes (#2991), and v the terminal value at it, ``terminal_value(get_m_init())``, which is
+      ``u_terminal`` without a terminal coupling; the FP is handed the
       initial density, with v only at T. So a callable that takes them is handed those values at its nodes, and the
       FP's source, if it takes v, is not read: no finite-volume scheme reads it at T. Where a terminal coupling is
       declared and the problem binds none (off a grid), v is the HJB solver's binding's, and what takes v is not read.

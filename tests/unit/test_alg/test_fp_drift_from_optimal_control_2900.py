@@ -566,9 +566,10 @@ def test_each_router_caller_hands_the_solver_so_the_own_control_is_read(caller):
 
 
 def test_regime_switching_takes_the_velocity_route_from_its_first_sweep():
-    """RegimeSwitchingIterator hands the router each regime's density trajectory from its first sweep, the cold start's
-    iterate (#2905, #2991), so FP-FDM reads the own optimal control on the velocity route, as it reads the library H's.
-    At f9a41a31 the first sweep handed it the single initial density, and FP-FDM refused."""
+    """RegimeSwitchingIterator hands the router a density trajectory from its first sweep (#2905), so FP-FDM reads the
+    own optimal control on the velocity route, as it reads the library H's. At f9a41a31 the first sweep handed it the
+    single initial density, and FP-FDM refused. On this no-flux layout the trajectory is m_initial at every level; that
+    it is the cold start's iterate is pinned by the decoupled sweep's congestion arm in #2991's pin file."""
 
     def run(kind):
         problems = [_problem(_library() if kind == "library" else _steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
