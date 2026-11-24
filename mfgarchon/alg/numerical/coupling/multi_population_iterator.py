@@ -31,7 +31,7 @@ from .base_mfg import (
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
-from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
+from .fixed_point_utils import cold_start_density_at_level, diverged_value_function, hjb_solver_sig_params
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
@@ -226,7 +226,7 @@ class MultiPopulationIterator:
             M_k = np.zeros((Nt + 1, Nx))
             M_k[0] = m0_k
             for n in range(1, Nt + 1):
-                M_k[n] = m0_k
+                M_k[n] = cold_start_density_at_level(m0_k, self.fp_solvers[k], n)
             M.append(M_k)
 
             # The terminal datum's one owner (#1642 stage 2); no population carries a terminal coupling (refused above).

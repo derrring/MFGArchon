@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse as sparse
@@ -16,10 +16,12 @@ from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volat
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
+    _capped_exit_nodes,
     _refuse_a_cap_off_upwind,
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
     initial_density_as_held,
+    prescribed_nodes_and_values,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -337,6 +339,29 @@ class FPFDMSolver(BaseFPSolver):
                 _NO_TIME_DERIVATIVE, 0.0, coupling_coefficient, spacing, u_flat, geometry, boundary_conditions,
             )  # fmt: skip
         return sparse.coo_matrix((values, (rows, cols)), shape=(total, total)).tocsr()
+
+    def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """The density the implicit step holds at level ``level``: its Dirichlet rows' nodes and values at t_level, read
+        by `prescribed_nodes_and_values`, the function the step's right-hand side reads them with (#2991). On the
+        problem's shared BC a Dirichlet face is an absorbing exit, 0 (#2512); on the solver's own DIRICHLET(g), g. None
+        when the step holds no node. A capped exit's node is not named: the step holds it at 0 only while its outflow
+        stays under the cap, so each step's active set decides its row (#2581), by `_capped_exit_nodes`, the read the
+        step makes."""
+        geometry = self.problem.geometry
+        shape = tuple(geometry.get_grid_shape())
+        nodes, values = prescribed_nodes_and_values(self.boundary_conditions, shape, geometry, level * self.problem.dt)
+        capped: dict[int, Any] = {}
+        if nodes and any(
+            seg.flux_capacity is not None for seg in getattr(self.boundary_conditions, "segments", None) or ()
+        ):
+            # Each node was read through `_grid_axes`, which takes only a CartesianGrid, the class that declares the
+            # spacing (#2490).
+            spacing = tuple(cast("CartesianGrid", geometry).get_grid_spacing())
+            capped = _capped_exit_nodes(self.boundary_conditions, nodes, shape, geometry, spacing)
+        held = [(node, value) for node, value in zip(nodes, values, strict=True) if node not in capped]
+        if not held:
+            return None
+        return np.asarray([n for n, _ in held], dtype=np.intp), np.asarray([v for _, v in held], dtype=np.float64)
 
     def solve_fp_system(
         self,

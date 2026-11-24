@@ -40,6 +40,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
+    cold_start_iterate,
     diverged_value_function,
     fp_solver_sig_params,
     hjb_solver_sig_params,
@@ -422,7 +423,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             s = np.zeros(x.shape[0])
             for j in range(K):
                 if j != k:
-                    m_j = Ms[j] if Ms[j].ndim == 1 else (Ms[j][n] if n < Ms[j].shape[0] else Ms[j][-1])
+                    m_j = Ms[j][n] if n < Ms[j].shape[0] else Ms[j][-1]
                     s += Q[j, k] * m_j  # inflow from j
             if problem_source is not None:
                 s = s + problem_source(t, x)
@@ -472,17 +473,21 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         self._assert_outflow_horizon_representable(K, Q)
         self._assert_fp_boundary_data_is_homogeneous(K, Q)
 
-        # Initialize: initial densities, then each regime's terminal condition from its one owner at that density, the
-        # density at t = T of the first sweep (#1642 stage 2), expanded to full time-space arrays.
-        Ms = [p.get_m_initial() for p in self._problems]
+        # Initialize: each regime's terminal condition from its one owner at its initial density, expanded to full
+        # time-space arrays, and each regime's density as the cold start's iterate, the one every reader of the first
+        # sweep reads -- its HJB, its sources, the inflow into the other regimes, the drift router and the early return:
+        # m_initial, except at a node the FP prescribes from level 1 on (#2991, #2905). The first sweep re-reads the
+        # terminal value at that density at t = T (#1642 stage 2).
+        m_initials = [p.get_m_initial() for p in self._problems]
         Us_full = []
         for k in range(K):
             p = self._problems[k]
             Nt = p.Nt
-            u_terminal = np.asarray(p.terminal_value(Ms[k], reader="RegimeSwitchingIterator"))
+            u_terminal = np.asarray(p.terminal_value(m_initials[k], reader="RegimeSwitchingIterator"))
             U_k = np.zeros((Nt + 1, len(u_terminal)))
             U_k[-1] = u_terminal
             Us_full.append(U_k)
+        Ms = [cold_start_iterate(m_initials[k], self._fp[k], self._problems[k].Nt) for k in range(K)]
 
         error_history = []
         integrates = [p.spatial_measure().integrate for p in self._problems]
@@ -494,11 +499,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
             # --- HJB step: solve K backward equations with cross-terms ---
             for k in range(K):
-                M_k = (
-                    Ms[k]
-                    if isinstance(Ms[k], np.ndarray) and Ms[k].ndim == 2
-                    else np.tile(Ms[k], (self._problems[k].Nt + 1, 1))
-                )
+                M_k = Ms[k]
                 # Issue #2666: regime k's own source, composed from the iterates this solve starts from.
                 hjb_source = self._make_hjb_source(
                     k,
@@ -549,15 +550,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     values = [Us_new[j] if j <= k else Us_full[j] for j in range(K)]
                     self._last_result = RegimeSwitchingResult(
                         values=values,
-                        # Same expansion the HJB step above applies: at iteration 0 `Ms`
-                        # still holds 1-D initial densities, against a docstring promising
-                        # (Nt+1, Nx).
-                        densities=[
-                            Ms[j]
-                            if isinstance(Ms[j], np.ndarray) and Ms[j].ndim == 2
-                            else np.tile(Ms[j], (self._problems[j].Nt + 1, 1))
-                            for j in range(K)
-                        ],
+                        densities=list(Ms),
                         converged=False,
                         iterations=iteration + 1,
                         error_history=error_history,
@@ -567,12 +560,11 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
             # --- FP step: solve K forward equations with mass transfer ---
             for k in range(K):
-                # Issue #2666: regime k's own FP source, composed from the density this solve replaces
-                # (tiled at iteration 0, when `Ms[k]` is still m_initial) and the U it consumes.
-                M_k = Ms[k] if Ms[k].ndim == 2 else np.tile(Ms[k], (self._problems[k].Nt + 1, 1))
-                fp_source = self._make_fp_source(k, K, Q, Ms, compose_fp_source(self._problems[k], M_k, Us_new[k]))
+                # Issue #2666: regime k's own FP source, composed from the density this solve replaces and the U it
+                # consumes.
+                fp_source = self._make_fp_source(k, K, Q, Ms, compose_fp_source(self._problems[k], Ms[k], Us_new[k]))
 
-                m0_k = Ms[k][0] if Ms[k].ndim == 2 else Ms[k]
+                m0_k = Ms[k][0]
                 # Issue #1315 (Refs #1043): route the value function through the
                 # drift-convention dispatcher instead of passing U as drift_field. After the
                 # v0.18.6 rename drift_field is the velocity alpha*, not the U-potential; for a
@@ -615,9 +607,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             # and on the map's output: after damping the change is `theta` times this one, so the
             # damping factor bought the verdict (#1684 item 7). Each regime's change is its relative L2
             # change in its own problem's measure, and the criterion takes the max over regimes (#2555).
-            # On iteration 0 `Ms[k]` is the 1-D m_initial while `Ms_new[k]` is the trajectory, so the
-            # density change is undefined and the sweep does not converge.
-            if all(Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim for k in range(K)):
+            # The first sweep's input density is the cold start, which no sweep produced, so its change is not a
+            # sweep's change: the first sweep is not measured and does not converge.
+            if iteration > 0:
                 per_regime = [
                     sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(K)
                 ]
@@ -638,7 +630,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             theta = self._damping
             for k in range(K):
                 Us_new[k] = theta * Us_new[k] + (1 - theta) * Us_full[k]
-                if Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim:
+                if iteration > 0:  # the first sweep takes the FP's density whole
                     Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms[k]
 
             error_history.append(error)

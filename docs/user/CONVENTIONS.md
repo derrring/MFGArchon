@@ -422,10 +422,18 @@ these states, and a test holds the reads inside them for every member. A solver 
   NO_FLUX or REFLECTING segment's is not read, as its constant is not;
 - **$m$ and $v$**: the first Picard iteration hands the HJB the initial density at every $t_n$, and $v$ the terminal
   value at it, `terminal_value(get_m_init())`: `u_terminal`, plus the terminal coupling's derivative where one is
-  declared. It hands the FP the initial density, with $v$ only at $T$. So a callable that takes them is read with those
-  values at its nodes. A `source_term_fp` that takes $v$ is not read, since no finite-volume scheme reads it at $T$;
-  and where a terminal coupling is declared off a grid, which the problem does not bind, $v$ is the HJB solver's
-  binding's, and nothing that takes $v$ is read;
+  declared. From $t_1$ on, a node the FP solver's step prescribes holds that value instead
+  (`BaseFPSolver.prescribed_density`, #2991); under `problem.solve` that is a node of a Dirichlet face, which the FP
+  reads as an exit, so 0. There the owner reads the initial density where the first iteration hands 0: in
+  `terminal_coupling` and what takes the $v$ it makes, judged at every node at $T$ (below), on a grid too; at a probe
+  node on a mesh whose boundary is not the box; and in a callable that reads the density beyond its own node, such as
+  a nonlocal `coupling_cost`. A `terminal_coupling` that is non-finite at that value, such as $G'(m) = \log m + 1$ at
+  an exit, passes construction and is refused where the HJB reads $v$ on the first iteration ("`U_terminal` is
+  non-finite", #2975; run with HJB-FDM under `problem.solve`; user ruling 2026-11-24). The first iteration hands the
+  FP the initial density, with $v$ only at $T$. So a callable that takes them is read with those values at its nodes.
+  A `source_term_fp` that takes $v$ is not read, since no finite-volume scheme reads it at $T$; and where a terminal
+  coupling is declared off a grid, which the problem does not bind, $v$ is the HJB solver's binding's, and nothing that
+  takes $v$ is read;
 - `coupling_cost` as its derivative at the initial density (`_coupling_part`), and `nonlocal_operator` applied to that
   $v$, each evaluated on the whole grid and judged at the probe nodes off the boundary, as above; `terminal_coupling`
   through `terminal_value`, at $T$, at every node, since at $T$ the terminal value is the solution;
@@ -1587,7 +1595,9 @@ solver whose BC carries one: paired with an HJB that reads $u = g$ at the exit i
 $c \to 0$ the FP side becomes a wall while the HJB side stays an exit (user rulings 2026-10-10 and 2026-10-31). The
 exit a coupled MFG is to use is the finite-rate one, #2581's PR 3, not yet implemented. The refusal reads the FP solver
 a coupled solver is handed: a user's object that wraps a capped FP-FDM and hides its BC is not seen, as a user's own
-coupling loop around `solve_fp_system` is not (user ruling 2026-11-01). FP-FDM honours it on a `DIRICHLET` exit with value 0 of
+coupling loop around `solve_fp_system` is not (user ruling 2026-11-01). [AMENDED 2026-11-24, user ruling, #2991] Such a
+wrapper defines `BaseFPSolver.prescribed_density` or forwards it to the FP-FDM it wraps, which names no capped node; a
+cold start refuses one that does neither, by name. FP-FDM honours it on a `DIRICHLET` exit with value 0 of
 its own `boundary_conditions`, on `divergence_upwind`, as an active set within each implicit step: every exit node
 starts absorbing; a node whose outflow over the step would exceed $c\,|\text{face}|\,\Delta t$ takes the `FLUX(c)` row,
 and the step is solved again until no absorbing node exceeds its cap. A node's outflow is read off its no-flux row, the

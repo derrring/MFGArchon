@@ -48,7 +48,7 @@ from mfgarchon.core.mfg_problem import _call_problem_source
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
-from .fixed_point_utils import diverged_value_function
+from .fixed_point_utils import cold_start_iterate, diverged_value_function
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -210,8 +210,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         refuse_a_capped_exit_in_a_coupled_solve(self._fp, "GraphMFGSolver.solve")
         N = self._N
 
-        # Initialize: initial densities, then each node's terminal condition from its one owner at that density, the
-        # density at t = T of the first sweep (#1642 stage 2).
+        # Initialize: initial densities, then each node's terminal condition from its one owner at that density; the
+        # first sweep re-reads it at its density at t = T, which holds the FP's prescribed value at its nodes (#1642
+        # stage 2, #2991).
         Ms = []
         for k in range(N):
             m_init = self._problems[k].get_m_initial()
@@ -377,11 +378,10 @@ class GraphMFGSolver(BaseCouplingIterator):
         return self._last_result
 
     def _expand_density(self, k: int, m: NDArray) -> NDArray:
-        """Expand density to (Nt+1, Nx) if needed."""
+        """Expand the initial density to (Nt+1, Nx), the first sweep's iterate (`cold_start_iterate`, #2991)."""
         if isinstance(m, np.ndarray) and m.ndim == 2:
             return m
-        Nt = self._problems[k].Nt
-        return np.tile(m, (Nt + 1, 1))
+        return cold_start_iterate(m, self._fp[k], self._problems[k].Nt)
 
     def _compose_hjb_source(
         self,

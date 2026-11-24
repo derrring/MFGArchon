@@ -226,6 +226,22 @@ class FPNetworkSolver(BaseFPSolver):
             if self.dt > self.dt_stable:
                 print(f"Warning: dt={self.dt:.2e} > dt_stable={self.dt_stable:.2e}")
 
+    def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """None when the network carries no node BC, where the step applies none (``_node_applicator is None``). With one,
+        refused (#2991): the step holds an ABSORBING node at 0 and a SOURCE node at its value, and naming them would need
+        three things the step does not share -- a SOURCE value is read at t_n for level n + 1, a CUSTOM rule reads the
+        field the step hands it, and the conditions apply in order, the last write winning. A graph whose node BCs are
+        DIRICHLET or NEUMANN only, which do not touch the density, is refused too."""
+        if self._node_applicator is None:
+            return None
+        raise NotImplementedError(
+            f"{type(self).__name__}.prescribed_density: this network carries node boundary conditions, and the step "
+            "holds an ABSORBING node at 0 and a SOURCE node at its value. Naming them would need three things the step "
+            "does not share: a SOURCE value read at t_n for level n + 1, a CUSTOM rule that reads the field it is "
+            "handed, and the conditions' order, the last write winning. A graph whose node BCs are DIRICHLET or NEUMANN "
+            "only, which do not touch the density, is refused too (#2991)."
+        )
+
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,

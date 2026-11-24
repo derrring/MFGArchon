@@ -407,6 +407,9 @@ class TestBlockIteratorFPDriftConvention:
 
             problem = problem_l1  # the problem it was built for, whose geometry the coupler compares (#2775)
 
+            def prescribed_density(self, level):
+                return None  # its step holds no node the cold start asks about (#2991)
+
             def solve_fp_system(
                 self,
                 M_initial: np.ndarray,

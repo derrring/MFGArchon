@@ -472,7 +472,8 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
 
     It reads only states that every `NumericalScheme` that solves the problem hands each callable, as #2974's
     recording census over the enum found them and its R1 test pins them, and each through the function the solve reads
-    it with, handed what the iterator's cold start hands: m from ``get_m_init``, v from ``terminal_value`` at it.
+    it with, handed what the iterator's cold start hands: m from ``get_m_init``, v from ``terminal_value`` at it, but at
+    a node the FP prescribes from level 1 on (#2991).
     Expert-mode solvers, which ``problem.solve`` is handed rather than builds, and the iterator's warm start
     (``set_warm_start_data``), which ``problem.solve`` does not offer, are outside that census.
 
@@ -495,8 +496,9 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
       (``_read_of_the_density``). A held source declared with any other slots is the check's own error, and raises. A
       boundary segment's callable value is read at the boundary probe nodes it governs (``segment_for_point``), where
       its type reads its value (``FIELDS_READ``): a NO_FLUX or REFLECTING segment's is not read, as its constant is not;
-    - m and v: the first Picard iteration hands the HJB the initial density at every t_n, and v the terminal value at
-      it, ``terminal_value(get_m_init())``, which is ``u_terminal`` without a terminal coupling; the FP is handed the
+    - m and v: the first Picard iteration hands the HJB the initial density at every t_n, but from t_1 on the FP's value
+      at a node it prescribes (#2991), and v the terminal value at it, ``terminal_value(get_m_init())``, which is
+      ``u_terminal`` without a terminal coupling; the FP is handed the
       initial density, with v only at T. So a callable that takes them is handed those values at its nodes, and the
       FP's source, if it takes v, is not read: no finite-volume scheme reads it at T. Where a terminal coupling is
       declared and the problem binds none (off a grid), v is the HJB solver's binding's, and what takes v is not read.
@@ -780,9 +782,12 @@ def _refuse_a_non_finite_read_of_the_bound_terms(
 
     - ``coupling_cost`` through `_coupling_part`, with the problem's own binding, at ``m_initial`` and the interior
       times;
-    - ``terminal_coupling`` through ``problem.terminal_value(m_initial)``, the iterator's cold start, at T;
+    - ``terminal_coupling`` through ``problem.terminal_value(m_initial)``, the iterator's cold start at T but at a node
+      the FP prescribes, where the first iteration hands the FP's value (#2991; CONVENTIONS, § *What construction
+      refuses as non-finite*);
     - what takes v -- ``source_term_hjb`` taking v, through `_call_problem_source`, and ``nonlocal_operator`` -- at the
-      v the first iteration hands: ``terminal_value(m_initial)``, which every row of the cold start holds. Where a
+      v the first iteration hands: ``terminal_value(m_initial)``, at the density every row of the cold start holds but
+      at a node the FP prescribes from level 1 on. Where a
       terminal coupling is declared and the problem binds none (off a grid), that v is the HJB solver's binding's, which
       construction does not have: ``terminal_value`` refuses there, and what takes v is not read.
 

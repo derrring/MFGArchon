@@ -217,7 +217,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         Retrieve the initial density and the terminal value function from the problem.
 
         The initial density is the problem's ``get_m_init()``; the terminal value is its one owner,
-        ``problem.terminal_value``, at that density, which a cold start writes into every row (#1642 stage 2).
+        ``problem.terminal_value``, at that density, which a cold start writes into every row but at a node the FP
+        prescribes from level 1 on (#1642 stage 2, #2991).
 
         Args:
             shape: Spatial grid shape
@@ -323,7 +324,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                     self.M[0] = M_initial
                     self.U[num_time_steps - 1] = U_terminal
 
-                self.U, self.M = initialize_cold_start(self.U, self.M, M_initial, U_terminal, num_time_steps)
+                self.U, self.M = initialize_cold_start(
+                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
+                )
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)

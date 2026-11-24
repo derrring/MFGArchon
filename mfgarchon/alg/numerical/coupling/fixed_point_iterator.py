@@ -219,8 +219,8 @@ class FixedPointIterator(BaseCouplingIterator):
         density (#1642).
         """
         M_initial = self._reshape_to(self.problem.get_m_init(), shape)
-        # The terminal datum's one owner (#1642 stage 2). A cold start writes M_initial into every row, so it is the
-        # density at t = T of the first iterate; each iteration re-reads it at the density its HJB solve uses.
+        # The terminal datum's one owner (#1642 stage 2), at M_initial, which a cold start writes into every row but at
+        # a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB solve uses.
         return M_initial, self._reshape_to(
             self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__),
             shape,
@@ -392,7 +392,9 @@ class FixedPointIterator(BaseCouplingIterator):
                     self.U[num_time_steps - 1] = U_terminal
 
                 # Initialize interior with boundary conditions
-                self.U, self.M = initialize_cold_start(self.U, self.M, M_initial, U_terminal, num_time_steps)
+                self.U, self.M = initialize_cold_start(
+                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
+                )
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)
@@ -434,7 +436,8 @@ class FixedPointIterator(BaseCouplingIterator):
         convergence_reason = "Maximum iterations reached"
         # True once self.M holds a density this solve's FP produced. The mass-conservation
         # measurement below is meaningful only then: before that, self.M is the cold start
-        # (constant mass by construction, so it measures as exactly 0.0) or a warm start
+        # (which no solve produced; with nothing prescribed its mass is constant and measures as
+        # exactly 0.0, #2991) or a warm start
         # (some other solve's output). Set where self.M is assigned, not at the exits, so
         # that a break after a completed FP step still reports its real number (Issue #1717).
         fp_output_available = False
@@ -827,8 +830,9 @@ class FixedPointIterator(BaseCouplingIterator):
         if not fp_output_available:
             # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
             # density. Two ways to get here, and the number would be wrong differently in each:
-            # from a cold start, initialize_cold_start writes M_initial into every row, so mass
-            # is constant by construction and measures as exactly 0.0 -- the best possible value
+            # from a cold start, self.M is initialize_cold_start's construction -- M_initial in every
+            # row, except where the FP prescribes a value (#2991) -- so its mass describes that
+            # construction, and with nothing prescribed measures as exactly 0.0, the best possible value
             # for a solve that never ran; from a warm start, self.M is some other solve's output,
             # so any number describes that solve rather than this one. Neither is a measurement
             # of this solve, and the None sentinel exists so that cannot masquerade as one.

@@ -25,7 +25,7 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.utils.solver_result import SolverResult
@@ -63,12 +63,47 @@ def hjb_solver_sig_params(hjb_solver: BaseHJBSolver) -> set[str] | None:
         return None
 
 
+def cold_start_density_at_level(M_initial: np.ndarray, fp_solver: BaseFPSolver, level: int) -> np.ndarray:
+    """A cold start's density at the later level ``level`` (1, ..., Nt): ``M_initial``, except at a node the FP
+    solver's step prescribes, which holds the step's value at that level (`BaseFPSolver.prescribed_density`). Each
+    sweep blends the FP's row into the iterate, so a node started off the prescribed value p kept a remnant
+    prod(1 - theta_j)(M_initial - p) there after any finite number of sweeps (#2991).
+
+    Raises:
+        TypeError: ``fp_solver``'s class (``__class__``, the class ``isinstance`` reads) does not define
+            ``prescribed_density``.
+    """
+    if getattr(fp_solver.__class__, "prescribed_density", None) is None:
+        raise TypeError(
+            f"{fp_solver.__class__.__name__} does not define `prescribed_density`, which a cold start asks for the "
+            "density the FP's step holds at a node: define it on the class, or forward it there to the solver it wraps "
+            "(an instance attribute or `__getattr__` is not read), returning the flat indices its step holds whatever it "
+            "is handed and their values; subclassing `BaseFPSolver` gives None, which is right only where its step holds "
+            "no node (#2991)"
+        )
+    prescribed = fp_solver.prescribed_density(level)
+    if prescribed is None:
+        return M_initial
+    nodes, values = prescribed
+    held = np.array(M_initial, dtype=np.float64, copy=True)
+    held.flat[nodes] = values  # C-order positions whatever the copy's layout; reshape(-1) of an F-order copy is a copy
+    return held
+
+
+def cold_start_iterate(M_initial: np.ndarray, fp_solver: BaseFPSolver, Nt: int) -> np.ndarray:
+    """A cold start's whole density iterate, levels 0, ..., Nt stacked on a new first axis: ``M_initial`` at level 0
+    and `cold_start_density_at_level` at each later level (#2991)."""
+    return np.stack([M_initial] + [cold_start_density_at_level(M_initial, fp_solver, n) for n in range(1, Nt + 1)])
+
+
 def initialize_cold_start(
     U: np.ndarray,
     M: np.ndarray,
     M_initial: np.ndarray,
     U_terminal: np.ndarray,
     Nt: int,
+    *,
+    fp_solver: BaseFPSolver,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Initialize U and M arrays for cold start (no warm start provided).
@@ -77,14 +112,16 @@ def initialize_cold_start(
     - U[Nt-1, :] = U_terminal (terminal condition)
     - M[0, :] = M_initial (initial condition)
     - U[0:Nt-1, :] = U_terminal (interior initialized with terminal condition)
-    - M[1:Nt, :] = M_initial (interior initialized with initial condition)
+    - M[1:Nt, :] = M_initial (interior initialized with initial condition), except at a node ``fp_solver``'s step
+      prescribes, which holds its value at that level (`cold_start_density_at_level`, #2991)
 
     Args:
         U: Value function array to initialize (modified in-place)
         M: Density array to initialize (modified in-place)
         M_initial: Initial density distribution m_0(x)
         U_terminal: The terminal value at the initial density, ``problem.terminal_value(M_initial)``
-        Nt: Number of time steps
+        Nt: Number of time levels, the arrays' first axis
+        fp_solver: The FP solver the route steps with, asked what its step prescribes
 
     Returns:
         Tuple of (initialized U, initialized M)
@@ -101,7 +138,7 @@ def initialize_cold_start(
     for n_time_idx in range(Nt - 1):
         U[n_time_idx, :] = U_terminal
     for n_time_idx in range(1, Nt):
-        M[n_time_idx, :] = M_initial
+        M[n_time_idx, :] = cold_start_density_at_level(M_initial, fp_solver, n_time_idx)
 
     return U, M
 

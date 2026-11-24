@@ -213,6 +213,7 @@ def test_fixed_point_nan_early_termination():
     # Mock FP solver: returns valid density
     fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
+    fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.return_value = np.ones((num_time_steps, *spatial_shape)) / Nx
     # #2188: this FP step completes, so the iterator reaches the override call. A bare Mock would
     # fabricate a truthy Mock there and put it in SolverResult.mass_conservation_error, whose
@@ -282,6 +283,7 @@ def test_fp_is_not_solved_after_hjb_returns_nonfinite():
 
     fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
+    fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = fp_side_effect
     fp_solver.mass_conservation_error_override.return_value = None  # #2188, see above
 
@@ -319,6 +321,7 @@ def test_mass_conservation_is_unmeasured_when_fp_never_ran():
     hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
     fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
+    fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
 
     result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
@@ -361,6 +364,7 @@ def test_mass_conservation_is_still_measured_when_fp_ran_before_the_divergence()
     losing_mass = np.ones(shape) / Nx * np.linspace(1.0, 0.1, shape[0])[:, None]
     fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
+    fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: losing_mass
     # #2188: a real BaseFPSolver's mass_conservation_error_override() returns None by default,
     # meaning "nothing solver-specific, use the generic grid measurement below". A bare Mock
@@ -400,6 +404,7 @@ def test_terminal_condition_survives_an_hjb_divergence():
     hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
     fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
+    fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
 
     result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
