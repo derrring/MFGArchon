@@ -34,7 +34,12 @@ from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 
-from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
+from .base_mfg import (
+    BaseCouplingIterator,
+    assert_paired_solver_geometry,
+    assert_paired_solver_sigma,
+    refuse_retired_solve_keywords,
+)
 from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
@@ -296,6 +301,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         Returns:
             (U, M, info): Solution and convergence information
         """
+        refuse_retired_solve_keywords(kwargs, "NewtonMFGSolver.solve")
         start_time = time.time()
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
 

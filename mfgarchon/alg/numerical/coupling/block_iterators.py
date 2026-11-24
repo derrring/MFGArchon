@@ -50,6 +50,7 @@ from .base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     refuse_a_capped_exit_in_a_coupled_solve,
+    refuse_retired_solve_keywords,
 )
 from .damping_run import DampingRun
 from .fixed_point_utils import (
@@ -619,6 +620,7 @@ class BlockIterator(BaseCouplingIterator):
         Returns:
             SolverResult with solution and convergence info
         """
+        refuse_retired_solve_keywords(kwargs, f"{type(self).__name__}.solve")
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
         start_time = time.time()
 

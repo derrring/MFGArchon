@@ -56,15 +56,34 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None
             )
 
 
-#: The keywords a coupling iterator's ``solve()`` no longer takes, with what replaces each. ``FixedPointIterator.solve``
-#: and ``FictitiousPlayIterator.solve`` keep ``**kwargs`` -- ``problem.solve()`` passes ``verbose=`` through the first,
-#: and the second reads ``verbose`` from it -- so these would be accepted in silence; they are refused by name instead.
+#: The keywords a coupling iterator's ``solve()`` no longer takes, with what replaces each. The solves of
+#: ``FixedPointIterator``, ``FictitiousPlayIterator``, the Block iterators and ``NewtonMFGSolver`` keep ``**kwargs`` --
+#: ``problem.solve()`` passes ``verbose=`` through the first, and the second reads ``verbose`` from it -- so these would
+#: be accepted in silence; they are refused by name instead. The damping keywords were the routes' constructors' until
+#: #2997, and a solve swallowed them silently.
+_DAMPING = "damping is the constructor's damping= (a DampingPolicy, #2997), or a config's PicardConfig.damping"
 RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
     "return_tuple": "solve() returns a SolverResult",
     "Niter_max": "pass max_iterations=",
     "max_picard_iterations": "pass max_iterations=",
     "l2errBoundPicard": "pass tolerance=",
     "picard_tolerance": "pass tolerance=",
+    "relaxation": _DAMPING,
+    "relaxation_M": _DAMPING,
+    "relaxation_schedule": _DAMPING,
+    "relaxation_schedule_M": _DAMPING,
+    "adaptive_relaxation": _DAMPING,
+    "adaptive_relaxation_decay": _DAMPING,
+    "adaptive_relaxation_min": _DAMPING,
+    "use_anderson": _DAMPING,
+    "anderson_depth": _DAMPING,
+    "anderson_beta": _DAMPING,
+    "anderson_memory": _DAMPING,
+    "learning_rate_schedule": _DAMPING,
+    "initial_learning_rate": _DAMPING,
+    "min_learning_rate": _DAMPING,
+    "damp_value_function": _DAMPING,
+    "picard_damping": _DAMPING,
 }
 
 
