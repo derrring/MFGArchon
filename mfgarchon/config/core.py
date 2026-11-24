@@ -127,9 +127,11 @@ class PicardConfig(BaseConfig):
         quantity (#2555).
     damping : DampingPolicy | None
         How U and M are damped, one policy per field (#2997): their base thetas, schedules, floors, adaptation and
-        first sweep, and Anderson acceleration on U. ``mfgarchon.config.damping`` states the rule. None (default) leaves
-        the route's own damping, its constructor's ``damping=``; a policy set here decides instead, and a route given a
-        damping both here and at its constructor refuses the solve (the user's ruling of 2026-11-24).
+        first sweep, and Anderson acceleration on U. ``mfgarchon.config.damping`` states the rule. It is read by the
+        routes whose solve takes a config, ``FixedPointIterator`` and ``FictitiousPlayIterator``: None (default) leaves
+        the route's own damping, its constructor's ``damping=``; a policy set here decides instead, and a damping given
+        both here and at the constructor refuses the solve (the user's ruling of 2026-11-24). The Block iterators and
+        ``NewtonMFGSolver`` take no config; their damping is the constructor's alone.
     verbose : bool
         Print iteration progress (default: True)
     """

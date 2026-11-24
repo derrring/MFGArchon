@@ -15,8 +15,10 @@
   - Attributes: `FixedPointIterator`'s `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`,
     `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson` and
     `anderson_accelerator`; the Block iterators' `relaxation` and `relaxation_M`; `FictitiousPlayIterator`'s
-    `initial_learning_rate`, `min_learning_rate` and `damp_value_function`; `NewtonMFGSolver`'s `picard_damping`. Each
-    route's `damping` holds the policy.
+    `initial_learning_rate`, `min_learning_rate` and `damp_value_function`; `NewtonMFGSolver`'s `picard_damping` and
+    `total_iterations`. Each route's `damping` holds its constructor's policy: given none, the Block iterators and
+    `NewtonMFGSolver` hold their default, and `FixedPointIterator` and `FictitiousPlayIterator` hold None, since a
+    solve's config or the route's default then decides.
   - Result metadata: `FictitiousPlayIterator`'s `learning_rate_schedule` and `damp_value_function`, and the Block
     iterators' `relaxation`, replaced by `damping`, the policy applied; `NewtonMFGSolver`'s `total_iterations`, replaced
     by `SolverResult.iterations`, the sweeps whose change was measured.

@@ -76,8 +76,9 @@ class FieldDamping:
             raise ValueError(f"FieldDamping: schedule must be one of {SCHEDULES} or a callable, got {self.schedule!r}")
         if not 0.0 <= self.floor <= 1.0:
             raise ValueError(f"FieldDamping: floor must be in [0, 1], got {self.floor!r}")
-        if not isinstance(self.adaptive, bool):
+        if not isinstance(self.adaptive, (bool, np.bool_)):
             raise TypeError(f"FieldDamping: adaptive must be a bool, got {self.adaptive!r}")
+        object.__setattr__(self, "adaptive", bool(self.adaptive))
         if not 0.0 < self.adaptive_decay < 1.0:
             raise ValueError(f"FieldDamping: adaptive_decay must be in (0, 1), got {self.adaptive_decay!r}")
         if self.first_sweep not in ("damped", "whole"):
@@ -99,8 +100,8 @@ class AndersonOptions:
     def _check_mixing(self) -> None:
         """``beta``, the accelerator's mixing, in (0, 1]. It is named like a Robin coefficient, so #2512's coefficient scan
         allows this method by name, and only this one."""
-        if not 0.0 < self.beta <= 1.0:
-            raise ValueError(f"AndersonOptions: beta must be in (0, 1], got {self.beta!r}")
+        if isinstance(self.beta, bool) or not 0.0 < self.beta <= 1.0:
+            raise ValueError(f"AndersonOptions: beta must be a number in (0, 1], got {self.beta!r}")
 
 
 @dataclass(frozen=True)

@@ -1197,8 +1197,10 @@ outer and the Newton tolerance bound is in § *The measure*, *What a tolerance b
 The fixed-point damping is `damping=`, a `DampingPolicy` (`mfgarchon.config.damping`): one `FieldDamping` for U and
 one for M, each with its theta, schedule, floor, adaptation and first-sweep rule, and Anderson acceleration on U.
 `FixedPointIterator`, the Block iterators, `FictitiousPlayIterator` and `NewtonMFGSolver` take it (#2997).
-`PicardConfig.damping` holds one for a solve run from a config: set, it decides; left None, the default, the route keeps
-its own; a damping given to both the constructor and the config is refused. `GraphMFGSolver` and
+`PicardConfig.damping` holds one for a solve run from a config, on the two routes whose solve takes one,
+`FixedPointIterator` and `FictitiousPlayIterator`: set, it decides; left None, the default, the route keeps its own; a
+damping given to both the constructor and the config is refused. The Block iterators and `NewtonMFGSolver` take no
+config, and their solves accept a `config=` without reading it (#2922), so their damping is the constructor's alone. `GraphMFGSolver` and
 `RegimeSwitchingIterator` still take a number as `damping=`, and `MultiPopulationIterator` takes `relaxation=`, until
 #2997's stage 1b.
 
@@ -1704,7 +1706,8 @@ free-form dict, is not Python's to refuse:
 
 - the solves of `FixedPointIterator`, `FictitiousPlayIterator`, the Block iterators and `NewtonMFGSolver` keep a
   `**kwargs` and refuse `return_tuple`, `Niter_max`, `max_picard_iterations`, `l2errBoundPicard`, `picard_tolerance`,
-  the damping keywords #2997 removed, and `damping` itself, which is the constructor's or the config's, by name;
+  the damping keywords #2997 removed, and `damping` itself, by name, saying where the route takes a damping: its
+  constructor's `damping=`, and on `FixedPointIterator` and `FictitiousPlayIterator` also `PicardConfig.damping`;
 - `MFGProblem` refuses a key of the free-form `components.parameters` dict named after one of the 14 inputs it no
   longer reads, and accepts any other key;
 - those solves, past those names, accept and ignore a keyword they do not read (#2922).

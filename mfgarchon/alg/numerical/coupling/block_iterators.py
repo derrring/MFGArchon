@@ -621,7 +621,7 @@ class BlockIterator(BaseCouplingIterator):
         Returns:
             SolverResult with solution and convergence info
         """
-        refuse_retired_solve_keywords(kwargs, f"{type(self).__name__}.solve")
+        refuse_retired_solve_keywords(kwargs, self)
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
         start_time = time.time()
 

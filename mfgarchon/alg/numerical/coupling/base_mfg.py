@@ -63,7 +63,8 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None
 #: ``problem.solve()`` passes ``verbose=`` through the first, and the second reads ``verbose`` from it -- so these would
 #: be accepted in silence; they are refused by name instead. The damping keywords were the routes' constructors' until
 #: #2997, and a solve swallowed them silently.
-_DAMPING = "damping is the constructor's damping= (a DampingPolicy, #2997), or a config's PicardConfig.damping"
+#: Marks a retired keyword whose replacement is the route's damping; the refusal says where that goes on this route.
+_DAMPING = "the route's damping"
 RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
     "return_tuple": "solve() returns a SolverResult",
     "Niter_max": "pass max_iterations=",
@@ -88,11 +89,18 @@ RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
     "picard_damping": _DAMPING,
 }
 
-#: Keywords a ``solve()`` never took, which belong to the constructor or the config: refused by name, saying where to
-#: pass the value instead, since those ``**kwargs`` would accept them in silence (#2997).
-CONSTRUCTOR_KEYWORDS: dict[str, str] = {
-    "damping": "pass it as the constructor's damping=, or set PicardConfig.damping in the solve's config (#2997)",
-}
+#: Keywords a ``solve()`` never took, which belong elsewhere on the route: refused by name, saying where to pass the value
+#: instead, since those ``**kwargs`` would accept them in silence (#2997).
+CONSTRUCTOR_KEYWORDS: frozenset[str] = frozenset({"damping"})
+
+
+def _where_damping_goes(solver: Any, what: str) -> str:
+    """Where a damping goes on this route: its constructor's ``damping=``, and ``PicardConfig.damping`` only where its
+    ``solve`` takes a config. The Block iterators' and Newton's do not: their ``**kwargs`` swallow ``config=`` (#2922),
+    so naming the config there would advise a solve that ignores it (#2997 review 2)."""
+    takes_config = "config" in inspect.signature(solver.solve).parameters
+    config = ", or set PicardConfig.damping in the solve's config" if takes_config else ""
+    return f"pass {what} as the constructor's damping={config} (#2997)"
 
 
 def damping_argument(damping: Any, route: str) -> DampingPolicy | None:
@@ -122,13 +130,17 @@ def damping_for_the_solve(
     return given if given is not None else default
 
 
-def refuse_retired_solve_keywords(kwargs: dict[str, Any], where: str) -> None:
-    """Refuse a keyword `RETIRED_SOLVE_KEYWORDS` or `CONSTRUCTOR_KEYWORDS` names, saying what to pass instead."""
+def refuse_retired_solve_keywords(kwargs: dict[str, Any], solver: Any) -> None:
+    """Refuse a keyword `RETIRED_SOLVE_KEYWORDS` or `CONSTRUCTOR_KEYWORDS` names, saying what to pass instead on
+    ``solver``'s route."""
+    where = f"{type(solver).__name__}.solve"
     for name in kwargs:
         if name in RETIRED_SOLVE_KEYWORDS:
-            raise TypeError(f"{where}() no longer takes {name}=: {RETIRED_SOLVE_KEYWORDS[name]}.")
+            reason = RETIRED_SOLVE_KEYWORDS[name]
+            reason = _where_damping_goes(solver, "a DampingPolicy") if reason == _DAMPING else reason
+            raise TypeError(f"{where}() no longer takes {name}=: {reason}.")
         if name in CONSTRUCTOR_KEYWORDS:
-            raise TypeError(f"{where}() does not take {name}=: {CONSTRUCTOR_KEYWORDS[name]}.")
+            raise TypeError(f"{where}() does not take {name}=: {_where_damping_goes(solver, 'it')}.")
 
 
 def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:

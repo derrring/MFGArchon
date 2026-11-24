@@ -315,7 +315,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             in its metadata (convergence_reason, picard and newton residuals, ...). The iteration count is
             `SolverResult.iterations` alone: the sweeps whose change was measured.
         """
-        refuse_retired_solve_keywords(kwargs, "NewtonMFGSolver.solve")
+        refuse_retired_solve_keywords(kwargs, self)
         start_time = time.time()
         self._changes = ([], [])
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)

@@ -8,7 +8,12 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
-from mfgarchon.alg.numerical.coupling import BlockGaussSeidelIterator, FictitiousPlayIterator, FixedPointIterator
+from mfgarchon.alg.numerical.coupling import (
+    BlockGaussSeidelIterator,
+    BlockJacobiIterator,
+    FictitiousPlayIterator,
+    FixedPointIterator,
+)
 from mfgarchon.alg.numerical.coupling.damping_run import DampingRun
 from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
@@ -134,29 +139,30 @@ def _strongly_coupled():
     )
 
 
-def _five_sweeps(route, damping):
+def _ten_sweeps(route, damping):
     problem = _strongly_coupled()
     pair = (problem, HJBFDMSolver(problem), FPFDMSolver(problem))
     if route is NewtonMFGSolver:
-        solver = NewtonMFGSolver(*pair, picard_warmup=5, newton_max_iterations=1, damping=damping)
-        result = solver.solve(max_iterations=6, tolerance=1e-6, verbose=False)
+        solver = NewtonMFGSolver(*pair, picard_warmup=10, newton_max_iterations=1, damping=damping)
+        result = solver.solve(max_iterations=11, tolerance=1e-6, verbose=False)
     else:
-        result = route(*pair, damping=damping).solve(max_iterations=5, tolerance=1e-6, verbose=False)
-    return np.concatenate([np.asarray(result.error_history_U)[:5], np.asarray(result.error_history_M)[:5]])
+        result = route(*pair, damping=damping).solve(max_iterations=10, tolerance=1e-6, verbose=False)
+    return np.concatenate([np.asarray(result.error_history_U)[:10], np.asarray(result.error_history_M)[:10]])
 
 
 def test_each_route_adapts_as_fixed_point_does():
     """Ruling 9 on every route: at theta 1 on a strongly coupled problem the four routes take one path, so with both
-    fields adaptive each route's first five changes are FixedPoint's, bit for bit. The control: FixedPoint's own changes
+    fields adaptive each route's first ten changes are FixedPoint's, bit for bit. The control: FixedPoint's own changes
     move with adaptation, from the fourth sweep, after M's base decays at the second and U's at the third. A
     mutation-verified convention pin: a route that never observes, adapts on another measure, or applies a decay at the
-    sweep it observed fails it."""
+    sweep it observed fails it; ten sweeps, since FictitiousPlay adapting on its averaged belief parts from FixedPoint
+    only at the eighth (#2997 review 2)."""
     adaptive = FieldDamping(theta=1.0, adaptive=True)
     policy = DampingPolicy(U=adaptive, M=adaptive)
-    reference = _five_sweeps(FixedPointIterator, policy)
-    assert not np.array_equal(reference, _five_sweeps(FixedPointIterator, DampingPolicy.constant(1.0)))
+    reference = _ten_sweeps(FixedPointIterator, policy)
+    assert not np.array_equal(reference, _ten_sweeps(FixedPointIterator, DampingPolicy.constant(1.0)))
     for route in (BlockGaussSeidelIterator, FictitiousPlayIterator, NewtonMFGSolver):
-        assert np.array_equal(_five_sweeps(route, policy), reference), f"{route.__name__} adapts unlike FixedPoint"
+        assert np.array_equal(_ten_sweeps(route, policy), reference), f"{route.__name__} adapts unlike FixedPoint"
 
 
 @pytest.mark.parametrize("route", [FixedPointIterator, FictitiousPlayIterator])
@@ -180,3 +186,45 @@ def test_a_config_damping_decides_and_one_given_twice_is_refused(route):
     assert not np.array_equal(solve(None, None), from_constructor)
     with pytest.raises(ValueError, match="damping is given twice"):
         solve(policy, DampingPolicy.constant(0.4))
+
+
+def _two_sweeps(route, damping=None, config_damping=None):
+    """U and M after two sweeps (Newton: a two-sweep warm-up and one Newton iteration), the damping given at the
+    constructor, in a config handed to the solve, or neither."""
+    problem = _strongly_coupled()
+    extra = {"picard_warmup": 2, "newton_max_iterations": 1} if route is NewtonMFGSolver else {}
+    solver = route(problem, HJBFDMSolver(problem), FPFDMSolver(problem), damping=damping, **extra)
+    kwargs = {"max_iterations": 2, "tolerance": 1e-6, "verbose": False}
+    if config_damping is not None:
+        picard = PicardConfig(max_iterations=2, tolerance=1e-6, verbose=False, damping=config_damping)
+        kwargs["config"] = MFGSolverConfig(picard=picard)
+    result = solver.solve(**kwargs)
+    return np.concatenate([result.U.ravel(), result.M.ravel()])
+
+
+@pytest.mark.parametrize(
+    "route",
+    [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator, BlockJacobiIterator, NewtonMFGSolver],
+)
+def test_the_refusal_of_solve_damping_names_only_places_that_apply_it(route):
+    """``solve(damping=)`` is refused, and its advice is followed: each place it names, the constructor's ``damping=``
+    and, where the route's solve takes a config, ``PicardConfig.damping``, applies the damping against the route's
+    default. #2997 review 2: the advice named the config on the Block iterators and Newton, whose solves accept a
+    ``config=`` without reading it (#2922). A mutation-verified convention pin: advice naming the config on every route,
+    or a ``damping=`` accepted in silence, fails it."""
+    policy = DampingPolicy.constant(0.3)
+    problem = _strongly_coupled()
+    extra = {"picard_warmup": 2, "newton_max_iterations": 1} if route is NewtonMFGSolver else {}
+    with pytest.raises(TypeError, match="does not take damping=") as refusal:
+        route(problem, HJBFDMSolver(problem), FPFDMSolver(problem), **extra).solve(
+            max_iterations=2, tolerance=1e-6, verbose=False, damping=policy
+        )
+    places = {"the constructor's damping=": {"damping": policy}, "PicardConfig.damping": {"config_damping": policy}}
+    named = [place for place in places if place in str(refusal.value)]
+    assert "the constructor's damping=" in named, str(refusal.value)
+    default = _two_sweeps(route)
+    for place in named:
+        applied = _two_sweeps(route, **places[place])
+        assert not np.array_equal(applied, default), (
+            f"{route.__name__}'s refusal names {place}, which does not apply it"
+        )

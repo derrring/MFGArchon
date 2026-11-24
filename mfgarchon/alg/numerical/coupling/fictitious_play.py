@@ -214,7 +214,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         Returns:
             SolverResult object
         """
-        refuse_retired_solve_keywords(kwargs, "FictitiousPlayIterator.solve")
+        refuse_retired_solve_keywords(kwargs, self)
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FictitiousPlayIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
