@@ -458,11 +458,14 @@ def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_was_handed
     )
     read = min(float(np.min(one)) for one in held)
     assert f"has a minimum of {read:.3e}" in lines[0]
-    assert f"at iteration {1 if coupler == 'NewtonMFGSolver' else 2}," in lines[0]
+    # Every coupler's first non-finite HJB solve is its second: from the cold start (#2997) the first is handed m0 > 0.
+    # Newton's, after one warm-up sweep, is the one its first verdict reads (#2997 ruling 10).
+    assert "at iteration 2," in lines[0]
 
 
 def test_newton_warm_up_states_a_negative_the_solve_read(mfg_caplog):
-    """The row above has Newton stop at its initial guess, whose minimum is 0, so an absolute value would pass there."""
+    """The warm-up's own guard, with Newton's default three sweeps, states the signed minimum of the density its second
+    sweep read. The row above, with one warm-up sweep, stops at the guard before Newton's first verdict instead."""
     with (
         mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
         np.errstate(invalid="ignore", divide="ignore"),

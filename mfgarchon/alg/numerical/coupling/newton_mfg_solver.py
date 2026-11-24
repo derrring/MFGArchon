@@ -61,6 +61,14 @@ logger = get_logger(__name__)
 _NOT_READ = object()
 
 
+class _MapDivergedError(Exception):
+    """A verdict's map output, the HJB half, is non-finite: the shared guard has published it (#2997 ruling 10)."""
+
+    def __init__(self, U: NDArray, M: NDArray, sweep: int) -> None:
+        super().__init__(sweep)
+        self.U, self.M, self.sweep = U, M, sweep
+
+
 class NewtonMFGSolver(BaseCouplingIterator):
     """
     Newton's method solver for coupled MFG systems.
@@ -289,8 +297,20 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         last_reason = [""]
         self._verdict_inner_failures: object = _NOT_READ
+        # The 0-based index of the sweep the next verdict judges: the warm-up's sweeps come first, then one per iterate.
+        judged = [self.picard_warmup]
 
         def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
+            # The verdict reads the map's change, and U + F_HJB is the map's HJB output: the shared guard sees it first,
+            # as on every other route, so a non-finite one stops the solve instead of reaching #2578's refusal of a
+            # non-finite change (#2997 ruling 10).
+            sweep = judged[0]
+            judged[0] += 1
+            published = diverged_value_function(
+                U + F_HJB, self.mfg_residual.terminal_at(M), site="NewtonMFGSolver", density=M, iteration=sweep
+            )
+            if published is not None:
+                raise _MapDivergedError(published, M, sweep)
             # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
             # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
             converged, reason = outer_verdict(U, M, F_HJB, F_FP)
@@ -337,7 +357,11 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         # Check if already converged after Picard: the outer verdict on the Picard residual (#2565)
         _, F_HJB, F_FP = self.mfg_residual.compute_residual(U, M, return_components=True)
-        if verdict(U, M, F_HJB, F_FP)[0]:
+        try:
+            converged_after_warmup = verdict(U, M, F_HJB, F_FP)[0]
+        except _MapDivergedError as stop:
+            return self._stop_on_a_diverged_map(stop, start_time)
+        if converged_after_warmup:
             self.U = U
             self.M = M
             self.total_iterations = self.picard_warmup
@@ -372,11 +396,14 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         # Run Newton solver
         self.mfg_residual.reset_evaluation_count()
-        x_solution, newton_info = newton_solver.solve(
-            self.mfg_residual.residual_function,
-            x_current,
-            converged=lambda x, F: verdict(*self.mfg_residual.unpack_state(x), *self.mfg_residual.unpack_state(F)),
-        )
+        try:
+            x_solution, newton_info = newton_solver.solve(
+                self.mfg_residual.residual_function,
+                x_current,
+                converged=lambda x, F: verdict(*self.mfg_residual.unpack_state(x), *self.mfg_residual.unpack_state(F)),
+            )
+        except _MapDivergedError as stop:
+            return self._stop_on_a_diverged_map(stop, start_time)
 
         # Unpack solution
         self.U, self.M = self.mfg_residual.unpack_state(x_solution)
@@ -445,21 +472,36 @@ class NewtonMFGSolver(BaseCouplingIterator):
     def _iteration_state(self) -> IterationState:
         return self.mfg_residual.state
 
+    def _stop_on_a_diverged_map(
+        self, stop: _MapDivergedError, start_time: float
+    ) -> tuple[NDArray, NDArray, dict[str, Any]]:
+        """Publish what the guard published and stop: the iterate the verdict judged, with the map's non-finite HJB
+        output as U (#1718's contract), after ``stop.sweep - picard_warmup`` Newton iterations."""
+        self.U, self.M = stop.U, stop.M
+        self.newton_residuals = []
+        self.total_iterations = stop.sweep
+        self._solution_computed = True
+        return self._create_result(
+            False, "diverged_nan", time.time() - start_time, newton_iterations=stop.sweep - self.picard_warmup
+        )
+
     def _create_result(
         self,
         converged: bool,
         reason: str,
         elapsed: float,
         newton_info: SolverInfo | None = None,
+        newton_iterations: int | None = None,
     ) -> tuple[NDArray, NDArray, dict[str, Any]]:
-        """Create result tuple with convergence information."""
+        """Create result tuple with convergence information. ``newton_iterations`` overrides the count read from
+        ``newton_residuals``, for a stop that has no residual history."""
         info = {
             "converged": converged,
             "convergence_reason": reason,
             "total_iterations": self.total_iterations,
             "picard_iterations": self.picard_warmup,
             "picard_residuals": self.picard_residuals,
-            "newton_iterations": len(self.newton_residuals),
+            "newton_iterations": len(self.newton_residuals) if newton_iterations is None else newton_iterations,
             "newton_residuals": self.newton_residuals,
             "residual_evaluations": self.mfg_residual.residual_evaluations,
             "elapsed_time": elapsed,

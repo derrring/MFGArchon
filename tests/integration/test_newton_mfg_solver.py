@@ -307,10 +307,16 @@ def test_one_newton_step_reduces_the_mfg_residual():
     agreement-to-5%-of-Picard tolerates a shortened step that still converges while a
     residual-reduction bound does not.
 
-    The 0.25 threshold is not slack: the measured ratio is 0.049, and a step-scale sweep passes only
-    for s in roughly [0.75, 1.24] -- it tolerates -25% to +24% of step-length error and no more. The start is
-    explicit and fixed, zeros with m(0) at level 0, so the pin measures the step and not the cold start, whose
-    flatter residual (#2997) leaves 0.28 after an exact step and would tolerate about +-30%.
+    The 0.25 threshold is not slack: from the cold start (#2997) the measured ratio is 0.019, a halved step leaves
+    0.498, and a step-scale sweep passes only for s in roughly [0.75, 1.24] -- it tolerates -25% to +24% of
+    step-length error and no more.
+
+    The terminal cost is (x - 0.3)^2 and not 0 on purpose. With u_T = 0 the cold start's U is identically 0, and the
+    FP's upwind drift -grad U is not differentiable at grad U = 0, so the start sits on that switch at every node. One
+    step then leaves 0.28 whatever the Jacobian's finite-difference step (1e-5, 1e-7 and 1e-9 all give 0.2799), and
+    the linear model's error along the step is first order on the FP rows (e/t = 4.28e-2 from t = 0.1 to 0.001)
+    against second order on the HJB rows (1.8e-6 to 1.8e-8); with (x - 0.3)^2 the FP rows are second order too
+    (3.8e-4 to 3.8e-6). A start on the switch makes the pin measure the kink, not the step.
 
     Note `line_search=False` here: the backtracking path is therefore NOT under test, and deleting
     it leaves all four automatic Newton tests green.
@@ -324,7 +330,7 @@ def test_one_newton_step_reduces_the_mfg_residual():
         ),
         conditions=Conditions(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
-            u_terminal=lambda x: 0.0,
+            u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.3) ** 2,
             T=0.1,
         ),
         Nt=2,
@@ -338,10 +344,7 @@ def test_one_newton_step_reduces_the_mfg_residual():
         line_search=False,
     )
 
-    initial_u = np.zeros(solver.mfg_residual.solution_shape)  # u(T) = 0 in this problem
-    initial_m = np.zeros(solver.mfg_residual.solution_shape)
-    initial_m[0] = solver.mfg_residual.M_initial
-    solver.set_warm_start_data((initial_u, initial_m))
+    initial_u, initial_m = solver.mfg_residual.state.start()
     initial_residual = solver.mfg_residual.compute_residual_norm(initial_u, initial_m)
 
     U, M, info = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
