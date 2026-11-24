@@ -268,7 +268,7 @@ mfg_solver = FixedPointIterator(
 - Still uses damping on **M** (density) to preserve positivity and mass
 - Typically 2-5x speedup on outer Picard iteration
 
-**Implementation**: `mfgarchon/alg/numerical/mfg_solvers/fixed_point_iterator.py:260-272`
+**Implementation**: `DampingRun.update` in `mfgarchon/alg/numerical/coupling/damping_run.py` (#2997)
 
 ### Custom Jacobian (Advanced)
 
