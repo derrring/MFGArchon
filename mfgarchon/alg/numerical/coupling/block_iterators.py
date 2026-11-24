@@ -54,12 +54,10 @@ from .fixed_point_utils import (
     apply_damping,
     check_convergence_criteria,
     diverged_value_function,
-    initialize_cold_start,
-    preserve_initial_condition,
-    preserve_terminal_condition,
     resolve_fp_drift_kwargs,
     value_function_is_finite,
 )
+from .iteration_state import IterationState
 from .source_composition import fp_source_is_active
 
 if TYPE_CHECKING:
@@ -201,9 +199,24 @@ class BlockIterator(BaseCouplingIterator):
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-        # Cache initial/terminal conditions
+        # m(0) and the latest sweep's u(T), which the step functions read
         self._M_initial: NDArray | None = None
         self._U_terminal: NDArray | None = None
+
+        # The iterate's owner (#2997), built on first use: the geometry it sizes the state from is checked there.
+        self._state: IterationState | None = None
+
+    def _iteration_state(self) -> IterationState:
+        if self._state is None:
+            self._state = IterationState(
+                self.problem,
+                self.hjb_solver,
+                self.fp_solver,
+                reader=type(self).__name__,
+                terminal_binding=self._hjb_terminal_binding,
+                unstructured_mesh=True,
+            )
+        return self._state
 
     def _validate_strict_adjoint_capability(self) -> None:
         """Refuse, at construction, a pair the remaining adjoint mode cannot run (Issue #622, #704, #707).
@@ -232,33 +245,6 @@ class BlockIterator(BaseCouplingIterator):
             f"{type(hjb_solver).__name__} builds none (#707, #2338): it does not satisfy "
             f"`LinearizedOperatorCapable`. Use HJBFDMSolver, or adjoint_mode='off'."
         )
-
-    def _initialize_conditions(self, shape: tuple[int, ...]) -> tuple[NDArray, NDArray]:
-        """Initialize initial density and terminal value from problem."""
-        # Try the get_m_initial() method (preferred)
-        try:
-            M_initial = self.problem.get_m_initial()
-            if M_initial.shape != shape:
-                M_initial = M_initial.reshape(shape)
-        except AttributeError:
-            try:
-                M_initial = self.problem.m_initial  # Issue #670: unified naming
-                if M_initial is not None and M_initial.shape != shape:
-                    M_initial = M_initial.reshape(shape)
-            except AttributeError:
-                M_initial = np.ones(shape) / np.prod(shape)
-                logger.warning("No initial density found, using uniform")
-
-        # The terminal datum's one owner (#1642 stage 2), at the initial density, which a cold start writes into every
-        # row but at a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB
-        # solve uses.
-        U_terminal = np.asarray(
-            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__)
-        )
-        if U_terminal.shape != shape:
-            U_terminal = U_terminal.reshape(shape)
-
-        return M_initial, U_terminal
 
     def _solve_hjb(
         self,
@@ -641,33 +627,15 @@ class BlockIterator(BaseCouplingIterator):
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
         start_time = time.time()
 
-        # Get problem dimensions
-        num_time_steps = self.problem.Nt + 1
-        shape = tuple(self.problem.geometry.get_grid_shape())
         time_step = self.problem.dt
         integrate = self.problem.spatial_measure().integrate  # #2555
 
-        # Initialize conditions
-        self._M_initial, self._U_terminal = self._initialize_conditions(shape)
-
-        # Initialize solution arrays
-        warm_start = self.get_warm_start_data()
-        if warm_start is not None:
-            self.U, self.M = warm_start
-            if verbose:
-                print(f"Using warm start ({self.method.value})")
-        else:
-            self.U = np.zeros((num_time_steps, *shape))
-            self.M = np.zeros((num_time_steps, *shape))
-
-            # Set boundary conditions
-            self.M[0] = self._M_initial
-            self.U[-1] = self._U_terminal
-
-            # Initialize interior
-            self.U, self.M = initialize_cold_start(
-                self.U, self.M, self._M_initial, self._U_terminal, num_time_steps, fp_solver=self.fp_solver
-            )
+        # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997)
+        state = self._iteration_state()
+        if verbose and state.warm_start() is not None:
+            print(f"Using warm start ({self.method.value})")
+        self.U, self.M = state.start()
+        self._M_initial = state.m0
 
         # Reset tracking
         self.error_history_U = []
@@ -709,9 +677,7 @@ class BlockIterator(BaseCouplingIterator):
             U_old = self.U.copy()
             M_old = self.M.copy()
             # u(T) at the density this iteration's HJB solve uses: both steps solve the HJB with M_old (#1642 stage 2).
-            self._U_terminal = np.asarray(
-                self.problem.terminal_value(M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__)
-            ).reshape(shape)
+            self._U_terminal = state.terminal_at(M_old[-1])
 
             # Perform block iteration step
             U_new, M_new = step_fn(U_old, M_old, self._M_initial, self._U_terminal)
@@ -746,9 +712,7 @@ class BlockIterator(BaseCouplingIterator):
                 theta_M=self.relaxation_M,
             )
 
-            # Preserve boundary conditions
-            self.M = preserve_initial_condition(self.M, self._M_initial)
-            self.U = preserve_terminal_condition(self.U, self._U_terminal)
+            self.U, self.M = state.write_back(self.U, self.M, self._U_terminal)
 
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import sweep_change
