@@ -71,23 +71,23 @@ def test_the_outer_tolerance_decides_newtons_own_iterations():
 
 
 def test_the_warm_up_stops_on_the_relative_change_in_the_problems_measure():
-    """After three warm-up sweeps the relative change is 0.374 and the unscaled 2-norm 0.880: at
-    tolerance 0.5 the owners' verdict stops there, where the unscaled norm did not."""
-    _, _, info, change = _solve({"tolerance": 0.5}, picard_warmup=3)
+    """After three warm-up sweeps from the cold start (#2997) the relative change is 0.137 and the unscaled 2-norm
+    0.274: at tolerance 0.2 the owners' verdict stops there, where the unscaled norm would not."""
+    _, _, info, change = _solve({"tolerance": 0.2}, picard_warmup=3)
     assert info["convergence_reason"] == "Converged during Picard warm-up"
-    assert change < 0.5
+    assert change < 0.2
 
 
 def test_absolute_tolerance_reaches_the_verdict():
     """The absolute bound is an extra requirement on the same change, at both stops.
 
-    After three warm-up sweeps the relative change, 0.374, meets tolerance 0.5, and the absolute change,
-    0.082 (dt-weighted, in the problem's measure), then decides the warm-up stop: 0.1 stops it, 0.05 does
-    not. In phase 2 an absolute 1e-10 beside tolerance 1e-3 takes more Newton iterations than none.
+    After three warm-up sweeps from the cold start (#2997) the relative change, 0.137, meets tolerance 0.5, and the
+    absolute change, 0.024 (dt-weighted, in the problem's measure), then decides the warm-up stop: 0.05 stops it,
+    0.01 does not. In phase 2 an absolute 1e-10 beside tolerance 1e-3 takes more Newton iterations than none.
     """
-    _, _, met, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.1}, picard_warmup=3)
+    _, _, met, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.05}, picard_warmup=3)
     assert met["convergence_reason"] == "Converged during Picard warm-up"
-    _, _, unmet, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.05}, picard_warmup=3, newton_max_iterations=1)
+    _, _, unmet, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.01}, picard_warmup=3, newton_max_iterations=1)
     assert unmet["convergence_reason"] != "Converged during Picard warm-up"
     _, _, relative_only, _ = _solve({"tolerance": 1e-3})
     _, _, with_absolute, _ = _solve({"tolerance": 1e-3, "absolute_tolerance": 1e-10})

@@ -91,8 +91,15 @@ def _picard(where, **kwargs):
     return np.asarray(result.U, dtype=float)
 
 
+def _newton_residual(where):
+    """Newton's residual, the Picard map's change, at its cold start on an 11 x 5 grid (#2997)."""
+    problem = _plumbing_problem(where, n=11, nt=5)
+    solver = NewtonMFGSolver(problem, HJBFDMSolver(problem), FPFDMSolver(problem))
+    return solver.mfg_residual.compute_residual(*solver.mfg_residual.state.start())
+
+
 def _newton(where):
-    """One Newton step from the initial guess, on an 11 x 5 grid: its Jacobian is by finite differences."""
+    """One Newton step from the cold start, on an 11 x 5 grid: its Jacobian is by finite differences."""
     problem = _plumbing_problem(where, n=11, nt=5)
     U, _, _ = NewtonMFGSolver(
         problem, HJBFDMSolver(problem), FPFDMSolver(problem), picard_warmup=0, newton_max_iterations=1
@@ -105,7 +112,10 @@ def test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian(
     """F = int V m has ``delta F / delta m = V``, so ``PotentialCost(V)`` and V as H's potential pose one game, and
     each route takes the same iterates with either.
 
-    - HJB-FDM adds the source where it adds V. Five Picard sweeps agree to 1.1e-16; one Newton step, to 6.9e-18.
+    - HJB-FDM adds the source where it adds V. Five Picard sweeps agree to 1.1e-16.
+    - Newton's residuals at the cold start agree to 1.4e-17, bound 1e-14: that is where the claim lives. One Newton
+      step from there agrees to 3.4e-12, bound 1e-9, because its Jacobian, by central differences with step 1e-7,
+      divides that rounding by 2 x 1e-7. Dropping V moves both the residual and the step by 0.235.
     - HJB-SL takes V inside its update from H and adds the source at t_{n+1}, so the two differ by O(dt): after five
       sweeps, 8.8e-3 at Nt = 20 and 6.7e-3 at Nt = 40. The bound is 0.015 at Nt = 20.
     - Without either, five sweeps move U by 0.26: the scale a dropped part would show.
@@ -113,7 +123,9 @@ def test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian(
     if route == "Picard, HJB-FDM":
         gap, bound = np.max(np.abs(_picard("H") - _picard("F"))), 1e-14
     elif route == "Newton, HJB-FDM":
-        gap, bound = np.max(np.abs(_newton("H") - _newton("F"))), 1e-14
+        start_gap = np.max(np.abs(_newton_residual("H") - _newton_residual("F")))
+        assert start_gap <= 1e-14, f"{route}: the two forms' residuals at the cold start differ by {start_gap:.3e}"
+        gap, bound = np.max(np.abs(_newton("H") - _newton("F"))), 1e-9
     else:
         sl = {"scheme": NumericalScheme.SL_LINEAR}
         gap, bound = np.max(np.abs(_picard("H", **sl) - _picard("F", **sl))), 0.015

@@ -307,8 +307,10 @@ def test_one_newton_step_reduces_the_mfg_residual():
     agreement-to-5%-of-Picard tolerates a shortened step that still converges while a
     residual-reduction bound does not.
 
-    The 0.25 threshold is not slack: the measured ratio is 0.16, and a step-scale sweep passes only
-    for s in roughly [0.75, 1.13] -- it tolerates +-15-25% of step-length error and no more.
+    The 0.25 threshold is not slack: the measured ratio is 0.049, and a step-scale sweep passes only
+    for s in roughly [0.75, 1.24] -- it tolerates -25% to +24% of step-length error and no more. The start is
+    explicit and fixed, zeros with m(0) at level 0, so the pin measures the step and not the cold start, whose
+    flatter residual (#2997) leaves 0.28 after an exact step and would tolerate about +-30%.
 
     Note `line_search=False` here: the backtracking path is therefore NOT under test, and deleting
     it leaves all four automatic Newton tests green.
@@ -336,8 +338,10 @@ def test_one_newton_step_reduces_the_mfg_residual():
         line_search=False,
     )
 
-    initial_state = solver.mfg_residual.get_initial_guess()
-    initial_u, initial_m = solver.mfg_residual.unpack_state(initial_state)
+    initial_u = np.zeros(solver.mfg_residual.solution_shape)  # u(T) = 0 in this problem
+    initial_m = np.zeros(solver.mfg_residual.solution_shape)
+    initial_m[0] = solver.mfg_residual.M_initial
+    solver.set_warm_start_data((initial_u, initial_m))
     initial_residual = solver.mfg_residual.compute_residual_norm(initial_u, initial_m)
 
     U, M, info = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
@@ -378,8 +382,8 @@ class TestMFGResidualComputation:
 
         residual_computer = MFGResidual(residual_test_problem, hjb_solver, fp_solver)
 
-        # Get initial guess
-        x0 = residual_computer.get_initial_guess()
+        # The owner's cold start (#2997), packed
+        x0 = residual_computer.pack_state(*residual_computer.state.start())
 
         # Compute residual
         F = residual_computer.residual_function(x0)
@@ -394,9 +398,8 @@ class TestMFGResidualComputation:
         # This also cross-pins the flat `residual_function` interface (the one the Newton solve
         # calls) against `compute_residual`, which nothing else does.
         #
-        # Measured at HEAD: ||F|| = 4.98e-05 at the fixed point, against 14.06 at the initial guess
-        # this same test builds. The 1e-3 threshold leaves ~20x margin over the measured value while
-        # sitting 14000x below the un-converged norm.
+        # Measured at the #2997 stage 1a branch: ||F|| = 7.8e-07 at the fixed point, against 1.50 at the cold start
+        # this same test builds. The 1e-3 threshold sits about 1300x above the first and 1500x below the second.
         picard = FixedPointIterator(
             residual_test_problem,
             HJBFDMSolver(residual_test_problem),

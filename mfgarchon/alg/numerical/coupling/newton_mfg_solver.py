@@ -52,6 +52,8 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
 
+    from .iteration_state import IterationState
+
 logger = get_logger(__name__)
 
 
@@ -243,10 +245,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             U = self.picard_damping * U_new + (1 - self.picard_damping) * U_old
             M = self.picard_damping * M_new + (1 - self.picard_damping) * M_old
 
-            # Preserve boundary conditions
-            if self.mfg_residual.M_initial is not None:
-                M[0] = self.mfg_residual.M_initial
-            U[-1] = U_terminal
+            U, M = self.mfg_residual.state.write_back(U, M, U_terminal)
 
             # Compute residual norm
             res_norm = self.mfg_residual.compute_residual_norm(U, M)
@@ -301,15 +300,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
             )
             return converged, last_reason[0]
 
-        # Initialize from warm start or cold start
-        warm_start = self.get_warm_start_data()
-        if warm_start is not None:
-            U, M = warm_start
-            if verbose:
-                print("Using warm start from previous solution")
-        else:
-            x0 = self.mfg_residual.get_initial_guess()
-            U, M = self.mfg_residual.unpack_state(x0)
+        # The warm start, or the owner's cold start (#2997): u(T) at m(0) in every row of U, and m(0) with the FP's
+        # prescribed values in M.
+        state = self.mfg_residual.state
+        if verbose and state.warm_start() is not None:
+            print("Using warm start from previous solution")
+        U, M = state.start()
 
         # Phase 1: Picard warm-up (for robustness)
         if self.picard_warmup > 0:
@@ -445,6 +441,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
             )
 
         return verdict
+
+    def _iteration_state(self) -> IterationState:
+        return self.mfg_residual.state
 
     def _create_result(
         self,
