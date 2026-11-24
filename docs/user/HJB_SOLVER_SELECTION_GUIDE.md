@@ -250,13 +250,16 @@ solver = HJBFDMSolver(
 For the **outer Picard iteration** (not HJB timestep):
 
 ```python
-from mfgarchon.alg.numerical.mfg_solvers import FixedPointIterator
+from mfgarchon.alg.numerical.coupling import FixedPointIterator
+from mfgarchon.config.damping import AndersonOptions, DampingPolicy, FieldDamping
 
 mfg_solver = FixedPointIterator(
     problem, hjb_solver, fp_solver,
-    use_anderson=True,      # Enable Anderson acceleration
-    anderson_depth=5,       # Memory depth (3-10 typical)
-    relaxation=0.5,     # Still damp M for positivity
+    damping=DampingPolicy(
+        U=FieldDamping(theta=0.5),
+        M=FieldDamping(theta=0.5),        # Still damp M for positivity
+        anderson=AndersonOptions(depth=5),  # Anderson on U; memory depth 3-10 typical
+    ),
 )
 ```
 

@@ -238,7 +238,7 @@ solver = create_network_mfg_solver(
     solver_type="fixed_point",
     hjb_solver_type="explicit",
     fp_solver_type="explicit",
-    relaxation=0.6
+    damping=DampingPolicy.constant(0.6),  # from mfgarchon.config.damping
 )
 
 # Flow-based solver

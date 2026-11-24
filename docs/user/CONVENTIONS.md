@@ -1194,8 +1194,9 @@ On the coupling-level API — `MFGProblem.solve`, the coupling iterators, `Picar
 `NetworkHJBSolver(tolerance=)` and `HJBHowardSolver(max_iter=, tol=)` are inner-loop settings. What the
 outer and the Newton tolerance bound is in § *The measure*, *What a tolerance bounds*.
 
-The fixed-point relaxation parameter is `relaxation` (with `relaxation_M`, `adaptive_relaxation`,
-`relaxation_schedule`).
+The fixed-point damping is `damping=`, a `DampingPolicy` (`mfgarchon.config.damping`): one `FieldDamping` for U and
+one for M, each with its theta, schedule, floor, adaptation and first-sweep rule, and Anderson acceleration on U. Every
+coupling route takes it, and `PicardConfig.damping` holds it (#2997).
 
 ---
 
@@ -1697,11 +1698,12 @@ and `MFGGridConfig` raise `ValueError`, and the frozen dataclasses `HamiltonianV
 `FrozenInstanceError`, for any unknown name. A removed keyword that lands in a `**kwargs`, or a removed key in a
 free-form dict, is not Python's to refuse:
 
-- `FixedPointIterator.solve` and `FictitiousPlayIterator.solve` keep a `**kwargs` and refuse `return_tuple`,
-  `Niter_max`, `max_picard_iterations`, `l2errBoundPicard` and `picard_tolerance` by name;
+- the solves of `FixedPointIterator`, `FictitiousPlayIterator`, the Block iterators and `NewtonMFGSolver` keep a
+  `**kwargs` and refuse `return_tuple`, `Niter_max`, `max_picard_iterations`, `l2errBoundPicard`, `picard_tolerance`
+  and the damping keywords #2997 removed by name;
 - `MFGProblem` refuses a key of the free-form `components.parameters` dict named after one of the 14 inputs it no
   longer reads, and accepts any other key;
-- `BlockIterator.solve` and `NewtonMFGSolver.solve` keep a `**kwargs` and accept and ignore a keyword they do not read
+- `BlockIterator.solve` and `NewtonMFGSolver.solve`, past those names, accept and ignore a keyword they do not read
   (#2922).
 
 Names deprecated only in a docstring, and `WeakFormHJBSolver.solve_hjb_system`'s three pre-v0.12 names (§ *Solver
@@ -1719,7 +1721,8 @@ method surface*), are not removed yet.
 | `MFGComponents(potential_func=)` | the Hamiltonian's `potential=`, e.g. `SeparableHamiltonian(potential=...)`. It was stored and no solver added it to $H$ (#2554) |
 | `MFGProblem(gamma=)` | the Hamiltonian's `coupling=` (with `coupling_dm=`). It was stored and nothing read it (#2554) |
 | `problem.f_potential`, `problem.gamma` | nothing: they held the two inputs above (#2554) |
-| `damping_factor`, `damping_factor_M`, `damping` | `relaxation`, `relaxation_M` |
+| `damping_factor`, `damping_factor_M`, `damping` (a number) | `damping=`, a `DampingPolicy` (#2997) |
+| `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson`, `anderson_depth`, `anderson_beta` (FixedPointIterator); `relaxation`, `relaxation_M` (the Block iterators); `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`, `damp_value_function` (FictitiousPlayIterator); `picard_damping` (NewtonMFGSolver); `PicardConfig`'s `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `anderson_memory` | `damping=`, a `DampingPolicy`, on each route, and `PicardConfig.damping` (#2997) |
 | `MFGComponents(u_final=)` | `u_terminal=` |
 | `velocity_field=` on `FPFDMSolver.solve_fp_system` | `drift_field=` |
 | `m_initial_condition=`, `m_initial=` | `M_initial=` |

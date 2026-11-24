@@ -44,6 +44,7 @@ from .core import (
     PicardConfig,
     SolverConfig,  # Backward compatibility alias for MFGSolverConfig
 )
+from .damping import AndersonOptions, DampingPolicy, FieldDamping
 
 # YAML I/O
 from .io import load_solver_config, save_solver_config, validate_yaml_config
@@ -83,6 +84,9 @@ __all__ = [
     "BaseConfig",
     "SolverConfig",
     "PicardConfig",
+    "DampingPolicy",
+    "FieldDamping",
+    "AndersonOptions",
     "BackendConfig",
     "LoggingConfig",
     # Method configs (unified)
