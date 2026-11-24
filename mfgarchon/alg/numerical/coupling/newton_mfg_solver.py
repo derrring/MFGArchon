@@ -29,11 +29,13 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
+from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -119,6 +121,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
             basin, so a too-short warmup can converge to a spurious near-trivial fixed
             point of the discrete MFG map. For stiff couplings increase this until the
             warmup residual is well past its transient peak (Issue #1233).
+        damping: The Picard warm-up's damping, a `DampingPolicy` (#2997); None is ``DampingPolicy.constant(0.5)``.
+            The Newton phase is not damped; its line search sets the step.
         newton_max_iterations: Maximum Newton iterations (default: 20)
         line_search: Enable backtracking line search (default: True)
         use_jax_autodiff: Use JAX autodiff for the Jacobian (default: False). The MFG
@@ -145,7 +149,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         fp_solver: BaseFPSolver,
         *,
         picard_warmup: int = 3,
-        picard_damping: float = 0.5,
+        damping: DampingPolicy | None = None,
         newton_max_iterations: int = 20,
         line_search: bool = True,
         use_jax_autodiff: bool | str = False,
@@ -163,7 +167,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         # Picard warm-up parameters
         self.picard_warmup = picard_warmup
-        self.picard_damping = picard_damping
+        self.damping = damping if damping is not None else DampingPolicy.constant(0.5)
 
         # Newton parameters
         self.newton_max_iterations = newton_max_iterations
@@ -215,6 +219,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             composes an FP solve from U (#1718).
         """
         residuals = []
+        run = DampingRun(self.damping)
         # The warmup's `break` leaves only this loop. Its caller runs compute_residual_norm
         # immediately, which composes an FP solve from U -- so a diverged U escaped the guard
         # below and reached FP anyway, with the identical CFL misattribution #1718 removes
@@ -250,8 +255,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             M_new = self.mfg_residual.compute_fp_output(U_new, M_old)
 
             # Apply damping
-            U = self.picard_damping * U_new + (1 - self.picard_damping) * U_old
-            M = self.picard_damping * M_new + (1 - self.picard_damping) * M_old
+            U, M = run.update(i, U_old, U_new, M_old, M_new)
 
             U, M = self.mfg_residual.state.write_back(U, M, U_terminal)
 

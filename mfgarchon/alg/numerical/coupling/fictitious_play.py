@@ -35,11 +35,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
-
-# Import shared iteration utilities (Issue #630, migrated #985)
-from mfgarchon.utils.iteration.schedules import (
-    get_schedule,
-)
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -51,6 +47,7 @@ from .base_mfg import (
     refuse_retired_solve_keywords,
     resolve_backend,
 )
+from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -92,26 +89,18 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         problem: MFG problem definition
         hjb_solver: HJB solver instance (must be trait-validated)
         fp_solver: FP solver instance (must be trait-validated)
-        learning_rate_schedule: Schedule type or callable
-            - "harmonic": 1/(k+1) - standard fictitious play (default)
-            - "sqrt": 1/sqrt(k+1) - faster initial progress
-            - "polynomial": 1/(k+1)^0.6 - balanced rate
-            - Callable[[int], float]: Custom schedule function
         config: Configuration object (optional)
-        initial_learning_rate: Learning rate for first iteration (default 1.0)
-        min_learning_rate: Floor on the learning rate (default 0.0, no floor). A positive floor
-            turns the schedule into constant damping once the schedule falls below it, and
-            constant damping is not fictitious play: the convergence results are for the
-            unfloored 1/(n+1) average (Cardaliaguet-Hadikhanloo 2017, (2.2) with Theorem 2.1
-            for the second-order system, (3.3) with Theorem 3.1 for the first-order one). On
-            #1914's sigma=0 fixture, measured at 0f937601, a 0.01 floor left the fixed-point
-            residual at 2.45e-01 after 300 sweeps, against 4.67e-04 unfloored (#2415).
-        damp_value_function: Whether to also damp U (default False)
-            - False: Pure fictitious play (damp only M)
-            - True: Hybrid approach (damp both U and M)
+        damping: U's and M's damping, a `DampingPolicy` (#2997). None is ``DampingPolicy.fictitious_play()``: M averaged
+            with alpha_k = 1/(k+1) and U the best response taken whole. ``fictitious_play(alpha0, schedule, floor=,
+            damp_value_function=)`` sets the first rate, the schedule ("harmonic", "sqrt", "polynomial" or a callable),
+            a floor, and whether U is averaged too. A positive floor turns the schedule into constant damping once the
+            schedule falls below it, and constant damping is not fictitious play: the convergence results are for the
+            unfloored 1/(n+1) average (Cardaliaguet-Hadikhanloo 2017, (2.2) with Theorem 2.1 for the second-order
+            system, (3.3) with Theorem 3.1 for the first-order one). On #1914's sigma=0 fixture, measured at 0f937601, a
+            0.01 floor left the fixed-point residual at 2.45e-01 after 300 sweeps, against 4.67e-04 unfloored (#2415).
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
-            torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
+            torch are refused at allocation, naming #1922 (see ``iteration_state.allocate_iterate``).
         volatility: Optional volatility override -- the SDE volatility, not a diffusion
         volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
@@ -123,7 +112,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         ...     problem=problem,
         ...     hjb_solver=hjb_solver,
         ...     fp_solver=fp_solver,
-        ...     learning_rate_schedule="harmonic",
         ... )
         >>> result = solver.solve(max_iterations=100, tolerance=1e-4)
     """
@@ -133,11 +121,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         problem: MFGProblem,
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
-        learning_rate_schedule: str | Callable[[int], float] = "harmonic",
         config: MFGSolverConfig | None = None,
-        initial_learning_rate: float = 1.0,
-        min_learning_rate: float = 0.0,
-        damp_value_function: bool = False,
+        damping: DampingPolicy | None = None,
         backend: str | BaseBackend | None = None,
         volatility: float | np.ndarray | Any | None = None,
         drift_field: np.ndarray | Any | None = None,
@@ -157,14 +142,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         assert_paired_solver_geometry(hjb_solver, fp_solver, "FictitiousPlayIterator", problem=problem)
         self.config = config
 
-        # Fictitious play parameters
-        self.initial_learning_rate = initial_learning_rate
-        self.min_learning_rate = min_learning_rate
-        self.damp_value_function = damp_value_function
-
-        # Set up learning rate schedule (Issue #630: use shared schedules)
-        self._lr_schedule_fn = get_schedule(learning_rate_schedule)
-        self._lr_schedule_name = learning_rate_schedule if isinstance(learning_rate_schedule, str) else "custom"
+        self.damping = damping if damping is not None else DampingPolicy.fictitious_play()
 
         # PDE coefficient overrides
         self.volatility = volatility
@@ -199,25 +177,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 terminal_binding=self._hjb_terminal_binding,
             )
         return self._state
-
-    def get_learning_rate(self, iteration: int) -> float:
-        """
-        Compute learning rate for given iteration.
-
-        Args:
-            iteration: Current iteration number (0-indexed)
-
-        Returns:
-            Learning rate alpha in (0, 1]
-        """
-        # Apply schedule
-        alpha = self._lr_schedule_fn(iteration)
-
-        # Scale by initial rate and clamp to minimum
-        alpha = self.initial_learning_rate * alpha
-        alpha = max(alpha, self.min_learning_rate)
-
-        return alpha
 
     @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
@@ -280,6 +239,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.l2distu_rel = np.ones(final_max_iterations)
         self.l2distm_rel = np.ones(final_max_iterations)
         self.learning_rate_history = []
+        run = DampingRun(self.damping)
         self.iterations_run = 0
 
         # Main Fictitious Play iteration loop
@@ -305,7 +265,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             U_terminal = state.terminal_at(M_old[-1])
 
             # Compute learning rate for this iteration
-            alpha = self.get_learning_rate(k)
+            alpha = run.theta("M", k)
             self.learning_rate_history.append(alpha)
 
             # 1. Solve HJB backward — progress handled via context routing (#934)
@@ -359,17 +319,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 effective_drift = self.drift_field if self.drift_field is not None else U_new
                 M_candidate = self.fp_solver.solve_fp_system(M_initial, effective_drift, **fp_kwargs)
 
-            # 3. Fictitious Play update: average M with decaying learning rate
-            # This is the key difference from fixed-point iteration
-            # m_{n+1} = (1 - alpha_n) * m_n + alpha_n * m_candidate
-            self.M = (1 - alpha) * M_old + alpha * M_candidate
-
-            # Optionally damp U as well (hybrid mode)
-            if self.damp_value_function:
-                self.U = (1 - alpha) * U_old + alpha * U_new
-            else:
-                # Pure fictitious play: use full best response for U
-                self.U = U_new
+            # 3. Fictitious Play update: m_{n+1} = (1 - alpha_n) m_n + alpha_n m_candidate, and U the best response
+            # taken whole unless the policy averages it too (the policy, #2997)
+            self.U, self.M = run.update(k, U_old, U_new, M_old, M_candidate)
 
             self.U, self.M = state.write_back(self.U, self.M, U_terminal)
 
@@ -435,9 +387,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 "convergence_reason": convergence_reason,
                 "l2distu_rel": self.l2distu_rel[: self.iterations_run],
                 "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-                "learning_rate_schedule": self._lr_schedule_name,
+                "damping": self.damping,
                 "learning_rate_history": self.learning_rate_history,
-                "damp_value_function": self.damp_value_function,
             },
         )
 

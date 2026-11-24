@@ -38,6 +38,7 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
@@ -50,8 +51,8 @@ from .base_mfg import (
     assert_paired_solver_sigma,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
+from .damping_run import DampingRun
 from .fixed_point_utils import (
-    apply_damping,
     check_convergence_criteria,
     diverged_value_function,
     resolve_fp_drift_kwargs,
@@ -97,7 +98,7 @@ class BlockIterator(BaseCouplingIterator):
         hjb_solver: HJB solver instance
         fp_solver: FP solver instance
         method: Block iteration method ('jacobi' or 'gauss_seidel')
-        relaxation: Under-relaxation factor in (0, 1] (default: 1.0 = no relaxation)
+        damping: U's and M's damping, a `DampingPolicy` (#2997); None is ``DampingPolicy.constant(1.0)``, no damping
         volatility: Optional volatility override -- the SDE volatility, not a diffusion
         volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
@@ -124,8 +125,7 @@ class BlockIterator(BaseCouplingIterator):
         fp_solver: BaseFPSolver,
         *,
         method: str | BlockMethod = BlockMethod.GAUSS_SEIDEL,
-        relaxation: float = 1.0,
-        relaxation_M: float | None = None,
+        damping: DampingPolicy | None = None,
         volatility: float | NDArray | Any | None = None,
         volatility_kind: str | None = None,
         drift_field: NDArray | Any | None = None,
@@ -135,11 +135,8 @@ class BlockIterator(BaseCouplingIterator):
         """Initialize block iterator.
 
         Args:
-            relaxation: Under-relaxation factor for U (omega_U). Default 1.0 = no relaxation.
-            relaxation_M: Under-relaxation factor for M (omega_M). If None, uses `relaxation`.
-                Issue #719: Per-variable relaxation support.
-                Recommended for MFG: relaxation=1.0, relaxation_M=0.2
-                (U adapts fully, M filters particle noise).
+            damping: U's and M's damping, a `DampingPolicy` (#2997). None is ``DampingPolicy.constant(1.0)``, no
+                damping, for this base class; its two subclasses default to ``DampingPolicy.constant(0.5)``.
         """
         super().__init__(problem)
         assert_bc_providers_resolvable(self.problem, type(self).__name__)
@@ -154,9 +151,7 @@ class BlockIterator(BaseCouplingIterator):
             method = BlockMethod(method.lower())
         self.method = method
 
-        # Canonical relaxation state - Issue #719: Per-variable relaxation
-        self.relaxation = relaxation
-        self.relaxation_M = relaxation_M  # None = use `relaxation` for both
+        self.damping = damping if damping is not None else DampingPolicy.constant(1.0)
 
         # PDE coefficient overrides
         self.volatility = volatility
@@ -637,9 +632,13 @@ class BlockIterator(BaseCouplingIterator):
         self.U, self.M = state.start()
         self._M_initial = state.m0
 
-        # Reset tracking
+        # Reset tracking: the absolute change per sweep in error_history_U/M, as on every route, and the relative one
+        # beside it (#2997 ruling 7)
         self.error_history_U = []
         self.error_history_M = []
+        relative_U: list[float] = []
+        relative_M: list[float] = []
+        run = DampingRun(self.damping)
         self.iterations_run = 0
 
         # Issue #704: Reset adjoint verification counter
@@ -657,7 +656,7 @@ class BlockIterator(BaseCouplingIterator):
             method_name = "Block Gauss-Seidel"
 
         if verbose:
-            print(f"Starting {method_name} iteration (relaxation={self.relaxation})")
+            print(f"Starting {method_name} iteration (damping={self.damping})")
 
         # Progress bar (Issue #587 Protocol pattern)
         from mfgarchon.utils.progress import create_progress_bar
@@ -701,16 +700,8 @@ class BlockIterator(BaseCouplingIterator):
                 self.iterations_run = iiter
                 break
 
-            # Apply damping - Issue #719: Per-variable damping
-            # Note: apply_damping expects (new, old) order, not (old, new)
-            self.U, self.M = apply_damping(
-                U_new,
-                U_old,
-                M_new,
-                M_old,
-                theta=self.relaxation,
-                theta_M=self.relaxation_M,
-            )
+            # Damping, per field (the policy, #2997)
+            self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
 
             self.U, self.M = state.write_back(self.U, self.M, self._U_terminal)
 
@@ -718,11 +709,13 @@ class BlockIterator(BaseCouplingIterator):
             from mfgarchon.utils.convergence import sweep_change
 
             # The block's output against its input, not the damped `self.U - U_old`, which is
-            # `relaxation * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
+            # `theta * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
             metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
 
-            self.error_history_U.append(metrics["l2distu_rel"])
-            self.error_history_M.append(metrics["l2distm_rel"])
+            self.error_history_U.append(metrics["l2distu_abs"])
+            self.error_history_M.append(metrics["l2distm_abs"])
+            relative_U.append(metrics["l2distu_rel"])
+            relative_M.append(metrics["l2distm_rel"])
 
             iter_time = time.time() - iter_start
             self.iterations_run = iiter + 1
@@ -760,7 +753,9 @@ class BlockIterator(BaseCouplingIterator):
         # Build metadata
         metadata = {
             "method": self.method.value,
-            "relaxation": self.relaxation,
+            "damping": self.damping,
+            "l2distu_rel": np.array(relative_U),
+            "l2distm_rel": np.array(relative_M),
             "convergence_reason": convergence_reason,
             "elapsed_time": elapsed,
             "adjoint_mode": self.adjoint_mode,
@@ -826,7 +821,7 @@ class BlockJacobiIterator(BlockIterator):
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         *,
-        relaxation: float = 0.5,
+        damping: DampingPolicy | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -834,7 +829,7 @@ class BlockJacobiIterator(BlockIterator):
             hjb_solver,
             fp_solver,
             method=BlockMethod.JACOBI,
-            relaxation=relaxation,
+            damping=damping if damping is not None else DampingPolicy.constant(0.5),
             **kwargs,
         )
 
@@ -857,7 +852,7 @@ class BlockGaussSeidelIterator(BlockIterator):
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         *,
-        relaxation: float = 0.5,
+        damping: DampingPolicy | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -865,6 +860,6 @@ class BlockGaussSeidelIterator(BlockIterator):
             hjb_solver,
             fp_solver,
             method=BlockMethod.GAUSS_SEIDEL,
-            relaxation=relaxation,
+            damping=damping if damping is not None else DampingPolicy.constant(0.5),
             **kwargs,
         )
