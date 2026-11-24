@@ -10,6 +10,8 @@ import numpy as np
 # Issue #2207: the builders below COMPOSE the problem's source rather than receiving one,
 # so this module is the single consumer of the #1361 composition owner for every
 # BaseCouplingIterator subclass. Runtime, not TYPE_CHECKING -- it is called, not annotated.
+from mfgarchon.config.damping import DampingPolicy
+
 from .source_composition import compose_fp_source, compose_hjb_source
 
 if TYPE_CHECKING:
@@ -84,7 +86,35 @@ RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
     "min_learning_rate": _DAMPING,
     "damp_value_function": _DAMPING,
     "picard_damping": _DAMPING,
+    "damping": "damping is the constructor's damping= or a config's PicardConfig.damping, not solve()'s (#2997)",
 }
+
+
+def damping_argument(damping: Any, route: str) -> DampingPolicy | None:
+    """A route's ``damping=`` as given: a `DampingPolicy`, or None for the route's own default; anything else refused."""
+    if damping is not None and not isinstance(damping, DampingPolicy):
+        raise TypeError(
+            f"{route}: damping= takes a DampingPolicy (mfgarchon.config), such as DampingPolicy.constant(0.5), "
+            f"got {type(damping).__name__} {damping!r} (#2997)"
+        )
+    return damping
+
+
+def damping_for_the_solve(
+    route: str, given: DampingPolicy | None, default: DampingPolicy, solve_config: Any
+) -> DampingPolicy:
+    """The damping a solve applies (the user's ruling of 2026-11-24, #2997): the config's ``PicardConfig.damping`` when it
+    sets one, else the route's own, its constructor's ``damping=`` or ``default``. A damping set in both places is refused
+    by name, since either choice would drop the other in silence."""
+    from_config = None if solve_config is None else solve_config.picard.damping
+    if from_config is not None and given is not None:
+        raise ValueError(
+            f"{route}: damping is given twice, to the constructor (damping=) and in the solve's config "
+            "(PicardConfig.damping); give it in one place (#2997)"
+        )
+    if from_config is not None:
+        return from_config
+    return given if given is not None else default
 
 
 def refuse_retired_solve_keywords(kwargs: dict[str, Any], where: str) -> None:

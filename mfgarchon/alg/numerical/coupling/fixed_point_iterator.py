@@ -26,6 +26,8 @@ from .base_mfg import (
     BaseCouplingIterator,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
+    damping_for_the_solve,
     refuse_a_capped_exit_in_a_coupled_solve,
     refuse_retired_solve_keywords,
     resolve_backend,
@@ -113,7 +115,8 @@ class FixedPointIterator(BaseCouplingIterator):
         """
         Args:
             damping: How U and M are damped, one `DampingPolicy` per field (#2997); None is
-                ``DampingPolicy.constant(0.5)``. A solve's config, when given, decides it instead (``PicardConfig.damping``).
+                ``DampingPolicy.constant(0.5)``. A solve's config that sets ``PicardConfig.damping`` decides it instead; a
+                damping given both here and in that config is refused at the solve.
         """
         super().__init__(problem)
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
@@ -151,7 +154,8 @@ class FixedPointIterator(BaseCouplingIterator):
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator", problem=problem, override=volatility)
         assert_paired_solver_geometry(hjb_solver, fp_solver, "FixedPointIterator", problem=problem)
 
-        self.damping = damping if damping is not None else DampingPolicy.constant(0.5)
+        # The constructor's damping, or None for this route's default; a solve's config may set it instead (#2997).
+        self.damping = damping_argument(damping, "FixedPointIterator")
 
         # State arrays (initialized in solve)
         self.U: np.ndarray | None = None
@@ -235,13 +239,11 @@ class FixedPointIterator(BaseCouplingIterator):
             final_max_iterations = solve_config.picard.max_iterations
             final_tolerance = solve_config.picard.tolerance
             final_absolute_tolerance = solve_config.picard.absolute_tolerance
-            policy = solve_config.picard.damping
             verbose = solve_config.picard.verbose
         else:
             final_max_iterations = max_iterations or 100
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
-            policy = self.damping
             from mfgarchon.utils.progress import should_show_progress
 
             verbose = should_show_progress()
@@ -294,6 +296,7 @@ class FixedPointIterator(BaseCouplingIterator):
         self.iterations_run = 0
 
         # The damping this solve applies, with its own adapted bases, histories and Anderson memory (#2997)
+        policy = damping_for_the_solve("FixedPointIterator", self.damping, DampingPolicy.constant(0.5), solve_config)
         run = DampingRun(policy)
 
         # Layer 2: Initialize MeasureField for sensitivity tracking (#956)
@@ -522,8 +525,8 @@ class FixedPointIterator(BaseCouplingIterator):
                     time=f"{iter_time:.1f}s",
                 )
 
-                # Issue #583: an adaptive field adapts its base on its own relative change (#2997 ruling (i))
-                for message in run.observe(iiter, self.l2distu_rel[iiter], self.l2distm_rel[iiter]):
+                # Issue #583: an adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
+                for message in run.observe(iiter, metrics):
                     logger.warning(message)
 
                 # Issue #614: Invoke user callback if provided

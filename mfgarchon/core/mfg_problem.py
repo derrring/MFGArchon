@@ -2814,8 +2814,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # ─────────────────────────────────────────────────────────────────────
         # Create fixed-point iterator with selected/validated solvers
         # ─────────────────────────────────────────────────────────────────────
-        # Issue #1155: thread the backend from config to the iterator; its damping, Anderson included, is config.picard's
-        # policy, which the iterator reads from the config itself (#2997).
+        # Issue #1155: thread the backend from config to the iterator. Its damping, Anderson included, is config.picard's
+        # policy when the config sets one, else the iterator's own default; the iterator reads it from the config (#2997).
         from mfgarchon.config.translator import (
             backend_config_to_kwargs,
             check_logging_config,

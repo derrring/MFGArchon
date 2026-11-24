@@ -10,6 +10,22 @@
   - `create_network_mfg_solver`, `create_simple_network_solver`: `relaxation`.
   - `PicardConfig`: `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`,
     `anderson_memory`; replaced by `PicardConfig.damping`.
+- **The routes' damping attributes and metadata keys** (#2997), which the policy holds: writing an attribute after
+  construction no longer changes the solve.
+  - Attributes: `FixedPointIterator`'s `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`,
+    `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson` and
+    `anderson_accelerator`; the Block iterators' `relaxation` and `relaxation_M`; `FictitiousPlayIterator`'s
+    `initial_learning_rate`, `min_learning_rate` and `damp_value_function`; `NewtonMFGSolver`'s `picard_damping`. Each
+    route's `damping` holds the policy.
+  - Result metadata: `FictitiousPlayIterator`'s `learning_rate_schedule` and `damp_value_function`, and the Block
+    iterators' `relaxation`, replaced by `damping`, the policy applied; `NewtonMFGSolver`'s `total_iterations`, replaced
+    by `SolverResult.iterations`, the sweeps whose change was measured.
+- **The initial-density fallbacks** (#2997 ruling 8). The four routes read the problem's `get_m_initial()` and nothing
+  else. On `main` the Block iterators and `NewtonMFGSolver` fell back to `problem.m_initial`, then to a uniform density
+  with a warning, and `FixedPointIterator` and `FictitiousPlayIterator` read `problem.get_m_init()`; a duck-typed problem
+  without `get_m_initial()` now raises `AttributeError` naming it.
+- **`warm_start_data["U_prev"]` and `warm_start_data["M_prev"]` on the four routes** (#2997): the arrays are
+  `get_warm_start_data()`'s, and `warm_start_data` holds the metadata.
 - **The helpers the policy and the iterate's owner replace** (#2997): `apply_damping`, `compute_scheduled_damping`,
   `adapt_damping` (by `DampingRun`); `initialize_cold_start`, `allocate_state_arrays`, `MFGResidual.get_initial_guess`
   (by `IterationState.start`, its allocation `allocate_iterate`); `construct_solver_result`, which nothing called;

@@ -337,8 +337,8 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     assert info["newton_iterations"] == 0, (
         f"reported {info['newton_iterations']} Newton iterations for a solve that ran none"
     )
-    assert info["total_iterations"] <= info["picard_iterations"], (
-        f"total_iterations={info['total_iterations']} below picard_iterations="
+    assert newton_result.iterations <= info["picard_iterations"], (
+        f"iterations={newton_result.iterations} above picard_iterations="
         f"{info['picard_iterations']} is self-contradicting"
     )
 

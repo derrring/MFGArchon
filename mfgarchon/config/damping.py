@@ -22,6 +22,7 @@ decides never reads M's history, and the other way round.
 
 from __future__ import annotations
 
+import numbers
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -75,28 +76,32 @@ class FieldDamping:
             raise ValueError(f"FieldDamping: schedule must be one of {SCHEDULES} or a callable, got {self.schedule!r}")
         if not 0.0 <= self.floor <= 1.0:
             raise ValueError(f"FieldDamping: floor must be in [0, 1], got {self.floor!r}")
+        if not isinstance(self.adaptive, bool):
+            raise TypeError(f"FieldDamping: adaptive must be a bool, got {self.adaptive!r}")
         if not 0.0 < self.adaptive_decay < 1.0:
             raise ValueError(f"FieldDamping: adaptive_decay must be in (0, 1), got {self.adaptive_decay!r}")
         if self.first_sweep not in ("damped", "whole"):
             raise ValueError(f"FieldDamping: first_sweep must be 'damped' or 'whole', got {self.first_sweep!r}")
 
-    @property
-    def damped(self) -> bool:
-        """Whether this field is damped at all: its schedule is not ``"none"``."""
-        return self.schedule != "none"
-
 
 @dataclass(frozen=True)
 class AndersonOptions:
-    """Anderson acceleration on U: the accelerator's memory ``depth`` and mixing ``beta``."""
+    """Anderson acceleration on U: the accelerator's memory ``depth`` (at least 1) and mixing ``beta`` in (0, 1]."""
 
     depth: int = 5
     beta: float = 1.0
 
+    def __post_init__(self) -> None:
+        if isinstance(self.depth, bool) or not isinstance(self.depth, numbers.Integral) or self.depth < 1:
+            raise ValueError(f"AndersonOptions: depth must be an int >= 1, got {self.depth!r}")
+        if not 0.0 < self.beta <= 1.0:
+            raise ValueError(f"AndersonOptions: beta must be in (0, 1], got {self.beta!r}")
+
 
 @dataclass(frozen=True)
 class DampingPolicy:
-    """U's and M's damping (`FieldDamping` each), and Anderson acceleration on U or None."""
+    """U's and M's damping (`FieldDamping` each), and Anderson acceleration on U or None. With Anderson set, U's next
+    iterate is the accelerator's, so U's `FieldDamping` is not read; M's still is."""
 
     U: FieldDamping = field(default_factory=FieldDamping)
     M: FieldDamping = field(default_factory=FieldDamping)
@@ -137,7 +142,3 @@ class DampingPolicy:
         best response taken whole, or averaged the same way when ``damp_value_function``."""
         belief = FieldDamping(theta=alpha0, schedule=schedule, floor=floor)
         return cls(U=belief if damp_value_function else FieldDamping(schedule="none"), M=belief)
-
-
-# The default every route without its own and every PicardConfig share: frozen, so one instance serves all.
-DEFAULT_DAMPING = DampingPolicy.constant(0.5)

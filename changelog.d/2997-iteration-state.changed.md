@@ -10,3 +10,8 @@
   - FixedPoint's adaptive damping with M's theta unset adapts each field on its own history; M's theta no longer
     follows U's adaptation.
   - Fictitious play's `"constant"` schedule is alpha0 itself, not 0.5 alpha0.
+  - A route built with a damping and solved from a config that sets none keeps its constructor's damping whole. On
+    `main`, FixedPoint beside any config took `relaxation` and `relaxation_schedule` from the config, and M's theta
+    followed that `relaxation` when `relaxation_M` was unset, so `SolverFactory.create_solver`, which always builds a
+    config, dropped the theta it was given. A damping given both to the constructor and in the config
+    is refused (the user's ruling of 2026-11-24).

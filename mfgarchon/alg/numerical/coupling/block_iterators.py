@@ -49,6 +49,7 @@ from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
     refuse_retired_solve_keywords,
 )
@@ -152,7 +153,7 @@ class BlockIterator(BaseCouplingIterator):
             method = BlockMethod(method.lower())
         self.method = method
 
-        self.damping = damping if damping is not None else DampingPolicy.constant(1.0)
+        self.damping = damping_argument(damping, type(self).__name__) or DampingPolicy.constant(1.0)
 
         # PDE coefficient overrides
         self.volatility = volatility
@@ -713,6 +714,9 @@ class BlockIterator(BaseCouplingIterator):
             # The block's output against its input, not the damped `self.U - U_old`, which is
             # `theta * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
             metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
+            # An adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
+            for message in run.observe(iiter, metrics):
+                logger.warning(message)
 
             self.error_history_U.append(metrics["l2distu_abs"])
             self.error_history_M.append(metrics["l2distm_abs"])

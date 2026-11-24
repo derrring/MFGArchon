@@ -461,7 +461,7 @@ def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_was_handed
 
 def test_newton_warm_up_states_a_negative_the_solve_read(mfg_caplog):
     """The warm-up's own guard, with Newton's default three sweeps, states the signed minimum of the density its second
-    sweep read. The row above, with one warm-up sweep, stops at the guard before Newton's first verdict instead."""
+    sweep read. The row above, with one warm-up sweep, stops at the guard inside Newton's first verdict instead."""
     with (
         mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
         np.errstate(invalid="ignore", divide="ignore"),

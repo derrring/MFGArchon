@@ -36,6 +36,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.config.damping import DampingPolicy
+from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -43,6 +44,8 @@ from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
+    damping_for_the_solve,
     refuse_a_capped_exit_in_a_coupled_solve,
     refuse_retired_solve_keywords,
     resolve_backend,
@@ -54,6 +57,8 @@ from .fixed_point_utils import (
     resolve_fp_drift_kwargs,
 )
 from .iteration_state import IterationState
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -98,6 +103,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             unfloored 1/(n+1) average (Cardaliaguet-Hadikhanloo 2017, (2.2) with Theorem 2.1 for the second-order
             system, (3.3) with Theorem 3.1 for the first-order one). On #1914's sigma=0 fixture, measured at 0f937601, a
             0.01 floor left the fixed-point residual at 2.45e-01 after 300 sweeps, against 4.67e-04 unfloored (#2415).
+            A solve's config that sets ``PicardConfig.damping`` decides it instead; a damping given both here and in that
+            config is refused at the solve.
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
             torch are refused at allocation, naming #1922 (see ``iteration_state.allocate_iterate``).
@@ -142,7 +149,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         assert_paired_solver_geometry(hjb_solver, fp_solver, "FictitiousPlayIterator", problem=problem)
         self.config = config
 
-        self.damping = damping if damping is not None else DampingPolicy.fictitious_play()
+        # The constructor's damping, or None for fictitious play's own; a solve's config may set it instead (#2997).
+        self.damping = damping_argument(damping, "FictitiousPlayIterator")
 
         # PDE coefficient overrides
         self.volatility = volatility
@@ -239,7 +247,10 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.l2distu_rel = np.ones(final_max_iterations)
         self.l2distm_rel = np.ones(final_max_iterations)
         self.learning_rate_history = []
-        run = DampingRun(self.damping)
+        policy = damping_for_the_solve(
+            "FictitiousPlayIterator", self.damping, DampingPolicy.fictitious_play(), solve_config
+        )
+        run = DampingRun(policy)
         self.iterations_run = 0
 
         # Main Fictitious Play iteration loop
@@ -335,6 +346,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # on #1914's sigma=0 fixture (#2415). This is
             # #1684 item 7, which FixedPointIterator already measures this way.
             metrics = sweep_change(U_new, U_old, M_candidate, M_old, integrate, time_step)
+            # An adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
+            for message in run.observe(k, metrics):
+                logger.warning(message)
             self.l2distu_abs[k] = metrics["l2distu_abs"]
             self.l2distu_rel[k] = metrics["l2distu_rel"]
             self.l2distm_abs[k] = metrics["l2distm_abs"]
@@ -387,7 +401,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 "convergence_reason": convergence_reason,
                 "l2distu_rel": self.l2distu_rel[: self.iterations_run],
                 "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-                "damping": self.damping,
+                "damping": policy,
                 "learning_rate_history": self.learning_rate_history,
             },
         )

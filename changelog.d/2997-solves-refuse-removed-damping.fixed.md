@@ -4,4 +4,5 @@
   refusal of a non-finite change.
 - **A coupling route's `solve()` refuses a removed damping keyword by name** (#2997). `FixedPointIterator`,
   `FictitiousPlayIterator`, the Block iterators and `NewtonMFGSolver` keep `**kwargs` in `solve()`, which accepted
-  `relaxation=` and the other damping keywords in silence; they now refuse them, naming `damping=`.
+  `relaxation=` and the other damping keywords in silence; they now refuse them, naming `damping=`, and refuse
+  `damping=` itself, which is the constructor's or the config's.

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf, field_validator, model_validator
 
-from .damping import DEFAULT_DAMPING, DampingPolicy
+from .damping import DampingPolicy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -125,10 +125,11 @@ class PicardConfig(BaseConfig):
     absolute_tolerance : float | None
         If set, the absolute L2 change must also fall below it. None (default) compares no absolute
         quantity (#2555).
-    damping : DampingPolicy
+    damping : DampingPolicy | None
         How U and M are damped, one policy per field (#2997): their base thetas, schedules, floors, adaptation and
-        first sweep, and Anderson acceleration on U. The default is ``DampingPolicy.constant(0.5)``, one shared frozen
-        instance. ``mfgarchon.config.damping`` states the rule.
+        first sweep, and Anderson acceleration on U. ``mfgarchon.config.damping`` states the rule. None (default) leaves
+        the route's own damping, its constructor's ``damping=``; a policy set here decides instead, and a route given a
+        damping both here and at its constructor refuses the solve (the user's ruling of 2026-11-24).
     verbose : bool
         Print iteration progress (default: True)
     """
@@ -136,7 +137,7 @@ class PicardConfig(BaseConfig):
     max_iterations: int = Field(default=100, ge=1)
     tolerance: float = Field(default=1e-6, gt=0)
     absolute_tolerance: float | None = Field(default=None, gt=0)
-    damping: InstanceOf[DampingPolicy] = DEFAULT_DAMPING
+    damping: InstanceOf[DampingPolicy] | None = None
     verbose: bool = True
 
     @field_validator("damping", mode="before")

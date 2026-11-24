@@ -37,24 +37,26 @@ class DampingRun:
 
     def update(self, k: int, U_old: Any, U_new: Any, M_old: Any, M_new: Any) -> tuple[Any, Any]:
         """The next iterate after sweep ``k``: each field blended by its ``theta_k``, U through Anderson when set. A
-        field whose ``theta_k`` is 1 takes the map's output itself."""
+        field whose ``theta_k`` is 1 takes a copy of the map's output: the next iterate is never an input array, which
+        the write-back edits in place while the caller still measures the map's output (#2997 review 1)."""
         theta_U, theta_M = self.theta("U", k), self.theta("M", k)
         self.thetas["U"].append(theta_U)
         self.thetas["M"].append(theta_M)
         if self._anderson is not None:
             U = self._anderson.update(U_old.flatten(), U_new.flatten(), method="type1").reshape(U_old.shape)
         else:
-            U = U_new if theta_U == 1.0 else theta_U * U_new + (1 - theta_U) * U_old
-        M = M_new if theta_M == 1.0 else theta_M * M_new + (1 - theta_M) * M_old
+            U = U_new.copy() if theta_U == 1.0 else theta_U * U_new + (1 - theta_U) * U_old
+        M = M_new.copy() if theta_M == 1.0 else theta_M * M_new + (1 - theta_M) * M_old
         return U, M
 
-    def observe(self, k: int, change_U: float, change_M: float) -> list[str]:
-        """Record sweep ``k``'s relative change of each field; each adaptive field adapts its base on its own history.
-        Returns a message per decay, for the caller to log."""
+    def observe(self, k: int, change: dict[str, float]) -> list[str]:
+        """Record sweep ``k``'s change as `sweep_change` measured it; each adaptive field adapts its base on its own
+        history of its relative change, ``l2distu_rel`` or ``l2distm_rel``. The quantity is chosen here, so every route
+        adapts on the same measure (#2997 review 1). Returns a message per decay, for the caller to log."""
         messages = []
-        for name, change in (("U", change_U), ("M", change_M)):
+        for name, key in (("U", "l2distu_rel"), ("M", "l2distm_rel")):
             history = self._changes[name]
-            history.append(float(change))
+            history.append(float(change[key]))
             spec = self.policy.U if name == "U" else self.policy.M
             if not spec.adaptive or len(history) < 2:
                 continue
@@ -66,6 +68,6 @@ class DampingRun:
                 )
             elif len(history) >= 3 and all(history[-(i + 1)] < history[-(i + 2)] for i in range(2)):
                 self._base[name] = min(self._base[name] * 1.05, spec.theta)
-        if self.policy.U.adaptive or self.policy.M.adaptive:
+        if (self.policy.U.adaptive or self.policy.M.adaptive) and k >= 1:
             self.adapted.append({"iteration": k + 1, "theta_U": self._base["U"], "theta_M": self._base["M"]})
         return messages
