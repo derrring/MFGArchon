@@ -250,7 +250,8 @@ class BlockIterator(BaseCouplingIterator):
                 logger.warning("No initial density found, using uniform")
 
         # The terminal datum's one owner (#1642 stage 2), at the initial density, which a cold start writes into every
-        # row; each iteration re-reads it at the density its HJB solve uses.
+        # row but at a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB
+        # solve uses.
         U_terminal = np.asarray(
             self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__)
         )

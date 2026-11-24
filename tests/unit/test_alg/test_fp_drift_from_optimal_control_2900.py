@@ -565,20 +565,24 @@ def test_each_router_caller_hands_the_solver_so_the_own_control_is_read(caller):
     np.testing.assert_allclose(caller(_steep(_OwnControl)), caller(_library()), rtol=0, atol=1e-12)
 
 
-def test_regime_switching_refuses_without_a_density_trajectory():
-    """RegimeSwitchingIterator hands the router a single density on its first sweep, not a trajectory (#2905), so FP-FDM
-    refuses rather than reach the velocity route, which reads the trajectory."""
-    problems = [_problem(_steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
-    iterator = RegimeSwitchingIterator(
-        problems,
-        RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]])),
-        [HJBFDMSolver(problem) for problem in problems],
-        [FPFDMSolver(problem) for problem in problems],
-        max_iterations=6,
-        tolerance=1e-12,
-    )
-    with pytest.raises(NotImplementedError, match=r"Here it is handed M of shape \(21,\), not a density trajectory"):
-        _quietly(iterator.solve)
+def test_regime_switching_takes_the_velocity_route_from_its_first_sweep():
+    """RegimeSwitchingIterator hands the router each regime's density trajectory from its first sweep, the cold start's
+    iterate (#2905, #2991), so FP-FDM reads the own optimal control on the velocity route, as it reads the library H's.
+    At f9a41a31 the first sweep handed it the single initial density, and FP-FDM refused."""
+
+    def run(kind):
+        problems = [_problem(_library() if kind == "library" else _steep(_OwnControl), centre=c) for c in (0.3, 0.7)]
+        iterator = RegimeSwitchingIterator(
+            problems,
+            RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]])),
+            [HJBFDMSolver(problem) for problem in problems],
+            [FPFDMSolver(problem) for problem in problems],
+            max_iterations=6,
+            tolerance=1e-12,
+        )
+        return np.asarray([np.asarray(m) for m in _quietly(iterator.solve).densities])
+
+    np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
 
 
 def test_a_graph_solve_takes_the_velocity_route_on_each_node():

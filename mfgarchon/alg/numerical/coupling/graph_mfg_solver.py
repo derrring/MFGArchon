@@ -210,8 +210,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         refuse_a_capped_exit_in_a_coupled_solve(self._fp, "GraphMFGSolver.solve")
         N = self._N
 
-        # Initialize: initial densities, then each node's terminal condition from its one owner at that density, the
-        # density at t = T of the first sweep (#1642 stage 2).
+        # Initialize: initial densities, then each node's terminal condition from its one owner at that density; the
+        # first sweep re-reads it at its density at t = T, which holds the FP's prescribed value at its nodes (#1642
+        # stage 2, #2991).
         Ms = []
         for k in range(N):
             m_init = self._problems[k].get_m_initial()

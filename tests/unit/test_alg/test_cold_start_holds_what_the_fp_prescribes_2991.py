@@ -34,12 +34,12 @@ from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwi
 from mfgarchon.alg.numerical.fem import FPFEMSolver, HJBFEMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.hamiltonian import CongestionHamiltonian, QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc
 from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 
 NT, PLANT = 5, 7.0
@@ -82,10 +82,11 @@ def _problem(bc, mesh=False):
     )
 
 
-# (FP arm, the problem's BC, the FP's own BC or None, the HJB class, the FP class, a mesh, p at level n)
+# (FP arm, the problem's BC, the FP's own BC or None, the HJB class, the FP class, a mesh, p at level n). The problem's
+# face carries 0.3, which the FP reads as an exit, p = 0: a protocol that read the raw value would name 0.3.
 ARMS = {
     "FP-FDM, the problem's Dirichlet face (an exit, p = 0)": (
-        lambda: dirichlet_bc(value=0.0, dimension=1),
+        lambda: dirichlet_bc(value=0.3, dimension=1),
         None,
         HJBFDMSolver,
         FPFDMSolver,
@@ -101,7 +102,7 @@ ARMS = {
         lambda n, dt: 0.3 + n * dt,
     ),
     "FP-FEM, the problem's Dirichlet face (an exit, p = 0)": (
-        lambda: dirichlet_bc(value=0.0, dimension=1),
+        lambda: dirichlet_bc(value=0.3, dimension=1),
         None,
         lambda q: HJBFEMSolver(q, order=1),
         lambda q, **kw: FPFEMSolver(q, order=1, **kw),
@@ -172,7 +173,7 @@ CASES = [
 @pytest.mark.parametrize(("route", "arm"), CASES, ids=[f"{route} | {arm}" for route, arm in CASES])
 def test_the_cold_start_holds_the_fps_prescribed_value_at_its_later_levels(route, arm, monkeypatch):
     """At the walls, from level 1 on: the density the first sweep hands the HJB, and the density returned after one
-    sweep, are the FP's prescribed value p(t_n), not the caller's 7.0.
+    sweep, are the FP's prescribed value p(t_n), not the caller's 7.0. At level 0 the HJB is handed the caller's 7.0.
 
     The first is read by a recorder on the HJB's `solve_hjb_system`, wrapped so the signature the iterators read
     (`hjb_solver_sig_params`) is the solver's own; its control is that the route returns the same density with the
@@ -198,6 +199,7 @@ def test_the_cold_start_holds_the_fps_prescribed_value_at_its_later_levels(route
     walls = [0, -1]
     p = np.array([p_at(n, dt) for n in range(1, NT + 1)])
     first = handed[0].reshape(NT + 1, -1)
+    assert np.all(first[0, walls] == PLANT), f"level 0 is the caller's density (#2984), handed {first[0, walls]}"
     assert np.max(np.abs(first[1:, walls] - p[:, None])) <= 1e-12, (
         f"the first sweep handed the HJB {first[1:, walls].tolist()} at the walls, against p {p.tolist()}"
     )
@@ -313,6 +315,48 @@ def test_regimes_early_return_reports_the_cold_start_it_held(monkeypatch):
     assert float(np.max(np.abs(densities[1:, [0, -1]]))) == 0.0, densities[1:, [0, -1]].tolist()
 
 
+def test_each_regime_asks_its_own_fp_and_the_inflow_reads_the_cold_start():
+    """Regime 0's FP holds its exit walls at 0; regime 1's no-flux FP holds no node. The first sweep hands regime 0's HJB
+    0 at the walls from level 1 on and regime 1's the caller's 7.0, and the inflow into regime 1, Q[0, 1] m_0, reads
+    regime 0's cold start there: 0, not the caller's 7.0. The inflow is read off the source regime 1's FP is handed,
+    exp(q_1 t) Q[0, 1] m_0, at each level t_1..T."""
+    qs = [_problem(dirichlet_bc(value=0.3, dimension=1)), _problem(no_flux_bc(dimension=1))]
+    Q = np.array([[-0.5, 0.5], [0.2, -0.2]])
+    hjbs, fps = [HJBFDMSolver(q) for q in qs], [FPFDMSolver(q) for q in qs]
+    handed: dict[int, np.ndarray] = {}
+    for k, hjb in enumerate(hjbs):
+        original = hjb.solve_hjb_system
+
+        @functools.wraps(original)
+        def recording(*args, _k=k, _original=original, **kwargs):
+            handed.setdefault(_k, np.array(args[0], dtype=float, copy=True))
+            return _original(*args, **kwargs)
+
+        hjb.solve_hjb_system = recording
+    sources = []
+    original_fp = fps[1].solve_fp_system
+
+    @functools.wraps(original_fp)
+    def recording_fp(*args, **kwargs):
+        sources.append(kwargs.get("source_term"))
+        return original_fp(*args, **kwargs)
+
+    fps[1].solve_fp_system = recording_fp
+    RegimeSwitchingIterator(
+        qs, RegimeSwitchingConfig(transition_matrix=Q), hjbs, fps, max_iterations=1, tolerance=1e-12, damping=0.5
+    ).solve()
+    walls = [0, -1]
+    assert np.all(handed[0][1:, walls] == 0.0), handed[0][1:, walls].tolist()
+    assert np.all(handed[1][1:, walls] == PLANT), handed[1][1:, walls].tolist()
+    assert sources[0] is not None, "regime 1's FP was handed no inflow"
+    x = qs[1].geometry.get_spatial_grid()
+    read = [
+        np.asarray(sources[0](n * qs[1].dt, x), dtype=float)[walls] / (np.exp(0.2 * n * qs[1].dt) * Q[0, 1])
+        for n in range(1, NT + 1)
+    ]
+    assert np.max(np.abs(read)) <= 1e-12, [r.tolist() for r in read]
+
+
 def _held_by_the_step(fp, shape):
     """The oracle, which does not ask the protocol: the FP's direct call on two unrelated inputs. A (level, node) is held
     when the two outputs agree there to 1e-12; returns {level: (nodes, values)} for levels 1..NT."""
@@ -410,19 +454,24 @@ def test_the_fp_names_exactly_the_nodes_its_step_holds_and_their_values(layout):
         np.testing.assert_allclose(np.asarray(answer[1])[order], held[n][1], rtol=0, atol=1e-14, err_msg=f"level {n}")
 
 
-def test_fp_fdm_names_no_value_at_a_capped_exit():
-    """A capped exit's density at a later level follows each step's active set (#2581), so FP-FDM prescribes nothing
-    there and refuses to name a value. Every coupled route refuses a capped exit before its cold start."""
+def test_fp_fdm_names_the_uncapped_dirichlet_node_and_not_the_capped_exit():
+    """A capped exit's node is held at 0 only while its outflow stays under the cap; each step's active set decides its
+    row (#2581), so FP-FDM does not name it, and names the uncapped Dirichlet node beside it. The step's two-input oracle
+    agrees: the capped node differs between the inputs at every level, and x_min holds 0.4."""
     capped = BoundaryConditions(
         dimension=1,
         segments=[
-            BCSegment(name="x_min", bc_type=BCType.NO_FLUX, boundary="x_min"),
-            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.5),
+            BCSegment(name="own", bc_type=BCType.DIRICHLET, value=0.4, boundary="x_min"),
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.05),
         ],
     )
-    fp = FPFDMSolver(_problem(dirichlet_bc(value=0.0, dimension=1)), boundary_conditions=capped)
-    with pytest.raises(NotImplementedError, match=r"segment\(s\) \['exit'\] carry a flux_capacity"):
-        fp.prescribed_density(1)
+    fp = FPFDMSolver(_problem(dirichlet_bc(value=0.3, dimension=1)), boundary_conditions=capped)
+    held = _held_by_the_step(fp, (11,))
+    for n in range(1, NT + 1):
+        assert held[n][0].tolist() == [0], f"level {n}: the step holds {held[n][0].tolist()}"
+        nodes, values = fp.prescribed_density(n)
+        assert nodes.tolist() == [0]
+        np.testing.assert_allclose(values, [0.4], rtol=0, atol=1e-15)
 
 
 def test_the_network_fp_refuses_to_name_what_its_step_holds_at_a_node_bc():
@@ -460,8 +509,6 @@ def test_the_network_fp_refuses_to_name_what_its_step_holds_at_a_node_bc():
 
 def test_a_solver_whose_step_prescribes_nothing_names_nothing():
     """FP-FDM on a no-flux BC holds no node; the protocol answers None, so the cold start is m_initial everywhere."""
-    from mfgarchon.geometry.boundary import no_flux_bc
-
     fp, shape = _grid_fp((11,), no_flux_bc(dimension=1), own=False)
     held = _held_by_the_step(fp, shape)
     assert not any(len(held[n][0]) for n in held)
@@ -489,7 +536,10 @@ def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
         def prescribed_density(self, level):
             return np.array([0]), np.array([0.25])
 
-    refusal = r"_Bare does not define `prescribed_density`.*subclass `BaseFPSolver`, whose default is None \(#2991\)"
+    refusal = (
+        r"_Bare does not define `prescribed_density`.*forward it to the solver it wraps.*subclassing `BaseFPSolver` "
+        r"gives None, which is right only where its step holds no node \(#2991\)"
+    )
     with pytest.raises(TypeError, match=refusal):
         cold_start_density_at_level(m0, _Bare(), 1)
     on_the_instance = _Bare()
@@ -505,3 +555,175 @@ def test_a_cold_start_refuses_an_fp_whose_class_does_not_define_the_protocol():
     spec_mock = Mock(spec=FPFDMSolver)
     spec_mock.prescribed_density.return_value = None
     assert cold_start_density_at_level(m0, spec_mock, 1) is m0
+
+
+def test_a_wrapper_over_a_capped_fp_forwards_the_protocol_and_its_cap_is_honoured():
+    """A user's wrapper that hides a capped FP-FDM's ``boundary_conditions`` is not seen by the coupled route's cap
+    refusal, and the cap is honoured inside the solve (user ruling 2026-11-01). Under the user's ruling of 2026-11-24 it
+    defines or forwards ``prescribed_density``: forwarded, FP-FDM names no capped node, so the cold start keeps the
+    caller's density there and the solve runs; a wrapper that does neither is refused by name."""
+    q = _problem(dirichlet_bc(value=0.0, dimension=1))
+    capped = BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.NO_FLUX, boundary="x_min"),
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max", flux_capacity=0.5),
+        ],
+    )
+
+    class _Hides:
+        def __init__(self, inner):
+            object.__setattr__(self, "_inner", inner)
+
+        def __getattr__(self, name):
+            if name == "boundary_conditions":
+                raise AttributeError(name)
+            return getattr(self._inner, name)
+
+    class _Forwards(_Hides):
+        def prescribed_density(self, level):
+            return self._inner.prescribed_density(level)
+
+    with pytest.raises(TypeError, match=r"_Hides does not define `prescribed_density`.*forward it"):
+        FixedPointIterator(
+            q, HJBFDMSolver(q), _Hides(FPFDMSolver(q, boundary_conditions=capped)), relaxation=0.5
+        ).solve(max_iterations=1, verbose=False)
+    handed: list[np.ndarray] = []
+    hjb = HJBFDMSolver(q)
+    original = hjb.solve_hjb_system
+
+    @functools.wraps(original)
+    def recording(*args, **kwargs):
+        handed.append(np.array(args[0], dtype=float, copy=True))
+        return original(*args, **kwargs)
+
+    hjb.solve_hjb_system = recording
+    fp = _Forwards(FPFDMSolver(q, boundary_conditions=capped))
+    assert all(fp.prescribed_density(n) is None for n in range(1, NT + 1))
+    M = np.asarray(FixedPointIterator(q, hjb, fp, relaxation=0.5).solve(max_iterations=1, verbose=False).M)
+    assert np.all(np.isfinite(M))
+    assert np.all(handed[0][1:, -1] == PLANT), handed[0][1:, -1].tolist()
+
+
+def test_the_cold_start_holds_the_prescribed_values_whatever_the_initial_densitys_memory_layout():
+    """The protocol's indices are C-order flat positions in one level's array. An initial density handed in Fortran order,
+    or as a transposed view, gets the same values at the same nodes as a C-order one: on the 9 x 7 grid whose x_min holds
+    0.4 and y_min 0.9, through the level helper, the exported `initialize_cold_start` and `cold_start_iterate`."""
+    from mfgarchon.alg.numerical.coupling import initialize_cold_start
+    from mfgarchon.alg.numerical.coupling.fixed_point_utils import cold_start_density_at_level, cold_start_iterate
+
+    fp, shape = LAYOUTS["FP-FDM, 9 x 7, its own DIRICHLET 0.4 on x_min and 0.9 on y_min, no-flux elsewhere"]()
+    for level in range(1, NT + 1):
+        nodes, values = fp.prescribed_density(level)
+        expected = np.full(shape, PLANT)
+        expected.reshape(-1)[nodes] = values
+        assert sorted(set(np.round(values, 12))) == [0.4, 0.9]
+        for layout, m0 in (
+            ("C order", np.full(shape, PLANT)),
+            ("Fortran order", np.asfortranarray(np.full(shape, PLANT))),
+            ("a transposed view", np.full(shape[::-1], PLANT).T),
+        ):
+            np.testing.assert_array_equal(cold_start_density_at_level(m0, fp, level), expected, err_msg=layout)
+            np.testing.assert_array_equal(cold_start_iterate(m0, fp, NT)[level], expected, err_msg=layout)
+            _, M = initialize_cold_start(
+                np.zeros((NT + 1, *shape)), np.zeros((NT + 1, *shape)), m0, np.zeros(shape), NT + 1, fp_solver=fp
+            )
+            np.testing.assert_array_equal(M[level], expected, err_msg=layout)
+
+
+def test_each_population_and_graph_node_asks_its_own_fp():
+    """Two populations, and two graph nodes, on one grid: a's FP holds its exit walls at 0, b's no-flux FP holds no node.
+    The first sweep hands a's HJB 0 at the walls from level 1 on and b's HJB the caller's 7.0, so a cold start that asked
+    one member's FP for another's density would hand b 0."""
+    qa, qb = _problem(dirichlet_bc(value=0.3, dimension=1)), _problem(no_flux_bc(dimension=1))
+    walls = [0, -1]
+
+    def recorded(hjb):
+        seen = []
+        original = hjb.solve_hjb_system
+
+        @functools.wraps(original)
+        def recording(*args, **kwargs):
+            seen.append(np.array(args[0] if args else kwargs["M_density"], dtype=float, copy=True))
+            return original(*args, **kwargs)
+
+        hjb.solve_hjb_system = recording
+        return hjb, seen
+
+    (ha, seen_a), (hb, seen_b) = recorded(HJBFDMSolver(qa)), recorded(HJBFDMSolver(qb))
+    multi = MultiPopulationProblem(populations=[qa, qb], population_names=["a", "b"])
+    MultiPopulationIterator(multi, [ha, hb], [FPFDMSolver(qa), FPFDMSolver(qb)], relaxation=0.5).solve(
+        max_iterations=1, tolerance=1e-12
+    )
+    (ga, graph_a), (gb, graph_b) = recorded(HJBFDMSolver(qa)), recorded(HJBFDMSolver(qb))
+    coupling = AdjacencyCoupling(np.zeros((2, 2)), alpha=0.05, beta=0.02)
+    GraphMFGSolver(
+        [qa, qb], coupling, [ga, gb], [FPFDMSolver(qa), FPFDMSolver(qb)], max_iterations=1, tolerance=1e-12, damping=0.5
+    ).solve()
+    for route, a, b in (("MultiPopulation", seen_a, seen_b), ("Graph", graph_a, graph_b)):
+        assert a, f"{route}: the recorder saw no HJB call for a"
+        assert b, f"{route}: the recorder saw no HJB call for b"
+        first_a, first_b = (x.reshape(NT + 1, -1) for x in (a[0], b[0]))
+        assert np.all(first_a[1:, walls] == 0.0), f"{route}: a was handed {first_a[1:, walls].tolist()}"
+        assert np.all(first_b[1:, walls] == PLANT), f"{route}: b was handed {first_b[1:, walls].tolist()}"
+
+
+@pytest.mark.parametrize("hamiltonian", ["quadratic", "congestion"])
+def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(hamiltonian):
+    """With Q = 0 the regimes decouple: no cross term and an integrating factor of 1, so one RegimeSwitchingIterator sweep
+    at damping 1 is one FixedPoint sweep at relaxation 1 on each regime, on the problem's exit. CongestionHamiltonian's
+    FP drift is on the velocity route, which reads the density trajectory the first sweep hands it (#2905): at f9a41a31
+    the router was handed the single initial density there, and regime 0's first-sweep M was 9.232e-02 off FixedPoint's.
+    The quadratic H, on the value route, agrees at both trees."""
+
+    def problem(centre):
+        H = (
+            SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.5 * m)
+            if hamiltonian == "quadratic"
+            else CongestionHamiltonian(
+                QuadraticControlCost(control_cost=1.0), congestion_factor=lambda m: 1.0 + 0.5 * m
+            )
+        )
+        return MFGProblem(
+            model=Model(hamiltonian=H, volatility=0.3),
+            domain=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=dirichlet_bc(value=0.3, dimension=1)
+            ),
+            conditions=Conditions(
+                m_initial=lambda x: 0.2 + np.exp(-40 * (_coordinate(x) - centre) ** 2),
+                u_terminal=lambda x: 2.0 * (_coordinate(x) - 0.8) ** 2,
+                T=0.5,
+            ),
+            Nt=10,
+        )
+
+    qs = [problem(c) for c in (0.3, 0.6)]
+    regime = RegimeSwitchingIterator(
+        qs,
+        RegimeSwitchingConfig(transition_matrix=np.zeros((2, 2))),
+        [HJBFDMSolver(q) for q in qs],
+        [FPFDMSolver(q) for q in qs],
+        max_iterations=1,
+        tolerance=1e-12,
+        damping=1.0,
+    ).solve()
+    for k, q in enumerate(qs):
+        fixed = FixedPointIterator(q, HJBFDMSolver(q), FPFDMSolver(q), relaxation=1.0).solve(
+            max_iterations=1, verbose=False
+        )
+        np.testing.assert_allclose(np.asarray(regime.densities[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(regime.values[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)
+    # The first sweep takes the FP's density whole and is not measured, whatever the damping and the tolerance.
+    fresh = [problem(c) for c in (0.3, 0.6)]
+    damped = RegimeSwitchingIterator(
+        fresh,
+        RegimeSwitchingConfig(transition_matrix=np.zeros((2, 2))),
+        [HJBFDMSolver(q) for q in fresh],
+        [FPFDMSolver(q) for q in fresh],
+        max_iterations=1,
+        tolerance=1e9,
+        damping=0.5,
+    ).solve()
+    assert not damped.converged
+    for k in range(2):
+        np.testing.assert_allclose(np.asarray(damped.densities[k]), np.asarray(regime.densities[k]), rtol=0, atol=1e-12)

@@ -76,15 +76,16 @@ def cold_start_density_at_level(M_initial: np.ndarray, fp_solver: BaseFPSolver, 
     if getattr(fp_solver.__class__, "prescribed_density", None) is None:
         raise TypeError(
             f"{fp_solver.__class__.__name__} does not define `prescribed_density`, which a cold start asks for the "
-            "density the FP's step holds at a node: define `prescribed_density`, or subclass `BaseFPSolver`, whose "
-            "default is None (#2991)"
+            "density the FP's step holds at a node: define it, or forward it to the solver it wraps, returning the flat "
+            "indices its step holds whatever it is handed and their values; subclassing `BaseFPSolver` gives None, "
+            "which is right only where its step holds no node (#2991)"
         )
     prescribed = fp_solver.prescribed_density(level)
     if prescribed is None:
         return M_initial
     nodes, values = prescribed
     held = np.array(M_initial, dtype=np.float64, copy=True)
-    held.reshape(-1)[nodes] = values
+    held.flat[nodes] = values  # C-order positions whatever the copy's layout; reshape(-1) of an F-order copy is a copy
     return held
 
 

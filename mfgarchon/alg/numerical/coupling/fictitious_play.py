@@ -217,7 +217,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         Retrieve the initial density and the terminal value function from the problem.
 
         The initial density is the problem's ``get_m_init()``; the terminal value is its one owner,
-        ``problem.terminal_value``, at that density, which a cold start writes into every row (#1642 stage 2).
+        ``problem.terminal_value``, at that density, which a cold start writes into every row but at a node the FP
+        prescribes from level 1 on (#1642 stage 2, #2991).
 
         Args:
             shape: Spatial grid shape

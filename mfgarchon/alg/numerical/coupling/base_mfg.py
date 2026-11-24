@@ -33,8 +33,10 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None
     calls this.
 
     The limit: this reads the object handed over, not what it delegates to. A user's object that wraps a capped
-    FP-FDM and does not expose its ``boundary_conditions`` is not seen, and the cap is honoured inside the coupled
-    solve, as in a user's own loop around ``solve_fp_system`` (user ruling, 2026-11-01).
+    FP-FDM and does not expose its ``boundary_conditions`` is not seen, ~~and the cap is honoured inside the coupled
+    solve~~, as in a user's own loop around ``solve_fp_system`` (user ruling, 2026-11-01). [AMENDED 2026-11-24, user
+    ruling, #2991] Such a wrapper defines ``prescribed_density`` or forwards it to the FP-FDM it wraps, or the cold start
+    refuses it by name; forwarded, FP-FDM names no capped node, and the cap is honoured inside the coupled solve.
     """
     for fp_solver in fp_solvers:
         bc = getattr(fp_solver, "boundary_conditions", None)

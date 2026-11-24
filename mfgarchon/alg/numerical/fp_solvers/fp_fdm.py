@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse as sparse
@@ -16,6 +16,7 @@ from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_volat
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
+    _capped_exit_nodes,
     _refuse_a_cap_off_upwind,
     _refuse_an_inadmissible_cap,
     _refuse_partial_periodic,
@@ -343,25 +344,24 @@ class FPFDMSolver(BaseFPSolver):
         """The density the implicit step holds at level ``level``: its Dirichlet rows' nodes and values at t_level, read
         by `prescribed_nodes_and_values`, the function the step's right-hand side reads them with (#2991). On the
         problem's shared BC a Dirichlet face is an absorbing exit, 0 (#2512); on the solver's own DIRICHLET(g), g. None
-        when the step holds no node. A capped exit is refused: its later levels follow each step's active set (#2581),
-        so no value is prescribed there."""
-        capped = [
-            seg.name
-            for seg in getattr(self.boundary_conditions, "segments", None) or ()
-            if seg.flux_capacity is not None
-        ]
-        if capped:
-            raise NotImplementedError(
-                f"{type(self).__name__}.prescribed_density: segment(s) {capped} carry a flux_capacity, whose density "
-                "at a later level each step's active set decides (#2581); no value is prescribed there."
-            )
+        when the step holds no node. A capped exit's node is not named: the step holds it at 0 only while its outflow
+        stays under the cap, so each step's active set decides its row (#2581), by `_capped_exit_nodes`, the read the
+        step makes."""
         geometry = self.problem.geometry
-        nodes, values = prescribed_nodes_and_values(
-            self.boundary_conditions, tuple(geometry.get_grid_shape()), geometry, level * self.problem.dt
-        )
-        if not nodes:
+        shape = tuple(geometry.get_grid_shape())
+        nodes, values = prescribed_nodes_and_values(self.boundary_conditions, shape, geometry, level * self.problem.dt)
+        capped: dict[int, Any] = {}
+        if nodes and any(
+            seg.flux_capacity is not None for seg in getattr(self.boundary_conditions, "segments", None) or ()
+        ):
+            # Each node was read through `_grid_axes`, which takes only a CartesianGrid, the class that declares the
+            # spacing (#2490).
+            spacing = tuple(cast("CartesianGrid", geometry).get_grid_spacing())
+            capped = _capped_exit_nodes(self.boundary_conditions, nodes, shape, geometry, spacing)
+        held = [(node, value) for node, value in zip(nodes, values, strict=True) if node not in capped]
+        if not held:
             return None
-        return np.asarray(nodes, dtype=np.intp), np.asarray(values, dtype=np.float64)
+        return np.asarray([n for n, _ in held], dtype=np.intp), np.asarray([v for _, v in held], dtype=np.float64)
 
     def solve_fp_system(
         self,

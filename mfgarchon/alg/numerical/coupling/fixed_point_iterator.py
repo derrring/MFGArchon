@@ -219,8 +219,8 @@ class FixedPointIterator(BaseCouplingIterator):
         density (#1642).
         """
         M_initial = self._reshape_to(self.problem.get_m_init(), shape)
-        # The terminal datum's one owner (#1642 stage 2). A cold start writes M_initial into every row, so it is the
-        # density at t = T of the first iterate; each iteration re-reads it at the density its HJB solve uses.
+        # The terminal datum's one owner (#1642 stage 2), at M_initial, which a cold start writes into every row but at
+        # a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB solve uses.
         return M_initial, self._reshape_to(
             self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__),
             shape,
