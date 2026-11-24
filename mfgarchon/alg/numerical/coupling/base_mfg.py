@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
     from mfgarchon.types.solver_types import SolverReturnTuple
+
+    from .iteration_state import IterationState
 else:
     pass
 
@@ -840,6 +842,11 @@ class BaseCouplingIterator(ABC):
             Tuple of (U, M) solution arrays
         """
 
+    def _iteration_state(self) -> IterationState | None:
+        """The route's iterate owner (#2997), or None for a route that holds none yet: GraphMFGSolver,
+        RegimeSwitchingIterator and MultiPopulationIterator take one in stage 1b."""
+        return None
+
     def set_warm_start_data(
         self,
         previous_solution: tuple[np.ndarray, np.ndarray],
@@ -849,10 +856,16 @@ class BaseCouplingIterator(ABC):
         Set warm start data from a previous solution.
 
         Args:
-            previous_solution: Tuple of (U, M) arrays from previous solve
+            previous_solution: Tuple of (U, M) arrays from previous solve, each of the iterate's shape
+                ``(Nt + 1, *shape)``; copied.
             metadata: Optional metadata about the previous solution
         """
         U_prev, M_prev = previous_solution
+        state = self._iteration_state()
+        if state is not None:
+            state.set_warm_start(U_prev, M_prev)
+            self.warm_start_data = {"metadata": metadata or {}}
+            return
 
         # Validate dimensions with enhanced error messages
         from mfgarchon.utils.exceptions import validate_array_dimensions
@@ -888,18 +901,24 @@ class BaseCouplingIterator(ABC):
         Returns:
             Tuple of (U, M) arrays if warm start data exists, None otherwise
         """
+        state = self._iteration_state()
+        if state is not None:
+            return state.warm_start()
         if self.warm_start_data is None:
             return None
         return self.warm_start_data["U_prev"], self.warm_start_data["M_prev"]
 
     def clear_warm_start_data(self) -> None:
         """Clear any stored warm start data."""
+        state = self._iteration_state()
+        if state is not None:
+            state.clear_warm_start()
         self.warm_start_data = None
 
     @property
     def has_warm_start_data(self) -> bool:
         """Check if warm start data is available."""
-        return self.warm_start_data is not None
+        return self.get_warm_start_data() is not None
 
     @property
     def is_solved(self) -> bool:

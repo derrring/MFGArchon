@@ -105,6 +105,8 @@ class IterationState:
         self.shape = _state_shape(problem, hjb_solver, fp_solver, reader=reader, unstructured_mesh=unstructured_mesh)
         self.solution_shape = (problem.Nt + 1, *self.shape)
         self._warm_start: tuple[np.ndarray, np.ndarray] | None = None
+        # m(0) as `start` read it, for the solve that follows: the FP's initial datum and the write-back's level 0.
+        self.m0: np.ndarray | None = None
 
     def initial_density(self) -> np.ndarray:
         """m(0): the problem's initial density, in this state's shape."""
@@ -139,12 +141,13 @@ class IterationState:
 
         The cold start's U is u(T) at the initial density in every row; its M is the initial density at level 0 and
         `cold_start_density_at_level` at each later level, which holds the FP step's value at a node the step
-        prescribes (#2991).
+        prescribes (#2991). Either way it reads m(0) for the solve that follows (`m0`).
         """
+        m0 = self.initial_density()
+        self.m0 = m0
         if self._warm_start is not None:
             U_warm, M_warm = self._warm_start
             return U_warm.copy(), M_warm.copy()
-        m0 = self.initial_density()
         u_terminal = self.terminal_at(m0)
         U, M = allocate_iterate(backend, self.solution_shape, self.reader)
         for n in range(self.solution_shape[0]):
@@ -156,8 +159,10 @@ class IterationState:
 
     def write_back(self, U: Any, M: Any, u_terminal: np.ndarray) -> tuple[Any, Any]:
         """After a sweep's update: level 0 of M to the initial density, and U's terminal row to ``u_terminal``, the
-        u(T) that sweep's HJB solve was given. Both in place; the arrays are returned."""
-        return preserve_terminal_condition(U, u_terminal), preserve_initial_condition(M, self.initial_density())
+        u(T) that sweep's HJB solve was given. Both in place; the arrays are returned. `start` comes first."""
+        if self.m0 is None:
+            raise RuntimeError(f"{self.reader}: write_back before start: the state has not read m(0) for this solve")
+        return preserve_terminal_condition(U, u_terminal), preserve_initial_condition(M, self.m0)
 
     def pack(self, U: np.ndarray, M: np.ndarray) -> np.ndarray:
         """``(U, M)`` as one vector, U's entries first, each in C order."""

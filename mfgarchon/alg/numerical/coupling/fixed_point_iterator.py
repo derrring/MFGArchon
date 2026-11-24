@@ -23,7 +23,6 @@ from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
-    allocate_state_arrays,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     refuse_a_capped_exit_in_a_coupled_solve,
@@ -33,13 +32,11 @@ from .base_mfg import (
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
-    initialize_cold_start,
-    preserve_initial_condition,
-    preserve_terminal_condition,
     read_inner_solve_failures,
     refuse_convergence_over_failed_inner_solves,
     resolve_fp_drift_kwargs,
 )
+from .iteration_state import IterationState
 
 logger = get_logger(__name__)
 
@@ -85,7 +82,7 @@ class FixedPointIterator(BaseCouplingIterator):
         anderson_beta: Anderson acceleration mixing parameter
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
-            torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
+            torch are refused at allocation, naming #1922 (see ``iteration_state.allocate_iterate``).
         volatility: Optional VOLATILITY override (float, array, or callable), forwarded to
             both the HJB and FP solvers (#1783) -- the SDE volatility Sigma, not the diffusion.
             - None: the solvers read problem.volatility, with the problem's kind (default)
@@ -131,7 +128,7 @@ class FixedPointIterator(BaseCouplingIterator):
         """
         super().__init__(problem)
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
-        # again in allocate_state_arrays, which also catches a name or bad type assigned
+        # again in allocate_iterate, at the start of each solve, which also catches a name or bad type assigned
         # to self.backend after construction (a public attribute -- see resolve_backend).
         self.backend = resolve_backend(backend, "FixedPointIterator")
         self.hjb_solver = hjb_solver
@@ -198,33 +195,23 @@ class FixedPointIterator(BaseCouplingIterator):
         self.l2distm_rel: np.ndarray | None = None
         self.iterations_run = 0
 
-        # Warm start support
-        self._warm_start_U: np.ndarray | None = None
-        self._warm_start_M: np.ndarray | None = None
-
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-    def _get_initial_and_terminal_conditions(self, shape: tuple) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Retrieve initial density and terminal value function from problem.
+        # The iterate's owner (#2997), built on first use: the geometry it sizes the state from is checked there.
+        self._state: IterationState | None = None
 
-        Args:
-            shape: Spatial grid shape
-
-        Returns:
-            (M_initial, U_terminal): Initial density and terminal value function
-
-        The initial density is the problem's ``get_m_init()``, and the terminal value its ``terminal_value`` at that
-        density (#1642).
-        """
-        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
-        # The terminal datum's one owner (#1642 stage 2), at M_initial, which a cold start writes into every row but at
-        # a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB solve uses.
-        return M_initial, self._reshape_to(
-            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__),
-            shape,
-        )
+    def _iteration_state(self) -> IterationState:
+        if self._state is None:
+            self._state = IterationState(
+                self.problem,
+                self.hjb_solver,
+                self.fp_solver,
+                reader=type(self).__name__,
+                terminal_binding=self._hjb_terminal_binding,
+                unstructured_mesh=True,
+            )
+        return self._state
 
     @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
@@ -322,79 +309,23 @@ class FixedPointIterator(BaseCouplingIterator):
                 stacklevel=SOLVE_CALLER_STACKLEVEL,
             )
 
-        # Get problem dimensions - handle both old 1D and new nD interfaces
-        num_time_steps = self.problem.Nt + 1  # Renamed from Nt
-
-        # Detect problem shape using geometry API
+        num_time_steps = self.problem.Nt + 1
+        # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997): the grid's shape, or the
+        # pair's DOF count on an unstructured mesh (#1489 S6), checked against the geometry there.
+        state = self._iteration_state()
         from mfgarchon.geometry.base import CartesianGrid
 
-        # Issue #543 Phase 2: Replace hasattr with try/except
-        try:
-            geometry = self.problem.geometry
-        except AttributeError as e:
-            raise ValueError("Problem must have 'geometry' attribute") from e
-
-        if geometry is None:
-            raise ValueError("Problem geometry cannot be None")
-
-        from mfgarchon.geometry import GeometryType
-
-        is_grid = isinstance(geometry, CartesianGrid)
-        if is_grid:
-            shape = tuple(self.problem.geometry.get_grid_shape())
-        elif getattr(geometry, "geometry_type", None) == GeometryType.UNSTRUCTURED_MESH:
-            # Coupled-FEM chain seam 3: unstructured mesh -> flat per-DOF state.
-            # The FEM / meshless-Galerkin solvers assemble their own operators; the iterator only
-            # shuttles (Nt+1, N) arrays.
-            # Issue #1489 (S6): size the state on the SOLVER's DOF count, not num_spatial_points
-            # (= num_vertices). For P2 FEM n_dof = vertices + edges > num_vertices, so a
-            # (Nt+1, num_vertices) state mismatches the (Nt+1, n_dof) the solver returns -> an opaque
-            # broadcast ValueError deep in the damping step. Prefer the solver n_dof; a HJB/FP DOF mismatch was refused
-            # at construction (`assert_paired_solver_geometry`, #1489, #2775).
-            fp_n = getattr(self.fp_solver, "n_dof", None)
-            hjb_n = getattr(self.hjb_solver, "n_dof", None)
-            n = fp_n if fp_n is not None else (hjb_n if hjb_n is not None else int(self.problem.num_spatial_points))
-            shape = (int(n),)
-        else:
-            raise ValueError(
-                f"Problem geometry must be a CartesianGrid or unstructured mesh, got {type(geometry).__name__}"
-            )
+        is_grid = isinstance(self.problem.geometry, CartesianGrid)
         time_step = self.problem.dt
         # #2555: the change a sweep makes is measured in the problem's own spatial measure, the one
         # `initial_mass` is measured in, so the same relative accuracy stops at the same sweep in any
         # dimension and on any extent.
         integrate = self.problem.spatial_measure().integrate
 
-        # Issue #1285: M_initial / U_terminal are needed by both the warm-start
-        # and cold-start paths (HJB solve, FP solve, BC preservation).  Hoist
-        # unconditionally so the warm-start branch does not hit NameError.
-        # BlockIterator does the same (block_iterators.py:485).
-        M_initial, U_terminal = self._get_initial_and_terminal_conditions(shape)
-
-        # Initialize arrays (cold start or warm start)
-        warm_start = self.get_warm_start_data()
-        if warm_start is not None:
-            self.U, self.M = warm_start
-        else:
-            # Cold start initialization
-            # #2250: one owner for the allocation, so a backend that cannot carry a solve is
-            # refused HERE -- which is the only place that also sees a backend assigned after
-            # construction, as this repository's own acceleration example does.
-            self.U, self.M = allocate_state_arrays(self.backend, (num_time_steps, *shape), "FixedPointIterator")
-
-            if num_time_steps > 0:
-                # Set boundary conditions
-                if len(shape) == 1:
-                    self.M[0, :] = M_initial
-                    self.U[num_time_steps - 1, :] = U_terminal
-                else:
-                    self.M[0] = M_initial
-                    self.U[num_time_steps - 1] = U_terminal
-
-                # Initialize interior with boundary conditions
-                self.U, self.M = initialize_cold_start(
-                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
-                )
+        # #2250: the owner's allocation refuses a backend that cannot carry a solve; it reads self.backend here, so a
+        # backend assigned after construction, as this repository's own acceleration example does, is checked too.
+        self.U, self.M = state.start(self.backend)
+        M_initial = state.m0
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)
@@ -463,12 +394,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 M_old = self.M.copy()
                 # u(T) at the density this iteration's HJB solve uses (#1642 stage 2): the solve, the restore after a
                 # diverged step and the re-imposition after the update all read this one.
-                U_terminal = self._reshape_to(
-                    self.problem.terminal_value(
-                        M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__
-                    ),
-                    shape,
-                )
+                U_terminal = state.terminal_at(M_old[-1])
 
                 # Build iteration state for BC provider resolution (Issue #625)
                 # This state is passed to BCValueProvider.compute() for dynamic BCs
@@ -594,9 +520,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 # iteration breaks before its own FP step (Issue #1717).
                 fp_output_available = True
 
-                # Preserve boundary conditions
-                self.M = preserve_initial_condition(self.M, M_initial)
-                self.U = preserve_terminal_condition(self.U, U_terminal)
+                self.U, self.M = state.write_back(self.U, self.M, U_terminal)
 
                 # Issue #1489 (S5): a FINITE but blown-up density (e.g. the pre-overflow divergence,
                 # total mass ~5.9e4 before it becomes inf) passes the isfinite check below and would be
@@ -830,7 +754,7 @@ class FixedPointIterator(BaseCouplingIterator):
         if not fp_output_available:
             # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
             # density. Two ways to get here, and the number would be wrong differently in each:
-            # from a cold start, self.M is initialize_cold_start's construction -- M_initial in every
+            # from a cold start, self.M is IterationState.start's construction -- M_initial in every
             # row, except where the FP prescribes a value (#2991) -- so its mass describes that
             # construction, and with nothing prescribed measures as exactly 0.0, the best possible value
             # for a solve that never ran; from a warm start, self.M is some other solve's output,
@@ -918,22 +842,6 @@ class FixedPointIterator(BaseCouplingIterator):
             "l2distu_rel": self.l2distu_rel[: self.iterations_run] if self.l2distu_rel is not None else np.array([]),
             "l2distm_rel": self.l2distm_rel[: self.iterations_run] if self.l2distm_rel is not None else np.array([]),
         }
-
-    def set_warm_start_data(self, U_init: np.ndarray, M_init: np.ndarray) -> None:
-        """Set warm start initialization data."""
-        self._warm_start_U = U_init
-        self._warm_start_M = M_init
-
-    def get_warm_start_data(self) -> tuple[np.ndarray, np.ndarray] | None:
-        """Get warm start initialization data."""
-        if self._warm_start_U is not None and self._warm_start_M is not None:
-            return (self._warm_start_U, self._warm_start_M)
-        return None
-
-    def clear_warm_start_data(self) -> None:
-        """Clear warm start data."""
-        self._warm_start_U = None
-        self._warm_start_M = None
 
     def get_results(self) -> tuple[np.ndarray, np.ndarray]:
         """
