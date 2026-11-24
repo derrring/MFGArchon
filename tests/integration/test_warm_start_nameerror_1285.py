@@ -114,7 +114,7 @@ class TestWarmStartNameError1285:
 
         solver = FictitiousPlayIterator(problem, hjb, fp, learning_rate_schedule="harmonic")
         U_warm, M_warm = _warm_arrays(problem)
-        solver.set_warm_start_data(U_warm, M_warm)
+        solver.set_warm_start_data((U_warm, M_warm))
 
         # Must not raise NameError; 2 iterations is sufficient to exercise the path.
         result = solver.solve(max_iterations=2, tolerance=1e-10)
