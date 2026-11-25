@@ -8,7 +8,8 @@
   - On `main`, `GraphMFGSolver` and `RegimeSwitchingIterator` solved components of one dt and different (T, Nt), as
     (0.3, 5) beside (0.6, 10).
   - The comparison is exact, as `MultiPopulationIterator`'s was (#2335), so a caller passes one T to every component.
-    `GraphMFGSolver` compared dt with `np.isclose` on `main`, so a horizon equal within rounding, 0.1 + 0.2 beside 0.3,
-    solved there, correctly, and is refused now: the refusal names both values.
+    On `main`, `GraphMFGSolver` (whose dt check used `np.isclose`) and `RegimeSwitchingIterator` both solved a horizon
+    equal within rounding, 0.1 + 0.2 beside 0.3, and solved it correctly. Both are refused now, and the refusal names
+    both values.
   - `GraphMFGSolver` refused a different dt at construction, and `MultiPopulationIterator` a different (T, Nt) in its own
     check; both are now the one refusal, at the solve, whose message names the components and both grids.

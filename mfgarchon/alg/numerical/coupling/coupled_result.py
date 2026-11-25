@@ -42,10 +42,10 @@ class MassInvariant(Enum):
     TOTAL = "total"
     """The total over components: the components exchange mass, as RegimeSwitching's regimes through Q, whose rows sum
     to zero (`RegimeSwitchingConfig.validate` refuses a Q whose rows do not), and Graph's nodes through a coupling whose
-    FP sources sum to zero over the nodes. The default couplings' do on an adjacency where every node's in-degree equals
-    its out-degree, a symmetric one among them. A directed adjacency or a custom ``coupling_fp`` changes the total by
-    design, and its drift is then the coupling's net source, to be read against the coupling as a wall's loss is. A
-    component's own drift is partly the exchange."""
+    FP sources sum to zero over the nodes. The default couplings' do on an adjacency whose weighted in-degree equals its
+    out-degree at every node, a symmetric one or a directed cycle among them. An adjacency where the two differ at some
+    node changes the total by design, as a custom ``coupling_fp`` can, and its drift is then the coupling's net source,
+    to be read against the coupling as a wall's loss is. A component's own drift is partly the exchange."""
 
 
 class SweepRecord:

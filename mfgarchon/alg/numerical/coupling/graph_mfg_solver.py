@@ -179,9 +179,10 @@ class GraphMFGSolver(BaseCouplingIterator):
         -------
         SolverResult
             U and M of shape (N, Nt+1, *shape), node k's at ``U[k]`` and ``M[k]``, and ``components`` N (#2997). Its
-            ``mass_conservation_error`` is the total mass's drift, since a coupling can move mass between nodes, and
-            on a directed adjacency or a custom ``coupling_fp`` changes the total by design (`MassInvariant.TOTAL`);
-            each node's own is in ``metadata["per_component"]``. On a diverged HJB, each node the sweep solved holds
+            ``mass_conservation_error`` is the total mass's drift, since a coupling can move mass between nodes. The
+            total itself moves by design where the adjacency's weighted in- and out-degrees differ at some node, or a
+            custom ``coupling_fp`` adds mass (`MassInvariant.TOTAL`); each node's own drift is in
+            ``metadata["per_component"]``. On a diverged HJB, each node the sweep solved holds
             that HJB output as its U, the diverged node's with its NaN kept (#1718); the later nodes' U, and every M,
             are the iterate after the last finite sweep.
         """

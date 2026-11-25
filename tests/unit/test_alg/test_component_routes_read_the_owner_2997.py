@@ -498,8 +498,8 @@ def test_a_diverged_stop_counts_its_sweep_as_nan_on_every_route(route):
     """Ruling 10 (stage 1c): the sweep that diverged counts, its history entries are NaN, and the reason names the
     divergence, so a diverged solve's final change is not the last finite sweep's (#1672's shape). The first sweep is
     finite; at the second, the first component's HJB returns its output with one NaN. At ba36fa73 FixedPoint and
-    FictitiousPlay published a 1.0 there, the Block iterators and Newton dropped the sweep, and Graph and RegimeSwitching
-    counted it with no entry."""
+    FictitiousPlay published a 1.0 there, the Block iterators and Newton dropped the sweep, Graph and RegimeSwitching
+    counted it with no entry, and MultiPopulation counted it with its last-sweep errors emptied."""
     problems = [_problem(c, terminal_coupled=False) for c in ((0.3,) if route not in ROUTES else (0.3, 0.6))]
     hjbs = [_DivergingHJB(p, 2 if k == 0 else None) for k, p in enumerate(problems)]
     result = _quiet(lambda: _any_route(route, problems, hjbs, 4, 1e-12))

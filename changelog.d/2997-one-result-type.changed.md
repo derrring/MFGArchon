@@ -20,9 +20,10 @@
     That is the total over components on `GraphMFGSolver` and `RegimeSwitchingIterator`, whose components exchange mass,
     and the worst population's on `MultiPopulationIterator`, whose populations exchange none; each component's own drift
     is in `metadata["per_component"]`. RegimeSwitching's Q conserves the total, its rows summing to zero. Graph's
-    coupling conserves it where its FP sources sum to zero over the nodes, as the default couplings' do on a symmetric
-    adjacency. A directed adjacency or a custom `coupling_fp` changes the total by design, and the drift is then the
-    coupling's net source, read against the coupling as a wall's loss is. `FixedPointIterator`'s value is unchanged. On `main` it was None on the Block
+    coupling conserves it where its FP sources sum to zero over the nodes, as the default couplings' do on an adjacency
+    whose weighted in-degree equals its out-degree at every node, a symmetric one or a directed cycle among them. An
+    adjacency where the two differ at some node changes the total by design, as a custom `coupling_fp` can, and the drift
+    is then the coupling's net source, read against the coupling as a wall's loss is. `FixedPointIterator`'s value is unchanged. On `main` it was None on the Block
     iterators, `FictitiousPlayIterator` and `NewtonMFGSolver`, and absent on the three component routes. An FP solver
     without `mass_conservation_error_override` is measured through the geometry's integral, where `FixedPointIterator`
     raised `AttributeError` once its solve ended.
@@ -40,4 +41,5 @@
   - `SolverResult.max_error` is NaN when either final error is, where the builtin `max` dropped a NaN that came second;
     and `compare_to` ranks a NaN final error below any measured one, where every comparison with NaN called a diverged
     solve and a converged one a tie. With `execution_time` measured, `compare_to` names the faster solver when the two
-    times differ by more than its 1 ms threshold, where it called every pair of coupled results a tie.
+    times differ by more than its 1 ms threshold, where it called every pair of the four `SolverResult` routes' results a
+    tie; the three component routes' results had no `compare_to` on `main`.
