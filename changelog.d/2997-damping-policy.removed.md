@@ -40,8 +40,9 @@
   and checks the shapes.
 - **The base class's warm-start store** (#2997, stage 1b; the user's ruling of 2026-11-25). On a
   `BaseCouplingIterator` subclass whose `_iteration_state()` returns None, `set_warm_start_data` stored the arrays
-  and `get_warm_start_data` returned them; it now raises `NotImplementedError`. `GraphMFGSolver` and
-  `RegimeSwitchingIterator` were two such routes, which never read it. A subclass takes a warm start by returning an
-  `IterationState` from `_iteration_state` and starting its solve from that state's `start()`.
+  and `get_warm_start_data` returned them. Now `set_warm_start_data` raises `NotImplementedError`, and
+  `get_warm_start_data` returns None. `GraphMFGSolver` and `RegimeSwitchingIterator` were two such routes, which never
+  read it. A subclass takes a warm start as `FixedPointIterator` does: one `IterationState`, built once and returned by
+  every call of `_iteration_state`, whose `start()` its solve calls.
 - **`NewtonMFGSolver.solve()`'s `(U, M, info)` tuple** (#2997 ruling 4): it returns a `SolverResult`, as every route does,
   whose `metadata` is the former `info` and whose error histories are the absolute change per measured sweep.

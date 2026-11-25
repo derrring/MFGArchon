@@ -116,9 +116,9 @@ class AdjacencyCoupling:
         Can be weighted (interaction strength) or binary.
     coupling_hjb : Callable[..., NDArray] | None
         Custom HJB coupling function, read by the names it declares of t, i, j, v_j and m_j. ``v_j`` and ``m_j`` are
-        node j's levels at time t as the iterate holds them, of the grid's shape (#2997); it returns the term's N
-        values at the solver's points, a 1-D array in the geometry's order (`IterationState.level_at_points`), or one
-        value for all of them.
+        node j's levels at time t as the iterate holds them, of the grid's shape, or the DOF count on a mesh (#2997). It
+        returns the term's N values at the solver's points, a 1-D array in the geometry's order
+        (`IterationState.level_at_points`), or one value for all of them.
         Default: alpha * (v_i_at_t - v_j_at_t) (value difference).
     coupling_fp : Callable[..., NDArray] | None
         Custom FP coupling function, read by the same names, handed and returning what ``coupling_hjb`` is.

@@ -822,8 +822,9 @@ class BaseCouplingIterator(ABC):
             raise NotImplementedError(
                 f"{type(self).__name__} takes no warm start: it has no single iterate owner, its _iteration_state() "
                 "returning None, as GraphMFGSolver and RegimeSwitchingIterator, which iterate one (U, M) per component, "
-                "have none (the user's rulings of 2026-11-25, #2997). A subclass takes a warm start by returning an "
-                "IterationState from _iteration_state and starting its solve from that state's start()."
+                "have none (the user's rulings of 2026-11-25, #2997). A subclass takes a warm start as "
+                "FixedPointIterator does: one mfgarchon.alg.numerical.coupling.iteration_state.IterationState, built "
+                "once and returned by every call of _iteration_state, whose start() its solve calls."
             )
         state.set_warm_start(U_prev, M_prev)
         self.warm_start_data = {"metadata": metadata or {}}

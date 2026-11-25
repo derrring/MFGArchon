@@ -38,10 +38,11 @@
   - `NewtonMFGSolver` judges each warm-up sweep's change, FixedPoint's sweep, through the one measure, as the Newton
     phase judges the residual it solves. The first warm-up sweep whose change meets the criteria ends the solve there
     with that sweep's iterate: converged, unless its HJB steps failed (#1878). `main` ran every warm-up sweep, then
-    judged the residual at their output and went on into Newton steps when that failed, so the count and the iterate
-    change whenever a warm-up sweep's change meets the criteria.
+    judged the residual at their output and went on into Newton steps when that failed. So the count changes whenever
+    a warm-up sweep's change meets the criteria, and the iterate too, unless that sweep is the warm-up's last and main's
+    check at its output passed.
   - `GraphMFGSolver`, `RegimeSwitchingIterator` and `MultiPopulationIterator` refuse a `PointCloudGeometry`, on which
-    each solved at `main`: the iterate's owner takes a tensor grid or an unstructured mesh, as on the other four routes
-    (the user's ruling of 2026-11-25).
+    each solved at `main`, as the other four routes do: the iterate's owner takes a tensor grid, or an unstructured mesh
+    where the route allows one (the user's ruling of 2026-11-25).
   - `BaseCouplingIterator.solve`'s abstract signature is `solve(self)`: each route's solve adds its own parameters, all
     optional.
