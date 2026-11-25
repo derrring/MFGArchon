@@ -131,7 +131,10 @@ def _solve(
                 ps = fields(n_fields or (3 if mixed else 2))
                 multi = MultiPopulationProblem(populations=ps, population_names=["a", "b", "c"][: len(ps)])
                 it = MultiPopulationIterator(
-                    multi, [HJBFDMSolver(q) for q in ps], [FPFDMSolver(q) for q in ps], relaxation=relaxation
+                    multi,
+                    [HJBFDMSolver(q) for q in ps],
+                    [FPFDMSolver(q) for q in ps],
+                    damping=DampingPolicy.constant(relaxation),
                 )
                 return bool(
                     it.solve(
@@ -150,7 +153,7 @@ def _solve(
                         [FPFDMSolver(q) for q in ps],
                         max_iterations=sweeps,
                         tolerance=tolerance,
-                        damping=relaxation,
+                        damping=DampingPolicy.constant(relaxation),
                         absolute_tolerance=absolute_tolerance,
                     )
                     .solve()
@@ -179,7 +182,7 @@ def _solve(
                     [FPFDMSolver(q_) for q_ in ps],
                     max_iterations=sweeps,
                     tolerance=tolerance,
-                    damping=relaxation,
+                    damping=DampingPolicy.constant(relaxation),
                     absolute_tolerance=absolute_tolerance,
                 )
                 .solve()
@@ -214,7 +217,7 @@ def test_an_absolute_bound_applies_only_when_asked_for(kind):
     """Each iterator stops on the relative change alone, and on both when ``absolute_tolerance`` is set.
 
     On the ``heavy`` data at relaxation 1, every iterator's relative change is below 0.5 by sweep 2
-    (0.379 for the single-pair iterators; regime measures from its second sweep), while their absolute
+    (0.379 for the single-pair iterators), while their absolute
     change there is 2.39. So an iterator that compared the absolute change by default,
     against the same tolerance, would not stop within two sweeps.
     """
@@ -226,17 +229,17 @@ def test_an_absolute_bound_applies_only_when_asked_for(kind):
     ("kind", "data"),
     [
         *[pytest.param(kind, "static_u", id=f"{kind}-only_m_moves") for kind in _DAMPED],
-        *[pytest.param(kind, "static_m", id=f"{kind}-only_u_moves") for kind in _DAMPED if kind != "multi_population"],
+        *[pytest.param(kind, "static_m", id=f"{kind}-only_u_moves") for kind in _DAMPED],
     ],
 )
 def test_each_field_is_measured_before_damping(kind, data):
     """#1684 item 7, one field at a time, which is the shape the multi-population defect had.
 
     One field is static (u = 0 exactly, or a uniform m that stays uniform to rounding) and the other moves:
-    m by about 0.2 relative per sweep, u by 0.39 (fixed point, block) to 0.96 (graph, regime). At relaxation
+    m by about 0.2 relative per sweep, u by about 0.39, from u(T) in every row (#2997 ruling 3). At relaxation
     0.01 the moving field's damped step is a hundredth of that, so an iterator that measured only that
     field's damped step would stop at a tolerance of 0.1. A pin that damps both fields at once cannot see a
-    one-field revert. `MultiPopulationIterator` never damps u, so it has no u half to revert.
+    one-field revert.
     """
     assert _solve(kind, relaxation=0.01, tolerance=0.1, absolute_tolerance=None, data=data) is False
 
@@ -260,13 +263,12 @@ def test_the_max_over_fields_decides(kind, data, position):
     The moving one is a zero-coupling field among static ones (graph, populations, regime's u case), or
     the receiving regime of one-way switching from a static source, beside an isolated static regime
     (regime's m case). At relaxation 0.01 the moving quantity's relative change is about 0.19 (m) or
-    0.95 (u) per sweep, and the tolerance, 0.15 for m and 0.6 for u, sits below it and above the mean over
-    the three fields. So a min, a mean, or reading any one field or any two of the three would stop
-    where the max does not. Populations run one sweep for u, because `MultiPopulationIterator` does not
-    damp u and reaches u's fixed point at the second sweep.
+    0.39 (u, from u(T) in every row, #2997 ruling 3) per sweep, and the tolerance, 0.15 for m and 0.3 for
+    u, sits below it and above the mean over the three fields. So a min, a mean, or reading any one field
+    or any two of the three would stop where the max does not.
     """
-    tolerance = 0.15 if data == "static_u" else 0.6
-    sweeps = 1 if (kind == "multi_population" and data == "static_m") else 3
+    tolerance = 0.15 if data == "static_u" else 0.3
+    sweeps = 3
     mixed = not (kind == "regime" and data == "static_u")
     assert (
         _solve(

@@ -78,7 +78,7 @@ def _solve(K, cross, max_iterations=6):
         multi,
         [HJBFDMSolver(p) for p in probs],
         [FPFDMSolver(p) for p in probs],
-        relaxation=0.5,
+        damping=DampingPolicy.constant(0.5),
     )
     return it.solve(max_iterations=max_iterations, tolerance=1e-10)
 
@@ -161,7 +161,7 @@ def test_nonfdm_backend_multipop_fails_loud():
         multi,
         [_StubHJB(p) for p in probs],
         [FPFDMSolver(p) for p in probs],
-        relaxation=0.5,
+        damping=DampingPolicy.constant(0.5),
     )
     with pytest.raises(NotImplementedError, match="1071"):
         it.solve(max_iterations=2, tolerance=1e-10)

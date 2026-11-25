@@ -15,6 +15,7 @@ from mfgarchon.alg.numerical.coupling.regime_switching_iterator import (
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -75,7 +76,7 @@ class TestRegimeSwitchingInstantiation:
             fp_solvers=fps,
         )
         assert iterator._max_iter == 50
-        assert iterator._damping == 0.5
+        assert iterator.damping == DampingPolicy.constant(0.5)
 
     def test_custom_parameters(self):
         problems, config, hjbs, fps = _make_2regime_system()
@@ -86,11 +87,11 @@ class TestRegimeSwitchingInstantiation:
             fp_solvers=fps,
             max_iterations=20,
             tolerance=1e-3,
-            damping=0.3,
+            damping=DampingPolicy.constant(0.3),
         )
         assert iterator._max_iter == 20
         assert iterator._tol == 1e-3
-        assert iterator._damping == 0.3
+        assert iterator.damping == DampingPolicy.constant(0.3)
 
     def test_mismatched_counts_raises(self):
         problems, config, hjbs, fps = _make_2regime_system()
@@ -226,14 +227,15 @@ class TestRegimeSwitchingUpdateSchemes:
             hjb_solvers=hjbs,
             fp_solvers=fps,
             update_scheme="jacobi",
-            max_iterations=3,
+            max_iterations=8,
         )
         result = iterator.solve()
         assert isinstance(result, RegimeSwitchingResult)
 
         # Hold the jacobi branch to the same external oracle the gauss_seidel branch has: the
-        # regime masses must obey M(t) = M(0) @ expm(Qt). Measured on this fixture: 6.16e-04 for
-        # jacobi, 6.16e-04 for gauss_seidel -- the same threshold transfers, with 8x margin.
+        # regime masses must obey M(t) = M(0) @ expm(Qt). Measured on this fixture at 8 sweeps, both
+        # fields damped from the first (#2997): 4.79e-04 for jacobi, 4.79e-04 for gauss_seidel -- the
+        # same threshold transfers, with 10x margin.
         from scipy.linalg import expm
 
         dx = problems[0].geometry.get_grid_spacing()[0]
@@ -444,7 +446,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
     not the symptom.
     """
 
-    def _solve(self, Nt=10, T=1.0, max_iterations=3):
+    def _solve(self, Nt=10, T=1.0, max_iterations=8):
         problems = [_make_problem(coupling_strength=c, sigma=0.1, T=T, Nt=Nt) for c in (1.0, 0.5)]
         Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
         iterator = RegimeSwitchingIterator(
@@ -454,7 +456,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
             fp_solvers=[FPFDMSolver(p) for p in problems],
             max_iterations=max_iterations,
             tolerance=1e-4,
-            damping=0.5,
+            damping=DampingPolicy.constant(0.5),
         )
         return problems, Q, iterator.solve()
 
@@ -487,9 +489,11 @@ class TestDiagonalOutflowIsNotALaggedSource:
         exact = np.array([masses[:, 0] @ expm(Q * t) for t in t_grid]).T
 
         rel = np.abs(masses - exact).max() / np.abs(exact).max()
-        # 2.3e-03 measured at this fixture (Nt=10, 3 Picard iterations). The residual is the
-        # lagged INFLOW plus the piecewise-constant-in-time source, and it does not clean up
-        # under dt-refinement alone at fixed iteration count -- recorded, not hidden.
+        # 1.45e-03 measured at this fixture (Nt=10, 8 Picard iterations, both fields damped from the
+        # first, #2997). The residual is the lagged INFLOW plus the piecewise-constant-in-time source,
+        # and it does not clean up under dt-refinement alone at fixed iteration count -- recorded, not
+        # hidden. At 3 iterations the damped first sweep still carries an eighth of the cold start's
+        # mass, which is m(0)'s at every level: 9.54e-03.
         assert rel < 5e-3, f"regime masses deviate {rel:.3e} from M(0) @ expm(Qt)"
 
         # Direction is part of the claim: stationary pi = [2/3, 1/3] from equal initial
@@ -645,7 +649,7 @@ class TestGuardsAreRecheckedAtSolveTime:
             fp_solvers=fps,
             max_iterations=1,
             tolerance=1e-4,
-            damping=1.0,
+            damping=DampingPolicy.constant(1.0),
         )
         return it, problems, fps
 
@@ -677,7 +681,7 @@ class TestGuardsAreRecheckedAtSolveTime:
             fp_solvers=[FPFDMSolver(p, boundary_conditions=dirichlet_bc(value=0.2, dimension=1)) for p in problems],
             max_iterations=1,
             tolerance=1e-4,
-            damping=1.0,
+            damping=DampingPolicy.constant(1.0),
         )
         Q[:] = [[-0.1, 0.1], [0.2, -0.2]]  # in place: the iterator holds this same array
         with pytest.raises(ValueError, match=r"not verifiably zero"):

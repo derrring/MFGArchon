@@ -35,12 +35,13 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
+    hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
-    cold_start_iterate,
     diverged_value_function,
     fp_solver_sig_params,
     hjb_solver_sig_params,
@@ -48,7 +49,12 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     verdict_reads_inner_failures,
 )
 from mfgarchon.alg.numerical.coupling.source_composition import compose_fp_source, compose_hjb_source
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
+from mfgarchon.utils.mfg_logging import get_logger
+
+from .damping_run import DampingRun
+from .iteration_state import IterationState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,6 +65,8 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+logger = get_logger(__name__)
 
 # Largest q_k*T for which the diagonal integrating factor of Issue #1681 is accurate in
 # float64. exp(50) is ~5e21: the source spans 21 orders across the horizon, which still
@@ -105,10 +113,10 @@ class RegimeSwitchingResult:
     """Result container for regime-switching MFG."""
 
     values: list[NDArray]
-    """Value functions v^k for each regime, shape (Nt+1, Nx) each."""
+    """Value functions v^k for each regime, each of the regime's iterate shape (Nt+1, *shape)."""
 
     densities: list[NDArray]
-    """Density fields m^k for each regime, shape (Nt+1, Nx) each."""
+    """Density fields m^k for each regime, each of the regime's iterate shape (Nt+1, *shape)."""
 
     converged: bool
     """Whether the Picard iteration converged."""
@@ -155,8 +163,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         Bound on the largest relative L2 change of a sweep, over regimes and over the value function and
         the density, each regime's in its own problem's measure; the change is the sweep's output before
         damping against its input (default 1e-5; docs/user/CONVENTIONS.md § 9, #2555).
-    damping : float
-        Damping factor for Picard update (default 0.5).
+    damping : DampingPolicy | None
+        Each regime's damping of U and M, a `DampingPolicy` (#2997), applied per regime: every regime's fields adapt
+        on their own history. None is ``DampingPolicy.constant(0.5)``: both fields damped from the first sweep.
     update_scheme : Literal["jacobi", "gauss_seidel"]
         Update order for regimes (default "gauss_seidel").
         Gauss-Seidel uses already-updated v^j for j < k (faster convergence).
@@ -186,7 +195,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         fp_solvers: list[BaseFPSolver],
         max_iterations: int = 50,
         tolerance: float = 1e-5,
-        damping: float = 0.5,
+        damping: DampingPolicy | None = None,
         update_scheme: Literal["jacobi", "gauss_seidel"] = "gauss_seidel",
         absolute_tolerance: float | None = None,
     ):
@@ -215,7 +224,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         self._max_iter = max_iterations
         self._tol = tolerance
         self._abs_tol = absolute_tolerance
-        self._damping = damping
+        self.damping = damping_argument(damping, "RegimeSwitchingIterator") or DampingPolicy.constant(0.5)
         self._update_scheme = update_scheme
 
         # Validate dimensions
@@ -364,8 +373,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                         u_j = Us_new[j]
                     else:
                         u_j = Us_full[j]
-                    u_k_n = Us_full[k][n] if n < Us_full[k].shape[0] else Us_full[k][-1]
-                    u_j_n = u_j[n] if n < u_j.shape[0] else u_j[-1]
+                    # Each level as its values at the source's points, in the geometry's order (#2997).
+                    u_k_n = IterationState.level_at_points(Us_full[k][n] if n < Us_full[k].shape[0] else Us_full[k][-1])
+                    u_j_n = IterationState.level_at_points(u_j[n] if n < u_j.shape[0] else u_j[-1])
                     # The DPP chain term sum_j Q[k,j](v^k - v^j) sits on the HJB LHS
                     # (-v^k_t + H^k - (sigma^2/2)Lap + cross = 0). The HJB solver subtracts
                     # the source (Phi_U -= source_term, base_hjb), so source = -cross. Passing
@@ -423,7 +433,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             s = np.zeros(x.shape[0])
             for j in range(K):
                 if j != k:
-                    m_j = Ms[j][n] if n < Ms[j].shape[0] else Ms[j][-1]
+                    m_j = IterationState.level_at_points(Ms[j][n] if n < Ms[j].shape[0] else Ms[j][-1])
                     s += Q[j, k] * m_j  # inflow from j
             if problem_source is not None:
                 s = s + problem_source(t, x)
@@ -473,29 +483,38 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         self._assert_outflow_horizon_representable(K, Q)
         self._assert_fp_boundary_data_is_homogeneous(K, Q)
 
-        # Initialize: each regime's terminal condition from its one owner at its initial density, expanded to full
-        # time-space arrays, and each regime's density as the cold start's iterate, the one every reader of the first
-        # sweep reads -- its HJB, its sources, the inflow into the other regimes, the drift router and the early return:
-        # m_initial, except at a node the FP prescribes from level 1 on (#2991, #2905). The first sweep re-reads the
-        # terminal value at that density at t = T (#1642 stage 2).
-        m_initials = [p.get_m_initial() for p in self._problems]
-        Us_full = []
-        for k in range(K):
-            p = self._problems[k]
-            Nt = p.Nt
-            u_terminal = np.asarray(p.terminal_value(m_initials[k], reader="RegimeSwitchingIterator"))
-            U_k = np.zeros((Nt + 1, len(u_terminal)))
-            U_k[-1] = u_terminal
+        # Each regime's iterate from its one owner (#2997): its layout, the grid's shape or the pair's DOF count on a
+        # mesh, and its cold start, u(T) at m(0) in every row of U and m(0) with the FP's prescribed values in M, the
+        # iterate every reader of the first sweep reads -- its HJB, its sources, the inflow into the other regimes, the
+        # drift router and the early return (#2991, #2905). Its u(T) is read through the regime's HJB solver's
+        # binding, so a terminal coupling solves off a grid (#1642).
+        states = [
+            IterationState(
+                self._problems[k],
+                self._hjb[k],
+                self._fp[k],
+                reader=f"RegimeSwitchingIterator[regime {k}]",
+                terminal_binding=hjb_terminal_binding(self._hjb[k]),
+                unstructured_mesh=True,
+            )
+            for k in range(K)
+        ]
+        Us_full, Ms = [], []
+        for state in states:
+            U_k, M_k = state.start()
             Us_full.append(U_k)
-        Ms = [cold_start_iterate(m_initials[k], self._fp[k], self._problems[k].Nt) for k in range(K)]
+            Ms.append(M_k)
+        # One damping run per regime: each regime's fields adapt on that regime's own history (#2997 rulings 5 and 9).
+        runs = [DampingRun(self.damping) for state in states]
 
         error_history = []
         integrates = [p.spatial_measure().integrate for p in self._problems]
         dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
-            Us_new = [None] * K
-            Ms_new = [None] * K
+            Us_new: list[Any] = [None] * K
+            Ms_new: list[Any] = [None] * K
+            terminals: list[Any] = [None] * K
 
             # --- HJB step: solve K backward equations with cross-terms ---
             for k in range(K):
@@ -522,9 +541,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 else:
                     hjb_kwargs = {"source_term": hjb_source}
 
-                # u(T) at the density this regime's HJB solve uses (#1642 stage 2). The previous iterate's last row, read
-                # here before, is the damped mix of two terminals.
-                terminal_k = np.asarray(self._problems[k].terminal_value(M_k[-1], reader="RegimeSwitchingIterator"))
+                # u(T) at the density this regime's HJB solve uses (#1642 stage 2): the solve and the write-back after
+                # the update both read it.
+                terminal_k = terminals[k] = states[k].terminal_at(M_k[-1])
                 U_k = self._hjb[k].solve_hjb_system(
                     M_k,
                     terminal_k,  # terminal condition
@@ -543,7 +562,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     Us_new[k] = diverged
                     # Regimes after k were never solved this sweep and `Us_new` initialises to
                     # `None`. Returning that would break this result's own documented contract --
-                    # `values: list[NDArray]`, "shape (Nt+1, Nx) each" -- and any consumer looping
+                    # `values: list[NDArray]`, each of the regime's iterate shape -- and any consumer looping
                     # over `values` to find the NaN would hit `None` first. Carry the previous
                     # iterate for the unsolved regimes: a real value function of the right shape,
                     # and the honest reading of "this regime did not advance".
@@ -564,7 +583,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # consumes.
                 fp_source = self._make_fp_source(k, K, Q, Ms, compose_fp_source(self._problems[k], Ms[k], Us_new[k]))
 
-                m0_k = Ms[k][0]
+                m0_k = states[k].m0
                 # Issue #1315 (Refs #1043): route the value function through the
                 # drift-convention dispatcher instead of passing U as drift_field. After the
                 # v0.18.6 rename drift_field is the velocity alpha*, not the U-potential; for a
@@ -607,31 +626,29 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             # and on the map's output: after damping the change is `theta` times this one, so the
             # damping factor bought the verdict (#1684 item 7). Each regime's change is its relative L2
             # change in its own problem's measure, and the criterion takes the max over regimes (#2555).
-            # The first sweep's input density is the cold start, which no sweep produced, so its change is not a
-            # sweep's change: the first sweep is not measured and does not converge.
-            if iteration > 0:
-                per_regime = [
-                    sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(K)
-                ]
-                worst = worst_sweep_change(per_regime, "regime")
-                error = max(worst["l2distu_rel"], worst["l2distm_rel"])
-                converged, _ = check_convergence_criteria(
-                    worst["l2distu_rel"],
-                    worst["l2distm_rel"],
-                    worst["l2distu_abs"],
-                    worst["l2distm_abs"],
-                    self._tol,
-                    self._abs_tol,
-                )
-            else:
-                error, converged = float("inf"), False
+            # Every sweep is judged, the first included, as on every route: the owner holds one verdict measurement
+            # (the approver's ruling of 2026-11-25, #2997).
+            per_regime = [
+                sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(K)
+            ]
+            worst = worst_sweep_change(per_regime, "regime")
+            error = max(worst["l2distu_rel"], worst["l2distm_rel"])
+            converged, _ = check_convergence_criteria(
+                worst["l2distu_rel"],
+                worst["l2distm_rel"],
+                worst["l2distu_abs"],
+                worst["l2distm_abs"],
+                self._tol,
+                self._abs_tol,
+            )
 
-            # --- Damping ---
-            theta = self._damping
+            # --- Damping, per regime and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given ---
             for k in range(K):
-                Us_new[k] = theta * Us_new[k] + (1 - theta) * Us_full[k]
-                if iteration > 0:  # the first sweep takes the FP's density whole
-                    Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms[k]
+                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
+                Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
+                for message in runs[k].observe(iteration, per_regime[k]):
+                    logger.warning(f"RegimeSwitchingIterator[regime {k}]: {message}")
 
             error_history.append(error)
 

@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
-    from mfgarchon.types.solver_types import SolverReturnTuple
 
     from .iteration_state import IterationState
 else:
@@ -778,20 +777,11 @@ class BaseCouplingIterator(ABC):
         )
 
     @abstractmethod
-    def solve(self, max_iterations: int, tolerance: float = 1e-5, **kwargs: Any) -> SolverReturnTuple:
-        """
-        Solve the coupled MFG system.
+    def solve(self) -> object:
+        """Solve the coupled MFG system and return the route's result.
 
-        Args:
-            max_iterations: Maximum number of iterations
-            tolerance: Convergence tolerance
-            **kwargs: Additional solver-specific parameters
-
-        Returns:
-            Tuple of (U, M, convergence_info) where:
-            - U: Hamilton-Jacobi-Bellman solution array
-            - M: Fokker-Planck density array
-            - convergence_info: Dictionary with convergence details
+        Each route's solve adds its own parameters, every one of them optional, and takes no ``**kwargs``: a keyword
+        outside its signature is Python's own ``TypeError`` (#2997).
         """
 
     @abstractmethod
@@ -804,8 +794,9 @@ class BaseCouplingIterator(ABC):
         """
 
     def _iteration_state(self) -> IterationState | None:
-        """The route's iterate owner (#2997), or None for a route that holds none yet: GraphMFGSolver,
-        RegimeSwitchingIterator and MultiPopulationIterator take one in stage 1b."""
+        """The route's one iterate owner (#2997), or None: a route with a component axis, which holds one
+        `IterationState` per component (GraphMFGSolver, RegimeSwitchingIterator), or a subclass that returns none. A
+        route that returns None takes no warm start (the user's rulings of 2026-11-25)."""
         return None
 
     def set_warm_start_data(
@@ -820,40 +811,23 @@ class BaseCouplingIterator(ABC):
             previous_solution: Tuple of (U, M) arrays from previous solve, each of the iterate's shape
                 ``(Nt + 1, *shape)``; copied.
             metadata: Optional metadata about the previous solution
+
+        Raises:
+            NotImplementedError: on a route with no single iterate owner, whose `_iteration_state` returns None:
+                GraphMFGSolver and RegimeSwitchingIterator, and any subclass that does not return one.
         """
         U_prev, M_prev = previous_solution
         state = self._iteration_state()
-        if state is not None:
-            state.set_warm_start(U_prev, M_prev)
-            self.warm_start_data = {"metadata": metadata or {}}
-            return
-
-        # Validate dimensions with enhanced error messages
-        from mfgarchon.utils.exceptions import validate_array_dimensions
-
-        # Get expected shape from geometry
-        spatial_shape = tuple(self.problem.geometry.get_grid_shape())
-        expected_shape = (self.problem.Nt + 1, *spatial_shape)
-
-        try:
-            validate_array_dimensions(
-                U_prev,
-                expected_shape=expected_shape,
-                array_name="warm_start_U",
+        if state is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} takes no warm start: it has no single iterate owner, its _iteration_state() "
+                "returning None, as GraphMFGSolver and RegimeSwitchingIterator, which iterate one (U, M) per component, "
+                "have none (the user's rulings of 2026-11-25, #2997). A subclass takes a warm start as "
+                "FixedPointIterator does: one mfgarchon.alg.numerical.coupling.iteration_state.IterationState, built "
+                "once and returned by every call of _iteration_state, whose start() its solve calls."
             )
-            validate_array_dimensions(
-                M_prev,
-                expected_shape=expected_shape,
-                array_name="warm_start_M",
-            )
-        except Exception as e:
-            raise ValueError(f"Invalid warm start data dimensions: {e}") from e
-
-        self.warm_start_data = {
-            "U_prev": U_prev.copy(),
-            "M_prev": M_prev.copy(),
-            "metadata": metadata or {},
-        }
+        state.set_warm_start(U_prev, M_prev)
+        self.warm_start_data = {"metadata": metadata or {}}
 
     def get_warm_start_data(self) -> tuple[np.ndarray, np.ndarray] | None:
         """
@@ -863,11 +837,7 @@ class BaseCouplingIterator(ABC):
             Tuple of (U, M) arrays if warm start data exists, None otherwise
         """
         state = self._iteration_state()
-        if state is not None:
-            return state.warm_start()
-        if self.warm_start_data is None:
-            return None
-        return self.warm_start_data["U_prev"], self.warm_start_data["M_prev"]
+        return None if state is None else state.warm_start()
 
     def clear_warm_start_data(self) -> None:
         """Clear any stored warm start data."""

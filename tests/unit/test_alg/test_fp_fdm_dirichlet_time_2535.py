@@ -29,6 +29,7 @@ from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwi
 from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -179,7 +180,7 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         MultiPopulationProblem(populations=[problem], population_names=["the one"]),
         [HJBFDMSolver(problem)],
         [FPFDMSolver(problem)],
-        relaxation=0.5,
+        damping=DampingPolicy.constant(0.5),
     ).solve(max_iterations=3, tolerance=1e-6)
     assert np.array_equal(np.asarray(multi.M[0])[0], planted)
     graph = GraphMFGSolver(
@@ -189,7 +190,7 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         [FPFDMSolver(problem)],
         max_iterations=3,
         tolerance=1e-6,
-        damping=0.5,
+        damping=DampingPolicy.constant(0.5),
     ).solve()
     assert np.array_equal(np.asarray(graph.densities[0])[0], planted)
     regimes = [planted_problem(11, 5), planted_problem(11, 5)]
@@ -200,7 +201,7 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         [FPFDMSolver(q) for q in regimes],
         max_iterations=3,
         tolerance=1e-6,
-        damping=0.5,
+        damping=DampingPolicy.constant(0.5),
     ).solve()
     assert all(np.array_equal(np.asarray(density)[0], planted) for density in regime.densities)
     small = planted_problem(5, 2)

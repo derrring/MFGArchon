@@ -29,6 +29,8 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     BaseCouplingIterator,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
+    hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
@@ -44,11 +46,15 @@ from mfgarchon.alg.numerical.coupling.source_composition import (
     hjb_source_fields,
     hjb_source_is_active,
 )
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.mfg_problem import _call_problem_source
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
+from mfgarchon.utils.mfg_logging import get_logger
 
-from .fixed_point_utils import cold_start_iterate, diverged_value_function
+from .damping_run import DampingRun
+from .fixed_point_utils import diverged_value_function
+from .iteration_state import IterationState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,16 +66,18 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
 
+logger = get_logger(__name__)
+
 
 @dataclass
 class GraphMFGResult:
     """Result container for graph MFG solver."""
 
     values: list[NDArray]
-    """Value functions v^k for each node, shape (Nt+1, Nx) each."""
+    """Value functions v^k for each node, each of the node's iterate shape (Nt+1, *shape)."""
 
     densities: list[NDArray]
-    """Density fields m^k for each node, shape (Nt+1, Nx) each."""
+    """Density fields m^k for each node, each of the node's iterate shape (Nt+1, *shape)."""
 
     converged: bool
     """Whether the Picard iteration converged."""
@@ -118,8 +126,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         Bound on the largest relative L2 change of a sweep, over nodes and over the value function and
         the density, each node's in its own problem's measure; the change is the sweep's output before
         damping against its input (default 1e-5; docs/user/CONVENTIONS.md § 9, #2555).
-    damping : float
-        Damping factor for Picard update (default 0.5).
+    damping : DampingPolicy | None
+        Each node's damping of U and M, a `DampingPolicy` (#2997), applied per node: every node's fields adapt on
+        their own history. None is ``DampingPolicy.constant(0.5)``.
     absolute_tolerance : float | None
         If given, the largest absolute L2 change must also fall below it (default None).
 
@@ -145,7 +154,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         fp_solvers: list[BaseFPSolver],
         max_iterations: int = 50,
         tolerance: float = 1e-5,
-        damping: float = 0.5,
+        damping: DampingPolicy | None = None,
         absolute_tolerance: float | None = None,
     ):
         # Use first problem as representative for base class
@@ -165,7 +174,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._max_iter = max_iterations
         self._tol = tolerance
         self._abs_tol = absolute_tolerance
-        self._damping = damping
+        self.damping = damping_argument(damping, "GraphMFGSolver") or DampingPolicy.constant(0.5)
 
         # Validate dimensions
         N = coupling.n_nodes
@@ -210,21 +219,27 @@ class GraphMFGSolver(BaseCouplingIterator):
         refuse_a_capped_exit_in_a_coupled_solve(self._fp, "GraphMFGSolver.solve")
         N = self._N
 
-        # Initialize: initial densities, then each node's terminal condition from its one owner at that density; the
-        # first sweep re-reads it at its density at t = T, which holds the FP's prescribed value at its nodes (#1642
-        # stage 2, #2991).
-        Ms = []
-        for k in range(N):
-            m_init = self._problems[k].get_m_initial()
-            Ms.append(m_init)
-
-        Us_full = []
-        for k in range(N):
-            p = self._problems[k]
-            u_terminal = np.asarray(p.terminal_value(Ms[k], reader="GraphMFGSolver"))
-            U_k = np.zeros((p.Nt + 1, len(u_terminal)))
-            U_k[-1] = u_terminal
+        # Each node's iterate from its one owner (#2997): its layout, the grid's shape or the pair's DOF count on a mesh,
+        # and its cold start, u(T) at m(0) in every row of U and m(0) with the FP's prescribed values in M (#2991). Its
+        # u(T) is read through the node's HJB solver's binding, so a terminal coupling solves off a grid (#1642).
+        states = [
+            IterationState(
+                self._problems[k],
+                self._hjb[k],
+                self._fp[k],
+                reader=f"GraphMFGSolver[node {k}]",
+                terminal_binding=hjb_terminal_binding(self._hjb[k]),
+                unstructured_mesh=True,
+            )
+            for k in range(N)
+        ]
+        Us_full, Ms = [], []
+        for state in states:
+            U_k, M_k = state.start()
             Us_full.append(U_k)
+            Ms.append(M_k)
+        # One damping run per node: each node's fields adapt on that node's own history (#2997 rulings 5 and 9).
+        runs = [DampingRun(self.damping) for state in states]
 
         error_history: list[float] = []
         integrates = [p.spatial_measure().integrate for p in self._problems]
@@ -232,20 +247,20 @@ class GraphMFGSolver(BaseCouplingIterator):
 
         for iteration in range(self._max_iter):
             Us_new: list[NDArray] = [np.empty(0)] * N
-            Ms_new: list[NDArray | None] = [None] * N
+            Ms_new: list[NDArray] = [np.empty(0)] * N
+            terminals: list[NDArray] = [np.empty(0)] * N
 
             # --- HJB step: solve N backward equations with coupling ---
-            Ms_expanded = [self._expand_density(k, Ms[k]) for k in range(N)]
             for k in range(N):
-                raw_coupling = self._coupling.compute_hjb_source(k, Us_full, Ms_expanded, self._dt)
-                hjb_source = self._compose_hjb_source(k, Us_full, Ms_expanded, raw_coupling)
-                # u(T) at the density this node's HJB solve uses (#1642 stage 2). The previous iterate's last row,
-                # read here before, is the damped mix of two terminals.
-                terminal_k = np.asarray(self._problems[k].terminal_value(Ms_expanded[k][-1], reader="GraphMFGSolver"))
+                raw_coupling = self._coupling.compute_hjb_source(k, Us_full, Ms, self._dt)
+                hjb_source = self._compose_hjb_source(k, Us_full, Ms, raw_coupling)
+                # u(T) at the density this node's HJB solve uses (#1642 stage 2): the solve and the write-back after
+                # the update both read it.
+                terminals[k] = states[k].terminal_at(Ms[k][-1])
 
                 U_k = self._hjb[k].solve_hjb_system(
-                    Ms_expanded[k],
-                    terminal_k,  # terminal condition
+                    Ms[k],
+                    terminals[k],  # terminal condition
                     Us_full[k],  # previous iterate
                     source_term=hjb_source,
                 )
@@ -257,27 +272,21 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # what is an HJB failure.
                 diverged = diverged_value_function(
                     U_k,
-                    terminal_k,
+                    terminals[k],
                     site=f"GraphMFGSolver[node {k}]",
                     # `compute_hjb_source` is handed every node's density, whichever of them a coupling reads (#2845).
-                    density=np.concatenate([np.ravel(m) for m in Ms_expanded]),
+                    density=np.concatenate([np.ravel(m) for m in Ms]),
                     iteration=iteration,
                 )
                 if diverged is not None:
                     Us_new[k] = diverged
-                    # Nodes after k were never solved this sweep, and `Us_new` initialises to
-                    # `np.empty(0)`. Returning that would break this result's own documented
-                    # contract -- `values: list[NDArray]`, "shape (Nt+1, Nx) each" -- and
-                    # `result.values[j][-1]` would raise IndexError for every unsolved node, so a
-                    # consumer looping over values to FIND the NaN crashes before reaching it.
-                    # Carry the previous iterate for those, which is a real value function of the
-                    # right shape and is what "this node did not advance" means. `Ms_expanded`
-                    # rather than `Ms` for the same reason: at iteration 0 `Ms` still holds the
-                    # 1-D initial densities.
+                    # Nodes after k were never solved this sweep. Carry the previous iterate for those, a value
+                    # function of the node's shape, which is what "this node did not advance" means, so a consumer
+                    # looping over values to find the NaN reaches it.
                     values = [Us_new[j] if j <= k else Us_full[j] for j in range(N)]
                     self._last_result = GraphMFGResult(
                         values=values,
-                        densities=Ms_expanded,
+                        densities=Ms,
                         converged=False,
                         iterations=iteration + 1,
                         error_history=error_history,
@@ -287,10 +296,10 @@ class GraphMFGSolver(BaseCouplingIterator):
 
             # --- FP step: solve N forward equations with coupling ---
             for k in range(N):
-                raw_coupling = self._coupling.compute_fp_source(k, Us_new, Ms_expanded, self._dt)
-                fp_source = self._compose_fp_source(k, Us_new, Ms_expanded, raw_coupling)
+                raw_coupling = self._coupling.compute_fp_source(k, Us_new, Ms, self._dt)
+                fp_source = self._compose_fp_source(k, Us_new, Ms, raw_coupling)
 
-                m0_k = Ms[k][0] if isinstance(Ms[k], np.ndarray) and Ms[k].ndim == 2 else Ms[k]
+                m0_k = states[k].m0
                 # Issue #1315 (Refs #1043): route the value function through the
                 # drift-convention dispatcher instead of passing U as drift_field. After the
                 # v0.18.6 rename drift_field is the velocity alpha*, not the U-potential; for a
@@ -306,7 +315,7 @@ class GraphMFGSolver(BaseCouplingIterator):
                         fp_sig_params_k,
                         None,
                         Us_new[k],
-                        Ms_expanded[k],
+                        Ms[k],
                         drift_convention=self._fp_drift_convention_k[k],
                         fp_solver=self._fp[k],
                     )
@@ -324,32 +333,25 @@ class GraphMFGSolver(BaseCouplingIterator):
             # and on the map's output: after damping the change is `theta` times this one, so the
             # damping factor bought the verdict (#1684 item 7). Each node's change is its relative L2
             # change in its own problem's measure, and the criterion takes the max over nodes (#2555).
-            if all(Ms_new[k] is not None and Ms_new[k].shape == Ms_expanded[k].shape for k in range(N)):
-                per_node = [
-                    sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms_expanded[k], integrates[k], dts[k])
-                    for k in range(N)
-                ]
-                worst = worst_sweep_change(per_node, "node")
-                error = max(worst["l2distu_rel"], worst["l2distm_rel"])
-                converged, _ = check_convergence_criteria(
-                    worst["l2distu_rel"],
-                    worst["l2distm_rel"],
-                    worst["l2distu_abs"],
-                    worst["l2distm_abs"],
-                    self._tol,
-                    self._abs_tol,
-                )
-            else:
-                error, converged = float("inf"), False
+            per_node = [sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(N)]
+            worst = worst_sweep_change(per_node, "node")
+            error = max(worst["l2distu_rel"], worst["l2distm_rel"])
+            converged, _ = check_convergence_criteria(
+                worst["l2distu_rel"],
+                worst["l2distm_rel"],
+                worst["l2distu_abs"],
+                worst["l2distm_abs"],
+                self._tol,
+                self._abs_tol,
+            )
 
-            # --- Damping ---
-            theta = self._damping
+            # --- Damping, per node and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given ---
             for k in range(N):
-                Us_new[k] = theta * Us_new[k] + (1 - theta) * Us_full[k]
-                if Ms_new[k] is not None:
-                    Ms_expanded = self._expand_density(k, Ms[k])
-                    if Ms_new[k].shape == Ms_expanded.shape:
-                        Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms_expanded
+                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
+                Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
+                for message in runs[k].observe(iteration, per_node[k]):
+                    logger.warning(f"GraphMFGSolver[node {k}]: {message}")
 
             error_history.append(error)
 
@@ -377,17 +379,11 @@ class GraphMFGSolver(BaseCouplingIterator):
         )
         return self._last_result
 
-    def _expand_density(self, k: int, m: NDArray) -> NDArray:
-        """Expand the initial density to (Nt+1, Nx), the first sweep's iterate (`cold_start_iterate`, #2991)."""
-        if isinstance(m, np.ndarray) and m.ndim == 2:
-            return m
-        return cold_start_iterate(m, self._fp[k], self._problems[k].Nt)
-
     def _compose_hjb_source(
         self,
         k: int,
         Us_full: list[NDArray],
-        Ms_expanded: list[NDArray],
+        Ms: list[NDArray],
         coupling_source: Callable[[float, NDArray], NDArray],
     ) -> Callable[[float, NDArray], NDArray]:
         """Compose per-node problem sources with the graph coupling source.
@@ -418,7 +414,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             # graph coupling source and summed in the primitive's own order (source, F's part, nonlocal), which
             # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses self._dt so the slice index
             # matches the grid couplers.
-            for part in _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt, binding).values():
+            for part in _problem_hjb_source_terms(p, Ms[k], Us_full[k], t, x_eval, dt, binding).values():
                 s = s + part
             return s
 
@@ -428,7 +424,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self,
         k: int,
         Us_new: list[NDArray],
-        Ms_expanded: list[NDArray],
+        Ms: list[NDArray],
         coupling_source: Callable[[float, NDArray], NDArray],
     ) -> Callable[[float, NDArray], NDArray]:
         """Compose per-node problem sources with the graph coupling source (FP side)."""
@@ -442,7 +438,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         def composed(t: float, x_eval: NDArray) -> NDArray:
             s = evaluate_solver_source(coupling_source, t=t, x=x_eval, dimension=p.dimension)
             v_t = _get_time_slice(Us_new[k], t, dt)
-            m_t = _get_time_slice(Ms_expanded[k], t, dt)
+            m_t = _get_time_slice(Ms[k], t, dt)
             s = s + _call_problem_source(p, "source_term_fp", t=t, x=x_eval, m=m_t, v=v_t)
             return s
 

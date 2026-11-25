@@ -788,6 +788,7 @@ def _regime_switching_cell():
         )
         from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+        from mfgarchon.config.damping import DampingPolicy
         from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
         from mfgarchon.core.mfg_components import MFGComponents
         from mfgarchon.core.regime_switching import RegimeSwitchingConfig
@@ -832,7 +833,7 @@ def _regime_switching_cell():
             fp_solvers=[FPFDMSolver(p) for p in problems],
             max_iterations=3,
             tolerance=1e-4,
-            damping=0.5,
+            damping=DampingPolicy.constant(0.5),
         )
         result = iterator.solve()
 

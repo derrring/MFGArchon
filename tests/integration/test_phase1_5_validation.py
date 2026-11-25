@@ -18,6 +18,7 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
@@ -162,7 +163,7 @@ class TestRegimeSwitchingIntegration:
             fp_solvers=fp_solvers,
             max_iterations=3,
             tolerance=1e-4,
-            damping=0.5,
+            damping=DampingPolicy.constant(0.5),
         )
 
         result = iterator.solve()

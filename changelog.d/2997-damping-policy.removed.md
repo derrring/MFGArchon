@@ -7,6 +7,8 @@
   - `FictitiousPlayIterator`: `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`,
     `damp_value_function`, and the method `get_learning_rate`.
   - `NewtonMFGSolver`: `picard_damping`.
+  - `GraphMFGSolver`, `RegimeSwitchingIterator`: a number as `damping=` (stage 1b).
+  - `MultiPopulationIterator`: `relaxation`, and its attribute `relaxation` (stage 1b).
   - `create_network_mfg_solver`, `create_simple_network_solver`: `relaxation`.
   - `PicardConfig`: `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`,
     `anderson_memory`; replaced by `PicardConfig.damping`.
@@ -36,5 +38,11 @@
 - **`FixedPointIterator.set_warm_start_data(U, M)` and `FictitiousPlayIterator.set_warm_start_data(U, M)`** (#2997),
   with their `get` and `clear` overrides: the base class's `set_warm_start_data((U, M), metadata=None)` replaces them,
   and checks the shapes.
+- **The base class's warm-start store** (#2997, stage 1b; the user's ruling of 2026-11-25). On a
+  `BaseCouplingIterator` subclass whose `_iteration_state()` returns None, `set_warm_start_data` stored the arrays
+  and `get_warm_start_data` returned them. Now `set_warm_start_data` raises `NotImplementedError`, and
+  `get_warm_start_data` returns None. `GraphMFGSolver` and `RegimeSwitchingIterator` were two such routes, which never
+  read it. A subclass takes a warm start as `FixedPointIterator` does: one `IterationState`, built once and returned by
+  every call of `_iteration_state`, whose `start()` its solve calls.
 - **`NewtonMFGSolver.solve()`'s `(U, M, info)` tuple** (#2997 ruling 4): it returns a `SolverResult`, as every route does,
   whose `metadata` is the former `info` and whose error histories are the absolute change per measured sweep.

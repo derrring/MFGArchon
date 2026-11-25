@@ -609,21 +609,6 @@ def _g_refused(case):
         problem = _g_problem("G")
         points = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
         return lambda: MeshlessGalerkinHJBSolver(problem, collocation_points=points, delta=0.3)
-    if case in ("GraphMFGSolver", "RegimeSwitchingIterator"):
-        problems = [_g_problem("G"), _g_problem("G")]
-        hjbs, fps = [HJBFEMSolver(p) for p in problems], [FPFEMSolver(p) for p in problems]
-        if case == "GraphMFGSolver":
-            from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
-            from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
-
-            coupling = AdjacencyCoupling(np.array([[0.0, 1.0], [1.0, 0.0]]))
-            return lambda: GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=2).solve()
-        if case == "RegimeSwitchingIterator":
-            from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
-            from mfgarchon.core.regime_switching import RegimeSwitchingConfig
-
-            config = RegimeSwitchingConfig(transition_matrix=np.array([[-1.0, 1.0], [1.0, -1.0]]))
-        return lambda: RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=2).solve()
     if case == "MultiPopulationIterator":
         from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
         from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -667,8 +652,6 @@ _G_REFUSALS = {
     "HJB-FEM P2": r"HJBFEMSolver\(order=2\) binds .*Model\(terminal_coupling=\.\.\.\) on P1 only",
     "the meshless solver": r"MeshlessGalerkinHJBSolver solves on its own discretization and binds no "
     r"Model\(terminal_coupling=\.\.\.\)",
-    "GraphMFGSolver": r"GraphMFGSolver has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
-    "RegimeSwitchingIterator": r"RegimeSwitchingIterator has no binding of Model\(terminal_coupling=\.\.\.\) on this",
     "MultiPopulationIterator": r"population\(s\) \[0\] set Model\(terminal_coupling=\.\.\.\)",
     "no binding": r"MFGProblem.terminal_value has no binding of Model\(terminal_coupling=\.\.\.\) on this Mesh2D",
     "a binding on other points": r"on 81 points that are not this problem's 81, in their order, compared bitwise",
@@ -680,11 +663,11 @@ _G_REFUSALS = {
 @pytest.mark.parametrize("case", list(_G_REFUSALS))
 def test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name(case):
     """Off a grid the problem declares G and binds none, and every reader that cannot read it refuses it by name (#1642,
-    stage 1b's G line): a solver with no point measure, P2 and the meshless solver, at construction; the routes that
-    hand ``terminal_value`` no binding (graph, regime switching), as they refuse F; the
+    stage 1b's G line): a solver with no point measure, P2 and the meshless solver, at construction; the
     multi-population iterator, where G is single-population (the user's ruling 5); and ``terminal_value`` itself, for
     no binding, a binding on other points, a binding of another problem's G, and a binding beside the problem's own on
-    a grid, one G with two bindings."""
+    a grid, one G with two bindings. The graph and regime-switching routes read it through each component's HJB
+    solver's binding since #2997's stage 1b (the next test)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         call = _g_refused(case)
@@ -692,11 +675,44 @@ def test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name(case):
             call()
 
 
+@pytest.mark.parametrize("route", ["GraphMFGSolver", "RegimeSwitchingIterator"])
+def test_a_component_route_reads_an_off_grid_terminal_coupling_through_each_components_binding(route):
+    """Off a grid the problem binds no G, and a route reads it through the HJB solver's binding. The graph and
+    regime-switching routes handed ``terminal_value`` none and refused G; through the iterate's owner each component
+    hands its own HJB solver's binding (#2997 stage 1b, ruling 11). With two components and nothing coupling them, each
+    component's U and M after five sweeps are FixedPoint's on its own problem, bit for bit. A component handed the other
+    component's binding is refused, as another problem's G."""
+    from mfgarchon.alg.numerical.coupling import FixedPointIterator
+    from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+    from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+    from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+    from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+    problems = [_g_problem("G"), _g_problem("G")]
+    hjbs, fps = [HJBFEMSolver(p) for p in problems], [FPFEMSolver(p) for p in problems]
+    if route == "GraphMFGSolver":
+        coupling = AdjacencyCoupling(np.zeros((2, 2)), alpha=0.1, beta=0.1)
+        result = GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=5, tolerance=1e-14).solve()
+    else:
+        config = RegimeSwitchingConfig(transition_matrix=np.zeros((2, 2)))
+        result = RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=5, tolerance=1e-14).solve()
+    assert result.iterations == 5
+    for k in range(2):
+        alone = _g_problem("G")
+        fixed = FixedPointIterator(alone, HJBFEMSolver(alone), FPFEMSolver(alone)).solve(
+            max_iterations=5, tolerance=1e-14, verbose=False
+        )
+        assert np.array_equal(np.asarray(result.values[k]), fixed.U), f"component {k}'s U"
+        assert np.array_equal(np.asarray(result.densities[k]), fixed.M), f"component {k}'s M"
+
+
 def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_binding():
     """Off a grid the problem binds no G, and a route reads it through the HJB solver's binding. Newton's residual
     handed ``terminal_value`` none and refused G; through the iterate's owner it hands the binding (#2997 ruling 11),
-    and its fixed point is FixedPoint's. On this mesh they are 3.7e-9 apart at tolerance 1e-8, where G itself moves
-    U by 0.26. Newton stops inside its warm-up there, so the Newton phase is covered by recording instead: on a coarse
+    and its fixed point is FixedPoint's. Every warm-up sweep is judged as FixedPoint's is (#2997), so on this mesh at
+    tolerance 1e-8 Newton stops inside its warm-up at FixedPoint's sweep, 34, with FixedPoint's U bit for bit, where G
+    itself moves U by 0.26; at 4cd1803f it ran all 200 warm-up sweeps and ended 3.7e-9 away. The Newton phase is
+    covered by recording instead: on a coarse
     mesh (refine 1, Nt = 2), with no warm-up and one Newton step, every one of its 304 HJB solves, the
     finite-difference Jacobian's among them, is handed u(T) read through the binding at its own m(T). G is an
     interaction cost there, whose derivative K * m(T) moves with m(T), so the level read is seen: u(T) read at m(0)
@@ -714,8 +730,9 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
     U, _, info = newton_result.U, newton_result.M, newton_result.metadata
     assert fixed_point.converged
     assert info["convergence_reason"] == "Converged during Picard warm-up"
+    assert info["picard_iterations"] == fixed_point.iterations
     gap = float(np.max(np.abs(U - fixed_point.U)))
-    assert gap < 1e-6, f"Newton's fixed point is {gap:.3e} from FixedPoint's on an off-grid G"
+    assert gap == 0.0, f"Newton's fixed point is {gap:.3e} from FixedPoint's on an off-grid G"
 
     coarse = _g_problem(g=InteractionCost(GaussianKernel(amplitude=1.0, length_scale=0.3)), nt=2, refine=1)
     hjb = HJBFEMSolver(coarse)

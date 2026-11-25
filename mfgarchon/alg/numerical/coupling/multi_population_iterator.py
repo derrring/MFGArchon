@@ -6,7 +6,7 @@ Picard fixed-point loop. Each iteration:
   1. Solve K HJB equations (each sees all current densities)
   2. Extract K drift fields via H_k.optimal_control()
   3. Solve K FP equations
-  4. Damp all K density fields
+  4. Damp each population's U and M (its `DampingPolicy`, #2997)
 
 Reuses standard HJB/FP solvers — this class only coordinates.
 """
@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import _terms_reading_every_population, _why_not_as_it_ships
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -25,13 +26,16 @@ from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
     fp_solve_kwargs,
     hjb_coupling_binding,
     hjb_solve_kwargs,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
-from .fixed_point_utils import cold_start_density_at_level, diverged_value_function, hjb_solver_sig_params
+from .damping_run import DampingRun
+from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
+from .iteration_state import IterationState
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
@@ -111,8 +115,10 @@ class MultiPopulationIterator:
         One HJB solver per population.
     fp_solvers : list[BaseFPSolver]
         One FP solver per population.
-    relaxation : float
-        Picard under-relaxation factor in (0, 1]. Default 0.5.
+    damping : DampingPolicy | None
+        Each population's damping of U and M, a `DampingPolicy` (#2997), applied per population: every population's
+        fields adapt on their own history. None is ``DampingPolicy.constant(0.5)``: both fields damped from the first
+        sweep.
 
     Examples
     --------
@@ -131,12 +137,12 @@ class MultiPopulationIterator:
         multi_problem: MultiPopulationProblem,
         hjb_solvers: list[BaseHJBSolver],
         fp_solvers: list[BaseFPSolver],
-        relaxation: float = 0.5,
+        damping: DampingPolicy | None = None,
     ):
         self.multi_problem = multi_problem
         self.hjb_solvers = hjb_solvers
         self.fp_solvers = fp_solvers
-        self.relaxation = relaxation
+        self.damping = damping_argument(damping, "MultiPopulationIterator") or DampingPolicy.constant(0.5)
         K = multi_problem.K
         _get_pop = getattr(multi_problem, "get_population", None)
         if callable(_get_pop):
@@ -213,29 +219,28 @@ class MultiPopulationIterator:
             )
         refuse_what_the_doors_cannot_pair(self.multi_problem)
 
-        # Initialize from each population's problem
-        M = []
-        U = []
-        for k in range(K):
-            prob_k = self.multi_problem.get_population(k)
-            Nt = prob_k.Nt
-            grid_shape = prob_k.geometry.get_grid_shape()
-            Nx = grid_shape[0]
-
-            m0_k = prob_k.get_initial_m()
-            M_k = np.zeros((Nt + 1, Nx))
-            M_k[0] = m0_k
-            for n in range(1, Nt + 1):
-                M_k[n] = cold_start_density_at_level(m0_k, self.fp_solvers[k], n)
-            M.append(M_k)
-
-            # The terminal datum's one owner (#1642 stage 2); no population carries a terminal coupling (refused above).
-            U_terminal_k = prob_k.terminal_value(
-                m0_k, binding=hjb_terminal_binding(self.hjb_solvers[k]), reader="MultiPopulationIterator"
+        # Each population's iterate from its one owner (#2997): its layout, the grid's shape or, for one population on a
+        # mesh, the pair's DOF count, and its cold start, u(T) at m(0) in every row of U and m(0) with the FP's
+        # prescribed values in M (#2991). Its u(T) is the terminal datum's one owner, read through the population's HJB
+        # solver's binding (#1642); no population carries a terminal coupling (refused above).
+        states = [
+            IterationState(
+                self.multi_problem.get_population(k),
+                self.hjb_solvers[k],
+                self.fp_solvers[k],
+                reader=f"MultiPopulationIterator[population {k}]",
+                terminal_binding=hjb_terminal_binding(self.hjb_solvers[k]),
+                unstructured_mesh=True,
             )
-            U_k = np.zeros((Nt + 1, Nx))
-            U_k[-1] = U_terminal_k
+            for k in range(K)
+        ]
+        U, M = [], []
+        for state in states:
+            U_k, M_k = state.start()
             U.append(U_k)
+            M.append(M_k)
+        # One damping run per population: each population's fields adapt on its own history (#2997 rulings 5 and 9).
+        runs = [DampingRun(self.damping) for state in states]
 
         from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
@@ -280,18 +285,17 @@ class MultiPopulationIterator:
             # m_all_per_t[n] = concat(M[0][n], M[1][n], ..., M[K-1][n])
             m_all = np.concatenate(M, axis=-1)  # (Nt+1, K*Nx)
 
-            # Step 1: Solve K HJB equations
+            # Step 1: Solve K HJB equations, each population's into its own slot: the map's output, before damping.
             # `break` inside the loop below leaves only the population loop; this carries the stop
             # out to the Picard loop (#1718).
             diverged_population = None
+            U_map: list = [None] * K
+            terminals: list = [None] * K
             for k in range(K):
                 solver_k = self.hjb_solvers[k]
-                # u(T) at the density this population's HJB solve uses: g, since a terminal coupling is refused above.
-                U_terminal_k = np.asarray(
-                    populations[k].terminal_value(
-                        M[k][-1], binding=hjb_terminal_binding(solver_k), reader="MultiPopulationIterator"
-                    )
-                )
+                # u(T) at the density this population's HJB solve uses, g, since a terminal coupling is refused above:
+                # the solve and the write-back after the update both read it.
+                U_terminal_k = terminals[k] = states[k].terminal_at(M[k][-1])
 
                 # Issue #1071 (lock-faithful): pass the stacked cross-density trajectory ``m_all``
                 # directly. The HJB solver indexes it at each integer timestep and hands it to the
@@ -321,25 +325,26 @@ class MultiPopulationIterator:
                     binding=hjb_coupling_binding(solver_k),
                 )
                 if honors_cross_density:
-                    U[k] = solver_k.solve_hjb_system(
+                    U_map[k] = solver_k.solve_hjb_system(
                         M[k], U_terminal_k, U[k], cross_density=(None if K == 1 else m_all), **hjb_kwargs
                     )
                 else:
-                    U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k], **hjb_kwargs)
+                    U_map[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k], **hjb_kwargs)
 
                 # Issue #1718: check before the NEXT population is solved, not after the loop. Every
                 # population's HJB is solved before any FP runs, so one population's NaN would reach
                 # every other population's coupling source through `m_all` before anything noticed.
-                # `U[k]` is written in place, so there is no last-finite iterate to fall back on --
-                # which is why the diverged one is published rather than a restored predecessor.
+                # This sweep's map output is published for the populations solved so far, the diverged one's as the
+                # guard returns it; the later populations keep the previous iterate.
                 diverged = diverged_value_function(
-                    U[k],
+                    U_map[k],
                     U_terminal_k,
                     site=f"MultiPopulationIterator[population {k}]",
                     density=m_all,
                     iteration=iteration,
                 )
                 if diverged is not None:
+                    U[:k] = U_map[:k]
                     U[k] = diverged
                     diverged_population = k
                     break
@@ -372,21 +377,21 @@ class MultiPopulationIterator:
 
             for k in range(K):
                 prob_k = self.multi_problem.get_population(k)
-                m0_k = M[k][0]
+                m0_k = states[k].m0
                 H_k = prob_k.hamiltonian_class
                 fp_k = self.fp_solvers[k]
                 # Issue #2666: the population's FP source, composed from the density this solve replaces
                 # and the value function it consumes -- the new U, as FixedPointIterator binds it.
-                fp_kwargs = fp_solve_kwargs(prob_k, self._fp_sig_params[k], type(fp_k).__name__, M=M[k], U=U[k])
+                fp_kwargs = fp_solve_kwargs(prob_k, self._fp_sig_params[k], type(fp_k).__name__, M=M[k], U=U_map[k])
 
                 if getattr(prob_k, "spatial_dimension", None) == 0:
-                    M_new_k = fp_k.solve_fp_system(m0_k, potential_field=U[k], show_progress=False, **fp_kwargs)
+                    M_new_k = fp_k.solve_fp_system(m0_k, potential_field=U_map[k], show_progress=False, **fp_kwargs)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                         prob_k,
                         self._fp_sig_params[k],
                         None,
-                        U[k],
+                        U_map[k],
                         M[k],
                         h_class=H_k,
                         cross_density=None if K == 1 else m_all,
@@ -394,39 +399,44 @@ class MultiPopulationIterator:
                         fp_solver=fp_k,
                     )
                     if use_positional_U:
-                        M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False, **fp_kwargs)
+                        M_new_k = fp_k.solve_fp_system(m0_k, U_map[k], show_progress=False, **fp_kwargs)
                     else:
                         M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs, **fp_kwargs)
 
                 # The UNDAMPED map output is what the convergence test needs; see the block below.
                 M_map[k] = M_new_k
-                M[k] = (1 - self.relaxation) * M_old[k] + self.relaxation * M_new_k
 
             # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
             # step. `errors` keeps its shape and type -- one float per population -- and means the
             # larger of the two fields' relative changes.
             #
-            # `M_map[k] - M_old[k]`, NOT `M[k] - M_old[k]`. The damped update is
-            # `M = (1-r)*M_old + r*M_map`, so `M - M_old` is identically `r * (M_map - M_old)` and
-            # the reported error scales with the relaxation factor. That is #1684 items 6 and 7 --
-            # "turning damping down makes anything converge" -- and this repository has already
-            # fixed it at `nonlinear_solvers.py` and `fixed_point_iterator.py`. An
-            # earlier version of this block measured the damped step and so reintroduced, in the
-            # multi-population path, the exact defect the issue it cites is about: measured on the
-            # cross-coupled 2-population fixture at relaxation 0.01, it reported converged=True at
-            # sweep 2 with a true residual 45-61x the tolerance. U is never damped here, so its
-            # half was always the map residual.
+            # The map's output against the sweep's input, `U_map[k] - U_old[k]` and `M_map[k] - M_old[k]`, NOT the
+            # damped step: the damped update is `theta * map + (1 - theta) * old`, so the damped step is identically
+            # `theta` times the map's and the reported error would scale with the damping. That is #1684 items 6 and
+            # 7 -- "turning damping down makes anything converge". An earlier version of this block measured the damped
+            # step and so reintroduced it here: measured on the cross-coupled 2-population fixture at relaxation 0.01,
+            # it reported converged=True at sweep 2 with a true residual 45-61x the tolerance.
             #
             # #2555: each population's change is its relative L2 change in its OWN problem's measure,
             # and the criterion is the single-population one, fed the max over populations -- so u and
             # m no longer meet one tolerance in their own units.
-            per_population = [sweep_change(U[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)]
+            per_population = [
+                sweep_change(U_map[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)
+            ]
             worst = worst_sweep_change(per_population, "population")
             for metrics_k in per_population:
                 errors_M.append(metrics_k["l2distm_rel"])
                 errors_U.append(metrics_k["l2distu_rel"])
                 errors.append(max(metrics_k["l2distm_rel"], metrics_k["l2distu_rel"]))
             max_error = max(worst["l2distm_rel"], worst["l2distu_rel"])
+
+            # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given.
+            for k in range(K):
+                U_k, M_k = runs[k].update(iteration, U_old[k], U_map[k], M_old[k], M_map[k])
+                U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
+                for message in runs[k].observe(iteration, per_population[k]):
+                    logger.warning(f"MultiPopulationIterator[population {k}]: {message}")
 
             logger.info(
                 f"Multi-pop iter {iteration + 1}/{max_iterations}: "
@@ -463,9 +473,9 @@ class MultiPopulationResult:
     Attributes
     ----------
     U : list[np.ndarray]
-        Value functions, one per population. Each shape (Nt+1, Nx).
+        Value functions, one per population, each of the population's iterate shape (Nt+1, *shape).
     M : list[np.ndarray]
-        Density fields, one per population. Each shape (Nt+1, Nx).
+        Density fields, one per population, each of the population's iterate shape (Nt+1, *shape).
     iterations : int
         Number of Picard iterations performed.
     converged : bool
@@ -474,7 +484,7 @@ class MultiPopulationResult:
         Final per-population errors: for each population, the larger of the u and m
         relative L2 changes over the last sweep, in that population's own measure (#2555),
         both measured on the MAP's output rather than on the damped update -- `M_map - M_old`,
-        not `M - M_old`, which differs from it by a factor of the relaxation (#1684 items 6/7).
+        not `M - M_old`, which differs from it by a factor of the damping's theta (#1684 items 6/7).
         Before #1684 item 5 this was m only, and so was `converged`. Empty when no sweep completed.
     errors_M, errors_U : list[float] | None
         The same errors split by field, so a non-converged run says WHICH field

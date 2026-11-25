@@ -348,8 +348,8 @@ class MFGResidual:
         F_HJB = U_new - U
         F_FP = M_new - M
 
-        # Flatten for Newton solver
-        F = np.concatenate([F_HJB.flatten(), F_FP.flatten()])
+        # One vector for the Newton solver, in the state's packing (`IterationState.pack`, #2997)
+        F = self.state.pack(F_HJB, F_FP)
 
         if return_components:
             return F, F_HJB, F_FP
@@ -380,7 +380,7 @@ class MFGResidual:
         elif norm_type == "linf":
             return float(np.max(np.abs(F)))
         elif norm_type == "relative":
-            state_norm = np.linalg.norm(np.concatenate([U.flatten(), M.flatten()]))
+            state_norm = np.linalg.norm(self.state.pack(U, M))
             return float(np.linalg.norm(F) / (state_norm + 1e-10))
         else:
             raise ValueError(f"Unknown norm_type: {norm_type}")

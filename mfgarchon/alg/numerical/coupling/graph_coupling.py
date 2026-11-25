@@ -60,13 +60,15 @@ class GraphCouplingOperator(Protocol):
 
         Args:
             node_idx: Index of the node being solved.
-            values: Value functions v^k for all nodes, each shape (Nt+1, Nx).
-            densities: Densities m^k for all nodes, each shape (Nt+1, Nx) or (Nx,).
+            values: Value functions v^k for all nodes, each of the node's iterate shape (Nt+1, *shape): the grid's
+                shape, or the DOF count on a mesh.
+            densities: Densities m^k for all nodes, each of the same iterate shape.
             dt: Time step of the (shared) time grid, used to index into
                 values/densities at the physical time the solver requests.
 
         Returns:
-            source_term(t, x) -> NDArray compatible with HJB solver.
+            source_term(t, x) -> the source's N values at the solver's N points x, a 1-D array in the geometry's
+            order of its points (`IterationState.level_at_points`).
         """
         ...
 
@@ -86,7 +88,7 @@ class GraphCouplingOperator(Protocol):
             dt: Time step of the (shared) time grid.
 
         Returns:
-            source_term(t, x) -> NDArray compatible with FP solver.
+            source_term(t, x) -> the source's N values at the solver's N points x, as for `compute_hjb_source`.
         """
         ...
 
@@ -113,10 +115,13 @@ class AdjacencyCoupling:
         Adjacency matrix A, shape (N, N). A_{ij} > 0 if node j affects node i.
         Can be weighted (interaction strength) or binary.
     coupling_hjb : Callable[..., NDArray] | None
-        Custom HJB coupling function, read by the names it declares of t, i, j, v_j and m_j.
+        Custom HJB coupling function, read by the names it declares of t, i, j, v_j and m_j. ``v_j`` and ``m_j`` are
+        node j's levels at time t as the iterate holds them, of the grid's shape, or the DOF count on a mesh (#2997). It
+        returns the term's N values at the solver's points, a 1-D array in the geometry's order
+        (`IterationState.level_at_points`), or one value for all of them.
         Default: alpha * (v_i_at_t - v_j_at_t) (value difference).
     coupling_fp : Callable[..., NDArray] | None
-        Custom FP coupling function, read by the same names.
+        Custom FP coupling function, read by the same names, handed and returning what ``coupling_hjb`` is.
         Default: beta * (m_j_at_t - m_i_at_t) (mass transfer).
     alpha : float
         Default HJB coupling strength (default 0.1).
@@ -183,6 +188,7 @@ class AdjacencyCoupling:
                     s += A_row[j] * custom(t=t_eval, i=i, j=j, v_j=v_j, m_j=m_j)
                 else:
                     # Default: value difference (migration incentive)
+                    v_i, v_j = _at_points(v_i), _at_points(v_j)
                     n = min(len(v_i), len(v_j), Nx)
                     s[:n] += A_row[j] * alpha * (v_i[:n] - v_j[:n])
             return s
@@ -214,6 +220,7 @@ class AdjacencyCoupling:
                     s += A_row[j] * custom(t=t_eval, i=i, j=j, v_j=v_j, m_j=m_j)
                 else:
                     # Default: mass transfer (inflow from j, outflow to j)
+                    m_i, m_j = _at_points(m_i), _at_points(m_j)
                     n = min(len(m_i), len(m_j), Nx)
                     s[:n] += A_row[j] * beta * (m_j[:n] - m_i[:n])
             return s
@@ -270,7 +277,7 @@ class LaplacianCoupling:
             for j in range(len(values)):
                 if L_row[j] == 0:
                     continue
-                v_j = _get_time_slice(values[j], t_eval, dt)
+                v_j = _at_points(_get_time_slice(values[j], t_eval, dt))
                 n = min(len(v_j), Nx)
                 s[:n] += kappa * L_row[j] * v_j[:n]
             return s
@@ -294,7 +301,7 @@ class LaplacianCoupling:
             for j in range(len(densities)):
                 if L_row[j] == 0:
                     continue
-                m_j = _get_time_slice(densities[j], t_eval, dt)
+                m_j = _at_points(_get_time_slice(densities[j], t_eval, dt))
                 n = min(len(m_j), Nx)
                 s[:n] += kappa * L_row[j] * m_j[:n]
             return s
@@ -302,8 +309,18 @@ class LaplacianCoupling:
         return source
 
 
+def _at_points(level: NDArray) -> NDArray:
+    """A level of a node's iterate as its values at the source's points, in the geometry's order: the iterate owner's
+    `IterationState.level_at_points` (#2997). Imported here, not at the top: this module is imported while
+    ``base_mfg`` is, which `iteration_state` imports."""
+    from .iteration_state import IterationState
+
+    return IterationState.level_at_points(level)
+
+
 def _get_time_slice(arr: NDArray, t: float, dt: float) -> NDArray:
-    """Extract spatial slice from (Nt+1, Nx) or (Nx,) array at time t.
+    """One level of a node's iterate, of shape (Nt+1, *shape), at time t; an array of one dimension is returned as
+    it is.
 
     Uses `dt` to convert physical time to array index (round-to-nearest).
     Clamped to valid range [0, Nt].

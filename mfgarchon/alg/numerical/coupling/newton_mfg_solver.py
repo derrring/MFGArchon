@@ -128,7 +128,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
             Newton is a *local* root-finder and (even with line search) cannot escape a
             basin, so a too-short warmup can converge to a spurious near-trivial fixed
             point of the discrete MFG map. For stiff couplings increase this until the
-            warmup residual is well past its transient peak (Issue #1233).
+            warmup residual is well past its transient peak (Issue #1233). Every warm-up sweep's
+            change is judged, and the first that meets the criteria ends the solve, converged unless
+            its HJB steps failed, as FixedPoint's loop stops (#1878, #2997).
         damping: The Picard warm-up's damping, a `DampingPolicy` (#2997); None is ``DampingPolicy.constant(0.5)``.
             The Newton phase is not damped; its line search sets the step.
         newton_max_iterations: Maximum Newton iterations (default: 20)
@@ -213,7 +215,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
         U: NDArray,
         M: NDArray,
         num_iterations: int,
-    ) -> tuple[NDArray, NDArray, list[float], int | None]:
+        judge: Callable[[dict[str, float]], bool],
+    ) -> tuple[NDArray, NDArray, list[float], int | None, int | None]:
         """
         Run Picard fixed-point iterations for warm-up.
 
@@ -221,12 +224,17 @@ class NewtonMFGSolver(BaseCouplingIterator):
             U: Initial value function
             M: Initial density
             num_iterations: Number of Picard iterations
+            judge: The verdict on a sweep's change (`sweep_change`'s metrics), through the criteria every verdict of
+                the solve reads: True when the change meets them, which stops the warm-up whether or not the verdict is
+                then refused over failed inner HJB steps, as FixedPoint's loop stops (#1878; #2997, the approver's
+                rulings of 2026-11-25).
 
         Returns:
-            (U, M, residuals, diverged_at): updated state, residual history, and the 0-based
+            (U, M, residuals, diverged_at, converged_at): updated state, residual history, the 0-based
             warmup iteration at which the value function went non-finite -- or None if it did
-            not. The caller MUST stop on a non-None value: the statement after the warmup call
-            composes an FP solve from U (#1718).
+            not -- and the 0-based warmup iteration whose change met `judge`'s criteria, after which
+            the warmup stopped, or None. The caller MUST stop on a non-None ``diverged_at``: the statement
+            after the warmup call composes an FP solve from U (#1718).
         """
         residuals = []
         run = DampingRun(self.damping)
@@ -235,6 +243,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # below and reached FP anyway, with the identical CFL misattribution #1718 removes
         # everywhere else. The flag carries the stop out (#1718 review).
         diverged_at: int | None = None
+        converged_at: int | None = None
 
         for i in range(num_iterations):
             # Store old values
@@ -266,6 +275,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             change = sweep_change(U_new, U_old, M_new, M_old, self.problem.spatial_measure().integrate, self.problem.dt)
             self._changes[0].append(change["l2distu_abs"])
             self._changes[1].append(change["l2distm_abs"])
+            converged = judge(change)
             # Apply damping
             U, M = run.update(i, U_old, U_new, M_old, M_new)
             # An adaptive field adapts on its own history, after this sweep's blend as on every route, so a decay takes
@@ -280,8 +290,11 @@ class NewtonMFGSolver(BaseCouplingIterator):
             residuals.append(res_norm)
 
             logger.debug(f"Picard iteration {i + 1}: residual = {res_norm:.2e}")
+            if converged:
+                converged_at = i
+                break
 
-        return U, M, residuals, diverged_at
+        return U, M, residuals, diverged_at, converged_at
 
     @verdict_reads_inner_failures(
         lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver], check=False
@@ -300,7 +313,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
             max_iterations: Maximum total iterations (Picard + Newton)
             tolerance: The outer coupling tolerance (docs/user/CONVENTIONS.md § 9): it bounds the Picard
                 residual Phi(x) - x relative to the map's output, in the problem's own measure, through
-                `sweep_change` and `check_convergence_criteria` (#2565). It is checked after the warm-up and
+                `sweep_change` and `check_convergence_criteria` (#2565). It is checked at every warm-up sweep, on
+                that sweep's change, which ends the solve when it meets the criteria (#2997), after the warm-up and
                 at each iterate Newton evaluates before stepping; the iterate returned when Newton's budget
                 runs out is not judged, so it reports not converged.
             absolute_tolerance: Opt-in absolute bound on the same change, as for the other coupling
@@ -347,6 +361,21 @@ class NewtonMFGSolver(BaseCouplingIterator):
             )
             return converged, last_reason[0]
 
+        # The warm-up's verdict on the sweep that stopped it: converged, or refused over failed inner HJB steps.
+        warmup_converged = [False]
+
+        def judge_sweep(change: dict[str, float]) -> bool:
+            # A warm-up sweep judges the change of the map it iterates, FixedPoint's sweep, through the one measure;
+            # the Newton phase judges the residual it solves (the approver's ruling of 2026-11-25, #2997). A met
+            # criterion stops the warm-up either way, as it stops FixedPoint's loop, and the verdict reads the inner
+            # failures (#1878).
+            met, reason = self._judge(change, tolerance, absolute_tolerance)
+            self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
+            warmup_converged[0], last_reason[0] = refuse_convergence_over_failed_inner_solves(
+                met, reason, self._verdict_inner_failures
+            )
+            return met
+
         # The warm start, or the owner's cold start (#2997): u(T) at m(0) in every row of U, and m(0) with the FP's
         # prescribed values in M.
         state = self.mfg_residual.state
@@ -359,7 +388,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
             if verbose:
                 print(f"Phase 1: Picard warm-up ({self.picard_warmup} iterations)")
 
-            U, M, picard_res, picard_diverged_at = self._run_picard_warmup(U, M, self.picard_warmup)
+            U, M, picard_res, picard_diverged_at, picard_converged_at = self._run_picard_warmup(
+                U, M, self.picard_warmup, judge_sweep
+            )
             self.picard_residuals = picard_res
 
             if picard_diverged_at is not None:
@@ -380,6 +411,20 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
             if verbose and picard_res:
                 print(f"  Final Picard residual: {picard_res[-1]:.2e}")
+
+            if picard_converged_at is not None:
+                # A warm-up sweep whose change met the criteria ends the solve, with the iterate that sweep's update
+                # produced; the metadata's picard_iterations says which sweep, and the verdict whether its HJB steps
+                # failed (#1878).
+                self.U, self.M = U, M
+                self.newton_residuals = []
+                self._solution_computed = True
+                return self._create_result(
+                    converged=warmup_converged[0],
+                    reason="Converged during Picard warm-up" if warmup_converged[0] else last_reason[0],
+                    elapsed=time.time() - start_time,
+                    picard_iterations=picard_converged_at + 1,
+                )
 
         # Check if already converged after Picard: the outer verdict on the Picard residual (#2565)
         _, F_HJB, F_FP = self.mfg_residual.compute_residual(U, M, return_components=True)
@@ -487,17 +532,23 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str, dict[str, float]]:
             metrics = sweep_change(U + F_HJB, U, M + F_FP, M, integrate, dt)
-            converged, reason = check_convergence_criteria(
-                metrics["l2distu_rel"],
-                metrics["l2distm_rel"],
-                metrics["l2distu_abs"],
-                metrics["l2distm_abs"],
-                tolerance,
-                absolute_tolerance,
-            )
+            converged, reason = self._judge(metrics, tolerance, absolute_tolerance)
             return converged, reason, metrics
 
         return verdict
+
+    @staticmethod
+    def _judge(metrics: dict[str, float], tolerance: float, absolute_tolerance: float | None) -> tuple[bool, str]:
+        """The criteria on one sweep's change (`check_convergence_criteria`), which every verdict of the solve reads: a
+        warm-up sweep's and the map's at each iterate Newton evaluates (#2997)."""
+        return check_convergence_criteria(
+            metrics["l2distu_rel"],
+            metrics["l2distm_rel"],
+            metrics["l2distu_abs"],
+            metrics["l2distm_abs"],
+            tolerance,
+            absolute_tolerance,
+        )
 
     def _iteration_state(self) -> IterationState:
         return self.mfg_residual.state
@@ -519,14 +570,16 @@ class NewtonMFGSolver(BaseCouplingIterator):
         elapsed: float,
         newton_info: SolverInfo | None = None,
         newton_iterations: int | None = None,
+        picard_iterations: int | None = None,
     ) -> SolverResult:
         """The one result type (#2997 ruling 4), its metadata the convergence information. ``newton_iterations``
-        overrides the count read from ``newton_residuals``, for a stop that has no residual history. Its error histories
+        overrides the count read from ``newton_residuals``, for a stop that has no residual history, and
+        ``picard_iterations`` the configured warm-up count, for a warm-up that converged before it. Its error histories
         are the absolute change at each sweep measured, so a warm-up that diverged at sweep i reports i iterations."""
         info = {
             "converged": converged,
             "convergence_reason": reason,
-            "picard_iterations": self.picard_warmup,
+            "picard_iterations": self.picard_warmup if picard_iterations is None else picard_iterations,
             "picard_residuals": self.picard_residuals,
             "newton_iterations": len(self.newton_residuals) if newton_iterations is None else newton_iterations,
             "newton_residuals": self.newton_residuals,

@@ -37,6 +37,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core import MFGComponents, MFGProblem
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -125,7 +126,8 @@ class _StaticFP(FPFDMSolver):
 
 
 class _DriftingHJB(HJBFDMSolver):
-    """Returns a value function that moves by exactly 1.0 every sweep and never settles."""
+    """Returns a value function that moves by exactly 1.0 every sweep and never settles, its terminal row the u(T) it is
+    handed, 0 here, as an HJB solve's is."""
 
     def __init__(self, problem):
         super().__init__(problem)
@@ -137,13 +139,15 @@ class _DriftingHJB(HJBFDMSolver):
         assert source_term is None, "this stub cannot honour a source term"
         assert volatility is None, "this stub cannot honour a volatility field"
         self._sweep += 1
-        return np.full((_NT + 1, _NX + 1), float(self._sweep))
+        U = np.full((_NT + 1, _NX + 1), float(self._sweep))
+        U[-1] = args[1]  # the terminal condition the solve is handed
+        return U
 
 
 def _run(max_iterations=3):
     p = _problem()
     multi = MultiPopulationProblem(populations=[p], population_names=["P0"])
-    it = MultiPopulationIterator(multi, [_DriftingHJB(p)], [_StaticFP(p)], relaxation=1.0)
+    it = MultiPopulationIterator(multi, [_DriftingHJB(p)], [_StaticFP(p)], damping=DampingPolicy.constant(1.0))
     return it.solve(max_iterations=max_iterations, tolerance=1e-10)
 
 
@@ -163,8 +167,8 @@ def test_a_static_m_with_a_moving_u_does_not_converge():
     )
     # Fixture validity, and the breakdown that says which field failed.
     assert r.errors_M == pytest.approx([0.0], abs=1e-14), f"the fixture is wrong if m moved: errors_M={r.errors_M}"
-    # u moves by 1.0 per sweep and is 3.0 everywhere after the third, so its RELATIVE L2 change, which
-    # is what `errors_U` holds since #2555, is exactly 1/3.
+    # u moves by 1.0 per sweep and is 3.0 everywhere after the third but at t = T, where it is u(T) = 0 at every
+    # sweep, so its RELATIVE L2 change, which is what `errors_U` holds since #2555, is exactly 1/3.
     assert r.errors_U[0] == pytest.approx(1.0 / 3.0), f"u should move by 1.0 per sweep: {r.errors_U}"
 
 
@@ -196,7 +200,9 @@ def test_the_m_error_is_the_map_residual_not_the_damped_step():
     for relaxation in (1.0, 0.5, 0.1, 0.01):
         p = _problem()
         multi = MultiPopulationProblem(populations=[p], population_names=["P0"])
-        it = MultiPopulationIterator(multi, [HJBFDMSolver(p)], [FPFDMSolver(p)], relaxation=relaxation)
+        it = MultiPopulationIterator(
+            multi, [HJBFDMSolver(p)], [FPFDMSolver(p)], damping=DampingPolicy.constant(relaxation)
+        )
         errs.append(it.solve(max_iterations=1, tolerance=1e-30).errors_M[0])
 
     assert errs[0] > 0, "the fixture must actually move m, or this asserts nothing"
