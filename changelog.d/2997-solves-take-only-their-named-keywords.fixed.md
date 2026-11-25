@@ -3,10 +3,10 @@
   value function stops the solve with `diverged_nan`, as on every other route, instead of raising the verdict's
   refusal of a non-finite change.
 - **A coupling route's `solve()` takes only the keywords its signature names** (#2997, #2922). The solves of
-  `FixedPointIterator`, `FictitiousPlayIterator`, the Block iterators and `NewtonMFGSolver` took `**kwargs` and ignored
-  what landed there: `relaxation=` and the other damping keywords #2997 removed, `damping=`, `config=` on the Block
-  iterators and Newton, and `return_structured=` among them. Each is now Python's own `TypeError`, and so are the five
-  names the removal before 1.0 refused by name. `verbose=` is a named parameter of `FixedPointIterator.solve`, which
-  ignored it, and of `FictitiousPlayIterator.solve`. On both, a config in force governs progress through its
+  `FixedPointIterator`, `FictitiousPlayIterator`, the Block iterators and `NewtonMFGSolver` took `**kwargs`, which
+  accepted a keyword they did not name and read nothing of it: `relaxation=` and the other damping keywords #2997
+  removed, `damping=`, `config=` on the Block iterators and Newton, and `return_structured=` among them. Each is now
+  Python's own `TypeError`. `verbose=` is a named parameter of `FixedPointIterator.solve`, which ignored it, and of
+  `FictitiousPlayIterator.solve`, which read it from `**kwargs`. On both, a config in force governs progress through its
   `picard.verbose` instead, as it decides the budget and the tolerances; `problem.solve()` writes its own `verbose=`
   there.

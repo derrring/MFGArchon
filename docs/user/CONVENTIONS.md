@@ -1200,7 +1200,7 @@ one for M, each with its theta, schedule, floor, adaptation and first-sweep rule
 `PicardConfig.damping` holds one for a solve run from a config, on the two routes whose solve takes one,
 `FixedPointIterator` and `FictitiousPlayIterator`: set, it decides; left None, the default, the route keeps its own; a
 damping given to both the constructor and the config is refused. The Block iterators and `NewtonMFGSolver` take no
-config, and their solves accept a `config=` without reading it (#2922), so their damping is the constructor's alone. `GraphMFGSolver` and
+config: their solves take no `config=`, which is Python's own `TypeError` there (#2997), so their damping is the constructor's alone. `GraphMFGSolver` and
 `RegimeSwitchingIterator` still take a number as `damping=`, and `MultiPopulationIterator` takes `relaxation=`, until
 #2997's stage 1b.
 

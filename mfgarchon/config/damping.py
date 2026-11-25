@@ -102,7 +102,7 @@ class AndersonOptions:
         allows this method by name, and only this one."""
         if isinstance(self.beta, (bool, np.bool_)):
             raise ValueError(f"AndersonOptions: beta must be a real number in (0, 1], not a bool, got {self.beta!r}")
-        if not 0.0 < self.beta <= 1.0:
+        if not isinstance(self.beta, numbers.Real) or not 0.0 < self.beta <= 1.0:
             raise ValueError(f"AndersonOptions: beta must be a real number in (0, 1], got {self.beta!r}")
 
 
