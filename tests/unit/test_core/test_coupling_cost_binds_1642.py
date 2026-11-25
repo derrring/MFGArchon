@@ -859,8 +859,10 @@ def _run_loop(name, calls, diverge_at=None):
         solver.set_warm_start_data((np.zeros_like(M_w), M_w))
         newton_result = solver.solve(max_iterations=1, tolerance=1e30, verbose=False)
         U, _, info = newton_result.U, newton_result.M, newton_result.metadata
-        reason = "diverged_nan" if diverge_at is not None else "Converged during Picard warm-up"
-        assert info["convergence_reason"] == reason, info["convergence_reason"]
+        if diverge_at is not None:
+            assert info["convergence_reason"] == "diverged_nan", info["convergence_reason"]
+        else:
+            assert info["convergence_reason"].startswith("Picard warm-up: Converged: "), info["convergence_reason"]
         return np.asarray(U, dtype=float)[-1], np.asarray(problem.terminal_value(M_w[-1]), dtype=float)
     if name == "BaseHJBSolver.solve":
         problem = _terminal_coupled()
@@ -892,7 +894,7 @@ def _run_loop(name, calls, diverge_at=None):
     # Both re-impose the u(T) each node's HJB solve was given after the update (#2997), and restore it after a diverged
     # solve (#1718): the last-solved node publishes the last call's u(T).
     k = next(i for i, p in enumerate(problems) if p is calls[-1][0])
-    return np.asarray(result.values[k], dtype=float)[-1], calls[-1][2]
+    return np.asarray(result.U[k], dtype=float)[-1], calls[-1][2]
 
 
 _LOOPS = [

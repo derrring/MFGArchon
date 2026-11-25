@@ -407,8 +407,9 @@ _COUPLERS = {
 
 
 def _density_and_record(result):
-    densities = getattr(result, "densities", None)
-    return (result.M if densities is None else densities), result.metadata
+    """The result's densities, one per FP solver (component k's at ``M[k]`` on a route with a component axis, #2997),
+    and its record."""
+    return ([result.M] if result.components is None else list(result.M)), result.metadata
 
 
 @pytest.mark.parametrize("coupler", list(_COUPLERS))
@@ -416,8 +417,7 @@ def test_each_coupler_records_the_density_it_returns_and_warns_per_solver(couple
     """Newton's record is in its ``info``; on several FP solvers the record is one per solver."""
     with mfg_caplog.at_level(logging.WARNING, logger=_LOGGER):
         result, solvers = _COUPLERS[coupler](lambda m: m, lambda m: 1.0)
-    density, record = _density_and_record(result)
-    per_solver = [density] if len(solvers) == 1 else list(density)
+    per_solver, record = _density_and_record(result)
     reports = record["fp_negative_density"]
     reports = [reports] if len(solvers) == 1 else reports
     for solver, one, report in zip(solvers, per_solver, reports, strict=True):
@@ -443,15 +443,9 @@ def test_a_non_finite_value_function_ends_the_solve_and_names_what_it_was_handed
     assert coupler in lines[0]
     assert "source:" not in lines[0]
     # What the solve was handed is what it returns, since FP did not run on this iterate.
-    density, _ = _density_and_record(result)
+    per_solver, _ = _density_and_record(result)
     # A regime's HJB is handed its own density; a graph node's is handed every node's.
-    held = (
-        [density]
-        if isinstance(density, np.ndarray)
-        else [density[0]]
-        if coupler == "RegimeSwitchingIterator"
-        else density
-    )
+    held = per_solver[:1] if coupler == "RegimeSwitchingIterator" else per_solver
     read = min(float(np.min(one)) for one in held)
     assert f"has a minimum of {read:.3e}" in lines[0]
     # Every coupler's first non-finite HJB solve is its second: from the cold start (#2997) the first is handed m0 > 0.
@@ -526,7 +520,7 @@ def test_a_graph_nodes_line_states_the_lowest_density_it_was_handed(mfg_caplog):
         result = GraphMFGSolver([high, low], coupling, [ha, hb], [fa, fb], max_iterations=6, tolerance=1e-5).solve()
     line = next(m for m in mfg_caplog.messages if "NaN/Inf in the value function" in m)
     assert read[1] < 0.0, "the node must read a negative for this row to say anything"
-    lowest = min(float(np.nanmin(one)) for one in result.densities)
+    lowest = min(float(np.nanmin(one)) for one in result.M)
     assert f"has a minimum of {lowest:.3e}" in line
 
 

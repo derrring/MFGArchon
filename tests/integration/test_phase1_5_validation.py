@@ -167,10 +167,10 @@ class TestRegimeSwitchingIntegration:
         )
 
         result = iterator.solve()
-        assert len(result.values) == 2
-        assert len(result.densities) == 2
+        assert len(result.U) == 2
+        assert len(result.M) == 2
         assert result.iterations == 3 or result.converged
-        assert all(np.all(np.isfinite(v)) for v in result.values)
+        assert all(np.all(np.isfinite(v)) for v in result.U)
 
 
 # ---------------------------------------------------------------------------

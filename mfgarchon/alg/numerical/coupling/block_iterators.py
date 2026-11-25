@@ -42,7 +42,6 @@ from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
-from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
@@ -52,6 +51,7 @@ from .base_mfg import (
     damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
+from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
 logger = get_logger(__name__)
 
@@ -187,9 +188,6 @@ class BlockIterator(BaseCouplingIterator):
         self.U: NDArray | None = None
         self.M: NDArray | None = None
 
-        # Convergence tracking
-        self.error_history_U: list[float] = []
-        self.error_history_M: list[float] = []
         self.iterations_run = 0
 
         # Cache solver signatures via base class (Issue #934)
@@ -605,7 +603,7 @@ class BlockIterator(BaseCouplingIterator):
         tolerance: float = 1e-5,
         verbose: bool = True,
         absolute_tolerance: float | None = None,
-    ) -> SolverResult | tuple[NDArray, NDArray, dict[str, Any]]:
+    ) -> SolverResult:
         """
         Solve MFG system using block iteration.
 
@@ -631,12 +629,10 @@ class BlockIterator(BaseCouplingIterator):
         self.U, self.M = state.start()
         self._M_initial = state.m0
 
-        # Reset tracking: the absolute change per sweep in error_history_U/M, as on every route, and the relative one
-        # beside it (#2997 ruling 7)
-        self.error_history_U = []
-        self.error_history_M = []
-        relative_U: list[float] = []
-        relative_M: list[float] = []
+        # Every sweep run, through the result's one owner (#2997)
+        record = SweepRecord(1)
+        # True once self.M holds a density this solve's FP produced: what its mass_conservation_error measures (#1717)
+        fp_output_available = False
         run = DampingRun(self.damping)
         self.iterations_run = 0
 
@@ -690,19 +686,16 @@ class BlockIterator(BaseCouplingIterator):
                 self.U = diverged
                 converged = False
                 convergence_reason = "diverged_nan"
-                # `iiter`, not `iiter + 1`, and the difference is an invariant rather than an
-                # off-by-one. This class GROWS `error_history_U/M` inside the loop below, and
-                # SolverResult validates `iterations <= len(error_history)`. The sweep that
-                # diverged produced no error measurement, so counting it would make the result
-                # unconstructible. FixedPointIterator uses `iiter + 1` for the same event because
-                # it slices a preallocated history by that count, which stays consistent.
-                self.iterations_run = iiter
+                # The diverged sweep counts, its change NaN, as on every route (#2997)
+                self.iterations_run = iiter + 1
+                record.diverged()
                 break
 
             # Damping, per field (the policy, #2997)
             self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
 
             self.U, self.M = state.write_back(self.U, self.M, self._U_terminal)
+            fp_output_available = True
 
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import sweep_change
@@ -714,10 +707,7 @@ class BlockIterator(BaseCouplingIterator):
             for message in run.observe(iiter, metrics):
                 logger.warning(message)
 
-            self.error_history_U.append(metrics["l2distu_abs"])
-            self.error_history_M.append(metrics["l2distm_abs"])
-            relative_U.append(metrics["l2distu_rel"])
-            relative_M.append(metrics["l2distm_rel"])
+            record.measured([metrics])
 
             iter_time = time.time() - iter_start
             self.iterations_run = iiter + 1
@@ -752,16 +742,8 @@ class BlockIterator(BaseCouplingIterator):
 
         self._solution_computed = True
 
-        # Build metadata
-        metadata = {
-            "method": self.method.value,
-            "damping": self.damping,
-            "l2distu_rel": np.array(relative_U),
-            "l2distm_rel": np.array(relative_M),
-            "convergence_reason": convergence_reason,
-            "elapsed_time": elapsed,
-            "adjoint_mode": self.adjoint_mode,
-        }
+        # Block's own metadata; the fields every route has are the result owner's (#2997)
+        metadata: dict[str, Any] = {"method": self.method.value, "adjoint_mode": self.adjoint_mode}
 
         # Issue #704: Include adjoint verification results
         if self.adjoint_verify:
@@ -781,14 +763,17 @@ class BlockIterator(BaseCouplingIterator):
             else:
                 logger.warning(f"Adjoint verification: {self._adjoint_mismatch_count} mismatches")
 
-        return SolverResult(
+        return coupled_result(
             U=self.U,
             M=self.M,
-            iterations=self.iterations_run,
-            error_history_U=np.array(self.error_history_U),
-            error_history_M=np.array(self.error_history_M),
-            solver_name=self.name,
+            record=record,
             converged=converged,
+            reason=convergence_reason,
+            solver_name=self.name,
+            damping=self.damping,
+            problems=[self.problem],
+            fp_solvers=[self.fp_solver],
+            fp_output_available=fp_output_available,
             metadata=metadata,
         )
 

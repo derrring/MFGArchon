@@ -29,13 +29,10 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
-from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
@@ -43,6 +40,7 @@ from .base_mfg import (
     assert_paired_solver_sigma,
     damping_argument,
 )
+from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
@@ -61,6 +59,7 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
     from .iteration_state import IterationState
 
@@ -206,9 +205,11 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # Convergence history
         self.picard_residuals: list[float] = []
         self.newton_residuals: list[float] = []
-        # The absolute L2 change of the map's output against its input, U's and M's, at each sweep measured: the
-        # warm-up's sweeps, then each iterate the Newton phase's verdict judges (#2997 ruling 7).
-        self._changes: tuple[list[float], list[float]] = ([], [])
+        # The change of the map's output against its input at each sweep: the warm-up's sweeps, then each iterate the
+        # Newton phase's verdict judges, a diverged one as NaN (#2997 ruling 7, stage 1c).
+        self._record = SweepRecord(1)
+        # True once M holds this solve's density: a warm-up sweep's FP output, or a Newton step's iterate (#1717)
+        self._fp_output_available = False
 
     def _run_picard_warmup(
         self,
@@ -268,13 +269,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
             if diverged is not None:
                 U = diverged
                 diverged_at = i
+                self._record.diverged()
                 break
 
             # FP solve: M_new = FP(U_new)
             M_new = self.mfg_residual.compute_fp_output(U_new, M_old)
             change = sweep_change(U_new, U_old, M_new, M_old, self.problem.spatial_measure().integrate, self.problem.dt)
-            self._changes[0].append(change["l2distu_abs"])
-            self._changes[1].append(change["l2distm_abs"])
+            self._record.measured([change])
             converged = judge(change)
             # Apply damping
             U, M = run.update(i, U_old, U_new, M_old, M_new)
@@ -284,6 +285,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 logger.warning(message)
 
             U, M = self.mfg_residual.state.write_back(U, M, U_terminal)
+            self._fp_output_available = True
 
             # Compute residual norm
             res_norm = self.mfg_residual.compute_residual_norm(U, M)
@@ -297,7 +299,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
         return U, M, residuals, diverged_at, converged_at
 
     @verdict_reads_inner_failures(
-        lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver], check=False
+        lambda self: [self.hjb_solver],
+        fp_solvers_of=lambda self: [self.fp_solver],
+        check=False,
+        failures_of=lambda self: self._verdict_failures(),
     )
     def solve(
         self,
@@ -322,12 +327,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
             verbose: Print progress information
 
         Returns:
-            SolverResult (#2997 ruling 4): U, M, the absolute change per measured sweep, and the convergence information
-            in its metadata (convergence_reason, picard and newton residuals, ...). The iteration count is
-            `SolverResult.iterations` alone: the sweeps whose change was measured.
+            SolverResult (#2997 ruling 4): U, M, the absolute change per sweep, a diverged one as NaN, and the convergence
+            information in its metadata (convergence_reason, picard and newton residuals, ...). The iteration count is
+            `SolverResult.iterations` alone: the warm-up's sweeps and the iterates the Newton phase judged.
         """
         start_time = time.time()
-        self._changes = ([], [])
+        self._record = SweepRecord(1)
+        self._fp_output_available = False
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
         last_reason = [""]
@@ -353,8 +359,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             converged, reason, metrics = outer_verdict(U, M, F_HJB, F_FP)
             last_change[:] = [metrics]
             if record:
-                self._changes[0].append(metrics["l2distu_abs"])
-                self._changes[1].append(metrics["l2distm_abs"])
+                self._record.measured([metrics])
             self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
             converged, last_reason[0] = refuse_convergence_over_failed_inner_solves(
                 converged, reason, self._verdict_inner_failures
@@ -371,8 +376,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
             # failures (#1878).
             met, reason = self._judge(change, tolerance, absolute_tolerance)
             self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
+            # A met criterion's reason is the criteria's, with the phase that met it (#2997)
             warmup_converged[0], last_reason[0] = refuse_convergence_over_failed_inner_solves(
-                met, reason, self._verdict_inner_failures
+                met, f"Picard warm-up: {reason}" if met else reason, self._verdict_inner_failures
             )
             return met
 
@@ -407,7 +413,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 self.picard_warmup = picard_diverged_at + 1
                 self.newton_residuals = []
                 self._solution_computed = True
-                return self._create_result(False, "diverged_nan", time.time() - start_time)
+                return self._create_result(False, "diverged_nan")
 
             if verbose and picard_res:
                 print(f"  Final Picard residual: {picard_res[-1]:.2e}")
@@ -421,8 +427,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 self._solution_computed = True
                 return self._create_result(
                     converged=warmup_converged[0],
-                    reason="Converged during Picard warm-up" if warmup_converged[0] else last_reason[0],
-                    elapsed=time.time() - start_time,
+                    reason=last_reason[0],
                     picard_iterations=picard_converged_at + 1,
                 )
 
@@ -433,20 +438,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
             # iterate and records it.
             converged_after_warmup = verdict(U, M, F_HJB, F_FP, record=False)[0]
         except _MapDivergedError as stop:
-            return self._stop_on_a_diverged_map(stop, start_time)
+            return self._stop_on_a_diverged_map(stop)
         if converged_after_warmup:
-            self._changes[0].append(last_change[0]["l2distu_abs"])
-            self._changes[1].append(last_change[0]["l2distm_abs"])
+            self._record.measured([last_change[0]])
             self.U = U
             self.M = M
             self._solution_computed = True
-
-            elapsed = time.time() - start_time
-            return self._create_result(
-                converged=True,
-                reason="Converged during Picard warm-up",
-                elapsed=elapsed,
-            )
+            return self._create_result(converged=True, reason="Converged during Picard warm-up")
 
         # Phase 2: Newton iterations
         remaining_iterations = max_iterations - self.picard_warmup
@@ -477,11 +475,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 converged=lambda x, F: verdict(*self.mfg_residual.unpack_state(x), *self.mfg_residual.unpack_state(F)),
             )
         except _MapDivergedError as stop:
-            return self._stop_on_a_diverged_map(stop, start_time)
+            return self._stop_on_a_diverged_map(stop)
 
         # Unpack solution
         self.U, self.M = self.mfg_residual.unpack_state(x_solution)
         self.newton_residuals = newton_info.residual_history
+        if newton_info.iterations > 0:
+            self._fp_output_available = True
 
         elapsed = time.time() - start_time
 
@@ -509,12 +509,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             reason = "Newton max iterations" + (
                 f"; its last verdict, on the iterate before the one returned: {refused}" if refused else ""
             )
-        return self._create_result(
-            converged=newton_info.converged,
-            reason=reason,
-            elapsed=elapsed,
-            newton_info=newton_info,
-        )
+        return self._create_result(converged=newton_info.converged, reason=reason, newton_info=newton_info)
 
     def _outer_verdict(
         self, tolerance: float, absolute_tolerance: float | None
@@ -553,60 +548,61 @@ class NewtonMFGSolver(BaseCouplingIterator):
     def _iteration_state(self) -> IterationState:
         return self.mfg_residual.state
 
-    def _stop_on_a_diverged_map(self, stop: _MapDivergedError, start_time: float) -> SolverResult:
+    def _stop_on_a_diverged_map(self, stop: _MapDivergedError) -> SolverResult:
         """Publish what the guard published and stop: the iterate the verdict judged, with the map's non-finite HJB
-        output as U (#1718's contract), after ``stop.sweep - picard_warmup`` Newton iterations."""
+        output as U (#1718's contract), after ``stop.sweep - picard_warmup`` Newton iterations. The judged sweep counts,
+        its change NaN (#2997)."""
         self.U, self.M = stop.U, stop.M
         self.newton_residuals = []
         self._solution_computed = True
-        return self._create_result(
-            False, "diverged_nan", time.time() - start_time, newton_iterations=stop.sweep - self.picard_warmup
-        )
+        self._record.diverged()
+        if stop.sweep > self.picard_warmup:
+            self._fp_output_available = True
+        return self._create_result(False, "diverged_nan", newton_iterations=stop.sweep - self.picard_warmup)
+
+    def _verdict_failures(self) -> object:
+        """The inner HJB steps the last verdict read, or the latest solve's where no verdict ran; None when the solver
+        does not track them (#2644 review 2, F4): what the result's ``inner_hjb_failures`` holds."""
+        failures = getattr(self, "_verdict_inner_failures", _NOT_READ)
+        return read_inner_solve_failures(self.mfg_residual.hjb_solver) if failures is _NOT_READ else failures
 
     def _create_result(
         self,
         converged: bool,
         reason: str,
-        elapsed: float,
         newton_info: SolverInfo | None = None,
         newton_iterations: int | None = None,
         picard_iterations: int | None = None,
     ) -> SolverResult:
-        """The one result type (#2997 ruling 4), its metadata the convergence information. ``newton_iterations``
-        overrides the count read from ``newton_residuals``, for a stop that has no residual history, and
-        ``picard_iterations`` the configured warm-up count, for a warm-up that converged before it. Its error histories
-        are the absolute change at each sweep measured, so a warm-up that diverged at sweep i reports i iterations."""
-        info = {
+        """The one result type (#2997 ruling 4), through the owner every coupled route reads, with Newton's own counters
+        in its metadata. ``newton_iterations`` overrides the count read from ``newton_residuals``, for a stop that has no
+        residual history, and ``picard_iterations`` the configured warm-up count, for a warm-up that converged before
+        it. Its histories hold every sweep recorded, so a warm-up that diverged at sweep i reports i + 1 iterations,
+        the last NaN."""
+        info: dict[str, Any] = {
             "converged": converged,
-            "convergence_reason": reason,
             "picard_iterations": self.picard_warmup if picard_iterations is None else picard_iterations,
             "picard_residuals": self.picard_residuals,
             "newton_iterations": len(self.newton_residuals) if newton_iterations is None else newton_iterations,
             "newton_residuals": self.newton_residuals,
             "residual_evaluations": self.mfg_residual.residual_evaluations,
-            "elapsed_time": elapsed,
         }
 
         if newton_info is not None:
             info["final_residual"] = newton_info.residual
             info["jacobian_evaluations"] = newton_info.extra.get("jacobian_evals", 0)
 
-        # As on every coupler's result: the inner HJB steps the last verdict read, or the latest solve's where no
-        # verdict ran; None when the solver does not track them (#2644 review 2, F4).
-        failures = getattr(self, "_verdict_inner_failures", _NOT_READ)
-        if failures is _NOT_READ:
-            failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
-        info["inner_hjb_failures"] = list(failures) if isinstance(failures, tuple) else None
-
-        changes_U, changes_M = self._changes
-        return SolverResult(
+        return coupled_result(
             U=self.U,
             M=self.M,
-            iterations=len(changes_U),
-            error_history_U=np.asarray(changes_U, dtype=float),
-            error_history_M=np.asarray(changes_M, dtype=float),
-            solver_name="NewtonMFGSolver",
+            record=self._record,
             converged=converged,
+            reason=reason,
+            solver_name="NewtonMFGSolver",
+            damping=self.damping,
+            problems=[self.problem],
+            fp_solvers=[self.fp_solver],
+            fp_output_available=self._fp_output_available,
             metadata=info,
         )
 

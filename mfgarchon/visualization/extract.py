@@ -18,7 +18,6 @@ import pandas as pd
 import numpy as np
 
 if TYPE_CHECKING:
-    from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGResult
     from mfgarchon.utils.solver_result import SolverResult
 
 
@@ -95,21 +94,24 @@ def extract_mass_history(result: SolverResult, x_grid) -> pd.DataFrame:
     return pd.DataFrame({"step": np.arange(M.shape[0]), "total_mass": mass})
 
 
-def extract_graph_trajectories(result: GraphMFGResult, x_grid=None, field: str = "density") -> pd.DataFrame:
-    r"""Per-node trajectories from a ``GraphMFGResult`` (list-of-arrays) as tidy long-form — columns
-    ``node, step, x, value``. ``field`` selects ``"density"`` ($m$) or ``"value"`` ($u$). ``x_grid``
-    defaults to integer indices when omitted.
+def extract_graph_trajectories(result: SolverResult, x_grid=None, field: str = "density") -> pd.DataFrame:
+    r"""Per-node trajectories from a ``GraphMFGSolver`` result, whose U and M carry a node axis (#2997), as tidy
+    long-form — columns ``node, step, x, value``. ``field`` selects ``"density"`` ($m$) or ``"value"`` ($u$).
+    ``x_grid`` defaults to integer indices when omitted.
 
     >>> extract_graph_trajectories(graph_result, field="density")
     """
     if field == "density":
-        arrays = result.densities
+        arrays = result.M
     elif field == "value":
-        arrays = result.values
+        arrays = result.U
     else:
         raise ValueError(f"field must be 'density' or 'value', got {field!r}")
-    if not arrays:
-        raise ValueError("GraphMFGResult has no per-node arrays")
+    if result.components is None:
+        raise ValueError(
+            f"{result.solver_name}'s result has no component axis (components is None), so it has no per-node arrays: "
+            "extract_graph_trajectories reads a GraphMFGSolver result"
+        )
 
     frames = []
     for node, arr in enumerate(arrays):

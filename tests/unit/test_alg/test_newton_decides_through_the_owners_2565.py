@@ -89,8 +89,10 @@ def test_absolute_tolerance_reaches_the_verdict():
     an absolute 1e-10 beside tolerance 1e-3 takes more Newton iterations than none.
     """
     _, _, met, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.05}, picard_warmup=3)
-    assert met["convergence_reason"] == "Converged during Picard warm-up"
+    # A warm-up sweep's stop gives the criteria's reason, with the phase that met them (#2997 stage 1c)
+    assert met["convergence_reason"].startswith("Picard warm-up: Converged: ")
     _, _, unmet, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.01}, picard_warmup=3, newton_max_iterations=1)
+    assert not unmet["convergence_reason"].startswith("Picard warm-up: ")
     assert unmet["convergence_reason"] != "Converged during Picard warm-up"
     _, _, relative_only, _ = _solve({"tolerance": 1e-3})
     _, _, with_absolute, _ = _solve({"tolerance": 1e-3, "absolute_tolerance": 1e-10})

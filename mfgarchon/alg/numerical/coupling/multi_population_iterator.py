@@ -33,6 +33,7 @@ from .base_mfg import (
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
+from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
 from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
 from .iteration_state import IterationState
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.multi_population import MultiPopulationProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
 logger = get_logger(__name__)
 
@@ -50,10 +52,11 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
 
     The iterator stacks one row of nodes per population and step, and its doors (the 1-D HJB residual and Jacobian, and
     the 1-D FP velocity) hand a density term that declares ``cross_density`` every population's row at the same points
-    and step. So at two or more populations it refuses a grid of two or more dimensions; nodes or time grids that
-    differ, compared exactly; and a Hamiltonian with a term that declares the slot which is not a
+    and step. So at two or more populations it refuses a grid of two or more dimensions; nodes that differ, compared
+    exactly; and a Hamiltonian with a term that declares the slot which is not a
     ``SeparableHamiltonian`` or ``CongestionHamiltonian`` as the library ships it (`_why_not_as_it_ships`): the
-    library bodies of those two hand a declaring term the rows (`_takes_the_rows_path`).
+    library bodies of those two hand a declaring term the rows (`_takes_the_rows_path`). A time grid that differs is
+    refused by the solve, as on every route with a component axis (`refuse_components_off_one_grid`, #2997).
     """
     K = multi_problem.K
     if K < 2:
@@ -81,14 +84,6 @@ def refuse_what_the_doors_cannot_pair(multi_problem: MultiPopulationProblem) -> 
             + ", compared exactly). Each population's density is read at the points of the door that reads it, and "
             "every population's is handed beside it as cross_density at those same points, so the populations of one "
             "solve share one grid (#2335)."
-        )
-    times = [(population.T, population.Nt) for population in populations]
-    late = [k for k in range(1, K) if times[k] != times[0]]
-    if late:
-        raise ValueError(
-            f"MultiPopulationIterator: population(s) {late} step through time other than population 0's: (T, Nt) "
-            f"{[times[k] for k in late]} against {times[0]}, compared exactly. Every population's density is handed "
-            "beside the own at the same step, so the populations of one solve share one time grid (#2335)."
         )
     for k, population in enumerate(populations):
         hamiltonian = population.hamiltonian_class
@@ -128,8 +123,8 @@ class MultiPopulationIterator:
     ...     fp_solvers=[fp_A, fp_B],
     ... )
     >>> result = iterator.solve(max_iterations=50, tolerance=1e-6)
-    >>> result.U  # list of K value functions
-    >>> result.M  # list of K density fields
+    >>> result.U  # K value functions, of shape (K, Nt+1, *shape)
+    >>> result.M  # K densities, of the same shape
     """
 
     def __init__(
@@ -191,7 +186,7 @@ class MultiPopulationIterator:
         max_iterations: int = 50,
         tolerance: float = 1e-6,
         absolute_tolerance: float | None = None,
-    ) -> MultiPopulationResult:
+    ) -> SolverResult:
         """Run Picard iteration over K populations.
 
         ``tolerance`` bounds the largest relative L2 change of a sweep, over populations and fields, each
@@ -200,9 +195,12 @@ class MultiPopulationIterator:
 
         Returns
         -------
-        MultiPopulationResult
-            Contains U (list of value functions), M (list of densities),
-            iterations, and convergence info.
+        SolverResult
+            U and M of shape (K, Nt+1, *shape), population k's at ``U[k]`` and ``M[k]``, and ``components`` K (#2997).
+            Its ``mass_conservation_error`` is the worst population's drift, since the populations exchange no mass; each
+            population's own is in ``metadata["per_component"]``. On a diverged HJB the diverged population's U is the
+            HJB output the guard published, its NaN kept (#1718), and every other array the iterate after the last
+            finite sweep.
         """
         refuse_a_capped_exit_in_a_coupled_solve(self.fp_solvers, "MultiPopulationIterator.solve")
         K = self.multi_problem.K
@@ -234,6 +232,12 @@ class MultiPopulationIterator:
             )
             for k in range(K)
         ]
+        refuse_components_off_one_grid(
+            [self.multi_problem.get_population(k) for k in range(K)],
+            [state.solution_shape for state in states],
+            reader="MultiPopulationIterator",
+            component="population",
+        )
         U, M = [], []
         for state in states:
             U_k, M_k = state.start()
@@ -250,23 +254,14 @@ class MultiPopulationIterator:
         integrates = [p.spatial_measure().integrate for p in populations]
         dts = [p.dt for p in populations]
 
-        # Picard iteration
+        # Picard iteration. Every sweep run is recorded, a diverged one as NaN, so a diverged solve's final change is not
+        # the last finite sweep's: the #1672 shape, the best-looking number attached to the worst solve (#2997).
         converged = False
-        # Bound before the loop so a zero-sweep solve can still construct a result. The lists are
-        # additionally CLEARED at the start of every sweep, which is what covers an early exit from
-        # a later one -- see the comment there. The diverged-HJB break below also clears `errors`
-        # explicitly; that is now redundant with the per-sweep clearing, and harmless.
-        errors: list[float] = []
-        errors_M: list[float] = []
-        errors_U: list[float] = []
+        record = SweepRecord(K)
+        fp_output_available = False
+        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
+        reason = "Maximum iterations reached"
         for iteration in range(max_iterations):
-            # Cleared at the START of every sweep, not only before the loop. They are filled in the
-            # convergence block at the END of a sweep, so any exit before that -- #1718's diverged-HJB
-            # break -- would otherwise publish the PREVIOUS completed sweep's values beside an
-            # iteration count for the sweep that measured nothing. That is the #1672 shape: the
-            # best-looking number attached to the worst solve. Pre-loop binding alone is not enough;
-            # it only covers a divergence in sweep 0.
-            errors, errors_M, errors_U = [], [], []
             M_old = [m.copy() for m in M]
             # The value function is half of the coupled unknown and was never captured, so the
             # convergence test below could not see it (#1684 item 5). A Picard sweep can settle m
@@ -351,13 +346,8 @@ class MultiPopulationIterator:
 
             if diverged_population is not None:
                 converged = False
-                # Clear, do not inherit. The pre-loop binding at the top only takes effect when the
-                # divergence is in sweep 0; `errors` is re-bound by every COMPLETED sweep, so without
-                # this a divergence at sweep >= 1 would report the previous sweep's near-zero errors
-                # beside `iterations` counting the sweep that measured nothing -- the #1672 shape, the
-                # best-looking number attached to the worst solve. Measured before this line: a
-                # divergence at sweep 1 reported errors=[2.2204e-16, 2.2204e-16].
-                errors = []
+                reason = "diverged_nan"
+                record.diverged()
                 break
 
             # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced
@@ -407,8 +397,7 @@ class MultiPopulationIterator:
                 M_map[k] = M_new_k
 
             # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
-            # step. `errors` keeps its shape and type -- one float per population -- and means the
-            # larger of the two fields' relative changes.
+            # step.
             #
             # The map's output against the sweep's input, `U_map[k] - U_old[k]` and `M_map[k] - M_old[k]`, NOT the
             # damped step: the damped update is `theta * map + (1 - theta) * old`, so the damped step is identically
@@ -424,11 +413,7 @@ class MultiPopulationIterator:
                 sweep_change(U_map[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)
             ]
             worst = worst_sweep_change(per_population, "population")
-            for metrics_k in per_population:
-                errors_M.append(metrics_k["l2distm_rel"])
-                errors_U.append(metrics_k["l2distu_rel"])
-                errors.append(max(metrics_k["l2distm_rel"], metrics_k["l2distu_rel"]))
-            max_error = max(worst["l2distm_rel"], worst["l2distu_rel"])
+            record.measured(per_population)
 
             # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
             # terminal row to the u(T) this sweep's HJB solve was given.
@@ -437,14 +422,17 @@ class MultiPopulationIterator:
                 U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_population[k]):
                     logger.warning(f"MultiPopulationIterator[population {k}]: {message}")
+            fp_output_available = True
 
+            per_pop_m = [f"{change['l2distm_rel']:.2e}" for change in per_population]
+            per_pop_u = [f"{change['l2distu_rel']:.2e}" for change in per_population]
             logger.info(
                 f"Multi-pop iter {iteration + 1}/{max_iterations}: "
-                f"max_err={max_error:.4e}, per_pop_m={[f'{e:.2e}' for e in errors_M]}, "
-                f"per_pop_u={[f'{e:.2e}' for e in errors_U]}"
+                f"max_err={max(worst['l2distm_rel'], worst['l2distu_rel']):.4e}, "
+                f"per_pop_m={per_pop_m}, per_pop_u={per_pop_u}"
             )
 
-            converged, _ = check_convergence_criteria(
+            converged, reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -455,65 +443,17 @@ class MultiPopulationIterator:
             if converged:
                 break
 
-        return MultiPopulationResult(
+        return coupled_result(
             U=U,
             M=M,
-            iterations=iteration + 1,
+            record=record,
             converged=converged,
-            errors=errors,
-            errors_M=errors_M,
-            errors_U=errors_U,
-            population_names=self.multi_problem.population_names,
+            reason=reason,
+            solver_name="MultiPopulationIterator",
+            damping=self.damping,
+            problems=[self.multi_problem.get_population(k) for k in range(K)],
+            fp_solvers=self.fp_solvers,
+            fp_output_available=fp_output_available,
+            component_names=list(self.multi_problem.population_names),
+            invariant=MassInvariant.EACH,
         )
-
-
-class MultiPopulationResult:
-    """Result of multi-population MFG solve.
-
-    Attributes
-    ----------
-    U : list[np.ndarray]
-        Value functions, one per population, each of the population's iterate shape (Nt+1, *shape).
-    M : list[np.ndarray]
-        Density fields, one per population, each of the population's iterate shape (Nt+1, *shape).
-    iterations : int
-        Number of Picard iterations performed.
-    converged : bool
-        Whether tolerance was reached.
-    errors : list[float]
-        Final per-population errors: for each population, the larger of the u and m
-        relative L2 changes over the last sweep, in that population's own measure (#2555),
-        both measured on the MAP's output rather than on the damped update -- `M_map - M_old`,
-        not `M - M_old`, which differs from it by a factor of the damping's theta (#1684 items 6/7).
-        Before #1684 item 5 this was m only, and so was `converged`. Empty when no sweep completed.
-    errors_M, errors_U : list[float] | None
-        The same errors split by field, so a non-converged run says WHICH field
-        failed rather than only that one did. Cleared with `errors` at the start of
-        every sweep, so an early exit publishes empty lists rather than the previous
-        sweep's values.
-    population_names : list[str]
-        Names of populations.
-    metadata : dict
-        A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the
-        solvers' latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
-        ``verdict_reads_inner_failures`` writes both for every coupler (#2644).
-    """
-
-    def __init__(self, U, M, iterations, converged, errors, population_names, errors_M=None, errors_U=None):
-        self.U = U
-        self.M = M
-        self.iterations = iterations
-        self.converged = converged
-        self.errors = errors
-        self.errors_M = errors_M
-        self.errors_U = errors_U
-        self.population_names = population_names
-        self.metadata: dict = {}
-
-    def __repr__(self):
-        status = "converged" if self.converged else "not converged"
-        return f"MultiPopulationResult({self.K} populations, {self.iterations} iterations, {status})"
-
-    @property
-    def K(self) -> int:
-        return len(self.U)

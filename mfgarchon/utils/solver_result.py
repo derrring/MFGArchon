@@ -27,14 +27,17 @@ class SolverResult:
     backward compatibility with tuple unpacking for existing code.
 
     Attributes:
-        U: Control/value function solution array (Nt+1, Nx+1)
-        M: Density/distribution function solution array (Nt+1, Nx+1)
-        iterations: Number of iterations performed
-        error_history_U: History of U convergence errors
-        error_history_M: History of M convergence errors
+        U: Control/value function solution array (Nt+1, *shape), or (K, Nt+1, *shape) when ``components`` is K
+        M: Density/distribution function solution array, of U's shape
+        iterations: Number of sweeps run, a diverged one included
+        error_history_U: Per sweep, the absolute L2 change of U, the map's output against its input; with a
+            component axis, the worst component's. A sweep that diverged before its change was measured is NaN, so a
+            diverged solve's final error is NaN rather than the last finite sweep's (#1672, #2997). The relative changes
+            are ``metadata["l2distu_rel"]`` and ``metadata["l2distm_rel"]``.
+        error_history_M: The same for M
         solver_name: Name/type of solver used
         converged: Whether convergence was achieved
-        execution_time: Total solve time in seconds
+        execution_time: Total solve time in seconds, measured around the coupled solve
         metadata: Additional solver-specific information
         policy: Optimal control policy alpha*(t, x) as callable (Issue #875)
         mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
@@ -57,6 +60,14 @@ class SolverResult:
             actually conserved; see ``BaseFPSolver.mass_conservation_error_override`` for the
             general seam a solver uses to report this.
             [CORRECTED 2026-10-07 -- #2519: `M` is now scaled by N_t/N_0, so the grid integral does see absorption, short by the KDE's wall bias; the override stays the exact figure because it reads the count itself.]
+
+            With a component axis it is the drift of the mass the route's model conserves (#2997): the
+            total over components where they exchange mass (Graph's nodes, RegimeSwitching's regimes), and
+            the worst component's where they exchange none (MultiPopulation's populations). Each
+            component's own drift is in ``metadata["per_component"]``.
+        components: The number of components on a route with a component axis (Graph's nodes,
+            RegimeSwitching's regimes, MultiPopulation's populations), whose U and M are then of shape
+            (K, Nt+1, *shape), component k at ``U[k]``; None on a single-pair route
     """
 
     U: NDArray[np.floating]
@@ -70,6 +81,7 @@ class SolverResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Any | None = None
     mass_conservation_error: float | None = None
+    components: int | None = None
 
     def __init__(
         self,
@@ -85,6 +97,7 @@ class SolverResult:
         *,
         policy: Any | None = None,
         mass_conservation_error: float | None = None,
+        components: int | None = None,
     ):
         """
         Initialize SolverResult.
@@ -116,6 +129,7 @@ class SolverResult:
         self.metadata = metadata if metadata is not None else {}
         self.policy = policy
         self.mass_conservation_error = mass_conservation_error
+        self.components = components
 
         # Validate
         self.__post_init__()
@@ -176,8 +190,9 @@ class SolverResult:
 
     @property
     def max_error(self) -> float:
-        """Get the maximum of the final errors."""
-        return max(self.final_error_U, self.final_error_M)
+        """Get the maximum of the final errors: NaN when either is, as after a diverged sweep (#2997), which the builtin
+        ``max`` would drop when it comes second."""
+        return float(np.max([self.final_error_U, self.final_error_M]))
 
     @property
     def solution_shape(self) -> tuple[int, ...]:
@@ -199,6 +214,7 @@ class SolverResult:
             "final_error_M": self.final_error_M,
             "max_error": self.max_error,
             "solution_shape": self.solution_shape,
+            "components": self.components,
             "metadata": self.metadata,
         }
 
@@ -254,6 +270,8 @@ class SolverResult:
 
         if self.execution_time is not None:
             metadata["execution_time"] = self.execution_time
+        if self.components is not None:
+            metadata["components"] = self.components
 
         # Add user metadata
         metadata.update(self.metadata)
@@ -300,6 +318,7 @@ class SolverResult:
         solver_name = metadata.pop("solver_name", "Unknown Solver")
         converged = metadata.pop("converged", False)
         execution_time = metadata.pop("execution_time", None)
+        components = metadata.pop("components", None)
 
         # Remove derived fields that will be recomputed
         metadata.pop("final_error_U", None)
@@ -315,6 +334,7 @@ class SolverResult:
             converged=converged,
             execution_time=execution_time,
             metadata=metadata,
+            components=None if components is None else int(components),
         )
 
     def analyze_convergence(self) -> ConvergenceAnalysis:
@@ -1086,11 +1106,13 @@ class ComparisonReport:
             if abs(time_diff) > 0.001:  # 1ms threshold
                 faster = result1.solver_name if time_diff < 0 else result2.solver_name
 
-        # Accuracy comparison (lower error is better)
+        # Accuracy comparison (lower error is better). A NaN final error is a diverged sweep's (#2997), worse than any
+        # measured one; every comparison with it is False, which called a diverged solve and a converged one a tie.
+        error1, error2 = (np.inf if np.isnan(r.max_error) else r.max_error for r in (result1, result2))
         more_accurate = "tie"
-        if result1.max_error < result2.max_error:
+        if error1 < error2:
             more_accurate = result1.solver_name
-        elif result2.max_error < result1.max_error:
+        elif error2 < error1:
             more_accurate = result2.solver_name
 
         return cls(
