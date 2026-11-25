@@ -62,9 +62,12 @@ class SolverResult:
             [CORRECTED 2026-10-07 -- #2519: `M` is now scaled by N_t/N_0, so the grid integral does see absorption, short by the KDE's wall bias; the override stays the exact figure because it reads the count itself.]
 
             With a component axis it is the drift of the mass the route's model conserves (#2997): the
-            total over components where they exchange mass (Graph's nodes, RegimeSwitching's regimes), and
+            total over components where they exchange mass (RegimeSwitching's regimes; Graph's nodes), and
             the worst component's where they exchange none (MultiPopulation's populations). Each
-            component's own drift is in ``metadata["per_component"]``.
+            component's own drift is in ``metadata["per_component"]``. Graph's total is conserved where
+            its coupling's FP sources sum to zero over the nodes, as the default couplings' do on a
+            symmetric adjacency; a directed adjacency or a custom ``coupling_fp`` changes it by design,
+            and the drift is then the coupling's net source, read against the coupling as a wall's loss is.
         components: The number of components on a route with a component axis (Graph's nodes,
             RegimeSwitching's regimes, MultiPopulation's populations), whose U and M are then of shape
             (K, Nt+1, *shape), component k at ``U[k]``; None on a single-pair route

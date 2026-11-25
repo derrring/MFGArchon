@@ -11,5 +11,7 @@
     caller's own argument, is not carried.
 - **`metadata["elapsed_time"]`** on the Block iterators and `NewtonMFGSolver` (stage 1c, the user's ruling): the solve's
   time is `SolverResult.execution_time`, on every coupled route.
+- **`NewtonMFGSolver`'s `metadata["converged"]`** (stage 1c, the approver's ruling of 2026-11-25): it copied
+  `SolverResult.converged`, which holds the verdict.
 - **The Block iterators' `error_history_U` and `error_history_M` attributes**, which nothing read: the result's fields
   of the same names hold the histories.

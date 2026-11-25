@@ -40,8 +40,12 @@ class MassInvariant(Enum):
     worst component's drift, since a total can hide two drifts that cancel."""
 
     TOTAL = "total"
-    """The total over components: the components exchange mass, as Graph's nodes through a Laplacian coupling and
-    RegimeSwitching's regimes through Q, whose rows sum to zero. A component's own drift is then partly the exchange."""
+    """The total over components: the components exchange mass, as RegimeSwitching's regimes through Q, whose rows sum
+    to zero (`RegimeSwitchingConfig.validate` refuses a Q whose rows do not), and Graph's nodes through a coupling whose
+    FP sources sum to zero over the nodes. The default couplings' do on an adjacency where every node's in-degree equals
+    its out-degree, a symmetric one among them. A directed adjacency or a custom ``coupling_fp`` changes the total by
+    design, and its drift is then the coupling's net source, to be read against the coupling as a wall's loss is. A
+    component's own drift is partly the exchange."""
 
 
 class SweepRecord:
@@ -176,8 +180,8 @@ def refuse_components_off_one_grid(
     if late:
         raise ValueError(
             f"{reader}: {component}(s) {late} step through time other than {component} 0's: (T, Nt) "
-            f"{[times[k] for k in late]} against {times[0]}, compared exactly. Every {component}'s level is read beside "
-            f"the others' at the same step, so the {component}s of one solve share one time grid (#2997)."
+            f"{[times[k] for k in late]} against {times[0]}, compared exactly. The route reads every other {component}'s "
+            f"level by its step index, so the {component}s of one solve share one time grid (#2997)."
         )
     differ = [k for k in range(1, len(shapes)) if shapes[k] != shapes[0]]
     if differ:

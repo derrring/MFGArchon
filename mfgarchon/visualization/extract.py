@@ -95,8 +95,8 @@ def extract_mass_history(result: SolverResult, x_grid) -> pd.DataFrame:
 
 
 def extract_graph_trajectories(result: SolverResult, x_grid=None, field: str = "density") -> pd.DataFrame:
-    r"""Per-node trajectories from a ``GraphMFGSolver`` result, whose U and M carry a node axis (#2997), as tidy
-    long-form — columns ``node, step, x, value``. ``field`` selects ``"density"`` ($m$) or ``"value"`` ($u$).
+    r"""Per-node trajectories from a result with a component axis (#2997), a ``GraphMFGSolver``'s nodes or another
+    component route's components, as tidy long-form — columns ``node, step, x, value``. ``field`` selects ``"density"`` ($m$) or ``"value"`` ($u$).
     ``x_grid`` defaults to integer indices when omitted.
 
     >>> extract_graph_trajectories(graph_result, field="density")
@@ -110,7 +110,7 @@ def extract_graph_trajectories(result: SolverResult, x_grid=None, field: str = "
     if result.components is None:
         raise ValueError(
             f"{result.solver_name}'s result has no component axis (components is None), so it has no per-node arrays: "
-            "extract_graph_trajectories reads a GraphMFGSolver result"
+            "extract_graph_trajectories reads a result with a component axis, such as a GraphMFGSolver's"
         )
 
     frames = []

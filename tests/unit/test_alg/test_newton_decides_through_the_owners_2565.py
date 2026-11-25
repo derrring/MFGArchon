@@ -50,10 +50,10 @@ def _solve(solve_kw: dict, **ctor_kw):
     problem = _problem()
     solver = NewtonMFGSolver(problem, HJBFDMSolver(problem), FPFDMSolver(problem), **ctor_kw)
     newton_result = solver.solve(max_iterations=30, verbose=False, **solve_kw)
-    U, M, info = newton_result.U, newton_result.M, newton_result.metadata
+    U, M = newton_result.U, newton_result.M
     _, F_HJB, F_FP = solver.mfg_residual.compute_residual(U, M, return_components=True)
     change = sweep_change(U + F_HJB, U, M + F_FP, M, problem.spatial_measure().integrate, problem.dt)
-    return U, M, info, max(change["l2distu_rel"], change["l2distm_rel"])
+    return U, M, newton_result, max(change["l2distu_rel"], change["l2distm_rel"])
 
 
 def test_the_outer_tolerance_decides_newtons_own_iterations():
@@ -64,11 +64,11 @@ def test_the_outer_tolerance_decides_newtons_own_iterations():
     """
     _, _, loose, loose_change = _solve({"tolerance": 1e-5})
     _, _, tight, tight_change = _solve({"tolerance": 1e-13})
-    assert loose["converged"]
-    assert tight["converged"]
+    assert loose.converged
+    assert tight.converged
     assert loose_change < 1e-5
     assert tight_change < 1e-13
-    assert loose["newton_iterations"] < tight["newton_iterations"]
+    assert loose.metadata["newton_iterations"] < tight.metadata["newton_iterations"]
 
 
 def test_the_warm_up_stops_on_the_relative_change_in_the_problems_measure():
@@ -76,7 +76,7 @@ def test_the_warm_up_stops_on_the_relative_change_in_the_problems_measure():
     0.274: at tolerance 0.2 the owners' verdict stops there, where the unscaled norm would not. No warm-up sweep's own
     change, which is judged too (#2997), is below 0.2: the third's is 0.265."""
     _, _, info, change = _solve({"tolerance": 0.2}, picard_warmup=3)
-    assert info["convergence_reason"] == "Converged during Picard warm-up"
+    assert info.metadata["convergence_reason"] == "Converged during Picard warm-up"
     assert change < 0.2
 
 
@@ -90,15 +90,15 @@ def test_absolute_tolerance_reaches_the_verdict():
     """
     _, _, met, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.05}, picard_warmup=3)
     # A warm-up sweep's stop gives the criteria's reason, with the phase that met them (#2997 stage 1c)
-    assert met["convergence_reason"].startswith("Picard warm-up: Converged: ")
+    assert met.metadata["convergence_reason"].startswith("Picard warm-up: Converged: ")
     _, _, unmet, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.01}, picard_warmup=3, newton_max_iterations=1)
-    assert not unmet["convergence_reason"].startswith("Picard warm-up: ")
-    assert unmet["convergence_reason"] != "Converged during Picard warm-up"
+    assert not unmet.metadata["convergence_reason"].startswith("Picard warm-up: ")
+    assert unmet.metadata["convergence_reason"] != "Converged during Picard warm-up"
     _, _, relative_only, _ = _solve({"tolerance": 1e-3})
     _, _, with_absolute, _ = _solve({"tolerance": 1e-3, "absolute_tolerance": 1e-10})
-    assert relative_only["converged"]
-    assert with_absolute["converged"]
-    assert with_absolute["newton_iterations"] > relative_only["newton_iterations"]
+    assert relative_only.converged
+    assert with_absolute.converged
+    assert with_absolute.metadata["newton_iterations"] > relative_only.metadata["newton_iterations"]
 
 
 def test_a_newton_solver_given_no_verdict_keeps_its_norm_test():

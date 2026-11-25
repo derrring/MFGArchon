@@ -198,9 +198,9 @@ class MultiPopulationIterator:
         SolverResult
             U and M of shape (K, Nt+1, *shape), population k's at ``U[k]`` and ``M[k]``, and ``components`` K (#2997).
             Its ``mass_conservation_error`` is the worst population's drift, since the populations exchange no mass; each
-            population's own is in ``metadata["per_component"]``. On a diverged HJB the diverged population's U is the
-            HJB output the guard published, its NaN kept (#1718), and every other array the iterate after the last
-            finite sweep.
+            population's own is in ``metadata["per_component"]``. On a diverged HJB, each population the sweep solved
+            holds that HJB output as its U, the diverged population's with its NaN kept (#1718); the later populations'
+            U, and every M, are the iterate after the last finite sweep.
         """
         refuse_a_capped_exit_in_a_coupled_solve(self.fp_solvers, "MultiPopulationIterator.solve")
         K = self.multi_problem.K

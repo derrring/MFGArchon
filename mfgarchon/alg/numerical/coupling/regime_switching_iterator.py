@@ -434,8 +434,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         SolverResult
             U and M of shape (K, Nt+1, *shape), regime k's at ``U[k]`` and ``M[k]``, and ``components`` K (#2997). Its
             ``mass_conservation_error`` is the total mass's drift, since Q moves mass between regimes; each regime's own
-            is in ``metadata["per_component"]``. On a diverged HJB the diverged regime's U is the HJB output the guard
-            published, its NaN kept (#1718), and every other array the iterate after the last finite sweep.
+            is in ``metadata["per_component"]``. On a diverged HJB, each regime the sweep solved holds that HJB output
+            as its U, the diverged regime's with its NaN kept (#1718); the later regimes' U, and every M, are the
+            iterate after the last finite sweep.
         """
         refuse_a_capped_exit_in_a_coupled_solve(self._fp, "RegimeSwitchingIterator.solve")
         K = self._regime.n_regimes

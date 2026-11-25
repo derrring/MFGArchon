@@ -316,6 +316,7 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
         solver = NewtonMFGSolver(problem, _DivergingHJB(problem), FPFDMSolver(problem), picard_warmup=2)
         newton_result = _run_to_completion(lambda: solver.solve(max_iterations=3, tolerance=1e-8, verbose=False))
         U, info = newton_result.U, newton_result.metadata
+        converged = newton_result.converged
     finally:
         FPFDMSolver.solve_fp_system = original
 
@@ -323,7 +324,7 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
         f"the FP solver was handed a non-finite value function ({sum(calls)} of {len(calls)} "
         f"calls). The warmup guard stopped the warmup loop but not the solve."
     )
-    assert info["converged"] is False
+    assert converged is False
     assert info["convergence_reason"] == "diverged_nan"
     assert not np.all(np.isfinite(U)), "the diverged iterate must still be published"
     # The assertion the other call-site tests carry and this one was missing -- at the very site

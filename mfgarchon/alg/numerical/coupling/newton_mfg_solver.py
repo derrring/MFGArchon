@@ -148,7 +148,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
     Example:
         >>> solver = NewtonMFGSolver(problem, hjb_solver, fp_solver)
         >>> result = solver.solve(max_iterations=30)  # result.U, result.M, result.metadata
-        >>> print(f"Converged: {info['converged']}, iterations: {info['iterations']}")
+        >>> print(f"Converged: {result.converged}, iterations: {result.iterations}")
     """
 
     def __init__(
@@ -580,7 +580,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
         it. Its histories hold every sweep recorded, so a warm-up that diverged at sweep i reports i + 1 iterations,
         the last NaN."""
         info: dict[str, Any] = {
-            "converged": converged,
             "picard_iterations": self.picard_warmup if picard_iterations is None else picard_iterations,
             "picard_residuals": self.picard_residuals,
             "newton_iterations": len(self.newton_residuals) if newton_iterations is None else newton_iterations,

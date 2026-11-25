@@ -10,7 +10,9 @@
   the value function could not enter the test at any tolerance. It now captures both and reports
   the larger per-population change. `errors` keeps its shape and type but now means what its
   documented description ("Final per-population errors") already implied; `errors_M` and `errors_U`
-  are added so a non-converged run says which field failed.
+  are added so a non-converged run says which field failed. The three fields were removed later in this
+  release with `MultiPopulationResult` (#2997): each population's changes per sweep are in the result's
+  `metadata["per_component"]`.
 
   The m error is the **map's** residual, `M_map - M_old`, not the damped step `M - M_old`. Since
   `M = (1 - r) * M_old + r * M_map`, the damped step is identically `r * (M_map - M_old)`, so an
