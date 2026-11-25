@@ -371,7 +371,7 @@ def test_each_population_s_coupling_cost_reads_its_own_density():
             MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(len(problems))]),
             [HJBFDMSolver(p, newton_tolerance=1e-13) for p in problems],
             [FPFDMSolver(p) for p in problems],
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
         ).solve(max_iterations=200, tolerance=1e-12)
         assert result.converged
         return result.U
@@ -877,7 +877,7 @@ def _run_loop(name, calls, diverge_at=None):
             fp,
             max_iterations=4,
             tolerance=1e-6,
-            damping=0.3,
+            damping=DampingPolicy.constant(0.3),
         ).solve()
     else:
         result = GraphMFGSolver(
@@ -887,7 +887,7 @@ def _run_loop(name, calls, diverge_at=None):
             fp,
             max_iterations=4,
             tolerance=1e-6,
-            damping=0.3,
+            damping=DampingPolicy.constant(0.3),
         ).solve()
     if diverge_at is None:
         return None, None  # neither re-imposes u(T) after damping

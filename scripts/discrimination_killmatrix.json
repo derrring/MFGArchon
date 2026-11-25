@@ -5228,16 +5228,10 @@
     "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_reader_that_passes_no_binding_refuses_by_its_name[RegimeSwitchingIterator]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[GraphMFGSolver]": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[HJB-FEM P2]": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[MultiPopulationIterator]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[RegimeSwitchingIterator]": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[a binding on other points]": [
@@ -15216,7 +15210,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3236,
+      "kill_count": 3234,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -16541,10 +16535,8 @@
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_reader_that_passes_no_binding_refuses_by_its_name[HJBGFDMSolver]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_reader_that_passes_no_binding_refuses_by_its_name[MFGResidual]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_reader_that_passes_no_binding_refuses_by_its_name[RegimeSwitchingIterator]",
-        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[GraphMFGSolver]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[HJB-FEM P2]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[MultiPopulationIterator]",
-        "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[RegimeSwitchingIterator]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[a binding on other points]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[another problem's G]",
         "tests/unit/test_alg/test_hjb_fem_binds_the_coupling_cost_1642.py::test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name[no binding]",

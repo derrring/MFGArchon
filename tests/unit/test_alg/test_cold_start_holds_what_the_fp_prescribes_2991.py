@@ -138,13 +138,19 @@ def _solve(route, arm, iterations):
     if route == "MultiPopulation":
         q = problem()
         multi = MultiPopulationProblem(populations=[q], population_names=["a"])
-        result = MultiPopulationIterator(multi, [hjb_cls(q)], [fp(q)], relaxation=0.5)
+        result = MultiPopulationIterator(multi, [hjb_cls(q)], [fp(q)], damping=DampingPolicy.constant(0.5))
         return np.asarray(result.solve(max_iterations=iterations, tolerance=1e-12).M[0])
     if route == "Graph":
         q = problem()
         coupling = AdjacencyCoupling(np.zeros((1, 1)), alpha=0.05, beta=0.02)
         solver = GraphMFGSolver(
-            [q], coupling, [hjb_cls(q)], [fp(q)], max_iterations=iterations, tolerance=1e-12, damping=0.5
+            [q],
+            coupling,
+            [hjb_cls(q)],
+            [fp(q)],
+            max_iterations=iterations,
+            tolerance=1e-12,
+            damping=DampingPolicy.constant(0.5),
         )
         return np.asarray(solver.solve().densities[0])
     qs = [problem(), problem()]
@@ -156,7 +162,7 @@ def _solve(route, arm, iterations):
         [fp(q) for q in qs],
         max_iterations=iterations,
         tolerance=1e-12,
-        damping=0.5,
+        damping=DampingPolicy.constant(0.5),
     )
     return np.asarray(solver.solve().densities[0])
 
@@ -260,7 +266,13 @@ def _regime(problems, hjb_solvers=None):
     config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]]))
     hjbs = hjb_solvers or [HJBFDMSolver(q) for q in problems]
     return RegimeSwitchingIterator(
-        problems, config, hjbs, [FPFDMSolver(q) for q in problems], max_iterations=1, tolerance=1e-12, damping=0.5
+        problems,
+        config,
+        hjbs,
+        [FPFDMSolver(q) for q in problems],
+        max_iterations=1,
+        tolerance=1e-12,
+        damping=DampingPolicy.constant(0.5),
     )
 
 
@@ -344,7 +356,13 @@ def test_each_regime_asks_its_own_fp_and_the_inflow_reads_the_cold_start():
 
     fps[1].solve_fp_system = recording_fp
     RegimeSwitchingIterator(
-        qs, RegimeSwitchingConfig(transition_matrix=Q), hjbs, fps, max_iterations=1, tolerance=1e-12, damping=0.5
+        qs,
+        RegimeSwitchingConfig(transition_matrix=Q),
+        hjbs,
+        fps,
+        max_iterations=1,
+        tolerance=1e-12,
+        damping=DampingPolicy.constant(0.5),
     ).solve()
     walls = [0, -1]
     assert np.all(handed[0][1:, walls] == 0.0), handed[0][1:, walls].tolist()
@@ -670,13 +688,19 @@ def test_each_population_and_graph_node_asks_its_own_fp():
 
     (ha, seen_a), (hb, seen_b) = recorded(HJBFDMSolver(qa)), recorded(HJBFDMSolver(qb))
     multi = MultiPopulationProblem(populations=[qa, qb], population_names=["a", "b"])
-    MultiPopulationIterator(multi, [ha, hb], [FPFDMSolver(qa), FPFDMSolver(qb)], relaxation=0.5).solve(
-        max_iterations=1, tolerance=1e-12
-    )
+    MultiPopulationIterator(
+        multi, [ha, hb], [FPFDMSolver(qa), FPFDMSolver(qb)], damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=1, tolerance=1e-12)
     (ga, graph_a), (gb, graph_b) = recorded(HJBFDMSolver(qa)), recorded(HJBFDMSolver(qb))
     coupling = AdjacencyCoupling(np.zeros((2, 2)), alpha=0.05, beta=0.02)
     GraphMFGSolver(
-        [qa, qb], coupling, [ga, gb], [FPFDMSolver(qa), FPFDMSolver(qb)], max_iterations=1, tolerance=1e-12, damping=0.5
+        [qa, qb],
+        coupling,
+        [ga, gb],
+        [FPFDMSolver(qa), FPFDMSolver(qb)],
+        max_iterations=1,
+        tolerance=1e-12,
+        damping=DampingPolicy.constant(0.5),
     ).solve()
     for route, a, b in (("MultiPopulation", seen_a, seen_b), ("Graph", graph_a, graph_b)):
         assert a, f"{route}: the recorder saw no HJB call for a"
@@ -692,7 +716,8 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
     at damping 1 is one FixedPoint sweep at relaxation 1 on each regime, on the problem's exit. CongestionHamiltonian's
     FP drift is on the velocity route, which reads the density trajectory the first sweep hands it (#2905): at f9a41a31
     the router was handed the single initial density there, and regime 0's first-sweep M was 9.232e-02 off FixedPoint's.
-    The quadratic H, on the value route, agrees at both trees."""
+    The quadratic H, on the value route, agrees at both trees. At damping 0.5 the first sweep is damped in M and judged,
+    as FixedPoint's is (#2997): a tolerance it meets stops both routes there, with one iterate."""
 
     def problem(centre):
         H = (
@@ -723,7 +748,7 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
         [FPFDMSolver(q) for q in qs],
         max_iterations=1,
         tolerance=1e-12,
-        damping=1.0,
+        damping=DampingPolicy.constant(1.0),
     ).solve()
     for k, q in enumerate(qs):
         fixed = FixedPointIterator(q, HJBFDMSolver(q), FPFDMSolver(q), damping=DampingPolicy.constant(1.0)).solve(
@@ -731,7 +756,9 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
         )
         np.testing.assert_allclose(np.asarray(regime.densities[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
         np.testing.assert_allclose(np.asarray(regime.values[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)
-    # The first sweep takes the FP's density whole and is not measured, whatever the damping and the tolerance.
+    # The first sweep is damped and judged as FixedPoint's is (#2997 ruling 2, the approver's ruling of 2026-11-25): at
+    # damping 0.5 and a tolerance the sweep meets, each regime stops at its first sweep with FixedPoint's iterate. At
+    # 4cd1803f it took the FP's density whole and was not judged, so it did not stop.
     fresh = [problem(c) for c in (0.3, 0.6)]
     damped = RegimeSwitchingIterator(
         fresh,
@@ -740,8 +767,14 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
         [FPFDMSolver(q) for q in fresh],
         max_iterations=1,
         tolerance=1e9,
-        damping=0.5,
+        damping=DampingPolicy.constant(0.5),
     ).solve()
-    assert not damped.converged
-    for k in range(2):
-        np.testing.assert_allclose(np.asarray(damped.densities[k]), np.asarray(regime.densities[k]), rtol=0, atol=1e-12)
+    assert damped.converged
+    assert damped.iterations == 1
+    for k, q in enumerate(fresh):
+        fixed = FixedPointIterator(q, HJBFDMSolver(q), FPFDMSolver(q), damping=DampingPolicy.constant(0.5)).solve(
+            max_iterations=1, tolerance=1e9, verbose=False
+        )
+        assert fixed.converged
+        np.testing.assert_allclose(np.asarray(damped.densities[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(damped.values[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)

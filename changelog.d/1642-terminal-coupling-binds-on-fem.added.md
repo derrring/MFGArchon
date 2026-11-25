@@ -10,9 +10,10 @@
     - a binding beside the problem's own on a grid, one G with two bindings.
   - `NetworkMFGProblem.terminal_value` takes the same arguments and refuses a binding.
   - The couplers built on `BaseCouplingIterator` hand the solver's binding to `terminal_value`, as they hand F's to
-    the HJB source. On a mesh G solves through `problem.solve()`, `FixedPointIterator` and the `BlockIterator` family.
-    `GraphMFGSolver`, `RegimeSwitchingIterator` and `MFGResidual` pass none, and refuse G off a grid by name, as they
-    refuse F. `MultiPopulationIterator` refuses a declared G on any geometry (the user's ruling 5).
+    the HJB source. On a mesh G solves through `problem.solve()`, `FixedPointIterator`, the `BlockIterator` family,
+    `NewtonMFGSolver`, and, each component reading its own HJB solver's binding, `GraphMFGSolver` and
+    `RegimeSwitchingIterator` (#2997). `MultiPopulationIterator` refuses a declared G on any geometry (the user's
+    ruling 5).
   - With `PotentialCost(V)` as G the solve gives bitwise the same U as V added to `u_terminal`.
   - HJB-FEM P2 and the meshless solver refuse a declared G at construction, as they refuse F.
 - **Behaviour change: a terminal coupling on a mesh or an implicit domain now constructs,** where the problem refused

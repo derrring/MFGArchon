@@ -1196,13 +1196,14 @@ outer and the Newton tolerance bound is in § *The measure*, *What a tolerance b
 
 The fixed-point damping is `damping=`, a `DampingPolicy` (`mfgarchon.config.damping`): one `FieldDamping` for U and
 one for M, each with its theta, schedule, floor, adaptation and first-sweep rule, and Anderson acceleration on U.
-`FixedPointIterator`, the Block iterators, `FictitiousPlayIterator` and `NewtonMFGSolver` take it (#2997).
+`FixedPointIterator`, the Block iterators, `FictitiousPlayIterator`, `NewtonMFGSolver`, `GraphMFGSolver`,
+`RegimeSwitchingIterator` and `MultiPopulationIterator` take it (#2997). The last three apply it to each component, node,
+regime or population, whose fields adapt on that component's own history.
 `PicardConfig.damping` holds one for a solve run from a config, on the two routes whose solve takes one,
 `FixedPointIterator` and `FictitiousPlayIterator`: set, it decides; left None, the default, the route keeps its own; a
 damping given to both the constructor and the config is refused. The Block iterators and `NewtonMFGSolver` take no
-config: their solves take no `config=`, which is Python's own `TypeError` there (#2997), so their damping is the constructor's alone. `GraphMFGSolver` and
-`RegimeSwitchingIterator` still take a number as `damping=`, and `MultiPopulationIterator` takes `relaxation=`, until
-#2997's stage 1b.
+config: their solves take no `config=`, which is Python's own `TypeError` there (#2997), so their damping is the
+constructor's alone, as on the three component routes, which take no config.
 
 ---
 
@@ -1723,8 +1724,8 @@ method surface*), are not removed yet.
 | `MFGComponents(potential_func=)` | the Hamiltonian's `potential=`, e.g. `SeparableHamiltonian(potential=...)`. It was stored and no solver added it to $H$ (#2554) |
 | `MFGProblem(gamma=)` | the Hamiltonian's `coupling=` (with `coupling_dm=`). It was stored and nothing read it (#2554) |
 | `problem.f_potential`, `problem.gamma` | nothing: they held the two inputs above (#2554) |
-| `damping_factor`, `damping_factor_M`, and a number as `damping=`, on the four routes #2997's stage 1a moved | `damping=`, a `DampingPolicy` (#2997). `GraphMFGSolver` and `RegimeSwitchingIterator` take a number until stage 1b |
-| `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson`, `anderson_depth`, `anderson_beta` (FixedPointIterator); `relaxation`, `relaxation_M` (the Block iterators); `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`, `damp_value_function` (FictitiousPlayIterator); `picard_damping` (NewtonMFGSolver) | that route's constructor `damping=`, a `DampingPolicy` (#2997) |
+| `damping_factor`, `damping_factor_M`, and a number as `damping=` | `damping=`, a `DampingPolicy` (#2997), on every route that takes it |
+| `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson`, `anderson_depth`, `anderson_beta` (FixedPointIterator); `relaxation`, `relaxation_M` (the Block iterators); `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`, `damp_value_function` (FictitiousPlayIterator); `picard_damping` (NewtonMFGSolver); `relaxation` (MultiPopulationIterator) | that route's constructor `damping=`, a `DampingPolicy` (#2997) |
 | `PicardConfig`'s `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `anderson_memory` | `PicardConfig.damping`, a `DampingPolicy`, which `FixedPointIterator` and `FictitiousPlayIterator` read (#2997) |
 | `MFGComponents(u_final=)` | `u_terminal=` |
 | `velocity_field=` on `FPFDMSolver.solve_fp_system` | `drift_field=` |

@@ -7,6 +7,8 @@
   - `FictitiousPlayIterator`: `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`,
     `damp_value_function`, and the method `get_learning_rate`.
   - `NewtonMFGSolver`: `picard_damping`.
+  - `GraphMFGSolver`, `RegimeSwitchingIterator`: a number as `damping=` (stage 1b).
+  - `MultiPopulationIterator`: `relaxation`, and its attribute `relaxation` (stage 1b).
   - `create_network_mfg_solver`, `create_simple_network_solver`: `relaxation`.
   - `PicardConfig`: `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`,
     `anderson_memory`; replaced by `PicardConfig.damping`.

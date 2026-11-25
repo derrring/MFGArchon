@@ -183,6 +183,7 @@ class AdjacencyCoupling:
                     s += A_row[j] * custom(t=t_eval, i=i, j=j, v_j=v_j, m_j=m_j)
                 else:
                     # Default: value difference (migration incentive)
+                    v_i, v_j = _at_points(v_i), _at_points(v_j)
                     n = min(len(v_i), len(v_j), Nx)
                     s[:n] += A_row[j] * alpha * (v_i[:n] - v_j[:n])
             return s
@@ -214,6 +215,7 @@ class AdjacencyCoupling:
                     s += A_row[j] * custom(t=t_eval, i=i, j=j, v_j=v_j, m_j=m_j)
                 else:
                     # Default: mass transfer (inflow from j, outflow to j)
+                    m_i, m_j = _at_points(m_i), _at_points(m_j)
                     n = min(len(m_i), len(m_j), Nx)
                     s[:n] += A_row[j] * beta * (m_j[:n] - m_i[:n])
             return s
@@ -270,7 +272,7 @@ class LaplacianCoupling:
             for j in range(len(values)):
                 if L_row[j] == 0:
                     continue
-                v_j = _get_time_slice(values[j], t_eval, dt)
+                v_j = _at_points(_get_time_slice(values[j], t_eval, dt))
                 n = min(len(v_j), Nx)
                 s[:n] += kappa * L_row[j] * v_j[:n]
             return s
@@ -294,12 +296,21 @@ class LaplacianCoupling:
             for j in range(len(densities)):
                 if L_row[j] == 0:
                     continue
-                m_j = _get_time_slice(densities[j], t_eval, dt)
+                m_j = _at_points(_get_time_slice(densities[j], t_eval, dt))
                 n = min(len(m_j), Nx)
                 s[:n] += kappa * L_row[j] * m_j[:n]
             return s
 
         return source
+
+
+def _at_points(level: NDArray) -> NDArray:
+    """A level of a node's iterate as its values at the source's points, in the geometry's order: the iterate owner's
+    `IterationState.level_at_points` (#2997). Imported here, not at the top: this module is imported while
+    ``base_mfg`` is, which `iteration_state` imports."""
+    from .iteration_state import IterationState
+
+    return IterationState.level_at_points(level)
 
 
 def _get_time_slice(arr: NDArray, t: float, dt: float) -> NDArray:

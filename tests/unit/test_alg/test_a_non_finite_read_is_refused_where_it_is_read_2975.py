@@ -22,6 +22,7 @@ from scipy.sparse.linalg import LinearOperator
 
 import mfgarchon
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.coupling_costs import PotentialCost
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
@@ -1355,7 +1356,7 @@ def test_a_multi_population_coupling_is_named_as_the_coupling():
             MultiPopulationProblem(populations=problems, population_names=["P0", "P1"]),
             [HJBFDMSolver(p) for p in problems],
             [FPFDMSolver(p) for p in problems],
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
         )
         with pytest.raises(NonFiniteReadError, match=r"SeparableHamiltonian's coupling " + OWN):
             iterator.solve(max_iterations=6, tolerance=1e-10)

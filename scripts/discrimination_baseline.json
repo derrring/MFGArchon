@@ -143,7 +143,7 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 3236,
+      "kill_count": 3234,
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
       "status": "ok"
     },

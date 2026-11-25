@@ -132,29 +132,29 @@
         "library_said": {
           "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 2
         },
-        "max_rel_total_mass_drift": 0.0013952932393358425,
-        "max_rel_transfer": 0.08882009893326581,
-        "max_rel_vs_expm_oracle": 0.002426172493838338,
-        "min_density": 0.00010933371233239597,
+        "max_rel_total_mass_drift": 0.0015954871901705339,
+        "max_rel_transfer": 0.07922067424519369,
+        "max_rel_vs_expm_oracle": 0.010364226574574748,
+        "min_density": 0.010386951196620583,
         "oracle_tolerance": 0.01,
         "picard_converged": false,
         "picard_iterations": 3,
         "regimes": [
           {
             "all_finite": true,
-            "max_rel_transfer": 0.08882009893326581,
-            "min_density": 0.00010933371233239597,
+            "max_rel_transfer": 0.07922067424519369,
+            "min_density": 0.010386951196620583,
             "regime": 0
           },
           {
             "all_finite": true,
-            "max_rel_transfer": 0.08602951245459423,
-            "min_density": 0.0001807512633480155,
+            "max_rel_transfer": 0.07602969986485263,
+            "min_density": 0.010465090356824087,
             "regime": 1
           }
         ]
       },
-      "intended": "DEFECT - #1873/#1878, and the cell's own oracle was REPLACED here, not relaxed. Until this change the verdict required each regime's mass to stay CONSTANT to 1e-6. That is false of a correct solver: the generator Q transfers mass between regimes by construction, so per-regime mass follows M(t) = M(0) expm(Q t) and only the SUM is conserved. The clause was not merely inert but ANTI-CORRELATED with correctness on the axis it named - the only way to satisfy it is to not transfer mass, so a transposed or sign-flipped transfer would have PASSED it and fails the oracle at 8.9e-02. The 8.88e-02 the previous note called drift is the physical transfer: at t=1 the measured masses are 0.594648/0.499156 against the oracle's 0.593323/0.498957. WHAT IS GATED NOW: max_rel_vs_expm_oracle, an external oracle computed without reference to the scheme, at 1e-2, bracketed on both sides by measurement rather than fitted to one - it admits this fixture's 2.43e-03 and refuses the harness's 10% density mutation at 1.11e-01. That 2.43e-03 is a PICARD-LAG FLOOR, not a dt term: at the shipped 3-sweep budget an 8x refinement removes 14% of it (2.43e-03 at Nt=10, 2.10e-03 at Nt=80), and tests/unit/test_alg/test_regime_switching_iterator.py already recorded that beside its own expm assertion. A mass term had to stay in the gate because this cell is in MASS_ORACLE_CELLS and that listing claims its verdict reads mass; measured, the same mutation moves min_density only 1.087e-04 -> 1.141e-04, and upward, away from the threshold. Total-mass drift is recorded not gated, because zero row sums in Q make the oracle provably subsume it. WHY IT IS STILL RED: picard_converged false at its 3-sweep budget, the same axis as its FDM and SL siblings, and the cell's own library_said records 10 inner-Newton non-convergence warnings, which is #1878. The mass oracle now PASSES (2.43e-03 against 1e-2) and min_density is 1.087e-04, so #1681 stays fixed. Measured during review of PR #2222 and NOT re-derived here: at a 50-sweep budget the fixture does not converge at Nt=10 and does at Nt=40 (39 sweeps), with the oracle error falling to 3.4e-04 - so fixing #1873/#1878 will not turn the gate above into the next blocker. [RE-ADJUDICATED 2026-09-15 for #1878] The 10 inner-Newton warnings in library_said are gone with the non-decrease guard (#1878); status, oracle and the 3-sweep picard_converged false are unchanged, so what keeps this red is #1873 alone.",
+      "intended": "DEFECT - #1873. The verdict gates non-negativity and max_rel_vs_expm_oracle: the regime masses against M(0) expm(Q t), an external oracle computed without reference to the scheme, at 1e-2. Per-regime mass is not gated, since the generator Q transfers it by construction, and total-mass drift is recorded, not gated, since zero row sums in Q make the oracle subsume it. WHY IT IS RED: picard_converged false at the cell's 3-sweep budget, which is #1873. [RE-ADJUDICATED 2026-11-25 for #2997 stage 1b] Both fields are now damped from the first sweep, the ruled default (#2997 ruling 2), so after 3 sweeps M still carries an eighth of the cold start's deviation from the oracle, the cold start holding m(0)'s mass at every level: the oracle reads 1.036e-02, over its 1e-2, where it read 2.43e-03 at 4cd1803f with the first sweep's density taken whole. The cell is red on that axis too at this budget; for the same reason, tests/unit/test_alg/test_regime_switching_iterator.py runs its own fixtures' mass oracle at 8 sweeps. min_density is 1.039e-02, so #1681 stays fixed.",
       "status": "FAIL"
     },
     "sl_linear/mass_conservation": {

@@ -69,6 +69,7 @@ from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwi
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.stochastic import CommonNoiseMFGSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -342,7 +343,7 @@ def test_each_population_solves_with_its_own_source(field):
             MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
             [HJBFDMSolver(p) for p in problems],
             [FPFDMSolver(p) for p in problems],
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
         ).solve(**_CONVERGED)
         assert result.converged
         return result.U, result.M
@@ -368,7 +369,7 @@ def _regime_solve(*per_regime_fields):
         [FPFDMSolver(p) for p in problems],
         max_iterations=_CONVERGED["max_iterations"],
         tolerance=_CONVERGED["tolerance"],
-        damping=0.5,
+        damping=DampingPolicy.constant(0.5),
     ).solve()
     assert result.converged
     return result.values, result.densities

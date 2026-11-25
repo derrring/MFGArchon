@@ -10,7 +10,8 @@ one:
 - the warm start, checked against that shape;
 - the write-back after each sweep: level 0 to the initial density, and the terminal row to the u(T) that sweep's HJB
   solve was given;
-- the packing of (U, M) into one vector, for Newton.
+- the packing of (U, M) into one vector, for Newton;
+- the order in which a level's values sit at the points a solver hands a source (`level_at_points`).
 """
 
 from __future__ import annotations
@@ -163,6 +164,19 @@ class IterationState:
         if self.m0 is None:
             raise RuntimeError(f"{self.reader}: write_back before start: the state has not read m(0) for this solve")
         return preserve_terminal_condition(U, u_terminal), preserve_initial_condition(M, self.m0)
+
+    @staticmethod
+    def level_at_points(level: Any) -> np.ndarray:
+        """One time level of an iterate, of a state's shape, as its values at the geometry's points, shape ``(N,)``: for
+        the coupling closures that combine levels pointwise into a source (#2997).
+
+        The order is the geometry's enumeration of its points: a tensor grid lists them in the C order of its shape,
+        axis 0 slowest (`TensorProductGrid.flatten`, as `get_multi_index` reads an index). HJB-FDM, the base HJB
+        solver's timestep and FP-FDM evaluate a source at ``geometry.get_spatial_grid()`` and read its values in that
+        order. On a mesh the shape is ``(n_dof,)`` and the level is already in it. A solver that evaluates a source at
+        its own points, as HJB-GFDM does at its collocation points, still reads these values by index, which is #2765.
+        """
+        return np.reshape(level, -1, order="C")
 
     def pack(self, U: np.ndarray, M: np.ndarray) -> np.ndarray:
         """``(U, M)`` as one vector, U's entries first, each in C order."""

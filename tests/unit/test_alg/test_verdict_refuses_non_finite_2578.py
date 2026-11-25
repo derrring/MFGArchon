@@ -106,10 +106,10 @@ def _fp(problem: MFGProblem, nan_at_sweep: int | None) -> FPFDMSolver:
     return fp
 
 
-#: The first sweep each iterator judges. A regime's first sweep compares the 1-D initial density with a
-#: trajectory and is not judged; a NaN density earlier than the judged sweep would reach the next HJB solve
-#: and stop the loop as a diverged value function instead.
-_JUDGED_SWEEP = {"population": 1, "node": 1, "regime": 2}
+#: The first sweep each iterator judges: its first, a regime's included since #2997 (the approver's ruling of
+#: 2026-11-25). A NaN density at a sweep the iterator did not judge would reach the next HJB solve and stop the loop
+#: as a diverged value function instead.
+_JUDGED_SWEEP = {"population": 1, "node": 1, "regime": 1}
 
 
 def _converged(kind: str, bad: int | None) -> bool:
