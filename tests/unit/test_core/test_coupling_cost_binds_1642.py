@@ -889,8 +889,8 @@ def _run_loop(name, calls, diverge_at=None):
             tolerance=1e-6,
             damping=DampingPolicy.constant(0.3),
         ).solve()
-    if diverge_at is None:
-        return None, None  # neither re-imposes u(T) after damping
+    # Both re-impose the u(T) each node's HJB solve was given after the update (#2997), and restore it after a diverged
+    # solve (#1718): the last-solved node publishes the last call's u(T).
     k = next(i for i, p in enumerate(problems) if p is calls[-1][0])
     return np.asarray(result.values[k], dtype=float)[-1], calls[-1][2]
 

@@ -15,7 +15,7 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
-from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling, LaplacianCoupling
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
 from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
@@ -140,8 +140,9 @@ def test_each_component_takes_fixed_points_path(route, case, damping, coupling, 
     both fields damped from the first sweep (ruling 2); U's terminal row written back to the u(T) its sweep's HJB solve
     was given, which moves here with m(T) on Graph and RegimeSwitching; level 0 written back to m(0), seen only through
     an FP whose level 0 is not m(0), since FP-FDM's is; the first sweep judged (the approver's ruling of 2026-11-25); and
-    one damping run per component, each field adapting on that component's own history (rulings 5 and 9). At coupling 5 and theta 1 each FixedPoint run's adaptation decays both bases within eight sweeps; the control
-    checks that it does. At 4cd1803f the default case differs on all three routes (U by 8.5e-4 on Graph after 12
+    one damping run per component, each field adapting on that component's own history (rulings 5 and 9). At coupling 5
+    and theta 1 adaptation moves FixedPoint's path within eight sweeps; the control checks that it does, on the first
+    component's problem. At 4cd1803f the default case differs on all three routes (U by 8.5e-4 on Graph after 12
     sweeps), and RegimeSwitching's first sweep does not stop.
     """
     terminal_coupled = route != "MultiPopulationIterator" and case != "adaptive"
@@ -177,23 +178,32 @@ def test_each_component_takes_fixed_points_path(route, case, damping, coupling, 
         assert np.array_equal(np.asarray(densities[k]), reference.M), f"component {k}'s M is not FixedPoint's"
 
 
-def test_a_warm_up_sweep_that_passes_ends_newtons_solve():
-    """Every sweep of every phase is judged the same way (the approver's ruling of 2026-11-25): Newton's warm-up sweeps
-    are FixedPoint's, and the first whose change passes ends the solve there with FixedPoint's iterate and count. At
-    4cd1803f the warm-up ran all twelve sweeps and then judged the map at their output, a count of 13."""
+@pytest.mark.parametrize("inner", ["converging", "capped"])
+def test_a_warm_up_sweep_that_meets_the_criteria_ends_newtons_solve(inner):
+    """Each phase judges the change of the map it iterates, through the one measure (the approver's ruling of
+    2026-11-25): Newton's warm-up sweeps are FixedPoint's, so the first whose change meets the criteria ends the solve
+    there with FixedPoint's iterate, count, error histories and verdict. A met criterion stops it either way, as it
+    stops FixedPoint's loop (#1878): with each HJB step capped at one Newton iteration, the verdict is refused over the
+    failed steps on both. At 4cd1803f the warm-up ran all twelve sweeps and then judged the residual at their output:
+    a count of 13 where the HJB converges, and 16 against FixedPoint's 7 where it is capped, U 0.0148 apart."""
+    cap = {"max_newton_iterations": 1, "newton_tolerance": 1e-14} if inner == "capped" else {}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         p = _problem(0.3, terminal_coupled=True)
-        fixed = FixedPointIterator(p, HJBFDMSolver(p), FPFDMSolver(p)).solve(
+        fixed = FixedPointIterator(p, HJBFDMSolver(p, **cap), FPFDMSolver(p)).solve(
             max_iterations=12, tolerance=1e-2, verbose=False
         )
         q = _problem(0.3, terminal_coupled=True)
-        newton = NewtonMFGSolver(q, HJBFDMSolver(q), FPFDMSolver(q), picard_warmup=12).solve(
+        newton = NewtonMFGSolver(q, HJBFDMSolver(q, **cap), FPFDMSolver(q), picard_warmup=12).solve(
             max_iterations=30, tolerance=1e-2, verbose=False
         )
-    assert fixed.converged, "the fixture: FixedPoint must converge inside the warm-up"
-    assert fixed.iterations < 12, "the fixture: FixedPoint must converge inside the warm-up"
-    assert newton.converged
+    stopped = fixed.metadata["convergence_reason"]
+    assert fixed.iterations < 12, f"the fixture: FixedPoint must stop inside the warm-up ({stopped})"
+    if inner == "capped":
+        assert stopped.startswith("inner_hjb_not_converged"), f"the fixture: the capped HJB must fail ({stopped})"
+    assert newton.converged == fixed.converged == (inner == "converging")
+    if inner == "capped":
+        assert newton.metadata["convergence_reason"] == stopped
     assert newton.iterations == fixed.iterations
     assert newton.metadata["picard_iterations"] == fixed.iterations
     assert np.array_equal(newton.U, fixed.U)
@@ -234,8 +244,13 @@ def _flat_problem(k, axis, n=None):
 def _coupled(route, problems):
     hjbs = [HJBFDMSolver(p, newton_tolerance=1e-13, max_newton_iterations=60) for p in problems]
     fps = [FPFDMSolver(p) for p in problems]
-    if route == "GraphMFGSolver":
-        coupling = AdjacencyCoupling(np.ones((2, 2)) - np.eye(2), alpha=0.3, beta=0.2)
+    if route.startswith("GraphMFGSolver"):
+        adjacency = np.ones((2, 2)) - np.eye(2)
+        coupling = (
+            LaplacianCoupling(adjacency, kappa=0.3)
+            if route.endswith("Laplacian")
+            else AdjacencyCoupling(adjacency, alpha=0.3, beta=0.2)
+        )
         r = GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=4, tolerance=1e-300).solve()
         return r.values, r.densities
     if route == "RegimeSwitchingIterator":
@@ -248,18 +263,19 @@ def _coupled(route, problems):
 
 
 @pytest.mark.parametrize("axis", [0, 1], ids=["along x", "along y"])
-@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("route", ["GraphMFGSolver", "GraphMFGSolver, Laplacian", *ROUTES[1:]])
 def test_a_2d_solve_whose_data_vary_along_one_axis_is_the_1d_solve(route, axis):
     """External oracle: under no-flux walls, data that vary along one axis only give a 2-D solution constant along the
     other, equal to the 1-D solve along the varying axis. Four sweeps of each route on a 5 x 4 grid (one population for
     the multi-population iterator, which refuses two off a 1-D grid by name, #2335) equal the 1-D route's, replicated,
-    to 1e-12, with the HJB's Newton solved to 1e-13. At 4cd1803f all three raised on the 5 x 4 grid, sizing U from its
-    first axis (#2573's ledger).
+    to 1e-12, with the HJB's Newton solved to 1e-13. At 4cd1803f all three raised on the 5 x 4 grid, each writing a
+    level of that shape into a row sized from the grid's first axis (#2573's ledger).
 
     The grid is not square and the data run along each axis in turn, so the order in which a coupling closure reads a
-    level at the solver's points, `IterationState.level_at_points`, is seen: read in F order instead of C, Graph's
-    and RegimeSwitching's solves are 1e-2 to 1.7e-1 away in both cases. The multi-population iterator has no such
-    closure."""
+    level at the geometry's points is seen: Graph with `AdjacencyCoupling` and with `LaplacianCoupling`, whose
+    default sources are the library's four graph closures, and RegimeSwitching's two. Read in F order instead of C,
+    whether in `IterationState.level_at_points` or in one closure, the routes it reaches fail both cases. The
+    multi-population iterator has no such closure."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         two = _coupled(route, [_flat_problem(k, axis) for k in range(2)])

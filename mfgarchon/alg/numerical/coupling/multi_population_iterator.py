@@ -473,9 +473,9 @@ class MultiPopulationResult:
     Attributes
     ----------
     U : list[np.ndarray]
-        Value functions, one per population. Each shape (Nt+1, Nx).
+        Value functions, one per population, each of the population's iterate shape (Nt+1, *shape).
     M : list[np.ndarray]
-        Density fields, one per population. Each shape (Nt+1, Nx).
+        Density fields, one per population, each of the population's iterate shape (Nt+1, *shape).
     iterations : int
         Number of Picard iterations performed.
     converged : bool

@@ -794,9 +794,9 @@ class BaseCouplingIterator(ABC):
         """
 
     def _iteration_state(self) -> IterationState | None:
-        """The route's one iterate owner (#2997), or None for a route with a component axis, which holds one
-        `IterationState` per component and takes no warm start: GraphMFGSolver and RegimeSwitchingIterator (the user's
-        ruling of 2026-11-25)."""
+        """The route's one iterate owner (#2997), or None: a route with a component axis, which holds one
+        `IterationState` per component (GraphMFGSolver, RegimeSwitchingIterator), or a subclass that returns none. A
+        route that returns None takes no warm start (the user's rulings of 2026-11-25)."""
         return None
 
     def set_warm_start_data(
@@ -813,15 +813,17 @@ class BaseCouplingIterator(ABC):
             metadata: Optional metadata about the previous solution
 
         Raises:
-            NotImplementedError: on a route with a component axis, GraphMFGSolver or RegimeSwitchingIterator, which
-                takes no warm start (`_iteration_state`).
+            NotImplementedError: on a route with no single iterate owner, whose `_iteration_state` returns None:
+                GraphMFGSolver and RegimeSwitchingIterator, and any subclass that does not return one.
         """
         U_prev, M_prev = previous_solution
         state = self._iteration_state()
         if state is None:
             raise NotImplementedError(
-                f"{type(self).__name__} takes no warm start (the user's ruling of 2026-11-25, #2997): it iterates one "
-                "(U, M) per component, and its solve starts each of them from the cold start."
+                f"{type(self).__name__} takes no warm start: it has no single iterate owner, its _iteration_state() "
+                "returning None, as GraphMFGSolver and RegimeSwitchingIterator, which iterate one (U, M) per component, "
+                "have none (the user's rulings of 2026-11-25, #2997). A subclass takes a warm start by returning an "
+                "IterationState from _iteration_state and starting its solve from that state's start()."
             )
         state.set_warm_start(U_prev, M_prev)
         self.warm_start_data = {"metadata": metadata or {}}

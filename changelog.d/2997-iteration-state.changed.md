@@ -27,15 +27,21 @@
     given, which a terminal coupling moves with m(T), instead of the damped mix of two sweeps' u(T); and they read u(T)
     with each component's HJB solver's terminal binding, so a terminal coupling declared off a grid solves on them
     instead of being refused.
-  - The three solve on a 2-D grid, where each raised `ValueError` sizing U from the grid's first axis
+  - The three solve on a 2-D grid, where each raised `ValueError` writing a level of the grid's shape into a row sized
+    from its first axis
     (`MultiPopulationIterator` with one population; with two or more it refuses a grid of two or more dimensions by
     name, #2335). The graph couplings' and the regime coupling's sources read each level at the geometry's points, in
     its order (`IterationState.level_at_points`); a custom `coupling_hjb` or `coupling_fp` is handed each level as the
     iterate holds it, of the grid's shape.
   - `GraphMFGSolver.set_warm_start_data` and `RegimeSwitchingIterator.set_warm_start_data` raise
     `NotImplementedError`: each accepted a warm start and never read it (the user's ruling of 2026-11-25).
-  - `NewtonMFGSolver` judges every warm-up sweep as every route judges a sweep: one whose change passes ends the solve
-    there, as converged, with that sweep's iterate, where `main` ran every warm-up sweep and then judged the map at their
-    output. Its count and iterate change when a warm-up sweep before the last passes.
+  - `NewtonMFGSolver` judges each warm-up sweep's change, FixedPoint's sweep, through the one measure, as the Newton
+    phase judges the residual it solves. The first warm-up sweep whose change meets the criteria ends the solve there
+    with that sweep's iterate: converged, unless its HJB steps failed (#1878). `main` ran every warm-up sweep, then
+    judged the residual at their output and went on into Newton steps when that failed, so the count and the iterate
+    change whenever a warm-up sweep's change meets the criteria.
+  - `GraphMFGSolver`, `RegimeSwitchingIterator` and `MultiPopulationIterator` refuse a `PointCloudGeometry`, on which
+    each solved at `main`: the iterate's owner takes a tensor grid or an unstructured mesh, as on the other four routes
+    (the user's ruling of 2026-11-25).
   - `BaseCouplingIterator.solve`'s abstract signature is `solve(self)`: each route's solve adds its own parameters, all
     optional.
