@@ -46,7 +46,7 @@ MFGSolverConfig(tolerance=1e-8)          # raises: tolerance lives under `picard
 MFGSolverConfig(picard={"toleranse": 1})  # raises: extra inputs are not permitted
 ```
 
-That includes the old `damping_*` field names of `PicardConfig`, removed before 1.0: use the `relaxation_*` fields.
+That includes `PicardConfig`'s old `damping_*` and `relaxation_*` fields, removed before 1.0: set `damping`, a `DampingPolicy`, instead.
 
 ---
 

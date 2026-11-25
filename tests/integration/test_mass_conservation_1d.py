@@ -279,7 +279,7 @@ class TestMassConservation1D:
         )
 
         # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
-        result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
+        result = mfg_solver.solve(max_iterations=50, tolerance=1e-4)
 
         grid = problem.geometry
         Nt_points = problem.Nt + 1
@@ -356,7 +356,7 @@ class TestMassConservation1D:
             )
 
             # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
-            result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
+            result = mfg_solver.solve(max_iterations=50, tolerance=1e-4)
 
             grid = problem.geometry
             Nt_points = problem.Nt + 1

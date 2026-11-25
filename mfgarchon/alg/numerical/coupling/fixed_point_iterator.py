@@ -29,7 +29,6 @@ from .base_mfg import (
     damping_argument,
     damping_for_the_solve,
     refuse_a_capped_exit_in_a_coupled_solve,
-    refuse_retired_solve_keywords,
     resolve_backend,
 )
 from .damping_run import DampingRun
@@ -196,7 +195,7 @@ class FixedPointIterator(BaseCouplingIterator):
         iteration_callback: IterationCallback | None = None,
         track_measure_field: bool = False,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
+        verbose: bool | None = None,
     ) -> SolverResult:
         """
         Solve coupled MFG system using fixed-point iteration.
@@ -214,9 +213,10 @@ class FixedPointIterator(BaseCouplingIterator):
                 GridMeasureField is attached to SolverResult.metadata["measure_field"].
                 Each snapshot stores (ParticleMeasure from M_k, U_k). Default False.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: Not read: ``problem.solve()`` passes ``verbose=`` here. A keyword this method no longer takes
-                (``RETIRED_SOLVE_KEYWORDS``), or one that is the constructor's (``CONSTRUCTOR_KEYWORDS``), is refused by
-                name.
+            verbose: Show the progress display; None decides by the terminal (``should_show_progress``). A config in
+                force governs progress instead, through its ``picard.verbose``, as its ``picard`` fields decide the budget
+                and the tolerances (#2922). ``problem.solve()`` always solves from a config, into whose ``picard.verbose``
+                it writes its own ``verbose=``, so there that is what governs.
 
         Returns:
             SolverResult object
@@ -230,7 +230,6 @@ class FixedPointIterator(BaseCouplingIterator):
             ...     return True  # Continue
             >>> result = solver.solve(iteration_callback=monitor)
         """
-        refuse_retired_solve_keywords(kwargs, self)
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FixedPointIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
@@ -247,7 +246,7 @@ class FixedPointIterator(BaseCouplingIterator):
             final_absolute_tolerance = absolute_tolerance
             from mfgarchon.utils.progress import should_show_progress
 
-            verbose = should_show_progress()
+            verbose = should_show_progress(verbose)
 
         # Issue #1081: Picard cannot converge below the inner Newton-solve floor. When the
         # HJB Newton tolerance is looser than the Picard tolerance, each inner solve injects

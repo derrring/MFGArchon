@@ -10,7 +10,6 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import (
     BlockGaussSeidelIterator,
-    BlockJacobiIterator,
     FictitiousPlayIterator,
     FixedPointIterator,
 )
@@ -186,45 +185,3 @@ def test_a_config_damping_decides_and_one_given_twice_is_refused(route):
     assert not np.array_equal(solve(None, None), from_constructor)
     with pytest.raises(ValueError, match="damping is given twice"):
         solve(policy, DampingPolicy.constant(0.4))
-
-
-def _two_sweeps(route, damping=None, config_damping=None):
-    """U and M after two sweeps (Newton: a two-sweep warm-up and one Newton iteration), the damping given at the
-    constructor, in a config handed to the solve, or neither."""
-    problem = _strongly_coupled()
-    extra = {"picard_warmup": 2, "newton_max_iterations": 1} if route is NewtonMFGSolver else {}
-    solver = route(problem, HJBFDMSolver(problem), FPFDMSolver(problem), damping=damping, **extra)
-    kwargs = {"max_iterations": 2, "tolerance": 1e-6, "verbose": False}
-    if config_damping is not None:
-        picard = PicardConfig(max_iterations=2, tolerance=1e-6, verbose=False, damping=config_damping)
-        kwargs["config"] = MFGSolverConfig(picard=picard)
-    result = solver.solve(**kwargs)
-    return np.concatenate([result.U.ravel(), result.M.ravel()])
-
-
-@pytest.mark.parametrize(
-    "route",
-    [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator, BlockJacobiIterator, NewtonMFGSolver],
-)
-def test_the_refusal_of_solve_damping_names_only_places_that_apply_it(route):
-    """``solve(damping=)`` is refused, and its advice is followed: each place it names, the constructor's ``damping=``
-    and, where the route's solve takes a config, ``PicardConfig.damping``, applies the damping against the route's
-    default. #2997 review 2: the advice named the config on the Block iterators and Newton, whose solves accept a
-    ``config=`` without reading it (#2922). A mutation-verified convention pin: advice naming the config on every route,
-    or a ``damping=`` accepted in silence, fails it."""
-    policy = DampingPolicy.constant(0.3)
-    problem = _strongly_coupled()
-    extra = {"picard_warmup": 2, "newton_max_iterations": 1} if route is NewtonMFGSolver else {}
-    with pytest.raises(TypeError, match="does not take damping=") as refusal:
-        route(problem, HJBFDMSolver(problem), FPFDMSolver(problem), **extra).solve(
-            max_iterations=2, tolerance=1e-6, verbose=False, damping=policy
-        )
-    places = {"the constructor's damping=": {"damping": policy}, "PicardConfig.damping": {"config_damping": policy}}
-    named = [place for place in places if place in str(refusal.value)]
-    assert "the constructor's damping=" in named, str(refusal.value)
-    default = _two_sweeps(route)
-    for place in named:
-        applied = _two_sweeps(route, **places[place])
-        assert not np.array_equal(applied, default), (
-            f"{route.__name__}'s refusal names {place}, which does not apply it"
-        )

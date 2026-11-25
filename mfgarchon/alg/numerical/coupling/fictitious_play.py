@@ -47,7 +47,6 @@ from .base_mfg import (
     damping_argument,
     damping_for_the_solve,
     refuse_a_capped_exit_in_a_coupled_solve,
-    refuse_retired_solve_keywords,
     resolve_backend,
 )
 from .damping_run import DampingRun
@@ -195,7 +194,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         *,
         iteration_callback: Callable[[int, np.ndarray, np.ndarray, float, float], bool | None] | None = None,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
+        verbose: bool = True,
     ) -> SolverResult:
         """
         Solve coupled MFG system using Fictitious Play.
@@ -208,13 +207,12 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 Signature: (iteration, U, M, error_U, error_M) -> bool | None
                 Return True to stop early, None/False to continue.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: ``verbose`` (default True). A keyword this method no longer takes (``RETIRED_SOLVE_KEYWORDS``),
-                or one that is the constructor's (``CONSTRUCTOR_KEYWORDS``), is refused by name.
+            verbose: Show progress (default True). A config in force governs progress instead, through its
+                ``picard.verbose``, as its ``picard`` fields decide the budget and the tolerances (#2922).
 
         Returns:
             SolverResult object
         """
-        refuse_retired_solve_keywords(kwargs, self)
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FictitiousPlayIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
@@ -229,7 +227,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             final_max_iterations = max_iterations or 100
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
-            verbose = kwargs.get("verbose", True)
 
         # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997), which refuses a geometry
         # other than a CartesianGrid for this route.

@@ -42,7 +42,6 @@ from .base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
-    refuse_retired_solve_keywords,
 )
 from .damping_run import DampingRun
 from .fixed_point_utils import (
@@ -293,7 +292,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
         tolerance: float = 1e-5,
         verbose: bool = True,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
     ) -> SolverResult:
         """
         Solve MFG system using Newton's method.
@@ -308,14 +306,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
             absolute_tolerance: Opt-in absolute bound on the same change, as for the other coupling
                 iterators.
             verbose: Print progress information
-            **kwargs: Additional solver parameters
 
         Returns:
             SolverResult (#2997 ruling 4): U, M, the absolute change per measured sweep, and the convergence information
             in its metadata (convergence_reason, picard and newton residuals, ...). The iteration count is
             `SolverResult.iterations` alone: the sweeps whose change was measured.
         """
-        refuse_retired_solve_keywords(kwargs, self)
         start_time = time.time()
         self._changes = ([], [])
         outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)

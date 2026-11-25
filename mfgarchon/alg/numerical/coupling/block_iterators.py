@@ -51,7 +51,6 @@ from .base_mfg import (
     assert_paired_solver_sigma,
     damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
-    refuse_retired_solve_keywords,
 )
 from .damping_run import DampingRun
 from .fixed_point_utils import (
@@ -606,7 +605,6 @@ class BlockIterator(BaseCouplingIterator):
         tolerance: float = 1e-5,
         verbose: bool = True,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
     ) -> SolverResult | tuple[NDArray, NDArray, dict[str, Any]]:
         """
         Solve MFG system using block iteration.
@@ -616,12 +614,10 @@ class BlockIterator(BaseCouplingIterator):
             tolerance: Bound on the relative L2 change of one sweep (docs/user/CONVENTIONS.md § 9)
             verbose: Print progress information
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: Additional parameters
 
         Returns:
             SolverResult with solution and convergence info
         """
-        refuse_retired_solve_keywords(kwargs, self)
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
         start_time = time.time()
 

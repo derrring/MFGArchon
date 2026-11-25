@@ -449,7 +449,7 @@ create_network_visualizer(problem=None, network_data=None) -> NetworkMFGVisualiz
 **Solver Configuration:**
 - `max_iterations`: Maximum Picard iterations
 - `tolerance`: Convergence tolerance
-- `relaxation`: Picard damping parameter (0.5-0.8 recommended)
+- `damping`: the Picard damping, a `DampingPolicy` (`mfgarchon.config.damping`), such as `DampingPolicy.constant(0.6)`
 - `cfl_factor`: CFL stability factor for explicit schemes
 - `diffusion_coefficient`: Network diffusion strength
 

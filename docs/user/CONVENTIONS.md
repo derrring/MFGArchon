@@ -1701,16 +1701,12 @@ Before 1.0 a name the library no longer wants is deleted, not deprecated (AGENTS
 or reading one raises Python's own `TypeError`, `AttributeError` or `ImportError`. Assigning one to an object, as
 `solver.damping_factor = 0.3`, succeeds and does nothing, as it does for any name Python does not know; `PicardConfig`
 and `MFGGridConfig` raise `ValueError`, and the frozen dataclasses `HamiltonianValues` and `GraphBCConfig` raise
-`FrozenInstanceError`, for any unknown name. A removed keyword that lands in a `**kwargs`, or a removed key in a
-free-form dict, is not Python's to refuse:
-
-- the solves of `FixedPointIterator`, `FictitiousPlayIterator`, the Block iterators and `NewtonMFGSolver` keep a
-  `**kwargs` and refuse `return_tuple`, `Niter_max`, `max_picard_iterations`, `l2errBoundPicard`, `picard_tolerance`,
-  the damping keywords #2997 removed, and `damping` itself, by name, saying where the route takes a damping: its
-  constructor's `damping=`, and on `FixedPointIterator` and `FictitiousPlayIterator` also `PicardConfig.damping`;
-- `MFGProblem` refuses a key of the free-form `components.parameters` dict named after one of the 14 inputs it no
-  longer reads, and accepts any other key;
-- those solves, past those names, accept and ignore a keyword they do not read (#2922).
+`FrozenInstanceError`, for any unknown name. The solves of `FixedPointIterator`, `FictitiousPlayIterator`, the Block
+iterators and `NewtonMFGSolver` take no `**kwargs` (#2997), so `return_tuple=`, `Niter_max=`,
+`max_picard_iterations=`, `l2errBoundPicard=`, `picard_tolerance=`, the damping keywords #2997 removed and `damping=`
+raise Python's own `TypeError` there, as does any keyword their signatures do not name. A removed key in a free-form
+dict is not Python's to refuse: `MFGProblem` refuses a key of the free-form `components.parameters` dict named after one
+of the 14 inputs it no longer reads, and accepts any other key.
 
 Names deprecated only in a docstring, and `WeakFormHJBSolver.solve_hjb_system`'s three pre-v0.12 names (§ *Solver
 method surface*), are not removed yet.
@@ -1728,7 +1724,8 @@ method surface*), are not removed yet.
 | `MFGProblem(gamma=)` | the Hamiltonian's `coupling=` (with `coupling_dm=`). It was stored and nothing read it (#2554) |
 | `problem.f_potential`, `problem.gamma` | nothing: they held the two inputs above (#2554) |
 | `damping_factor`, `damping_factor_M`, and a number as `damping=`, on the four routes #2997's stage 1a moved | `damping=`, a `DampingPolicy` (#2997). `GraphMFGSolver` and `RegimeSwitchingIterator` take a number until stage 1b |
-| `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson`, `anderson_depth`, `anderson_beta` (FixedPointIterator); `relaxation`, `relaxation_M` (the Block iterators); `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`, `damp_value_function` (FictitiousPlayIterator); `picard_damping` (NewtonMFGSolver); `PicardConfig`'s `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `anderson_memory` | `damping=`, a `DampingPolicy`, on each route, and `PicardConfig.damping` (#2997) |
+| `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `adaptive_relaxation_decay`, `adaptive_relaxation_min`, `use_anderson`, `anderson_depth`, `anderson_beta` (FixedPointIterator); `relaxation`, `relaxation_M` (the Block iterators); `learning_rate_schedule`, `initial_learning_rate`, `min_learning_rate`, `damp_value_function` (FictitiousPlayIterator); `picard_damping` (NewtonMFGSolver) | that route's constructor `damping=`, a `DampingPolicy` (#2997) |
+| `PicardConfig`'s `relaxation`, `relaxation_M`, `relaxation_schedule`, `relaxation_schedule_M`, `adaptive_relaxation`, `anderson_memory` | `PicardConfig.damping`, a `DampingPolicy`, which `FixedPointIterator` and `FictitiousPlayIterator` read (#2997) |
 | `MFGComponents(u_final=)` | `u_terminal=` |
 | `velocity_field=` on `FPFDMSolver.solve_fp_system` | `drift_field=` |
 | `m_initial_condition=`, `m_initial=` | `M_initial=` |

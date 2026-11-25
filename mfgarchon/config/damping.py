@@ -100,8 +100,10 @@ class AndersonOptions:
     def _check_mixing(self) -> None:
         """``beta``, the accelerator's mixing, in (0, 1]. It is named like a Robin coefficient, so #2512's coefficient scan
         allows this method by name, and only this one."""
-        if isinstance(self.beta, bool) or not 0.0 < self.beta <= 1.0:
-            raise ValueError(f"AndersonOptions: beta must be a number in (0, 1], got {self.beta!r}")
+        if isinstance(self.beta, (bool, np.bool_)):
+            raise ValueError(f"AndersonOptions: beta must be a real number in (0, 1], not a bool, got {self.beta!r}")
+        if not 0.0 < self.beta <= 1.0:
+            raise ValueError(f"AndersonOptions: beta must be a real number in (0, 1], got {self.beta!r}")
 
 
 @dataclass(frozen=True)

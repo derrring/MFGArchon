@@ -8602,36 +8602,6 @@
     "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_a_positional_value_cannot_slide_past_a_deleted_coupling_coefficient": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-Niter_max]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-l2errBoundPicard]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-max_picard_iterations]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-picard_tolerance]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-return_tuple]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-Niter_max]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-l2errBoundPicard]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-max_picard_iterations]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-picard_tolerance]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-return_tuple]": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_rfc1574_phase0_guards_1560_1564.py::test_build_linearized_operator_fails_loud_on_dirichlet_1564": [
       "optimal_control_sign"
     ],
@@ -15246,7 +15216,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3246,
+      "kill_count": 3236,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -17454,16 +17424,6 @@
         "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_a_fourth_positional_argument_is_refused[FictitiousPlayIterator]",
         "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_a_fourth_positional_argument_is_refused[FixedPointIterator]",
         "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_a_positional_value_cannot_slide_past_a_deleted_coupling_coefficient",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-Niter_max]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-l2errBoundPicard]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-max_picard_iterations]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-picard_tolerance]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FictitiousPlayIterator-return_tuple]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-Niter_max]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-l2errBoundPicard]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-max_picard_iterations]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-picard_tolerance]",
-        "tests/unit/test_alg/test_retired_solve_keywords_are_refused.py::test_each_retired_keyword_is_refused_by_name[FixedPointIterator-return_tuple]",
         "tests/unit/test_alg/test_rfc1574_phase0_guards_1560_1564.py::test_build_linearized_operator_fails_loud_on_dirichlet_1564",
         "tests/unit/test_alg/test_rfc1574_phase0_guards_1560_1564.py::test_build_linearized_operator_ok_on_no_flux_1564",
         "tests/unit/test_alg/test_rfc1574_phase0_guards_1560_1564.py::test_sl_uniform_bc_still_constructs_1560",
