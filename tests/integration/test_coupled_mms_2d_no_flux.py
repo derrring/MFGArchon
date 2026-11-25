@@ -105,6 +105,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -245,7 +246,7 @@ def _build_problem(nx: int, nt: int):
 def _solve(nx: int, nt: int):
     problem = _build_problem(nx, nt)
     result = FixedPointIterator(
-        problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), relaxation=1.0
+        problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), damping=DampingPolicy.constant(1.0)
     ).solve(max_iterations=200, tolerance=1e-6, verbose=False)
     # BEFORE any error metric: an EOC read off an unconverged outer iteration measures how far the
     # iteration got in N steps, not a discretization order (#1998/#1728).

@@ -18,6 +18,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -223,10 +224,7 @@ def test_fixed_point_nan_early_termination():
 
     # Create iterator and solve
     iterator = FixedPointIterator(
-        problem=problem,
-        hjb_solver=hjb_solver,
-        fp_solver=fp_solver,
-        relaxation=0.5,
+        problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
     )
     result = iterator.solve(max_iterations=10, tolerance=1e-6)
 
@@ -287,9 +285,9 @@ def test_fp_is_not_solved_after_hjb_returns_nonfinite():
     fp_solver.solve_fp_system.side_effect = fp_side_effect
     fp_solver.mass_conservation_error_override.return_value = None  # #2188, see above
 
-    FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
-        max_iterations=10, tolerance=1e-6
-    )
+    FixedPointIterator(
+        problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=10, tolerance=1e-6)
 
     assert hjb_calls[0] == 2, "the second HJB solve is the one that diverges"
     assert not any(u_seen_by_fp), "FP was handed a non-finite array"
@@ -324,9 +322,9 @@ def test_mass_conservation_is_unmeasured_when_fp_never_ran():
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
 
-    result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
-        max_iterations=10, tolerance=1e-6
-    )
+    result = FixedPointIterator(
+        problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=10, tolerance=1e-6)
 
     assert fp_solver.solve_fp_system.call_count == 0, "FP must not run when the first HJB diverges"
     assert result.mass_conservation_error is None, (
@@ -372,9 +370,9 @@ def test_mass_conservation_is_still_measured_when_fp_ran_before_the_divergence()
     # would then treat as an override and use in place of the measurement this test is about.
     fp_solver.mass_conservation_error_override.return_value = None
 
-    result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
-        max_iterations=10, tolerance=1e-6
-    )
+    result = FixedPointIterator(
+        problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=10, tolerance=1e-6)
 
     assert fp_solver.solve_fp_system.call_count == 1, "one FP step must have completed"
     assert result.mass_conservation_error is not None, (
@@ -407,9 +405,9 @@ def test_terminal_condition_survives_an_hjb_divergence():
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
 
-    result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
-        max_iterations=10, tolerance=1e-6
-    )
+    result = FixedPointIterator(
+        problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+    ).solve(max_iterations=10, tolerance=1e-6)
 
     x = problem.geometry.get_spatial_grid().ravel()
     np.testing.assert_allclose(np.asarray(result.U)[-1], x**2, rtol=0, atol=1e-12)

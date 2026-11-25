@@ -25,6 +25,7 @@ from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
@@ -56,7 +57,7 @@ def _problem():
 def _solve(tolerance: float, callback):
     problem = _problem()
     iterator = FixedPointIterator(
-        problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), relaxation=0.5
+        problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), damping=DampingPolicy.constant(0.5)
     )
     result = iterator.solve(max_iterations=3, tolerance=tolerance, iteration_callback=callback)
     return iterator, result

@@ -44,6 +44,7 @@ from .core import (
     PicardConfig,
     SolverConfig,  # Backward compatibility alias for MFGSolverConfig
 )
+from .damping import AndersonOptions, DampingPolicy, FieldDamping
 
 # YAML I/O
 from .io import load_solver_config, save_solver_config, validate_yaml_config
@@ -71,7 +72,6 @@ from .translator import (
     check_logging_config,
     fp_config_to_kwargs,
     hjb_config_to_kwargs,
-    picard_config_to_iterator_kwargs,
     translate_solver_config,
 )
 
@@ -84,6 +84,9 @@ __all__ = [
     "BaseConfig",
     "SolverConfig",
     "PicardConfig",
+    "DampingPolicy",
+    "FieldDamping",
+    "AndersonOptions",
     "BackendConfig",
     "LoggingConfig",
     # Method configs (unified)
@@ -108,7 +111,6 @@ __all__ = [
     # Translator (Issue #1155)
     "hjb_config_to_kwargs",
     "fp_config_to_kwargs",
-    "picard_config_to_iterator_kwargs",
     "backend_config_to_kwargs",
     "check_logging_config",
     "translate_solver_config",

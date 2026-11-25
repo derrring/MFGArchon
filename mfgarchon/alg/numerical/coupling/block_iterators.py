@@ -38,6 +38,7 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import NonFiniteReadError
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
@@ -48,18 +49,17 @@ from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
+from .damping_run import DampingRun
 from .fixed_point_utils import (
-    apply_damping,
     check_convergence_criteria,
     diverged_value_function,
-    initialize_cold_start,
-    preserve_initial_condition,
-    preserve_terminal_condition,
     resolve_fp_drift_kwargs,
     value_function_is_finite,
 )
+from .iteration_state import IterationState
 from .source_composition import fp_source_is_active
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ class BlockIterator(BaseCouplingIterator):
         hjb_solver: HJB solver instance
         fp_solver: FP solver instance
         method: Block iteration method ('jacobi' or 'gauss_seidel')
-        relaxation: Under-relaxation factor in (0, 1] (default: 1.0 = no relaxation)
+        damping: U's and M's damping, a `DampingPolicy` (#2997); None is ``DampingPolicy.constant(1.0)``, no damping
         volatility: Optional volatility override -- the SDE volatility, not a diffusion
         volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
@@ -126,8 +126,7 @@ class BlockIterator(BaseCouplingIterator):
         fp_solver: BaseFPSolver,
         *,
         method: str | BlockMethod = BlockMethod.GAUSS_SEIDEL,
-        relaxation: float = 1.0,
-        relaxation_M: float | None = None,
+        damping: DampingPolicy | None = None,
         volatility: float | NDArray | Any | None = None,
         volatility_kind: str | None = None,
         drift_field: NDArray | Any | None = None,
@@ -137,11 +136,8 @@ class BlockIterator(BaseCouplingIterator):
         """Initialize block iterator.
 
         Args:
-            relaxation: Under-relaxation factor for U (omega_U). Default 1.0 = no relaxation.
-            relaxation_M: Under-relaxation factor for M (omega_M). If None, uses `relaxation`.
-                Issue #719: Per-variable relaxation support.
-                Recommended for MFG: relaxation=1.0, relaxation_M=0.2
-                (U adapts fully, M filters particle noise).
+            damping: U's and M's damping, a `DampingPolicy` (#2997). None is ``DampingPolicy.constant(1.0)``, no
+                damping, for this base class; its two subclasses default to ``DampingPolicy.constant(0.5)``.
         """
         super().__init__(problem)
         assert_bc_providers_resolvable(self.problem, type(self).__name__)
@@ -156,9 +152,7 @@ class BlockIterator(BaseCouplingIterator):
             method = BlockMethod(method.lower())
         self.method = method
 
-        # Canonical relaxation state - Issue #719: Per-variable relaxation
-        self.relaxation = relaxation
-        self.relaxation_M = relaxation_M  # None = use `relaxation` for both
+        self.damping = damping_argument(damping, type(self).__name__) or DampingPolicy.constant(1.0)
 
         # PDE coefficient overrides
         self.volatility = volatility
@@ -201,9 +195,24 @@ class BlockIterator(BaseCouplingIterator):
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-        # Cache initial/terminal conditions
+        # m(0) and the latest sweep's u(T), which the step functions read
         self._M_initial: NDArray | None = None
         self._U_terminal: NDArray | None = None
+
+        # The iterate's owner (#2997), built on first use: the geometry it sizes the state from is checked there.
+        self._state: IterationState | None = None
+
+    def _iteration_state(self) -> IterationState:
+        if self._state is None:
+            self._state = IterationState(
+                self.problem,
+                self.hjb_solver,
+                self.fp_solver,
+                reader=type(self).__name__,
+                terminal_binding=self._hjb_terminal_binding,
+                unstructured_mesh=True,
+            )
+        return self._state
 
     def _validate_strict_adjoint_capability(self) -> None:
         """Refuse, at construction, a pair the remaining adjoint mode cannot run (Issue #622, #704, #707).
@@ -232,33 +241,6 @@ class BlockIterator(BaseCouplingIterator):
             f"{type(hjb_solver).__name__} builds none (#707, #2338): it does not satisfy "
             f"`LinearizedOperatorCapable`. Use HJBFDMSolver, or adjoint_mode='off'."
         )
-
-    def _initialize_conditions(self, shape: tuple[int, ...]) -> tuple[NDArray, NDArray]:
-        """Initialize initial density and terminal value from problem."""
-        # Try the get_m_initial() method (preferred)
-        try:
-            M_initial = self.problem.get_m_initial()
-            if M_initial.shape != shape:
-                M_initial = M_initial.reshape(shape)
-        except AttributeError:
-            try:
-                M_initial = self.problem.m_initial  # Issue #670: unified naming
-                if M_initial is not None and M_initial.shape != shape:
-                    M_initial = M_initial.reshape(shape)
-            except AttributeError:
-                M_initial = np.ones(shape) / np.prod(shape)
-                logger.warning("No initial density found, using uniform")
-
-        # The terminal datum's one owner (#1642 stage 2), at the initial density, which a cold start writes into every
-        # row but at a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB
-        # solve uses.
-        U_terminal = np.asarray(
-            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__)
-        )
-        if U_terminal.shape != shape:
-            U_terminal = U_terminal.reshape(shape)
-
-        return M_initial, U_terminal
 
     def _solve_hjb(
         self,
@@ -623,7 +605,6 @@ class BlockIterator(BaseCouplingIterator):
         tolerance: float = 1e-5,
         verbose: bool = True,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
     ) -> SolverResult | tuple[NDArray, NDArray, dict[str, Any]]:
         """
         Solve MFG system using block iteration.
@@ -633,7 +614,6 @@ class BlockIterator(BaseCouplingIterator):
             tolerance: Bound on the relative L2 change of one sweep (docs/user/CONVENTIONS.md § 9)
             verbose: Print progress information
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: Additional parameters
 
         Returns:
             SolverResult with solution and convergence info
@@ -641,37 +621,23 @@ class BlockIterator(BaseCouplingIterator):
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
         start_time = time.time()
 
-        # Get problem dimensions
-        num_time_steps = self.problem.Nt + 1
-        shape = tuple(self.problem.geometry.get_grid_shape())
         time_step = self.problem.dt
         integrate = self.problem.spatial_measure().integrate  # #2555
 
-        # Initialize conditions
-        self._M_initial, self._U_terminal = self._initialize_conditions(shape)
+        # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997)
+        state = self._iteration_state()
+        if verbose and state.warm_start() is not None:
+            print(f"Using warm start ({self.method.value})")
+        self.U, self.M = state.start()
+        self._M_initial = state.m0
 
-        # Initialize solution arrays
-        warm_start = self.get_warm_start_data()
-        if warm_start is not None:
-            self.U, self.M = warm_start
-            if verbose:
-                print(f"Using warm start ({self.method.value})")
-        else:
-            self.U = np.zeros((num_time_steps, *shape))
-            self.M = np.zeros((num_time_steps, *shape))
-
-            # Set boundary conditions
-            self.M[0] = self._M_initial
-            self.U[-1] = self._U_terminal
-
-            # Initialize interior
-            self.U, self.M = initialize_cold_start(
-                self.U, self.M, self._M_initial, self._U_terminal, num_time_steps, fp_solver=self.fp_solver
-            )
-
-        # Reset tracking
+        # Reset tracking: the absolute change per sweep in error_history_U/M, as on every route, and the relative one
+        # beside it (#2997 ruling 7)
         self.error_history_U = []
         self.error_history_M = []
+        relative_U: list[float] = []
+        relative_M: list[float] = []
+        run = DampingRun(self.damping)
         self.iterations_run = 0
 
         # Issue #704: Reset adjoint verification counter
@@ -689,7 +655,7 @@ class BlockIterator(BaseCouplingIterator):
             method_name = "Block Gauss-Seidel"
 
         if verbose:
-            print(f"Starting {method_name} iteration (relaxation={self.relaxation})")
+            print(f"Starting {method_name} iteration (damping={self.damping})")
 
         # Progress bar (Issue #587 Protocol pattern)
         from mfgarchon.utils.progress import create_progress_bar
@@ -709,9 +675,7 @@ class BlockIterator(BaseCouplingIterator):
             U_old = self.U.copy()
             M_old = self.M.copy()
             # u(T) at the density this iteration's HJB solve uses: both steps solve the HJB with M_old (#1642 stage 2).
-            self._U_terminal = np.asarray(
-                self.problem.terminal_value(M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__)
-            ).reshape(shape)
+            self._U_terminal = state.terminal_at(M_old[-1])
 
             # Perform block iteration step
             U_new, M_new = step_fn(U_old, M_old, self._M_initial, self._U_terminal)
@@ -735,30 +699,25 @@ class BlockIterator(BaseCouplingIterator):
                 self.iterations_run = iiter
                 break
 
-            # Apply damping - Issue #719: Per-variable damping
-            # Note: apply_damping expects (new, old) order, not (old, new)
-            self.U, self.M = apply_damping(
-                U_new,
-                U_old,
-                M_new,
-                M_old,
-                theta=self.relaxation,
-                theta_M=self.relaxation_M,
-            )
+            # Damping, per field (the policy, #2997)
+            self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
 
-            # Preserve boundary conditions
-            self.M = preserve_initial_condition(self.M, self._M_initial)
-            self.U = preserve_terminal_condition(self.U, self._U_terminal)
+            self.U, self.M = state.write_back(self.U, self.M, self._U_terminal)
 
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import sweep_change
 
             # The block's output against its input, not the damped `self.U - U_old`, which is
-            # `relaxation * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
+            # `theta * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
             metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
+            # An adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
+            for message in run.observe(iiter, metrics):
+                logger.warning(message)
 
-            self.error_history_U.append(metrics["l2distu_rel"])
-            self.error_history_M.append(metrics["l2distm_rel"])
+            self.error_history_U.append(metrics["l2distu_abs"])
+            self.error_history_M.append(metrics["l2distm_abs"])
+            relative_U.append(metrics["l2distu_rel"])
+            relative_M.append(metrics["l2distm_rel"])
 
             iter_time = time.time() - iter_start
             self.iterations_run = iiter + 1
@@ -796,7 +755,9 @@ class BlockIterator(BaseCouplingIterator):
         # Build metadata
         metadata = {
             "method": self.method.value,
-            "relaxation": self.relaxation,
+            "damping": self.damping,
+            "l2distu_rel": np.array(relative_U),
+            "l2distm_rel": np.array(relative_M),
             "convergence_reason": convergence_reason,
             "elapsed_time": elapsed,
             "adjoint_mode": self.adjoint_mode,
@@ -862,7 +823,7 @@ class BlockJacobiIterator(BlockIterator):
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         *,
-        relaxation: float = 0.5,
+        damping: DampingPolicy | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -870,7 +831,7 @@ class BlockJacobiIterator(BlockIterator):
             hjb_solver,
             fp_solver,
             method=BlockMethod.JACOBI,
-            relaxation=relaxation,
+            damping=damping if damping is not None else DampingPolicy.constant(0.5),
             **kwargs,
         )
 
@@ -893,7 +854,7 @@ class BlockGaussSeidelIterator(BlockIterator):
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         *,
-        relaxation: float = 0.5,
+        damping: DampingPolicy | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -901,6 +862,6 @@ class BlockGaussSeidelIterator(BlockIterator):
             hjb_solver,
             fp_solver,
             method=BlockMethod.GAUSS_SEIDEL,
-            relaxation=relaxation,
+            damping=damping if damping is not None else DampingPolicy.constant(0.5),
             **kwargs,
         )

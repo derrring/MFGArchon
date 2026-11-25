@@ -23,6 +23,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -86,7 +87,7 @@ def scenario_porous_medium():
         problem,
         hjb_solver,
         fp_solver,
-        relaxation=0.5,
+        damping=DampingPolicy.constant(0.5),
         volatility=porous_medium_diffusion,  # State-dependent!
     )
 
@@ -144,11 +145,7 @@ def scenario_crowd_dynamics():
     fp_solver = FPFDMSolver(problem)
 
     coupling = FixedPointIterator(
-        problem,
-        hjb_solver,
-        fp_solver,
-        relaxation=0.5,
-        volatility=crowd_diffusion,
+        problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5), volatility=crowd_diffusion
     )
 
     print("Solving MFG with crowd dynamics diffusion...")
@@ -201,11 +198,7 @@ def scenario_spatially_varying():
     fp_solver = FPFDMSolver(problem)
 
     coupling = FixedPointIterator(
-        problem,
-        hjb_solver,
-        fp_solver,
-        relaxation=0.5,
-        volatility=spatial_diffusion,
+        problem, hjb_solver, fp_solver, damping=DampingPolicy.constant(0.5), volatility=spatial_diffusion
     )
 
     print("Solving MFG with spatially varying diffusion...")

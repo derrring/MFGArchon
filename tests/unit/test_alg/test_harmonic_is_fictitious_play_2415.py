@@ -7,14 +7,14 @@ one (#1914's sigma = 0 fixture). Those are the update rules; the theorems assume
 coupling on the torus, which neither fixture has (local coupling, walls).
 
 The oracle is `_reference`: that update written out with the same HJB and FP solvers and no loop
-machinery, with the step scaled by BASE (the iterator's `initial_learning_rate`) so that the old
+machinery, with the step scaled by BASE (`DampingPolicy.fictitious_play`'s alpha0, #2997) so that the old
 0.01 floor bites within 14 sweeps: 0.1/(k+1) passes it at k = 10. At BASE = 1 it is (2.2)
 exactly; any other BASE is the same average, reweighted.
 
 Three defects, and the test that fails when each fix is reverted on its own (measured on the
 fixture below, 14 sweeps, with that fix reverted to its `0f937601` form):
 
-- The default `min_learning_rate=0.01` clamped the steps from k = 10 on, so the belief left the
+- The default floor of 0.01 (then `min_learning_rate=0.01`) clamped the steps from k = 10 on, so the belief left the
   oracle by 1.88e-03 relative. Killed by `test_fictitious_play_follows_the_average`.
 - Convergence was measured on the averaged step, which is exactly alpha_k times the map
   difference and so shrinks under a decaying alpha whether or not the belief is near a fixed
@@ -43,6 +43,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FictitiousPlayIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.model import Conditions, Model
@@ -100,8 +101,7 @@ def _run(hybrid: bool):
         problem,
         hjb_solver=HJBFDMSolver(problem),
         fp_solver=FPFDMSolver(problem),
-        initial_learning_rate=BASE,
-        damp_value_function=hybrid,
+        damping=DampingPolicy.fictitious_play(BASE, damp_value_function=hybrid),
     )
     result = iterator.solve(max_iterations=SWEEPS)
     # The loop holds the initial row of M and the terminal row of U fixed, so the oracle takes its

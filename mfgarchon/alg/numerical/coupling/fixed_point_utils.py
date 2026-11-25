@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.utils.solver_result import SolverResult
 
 _Solver = TypeVar("_Solver")
 _Params = ParamSpec("_Params")
@@ -94,166 +93,6 @@ def cold_start_iterate(M_initial: np.ndarray, fp_solver: BaseFPSolver, Nt: int) 
     """A cold start's whole density iterate, levels 0, ..., Nt stacked on a new first axis: ``M_initial`` at level 0
     and `cold_start_density_at_level` at each later level (#2991)."""
     return np.stack([M_initial] + [cold_start_density_at_level(M_initial, fp_solver, n) for n in range(1, Nt + 1)])
-
-
-def initialize_cold_start(
-    U: np.ndarray,
-    M: np.ndarray,
-    M_initial: np.ndarray,
-    U_terminal: np.ndarray,
-    Nt: int,
-    *,
-    fp_solver: BaseFPSolver,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Initialize U and M arrays for cold start (no warm start provided).
-
-    Cold start initialization sets:
-    - U[Nt-1, :] = U_terminal (terminal condition)
-    - M[0, :] = M_initial (initial condition)
-    - U[0:Nt-1, :] = U_terminal (interior initialized with terminal condition)
-    - M[1:Nt, :] = M_initial (interior initialized with initial condition), except at a node ``fp_solver``'s step
-      prescribes, which holds its value at that level (`cold_start_density_at_level`, #2991)
-
-    Args:
-        U: Value function array to initialize (modified in-place)
-        M: Density array to initialize (modified in-place)
-        M_initial: Initial density distribution m_0(x)
-        U_terminal: The terminal value at the initial density, ``problem.terminal_value(M_initial)``
-        Nt: Number of time levels, the arrays' first axis
-        fp_solver: The FP solver the route steps with, asked what its step prescribes
-
-    Returns:
-        Tuple of (initialized U, initialized M)
-
-    Note:
-        This is the standard initialization used when no warm start is provided.
-        Interior points are set to boundary conditions as a simple initial guess.
-    """
-    # Set boundary conditions
-    U[Nt - 1, :] = U_terminal
-    M[0, :] = M_initial
-
-    # Initialize interior with boundary conditions
-    for n_time_idx in range(Nt - 1):
-        U[n_time_idx, :] = U_terminal
-    for n_time_idx in range(1, Nt):
-        M[n_time_idx, :] = cold_start_density_at_level(M_initial, fp_solver, n_time_idx)
-
-    return U, M
-
-
-def construct_solver_result(
-    U: np.ndarray,
-    M: np.ndarray,
-    iterations_run: int,
-    l2distu_abs: np.ndarray,
-    l2distm_abs: np.ndarray,
-    l2distu_rel: np.ndarray,
-    l2distm_rel: np.ndarray,
-    solver_name: str,
-    converged: bool,
-    convergence_reason: str,
-) -> SolverResult:
-    """
-    Construct a SolverResult object from fixed-point iteration data.
-
-    Args:
-        U: Final value function array
-        M: Final density array
-        iterations_run: Number of iterations executed
-        l2distu_abs: Absolute L2 errors for U (full array)
-        l2distm_abs: Absolute L2 errors for M (full array)
-        l2distu_rel: Relative L2 errors for U (full array)
-        l2distm_rel: Relative L2 errors for M (full array)
-        solver_name: Name of the solver
-        converged: Whether the solver converged
-        convergence_reason: Reason for convergence/termination
-
-    Returns:
-        SolverResult object with all diagnostic information
-
-    Note:
-        Error arrays are truncated to iterations_run length before storage.
-    """
-    from mfgarchon.utils.solver_result import SolverResult
-
-    # Truncate error arrays to actual iterations run
-    l2distu_abs_truncated = l2distu_abs[:iterations_run]
-    l2distm_abs_truncated = l2distm_abs[:iterations_run]
-    l2distu_rel_truncated = l2distu_rel[:iterations_run]
-    l2distm_rel_truncated = l2distm_rel[:iterations_run]
-
-    # Construct result object
-    result = SolverResult(
-        U=U,
-        M=M,
-        converged=converged,
-        iterations=iterations_run,
-        convergence_reason=convergence_reason,
-        diagnostics={
-            "l2distu_abs": l2distu_abs_truncated,
-            "l2distm_abs": l2distm_abs_truncated,
-            "l2distu_rel": l2distu_rel_truncated,
-            "l2distm_rel": l2distm_rel_truncated,
-            "solver_name": solver_name,
-        },
-    )
-
-    return result
-
-
-def apply_damping(
-    U_new: np.ndarray,
-    U_old: np.ndarray,
-    M_new: np.ndarray,
-    M_old: np.ndarray,
-    theta: float,
-    theta_M: float | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Apply damping to fixed-point iteration updates.
-
-    Damping formula:
-        U_damped = theta * U_new + (1 - theta) * U_old
-        M_damped = theta_M * M_new + (1 - theta_M) * M_old
-
-    Args:
-        U_new: New value function from HJB solve
-        U_old: Previous value function
-        M_new: New density from FP solve
-        M_old: Previous density
-        theta: Damping parameter for U in [0, 1] (0=no update, 1=full update)
-            Also used for M if theta_M is None (backward compatible).
-        theta_M: Optional separate damping parameter for M in [0, 1].
-            If None, uses theta for both U and M (backward compatible).
-            Issue #719: Per-variable damping support.
-
-    Returns:
-        Tuple of (U_damped, M_damped)
-
-    Note:
-        theta=1 corresponds to no damping (full update)
-        theta=0.5 is a common choice for stability
-        Smaller theta increases stability but slows convergence
-
-    Example:
-        # Same damping for both (backward compatible)
-        U, M = apply_damping(U_new, U_old, M_new, M_old, theta=0.5)
-
-        # Different damping: full update for U, conservative for M
-        # Recommended for MFG: U adapts quickly, M filters particle noise
-        U, M = apply_damping(U_new, U_old, M_new, M_old, theta=1.0, theta_M=0.2)
-    """
-    # Issue #719: Support per-variable damping
-    theta_U = theta
-    if theta_M is None:
-        theta_M = theta  # Backward compatible: same damping for both
-
-    U_damped = theta_U * U_new + (1 - theta_U) * U_old
-    M_damped = theta_M * M_new + (1 - theta_M) * M_old
-
-    return U_damped, M_damped
 
 
 def check_convergence_criteria(
@@ -392,13 +231,10 @@ def negative_density_recorded(fp_solvers: Iterable[Any]) -> Iterator[None]:
 
 def _report_negative_density(result: Any, fp_solvers: list[Any]) -> None:
     """One warning per solver, and ``fp_negative_density`` in the result's record, for the density the result returns
-    rather than the last sweep's step, since a coupler can damp it (#2845). Newton returns ``(U, M, info)``."""
-    if isinstance(result, tuple):
-        densities, record = result[1], result[2]
-    else:
-        densities = getattr(result, "densities", None)
-        densities = result.M if densities is None else densities
-        record = getattr(result, "metadata", None)
+    rather than the last sweep's step, since a coupler can damp it (#2845)."""
+    densities = getattr(result, "densities", None)
+    densities = result.M if densities is None else densities
+    record = getattr(result, "metadata", None)
     per_solver = [densities] if len(fp_solvers) == 1 else list(densities)
     reports: list[dict[str, Any] | None] = []
     for solver, density in zip(fp_solvers, per_solver, strict=True):
@@ -545,119 +381,6 @@ def preserve_initial_condition(
     """
     M[0, :] = M_initial
     return M
-
-
-def adapt_damping(
-    theta_U: float,
-    theta_M: float,
-    error_history_U: list[float],
-    error_history_M: list[float],
-    *,
-    theta_U_initial: float,
-    theta_M_initial: float,
-    decay: float = 0.5,
-    min_damping: float = 0.05,
-    increase_threshold: float = 1.2,
-    recovery_rate: float = 1.05,
-    stable_window: int = 3,
-) -> tuple[float, float, str | None]:
-    """
-    Adapt Picard damping factors based on error history (Issue #583).
-
-    Detects oscillation (error increasing) and reduces damping to stabilize.
-    After sustained convergence, cautiously recovers toward initial damping.
-
-    U and M are adapted independently since U gradient explosion is the
-    primary pathology in strongly-coupled MFG systems.
-
-    Args:
-        theta_U: Current damping factor for U.
-        theta_M: Current damping factor for M.
-        error_history_U: Relative L2 error history for U (all iterations so far).
-        error_history_M: Relative L2 error history for M (all iterations so far).
-        theta_U_initial: Initial damping factor for U (recovery ceiling).
-        theta_M_initial: Initial damping factor for M (recovery ceiling).
-        decay: Multiplicative decay on oscillation (e.g., 0.5 halves damping).
-        min_damping: Minimum damping bound (prevents stalling).
-        increase_threshold: Error ratio above which oscillation is detected.
-        recovery_rate: Multiplicative increase during stable convergence.
-        stable_window: Consecutive decreasing iterations required for recovery.
-
-    Returns:
-        (theta_U, theta_M, warning_msg): Updated damping factors and optional
-        warning message (None if no oscillation detected).
-    """
-    warning_msg = None
-
-    # Need at least 2 data points to detect oscillation
-    if len(error_history_U) < 2:
-        return theta_U, theta_M, None
-
-    # --- Adapt U ---
-    ratio_U = error_history_U[-1] / error_history_U[-2] if error_history_U[-2] > 0 else 1.0
-    if ratio_U > increase_threshold:
-        theta_U = max(theta_U * decay, min_damping)
-        warning_msg = f"Adaptive damping: U error increased by {ratio_U:.2f}x. Reduced theta_U to {theta_U:.4f}."
-    elif len(error_history_U) >= stable_window and all(
-        error_history_U[-(i + 1)] < error_history_U[-(i + 2)] for i in range(stable_window - 1)
-    ):
-        theta_U = min(theta_U * recovery_rate, theta_U_initial)
-
-    # --- Adapt M ---
-    ratio_M = error_history_M[-1] / error_history_M[-2] if error_history_M[-2] > 0 else 1.0
-    if ratio_M > increase_threshold:
-        theta_M = max(theta_M * decay, min_damping)
-        msg_M = f"Adaptive damping: M error increased by {ratio_M:.2f}x. Reduced theta_M to {theta_M:.4f}."
-        warning_msg = f"{warning_msg} {msg_M}" if warning_msg else msg_M
-    elif len(error_history_M) >= stable_window and all(
-        error_history_M[-(i + 1)] < error_history_M[-(i + 2)] for i in range(stable_window - 1)
-    ):
-        theta_M = min(theta_M * recovery_rate, theta_M_initial)
-
-    return theta_U, theta_M, warning_msg
-
-
-def compute_scheduled_damping(
-    iteration: int,
-    base_damping: float,
-    schedule: str = "constant",
-    min_damping: float = 0.01,
-) -> float:
-    """Compute damping factor for a given iteration using a named schedule.
-
-    The base_damping acts as the initial/maximum value. Decay schedules
-    modulate it: theta(k) = base_damping * schedule(k), clamped to min_damping.
-
-    Args:
-        iteration: Current iteration (0-indexed).
-        base_damping: Base damping factor (theta at k=0 for decay schedules).
-        schedule: "constant", "harmonic", "sqrt", or "exponential".
-        min_damping: Floor for damping value.
-
-    Returns:
-        Damping factor for this iteration.
-
-    Raises:
-        ValueError: If schedule name is not recognized.
-    """
-    if schedule == "constant":
-        return base_damping
-
-    from mfgarchon.utils.iteration.schedules import harmonic_schedule, sqrt_schedule
-
-    if schedule == "harmonic":
-        value = base_damping * harmonic_schedule(iteration)
-    elif schedule == "sqrt":
-        value = base_damping * sqrt_schedule(iteration)
-    elif schedule == "exponential":
-        # Geometric decay: theta(k) = base_damping^(k+1)
-        value = base_damping ** (iteration + 1)
-    else:
-        raise ValueError(
-            f"Unknown damping schedule: {schedule!r}. Available: 'constant', 'harmonic', 'sqrt', 'exponential'."
-        )
-
-    return max(value, min_damping)
 
 
 def preserve_terminal_condition(

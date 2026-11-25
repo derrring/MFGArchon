@@ -30,11 +30,13 @@ from mfgarchon.utils.mfg_logging import get_logger
 from .base_mfg import (
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
+    hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
     resolve_volatility_kwarg,
 )
 from .fixed_point_utils import resolve_fp_drift_kwargs
+from .iteration_state import IterationState
 from .source_composition import compose_fp_source, compose_hjb_source
 
 if TYPE_CHECKING:
@@ -103,9 +105,8 @@ class MFGResidual:
         problem: MFG problem definition
         hjb_solver: HJB solver instance
         fp_solver: FP solver instance
-        M_initial: Initial density condition
-        U_terminal: u(T) at the initial density, the cold start's terminal row; each HJB solve reads
-            ``terminal_at(M)`` instead (#1642)
+        state: The iterate's owner (`IterationState`, #2997): its layout, m(0), u(T) and packing
+        M_initial: Initial density condition, read from the owner at construction
 
     Example:
         >>> residual_computer = MFGResidual(problem, hjb_solver, fp_solver)
@@ -144,15 +145,19 @@ class MFGResidual:
         self.volatility_kind = volatility_kind
         self.drift_field = drift_field
 
-        # Cache problem dimensions
+        # The iterate's layout, m(0), u(T) and packing, from its one owner (#2997)
+        self.state = IterationState(
+            problem,
+            hjb_solver,
+            fp_solver,
+            reader="MFGResidual",
+            terminal_binding=hjb_terminal_binding(hjb_solver),
+            unstructured_mesh=True,
+        )
         self.num_time_steps = problem.Nt + 1
-        self.spatial_shape = tuple(problem.geometry.get_grid_shape())
-        self.solution_shape = (self.num_time_steps, *self.spatial_shape)
-
-        # Cache initial/terminal conditions
-        self.M_initial: NDArray | None = None
-        self.U_terminal: NDArray
-        self._initialize_conditions()
+        self.spatial_shape = self.state.shape
+        self.solution_shape = self.state.solution_shape
+        self.M_initial: NDArray = self.state.initial_density()
 
         # Cache solver method signatures for parameter passing
         self._hjb_sig_params: set[str] | None = None
@@ -164,36 +169,9 @@ class MFGResidual:
         # Evaluation counter for diagnostics
         self.residual_evaluations = 0
 
-    def _initialize_conditions(self) -> None:
-        """Initialize initial density and terminal value from problem."""
-        shape = self.spatial_shape
-
-        # Try to get initial density
-        try:
-            self.M_initial = self.problem.get_m_initial()
-            if self.M_initial.shape != shape:
-                self.M_initial = self.M_initial.reshape(shape)
-        except AttributeError:
-            try:
-                self.M_initial = self.problem.m_initial  # Issue #670: unified naming
-                if self.M_initial is not None and self.M_initial.shape != shape:
-                    self.M_initial = self.M_initial.reshape(shape)
-            except AttributeError:
-                # Default: uniform density
-                self.M_initial = np.ones(shape) / np.prod(shape)
-                logger.warning("No initial density found, using uniform")
-
-        # The terminal value at the initial density: the cold start's U(T). A terminal coupling
-        # moves u(T) with m(T), so each HJB solve reads terminal_at(M) instead (#1642).
-        self.U_terminal = np.asarray(
-            self.problem.terminal_value(self.M_initial, reader="MFGResidual"), dtype=float
-        ).reshape(shape)
-
     def terminal_at(self, M: NDArray) -> NDArray:
-        """u(T) for the density trajectory ``M``: the problem's terminal value at ``M[-1]`` (#1642)."""
-        return np.asarray(self.problem.terminal_value(M[-1], reader="MFGResidual"), dtype=float).reshape(
-            self.spatial_shape
-        )
+        """u(T) for the density trajectory ``M``: the owner's terminal value at ``M[-1]`` (#1642, #2997)."""
+        return self.state.terminal_at(M[-1])
 
     def _cache_solver_signatures(self) -> None:
         """Cache solver method signatures for parameter passing."""
@@ -314,7 +292,7 @@ class MFGResidual:
         )
 
         if M is None:
-            M = np.broadcast_to(self.M_initial, self.solution_shape) if self.M_initial is not None else U
+            M = np.broadcast_to(self.M_initial, self.solution_shape)
 
         # Issue #1430: fail loud like Picard (Issue #1424) rather than silently dropping a
         # composed FP source the solver cannot accept.
@@ -408,36 +386,12 @@ class MFGResidual:
             raise ValueError(f"Unknown norm_type: {norm_type}")
 
     def pack_state(self, U: NDArray, M: NDArray) -> NDArray:
-        """
-        Pack (U, M) into a single flattened state vector.
-
-        Args:
-            U: Value function (Nt+1, *spatial_shape)
-            M: Density field (Nt+1, *spatial_shape)
-
-        Returns:
-            x: Flattened state vector [U_flat, M_flat]
-        """
-        return np.concatenate([U.flatten(), M.flatten()])
+        """``(U, M)`` as one vector, by the owner's packing (`IterationState.pack`)."""
+        return self.state.pack(U, M)
 
     def unpack_state(self, x: NDArray) -> tuple[NDArray, NDArray]:
-        """
-        Unpack flattened state vector into (U, M).
-
-        Args:
-            x: Flattened state vector [U_flat, M_flat]
-
-        Returns:
-            (U, M): Reshaped value function and density
-        """
-        total_size = np.prod(self.solution_shape)
-        U_flat = x[:total_size]
-        M_flat = x[total_size:]
-
-        U = U_flat.reshape(self.solution_shape)
-        M = M_flat.reshape(self.solution_shape)
-
-        return U, M
+        """The inverse of `pack_state` (`IterationState.unpack`)."""
+        return self.state.unpack(x)
 
     def residual_function(self, x: NDArray) -> NDArray:
         """
@@ -451,26 +405,6 @@ class MFGResidual:
         """
         U, M = self.unpack_state(x)
         return self.compute_residual(U, M)
-
-    def get_initial_guess(self) -> NDArray:
-        """
-        Get initial guess for Newton iteration.
-
-        Returns the cold start: U(T) = U_terminal, the terminal at the initial density, and
-        M(0) = M_initial; every other row is zero.
-
-        Returns:
-            x0: Flattened initial state
-        """
-        U = np.zeros(self.solution_shape)
-        M = np.zeros(self.solution_shape)
-
-        # Set boundary conditions
-        U[-1] = self.U_terminal
-        if self.M_initial is not None:
-            M[0] = self.M_initial
-
-        return self.pack_state(U, M)
 
     def reset_evaluation_count(self) -> None:
         """Reset residual evaluation counter."""

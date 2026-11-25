@@ -387,7 +387,7 @@ MUTATIONS: list[Mutation] = [
         path="mfgarchon/alg/numerical/coupling/fixed_point_utils.py",
         old="    U[-1] = U_terminal",
         new="    U[0] = U_terminal  # MUTATED: terminal condition re-imposed at t=0 instead of t=T",
-        owner="u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
+        owner="u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, two callers: IterationState.write_back after every sweep of the routes it owns (#2997), and diverged_value_function's restore. No issue ",
         verify="preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0",
     ),
     Mutation(

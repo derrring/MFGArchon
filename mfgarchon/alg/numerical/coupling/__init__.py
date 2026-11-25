@@ -27,10 +27,7 @@ from .fixed_point_iterator import FixedPointIterator
 
 # Shared utilities
 from .fixed_point_utils import (
-    apply_damping,
     check_convergence_criteria,
-    construct_solver_result,
-    initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
 )
@@ -58,10 +55,7 @@ __all__ = [
     "MFGResidual",
     "NewtonMFGSolver",
     # Utilities
-    "apply_damping",
     "check_convergence_criteria",
-    "construct_solver_result",
-    "initialize_cold_start",
     "preserve_initial_condition",
     "preserve_terminal_condition",
 ]

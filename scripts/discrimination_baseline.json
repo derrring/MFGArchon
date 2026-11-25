@@ -143,7 +143,7 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 3247,
+      "kill_count": 3236,
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
       "status": "ok"
     },
@@ -179,7 +179,7 @@
     },
     "terminal_condition_pinned_at_initial_index": {
       "kill_count": 38,
-      "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
+      "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, two callers: IterationState.write_back after every sweep of the routes it owns (#2997), and diverged_value_function's restore. No issue ",
       "status": "ok"
     },
     "upwind_minimum_takes_a_one_sided_difference": {

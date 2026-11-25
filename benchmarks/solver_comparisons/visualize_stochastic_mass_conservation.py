@@ -12,6 +12,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.mfg_solvers.fixed_point_iterator import FixedPointIterator
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -37,7 +38,9 @@ def main():
 
     fp_solver = FPParticleSolver(problem, num_particles=1000, normalize_kde_output=True, boundary_conditions=bc)
     hjb_solver = HJBFDMSolver(problem)
-    mfg_solver = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5)
+    mfg_solver = FixedPointIterator(
+        problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
+    )
 
     print("\nRunning solver (100 iterations, accepting stochastic fluctuations)...")
 

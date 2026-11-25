@@ -20,6 +20,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid, no_flux_bc
 
@@ -71,10 +72,7 @@ def main():
     )
     hjb_solver = HJBFDMSolver(problem)
     mfg_solver = FixedPointIterator(
-        problem,
-        hjb_solver=hjb_solver,
-        fp_solver=fp_solver,
-        relaxation=0.5,
+        problem, hjb_solver=hjb_solver, fp_solver=fp_solver, damping=DampingPolicy.constant(0.5)
     )
 
     print("Running solver (30 iterations max)...\n")

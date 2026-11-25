@@ -16,6 +16,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling import FictitiousPlayIterator, FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -66,9 +67,9 @@ class TestWarmStartNameError1285:
         hjb = HJBFDMSolver(problem)
         fp = FPFDMSolver(problem)
 
-        solver = FixedPointIterator(problem, hjb, fp, relaxation=0.5)
+        solver = FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5))
         U_warm, M_warm = _warm_arrays(problem)
-        solver.set_warm_start_data(U_warm, M_warm)
+        solver.set_warm_start_data((U_warm, M_warm))
 
         # Must not raise NameError; 2 iterations is sufficient to exercise the path.
         result = solver.solve(max_iterations=2, tolerance=1e-10)
@@ -85,7 +86,7 @@ class TestWarmStartNameError1285:
         # max|dM| = 1.224, so 1e-3 is two orders of margin.
         cold_problem = _make_problem()
         cold = FixedPointIterator(
-            cold_problem, HJBFDMSolver(cold_problem), FPFDMSolver(cold_problem), relaxation=0.5
+            cold_problem, HJBFDMSolver(cold_problem), FPFDMSolver(cold_problem), damping=DampingPolicy.constant(0.5)
         ).solve(max_iterations=2, tolerance=1e-10)
         assert np.max(np.abs(result.U - cold.U)) > 1e-3, "warm-start arrays were ignored"
 
@@ -112,9 +113,9 @@ class TestWarmStartNameError1285:
         hjb = HJBFDMSolver(problem)
         fp = FPFDMSolver(problem)
 
-        solver = FictitiousPlayIterator(problem, hjb, fp, learning_rate_schedule="harmonic")
+        solver = FictitiousPlayIterator(problem, hjb, fp, damping=DampingPolicy.fictitious_play(1.0, "harmonic"))
         U_warm, M_warm = _warm_arrays(problem)
-        solver.set_warm_start_data(U_warm, M_warm)
+        solver.set_warm_start_data((U_warm, M_warm))
 
         # Must not raise NameError; 2 iterations is sufficient to exercise the path.
         result = solver.solve(max_iterations=2, tolerance=1e-10)
@@ -130,7 +131,10 @@ class TestWarmStartNameError1285:
         # max|dU| = 0.102, max|dM| = 1.145, so 1e-3 is two orders of margin.
         cold_problem = _make_problem()
         cold = FictitiousPlayIterator(
-            cold_problem, HJBFDMSolver(cold_problem), FPFDMSolver(cold_problem), learning_rate_schedule="harmonic"
+            cold_problem,
+            HJBFDMSolver(cold_problem),
+            FPFDMSolver(cold_problem),
+            damping=DampingPolicy.fictitious_play(1.0, "harmonic"),
         ).solve(max_iterations=2, tolerance=1e-10)
         assert np.max(np.abs(result.U - cold.U)) > 1e-3, "warm-start arrays were ignored"
 

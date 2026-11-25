@@ -51,7 +51,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from mfgarchon.config.core import BackendConfig, LoggingConfig, PicardConfig
+    from mfgarchon.config.core import BackendConfig, LoggingConfig
     from mfgarchon.config.mfg_methods import FPConfig, HJBConfig
     from mfgarchon.types import NumericalScheme
 
@@ -447,30 +447,6 @@ def fp_config_to_kwargs(
 # ---------------------------------------------------------------------------
 
 
-def picard_config_to_iterator_kwargs(picard_cfg: PicardConfig) -> dict[str, Any]:
-    """Map PicardConfig.anderson_memory to FixedPointIterator constructor kwargs.
-
-    Returns an empty dict when anderson_memory==0 (disabled), so callers can
-    safely unpack the result without conditionals.
-
-    Parameters
-    ----------
-    picard_cfg : PicardConfig
-        Validated Picard iteration configuration.
-
-    Returns
-    -------
-    dict
-        ``use_anderson`` and ``anderson_depth`` entries (if anderson_memory > 0).
-    """
-    if picard_cfg.anderson_memory > 0:
-        return {
-            "use_anderson": True,
-            "anderson_depth": picard_cfg.anderson_memory,
-        }
-    return {}
-
-
 # ---------------------------------------------------------------------------
 # Backend / Logging extras
 # ---------------------------------------------------------------------------
@@ -546,7 +522,7 @@ def check_logging_config(logging_cfg: LoggingConfig) -> None:
 def translate_solver_config(
     config: Any,
     scheme: NumericalScheme,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Translate a full MFGSolverConfig into solver constructor kwarg dicts.
 
     Parameters
@@ -562,14 +538,11 @@ def translate_solver_config(
         Kwargs for HJB solver constructor.
     fp_kwargs : dict
         Kwargs for FP solver constructor.
-    iterator_kwargs : dict
-        Extra kwargs for FixedPointIterator (anderson acceleration).
     backend_kwargs : dict
         Backend kwarg for both HJB solver and FixedPointIterator.
     """
     hjb_kwargs = hjb_config_to_kwargs(config.hjb, scheme)
     fp_kwargs = fp_config_to_kwargs(config.fp, scheme)
-    iterator_kwargs = picard_config_to_iterator_kwargs(config.picard)
     backend_kwargs = backend_config_to_kwargs(config.backend)
     check_logging_config(config.logging)
-    return hjb_kwargs, fp_kwargs, iterator_kwargs, backend_kwargs
+    return hjb_kwargs, fp_kwargs, backend_kwargs

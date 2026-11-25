@@ -25,9 +25,10 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
-from mfgarchon.alg.numerical.coupling.base_mfg import allocate_state_arrays, resolve_backend
+from mfgarchon.alg.numerical.coupling.base_mfg import resolve_backend
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.coupling.iteration_state import allocate_iterate
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.backends import create_backend
@@ -118,7 +119,7 @@ class TestBackendSelectionIsResolvedOrRefused:
                 return np.zeros(shape).view(self._Arr)
 
         with pytest.raises(NotImplementedError, match="#1922"):
-            allocate_state_arrays(_OwnTypeOnly(), (3, 4), "T")
+            allocate_iterate(_OwnTypeOnly(), (3, 4), "T")
 
     def test_an_unwritable_backend_is_refused_at_allocation_with_a_reason(self):
         """The check lives at the allocation, not the constructor, and that is load-bearing.
@@ -142,16 +143,16 @@ class TestBackendSelectionIsResolvedOrRefused:
                 return a
 
         with pytest.raises(NotImplementedError, match="#1922"):
-            allocate_state_arrays(_Immutable(), (3, 4), "T")
+            allocate_iterate(_Immutable(), (3, 4), "T")
 
     def test_a_writable_backend_allocates_normally(self):
         """The control for the test above: same call, a backend that CAN be written."""
-        U, M = allocate_state_arrays(create_backend("numpy"), (3, 4), "T")
+        U, M = allocate_iterate(create_backend("numpy"), (3, 4), "T")
         U[0, 0] = 1.0
         assert U.shape == (3, 4)
         assert M.shape == (3, 4)
 
     def test_no_backend_allocates_numpy(self):
-        U, M = allocate_state_arrays(None, (3, 4), "T")
+        U, M = allocate_iterate(None, (3, 4), "T")
         assert isinstance(U, np.ndarray)
         assert isinstance(M, np.ndarray)

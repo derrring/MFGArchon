@@ -17,29 +17,29 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
-    allocate_state_arrays,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
+    damping_for_the_solve,
     refuse_a_capped_exit_in_a_coupled_solve,
-    refuse_retired_solve_keywords,
     resolve_backend,
 )
+from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
-    initialize_cold_start,
-    preserve_initial_condition,
-    preserve_terminal_condition,
     read_inner_solve_failures,
     refuse_convergence_over_failed_inner_solves,
     resolve_fp_drift_kwargs,
 )
+from .iteration_state import IterationState
 
 logger = get_logger(__name__)
 
@@ -80,12 +80,11 @@ class FixedPointIterator(BaseCouplingIterator):
         hjb_solver: HJB solver instance (must be trait-validated)
         fp_solver: FP solver instance (must be trait-validated)
         config: Configuration object (preferred modern approach)
-        use_anderson: Enable Anderson acceleration
-        anderson_depth: Anderson acceleration memory depth
-        anderson_beta: Anderson acceleration mixing parameter
+        damping: U's and M's damping, a `DampingPolicy` (#2997), Anderson acceleration on U among its options;
+            None is ``DampingPolicy.constant(0.5)``
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
-            torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
+            torch are refused at allocation, naming #1922 (see ``iteration_state.allocate_iterate``).
         volatility: Optional VOLATILITY override (float, array, or callable), forwarded to
             both the HJB and FP solvers (#1783) -- the SDE volatility Sigma, not the diffusion.
             - None: the solvers read problem.volatility, with the problem's kind (default)
@@ -106,32 +105,21 @@ class FixedPointIterator(BaseCouplingIterator):
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         config: MFGSolverConfig | None = None,
-        relaxation: float = 0.5,
-        relaxation_M: float | None = None,
-        use_anderson: bool = False,
-        anderson_depth: int = 5,
-        anderson_beta: float = 1.0,
+        damping: DampingPolicy | None = None,
         backend: str | BaseBackend | None = None,
         volatility: float | np.ndarray | Any | None = None,  # Phase 2.3
         drift_field: np.ndarray | Any | None = None,  # Phase 2.3
-        adaptive_relaxation: bool = False,
-        adaptive_relaxation_decay: float = 0.5,
-        adaptive_relaxation_min: float = 0.05,
-        relaxation_schedule: str = "constant",
-        relaxation_schedule_M: str | None = None,
         volatility_kind: str | None = None,
     ):
         """
         Args:
-            relaxation: Under-relaxation factor for U (omega_U) in (0, 1]. Default 0.5.
-            relaxation_M: Under-relaxation factor for M (omega_M). If None, uses `relaxation`
-                for both. Issue #719: Per-variable relaxation support.
-                Recommended for MFG: relaxation=1.0, relaxation_M=0.2 (U adapts fully,
-                M filters particle noise).
+            damping: How U and M are damped, one `DampingPolicy` per field (#2997); None is
+                ``DampingPolicy.constant(0.5)``. A solve's config that sets ``PicardConfig.damping`` decides it instead; a
+                damping given both here and in that config is refused at the solve.
         """
         super().__init__(problem)
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
-        # again in allocate_state_arrays, which also catches a name or bad type assigned
+        # again in allocate_iterate, at the start of each solve, which also catches a name or bad type assigned
         # to self.backend after construction (a public attribute -- see resolve_backend).
         self.backend = resolve_backend(backend, "FixedPointIterator")
         self.hjb_solver = hjb_solver
@@ -165,27 +153,8 @@ class FixedPointIterator(BaseCouplingIterator):
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator", problem=problem, override=volatility)
         assert_paired_solver_geometry(hjb_solver, fp_solver, "FixedPointIterator", problem=problem)
 
-        # Anderson acceleration support
-        self.use_anderson = use_anderson
-        self.anderson_accelerator = None
-        if use_anderson:
-            from mfgarchon.alg.numerical.coupling.anderson_acceleration import AndersonAccelerator
-
-            self.anderson_accelerator = AndersonAccelerator(depth=anderson_depth, beta=anderson_beta)
-
-        # Canonical relaxation state (config can override at solve() time)
-        # Issue #719: Per-variable relaxation support
-        self.relaxation = relaxation
-        self.relaxation_M = relaxation_M  # None = use `relaxation` for both
-
-        # Issue #583: Adaptive Picard relaxation
-        self.adaptive_relaxation = adaptive_relaxation
-        self.adaptive_relaxation_decay = adaptive_relaxation_decay
-        self.adaptive_relaxation_min = adaptive_relaxation_min
-
-        # Issue #719 Phase 2: Relaxation schedules
-        self.relaxation_schedule = relaxation_schedule
-        self.relaxation_schedule_M = relaxation_schedule_M
+        # The constructor's damping, or None for this route's default; a solve's config may set it instead (#2997).
+        self.damping = damping_argument(damping, "FixedPointIterator")
 
         # State arrays (initialized in solve)
         self.U: np.ndarray | None = None
@@ -198,33 +167,23 @@ class FixedPointIterator(BaseCouplingIterator):
         self.l2distm_rel: np.ndarray | None = None
         self.iterations_run = 0
 
-        # Warm start support
-        self._warm_start_U: np.ndarray | None = None
-        self._warm_start_M: np.ndarray | None = None
-
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-    def _get_initial_and_terminal_conditions(self, shape: tuple) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Retrieve initial density and terminal value function from problem.
+        # The iterate's owner (#2997), built on first use: the geometry it sizes the state from is checked there.
+        self._state: IterationState | None = None
 
-        Args:
-            shape: Spatial grid shape
-
-        Returns:
-            (M_initial, U_terminal): Initial density and terminal value function
-
-        The initial density is the problem's ``get_m_init()``, and the terminal value its ``terminal_value`` at that
-        density (#1642).
-        """
-        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
-        # The terminal datum's one owner (#1642 stage 2), at M_initial, which a cold start writes into every row but at
-        # a node the FP prescribes from level 1 on (#2991); each iteration re-reads it at the density its HJB solve uses.
-        return M_initial, self._reshape_to(
-            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__),
-            shape,
-        )
+    def _iteration_state(self) -> IterationState:
+        if self._state is None:
+            self._state = IterationState(
+                self.problem,
+                self.hjb_solver,
+                self.fp_solver,
+                reader=type(self).__name__,
+                terminal_binding=self._hjb_terminal_binding,
+                unstructured_mesh=True,
+            )
+        return self._state
 
     @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
@@ -236,7 +195,7 @@ class FixedPointIterator(BaseCouplingIterator):
         iteration_callback: IterationCallback | None = None,
         track_measure_field: bool = False,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
+        verbose: bool | None = None,
     ) -> SolverResult:
         """
         Solve coupled MFG system using fixed-point iteration.
@@ -254,8 +213,10 @@ class FixedPointIterator(BaseCouplingIterator):
                 GridMeasureField is attached to SolverResult.metadata["measure_field"].
                 Each snapshot stores (ParticleMeasure from M_k, U_k). Default False.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: Not read: ``problem.solve()`` passes ``verbose=`` here. A keyword this method no longer takes
-                (``RETIRED_SOLVE_KEYWORDS``) is refused by name.
+            verbose: Show the progress display; None decides by the terminal (``should_show_progress``). A config in
+                force governs progress instead, through its ``picard.verbose``, as its ``picard`` fields decide the budget
+                and the tolerances (#2922). ``problem.solve()`` always solves from a config, into whose ``picard.verbose``
+                it writes its own ``verbose=``, so there that is what governs.
 
         Returns:
             SolverResult object
@@ -269,7 +230,6 @@ class FixedPointIterator(BaseCouplingIterator):
             ...     return True  # Continue
             >>> result = solver.solve(iteration_callback=monitor)
         """
-        refuse_retired_solve_keywords(kwargs, "FixedPointIterator.solve")
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FixedPointIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
@@ -279,26 +239,14 @@ class FixedPointIterator(BaseCouplingIterator):
             final_max_iterations = solve_config.picard.max_iterations
             final_tolerance = solve_config.picard.tolerance
             final_absolute_tolerance = solve_config.picard.absolute_tolerance
-            final_damping_factor = solve_config.picard.relaxation
-            # Issue #719: Per-variable relaxation and schedules from config
-            # relaxation_M / relaxation_schedule_M use `or` because None means "follow U"
-            final_damping_factor_M = solve_config.picard.relaxation_M or self.relaxation_M
-            final_schedule = solve_config.picard.relaxation_schedule
-            final_schedule_M = solve_config.picard.relaxation_schedule_M or self.relaxation_schedule_M
-            final_adaptive_damping = solve_config.picard.adaptive_relaxation or self.adaptive_relaxation
             verbose = solve_config.picard.verbose
         else:
             final_max_iterations = max_iterations or 100
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
-            final_damping_factor = self.relaxation
-            final_damping_factor_M = self.relaxation_M  # Issue #719
-            final_schedule = self.relaxation_schedule  # Issue #719 Phase 2
-            final_schedule_M = self.relaxation_schedule_M
-            final_adaptive_damping = self.adaptive_relaxation
             from mfgarchon.utils.progress import should_show_progress
 
-            verbose = should_show_progress()
+            verbose = should_show_progress(verbose)
 
         # Issue #1081: Picard cannot converge below the inner Newton-solve floor. When the
         # HJB Newton tolerance is looser than the Picard tolerance, each inner solve injects
@@ -322,79 +270,23 @@ class FixedPointIterator(BaseCouplingIterator):
                 stacklevel=SOLVE_CALLER_STACKLEVEL,
             )
 
-        # Get problem dimensions - handle both old 1D and new nD interfaces
-        num_time_steps = self.problem.Nt + 1  # Renamed from Nt
-
-        # Detect problem shape using geometry API
+        num_time_steps = self.problem.Nt + 1
+        # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997): the grid's shape, or the
+        # pair's DOF count on an unstructured mesh (#1489 S6), checked against the geometry there.
+        state = self._iteration_state()
         from mfgarchon.geometry.base import CartesianGrid
 
-        # Issue #543 Phase 2: Replace hasattr with try/except
-        try:
-            geometry = self.problem.geometry
-        except AttributeError as e:
-            raise ValueError("Problem must have 'geometry' attribute") from e
-
-        if geometry is None:
-            raise ValueError("Problem geometry cannot be None")
-
-        from mfgarchon.geometry import GeometryType
-
-        is_grid = isinstance(geometry, CartesianGrid)
-        if is_grid:
-            shape = tuple(self.problem.geometry.get_grid_shape())
-        elif getattr(geometry, "geometry_type", None) == GeometryType.UNSTRUCTURED_MESH:
-            # Coupled-FEM chain seam 3: unstructured mesh -> flat per-DOF state.
-            # The FEM / meshless-Galerkin solvers assemble their own operators; the iterator only
-            # shuttles (Nt+1, N) arrays.
-            # Issue #1489 (S6): size the state on the SOLVER's DOF count, not num_spatial_points
-            # (= num_vertices). For P2 FEM n_dof = vertices + edges > num_vertices, so a
-            # (Nt+1, num_vertices) state mismatches the (Nt+1, n_dof) the solver returns -> an opaque
-            # broadcast ValueError deep in the damping step. Prefer the solver n_dof; a HJB/FP DOF mismatch was refused
-            # at construction (`assert_paired_solver_geometry`, #1489, #2775).
-            fp_n = getattr(self.fp_solver, "n_dof", None)
-            hjb_n = getattr(self.hjb_solver, "n_dof", None)
-            n = fp_n if fp_n is not None else (hjb_n if hjb_n is not None else int(self.problem.num_spatial_points))
-            shape = (int(n),)
-        else:
-            raise ValueError(
-                f"Problem geometry must be a CartesianGrid or unstructured mesh, got {type(geometry).__name__}"
-            )
+        is_grid = isinstance(self.problem.geometry, CartesianGrid)
         time_step = self.problem.dt
         # #2555: the change a sweep makes is measured in the problem's own spatial measure, the one
         # `initial_mass` is measured in, so the same relative accuracy stops at the same sweep in any
         # dimension and on any extent.
         integrate = self.problem.spatial_measure().integrate
 
-        # Issue #1285: M_initial / U_terminal are needed by both the warm-start
-        # and cold-start paths (HJB solve, FP solve, BC preservation).  Hoist
-        # unconditionally so the warm-start branch does not hit NameError.
-        # BlockIterator does the same (block_iterators.py:485).
-        M_initial, U_terminal = self._get_initial_and_terminal_conditions(shape)
-
-        # Initialize arrays (cold start or warm start)
-        warm_start = self.get_warm_start_data()
-        if warm_start is not None:
-            self.U, self.M = warm_start
-        else:
-            # Cold start initialization
-            # #2250: one owner for the allocation, so a backend that cannot carry a solve is
-            # refused HERE -- which is the only place that also sees a backend assigned after
-            # construction, as this repository's own acceleration example does.
-            self.U, self.M = allocate_state_arrays(self.backend, (num_time_steps, *shape), "FixedPointIterator")
-
-            if num_time_steps > 0:
-                # Set boundary conditions
-                if len(shape) == 1:
-                    self.M[0, :] = M_initial
-                    self.U[num_time_steps - 1, :] = U_terminal
-                else:
-                    self.M[0] = M_initial
-                    self.U[num_time_steps - 1] = U_terminal
-
-                # Initialize interior with boundary conditions
-                self.U, self.M = initialize_cold_start(
-                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
-                )
+        # #2250: the owner's allocation refuses a backend that cannot carry a solve; it reads self.backend here, so a
+        # backend assigned after construction, as this repository's own acceleration example does, is checked too.
+        self.U, self.M = state.start(self.backend)
+        M_initial = state.m0
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)
@@ -403,16 +295,9 @@ class FixedPointIterator(BaseCouplingIterator):
         self.l2distm_rel = np.ones(final_max_iterations)
         self.iterations_run = 0
 
-        # Issue #583: Adaptive damping state
-        _error_history_U: list[float] = []
-        _error_history_M: list[float] = []
-        _damping_history: list[dict] = []
-        _theta_U_initial = final_damping_factor
-        _theta_M_initial = final_damping_factor_M if final_damping_factor_M is not None else final_damping_factor
-
-        # Reset Anderson accelerator if using it
-        if self.anderson_accelerator is not None:
-            self.anderson_accelerator.reset()
+        # The damping this solve applies, with its own adapted bases, histories and Anderson memory (#2997)
+        policy = damping_for_the_solve("FixedPointIterator", self.damping, DampingPolicy.constant(0.5), solve_config)
+        run = DampingRun(policy)
 
         # Layer 2: Initialize MeasureField for sensitivity tracking (#956)
         measure_field = None
@@ -463,12 +348,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 M_old = self.M.copy()
                 # u(T) at the density this iteration's HJB solve uses (#1642 stage 2): the solve, the restore after a
                 # diverged step and the re-imposition after the update all read this one.
-                U_terminal = self._reshape_to(
-                    self.problem.terminal_value(
-                        M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__
-                    ),
-                    shape,
-                )
+                U_terminal = state.terminal_at(M_old[-1])
 
                 # Build iteration state for BC provider resolution (Issue #625)
                 # This state is passed to BCValueProvider.compute() for dynamic BCs
@@ -557,46 +437,15 @@ class FixedPointIterator(BaseCouplingIterator):
                 else:
                     M_new = self.fp_solver.solve_fp_system(M_initial, U_new)
 
-                # 3. Apply damping or Anderson acceleration
-                # Issue #719: Per-variable damping + Phase 2 schedule support
-                from .fixed_point_utils import compute_scheduled_damping
-
-                base_theta_M = final_damping_factor_M if final_damping_factor_M is not None else final_damping_factor
-                effective_theta_U = compute_scheduled_damping(
-                    iiter,
-                    final_damping_factor,
-                    final_schedule,
-                    self.adaptive_relaxation_min,
-                )
-                effective_theta_M = compute_scheduled_damping(
-                    iiter,
-                    base_theta_M,
-                    final_schedule_M if final_schedule_M is not None else final_schedule,
-                    self.adaptive_relaxation_min,
-                )
-
-                if self.use_anderson and self.anderson_accelerator is not None:
-                    # Anderson acceleration on U only (M uses standard damping)
-                    x_current_U = U_old.flatten()
-                    f_current_U = U_new.flatten()
-                    x_next_U = self.anderson_accelerator.update(x_current_U, f_current_U, method="type1")
-                    self.U = x_next_U.reshape(U_old.shape)
-
-                    # Standard damping for M, a convex combination, which keeps a mass the two densities share
-                    self.M = effective_theta_M * M_new + (1 - effective_theta_M) * M_old
-                else:
-                    # Standard damping for both - Issue #719: separate factors + schedules
-                    self.U = effective_theta_U * U_new + (1 - effective_theta_U) * U_old
-                    self.M = effective_theta_M * M_new + (1 - effective_theta_M) * M_old
+                # 3. Damping, per field, or Anderson acceleration on U (the policy, #2997)
+                self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
 
                 # self.M now carries a density this solve's FP produced, so the end-of-solve
                 # mass measurement has something real to measure -- including if a later
                 # iteration breaks before its own FP step (Issue #1717).
                 fp_output_available = True
 
-                # Preserve boundary conditions
-                self.M = preserve_initial_condition(self.M, M_initial)
-                self.U = preserve_terminal_condition(self.U, U_terminal)
+                self.U, self.M = state.write_back(self.U, self.M, U_terminal)
 
                 # Issue #1489 (S5): a FINITE but blown-up density (e.g. the pre-overflow divergence,
                 # total mass ~5.9e4 before it becomes inf) passes the isfinite check below and would be
@@ -655,7 +504,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 # "we stopped moving" with "we reached the fixed point" -- and at theta -> 0 the
                 # first happens without the second (Issue #1684 item 7, the same shape as item 6
                 # one level up). Measured on a 21-point no-flux fixture, iteration 2: the reported
-                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as relaxation went 1.0 -> 0.1, a factor
+                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as theta went 1.0 -> 0.1, a factor
                 # of 7.3 bought by the damping factor rather than by progress toward the fixed
                 # point. Convergence is a property of the map; damping is a property of the path.
                 metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
@@ -676,38 +525,9 @@ class FixedPointIterator(BaseCouplingIterator):
                     time=f"{iter_time:.1f}s",
                 )
 
-                # Issue #583: Adaptive damping — adjust based on error behavior
-                _error_history_U.append(self.l2distu_rel[iiter])
-                _error_history_M.append(self.l2distm_rel[iiter])
-
-                if final_adaptive_damping and iiter >= 1:
-                    from .fixed_point_utils import adapt_damping
-
-                    final_damping_factor, theta_M_adapted, warning_msg = adapt_damping(
-                        theta_U=final_damping_factor,
-                        theta_M=base_theta_M,
-                        error_history_U=_error_history_U,
-                        error_history_M=_error_history_M,
-                        theta_U_initial=_theta_U_initial,
-                        theta_M_initial=_theta_M_initial,
-                        decay=self.adaptive_relaxation_decay,
-                        min_damping=self.adaptive_relaxation_min,
-                    )
-                    # Update base M damping for next iteration
-                    if final_damping_factor_M is not None:
-                        final_damping_factor_M = theta_M_adapted
-                    # else: base_theta_M follows final_damping_factor via fallback
-
-                    if warning_msg:
-                        logger.warning(warning_msg)
-
-                    _damping_history.append(
-                        {
-                            "iteration": iiter + 1,
-                            "theta_U": final_damping_factor,
-                            "theta_M": theta_M_adapted,
-                        }
-                    )
+                # Issue #583: an adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
+                for message in run.observe(iiter, metrics):
+                    logger.warning(message)
 
                 # Issue #614: Invoke user callback if provided
                 if iteration_callback is not None:
@@ -767,27 +587,23 @@ class FixedPointIterator(BaseCouplingIterator):
             "inner_hjb_failures": list(inner_failures) if isinstance(inner_failures, tuple) else None,
             "l2distu_rel": self.l2distu_rel[: self.iterations_run],
             "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-            "anderson_used": self.use_anderson,
+            "anderson_used": policy.anderson is not None,
         }
 
         # Issue #719 Phase 2: Record schedule info
-        if final_schedule != "constant" or (final_schedule_M is not None and final_schedule_M != "constant"):
-            metadata["damping_schedule"] = {
-                "schedule_U": final_schedule,
-                "schedule_M": final_schedule_M if final_schedule_M is not None else final_schedule,
-            }
+        if policy.U.schedule != "constant" or policy.M.schedule != "constant":
+            metadata["damping_schedule"] = {"schedule_U": policy.U.schedule, "schedule_M": policy.M.schedule}
 
         # Layer 2: Attach MeasureField to metadata (#956)
         if measure_field is not None:
             metadata["measure_field"] = measure_field
 
-        if final_adaptive_damping:
-            _final_base_theta_M = final_damping_factor_M if final_damping_factor_M is not None else final_damping_factor
+        if policy.U.adaptive or policy.M.adaptive:
             metadata["adaptive_damping"] = {
                 "enabled": True,
-                "damping_history": _damping_history,
-                "final_theta_U": final_damping_factor,
-                "final_theta_M": _final_base_theta_M,
+                "damping_history": run.adapted,
+                "final_theta_U": run.base("U"),
+                "final_theta_M": run.base("M"),
             }
 
         # Issue #688: Validate final solver output
@@ -830,7 +646,7 @@ class FixedPointIterator(BaseCouplingIterator):
         if not fp_output_available:
             # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
             # density. Two ways to get here, and the number would be wrong differently in each:
-            # from a cold start, self.M is initialize_cold_start's construction -- M_initial in every
+            # from a cold start, self.M is IterationState.start's construction -- M_initial in every
             # row, except where the FP prescribes a value (#2991) -- so its mass describes that
             # construction, and with nothing prescribed measures as exactly 0.0, the best possible value
             # for a solve that never ran; from a warm start, self.M is some other solve's output,
@@ -918,22 +734,6 @@ class FixedPointIterator(BaseCouplingIterator):
             "l2distu_rel": self.l2distu_rel[: self.iterations_run] if self.l2distu_rel is not None else np.array([]),
             "l2distm_rel": self.l2distm_rel[: self.iterations_run] if self.l2distm_rel is not None else np.array([]),
         }
-
-    def set_warm_start_data(self, U_init: np.ndarray, M_init: np.ndarray) -> None:
-        """Set warm start initialization data."""
-        self._warm_start_U = U_init
-        self._warm_start_M = M_init
-
-    def get_warm_start_data(self) -> tuple[np.ndarray, np.ndarray] | None:
-        """Get warm start initialization data."""
-        if self._warm_start_U is not None and self._warm_start_M is not None:
-            return (self._warm_start_U, self._warm_start_M)
-        return None
-
-    def clear_warm_start_data(self) -> None:
-        """Clear warm start data."""
-        self._warm_start_U = None
-        self._warm_start_M = None
 
     def get_results(self) -> tuple[np.ndarray, np.ndarray]:
         """

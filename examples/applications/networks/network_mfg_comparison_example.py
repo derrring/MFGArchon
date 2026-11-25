@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.network_mfg_solver import create_network_mfg_solver
+from mfgarchon.config.damping import DampingPolicy
 
 # MFGarchon imports
 from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
@@ -166,7 +167,7 @@ class NetworkMFGBenchmark:
                 "solver_type": "fixed_point",
                 "hjb_solver_type": "explicit",
                 "fp_solver_type": "explicit",
-                "relaxation": 0.5,
+                "damping": DampingPolicy.constant(0.5),
                 "hjb_kwargs": {"cfl_factor": 0.3},
                 "fp_kwargs": {"cfl_factor": 0.3},
             },
@@ -174,7 +175,7 @@ class NetworkMFGBenchmark:
                 "solver_type": "fixed_point",
                 "hjb_solver_type": "implicit",
                 "fp_solver_type": "implicit",
-                "relaxation": 0.7,
+                "damping": DampingPolicy.constant(0.7),
                 "hjb_kwargs": {"max_iterations": 50},
                 "fp_kwargs": {"max_iterations": 50},
             },
@@ -182,7 +183,7 @@ class NetworkMFGBenchmark:
                 "solver_type": "flow",
                 "hjb_solver_type": "explicit",
                 "fp_solver_type": "flow",
-                "relaxation": 0.6,
+                "damping": DampingPolicy.constant(0.6),
                 "hjb_kwargs": {"cfl_factor": 0.3},
             },
         }

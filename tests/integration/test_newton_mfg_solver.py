@@ -37,6 +37,7 @@ from mfgarchon import Conditions, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -103,7 +104,8 @@ class TestNewtonMFGSolverBasic:
             newton_max_iterations=5,
         )
 
-        U, M, info = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
+        U, M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         # Basic shape checks
         expected_shape = (simple_1d_problem.Nt + 1, 21)
@@ -112,7 +114,6 @@ class TestNewtonMFGSolverBasic:
 
         # Result contains convergence info
         assert "converged" in info
-        assert "total_iterations" in info
         assert "picard_iterations" in info
         assert "newton_iterations" in info
 
@@ -128,7 +129,8 @@ class TestNewtonMFGSolverBasic:
             newton_max_iterations=10,
         )
 
-        _U, M, _info = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        _U, M, _info = newton_result.U, newton_result.M, newton_result.metadata
 
         # Allow small numerical noise (same tolerance as other MFG tests)
         assert np.all(M >= -1e-6), f"M has negative values: min={np.min(M)}"
@@ -159,7 +161,8 @@ class TestNewtonMFGSolverHybrid:
             newton_max_iterations=10,
         )
 
-        _U, _M, info = newton_solver.solve(max_iterations=20, tolerance=1e-6, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=20, tolerance=1e-6, verbose=False)
+        _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         assert info["picard_iterations"] == 5, f"Picard iterations: {info['picard_iterations']}"
         assert len(info.get("picard_residuals", [])) > 0, "No Picard residuals recorded"
@@ -174,11 +177,12 @@ class TestNewtonMFGSolverHybrid:
             hjb_solver,
             fp_solver,
             picard_warmup=5,
-            picard_damping=0.5,
+            damping=DampingPolicy.constant(0.5),
             newton_max_iterations=5,
         )
 
-        _U, _M, info = newton_solver.solve(max_iterations=12, tolerance=1e-6, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=12, tolerance=1e-6, verbose=False)
+        _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         picard_residuals = info.get("picard_residuals", [])
         if len(picard_residuals) >= 2:
@@ -201,7 +205,8 @@ class TestNewtonMFGSolverHybrid:
             newton_max_iterations=15,
         )
 
-        U, M, info = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=15, tolerance=1e-4, verbose=False)
+        U, M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         assert info["picard_iterations"] == 0
         assert np.all(np.isfinite(U))
@@ -244,14 +249,12 @@ class TestNewtonVsPicard:
 
         # Picard solver
         picard_solver = FixedPointIterator(
-            comparison_problem,
-            hjb_solver=hjb_picard,
-            fp_solver=fp_picard,
-            relaxation=0.5,
+            comparison_problem, hjb_solver=hjb_picard, fp_solver=fp_picard, damping=DampingPolicy.constant(0.5)
         )
 
         # Solve
-        U_newton, M_newton, _info_newton = newton_solver.solve(max_iterations=20, tolerance=1e-5, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=20, tolerance=1e-5, verbose=False)
+        U_newton, M_newton, _info_newton = newton_result.U, newton_result.M, newton_result.metadata
         result_picard = picard_solver.solve(max_iterations=50, tolerance=1e-5, verbose=False)
         U_picard, M_picard = result_picard[:2]
 
@@ -290,10 +293,10 @@ class TestNewtonMFGSolverParameters:
         )
 
         # Tight relative and absolute bounds; absolute_tolerance replaces the deprecated newton_tolerance (#2565).
-        _U, _M, info = newton_solver.solve(max_iterations=25, tolerance=1e-8, absolute_tolerance=1e-8, verbose=False)
+        newton_result = newton_solver.solve(max_iterations=25, tolerance=1e-8, absolute_tolerance=1e-8, verbose=False)
 
         # Should complete (converged or max iterations)
-        assert info["total_iterations"] > 0
+        assert newton_result.iterations > 0
 
 
 @pytest.mark.fast
@@ -307,8 +310,16 @@ def test_one_newton_step_reduces_the_mfg_residual():
     agreement-to-5%-of-Picard tolerates a shortened step that still converges while a
     residual-reduction bound does not.
 
-    The 0.25 threshold is not slack: the measured ratio is 0.16, and a step-scale sweep passes only
-    for s in roughly [0.75, 1.13] -- it tolerates +-15-25% of step-length error and no more.
+    The 0.25 threshold is not slack: from the cold start (#2997) the measured ratio is 0.019, a halved step leaves
+    0.498, and a step-scale sweep passes only for s in roughly [0.75, 1.24] -- it tolerates -25% to +24% of
+    step-length error and no more.
+
+    The terminal cost is (x - 0.3)^2 and not 0 on purpose. With u_T = 0 the cold start's U is identically 0, and the
+    FP's upwind drift -grad U is not differentiable at grad U = 0, so the start sits on that switch at every node. One
+    step then leaves 0.28 whatever the Jacobian's finite-difference step (1e-5, 1e-7 and 1e-9 all give 0.2799), and
+    the linear model's error along the step is first order on the FP rows (e/t = 4.28e-2 from t = 0.1 to 0.001)
+    against second order on the HJB rows (1.8e-6 to 1.8e-8); with (x - 0.3)^2 the FP rows are second order too
+    (3.8e-4 to 3.8e-6). A start on the switch makes the pin measure the kink, not the step.
 
     Note `line_search=False` here: the backtracking path is therefore NOT under test, and deleting
     it leaves all four automatic Newton tests green.
@@ -322,7 +333,7 @@ def test_one_newton_step_reduces_the_mfg_residual():
         ),
         conditions=Conditions(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x[0]) - 0.5) ** 2).squeeze(),
-            u_terminal=lambda x: 0.0,
+            u_terminal=lambda x: (np.asarray(x[0], dtype=float) - 0.3) ** 2,
             T=0.1,
         ),
         Nt=2,
@@ -336,11 +347,11 @@ def test_one_newton_step_reduces_the_mfg_residual():
         line_search=False,
     )
 
-    initial_state = solver.mfg_residual.get_initial_guess()
-    initial_u, initial_m = solver.mfg_residual.unpack_state(initial_state)
+    initial_u, initial_m = solver.mfg_residual.state.start()
     initial_residual = solver.mfg_residual.compute_residual_norm(initial_u, initial_m)
 
-    U, M, info = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
+    newton_result = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
+    U, M, info = newton_result.U, newton_result.M, newton_result.metadata
     final_residual = solver.mfg_residual.compute_residual_norm(U, M)
     # On the geometry's own measure (#2145). `M.sum(axis=1)` is the counting measure, which gives
     # both wall nodes a full cell on an endpoint-inclusive grid -- and at Nx_points=5 the two wall
@@ -378,8 +389,8 @@ class TestMFGResidualComputation:
 
         residual_computer = MFGResidual(residual_test_problem, hjb_solver, fp_solver)
 
-        # Get initial guess
-        x0 = residual_computer.get_initial_guess()
+        # The owner's cold start (#2997), packed
+        x0 = residual_computer.pack_state(*residual_computer.state.start())
 
         # Compute residual
         F = residual_computer.residual_function(x0)
@@ -394,14 +405,13 @@ class TestMFGResidualComputation:
         # This also cross-pins the flat `residual_function` interface (the one the Newton solve
         # calls) against `compute_residual`, which nothing else does.
         #
-        # Measured at HEAD: ||F|| = 4.98e-05 at the fixed point, against 14.06 at the initial guess
-        # this same test builds. The 1e-3 threshold leaves ~20x margin over the measured value while
-        # sitting 14000x below the un-converged norm.
+        # Measured at the #2997 stage 1a branch: ||F|| = 7.8e-07 at the fixed point, against 1.50 at the cold start
+        # this same test builds. The 1e-3 threshold sits about 1300x above the first and 1500x below the second.
         picard = FixedPointIterator(
             residual_test_problem,
             HJBFDMSolver(residual_test_problem),
             FPFDMSolver(residual_test_problem),
-            relaxation=0.5,
+            damping=DampingPolicy.constant(0.5),
         ).solve(max_iterations=80, tolerance=1e-6)
 
         residual_at_fixed_point = residual_computer.residual_function(residual_computer.pack_state(picard.U, picard.M))

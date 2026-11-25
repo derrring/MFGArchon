@@ -35,31 +35,29 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
-
-# Import shared iteration utilities (Issue #630, migrated #985)
-from mfgarchon.utils.iteration.schedules import (
-    get_schedule,
-)
+from mfgarchon.config.damping import DampingPolicy
+from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
-    allocate_state_arrays,
     assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    damping_argument,
+    damping_for_the_solve,
     refuse_a_capped_exit_in_a_coupled_solve,
-    refuse_retired_solve_keywords,
     resolve_backend,
 )
+from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
-    initialize_cold_start,
-    preserve_initial_condition,
-    preserve_terminal_condition,
     resolve_fp_drift_kwargs,
 )
+from .iteration_state import IterationState
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -95,26 +93,20 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         problem: MFG problem definition
         hjb_solver: HJB solver instance (must be trait-validated)
         fp_solver: FP solver instance (must be trait-validated)
-        learning_rate_schedule: Schedule type or callable
-            - "harmonic": 1/(k+1) - standard fictitious play (default)
-            - "sqrt": 1/sqrt(k+1) - faster initial progress
-            - "polynomial": 1/(k+1)^0.6 - balanced rate
-            - Callable[[int], float]: Custom schedule function
         config: Configuration object (optional)
-        initial_learning_rate: Learning rate for first iteration (default 1.0)
-        min_learning_rate: Floor on the learning rate (default 0.0, no floor). A positive floor
-            turns the schedule into constant damping once the schedule falls below it, and
-            constant damping is not fictitious play: the convergence results are for the
-            unfloored 1/(n+1) average (Cardaliaguet-Hadikhanloo 2017, (2.2) with Theorem 2.1
-            for the second-order system, (3.3) with Theorem 3.1 for the first-order one). On
-            #1914's sigma=0 fixture, measured at 0f937601, a 0.01 floor left the fixed-point
-            residual at 2.45e-01 after 300 sweeps, against 4.67e-04 unfloored (#2415).
-        damp_value_function: Whether to also damp U (default False)
-            - False: Pure fictitious play (damp only M)
-            - True: Hybrid approach (damp both U and M)
+        damping: U's and M's damping, a `DampingPolicy` (#2997). None is ``DampingPolicy.fictitious_play()``: M averaged
+            with alpha_k = 1/(k+1) and U the best response taken whole. ``fictitious_play(alpha0, schedule, floor=,
+            damp_value_function=)`` sets the first rate, the schedule ("harmonic", "sqrt", "polynomial" or a callable),
+            a floor, and whether U is averaged too. A positive floor turns the schedule into constant damping once the
+            schedule falls below it, and constant damping is not fictitious play: the convergence results are for the
+            unfloored 1/(n+1) average (Cardaliaguet-Hadikhanloo 2017, (2.2) with Theorem 2.1 for the second-order
+            system, (3.3) with Theorem 3.1 for the first-order one). On #1914's sigma=0 fixture, measured at 0f937601, a
+            0.01 floor left the fixed-point residual at 2.45e-01 after 300 sweeps, against 4.67e-04 unfloored (#2415).
+            A solve's config that sets ``PicardConfig.damping`` decides it instead; a damping given both here and in that
+            config is refused at the solve.
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
-            torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
+            torch are refused at allocation, naming #1922 (see ``iteration_state.allocate_iterate``).
         volatility: Optional volatility override -- the SDE volatility, not a diffusion
         volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
@@ -126,7 +118,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         ...     problem=problem,
         ...     hjb_solver=hjb_solver,
         ...     fp_solver=fp_solver,
-        ...     learning_rate_schedule="harmonic",
         ... )
         >>> result = solver.solve(max_iterations=100, tolerance=1e-4)
     """
@@ -136,11 +127,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         problem: MFGProblem,
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
-        learning_rate_schedule: str | Callable[[int], float] = "harmonic",
         config: MFGSolverConfig | None = None,
-        initial_learning_rate: float = 1.0,
-        min_learning_rate: float = 0.0,
-        damp_value_function: bool = False,
+        damping: DampingPolicy | None = None,
         backend: str | BaseBackend | None = None,
         volatility: float | np.ndarray | Any | None = None,
         drift_field: np.ndarray | Any | None = None,
@@ -149,7 +137,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         super().__init__(problem)
         assert_bc_providers_resolvable(self.problem, "FictitiousPlayIterator")
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
-        # again in allocate_state_arrays, which also catches a name or bad type assigned
+        # again in allocate_iterate, at the start of each solve, which also catches a name or bad type assigned
         # to self.backend after construction (a public attribute -- see resolve_backend).
         self.backend = resolve_backend(backend, "FictitiousPlayIterator")
         self.hjb_solver = hjb_solver
@@ -160,14 +148,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         assert_paired_solver_geometry(hjb_solver, fp_solver, "FictitiousPlayIterator", problem=problem)
         self.config = config
 
-        # Fictitious play parameters
-        self.initial_learning_rate = initial_learning_rate
-        self.min_learning_rate = min_learning_rate
-        self.damp_value_function = damp_value_function
-
-        # Set up learning rate schedule (Issue #630: use shared schedules)
-        self._lr_schedule_fn = get_schedule(learning_rate_schedule)
-        self._lr_schedule_name = learning_rate_schedule if isinstance(learning_rate_schedule, str) else "custom"
+        # The constructor's damping, or None for fictitious play's own; a solve's config may set it instead (#2997).
+        self.damping = damping_argument(damping, "FictitiousPlayIterator")
 
         # PDE coefficient overrides
         self.volatility = volatility
@@ -186,51 +168,22 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.learning_rate_history: list[float] = []
         self.iterations_run = 0
 
-        # Warm start support
-        self._warm_start_U: np.ndarray | None = None
-        self._warm_start_M: np.ndarray | None = None
-
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-    def get_learning_rate(self, iteration: int) -> float:
-        """
-        Compute learning rate for given iteration.
+        # The iterate's owner (#2997), built on first use: the geometry it sizes the state from is checked there.
+        self._state: IterationState | None = None
 
-        Args:
-            iteration: Current iteration number (0-indexed)
-
-        Returns:
-            Learning rate alpha in (0, 1]
-        """
-        # Apply schedule
-        alpha = self._lr_schedule_fn(iteration)
-
-        # Scale by initial rate and clamp to minimum
-        alpha = self.initial_learning_rate * alpha
-        alpha = max(alpha, self.min_learning_rate)
-
-        return alpha
-
-    def _get_initial_and_terminal_conditions(self, shape: tuple) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Retrieve the initial density and the terminal value function from the problem.
-
-        The initial density is the problem's ``get_m_init()``; the terminal value is its one owner,
-        ``problem.terminal_value``, at that density, which a cold start writes into every row but at a node the FP
-        prescribes from level 1 on (#1642 stage 2, #2991).
-
-        Args:
-            shape: Spatial grid shape
-
-        Returns:
-            (M_initial, U_terminal): Initial density and terminal value function
-        """
-        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
-        U_terminal = np.asarray(
-            self.problem.terminal_value(M_initial, binding=self._hjb_terminal_binding, reader=type(self).__name__)
-        )
-        return M_initial, self._reshape_to(U_terminal, shape)
+    def _iteration_state(self) -> IterationState:
+        if self._state is None:
+            self._state = IterationState(
+                self.problem,
+                self.hjb_solver,
+                self.fp_solver,
+                reader=type(self).__name__,
+                terminal_binding=self._hjb_terminal_binding,
+            )
+        return self._state
 
     @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
@@ -241,7 +194,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         *,
         iteration_callback: Callable[[int, np.ndarray, np.ndarray, float, float], bool | None] | None = None,
         absolute_tolerance: float | None = None,
-        **kwargs: Any,
+        verbose: bool = True,
     ) -> SolverResult:
         """
         Solve coupled MFG system using Fictitious Play.
@@ -254,13 +207,12 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 Signature: (iteration, U, M, error_U, error_M) -> bool | None
                 Return True to stop early, None/False to continue.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
-            **kwargs: ``verbose`` (default True). A keyword this method no longer takes (``RETIRED_SOLVE_KEYWORDS``)
-                is refused by name.
+            verbose: Show progress (default True). A config in force governs progress instead, through its
+                ``picard.verbose``, as its ``picard`` fields decide the budget and the tolerances (#2922).
 
         Returns:
             SolverResult object
         """
-        refuse_retired_solve_keywords(kwargs, "FictitiousPlayIterator.solve")
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "FictitiousPlayIterator.solve")
         # Use provided config or fall back to instance config
         solve_config = config or self.config
@@ -275,58 +227,16 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             final_max_iterations = max_iterations or 100
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
-            verbose = kwargs.get("verbose", True)
 
-        # Get problem dimensions
-        num_time_steps = self.problem.Nt + 1
-
-        # Detect problem shape using geometry API
-        from mfgarchon.geometry.base import CartesianGrid
-
-        # Issue #543 Phase 2: Replace hasattr with try/except
-        try:
-            geometry = self.problem.geometry
-        except AttributeError as e:
-            raise ValueError("Problem must have 'geometry' attribute") from e
-
-        if geometry is None:
-            raise ValueError("Problem geometry cannot be None")
-
-        if not isinstance(geometry, CartesianGrid):
-            raise ValueError("Problem geometry must be CartesianGrid")
-
-        shape = tuple(self.problem.geometry.get_grid_shape())
+        # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997), which refuses a geometry
+        # other than a CartesianGrid for this route.
+        state = self._iteration_state()
         time_step = self.problem.dt
         integrate = self.problem.spatial_measure().integrate  # #2555
 
-        # Issue #1285: M_initial / U_terminal are needed by both the warm-start
-        # and cold-start paths (HJB solve, FP solve, BC preservation).  Hoist
-        # unconditionally so the warm-start branch does not hit NameError.
-        # BlockIterator does the same (block_iterators.py:485).
-        M_initial, U_terminal = self._get_initial_and_terminal_conditions(shape)
-
-        # Initialize arrays (cold start or warm start)
-        warm_start = self.get_warm_start_data()
-        if warm_start is not None:
-            self.U, self.M = warm_start
-        else:
-            # Cold start initialization
-            # #2250: one owner for the allocation, so a backend that cannot carry a solve is
-            # refused HERE -- which is the only place that also sees a backend assigned after
-            # construction, as this repository's own acceleration example does.
-            self.U, self.M = allocate_state_arrays(self.backend, (num_time_steps, *shape), "FictitiousPlayIterator")
-
-            if num_time_steps > 0:
-                if len(shape) == 1:
-                    self.M[0, :] = M_initial
-                    self.U[num_time_steps - 1, :] = U_terminal
-                else:
-                    self.M[0] = M_initial
-                    self.U[num_time_steps - 1] = U_terminal
-
-                self.U, self.M = initialize_cold_start(
-                    self.U, self.M, M_initial, U_terminal, num_time_steps, fp_solver=self.fp_solver
-                )
+        # #2250: the owner's allocation refuses a backend that cannot carry a solve, reading self.backend here.
+        self.U, self.M = state.start(self.backend)
+        M_initial = state.m0
 
         # Initialize error tracking
         self.l2distu_abs = np.ones(final_max_iterations)
@@ -334,6 +244,10 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.l2distu_rel = np.ones(final_max_iterations)
         self.l2distm_rel = np.ones(final_max_iterations)
         self.learning_rate_history = []
+        policy = damping_for_the_solve(
+            "FictitiousPlayIterator", self.damping, DampingPolicy.fictitious_play(), solve_config
+        )
+        run = DampingRun(policy)
         self.iterations_run = 0
 
         # Main Fictitious Play iteration loop
@@ -356,12 +270,10 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             M_old = self.M.copy()
             # u(T) at the density this iteration's HJB solve uses (#1642 stage 2), for the solve, the restore and the
             # re-imposition alike.
-            U_terminal = np.asarray(
-                self.problem.terminal_value(M_old[-1], binding=self._hjb_terminal_binding, reader=type(self).__name__)
-            ).reshape(shape)
+            U_terminal = state.terminal_at(M_old[-1])
 
             # Compute learning rate for this iteration
-            alpha = self.get_learning_rate(k)
+            alpha = run.theta("M", k)
             self.learning_rate_history.append(alpha)
 
             # 1. Solve HJB backward — progress handled via context routing (#934)
@@ -415,21 +327,11 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 effective_drift = self.drift_field if self.drift_field is not None else U_new
                 M_candidate = self.fp_solver.solve_fp_system(M_initial, effective_drift, **fp_kwargs)
 
-            # 3. Fictitious Play update: average M with decaying learning rate
-            # This is the key difference from fixed-point iteration
-            # m_{n+1} = (1 - alpha_n) * m_n + alpha_n * m_candidate
-            self.M = (1 - alpha) * M_old + alpha * M_candidate
+            # 3. Fictitious Play update: m_{n+1} = (1 - alpha_n) m_n + alpha_n m_candidate, and U the best response
+            # taken whole unless the policy averages it too (the policy, #2997)
+            self.U, self.M = run.update(k, U_old, U_new, M_old, M_candidate)
 
-            # Optionally damp U as well (hybrid mode)
-            if self.damp_value_function:
-                self.U = (1 - alpha) * U_old + alpha * U_new
-            else:
-                # Pure fictitious play: use full best response for U
-                self.U = U_new
-
-            # Preserve boundary conditions
-            self.M = preserve_initial_condition(self.M, M_initial)
-            self.U = preserve_terminal_condition(self.U, U_terminal)
+            self.U, self.M = state.write_back(self.U, self.M, U_terminal)
 
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import sweep_change
@@ -441,6 +343,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # on #1914's sigma=0 fixture (#2415). This is
             # #1684 item 7, which FixedPointIterator already measures this way.
             metrics = sweep_change(U_new, U_old, M_candidate, M_old, integrate, time_step)
+            # An adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
+            for message in run.observe(k, metrics):
+                logger.warning(message)
             self.l2distu_abs[k] = metrics["l2distu_abs"]
             self.l2distu_rel[k] = metrics["l2distu_rel"]
             self.l2distm_abs[k] = metrics["l2distm_abs"]
@@ -493,9 +398,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 "convergence_reason": convergence_reason,
                 "l2distu_rel": self.l2distu_rel[: self.iterations_run],
                 "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-                "learning_rate_schedule": self._lr_schedule_name,
+                "damping": policy,
                 "learning_rate_history": self.learning_rate_history,
-                "damp_value_function": self.damp_value_function,
             },
         )
 
@@ -515,22 +419,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             "l2distm_rel": self.l2distm_rel[: self.iterations_run] if self.l2distm_rel is not None else np.array([]),
             "learning_rate_history": self.learning_rate_history,
         }
-
-    def set_warm_start_data(self, U_init: np.ndarray, M_init: np.ndarray) -> None:
-        """Set warm start initialization data."""
-        self._warm_start_U = U_init
-        self._warm_start_M = M_init
-
-    def get_warm_start_data(self) -> tuple[np.ndarray, np.ndarray] | None:
-        """Get warm start initialization data."""
-        if self._warm_start_U is not None and self._warm_start_M is not None:
-            return (self._warm_start_U, self._warm_start_M)
-        return None
-
-    def clear_warm_start_data(self) -> None:
-        """Clear warm start data."""
-        self._warm_start_U = None
-        self._warm_start_M = None
 
     def get_results(self) -> tuple[np.ndarray, np.ndarray]:
         """

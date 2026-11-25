@@ -20,7 +20,7 @@ H = SeparableHamiltonian(
     coupling_dm=lambda m: 0.1 * np.ones_like(m),
 )
 # At Model's default volatility 0.1 this problem does not converge under the default Picard
-# settings; MFGSolverConfig(picard=PicardConfig(relaxation=0.2)) makes it converge there.
+# settings; MFGSolverConfig(picard=PicardConfig(damping=DampingPolicy.constant(0.2))) makes it converge there.
 model = Model(hamiltonian=H, volatility=0.2)
 
 # 2. The data: terminal value, initial density and horizon

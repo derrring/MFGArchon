@@ -15,6 +15,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.invariants import mass_drift
@@ -269,9 +270,9 @@ class TestWhatTheRefusalDoesToCallers:
         def _solve_blowing_up(integrate):
             blowing = _fresh()
             blowing.geometry.integrate = integrate
-            return FixedPointIterator(blowing, HJBFDMSolver(blowing), _BlowsUp(blowing), relaxation=1.0).solve(
-                max_iterations=2, tolerance=1e-6
-            )
+            return FixedPointIterator(
+                blowing, HJBFDMSolver(blowing), _BlowsUp(blowing), damping=DampingPolicy.constant(1.0)
+            ).solve(max_iterations=2, tolerance=1e-6)
 
         def _not_implemented(_field):
             raise NotImplementedError("this geometry has no measure")

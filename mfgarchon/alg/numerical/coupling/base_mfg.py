@@ -10,6 +10,8 @@ import numpy as np
 # Issue #2207: the builders below COMPOSE the problem's source rather than receiving one,
 # so this module is the single consumer of the #1361 composition owner for every
 # BaseCouplingIterator subclass. Runtime, not TYPE_CHECKING -- it is called, not annotated.
+from mfgarchon.config.damping import DampingPolicy
+
 from .source_composition import compose_fp_source, compose_hjb_source
 
 if TYPE_CHECKING:
@@ -18,6 +20,8 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
     from mfgarchon.types.solver_types import SolverReturnTuple
+
+    from .iteration_state import IterationState
 else:
     pass
 
@@ -54,24 +58,31 @@ def refuse_a_capped_exit_in_a_coupled_solve(fp_solvers: Any, where: str) -> None
             )
 
 
-#: The keywords a coupling iterator's ``solve()`` no longer takes, with what replaces each. ``FixedPointIterator.solve``
-#: and ``FictitiousPlayIterator.solve`` keep ``**kwargs`` -- ``problem.solve()`` passes ``verbose=`` through the first,
-#: and the second reads ``verbose`` from it -- so these would be accepted in silence; they are refused by name instead.
-RETIRED_SOLVE_KEYWORDS: dict[str, str] = {
-    "return_tuple": "solve() returns a SolverResult",
-    "Niter_max": "pass max_iterations=",
-    "max_picard_iterations": "pass max_iterations=",
-    "l2errBoundPicard": "pass tolerance=",
-    "picard_tolerance": "pass tolerance=",
-}
+def damping_argument(damping: Any, route: str) -> DampingPolicy | None:
+    """A route's ``damping=`` as given: a `DampingPolicy`, or None for the route's own default; anything else refused."""
+    if damping is not None and not isinstance(damping, DampingPolicy):
+        raise TypeError(
+            f"{route}: damping= takes a DampingPolicy (mfgarchon.config), such as DampingPolicy.constant(0.5), "
+            f"got {type(damping).__name__} {damping!r} (#2997)"
+        )
+    return damping
 
 
-def refuse_retired_solve_keywords(kwargs: dict[str, Any], where: str) -> None:
-    """Refuse a keyword `RETIRED_SOLVE_KEYWORDS` names, saying what replaces it."""
-    retired = [name for name in kwargs if name in RETIRED_SOLVE_KEYWORDS]
-    if retired:
-        name = retired[0]
-        raise TypeError(f"{where}() no longer takes {name}=: {RETIRED_SOLVE_KEYWORDS[name]}.")
+def damping_for_the_solve(
+    route: str, given: DampingPolicy | None, default: DampingPolicy, solve_config: Any
+) -> DampingPolicy:
+    """The damping a solve applies (the user's ruling of 2026-11-24, #2997): the config's ``PicardConfig.damping`` when it
+    sets one, else the route's own, its constructor's ``damping=`` or ``default``. A damping set in both places is refused
+    by name, since either choice would drop the other in silence."""
+    from_config = None if solve_config is None else solve_config.picard.damping
+    if from_config is not None and given is not None:
+        raise ValueError(
+            f"{route}: damping is given twice, to the constructor (damping=) and in the config the solve reads "
+            "(PicardConfig.damping); give it in one place (#2997)"
+        )
+    if from_config is not None:
+        return from_config
+    return given if given is not None else default
 
 
 def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
@@ -326,13 +337,13 @@ def resolve_backend(backend: Any, iterator_name: str) -> Any:
     both spellings are accepted.
 
     Called twice, deliberately: once at construction (fail fast on an obviously bad value)
-    and again inside ``allocate_state_arrays`` (catch a NAME or a bad type assigned to
+    and again inside ``iteration_state.allocate_iterate`` (catch a NAME or a bad type assigned to
     ``self.backend`` after construction, since a plain public attribute admits that and a
     constructor check cannot see it). Idempotent on an already-resolved backend, so the
     second call is not a second decision.
 
     Whether the allocated array can actually be WRITTEN is a separate question, checked at
-    the allocation site by ``allocate_state_arrays``.
+    the allocation site by ``iteration_state.allocate_iterate``.
     """
     if backend is None:
         return None
@@ -348,54 +359,6 @@ def resolve_backend(backend: Any, iterator_name: str) -> Any:
         f"{iterator_name}: backend must be a backend name (str), a BaseBackend instance, or "
         f"None; got {type(backend).__name__}. Refs #2250."
     )
-
-
-def allocate_state_arrays(backend: Any, shape: tuple[int, ...], iterator_name: str) -> tuple[Any, Any]:
-    """Cold-start ``(U, M)``, refusing a backend whose arrays the coupling loop cannot write.
-
-    The loop assigns into ``U`` and ``M`` by index throughout. A JAX array is immutable and a
-    torch tensor rejects a numpy right-hand side, so allocating from those backends produced
-    arrays that failed later, deep in the solve, with a message about the array rather than
-    about the configuration: ``JAX arrays are immutable and do not support in-place item
-    assignment``, ``can't assign a numpy.ndarray to a torch.DoubleTensor``.
-
-    So allocate, then probe one write, with the value type the loop uses. Measured on
-    ``(3, 4)``: assigning a numpy row gives ok / TypeError / TypeError for numpy / jax / torch,
-    while self-assignment gives ok / TypeError / **ok** -- torch passes a symmetric probe and
-    fails the real one. This sits at the allocation rather than in the constructor
-    deliberately: ``self.backend`` is a public attribute and the repository's own
-    example assigns to it AFTER construction, so a constructor-only check would let that path
-    through -- and, once the allocation branch is present, silently ignore it.
-
-    ``backend`` is re-resolved here, not assumed already resolved. A NAME assigned to
-    ``self.backend`` after construction reaches this call unresolved, and calling
-    ``backend.zeros(shape)`` on a string reproduces #2250's exact original signature
-    (``AttributeError: 'str' object has no attribute 'zeros'``) -- measured before this
-    line was added. ``resolve_backend`` is idempotent on an object, so the ordinary
-    resolved-at-construction path costs one ``isinstance`` check.
-
-    #1922 is the capability ("selecting a backend is not an operation this package supports").
-    """
-    backend = resolve_backend(backend, iterator_name)
-    if backend is None:
-        return np.zeros(shape), np.zeros(shape)
-    U = backend.zeros(shape)
-    M = backend.zeros(shape)
-    try:
-        # Assign a NUMPY row, because that is what the loop does -- not `U[0] = U[0]`, which is
-        # symmetric and cannot see an asymmetric defect: measured, a torch tensor accepts its own
-        # element back (probe reads "writable") and rejects the numpy array the solve actually
-        # hands it. jax refuses both, so a self-assignment probe passes torch and fails jax while
-        # both are equally unusable.
-        U[0] = np.zeros(shape[1:])
-    except (TypeError, ValueError) as exc:
-        raise NotImplementedError(
-            f"{iterator_name}: backend {type(backend).__name__} allocates arrays the coupling "
-            f"loop cannot write into ({type(exc).__name__}: {exc}). The loop assigns U and M by "
-            f"index at every step, so this backend cannot carry a solve. Pass backend=None or a "
-            f"NumPy backend. Backend selection is tracked in #1922; this refusal is #2250."
-        ) from exc
-    return U, M
 
 
 def matches_problem_sigma(problem: Any, volatility: Any, volatility_kind: str | None = None) -> bool:
@@ -840,6 +803,11 @@ class BaseCouplingIterator(ABC):
             Tuple of (U, M) solution arrays
         """
 
+    def _iteration_state(self) -> IterationState | None:
+        """The route's iterate owner (#2997), or None for a route that holds none yet: GraphMFGSolver,
+        RegimeSwitchingIterator and MultiPopulationIterator take one in stage 1b."""
+        return None
+
     def set_warm_start_data(
         self,
         previous_solution: tuple[np.ndarray, np.ndarray],
@@ -849,10 +817,16 @@ class BaseCouplingIterator(ABC):
         Set warm start data from a previous solution.
 
         Args:
-            previous_solution: Tuple of (U, M) arrays from previous solve
+            previous_solution: Tuple of (U, M) arrays from previous solve, each of the iterate's shape
+                ``(Nt + 1, *shape)``; copied.
             metadata: Optional metadata about the previous solution
         """
         U_prev, M_prev = previous_solution
+        state = self._iteration_state()
+        if state is not None:
+            state.set_warm_start(U_prev, M_prev)
+            self.warm_start_data = {"metadata": metadata or {}}
+            return
 
         # Validate dimensions with enhanced error messages
         from mfgarchon.utils.exceptions import validate_array_dimensions
@@ -888,18 +862,24 @@ class BaseCouplingIterator(ABC):
         Returns:
             Tuple of (U, M) arrays if warm start data exists, None otherwise
         """
+        state = self._iteration_state()
+        if state is not None:
+            return state.warm_start()
         if self.warm_start_data is None:
             return None
         return self.warm_start_data["U_prev"], self.warm_start_data["M_prev"]
 
     def clear_warm_start_data(self) -> None:
         """Clear any stored warm start data."""
+        state = self._iteration_state()
+        if state is not None:
+            state.clear_warm_start()
         self.warm_start_data = None
 
     @property
     def has_warm_start_data(self) -> bool:
         """Check if warm start data is available."""
-        return self.warm_start_data is not None
+        return self.get_warm_start_data() is not None
 
     @property
     def is_solved(self) -> bool:

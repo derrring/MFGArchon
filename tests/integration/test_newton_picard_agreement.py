@@ -22,6 +22,7 @@ from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
 from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -46,10 +47,7 @@ def _small_problem():
 
 def _picard_solution(problem):
     picard = FixedPointIterator(
-        problem,
-        hjb_solver=HJBFDMSolver(problem),
-        fp_solver=FPFDMSolver(problem),
-        relaxation=0.5,
+        problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), damping=DampingPolicy.constant(0.5)
     )
     result = picard.solve(max_iterations=80, tolerance=1e-6, verbose=False)
     return result[0], result[1]
@@ -96,7 +94,8 @@ def test_newton_matches_picard_small():
         newton_max_iterations=3,
         line_search=True,
     )
-    U_newton, M_newton, _info = newton.solve(max_iterations=8, tolerance=1e-5, verbose=False)
+    newton_result = newton.solve(max_iterations=8, tolerance=1e-5, verbose=False)
+    U_newton, M_newton, _info = newton_result.U, newton_result.M, newton_result.metadata
 
     u_diff = np.linalg.norm(U_newton - U_picard) / (np.linalg.norm(U_picard) + 1e-10)
     m_diff = np.linalg.norm(M_newton - M_picard) / (np.linalg.norm(M_picard) + 1e-10)

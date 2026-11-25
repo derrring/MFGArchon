@@ -44,6 +44,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from mfgarchon.alg.numerical.coupling.network_mfg_solver import create_simple_network_solver
+from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
 from mfgarchon.geometry.graph.network_geometry import BaseNetworkGeometry, NetworkData, NetworkType
 from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
@@ -266,7 +267,7 @@ def main():
 
     # Solve using network MFG solver
     logger.info("\n[2/3] Solving MFG system...")
-    solver = create_simple_network_solver(problem, scheme="implicit", relaxation=0.6)
+    solver = create_simple_network_solver(problem, scheme="implicit", damping=DampingPolicy.constant(0.6))
 
     # solve() returns (U, M, iterations, error_U_history, error_M_history)
     U, M, iterations, error_U_hist, error_M_hist = solver.solve(max_iterations=100, tolerance=1e-6)

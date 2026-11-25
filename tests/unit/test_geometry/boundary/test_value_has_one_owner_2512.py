@@ -196,6 +196,7 @@ COEFFICIENT_READS_ALLOWED = {
     ("mfgarchon/alg/numerical/adjoint/operators.py", "build_diffusion_matrix_1d"): "a stencil's alpha",
     ("mfgarchon/alg/numerical/coupling/anderson_acceleration.py", "_compute_aa_step_qr"): "Anderson's damping",
     ("mfgarchon/alg/numerical/coupling/anderson_acceleration.py", "update"): "Anderson's damping",
+    ("mfgarchon/config/damping.py", "_check_mixing"): "Anderson's mixing, AndersonOptions' own check",
     ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "__repr__"): "a diffusivity",
     ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "_build_system_matrices"): "a diffusivity",
     ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "get_cfl_number"): "a diffusivity",

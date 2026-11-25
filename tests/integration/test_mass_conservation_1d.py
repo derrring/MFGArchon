@@ -20,6 +20,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIter
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+from mfgarchon.config.damping import AndersonOptions, DampingPolicy, FieldDamping
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -269,13 +270,16 @@ class TestMassConservation1D:
             problem,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
-            use_anderson=True,
-            anderson_depth=5,
+            damping=DampingPolicy(
+                U=FieldDamping(theta=0.5),
+                M=FieldDamping(theta=0.5),
+                anderson=AndersonOptions(depth=5, beta=1.0),
+            ),
             backend=None,
         )
 
         # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
-        result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
+        result = mfg_solver.solve(max_iterations=50, tolerance=1e-4)
 
         grid = problem.geometry
         Nt_points = problem.Nt + 1
@@ -343,13 +347,16 @@ class TestMassConservation1D:
                 problem,
                 hjb_solver=hjb_solver,
                 fp_solver=fp_solver,
-                use_anderson=True,
-                anderson_depth=5,
+                damping=DampingPolicy(
+                    U=FieldDamping(theta=0.5),
+                    M=FieldDamping(theta=0.5),
+                    anderson=AndersonOptions(depth=5, beta=1.0),
+                ),
                 backend=None,
             )
 
             # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
-            result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
+            result = mfg_solver.solve(max_iterations=50, tolerance=1e-4)
 
             grid = problem.geometry
             Nt_points = problem.Nt + 1
