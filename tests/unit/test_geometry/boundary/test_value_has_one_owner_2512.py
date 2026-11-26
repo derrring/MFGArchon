@@ -270,6 +270,7 @@ def test_a_planted_coefficient_reader_is_found(package_copy, planted):
 CALLABLE_CALLS_ALLOWED = {
     # Not a boundary value: a callable probe of an accessor, a getter or an operator.
     ("mfgarchon/alg/numerical/adjoint/verification.py", "verify_duality"): "non-boundary: L_hjb, L_fp_adjoint",
+    ("mfgarchon/alg/numerical/coupling/coupled_result.py", "_override"): "non-boundary: a method",
     ("mfgarchon/alg/numerical/coupling/fixed_point_utils.py", "read_inner_solve_failures"): "non-boundary: a method",
     ("mfgarchon/alg/numerical/coupling/multi_population_iterator.py", "__init__"): "non-boundary: a population getter",
     ("mfgarchon/core/mfg_problem.py", "spatial_measure"): "non-boundary: get_spacing",

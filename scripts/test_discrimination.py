@@ -205,13 +205,13 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="mass_drift_reported_as_deviation_from_one",
-        path="mfgarchon/alg/numerical/coupling/fixed_point_iterator.py",
-        old="                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))",
-        new="                mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))  # MUTATED: deviation from 1, not drift from the initial mass",
+        path="mfgarchon/alg/numerical/coupling/coupled_result.py",
+        old="    return float(np.max(np.abs(mass / float(mass[0]) - 1.0)))",
+        new="    return float(np.max(np.abs(mass - 1.0)))  # MUTATED: deviation from 1, not drift from the initial mass",
         owner=(
             "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, "
-            "`|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, "
-            "which is the only site that writes the field. "
+            "`|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: `coupled_result`'s "
+            "`_drift`, which every coupled route's result reads (#2997 stage 1c). "
             "The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, "
             "so `mass(0)` is whatever the caller handed in and the two expressions are different "
             "numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves "

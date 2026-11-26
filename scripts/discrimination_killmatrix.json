@@ -9225,9 +9225,6 @@
     "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_m_error_is_the_map_residual_not_the_damped_step": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_split_says_which_field_failed": [
       "optimal_control_sign"
     ],
@@ -14962,7 +14959,7 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_centered]",
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
-      "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
+      "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: `coupled_result`'s `_drift`, which every coupled route's result reads (#2997 stage 1c). The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
       "seconds": 248.4,
       "status": "ok",
       "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, volatility=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (x[0] - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
@@ -15210,7 +15207,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3234,
+      "kill_count": 3233,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -17548,7 +17545,6 @@
         "tests/unit/test_alg/test_source_term_convention_2019.py::test_the_source_actually_moves_the_answer[FPFVMSolver]",
         "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_a_static_m_with_a_moving_u_does_not_converge",
         "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_m_error_is_the_map_residual_not_the_damped_step",
-        "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields",
         "tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_split_says_which_field_failed",
         "tests/unit/test_alg/test_true_adjoint.py::TestBuildLinearizedOperator1D::test_boundary_rows_zero",
         "tests/unit/test_alg/test_true_adjoint.py::TestBuildLinearizedOperator1D::test_returns_sparse_matrix",

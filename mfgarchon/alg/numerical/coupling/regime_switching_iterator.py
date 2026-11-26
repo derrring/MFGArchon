@@ -25,7 +25,6 @@ Design constraints (from Dev Plan Rev 4):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -53,6 +52,7 @@ from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
 from .iteration_state import IterationState
 
@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+    from mfgarchon.utils.solver_result import SolverResult
 
 logger = get_logger(__name__)
 
@@ -106,34 +107,6 @@ def _fp_boundary_conditions(fp_solver: Any) -> Any:
     if resolved is not None:
         return resolved
     return fp_solver.get_boundary_conditions()
-
-
-@dataclass
-class RegimeSwitchingResult:
-    """Result container for regime-switching MFG."""
-
-    values: list[NDArray]
-    """Value functions v^k for each regime, each of the regime's iterate shape (Nt+1, *shape)."""
-
-    densities: list[NDArray]
-    """Density fields m^k for each regime, each of the regime's iterate shape (Nt+1, *shape)."""
-
-    converged: bool
-    """Whether the Picard iteration converged."""
-
-    iterations: int
-    """Number of Picard iterations performed."""
-
-    error_history: list[float] = field(default_factory=list)
-    """Per sweep, the largest relative L2 change over regimes and fields (inf when not comparable)."""
-
-    regime_config: RegimeSwitchingConfig | None = None
-    """The regime switching configuration used."""
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the solvers'
-    latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
-    ``verdict_reads_inner_failures`` writes both for every coupler (#2644)."""
 
 
 class RegimeSwitchingIterator(BaseCouplingIterator):
@@ -251,7 +224,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # integrating factor relies on (non-negative off-diagonals, zero row sums).
         self._assert_outflow_horizon_representable(K, regime_config.transition_matrix)
         self._assert_fp_boundary_data_is_homogeneous(K, regime_config.transition_matrix)
-        self._last_result: RegimeSwitchingResult | None = None
+        self._last_result: SolverResult | None = None
 
     def _assert_fp_boundary_data_is_homogeneous(self, K: int, Q: NDArray) -> None:
         """Refuse FP boundary data the integrating factor would silently rescale.
@@ -453,13 +426,17 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         return N_k * factor.reshape((-1,) + (1,) * (N_k.ndim - 1))
 
     @verdict_reads_inner_failures(lambda self: list(self._hjb), fp_solvers_of=lambda self: list(self._fp))
-    def solve(self) -> RegimeSwitchingResult:
+    def solve(self) -> SolverResult:
         """Run Picard iteration over K coupled regime systems.
 
         Returns
         -------
-        RegimeSwitchingResult
-            Contains value functions, densities, convergence info.
+        SolverResult
+            U and M of shape (K, Nt+1, *shape), regime k's at ``U[k]`` and ``M[k]``, and ``components`` K (#2997). Its
+            ``mass_conservation_error`` is the total mass's drift, since Q moves mass between regimes; each regime's own
+            is in ``metadata["per_component"]``. On a diverged HJB, each regime the sweep solved holds that HJB output
+            as its U, the diverged regime's with its NaN kept (#1718); the later regimes' U, and every M, are the
+            iterate after the last finite sweep.
         """
         refuse_a_capped_exit_in_a_coupled_solve(self._fp, "RegimeSwitchingIterator.solve")
         K = self._regime.n_regimes
@@ -499,6 +476,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             )
             for k in range(K)
         ]
+        refuse_components_off_one_grid(
+            self._problems,
+            [state.solution_shape for state in states],
+            reader="RegimeSwitchingIterator",
+            component="regime",
+        )
         Us_full, Ms = [], []
         for state in states:
             U_k, M_k = state.start()
@@ -507,7 +490,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # One damping run per regime: each regime's fields adapt on that regime's own history (#2997 rulings 5 and 9).
         runs = [DampingRun(self.damping) for state in states]
 
-        error_history = []
+        record = SweepRecord(K)
+        fp_output_available = False
+        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
+        reason = "Maximum iterations reached"
         integrates = [p.spatial_measure().integrate for p in self._problems]
         dts = [p.dt for p in self._problems]
 
@@ -567,15 +553,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     # iterate for the unsolved regimes: a real value function of the right shape,
                     # and the honest reading of "this regime did not advance".
                     values = [Us_new[j] if j <= k else Us_full[j] for j in range(K)]
-                    self._last_result = RegimeSwitchingResult(
-                        values=values,
-                        densities=list(Ms),
-                        converged=False,
-                        iterations=iteration + 1,
-                        error_history=error_history,
-                        regime_config=self._regime,
-                    )
-                    return self._last_result
+                    record.diverged()
+                    return self._result(values, list(Ms), record, False, "diverged_nan", fp_output_available)
 
             # --- FP step: solve K forward equations with mass transfer ---
             for k in range(K):
@@ -632,8 +611,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(K)
             ]
             worst = worst_sweep_change(per_regime, "regime")
-            error = max(worst["l2distu_rel"], worst["l2distm_rel"])
-            converged, _ = check_convergence_criteria(
+            record.measured(per_regime)
+            converged, reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -650,36 +629,45 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 for message in runs[k].observe(iteration, per_regime[k]):
                     logger.warning(f"RegimeSwitchingIterator[regime {k}]: {message}")
 
-            error_history.append(error)
-
             Us_full = Us_new
             Ms = Ms_new
+            fp_output_available = True
 
             if converged:
-                self._last_result = RegimeSwitchingResult(
-                    values=Us_full,
-                    densities=Ms,
-                    converged=True,
-                    iterations=iteration + 1,
-                    error_history=error_history,
-                    regime_config=self._regime,
-                )
-                return self._last_result
+                return self._result(Us_full, Ms, record, True, reason, fp_output_available)
 
-        self._last_result = RegimeSwitchingResult(
-            values=Us_full,
-            densities=Ms,
-            converged=False,
-            iterations=self._max_iter,
-            error_history=error_history,
-            regime_config=self._regime,
+        return self._result(Us_full, Ms, record, False, reason, fp_output_available)
+
+    def _result(
+        self,
+        values: list[NDArray],
+        densities: list[NDArray],
+        record: SweepRecord,
+        converged: bool,
+        reason: str,
+        fp_output_available: bool,
+    ) -> SolverResult:
+        names = self._regime.regime_names
+        self._last_result = coupled_result(
+            U=values,
+            M=densities,
+            record=record,
+            converged=converged,
+            reason=reason,
+            solver_name="RegimeSwitchingIterator",
+            damping=self.damping,
+            problems=self._problems,
+            fp_solvers=self._fp,
+            fp_output_available=fp_output_available,
+            component_names=[str(k) for k in range(len(values))] if names is None else list(names),
+            invariant=MassInvariant.TOTAL,
         )
         return self._last_result
 
     def get_results(self) -> tuple:
-        """Get computed solution arrays (required by BaseCouplingIterator)."""
+        """The last solve's U and M, every regime's, of shape (K, Nt+1, *shape) (required by BaseCouplingIterator)."""
         if self._last_result is not None:
-            return self._last_result.values[0], self._last_result.densities[0]
+            return self._last_result.U, self._last_result.M
         raise RuntimeError("No solution computed yet. Call solve() first.")
 
     def validate_solution(self) -> dict[str, Any]:

@@ -581,7 +581,7 @@ def test_regime_switching_takes_the_velocity_route_from_its_first_sweep():
             max_iterations=6,
             tolerance=1e-12,
         )
-        return np.asarray([np.asarray(m) for m in _quietly(iterator.solve).densities])
+        return np.asarray(_quietly(iterator.solve).M)
 
     np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
 
@@ -601,7 +601,7 @@ def test_a_graph_solve_takes_the_velocity_route_on_each_node():
             max_iterations=6,
             tolerance=1e-12,
         )
-        return np.asarray([np.asarray(m) for m in _quietly(solver.solve).densities])
+        return np.asarray(_quietly(solver.solve).M)
 
     np.testing.assert_allclose(run("own"), run("library"), rtol=0, atol=1e-12)
 

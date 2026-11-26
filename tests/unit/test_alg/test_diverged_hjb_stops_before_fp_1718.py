@@ -231,12 +231,13 @@ class _LateDivergingHJB(HJBFDMSolver):
 def test_a_late_divergence_does_not_publish_the_previous_sweeps_errors():
     """The #1672 shape: the best-looking number attached to the worst solve.
 
-    `errors` is assigned in the convergence block at the END of a sweep, so a divergence at sweep
-    >= 1 breaks out with the PREVIOUS completed sweep's values still bound. Measured before the
-    clearing line existed: `converged=False, iterations=2, errors=[2.2204e-16, 2.2204e-16]` -- a
-    converged-looking per-population error for a sweep in which nothing was measured and no FP ran.
+    A divergence at sweep >= 1 ends the solve after a completed sweep, whose change is the last finite one. Measured
+    before the old `errors` list was cleared at a diverged stop: `converged=False, iterations=2, errors=[2.2204e-16,
+    2.2204e-16]` -- a converged-looking per-population error for a sweep in which nothing was measured and no FP ran.
+    The result now records every sweep run, the diverged one as NaN (#2997), so its final change is NaN: the last entry
+    of every history, the top level's and each population's.
 
-    This test exists because that clearing was UNPINNED: removing the line left the whole
+    This test exists because the old clearing was UNPINNED: removing the line left the whole
     CI-marker suite green (2741 passed), while the PR claimed each fix had been verified by
     reverting it. It had not been, for this one.
     """
@@ -247,9 +248,13 @@ def test_a_late_divergence_does_not_publish_the_previous_sweeps_errors():
 
     assert result.converged is False
     assert result.iterations >= 2, "the fixture must reach a sweep beyond the first"
-    assert result.errors == [], (
-        f"a diverged sweep published errors={result.errors} -- the previous completed sweep's "
-        f"values, beside iterations={result.iterations} counting the sweep that measured nothing"
+    assert len(result.error_history_U) == result.iterations
+    assert np.isfinite(result.error_history_U[0]), "the fixture: the first sweep is measured"
+    finals = [result.final_error_U, result.final_error_M]
+    finals += [own[key][-1] for own in result.metadata["per_component"] for key in ("l2distu_rel", "l2distm_rel")]
+    assert all(np.isnan(final) for final in finals), (
+        f"a diverged sweep published {finals} as its change -- the previous completed sweep's values, beside "
+        f"iterations={result.iterations} counting the sweep that measured nothing"
     )
 
 
@@ -267,21 +272,21 @@ def test_regime_switching_stops_and_attributes():
     )
     result = _run_to_completion(lambda: it.solve())
     assert result.converged is False
-    assert not np.all(np.isfinite(result.values[0]))
+    assert not np.all(np.isfinite(result.U[0]))
     (
-        np.testing.assert_array_equal(np.asarray(result.values[0])[-1], np.full(_NX, 4.0)),
+        np.testing.assert_array_equal(np.asarray(result.U[0])[-1], np.full(_NX, 4.0)),
         ("regime 0's terminal row must be restored"),
     )
     # The regimes AFTER the diverged one were never solved. `Us_new` initialises to None, so a
     # result that published it would hand a consumer None where the contract promises an
-    # (Nt+1, Nx) array -- and a consumer looping over `values` to FIND the NaN is exactly what
+    # (Nt+1, Nx) array -- and a consumer looping over the regimes to FIND the NaN is exactly what
     # publishing the diverged iterate is for.
-    assert result.values[1] is not None, "unsolved regimes must not be published as None"
-    assert np.asarray(result.values[1]).ndim == 2, (
-        f"unsolved regime published with shape {np.asarray(result.values[1]).shape}, against a documented (Nt+1, Nx)"
+    assert result.U[1] is not None, "unsolved regimes must not be published as None"
+    assert np.asarray(result.U[1]).ndim == 2, (
+        f"unsolved regime published with shape {np.asarray(result.U[1]).shape}, against a documented (Nt+1, Nx)"
     )
-    assert np.asarray(result.values[1])[-1].shape == (_NX,)
-    for j, d in enumerate(result.densities):
+    assert np.asarray(result.U[1])[-1].shape == (_NX,)
+    for j, d in enumerate(result.M):
         assert np.asarray(d).ndim == 2, f"density {j} published 1-D against a documented (Nt+1, Nx)"
 
 
@@ -311,6 +316,7 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
         solver = NewtonMFGSolver(problem, _DivergingHJB(problem), FPFDMSolver(problem), picard_warmup=2)
         newton_result = _run_to_completion(lambda: solver.solve(max_iterations=3, tolerance=1e-8, verbose=False))
         U, info = newton_result.U, newton_result.metadata
+        converged = newton_result.converged
     finally:
         FPFDMSolver.solve_fp_system = original
 
@@ -318,7 +324,7 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
         f"the FP solver was handed a non-finite value function ({sum(calls)} of {len(calls)} "
         f"calls). The warmup guard stopped the warmup loop but not the solve."
     )
-    assert info["converged"] is False
+    assert converged is False
     assert info["convergence_reason"] == "diverged_nan"
     assert not np.all(np.isfinite(U)), "the diverged iterate must still be published"
     # The assertion the other call-site tests carry and this one was missing -- at the very site
@@ -365,15 +371,34 @@ def test_graph_solver_stops_and_publishes_a_usable_result():
     )
     result = _run_to_completion(lambda: it.solve())
     assert result.converged is False
-    assert not np.all(np.isfinite(result.values[0])), "node 0's diverged iterate must be published"
-    np.testing.assert_array_equal(np.asarray(result.values[0])[-1], np.full(_NX, 4.0))
+    assert not np.all(np.isfinite(result.U[0])), "node 0's diverged iterate must be published"
+    np.testing.assert_array_equal(np.asarray(result.U[0])[-1], np.full(_NX, 4.0))
     # Nodes 1 and 2 were never solved this sweep. `Us_new` initialises to np.empty(0), so
-    # publishing it unchanged made `result.values[j][-1]` raise IndexError for every unsolved
-    # node -- crashing the very consumer that loops over values to find the NaN.
+    # publishing it unchanged made each unsolved node's last row raise IndexError -- crashing the
+    # very consumer that loops over the nodes to find the NaN.
     for j in (1, 2):
-        arr = np.asarray(result.values[j])
+        arr = np.asarray(result.U[j])
         assert arr.ndim == 2, f"unsolved node {j} published with shape {arr.shape}, against a documented (Nt+1, Nx)"
         assert arr.shape[0] > 0, f"unsolved node {j} published a zero-length array"
         arr[-1]  # must not raise
-    for j, d in enumerate(result.densities):
+    for j, d in enumerate(result.M):
         assert np.asarray(d).ndim == 2, f"density {j} published 1-D against a documented (Nt+1, Nx)"
+
+
+def test_a_nan_final_error_is_not_read_as_small():
+    """A diverged sweep's change is NaN (#2997 stage 1c), and a reader of a result's final error takes it as it stands.
+    `max_error` is NaN when either final error is: the builtin `max` dropped a NaN that came second. `compare_to` ranks it
+    below a measured error: every comparison with NaN is False, which called a diverged solve and a converged one a
+    tie."""
+    from mfgarchon.utils.solver_result import SolverResult
+
+    measured = np.array([0.1, 0.2])
+    shape = (2, 3)
+    diverged = SolverResult(
+        np.zeros(shape), np.zeros(shape), 2, measured, np.array([0.1, np.nan]), solver_name="diverged"
+    )
+    finite = SolverResult(np.zeros(shape), np.zeros(shape), 2, measured, measured, solver_name="finite")
+    assert np.isnan(diverged.max_error), diverged.max_error
+    assert diverged.compare_to(finite).more_accurate_solver == "finite"
+    assert finite.compare_to(diverged).more_accurate_solver == "finite"
+    assert finite.compare_to(finite).more_accurate_solver == "tie", "the control: equal errors are a tie"

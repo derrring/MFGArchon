@@ -893,7 +893,7 @@ def _regime_switching_cell():
             """
             per_regime = []
             masses = []
-            for k, dens in enumerate(result.densities):
+            for k, dens in enumerate(result.M):
                 M = _apply_mutation(np.asarray(dens, dtype=float))
                 mass = np.asarray(problems[0].geometry.integrate(M), dtype=float)  # #2145
                 masses.append(mass)

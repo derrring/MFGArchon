@@ -192,7 +192,7 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         tolerance=1e-6,
         damping=DampingPolicy.constant(0.5),
     ).solve()
-    assert np.array_equal(np.asarray(graph.densities[0])[0], planted)
+    assert np.array_equal(np.asarray(graph.M[0])[0], planted)
     regimes = [planted_problem(11, 5), planted_problem(11, 5)]
     regime = RegimeSwitchingIterator(
         regimes,
@@ -203,7 +203,7 @@ def test_level_0_is_the_callers_density_at_a_dirichlet_wall_on_both_routes_and_t
         tolerance=1e-6,
         damping=DampingPolicy.constant(0.5),
     ).solve()
-    assert all(np.array_equal(np.asarray(density)[0], planted) for density in regime.densities)
+    assert all(np.array_equal(np.asarray(density)[0], planted) for density in regime.M)
     small = planted_problem(5, 2)
     newton_result = NewtonMFGSolver(
         small, HJBFDMSolver(small), FPFDMSolver(small), picard_warmup=0, newton_max_iterations=1

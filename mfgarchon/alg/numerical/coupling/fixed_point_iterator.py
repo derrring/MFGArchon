@@ -19,8 +19,6 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import SOLVE_CALLER_STACKLEVEL, verdict_reads_inner_failures
 from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
-from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
@@ -31,6 +29,7 @@ from .base_mfg import (
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_backend,
 )
+from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
@@ -49,6 +48,7 @@ if TYPE_CHECKING:
     from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.config import MFGSolverConfig
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
 # Type alias for iteration callback (Issue #614)
 # Signature: callback(iteration, U, M, error_U, error_M) -> bool
@@ -166,6 +166,7 @@ class FixedPointIterator(BaseCouplingIterator):
         self.l2distu_rel: np.ndarray | None = None
         self.l2distm_rel: np.ndarray | None = None
         self.iterations_run = 0
+        self._record: SweepRecord | None = None
 
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
@@ -288,12 +289,14 @@ class FixedPointIterator(BaseCouplingIterator):
         self.U, self.M = state.start(self.backend)
         M_initial = state.m0
 
-        # Initialize error tracking
-        self.l2distu_abs = np.ones(final_max_iterations)
-        self.l2distm_abs = np.ones(final_max_iterations)
-        self.l2distu_rel = np.ones(final_max_iterations)
-        self.l2distm_rel = np.ones(final_max_iterations)
+        # Initialize error tracking. NaN until a sweep measures its change: a sweep that diverged before it was measured
+        # has no change, and a 1.0 there read as one (#2997).
+        self.l2distu_abs = np.full(final_max_iterations, np.nan)
+        self.l2distm_abs = np.full(final_max_iterations, np.nan)
+        self.l2distu_rel = np.full(final_max_iterations, np.nan)
+        self.l2distm_rel = np.full(final_max_iterations, np.nan)
         self.iterations_run = 0
+        record = self._record = SweepRecord(1)
 
         # The damping this solve applies, with its own adapted bases, histories and Anderson memory (#2997)
         policy = damping_for_the_solve("FixedPointIterator", self.damping, DampingPolicy.constant(0.5), solve_config)
@@ -401,6 +404,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     self.U = diverged
                     convergence_reason = "diverged_nan"
                     self.iterations_run = iiter + 1
+                    record.diverged()
                     break
 
                 # 2. Solve FP forward with new U (transient subtask)
@@ -464,6 +468,7 @@ class FixedPointIterator(BaseCouplingIterator):
                         m_mass / (m0_mass + 1e-300),
                     )
                     self.iterations_run = iiter + 1
+                    record.diverged()
                     break
 
                 # Issue #688: Early termination on NaN/Inf (runtime safety). It says which array is non-finite and
@@ -483,6 +488,7 @@ class FixedPointIterator(BaseCouplingIterator):
                         float(np.nanmin(M_old)),
                     )
                     self.iterations_run = iiter + 1
+                    record.diverged()
                     break
 
                 # Layer 2: Record MeasureField snapshot (#956), after the guards above, which end a
@@ -512,6 +518,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 self.l2distu_rel[iiter] = metrics["l2distu_rel"]
                 self.l2distm_abs[iiter] = metrics["l2distm_abs"]
                 self.l2distm_rel[iiter] = metrics["l2distm_rel"]
+                record.measured([metrics])
 
                 iter_time = time.time() - iter_start
                 self.iterations_run = iiter + 1
@@ -580,15 +587,8 @@ class FixedPointIterator(BaseCouplingIterator):
                 if criteria_met:
                     break
 
-        # Build metadata
-        metadata: dict[str, Any] = {
-            "convergence_reason": convergence_reason,
-            # The final sweep's non-converged HJB time steps (#1878); None when the solver does not track them.
-            "inner_hjb_failures": list(inner_failures) if isinstance(inner_failures, tuple) else None,
-            "l2distu_rel": self.l2distu_rel[: self.iterations_run],
-            "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-            "anderson_used": policy.anderson is not None,
-        }
+        # FixedPoint's own metadata; the fields every route has are the result owner's (#2997)
+        metadata: dict[str, Any] = {"anderson_used": policy.anderson is not None}
 
         # Issue #719 Phase 2: Record schedule info
         if policy.U.schedule != "constant" or policy.M.schedule != "constant":
@@ -627,99 +627,21 @@ class FixedPointIterator(BaseCouplingIterator):
                 "; ".join(str(i) for i in output_validation.issues),
             )
 
-        # Issue #1672: the field defaulted to 0.0 and nothing on this path wrote it, so every
-        # coupled solve reported perfect mass conservation -- including the FDM_CENTERED case whose
-        # mass reached 6378 (Issue #1671). Measured here, where M and the geometry are both in hand,
-        # through the geometry's own integral rather than a second hand-rolled dx, so the measure
-        # has one owner.
-        #
-        # Measured as DRIFT from the initial mass, not as deviation from 1.0. A ratio is what the
-        # field's name claims to quantify, and 1.0 is not a property of the Fokker-Planck equation --
-        # it conserves whatever it started with, and what that is belongs to the caller.
-        #
-        # The ratio is invariant to a UNIFORM rescaling of the measure and not to this one: the end
-        # nodes hold half a cell each (#2145), so `sum(M)` and the grid's integral weight the walls
-        # differently, and at a no-flux wall the density piles up exactly there. Reporting the ratio
-        # of the counting sum is how a solve reports perfect conservation of a quantity nobody asked
-        # about.
-        mass_conservation_error: float | None
-        if not fp_output_available:
-            # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
-            # density. Two ways to get here, and the number would be wrong differently in each:
-            # from a cold start, self.M is IterationState.start's construction -- M_initial in every
-            # row, except where the FP prescribes a value (#2991) -- so its mass describes that
-            # construction, and with nothing prescribed measures as exactly 0.0, the best possible value
-            # for a solve that never ran; from a warm start, self.M is some other solve's output,
-            # so any number describes that solve rather than this one. Neither is a measurement
-            # of this solve, and the None sentinel exists so that cannot masquerade as one.
-            #
-            # The condition is "no FP output yet", not "the solve diverged". A divergence after a
-            # completed FP step DOES have a real density to measure, and reporting None there
-            # would be this defect's mirror image -- suppressing a genuine number instead of
-            # fabricating a zero.
-            mass_conservation_error = None
-        else:
-            # #2188: a solver whose state holds information the grid density discards (e.g. how
-            # many particles are still alive) gets to report its own number instead of the
-            # generic one below, which cannot see it. None means "nothing solver-specific";
-            # every non-particle solver's default returns that, so this changes nothing for them.
-            solver_override = self.fp_solver.mass_conservation_error_override() if self.fp_solver is not None else None
-            if solver_override is not None:
-                mass_conservation_error = solver_override
-            else:
-                # #2157: the gate used to be `geometry.volume_element()` -- a different method from the
-                # one that supplies the number. Only `TensorProductGrid` had it, and only
-                # `TensorProductGrid` has `integrate`, so it was a spelling of "is this a
-                # TensorProductGrid" that would have refused any future geometry able to integrate.
-                # It now asks the question the comment always claimed to ask.
-                integrate = getattr(self.problem.geometry, "integrate", None)
-                if not callable(integrate):
-                    # No measure, so no total mass, so no conservation error to report. None says "not
-                    # measured"; 0.0 would be a valid measurement and must not stand in for one.
-                    #
-                    # The `np.sum(M)` fallback that used to sit here went with the old gate. Reaching it
-                    # required a geometry with a volume element and no integral, which no class in this
-                    # package has -- and it was the counting measure #2145 removed everywhere else.
-                    mass_conservation_error = None
-                else:
-                    try:
-                        mass_per_step = np.asarray(integrate(self.M), dtype=float)
-                    except (ValueError, NotImplementedError):
-                        # `integrate` refuses a geometry that has no measure -- a single-node axis is the
-                        # case that exists. Found by independent review of #2145: without this, a
-                        # completed solve on a one-point grid threw from result construction.
-                        #
-                        # The try is narrowed to this ONE call, which is what lets the deliberate
-                        # non-positive-mass raise below live outside it and escape. That used to need a
-                        # private `_MassNotMeasurableError` to climb out of a wider try; the sentinel is
-                        # gone because the structure now carries the distinction instead of a class.
-                        mass_conservation_error = None
-                    else:
-                        initial_mass = float(mass_per_step[0])
-                        refuse_a_non_finite_read(
-                            "FixedPointIterator", "the initial density's total mass", {"the initial mass": initial_mass}
-                        )
-                        if initial_mass <= 0.0:
-                            raise ValueError(
-                                f"initial density has non-positive total mass ({initial_mass!r}); "
-                                "mass conservation is undefined and the solve that produced it is already wrong"
-                            )
-                        mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
-
-        # Construct result
-        result = SolverResult(
+        # The result, through the one owner every coupled route reads (#2997): its histories from the sweeps recorded, and
+        # its mass_conservation_error measured only once an FP step of this solve completed (#1672, #1717).
+        return coupled_result(
             U=self.U,
             M=self.M,
-            iterations=self.iterations_run,
-            error_history_U=self.l2distu_abs[: self.iterations_run],
-            error_history_M=self.l2distm_abs[: self.iterations_run],
-            solver_name=self.name,
+            record=record,
             converged=converged,
+            reason=convergence_reason,
+            solver_name=self.name,
+            damping=policy,
+            problems=[self.problem],
+            fp_solvers=[self.fp_solver],
+            fp_output_available=fp_output_available,
             metadata=metadata,
-            mass_conservation_error=mass_conservation_error,
         )
-
-        return result
 
     @property
     def name(self) -> str:
@@ -727,12 +649,10 @@ class FixedPointIterator(BaseCouplingIterator):
         return "FixedPointIterator"
 
     def get_convergence_data(self) -> dict[str, np.ndarray]:
-        """Get convergence diagnostics."""
+        """The last solve's change per sweep, from the record its result reads (#2997); empty before a solve."""
         return {
-            "l2distu_abs": self.l2distu_abs[: self.iterations_run] if self.l2distu_abs is not None else np.array([]),
-            "l2distm_abs": self.l2distm_abs[: self.iterations_run] if self.l2distm_abs is not None else np.array([]),
-            "l2distu_rel": self.l2distu_rel[: self.iterations_run] if self.l2distu_rel is not None else np.array([]),
-            "l2distm_rel": self.l2distm_rel[: self.iterations_run] if self.l2distm_rel is not None else np.array([]),
+            key: np.array([]) if self._record is None else self._record.history(key)
+            for key in ("l2distu_abs", "l2distm_abs", "l2distu_rel", "l2distm_rel")
         }
 
     def get_results(self) -> tuple[np.ndarray, np.ndarray]:

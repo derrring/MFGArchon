@@ -15,6 +15,8 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
+from mfgarchon.alg.numerical.coupling.block_iterators import BlockGaussSeidelIterator
+from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling, LaplacianCoupling
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
@@ -29,6 +31,8 @@ from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.operators.interaction.kernels import RadialKernel
+from mfgarchon.utils.solver_result import SolverResult
+from mfgarchon.visualization.extract import extract_graph_trajectories
 
 ROUTES = ["GraphMFGSolver", "RegimeSwitchingIterator", "MultiPopulationIterator"]
 
@@ -88,8 +92,7 @@ def _fp(problem, lifted):
 
 
 def _uncoupled(route, problems, damping, sweeps, tolerance, lifted=False):
-    """``route`` on ``problems``, one component each, with nothing coupling the components: (values, densities, sweeps
-    run, converged)."""
+    """``route`` on ``problems``, one component each, with nothing coupling the components: its result."""
     hjbs, fps = [HJBFDMSolver(p) for p in problems], [_fp(p, lifted) for p in problems]
     K = len(problems)
     if route == "GraphMFGSolver":
@@ -102,8 +105,7 @@ def _uncoupled(route, problems, damping, sweeps, tolerance, lifted=False):
             tolerance=tolerance,
             damping=damping,
         ).solve()
-        return r.values, r.densities, r.iterations, r.converged
-    if route == "RegimeSwitchingIterator":
+    elif route == "RegimeSwitchingIterator":
         r = RegimeSwitchingIterator(
             problems,
             RegimeSwitchingConfig(transition_matrix=np.zeros((K, K))),
@@ -113,10 +115,10 @@ def _uncoupled(route, problems, damping, sweeps, tolerance, lifted=False):
             tolerance=tolerance,
             damping=damping,
         ).solve()
-        return r.values, r.densities, r.iterations, r.converged
-    multi = MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(K)])
-    r = MultiPopulationIterator(multi, hjbs, fps, damping=damping).solve(max_iterations=sweeps, tolerance=tolerance)
-    return r.U, r.M, r.iterations, r.converged
+    else:
+        multi = MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(K)])
+        r = MultiPopulationIterator(multi, hjbs, fps, damping=damping).solve(max_iterations=sweeps, tolerance=tolerance)
+    return r
 
 
 _ADAPTIVE = DampingPolicy(U=FieldDamping(theta=1.0, adaptive=True), M=FieldDamping(theta=1.0, adaptive=True))
@@ -144,6 +146,13 @@ def test_each_component_takes_fixed_points_path(route, case, damping, coupling, 
     and theta 1 adaptation moves FixedPoint's path within eight sweeps; the control checks that it does, on the first
     component's problem. At 4cd1803f the default case differs on all three routes (U by 8.5e-4 on Graph after 12
     sweeps), and RegimeSwitching's first sweep does not stop.
+
+    The result is FixedPoint's too, read on the component axis (stage 1c's K = 1 contract): each component's histories
+    and mass drift in ``metadata["per_component"]`` are FixedPoint's on its problem, and the top level is the worst
+    component's histories, the reason the same criteria give, and the drift of the mass the route conserves, the worst
+    population's on MultiPopulation and the total's on Graph and RegimeSwitching. At ba36fa73 the three routes returned
+    their own types: Graph's and RegimeSwitching's history the worst relative change per sweep, MultiPopulation's only
+    the last sweep's relative changes, and none a mass.
     """
     terminal_coupled = route != "MultiPopulationIterator" and case != "adaptive"
     centres = (0.3, 0.6)
@@ -168,14 +177,46 @@ def test_each_component_takes_fixed_points_path(route, case, damping, coupling, 
                     "the control: adaptation must move FixedPoint's path"
                 )
             problems = [_problem(c, terminal_coupled=terminal_coupled, coupling=coupling) for c in centres]
-            values, densities, run, converged = _uncoupled(route, problems, damping, sweeps, tolerance, lifted)
+            result = _uncoupled(route, problems, damping, sweeps, tolerance, lifted)
         finally:
             logging.disable(logging.NOTSET)
-    assert run == references[0].iterations == references[1].iterations
-    assert converged == references[0].converged
+    assert result.components == 2
+    assert result.U.shape == result.M.shape == (2, *references[0].U.shape)
+    assert result.iterations == references[0].iterations == references[1].iterations
+    assert result.converged == references[0].converged
+    assert result.solver_name == route
     for k, reference in enumerate(references):
-        assert np.array_equal(np.asarray(values[k]), reference.U), f"component {k}'s U is not FixedPoint's"
-        assert np.array_equal(np.asarray(densities[k]), reference.M), f"component {k}'s M is not FixedPoint's"
+        assert np.array_equal(result.U[k], reference.U), f"component {k}'s U is not FixedPoint's"
+        assert np.array_equal(result.M[k], reference.M), f"component {k}'s M is not FixedPoint's"
+        own = result.metadata["per_component"][k]
+        assert np.array_equal(own["l2distu_abs"], reference.error_history_U), f"component {k}'s history"
+        assert np.array_equal(own["l2distm_abs"], reference.error_history_M), f"component {k}'s history"
+        assert np.array_equal(own["l2distu_rel"], reference.metadata["l2distu_rel"]), f"component {k}'s history"
+        assert np.array_equal(own["l2distm_rel"], reference.metadata["l2distm_rel"]), f"component {k}'s history"
+        assert own["mass_conservation_error"] == reference.mass_conservation_error, f"component {k}'s mass drift"
+    for field, key in (("error_history_U", "l2distu_abs"), ("error_history_M", "l2distm_abs")):
+        worst = np.maximum(getattr(references[0], field), getattr(references[1], field))
+        assert np.array_equal(getattr(result, field), worst), f"{field} is not the worst component's"
+        assert np.array_equal(result.metadata["per_component"][0][key], getattr(references[0], field))
+    for key in ("l2distu_rel", "l2distm_rel"):
+        worst = np.maximum(references[0].metadata[key], references[1].metadata[key])
+        assert np.array_equal(result.metadata[key], worst), f"{key} is not the worst component's"
+    # The criteria's own reason at the stop: theirs for a met criterion, and empty where the budget ran out, as on FixedPoint
+    reason = result.metadata["convergence_reason"]
+    assert (
+        reason.startswith("Converged: ")
+        if result.converged
+        else reason == references[0].metadata["convergence_reason"] == ""
+    )
+    assert result.metadata["inner_hjb_failures"] == []
+    assert result.execution_time > 0.0
+    assert result.metadata["damping"] == (damping if damping is not None else DampingPolicy.constant(0.5))
+    if route == "MultiPopulationIterator":
+        assert result.mass_conservation_error == max(r.mass_conservation_error for r in references)
+    else:
+        masses = [np.asarray(p.geometry.integrate(r.M), dtype=float) for p, r in zip(problems, references, strict=True)]
+        total = masses[0] + masses[1]
+        assert result.mass_conservation_error == float(np.max(np.abs(total / float(total[0]) - 1.0)))
 
 
 @pytest.mark.parametrize("inner", ["converging", "capped"])
@@ -203,7 +244,9 @@ def test_a_warm_up_sweep_that_meets_the_criteria_ends_newtons_solve(inner):
         assert stopped.startswith("inner_hjb_not_converged"), f"the fixture: the capped HJB must fail ({stopped})"
     assert newton.converged == fixed.converged == (inner == "converging")
     if inner == "capped":
-        assert newton.metadata["convergence_reason"] == stopped
+        # The same refusal, of the criteria's reason with the phase that met it (stage 1c, ruling 3)
+        assert stopped.count("were met (") == 1
+        assert newton.metadata["convergence_reason"] == stopped.replace("were met (", "were met (Picard warm-up: ")
     assert newton.iterations == fixed.iterations
     assert newton.metadata["picard_iterations"] == fixed.iterations
     assert np.array_equal(newton.U, fixed.U)
@@ -252,11 +295,11 @@ def _coupled(route, problems):
             else AdjacencyCoupling(adjacency, alpha=0.3, beta=0.2)
         )
         r = GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=4, tolerance=1e-300).solve()
-        return r.values, r.densities
+        return r.U, r.M
     if route == "RegimeSwitchingIterator":
         config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.6, 0.6], [0.4, -0.4]]))
         r = RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=4, tolerance=1e-300).solve()
-        return r.values, r.densities
+        return r.U, r.M
     multi = MultiPopulationProblem(populations=problems[:1], population_names=["a"])
     r = MultiPopulationIterator(multi, hjbs[:1], fps[:1]).solve(max_iterations=4, tolerance=1e-300)
     return r.U, r.M
@@ -289,3 +332,288 @@ def test_a_2d_solve_whose_data_vary_along_one_axis_is_the_1d_solve(route, axis):
                 else np.repeat(f1[:, None, :], _SHAPE[0], axis=1)
             )
             np.testing.assert_allclose(np.asarray(f2), replicated, rtol=0, atol=1e-12, err_msg=f"{name}{k}")
+
+
+def _drifting_fp(problem, rate):
+    """FP-FDM whose output's level n is scaled by ``1 + rate * n / Nt``: a density whose mass drifts by ``rate`` by T,
+    level 0 kept."""
+    fp = FPFDMSolver(problem)
+    solve = fp.solve_fp_system
+
+    @functools.wraps(solve)
+    def drifting(*args, **kwargs):
+        M = np.array(solve(*args, **kwargs), dtype=float)
+        steps = np.arange(M.shape[0]) / (M.shape[0] - 1)
+        return M * (1.0 + rate * steps).reshape((-1,) + (1,) * (M.ndim - 1))
+
+    fp.solve_fp_system = drifting
+    return fp
+
+
+def test_the_mass_drift_is_of_what_the_route_conserves():
+    """``mass_conservation_error`` is the drift of the mass the route's model conserves (stage 1c, ruling 1).
+
+    - **RegimeSwitching conserves the total.** External oracle: with Q = [[-1, 1], [0, 0]] regime 0 empties into regime
+      1 at rate 1, so its mass is m_0(0) e^{-t} and its own drift 1 - e^{-T}, 0.259 at T = 0.3, while the total is
+      conserved; the top level is the total's drift, within the scheme's error of 1e-2.
+    - **MultiPopulation conserves each population's.** The control that separates the two: FP outputs whose masses
+      drift by +2e-2 and -2e-2, equal initial masses, so the total holds while each moves. The top level is the worst
+      population's, 2e-2, where the total's would read about 0.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problems = [_problem(c, terminal_coupled=False) for c in (0.3, 0.6)]
+        config = RegimeSwitchingConfig(transition_matrix=np.array([[-1.0, 1.0], [0.0, 0.0]]))
+        regime = RegimeSwitchingIterator(
+            problems,
+            config,
+            [HJBFDMSolver(p) for p in problems],
+            [FPFDMSolver(p) for p in problems],
+            max_iterations=20,
+            tolerance=1e-8,
+        ).solve()
+        populations = [_problem(c, terminal_coupled=False) for c in (0.3, 0.6)]
+        multi = MultiPopulationIterator(
+            MultiPopulationProblem(populations=populations, population_names=["up", "down"]),
+            [HJBFDMSolver(p) for p in populations],
+            [_drifting_fp(p, rate) for p, rate in zip(populations, (2e-2, -2e-2), strict=True)],
+            damping=DampingPolicy.constant(1.0),
+        ).solve(max_iterations=3, tolerance=1e-12)
+    own = [c["mass_conservation_error"] for c in regime.metadata["per_component"]]
+    assert abs(own[0] - (1.0 - np.exp(-0.3))) < 1e-2, f"regime 0's drift {own[0]:.4e} against 1 - e^-T"
+    assert regime.mass_conservation_error < 1e-2 < min(own), (regime.mass_conservation_error, own)
+    masses = [np.asarray(p.geometry.integrate(M), dtype=float) for p, M in zip(populations, multi.M, strict=True)]
+    total = masses[0] + masses[1]
+    assert float(np.max(np.abs(total / total[0] - 1.0))) < 1e-12, "the control: the populations' total must hold"
+    own = [c["mass_conservation_error"] for c in multi.metadata["per_component"]]
+    assert own == pytest.approx([2e-2, 2e-2], rel=1e-9)
+    assert multi.mass_conservation_error == max(own)
+
+
+def _grid_problem(n, nt, horizon):
+    xs = np.linspace(0.0, 1.0, n)
+    mass = np.trapezoid(np.exp(-40 * (xs - 0.4) ** 2), xs)
+    return MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
+            volatility=0.3,
+        ),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)),
+        conditions=Conditions(
+            m_initial=lambda x: np.exp(-40 * (np.asarray(x[0], dtype=float) - 0.4) ** 2) / mass,
+            u_terminal=lambda x: 3.0 * np.asarray(x[0], dtype=float),
+            T=horizon,
+        ),
+        Nt=nt,
+    )
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize(
+    ("second", "refusal"),
+    [
+        ((15, 5, 0.3), r"have an iterate of shape \[\(6, 15\)\] against {component} 0's \(6, 11\)"),
+        ((11, 7, 0.3), r"step through time other than {component} 0's: \(T, Nt\) \[\(0\.3, 7\)\] against \(0\.3, 5\)"),
+        ((11, 5, 0.5), r"step through time other than {component} 0's: \(T, Nt\) \[\(0\.5, 5\)\] against \(0\.3, 5\)"),
+    ],
+    ids=["other nodes", "other Nt", "other T"],
+)
+def test_components_off_one_grid_are_refused(route, second, refusal):
+    """A route with a component axis reads every other component's level at the step it solves, by index, and returns
+    every component's U and M in one array, so its components share one time grid and one shape (the user's rulings of
+    2026-11-25). Refused by name before the first sweep. At ba36fa73 RegimeSwitching solved two regimes with other Nt,
+    or other T at one Nt, each reading the other's level at its own time; Graph solved nodes of 11 and 15 points, its
+    default couplings truncating to the shorter (#2765). MultiPopulation refuses other nodes by its own grid check."""
+    component = {"GraphMFGSolver": "node", "RegimeSwitchingIterator": "regime"}.get(route, "population")
+    refusal = refusal.format(component=component)
+    if route == "MultiPopulationIterator" and second[0] != 11:
+        refusal = r"population\(s\) \[1\] sit on a grid other than population 0's"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problems = [_grid_problem(11, 5, 0.3), _grid_problem(*second)]
+        with pytest.raises(ValueError, match=refusal):
+            _uncoupled(route, problems, None, 2, 1e-12)
+
+
+ALL_ROUTES = ["FixedPointIterator", "FictitiousPlayIterator", "BlockGaussSeidelIterator", "NewtonMFGSolver", *ROUTES]
+
+
+class _DivergingHJB(HJBFDMSolver):
+    """HJB-FDM whose solve from its ``at``-th on returns its output with one NaN, as a diverged inner Newton does."""
+
+    def __init__(self, problem, at):
+        super().__init__(problem)
+        self._calls, self._at = 0, at
+
+    def solve_hjb_system(self, *args, source_term=None, volatility=None, **kwargs):
+        U = np.array(
+            super().solve_hjb_system(*args, source_term=source_term, volatility=volatility, **kwargs), dtype=float
+        )
+        self._calls += 1
+        if self._at is not None and self._calls >= self._at:
+            U[2, 5] = np.nan
+        return U
+
+
+def _any_route(route, problems, hjbs, sweeps, tolerance, **newton):
+    """One of the seven coupled routes, its HJB solvers given: one problem for the four single-pair routes, all of them
+    for the three component routes, with nothing coupling the components."""
+    fps = [FPFDMSolver(p) for p in problems]
+    p, h, f = problems[0], hjbs[0], fps[0]
+    if route == "FixedPointIterator":
+        return FixedPointIterator(p, h, f).solve(max_iterations=sweeps, tolerance=tolerance, verbose=False)
+    if route == "FictitiousPlayIterator":
+        return FictitiousPlayIterator(p, h, f).solve(max_iterations=sweeps, tolerance=tolerance, verbose=False)
+    if route == "BlockGaussSeidelIterator":
+        return BlockGaussSeidelIterator(p, h, f).solve(max_iterations=sweeps, tolerance=tolerance, verbose=False)
+    if route == "NewtonMFGSolver":
+        warmup = newton.get("picard_warmup", sweeps)
+        return NewtonMFGSolver(p, h, f, picard_warmup=warmup).solve(
+            max_iterations=sweeps, tolerance=tolerance, verbose=False
+        )
+    K = len(problems)
+    if route == "GraphMFGSolver":
+        return GraphMFGSolver(
+            problems, AdjacencyCoupling(np.zeros((K, K))), hjbs, fps, max_iterations=sweeps, tolerance=tolerance
+        ).solve()
+    if route == "RegimeSwitchingIterator":
+        config = RegimeSwitchingConfig(transition_matrix=np.zeros((K, K)))
+        return RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=sweeps, tolerance=tolerance).solve()
+    multi = MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(K)])
+    return MultiPopulationIterator(multi, hjbs, fps).solve(max_iterations=sweeps, tolerance=tolerance)
+
+
+def _quiet(call):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        logging.disable(logging.CRITICAL)
+        try:
+            return call()
+        finally:
+            logging.disable(logging.NOTSET)
+
+
+@pytest.mark.parametrize("route", ALL_ROUTES)
+def test_a_diverged_stop_counts_its_sweep_as_nan_on_every_route(route):
+    """Ruling 10 (stage 1c): the sweep that diverged counts, its history entries are NaN, and the reason names the
+    divergence, so a diverged solve's final change is not the last finite sweep's (#1672's shape). The first sweep is
+    finite; at the second, the first component's HJB returns its output with one NaN. At ba36fa73 FixedPoint and
+    FictitiousPlay published a 1.0 there, the Block iterators and Newton dropped the sweep, Graph and RegimeSwitching
+    counted it with no entry, and MultiPopulation counted it with its last-sweep errors emptied."""
+    problems = [_problem(c, terminal_coupled=False) for c in ((0.3,) if route not in ROUTES else (0.3, 0.6))]
+    hjbs = [_DivergingHJB(p, 2 if k == 0 else None) for k, p in enumerate(problems)]
+    result = _quiet(lambda: _any_route(route, problems, hjbs, 4, 1e-12))
+    assert result.iterations == 2 == len(result.error_history_U) == len(result.error_history_M)
+    assert np.isfinite(result.error_history_U[0])
+    assert np.isfinite(result.error_history_M[0])
+    assert np.isnan(result.error_history_U[-1])
+    assert np.isnan(result.error_history_M[-1])
+    assert np.isnan(result.metadata["l2distu_rel"][-1])
+    assert np.isnan(result.metadata["l2distm_rel"][-1])
+    assert result.metadata["convergence_reason"] == "diverged_nan"
+    assert not result.converged
+
+
+def _fp_turning(problem, at, value):
+    """FP-FDM whose output from its ``at``-th solve on is ``value`` times its own, level 0 kept: NaN for a non-finite
+    density, 1e6 for one whose mass blows up. The solver's signature is kept."""
+    fp = FPFDMSolver(problem)
+    solve = fp.solve_fp_system
+    calls = [0]
+
+    @functools.wraps(solve)
+    def turned(*args, **kwargs):
+        M = np.array(solve(*args, **kwargs), dtype=float)
+        calls[0] += 1
+        if calls[0] >= at:
+            M[1:] = M[1:] * value
+        return M
+
+    fp.solve_fp_system = turned
+    return fp
+
+
+@pytest.mark.parametrize(("value", "reason"), [(np.nan, "diverged_nan"), (1e6, "diverged_mass_blowup")])
+def test_fixed_points_density_stops_count_their_sweep_as_nan(value, reason):
+    """FixedPoint's two stops on the density it was handed, a non-finite one (#688) and one whose mass blew up (#1489),
+    end the sweep before its change is measured: the sweep counts, its entries NaN, as at its diverged HJB (ruling 10)."""
+    problem = _problem(0.3, terminal_coupled=False)
+    result = _quiet(
+        lambda: FixedPointIterator(problem, HJBFDMSolver(problem), _fp_turning(problem, 2, value)).solve(
+            max_iterations=4, tolerance=1e-12, verbose=False
+        )
+    )
+    assert result.metadata["convergence_reason"] == reason
+    assert result.iterations == 2 == len(result.error_history_U)
+    assert np.isfinite(result.error_history_U[0])
+    assert np.isnan(result.error_history_U[-1])
+    assert np.isnan(result.error_history_M[-1])
+
+
+def test_newtons_first_verdict_diverging_measures_no_mass():
+    """With no warm-up, Newton's first verdict reads the cold start's map. Diverging there, the solve ends with M the cold
+    start, which no FP of this solve produced, so its mass is not measured (#1717), and the sweep counts as NaN."""
+    problem = _problem(0.3, terminal_coupled=False)
+    result = _quiet(
+        lambda: _any_route("NewtonMFGSolver", [problem], [_DivergingHJB(problem, 1)], 4, 1e-12, picard_warmup=0)
+    )
+    assert result.metadata["convergence_reason"] == "diverged_nan"
+    assert result.iterations == 1
+    assert np.isnan(result.error_history_U[-1])
+    assert result.mass_conservation_error is None
+
+
+@pytest.mark.parametrize(
+    ("route", "picard_warmup", "tolerance"),
+    [(route, None, 1e-6) for route in ALL_ROUTES] + [("NewtonMFGSolver", 0, 1e-6), ("NewtonMFGSolver", None, 1e12)],
+    ids=[*ALL_ROUTES, "NewtonMFGSolver, its Newton phase", "NewtonMFGSolver, its warm-up's stop"],
+)
+def test_every_route_measures_the_mass_its_model_conserves(route, picard_warmup, tolerance):
+    """`mass_conservation_error` on all seven routes (stage 1c, rulings 1 and 2): the drift of the geometry's integral of
+    M from level 0, per component, and over the components the route conserves. Newton is run to each of its stops
+    that holds this solve's density: the Newton phase, with no warm-up, and a warm-up sweep whose change meets the
+    criteria. At ba36fa73 it was None on FictitiousPlay, Block and Newton."""
+    problems = [_problem(c, terminal_coupled=False) for c in ((0.3,) if route not in ROUTES else (0.3, 0.6))]
+    newton = {} if picard_warmup is None else {"picard_warmup": picard_warmup}
+    result = _quiet(lambda: _any_route(route, problems, [HJBFDMSolver(p) for p in problems], 4, tolerance, **newton))
+    densities = [result.M] if result.components is None else list(result.M)
+    masses = [np.asarray(p.geometry.integrate(M), dtype=float) for p, M in zip(problems, densities, strict=True)]
+    drifts = [float(np.max(np.abs(m / float(m[0]) - 1.0))) for m in masses]
+    total = sum(masses)
+    expected = (
+        float(np.max(np.abs(total / float(total[0]) - 1.0)))
+        if route in ("GraphMFGSolver", "RegimeSwitchingIterator")
+        else max(drifts)
+    )
+    assert result.mass_conservation_error == expected, (result.mass_conservation_error, expected)
+    assert result.execution_time > 0.0
+    assert isinstance(result.metadata["damping"], DampingPolicy)
+
+
+@pytest.mark.parametrize("route", ["BlockGaussSeidelIterator", *ROUTES])
+def test_a_solve_that_runs_no_sweep_reports_so(route):
+    """With no sweep run, a route's result counts none, gives FixedPoint's reason for that stop, and measures no mass,
+    M being the cold start (#1717). FixedPoint, FictitiousPlay and Newton read 0 as their default budget. At ba36fa73
+    MultiPopulation raised `UnboundLocalError` here."""
+    problems = [_problem(c, terminal_coupled=False) for c in ((0.3,) if route not in ROUTES else (0.3, 0.6))]
+    result = _quiet(lambda: _any_route(route, problems, [HJBFDMSolver(p) for p in problems], 0, 1e-12))
+    assert result.iterations == 0 == len(result.error_history_U)
+    assert result.metadata["convergence_reason"] == "Maximum iterations reached"
+    assert result.mass_conservation_error is None
+
+
+def test_a_result_with_no_component_axis_is_refused_by_the_graph_extractor(tmp_path):
+    """`extract_graph_trajectories` iterates U and M along the component axis, so a single-pair result, whose first axis
+    is time, would read its time levels as nodes; it is refused by name. A component result's `components` survives the
+    HDF5 round trip, so a reloaded result keeps its layout."""
+    problem = _problem(0.3, terminal_coupled=False)
+    single = _quiet(lambda: _any_route("FixedPointIterator", [problem], [HJBFDMSolver(problem)], 2, 1e-12))
+    with pytest.raises(ValueError, match="has no component axis"):
+        extract_graph_trajectories(single)
+    problems = [_problem(c, terminal_coupled=False) for c in (0.3, 0.6)]
+    graph = _quiet(lambda: _any_route("GraphMFGSolver", problems, [HJBFDMSolver(p) for p in problems], 2, 1e-12))
+    assert len(extract_graph_trajectories(graph)) == 2 * graph.U.shape[1] * graph.U.shape[2]
+    graph.save_hdf5(tmp_path / "graph.h5")
+    reloaded = SolverResult.load_hdf5(tmp_path / "graph.h5")
+    assert reloaded.components == 2
+    assert reloaded.U.shape == graph.U.shape

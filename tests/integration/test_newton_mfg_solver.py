@@ -112,8 +112,8 @@ class TestNewtonMFGSolverBasic:
         assert U.shape == expected_shape, f"U shape {U.shape} != {expected_shape}"
         assert M.shape == expected_shape, f"M shape {M.shape} != {expected_shape}"
 
-        # Result contains convergence info
-        assert "converged" in info
+        # Result contains convergence info: the verdict on the result itself (#2997 ruling 11), the counts in its metadata
+        assert isinstance(newton_result.converged, bool)
         assert "picard_iterations" in info
         assert "newton_iterations" in info
 

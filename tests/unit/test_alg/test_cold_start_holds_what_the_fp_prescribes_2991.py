@@ -152,7 +152,7 @@ def _solve(route, arm, iterations):
             tolerance=1e-12,
             damping=DampingPolicy.constant(0.5),
         )
-        return np.asarray(solver.solve().densities[0])
+        return np.asarray(solver.solve().M[0])
     qs = [problem(), problem()]
     config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]]))
     solver = RegimeSwitchingIterator(
@@ -164,7 +164,7 @@ def _solve(route, arm, iterations):
         tolerance=1e-12,
         damping=DampingPolicy.constant(0.5),
     )
-    return np.asarray(solver.solve().densities[0])
+    return np.asarray(solver.solve().M[0])
 
 
 ROUTES = ["FixedPoint", "FictitiousPlay", "BlockGaussSeidel", "BlockJacobi", "MultiPopulation", "Graph", "Regime"]
@@ -323,7 +323,7 @@ def test_regimes_early_return_reports_the_cold_start_it_held(monkeypatch):
     monkeypatch.setattr(HJBFDMSolver, "solve_hjb_system", diverging)
     result = solver.solve()
     assert not result.converged
-    densities = np.asarray(result.densities[0])
+    densities = np.asarray(result.M[0])
     assert densities.shape == (NT + 1, 11)
     assert float(np.max(np.abs(densities[1:, [0, -1]]))) == 0.0, densities[1:, [0, -1]].tolist()
 
@@ -754,8 +754,8 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
         fixed = FixedPointIterator(q, HJBFDMSolver(q), FPFDMSolver(q), damping=DampingPolicy.constant(1.0)).solve(
             max_iterations=1, verbose=False
         )
-        np.testing.assert_allclose(np.asarray(regime.densities[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
-        np.testing.assert_allclose(np.asarray(regime.values[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(regime.M[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(regime.U[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)
     # The first sweep is damped and judged as FixedPoint's is (#2997 ruling 2, the approver's ruling of 2026-11-25): at
     # damping 0.5 and a tolerance the sweep meets, each regime stops at its first sweep with FixedPoint's iterate. At
     # 4cd1803f it took the FP's density whole and was not judged, so it did not stop.
@@ -776,5 +776,5 @@ def test_a_first_regime_sweep_with_the_regimes_decoupled_is_a_fixed_point_sweep(
             max_iterations=1, tolerance=1e9, verbose=False
         )
         assert fixed.converged
-        np.testing.assert_allclose(np.asarray(damped.densities[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
-        np.testing.assert_allclose(np.asarray(damped.values[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(damped.M[k]), np.asarray(fixed.M), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(damped.U[k]), np.asarray(fixed.U), rtol=0, atol=1e-12)

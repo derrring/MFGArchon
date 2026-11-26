@@ -21,7 +21,8 @@
     every row, and damp U and M from the first sweep under their default, `DampingPolicy.constant(0.5)`, so their
     finite-sweep results and iteration counts change. `MultiPopulationIterator` damps U, which it took whole;
     `RegimeSwitchingIterator` damps M at its first sweep, which it took whole, and judges that sweep, so its
-    `error_history[0]` is the first sweep's change instead of `inf`, and a tolerance the first sweep meets stops it.
+    first history entry is the first sweep's change instead of `inf` (its `error_history`, removed later in this
+    release, #2997 stage 1c; `error_history_U` and `error_history_M` now), and a tolerance the first sweep meets stops it.
     Each one's old damping is one explicit `DampingPolicy` away; its U cold start and the unjudged first sweep are not.
   - `GraphMFGSolver` and `RegimeSwitchingIterator` write U's terminal row back to the u(T) each sweep's HJB solve was
     given, which a terminal coupling moves with m(T), instead of the damped mix of two sweeps' u(T); and they read u(T)

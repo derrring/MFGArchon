@@ -20,7 +20,6 @@ Issue #962: GraphMFGSolver — unified orchestrator for network MFG types 2 and 
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -52,6 +51,7 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
 from .fixed_point_utils import diverged_value_function
 from .iteration_state import IterationState
@@ -65,36 +65,9 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class GraphMFGResult:
-    """Result container for graph MFG solver."""
-
-    values: list[NDArray]
-    """Value functions v^k for each node, each of the node's iterate shape (Nt+1, *shape)."""
-
-    densities: list[NDArray]
-    """Density fields m^k for each node, each of the node's iterate shape (Nt+1, *shape)."""
-
-    converged: bool
-    """Whether the Picard iteration converged."""
-
-    iterations: int
-    """Number of Picard iterations performed."""
-
-    error_history: list[float] = field(default_factory=list)
-    """Per sweep, the largest relative L2 change over nodes and fields (inf when not comparable)."""
-
-    n_nodes: int = 0
-    """Number of nodes in the graph."""
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """A refused verdict's ``convergence_reason``, and ``inner_hjb_failures``: the failed inner HJB steps the solvers'
-    latest solves recorded, the last sweep's unless a diverged HJB ended it early (#1718).
-    ``verdict_reads_inner_failures`` writes both for every coupler (#2644)."""
 
 
 class GraphMFGSolver(BaseCouplingIterator):
@@ -191,30 +164,27 @@ class GraphMFGSolver(BaseCouplingIterator):
                 hjb_solvers[_k], fp_solvers[_k], f"GraphMFGSolver[node {_k}]", problem=problems[_k]
             )
 
-        # All nodes must share the same time grid for coupling to be well-defined.
-        # dt enters _get_time_slice when the coupling callable is invoked by each
-        # HJB/FP solver at its current time step.
-        dt0 = problems[0].T / problems[0].Nt
-        for k, p in enumerate(problems):
-            dt_k = p.T / p.Nt
-            if not np.isclose(dt_k, dt0):
-                raise ValueError(
-                    f"All nodes must share the same dt for graph coupling. "
-                    f"Node 0: dt={dt0:.6g}; Node {k}: dt={dt_k:.6g}"
-                )
-        self._dt = dt0
+        # dt enters _get_time_slice when the coupling callable is invoked by each HJB/FP solver at its current time
+        # step; the nodes share one time grid, which the solve refuses otherwise (refuse_components_off_one_grid).
+        self._dt = problems[0].T / problems[0].Nt
 
         self._N = N
-        self._last_result: GraphMFGResult | None = None
+        self._last_result: SolverResult | None = None
 
     @verdict_reads_inner_failures(lambda self: list(self._hjb), fp_solvers_of=lambda self: list(self._fp))
-    def solve(self) -> GraphMFGResult:
+    def solve(self) -> SolverResult:
         """Run Picard iteration over N-node graph.
 
         Returns
         -------
-        GraphMFGResult
-            Contains value functions, densities, convergence info for all nodes.
+        SolverResult
+            U and M of shape (N, Nt+1, *shape), node k's at ``U[k]`` and ``M[k]``, and ``components`` N (#2997). Its
+            ``mass_conservation_error`` is the total mass's drift, since a coupling can move mass between nodes. The
+            total itself moves by design where the adjacency's weighted in- and out-degrees differ at some node, or a
+            custom ``coupling_fp`` adds mass (`MassInvariant.TOTAL`); each node's own drift is in
+            ``metadata["per_component"]``. On a diverged HJB, each node the sweep solved holds
+            that HJB output as its U, the diverged node's with its NaN kept (#1718); the later nodes' U, and every M,
+            are the iterate after the last finite sweep.
         """
         refuse_a_capped_exit_in_a_coupled_solve(self._fp, "GraphMFGSolver.solve")
         N = self._N
@@ -233,6 +203,9 @@ class GraphMFGSolver(BaseCouplingIterator):
             )
             for k in range(N)
         ]
+        refuse_components_off_one_grid(
+            self._problems, [state.solution_shape for state in states], reader="GraphMFGSolver", component="node"
+        )
         Us_full, Ms = [], []
         for state in states:
             U_k, M_k = state.start()
@@ -241,7 +214,10 @@ class GraphMFGSolver(BaseCouplingIterator):
         # One damping run per node: each node's fields adapt on that node's own history (#2997 rulings 5 and 9).
         runs = [DampingRun(self.damping) for state in states]
 
-        error_history: list[float] = []
+        record = SweepRecord(N)
+        fp_output_available = False
+        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
+        reason = "Maximum iterations reached"
         integrates = [p.spatial_measure().integrate for p in self._problems]
         dts = [p.dt for p in self._problems]
 
@@ -284,15 +260,8 @@ class GraphMFGSolver(BaseCouplingIterator):
                     # function of the node's shape, which is what "this node did not advance" means, so a consumer
                     # looping over values to find the NaN reaches it.
                     values = [Us_new[j] if j <= k else Us_full[j] for j in range(N)]
-                    self._last_result = GraphMFGResult(
-                        values=values,
-                        densities=Ms,
-                        converged=False,
-                        iterations=iteration + 1,
-                        error_history=error_history,
-                        n_nodes=N,
-                    )
-                    return self._last_result
+                    record.diverged()
+                    return self._result(values, Ms, record, False, "diverged_nan", fp_output_available)
 
             # --- FP step: solve N forward equations with coupling ---
             for k in range(N):
@@ -335,8 +304,8 @@ class GraphMFGSolver(BaseCouplingIterator):
             # change in its own problem's measure, and the criterion takes the max over nodes (#2555).
             per_node = [sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(N)]
             worst = worst_sweep_change(per_node, "node")
-            error = max(worst["l2distu_rel"], worst["l2distm_rel"])
-            converged, _ = check_convergence_criteria(
+            record.measured(per_node)
+            converged, reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -353,29 +322,37 @@ class GraphMFGSolver(BaseCouplingIterator):
                 for message in runs[k].observe(iteration, per_node[k]):
                     logger.warning(f"GraphMFGSolver[node {k}]: {message}")
 
-            error_history.append(error)
-
             Us_full = Us_new
             Ms = Ms_new
+            fp_output_available = True
 
             if converged:
-                self._last_result = GraphMFGResult(
-                    values=Us_full,
-                    densities=Ms,
-                    converged=True,
-                    iterations=iteration + 1,
-                    error_history=error_history,
-                    n_nodes=N,
-                )
-                return self._last_result
+                return self._result(Us_full, Ms, record, True, reason, fp_output_available)
 
-        self._last_result = GraphMFGResult(
-            values=Us_full,
-            densities=Ms,
-            converged=False,
-            iterations=self._max_iter,
-            error_history=error_history,
-            n_nodes=N,
+        return self._result(Us_full, Ms, record, False, reason, fp_output_available)
+
+    def _result(
+        self,
+        values: list[NDArray],
+        densities: list[NDArray],
+        record: SweepRecord,
+        converged: bool,
+        reason: str,
+        fp_output_available: bool,
+    ) -> SolverResult:
+        self._last_result = coupled_result(
+            U=values,
+            M=densities,
+            record=record,
+            converged=converged,
+            reason=reason,
+            solver_name="GraphMFGSolver",
+            damping=self.damping,
+            problems=self._problems,
+            fp_solvers=self._fp,
+            fp_output_available=fp_output_available,
+            component_names=[str(k) for k in range(self._N)],
+            invariant=MassInvariant.TOTAL,
         )
         return self._last_result
 
@@ -445,9 +422,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         return composed
 
     def get_results(self) -> tuple:
-        """Get computed solution arrays (required by BaseCouplingIterator)."""
+        """The last solve's U and M, every node's, of shape (N, Nt+1, *shape) (required by BaseCouplingIterator)."""
         if self._last_result is not None:
-            return self._last_result.values[0], self._last_result.densities[0]
+            return self._last_result.U, self._last_result.M
         raise RuntimeError("No solution computed yet. Call solve() first.")
 
     def validate_solution(self) -> dict[str, Any]:

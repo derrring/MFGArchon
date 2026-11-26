@@ -702,8 +702,8 @@ def test_a_component_route_reads_an_off_grid_terminal_coupling_through_each_comp
         fixed = FixedPointIterator(alone, HJBFEMSolver(alone), FPFEMSolver(alone)).solve(
             max_iterations=5, tolerance=1e-14, verbose=False
         )
-        assert np.array_equal(np.asarray(result.values[k]), fixed.U), f"component {k}'s U"
-        assert np.array_equal(np.asarray(result.densities[k]), fixed.M), f"component {k}'s M"
+        assert np.array_equal(np.asarray(result.U[k]), fixed.U), f"component {k}'s U"
+        assert np.array_equal(np.asarray(result.M[k]), fixed.M), f"component {k}'s M"
 
 
 def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_binding():
@@ -729,7 +729,7 @@ def test_newton_reads_an_off_grid_terminal_coupling_through_the_hjb_solvers_bind
     ).solve(max_iterations=200, tolerance=1e-8, verbose=False)
     U, _, info = newton_result.U, newton_result.M, newton_result.metadata
     assert fixed_point.converged
-    assert info["convergence_reason"] == "Converged during Picard warm-up"
+    assert info["convergence_reason"].startswith("Picard warm-up: Converged: ")
     assert info["picard_iterations"] == fixed_point.iterations
     gap = float(np.max(np.abs(U - fixed_point.U)))
     assert gap == 0.0, f"Newton's fixed point is {gap:.3e} from FixedPoint's on an off-grid G"

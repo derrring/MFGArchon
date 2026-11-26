@@ -11,7 +11,6 @@ import numpy as np
 
 from mfgarchon.alg.numerical.coupling.regime_switching_iterator import (
     RegimeSwitchingIterator,
-    RegimeSwitchingResult,
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
@@ -22,6 +21,7 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.solver_result import SolverResult
 
 
 def _make_problem(coupling_strength: float = 1.0, sigma: float = 0.3, T: float = 0.5, Nt: int = 10) -> MFGProblem:
@@ -137,17 +137,17 @@ class TestRegimeSwitchingSolve:
             max_iterations=3,
         )
         result = iterator.solve()
-        assert len(result.values) == 2
-        assert len(result.densities) == 2
+        assert len(result.U) == 2
+        assert len(result.M) == 2
         Nt = problems[0].Nt
         Nx = problems[0].geometry.get_grid_shape()[0]
-        assert result.values[0].shape == (Nt + 1, Nx)
-        assert result.values[1].shape == (Nt + 1, Nx)
+        assert result.U[0].shape == (Nt + 1, Nx)
+        assert result.U[1].shape == (Nt + 1, Nx)
         # u_terminal is `lambda x: 0.0` in _make_problem, so EVERY regime must carry it exactly.
         # Measured max|U[-1]| = 0.0 for both. A terminal condition applied to regime 0 only keeps
         # both shapes intact, which is all the asserts above can see.
         for k in range(2):
-            np.testing.assert_array_equal(result.values[k][-1, :], 0.0)
+            np.testing.assert_array_equal(result.U[k][-1, :], 0.0)
 
     def test_solutions_are_finite(self):
         """Every field must be spatially CONSTANT on this fixture, which subsumes finiteness.
@@ -174,8 +174,8 @@ class TestRegimeSwitchingSolve:
         # M 1.54e-11 / 2.98e-12 -- roughly 800x and 650x below the thresholds, and any real asymmetry is
         # O(1e-3) or larger.
         for k in range(2):
-            V = np.asarray(result.values[k], dtype=float)
-            M = np.asarray(result.densities[k], dtype=float)
+            V = np.asarray(result.U[k], dtype=float)
+            M = np.asarray(result.M[k], dtype=float)
             assert np.abs(V - V.mean(axis=1, keepdims=True)).max() < 1e-9, f"values not uniform in regime {k}"
             assert np.abs(M - M.mean(axis=1, keepdims=True)).max() < 1e-8, f"densities not uniform in regime {k}"
 
@@ -189,8 +189,8 @@ class TestRegimeSwitchingSolve:
             max_iterations=5,
         )
         result = iterator.solve()
-        assert len(result.error_history) > 0
-        assert len(result.error_history) <= 5
+        assert len(result.error_history_U) > 0
+        assert len(result.error_history_U) <= 5
 
     def test_iterations_reported(self):
         problems, config, hjbs, fps = _make_2regime_system()
@@ -230,7 +230,8 @@ class TestRegimeSwitchingUpdateSchemes:
             max_iterations=8,
         )
         result = iterator.solve()
-        assert isinstance(result, RegimeSwitchingResult)
+        assert isinstance(result, SolverResult)
+        assert result.components == 2
 
         # Hold the jacobi branch to the same external oracle the gauss_seidel branch has: the
         # regime masses must obey M(t) = M(0) @ expm(Qt). Measured on this fixture at 8 sweeps, both
@@ -239,7 +240,7 @@ class TestRegimeSwitchingUpdateSchemes:
         from scipy.linalg import expm
 
         dx = problems[0].geometry.get_grid_spacing()[0]
-        masses = np.array([np.asarray(d, dtype=float).sum(axis=1) * dx for d in result.densities])
+        masses = np.array([np.asarray(d, dtype=float).sum(axis=1) * dx for d in result.M])
         t_grid = np.arange(problems[0].Nt + 1) * problems[0].dt
         exact = np.array([masses[:, 0] @ expm(config.transition_matrix * t) for t in t_grid]).T
         rel = np.abs(masses - exact).max() / np.abs(exact).max()
@@ -260,12 +261,10 @@ class TestRegimeSwitchingGetResults:
         )
         result = iterator.solve()
         U, M = iterator.get_results()
-        assert U.shape[0] == problems[0].Nt + 1
-        # get_results() is a lossy 2-tuple over a K-regime solve: WHICH regime it exposes is the
-        # load-bearing convention, and the shape assert is blind to it because both regimes share
-        # the shape. Measured: both identities hold, and `U is result.values[1]` is False.
-        assert U is result.values[0]
-        assert M is result.densities[0]
+        # Every regime's, on the result's component axis (#2997): it was regime 0's alone before.
+        assert U.shape == M.shape == (2, problems[0].Nt + 1, *problems[0].geometry.get_grid_shape())
+        assert U is result.U
+        assert M is result.M
 
     def test_get_results_before_solve_raises(self):
         problems, config, hjbs, fps = _make_2regime_system()
@@ -463,7 +462,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
     def test_every_regime_density_stays_non_negative(self):
         """The invariant the lagged sink broke. Reverting the split reddens this."""
         _problems, _Q, result = self._solve()
-        for k, dens in enumerate(result.densities):
+        for k, dens in enumerate(result.M):
             M = np.asarray(dens, dtype=float)
             assert np.isfinite(M).all(), f"regime {k}: non-finite density"
             assert M.min() >= 0.0, (
@@ -484,7 +483,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
 
         problems, Q, result = self._solve()
         dx = problems[0].geometry.get_grid_spacing()[0]
-        masses = np.array([np.asarray(d, dtype=float).sum(axis=1) * dx for d in result.densities])
+        masses = np.array([np.asarray(d, dtype=float).sum(axis=1) * dx for d in result.M])
         t_grid = np.arange(problems[0].Nt + 1) * problems[0].dt
         exact = np.array([masses[:, 0] @ expm(Q * t) for t in t_grid]).T
 
@@ -706,8 +705,8 @@ class TestGuardsAreRecheckedAtSolveTime:
         """Negative control: re-checking must not refuse what it accepted at construction."""
         it, _problems, _fps = self._system(np.array([[-0.1, 0.1], [0.2, -0.2]]))
         result = it.solve()
-        assert len(result.densities) == 2
-        for d in result.densities:
+        assert len(result.M) == 2
+        for d in result.M:
             assert np.asarray(d, dtype=float).min() >= 0.0
 
 

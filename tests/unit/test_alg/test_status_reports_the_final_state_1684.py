@@ -144,6 +144,12 @@ class _DriftingHJB(HJBFDMSolver):
         return U
 
 
+def _last(result, key):
+    """Each population's change at the last sweep, `key` one of `sweep_change`'s: what `errors_U` and `errors_M` held
+    before the result carried every sweep's, per population (#2997)."""
+    return [float(own[key][-1]) for own in result.metadata["per_component"]]
+
+
 def _run(max_iterations=3):
     p = _problem()
     multi = MultiPopulationProblem(populations=[p], population_names=["P0"])
@@ -157,19 +163,21 @@ def test_a_static_m_with_a_moving_u_does_not_converge():
     The old criterion saw only m and reported convergence at the second sweep.
     """
     r = _run()
-    # The behavioural assertion comes FIRST, on purpose. Asserting the new `errors_M` /
-    # `errors_U` fields first made this test fail against the old code with AttributeError --
+    # The behavioural assertion comes FIRST, on purpose. Asserting the per-field breakdown
+    # first made this test fail against the old code with AttributeError --
     # proving only that a field had been added, and never reaching the question the test exists
     # to ask. Ordered this way it fails on the criterion being blind to u, which is the defect.
     assert r.converged is False, (
         f"reported converged with a tolerance of 1e-10 while the value function was still moving; "
-        f"per-population error reported as {r.errors}"
+        f"per-population relative change of u reported as {_last(r, 'l2distu_rel')}"
     )
     # Fixture validity, and the breakdown that says which field failed.
-    assert r.errors_M == pytest.approx([0.0], abs=1e-14), f"the fixture is wrong if m moved: errors_M={r.errors_M}"
+    moved_m = _last(r, "l2distm_rel")
+    assert moved_m == pytest.approx([0.0], abs=1e-14), f"the fixture is wrong if m moved: {moved_m}"
     # u moves by 1.0 per sweep and is 3.0 everywhere after the third but at t = T, where it is u(T) = 0 at every
-    # sweep, so its RELATIVE L2 change, which is what `errors_U` holds since #2555, is exactly 1/3.
-    assert r.errors_U[0] == pytest.approx(1.0 / 3.0), f"u should move by 1.0 per sweep: {r.errors_U}"
+    # sweep, so its RELATIVE L2 change (#2555) is exactly 1/3.
+    moved_u = _last(r, "l2distu_rel")
+    assert moved_u[0] == pytest.approx(1.0 / 3.0), f"u should move by 1.0 per sweep: {moved_u}"
 
 
 def test_the_m_error_is_the_map_residual_not_the_damped_step():
@@ -203,7 +211,7 @@ def test_the_m_error_is_the_map_residual_not_the_damped_step():
         it = MultiPopulationIterator(
             multi, [HJBFDMSolver(p)], [FPFDMSolver(p)], damping=DampingPolicy.constant(relaxation)
         )
-        errs.append(it.solve(max_iterations=1, tolerance=1e-30).errors_M[0])
+        errs.append(_last(it.solve(max_iterations=1, tolerance=1e-30), "l2distm_rel")[0])
 
     assert errs[0] > 0, "the fixture must actually move m, or this asserts nothing"
     for r, e in zip((1.0, 0.5, 0.1, 0.01), errs, strict=True):
@@ -214,15 +222,10 @@ def test_the_m_error_is_the_map_residual_not_the_damped_step():
         )
 
 
-def test_the_reported_error_is_the_larger_of_the_two_fields():
-    r = _run()
-    assert r.errors == [max(m, u) for m, u in zip(r.errors_M, r.errors_U, strict=True)]
-
-
 def test_the_split_says_which_field_failed():
     """A non-converged run must say WHICH field failed, not only that one did."""
     r = _run()
-    assert r.errors_U > r.errors_M, (
+    assert _last(r, "l2distu_rel") > _last(r, "l2distm_rel"), (
         f"u is the field that failed here and the breakdown should show it: "
-        f"errors_U={r.errors_U}, errors_M={r.errors_M}"
+        f"u {_last(r, 'l2distu_rel')}, m {_last(r, 'l2distm_rel')}"
     )

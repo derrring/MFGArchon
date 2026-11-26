@@ -37,7 +37,6 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import verdict_reads_inner_failures
 from mfgarchon.config.damping import DampingPolicy
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
     BaseCouplingIterator,
@@ -49,6 +48,7 @@ from .base_mfg import (
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_backend,
 )
+from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
 from .fixed_point_utils import (
     check_convergence_criteria,
@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.config import MFGSolverConfig
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
 
 class FictitiousPlayIterator(BaseCouplingIterator):
@@ -167,6 +168,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.l2distm_rel: np.ndarray | None = None
         self.learning_rate_history: list[float] = []
         self.iterations_run = 0
+        self._record: SweepRecord | None = None
 
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
@@ -238,12 +240,16 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.U, self.M = state.start(self.backend)
         M_initial = state.m0
 
-        # Initialize error tracking
-        self.l2distu_abs = np.ones(final_max_iterations)
-        self.l2distm_abs = np.ones(final_max_iterations)
-        self.l2distu_rel = np.ones(final_max_iterations)
-        self.l2distm_rel = np.ones(final_max_iterations)
+        # Initialize error tracking. NaN until a sweep measures its change: a sweep that diverged before it was measured
+        # has no change, and a 1.0 there read as one (#2997).
+        self.l2distu_abs = np.full(final_max_iterations, np.nan)
+        self.l2distm_abs = np.full(final_max_iterations, np.nan)
+        self.l2distu_rel = np.full(final_max_iterations, np.nan)
+        self.l2distm_rel = np.full(final_max_iterations, np.nan)
         self.learning_rate_history = []
+        record = self._record = SweepRecord(1)
+        # True once self.M holds a density this solve's FP produced: what its mass_conservation_error measures (#1717)
+        fp_output_available = False
         policy = damping_for_the_solve(
             "FictitiousPlayIterator", self.damping, DampingPolicy.fictitious_play(), solve_config
         )
@@ -297,6 +303,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 converged = False
                 convergence_reason = "diverged_nan"
                 self.iterations_run = k + 1
+                record.diverged()
                 break
 
             # 2. Solve FP forward with new U.
@@ -332,6 +339,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             self.U, self.M = run.update(k, U_old, U_new, M_old, M_candidate)
 
             self.U, self.M = state.write_back(self.U, self.M, U_terminal)
+            fp_output_available = True
 
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import sweep_change
@@ -350,6 +358,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             self.l2distu_rel[k] = metrics["l2distu_rel"]
             self.l2distm_abs[k] = metrics["l2distm_abs"]
             self.l2distm_rel[k] = metrics["l2distm_rel"]
+            record.measured([metrics])
 
             iter_time = time.time() - iter_start
             self.iterations_run = k + 1
@@ -386,24 +395,20 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 break
 
         # Construct result
-        result = SolverResult(
+        # The result, through the one owner every coupled route reads (#2997)
+        return coupled_result(
             U=self.U,
             M=self.M,
-            iterations=self.iterations_run,
-            error_history_U=self.l2distu_abs[: self.iterations_run],
-            error_history_M=self.l2distm_abs[: self.iterations_run],
-            solver_name=self.name,
+            record=record,
             converged=converged,
-            metadata={
-                "convergence_reason": convergence_reason,
-                "l2distu_rel": self.l2distu_rel[: self.iterations_run],
-                "l2distm_rel": self.l2distm_rel[: self.iterations_run],
-                "damping": policy,
-                "learning_rate_history": self.learning_rate_history,
-            },
+            reason=convergence_reason,
+            solver_name=self.name,
+            damping=policy,
+            problems=[self.problem],
+            fp_solvers=[self.fp_solver],
+            fp_output_available=fp_output_available,
+            metadata={"learning_rate_history": self.learning_rate_history},
         )
-
-        return result
 
     @property
     def name(self) -> str:
@@ -411,14 +416,13 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         return "FictitiousPlayIterator"
 
     def get_convergence_data(self) -> dict[str, np.ndarray | list[float]]:
-        """Get convergence diagnostics including learning rate history."""
-        return {
-            "l2distu_abs": self.l2distu_abs[: self.iterations_run] if self.l2distu_abs is not None else np.array([]),
-            "l2distm_abs": self.l2distm_abs[: self.iterations_run] if self.l2distm_abs is not None else np.array([]),
-            "l2distu_rel": self.l2distu_rel[: self.iterations_run] if self.l2distu_rel is not None else np.array([]),
-            "l2distm_rel": self.l2distm_rel[: self.iterations_run] if self.l2distm_rel is not None else np.array([]),
-            "learning_rate_history": self.learning_rate_history,
+        """The last solve's change per sweep, from the record its result reads (#2997), and its learning rates; empty
+        before a solve."""
+        histories = {
+            key: np.array([]) if self._record is None else self._record.history(key)
+            for key in ("l2distu_abs", "l2distm_abs", "l2distu_rel", "l2distm_rel")
         }
+        return {**histories, "learning_rate_history": self.learning_rate_history}
 
     def get_results(self) -> tuple[np.ndarray, np.ndarray]:
         """

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import time
 from collections import Counter
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
@@ -28,10 +29,11 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.utils.solver_result import SolverResult
 
 _Solver = TypeVar("_Solver")
 _Params = ParamSpec("_Params")
-_Result = TypeVar("_Result")
+_Result = TypeVar("_Result", bound="SolverResult")
 
 
 def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
@@ -229,13 +231,11 @@ def negative_density_recorded(fp_solvers: Iterable[Any]) -> Iterator[None]:
             solver.on_negative_density = "warn"
 
 
-def _report_negative_density(result: Any, fp_solvers: list[Any]) -> None:
+def _report_negative_density(result: SolverResult, fp_solvers: list[Any]) -> None:
     """One warning per solver, and ``fp_negative_density`` in the result's record, for the density the result returns
-    rather than the last sweep's step, since a coupler can damp it (#2845)."""
-    densities = getattr(result, "densities", None)
-    densities = result.M if densities is None else densities
-    record = getattr(result, "metadata", None)
-    per_solver = [densities] if len(fp_solvers) == 1 else list(densities)
+    rather than the last sweep's step, since a coupler can damp it (#2845). On a route with a component axis, component
+    k's density is ``result.M[k]``, read by its own FP solver."""
+    per_solver = [result.M] if result.components is None else list(result.M)
     reports: list[dict[str, Any] | None] = []
     for solver, density in zip(fp_solvers, per_solver, strict=True):
         if not getattr(solver, "reports_negative_density", False):
@@ -244,8 +244,8 @@ def _report_negative_density(result: Any, fp_solvers: list[Any]) -> None:
         report = solver.negative_density_of(density)
         solver.warn_negative_density(report)
         reports.append(report)
-    if any(report is not None for report in reports) and isinstance(record, dict):
-        record["fp_negative_density"] = reports[0] if len(reports) == 1 else reports
+    if any(report is not None for report in reports):
+        result.metadata["fp_negative_density"] = reports[0] if len(reports) == 1 else reports
 
 
 #: The ``stacklevel`` of a warning a decorated ``solve`` raises for its caller: `verdict_reads_inner_failures`' wrapper
@@ -258,6 +258,7 @@ def verdict_reads_inner_failures(
     *,
     fp_solvers_of: Callable[[Any], list[Any]],
     check: bool = True,
+    failures_of: Callable[[Any], object] | None = None,
 ) -> Callable[
     [Callable[Concatenate[_Solver, _Params], _Result]],
     Callable[Concatenate[_Solver, _Params], _Result],
@@ -269,8 +270,11 @@ def verdict_reads_inner_failures(
     ``BlockIterator`` over the same failed steps reported ``converged=True``. One HJB solver object in several slots is
     refused before the solve (`refuse_a_shared_hjb_solver`), so each solver's latest record is its slot's in the last
     sweep. Newton takes ``check=False``: its last HJB solve can be a Jacobian probe, so it reads the record in its own
-    verdict, where the latest solve is the accepted iterate's. ``fp_solvers_of`` gives one FP solver per density the
-    result returns, for its report of a kept negative (#2845).
+    verdict, where the latest solve is the accepted iterate's, and hands it over through ``failures_of``.
+    ``fp_solvers_of`` gives one FP solver per density the result returns, for its report of a kept negative (#2845).
+
+    It is the one writer of the result's ``inner_hjb_failures`` and ``execution_time``, on every coupled route (#2997):
+    the record the verdict read, and the time the wrapped solve took.
     """
 
     def decorate(
@@ -281,6 +285,7 @@ def verdict_reads_inner_failures(
             solvers = hjb_solvers_of(self)
             refuse_a_shared_hjb_solver(solvers, type(self).__name__)
             fp_solvers = fp_solvers_of(self)
+            started = time.perf_counter()
             with inner_failures_recorded(solvers), negative_density_recorded(fp_solvers):
                 returned = False
                 try:
@@ -295,15 +300,12 @@ def verdict_reads_inner_failures(
                                 report = solver.last_negative_density
                                 if report is not None:
                                     solver.warn_negative_density(report)
+            result.execution_time = time.perf_counter() - started
             _report_negative_density(result, fp_solvers)
-            if not check:
-                return result
-            failures = read_inner_solve_failures_of(solvers)
-            metadata = getattr(result, "metadata", None)
-            if isinstance(metadata, dict):
-                # Every coupler's result says what its solvers' latest solves recorded, converged or not (#2644).
-                metadata["inner_hjb_failures"] = None if failures is None else list(failures)
-            if failures:
+            failures = read_inner_solve_failures_of(solvers) if failures_of is None else failures_of(self)
+            # Every coupler's result says what the record its verdict read holds, converged or not (#2644).
+            result.metadata["inner_hjb_failures"] = list(failures) if isinstance(failures, tuple) else None
+            if check and isinstance(failures, tuple) and failures:
                 _refuse_a_converged_result(result, failures)
             return result
 
@@ -312,17 +314,13 @@ def verdict_reads_inner_failures(
     return decorate
 
 
-def _refuse_a_converged_result(result: Any, failures: tuple) -> None:
+def _refuse_a_converged_result(result: SolverResult, failures: tuple) -> None:
     """A result reported converged over ``failures``, failed inner steps of its last sweep, is not (#1878)."""
-    if not getattr(result, "converged", False):
+    if not result.converged:
         return
-    metadata = getattr(result, "metadata", None)
-    previous = metadata.get("convergence_reason", "") if isinstance(metadata, dict) else ""
-    _, reason = refuse_convergence_over_failed_inner_solves(True, previous, failures)
+    _, reason = refuse_convergence_over_failed_inner_solves(True, result.metadata["convergence_reason"], failures)
     result.converged = False
-    if isinstance(metadata, dict):
-        metadata["convergence_reason"] = reason
-        metadata["inner_hjb_failures"] = list(failures)
+    result.metadata["convergence_reason"] = reason
 
 
 def refuse_convergence_over_failed_inner_solves(

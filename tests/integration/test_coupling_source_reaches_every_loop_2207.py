@@ -372,7 +372,7 @@ def _regime_solve(*per_regime_fields):
         damping=DampingPolicy.constant(0.5),
     ).solve()
     assert result.converged
-    return result.values, result.densities
+    return result.U, result.M
 
 
 def test_each_regime_adds_its_own_hjb_source_to_the_cross_regime_term():
