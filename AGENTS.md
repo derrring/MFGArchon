@@ -371,6 +371,13 @@ So state which of these the fix ends with, in the PR body, in this order of pref
 Adding tests must be justified by a failure they discriminate, not by "should test more". Assert on
 the relevant disagreement, not merely on validity; every defect above sat on a covered line.
 
+**Each behaviour the PR body states meets a mutant before review 1** (user ruling, 2026-11-26). For
+every sentence that says what the change does, delete or alter the code it describes and name the
+test that turns red. A sentence with no such test goes under the body's *Known pin gaps* with its
+reason, or out of the body; a pin is written only where § *Admission* admits it. A claimed fix with
+no pin is a Blocker at review (§ *Review before merge*), and this check runs before the review that
+would find it.
+
 ---
 
 ## 🔧 Development workflow
@@ -395,7 +402,7 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 
 1. the fact the defect is about — the quantity, meaning, layout or decision several components must agree on — named, with its tracking issue;
 2. its population: every place that decides the fact and every place that reads it, found by the census in item 3, each with the source it asks and whether it agrees with the others on identical inputs. A member is a place that decides on its own, other than the owner the plan names, or a reader that disagrees with the owner; a place that reads the owner and agrees with it is not a member, and a place that decides on its own is a member even when a pin shows it agrees today. A control the census must find at both shas, outside the count; the count at the base sha and at the head sha. The table is posted on the fact's tracking issue, which the class line links, and the PR body carries its counts; the plan's author opens that issue if none exists, one issue per fact;
-3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. The plan's approver names it, and runs it if the author has not;
+3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. Besides that selection, its population takes in, mechanically, every caller and reader, in the package and through what it exports, of each symbol the change deletes or alters: named at plan and drawn again from the diff at the head. A list of the routes or classes the fact is thought to reach is not enough on its own (user ruling, 2026-11-26). The plan names the axes the census holds constant (a tolerance, divergence, a helper used on its own, which solver carries the BC), and item 4's case is taken from them. The plan's approver names the census, and runs it if the author has not;
 4. what a case the census did not select does at the head, per arm: reads right, raises, reds a test enumerating the class, or returns silently; one case on an axis the census held constant, with its output. If silent, the open issue;
 5. class fix (head count 0: the owner is the one deciding place, and no reader disagrees with it; the others deleted or made readers of it) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
