@@ -61,5 +61,6 @@ guards verified mutation-red: removing the FDM one fails 2 of 7, removing the FE
 **[2026-09-28, #2422: that file was deleted in #2227 (`18d8cc80`). The FDM refusal is pinned by
 `test_solver_bc_support_census_1975.py::test_a_provider_valued_coefficient_is_refused_rather_than_dropped`;
 the FEM `alpha`/`beta` one has no pin (`test_fem_inhomogeneous_neumann_2294.py` pins the separate `value` guard).]**
+**[#2424: both refusals, and that pin, were removed with providers later in this release.]**
 
 Unblocks #1970, which is in draft pending this. (#1970 then merged, and #2422 removed what it added.)

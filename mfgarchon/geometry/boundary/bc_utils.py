@@ -284,8 +284,9 @@ def _describe_bc_value(value: Any) -> object | None:
     (``10**400``), and where it raises TypeError or ValueError as unrecognised (a str); a ``Decimal`` too large for a
     float reads as ``inf``. Any other error propagates: an object whose ``__float__`` raises RuntimeError raises it,
     and a ragged list raises ValueError from ``np.iscomplexobj``, before ``float()``. An array is read before it, since
-    an all-zero array is a legitimate ``g = 0``. A complex value, zero included, is not verifiably zero: a boundary datum is real, and ``float()``
-    on a NumPy complex scalar drops the imaginary part, which read ``np.complex128(1j)`` as zero. The value
+    an all-zero array is a legitimate ``g = 0``. A complex value, zero included, is not verifiably zero: a boundary
+    datum is real, and ``float()`` on a NumPy complex scalar drops the imaginary part, which read
+    ``np.complex128(1j)`` as zero. The value
     owner (`types.boundary_value`) refuses complex too, so the two give one verdict (#2512 row B2).
     """
     import numpy as np
