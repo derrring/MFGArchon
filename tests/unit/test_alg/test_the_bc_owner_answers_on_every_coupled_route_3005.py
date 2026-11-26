@@ -74,9 +74,9 @@ def _solvers_with_their_own_bc(problem):
     """Both solvers carry their own BC, so neither asks the problem's owner."""
     points = np.asarray(problem.geometry.get_spatial_grid()).reshape(-1, 1)
     own = no_flux_bc(dimension=1)
-    return HJBGFDMSolver(problem, collocation_points=points, boundary_conditions=own), FPFDMSolver(
-        problem, boundary_conditions=own
-    )
+    # monotonicity_scheme="none" is the solver's default, named so it does not warn
+    hjb = HJBGFDMSolver(problem, collocation_points=points, boundary_conditions=own, monotonicity_scheme="none")
+    return hjb, FPFDMSolver(problem, boundary_conditions=own)
 
 
 def _build_and_solve(route, grid_bc, components_bc):
