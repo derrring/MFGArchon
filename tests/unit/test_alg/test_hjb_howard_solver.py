@@ -909,10 +909,9 @@ def test_integrated_howard_rejects_robin_nonzero_alpha():
 # 8. Part 1: per-solve BC refresh (Issue #1118)
 #
 # GFDM snapshots boundary conditions + the preclassified segment map at
-# __init__; the coupling layer resolves providers per Picard iteration by
-# swapping geometry.boundary_conditions (FDM re-reads it each solve, GFDM did
-# not). Without the refresh the adjoint coupling value would freeze at the
-# construction-time BC — silent-wrong in the >1000x-impact regime.
+# __init__, where FDM re-reads them each solve. Without the refresh a BC set on
+# the geometry between solves would not reach GFDM: it would solve against the
+# construction-time BC.
 # ---------------------------------------------------------------------------
 
 
@@ -965,7 +964,7 @@ def test_gfdm_refreshes_geometry_bc_per_solve():
     assert gfdm._bc_segment_per_point[bi].value == pytest.approx(0.3)
     assert gfdm._value_form_bc_rows(0)[bi][1] == pytest.approx(0.3)
 
-    # Coupling layer swaps the geometry BC (resolved-per-Picard analogue).
+    # The geometry's BC is replaced between solves.
     geom.boundary_conditions = _neumann_per_face_1d(0.9)
     gfdm._refresh_boundary_conditions_if_changed()
 
@@ -1013,7 +1012,7 @@ def test_gfdm_explicit_param_bc_not_refreshed():
 
 
 def test_gfdm_refresh_noop_when_bc_unchanged():
-    """No provider / no swap: refresh leaves the snapshot object identity intact (no churn)."""
+    """No swap: refresh leaves the snapshot object identity intact (no churn)."""
     gfdm, _geom, _pts, _bdry = _make_geom_sourced_gfdm_1d(_neumann_per_face_1d(0.3))
     snapshot = gfdm.boundary_conditions
     # The BC identity alone cannot fail: with the `live_bc is self.boundary_conditions` early
@@ -1071,9 +1070,8 @@ def test_howard_robin_nonzero_beta_rejected():
 
 
 def test_howard_honors_resolved_robin_in_solution():
-    """Howard must HONOR the resolved Robin row in the solved value function, not just build it:
-    the value-form boundary equation row @ U == g holds at the solved (non-terminal) slices.
-    Complements the load-bearing test (which checks the row is BUILT correctly). Verifies the
+    """Howard must HONOR the Robin row in the solved value function, not just build it:
+    the value-form boundary equation row @ U == g holds at the solved (non-terminal) slices. Verifies the
     value-form RHS=target is consumed by the inner solve (Constraint c) without depending on the
     Newton path (whose stall on this regime is the very motivation for Howard, #1118)."""
     sigma = 0.3

@@ -205,8 +205,8 @@ def fp_drift_coefficient(problem: Any, *, context: str = "fp_drift_coefficient")
 def scalar_volatility(volatility: Any, *, consumer: str) -> float:
     """A volatility as one scalar, for a consumer that can use nothing else (#2376).
 
-    ``volatility`` is what the consumer was handed -- ``problem.volatility``, a per-solve override,
-    a BC provider's state. There is no scalar view of a volatility that is not a scalar, and this
+    ``volatility`` is what the consumer was handed -- ``problem.volatility`` or a per-solve override.
+    There is no scalar view of a volatility that is not a scalar, and this
     function does not invent one. An array or callable raises, naming ``consumer``, where the retired
     ``problem.sigma`` returned the mean of an array and the literal ``1.0`` for a callable -- a
     factor of 400 in ``D`` for ``lambda x: 0.05`` against ``0.05``. Calling this is the consumer's

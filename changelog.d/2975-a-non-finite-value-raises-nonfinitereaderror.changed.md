@@ -9,7 +9,7 @@
     `apply_particles`, the FEM's `assemble_robin_terms`, and, reading a segment's Robin coefficients, HJB-FDM's
     `compute_hjb_residual`, `compute_hjb_jacobian` and `solve_hjb_timestep_newton`, `HJBGFDMSolver.solve_hjb_system`
     and `HJBHowardSolver.solve_hjb_system` (GFDM's Robin rows), and `FPResolver.resolve` and `HJBResolver.resolve` (a
-    provider's resolved coefficient), and so every solve that reads one, `problem.solve()` and the doors included.
+    provider's resolved coefficient; providers were removed later in this release, #2424), and so every solve that reads one, `problem.solve()` and the doors included.
     Code that caught `NotImplementedError` for it no longer does. A value of a type
     the reader cannot read, and an integer no float holds, keep `NotImplementedError`;
   - a `volatility=` override, the iterator's initial mass, the particle FP's `m_initial`, HJB-FDM's non-finite

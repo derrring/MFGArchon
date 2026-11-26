@@ -6,7 +6,7 @@
     - `VariationalMFGProblem.sigma` and `HamiltonianValues.sigma` are now `.volatility`. Reading `.sigma` raises an `AttributeError`.
     - `MFGGridConfig.sigma` is now `volatility`, and `MFGArrays.get_solution_statistics()` reports it under `"volatility"` where it reported `"sigma"`; `ExperimentConfig.to_notebook_metadata()` returns that dictionary under `"solution_statistics"`. `MFGGridConfig(sigma=...)` is rejected by `extra="forbid"`.
     - `OperatorConfig.sigma`, exported from `alg.numerical.adjoint`, is now `OperatorConfig.volatility`.
-    - The boundary-provider state that `FixedPointIterator` builds carries the volatility under `"volatility"`, where it was `"sigma"`. A provider of your own that read `state["sigma"]` now finds nothing there.
+    - The boundary-provider state that `FixedPointIterator` builds carries the volatility under `"volatility"`, where it was `"sigma"`. A provider of your own that read `state["sigma"]` now finds nothing there. Providers, and the state built for them, were removed later in this release (#2424).
     - `save_experiment_data` writes `"volatility"` where it wrote `"sigma"`. Files saved before this carry the old key.
   - **The strict-adjoint FP step reads the volatility by its declared kind.** It used to refuse the problem's tensor by checking `is problem.volatility`, so an equal tensor passed as an override was read as a per-point field. That was the last identity check from part 2a.
     - It now follows part 2a's rule for every override, so two inputs it accepted before are refused: an array with no `volatility_kind=`, and a negative scalar.

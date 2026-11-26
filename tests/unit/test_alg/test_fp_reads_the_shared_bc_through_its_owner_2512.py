@@ -22,7 +22,8 @@ the shared one.
 **The rule.** Each shared read must reach the owner's argument in the same function: inside it, or through
 names and `self` attributes assigned from it, transitively. That is per read: a function that translates
 one read and uses another raw is a rival. A read whose parent is a comparison (`... is None`) is a test of
-the value, not a use of it.
+the value, not a use of it; nor is a read whose value is discarded, an expression statement, which is made for the
+owner's refusals (`IterationState.start`, #3005).
 
 **Out of scope**, as the C1 guard says of its own shapes: the dataflow is flow-insensitive and within one
 function, so a read stored on `self` in one method and translated in another, a read passed through a
@@ -142,7 +143,9 @@ def raw_reads(scope: ast.AST, coupling: bool = False) -> list[int]:
     return sorted(
         node.lineno
         for node in nodes
-        if shared_read(node, coupling) and not isinstance(parents.get(node), ast.Compare) and not reaches(node)
+        if shared_read(node, coupling)
+        and not isinstance(parents.get(node), (ast.Compare, ast.Expr))
+        and not reaches(node)
     )
 
 
@@ -249,6 +252,8 @@ _CLASS_LINE = 2
         ("bc = self.problem.boundary_conditions\nview = bc\nreturn self._fp_view_of_shared(bc=view)", []),
         ("self.bc = self.problem.boundary_conditions\nself.bc = self._fp_view_of_shared(self.bc)", []),
         ("if self.problem.boundary_conditions is None:\n    return None\nreturn self.get_boundary_conditions()", []),
+        ("self.problem.get_boundary_conditions()\nreturn self.get_boundary_conditions()", []),
+        ("self.problem.get_boundary_conditions()\nreturn self.problem.geometry.boundary_conditions", [2]),
         ("return self.boundary_conditions", []),
     ],
     ids=[
@@ -260,6 +265,8 @@ _CLASS_LINE = 2
         "translated-through-two-names",
         "translated-through-self",
         "a-test-of-the-value",
+        "a-discarded-read",
+        "a-discarded-read-beside-a-raw-use",
         "own-attribute",
     ],
 )
@@ -303,6 +310,9 @@ _PLANT_COUPLING = "def _planted(problem, fp_solver):\n{body}"
             "return view, raw",
             [2],
         ),
+        # A read made for the owner's refusals, its value discarded, as IterationState makes one (#2424).
+        ("problem.get_boundary_conditions()\nreturn None", []),
+        ("problem.get_boundary_conditions()\nreturn problem.geometry.boundary_conditions", [2]),
     ],
     ids=[
         "the-2529-fallback",
@@ -313,6 +323,8 @@ _PLANT_COUPLING = "def _planted(problem, fp_solver):\n{body}"
         "translated",
         "translated-by-the-function",
         "the-function-translates-one-another-raw",
+        "a-discarded-read",
+        "a-discarded-read-beside-a-raw-use",
     ],
 )
 def test_each_coupling_shape_is_judged(alg_copy, body, raw):

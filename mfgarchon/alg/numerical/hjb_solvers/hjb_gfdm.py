@@ -1425,7 +1425,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         """Pre-classify every boundary collocation point to a BCSegment + face + normal.
 
         Called at __init__ time and re-run by ``_refresh_boundary_conditions_if_changed``
-        when the geometry BC is resolved per Picard iteration. Populates three
+        when the geometry's BC has been replaced since. Populates three
         companion maps:
 
         - ``self._bc_face_per_point[i]``: BoundaryFace the point lies on.
@@ -3052,8 +3052,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 raise NotImplementedError(_TENSOR_VOLATILITY_REFUSAL)
         self._volatility_override = volatility
 
-        # Pick up any per-Picard resolved BC the coupling layer installed on the
-        # geometry since construction (Issue #1118; matches FDM's per-solve re-read).
+        # Pick up a BC set on the geometry since construction (Issue #1118; matches FDM's per-solve re-read).
         self._refresh_boundary_conditions_if_changed()
 
         # Validate required parameters

@@ -1,0 +1,7 @@
+- **Every coupled route reads the problem's boundary conditions from their one owner** (#3005), so the owner's refusals answer whatever BC the route's solvers carry. `IterationState.start`, which every coupled route calls per component at each solve, reads `problem.get_boundary_conditions()`. The refusals are two declarations that differ (#2530) and a FLUX on the shared BC (#2581).
+  - **Main solves, this change refuses** (the user's ruling of 2026-11-26): `GraphMFGSolver`, both of whose solvers carry their own BC, with two declarations that differ or a FLUX on the shared BC. Graph never asked the owner.
+  - **The six other routes asked it through the provider check this release removes (#2424),** and FixedPoint every sweep. The read in `IterationState` keeps their refusals.
+  - **When they refuse:**
+    - every route refuses at the solve. `FictitiousPlayIterator`, `BlockGaussSeidelIterator`, `BlockJacobiIterator` and `NewtonMFGSolver` refused at construction.
+    - **A BC changed on the problem between two solves of one iterator** is refused at the next solve. `FixedPointIterator` refused it at main, since it read the owner every sweep. FictitiousPlay, Block GS and Newton, which read it only at construction, solved it.
+  - **Measured:** on a 1-D grid with HJB-GFDM and FP-FDM each given their own BC, on all eight route set-ups. A network problem, whose owner answers None or a `GraphBCConfig`, meets the same named refusals as before.

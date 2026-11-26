@@ -265,7 +265,7 @@ def test_gfdms_equivalence_is_the_row_it_writes():
     def seg(bc_type, **kwargs):
         return BCSegment(name="s", bc_type=bc_type, **kwargs)
 
-    def beta():  # a coefficient GFDM does not read, compared as stored: equal only to itself
+    def beta():  # a coefficient GFDM's row builder refuses (#1237), compared as stored: equal only to itself
         return 1.0
 
     assert _same_bc_row(seg(BCType.NEUMANN, value=0.0), seg(BCType.NO_FLUX))

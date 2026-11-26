@@ -204,9 +204,7 @@ def ghost_cell_robin(
     coeff_ghost = alpha / 2.0 + beta / dx
     coeff_interior = alpha / 2.0 - beta / dx
 
-    # alpha, beta and rhs_value may be FIELDS -- one value per boundary point. The impermeable
-    # wall of a Fokker-Planck equation is this condition with alpha = the outward normal drift,
-    # which varies along the boundary and is recomputed each Picard iterate. The arithmetic above
+    # alpha, beta and rhs_value may be FIELDS -- one value per boundary point. The arithmetic above
     # is already elementwise; only this guard needed to stop assuming a scalar.
     #
     # #2217: the threshold is RELATIVE because `coeff_ghost` carries units and the pair has no

@@ -577,7 +577,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 volatility_kind=volatility_kind,
                 use_upwind=self.use_upwind,
                 numerical_hamiltonian=self.numerical_hamiltonian,
-                bc=bc,  # Uses Robin BC from geometry
+                bc=bc,
                 domain_bounds=domain_bounds,
                 source_term=source_term,
                 cross_density=cross_density,  # Issue #1071

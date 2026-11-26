@@ -7,8 +7,9 @@ went with the boundary-value provider concept (#2424). Each route now reaches it
 iterate owner's (``IterationState``), or, for two network populations, MultiPopulation's #2335 refusal, the answer
 #2923 asked for.
 
-A labelled defect pin (AGENTS.md, admission class 3): its fourteen AttributeError cases fail at e14eecd6.
-FixedPointIterator and GraphMFGSolver, which refused the geometry by name before and after, are the controls.
+The pin this fix owes (AGENTS.md § Review before merge, a claimed fix with no pin that goes red without it): its
+fourteen AttributeError cases fail at e14eecd6. FixedPointIterator and GraphMFGSolver, which refused the geometry by
+name before and after, are the controls.
 """
 
 import pytest

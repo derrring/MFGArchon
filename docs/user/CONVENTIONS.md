@@ -1736,7 +1736,7 @@ method surface*), are not removed yet.
 | `problem.spatial_discretization` | `problem.geometry.Nx` (intervals) or `problem.geometry.Nx_points` (points). It held one count or the other depending on the constructor (#1889); the `spatial_discretization=` argument stays and counts intervals |
 | `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
 | `AdjointConsistentProvider`, `NormalDriftProvider` | nothing |
-| `BCValueProvider`, `BaseBCValueProvider`, `ConstantProvider`, `is_provider`, `resolve_provider`, `BCProviderState`; `BoundaryConditions.has_providers` and `with_resolved_providers`; `MFGProblem.using_resolved_bc`; the `state=` argument of `BCSegment.get_value` | nothing: a boundary value is a constant or a callable g(t, x) (#2424) |
+| `BCValueProvider`, `BaseBCValueProvider`, `ConstantProvider`, `is_provider`, `resolve_provider`, `BCProviderState`; `BoundaryConditions.has_providers` and `with_resolved_providers`; `MFGProblem.using_resolved_bc`; the `state=` argument of `BCSegment.get_value`, `segment_value`, `boundary_value` and `segment_robin_coefficients` | nothing: a boundary value is a constant or a callable g(t, x) (#2424) |
 
 The `removed` changelog fragment of the removal before 1.0 lists the names it deleted and what replaces them.
 

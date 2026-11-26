@@ -87,6 +87,11 @@ class IterationState:
         reader: The route's name, which every refusal names.
         terminal_binding: The HJB solver's binding of a terminal coupling, for ``problem.terminal_value``.
         unstructured_mesh: Whether the route runs on an unstructured mesh.
+
+    Each `start`, which every coupled route calls at each solve, reads the problem's boundary conditions from their one
+    owner, ``problem.get_boundary_conditions()``, whatever boundary conditions the pair carries, so the owner's refusals
+    answer on every coupled route (#3005): two declarations that differ (#2530), a FLUX on the shared BC (#2581), a
+    geometry that declares none (#2589).
     """
 
     def __init__(
@@ -142,8 +147,10 @@ class IterationState:
 
         The cold start's U is u(T) at the initial density in every row; its M is the initial density at level 0 and
         `cold_start_density_at_level` at each later level, which holds the FP step's value at a node the step
-        prescribes (#2991). Either way it reads m(0) for the solve that follows (`m0`).
+        prescribes (#2991). Either way it reads m(0) for the solve that follows (`m0`), and it reads the problem's BC from
+        its owner first, so the owner's refusals answer at each solve (#3005).
         """
+        self.problem.get_boundary_conditions()
         m0 = self.initial_density()
         self.m0 = m0
         if self._warm_start is not None:

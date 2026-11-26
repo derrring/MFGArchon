@@ -579,7 +579,7 @@ def test_the_layered_contract(value, returned, expected):
 
 def test_a_robin_coefficient_is_read_by_one_reader_and_a_callable_or_a_field_is_refused():
     """`segment_robin_coefficients` (#2512 row B2): a constant each, by the constant contract. A callable is refused
-    naming #1237, and a field from a provider naming #2600, the per-node capability no reader has yet."""
+    naming #1237, and a field of more than one value naming #2600, the per-node capability no reader has yet."""
     from mfgarchon.geometry.boundary.types import segment_robin_coefficients
 
     def robin(alpha, beta):

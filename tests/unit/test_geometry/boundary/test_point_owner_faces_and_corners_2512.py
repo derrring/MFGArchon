@@ -312,8 +312,8 @@ def test_two_robin_segments_are_compared_as_stored():
             ],
         )
 
-    provided = robins(lambda: 1.0)
-    assert provided.uniform_segment is None
-    assert _same_enforcement(provided.segments[0], provided.segments[0])
-    assert not _same_enforcement(provided.segments[0], provided.segments[1])
+    stored = robins(lambda: 1.0)
+    assert stored.uniform_segment is None
+    assert _same_enforcement(stored.segments[0], stored.segments[0])
+    assert not _same_enforcement(stored.segments[0], stored.segments[1])
     assert robins(1.0).uniform_segment.name == "ra"
