@@ -33,7 +33,9 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     refuse_a_capped_exit_in_a_coupled_solve,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    BUDGET_SPENT,
     check_convergence_criteria,
+    fp_output_stop,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
     verdict_reads_inner_failures,
@@ -216,12 +218,16 @@ class GraphMFGSolver(BaseCouplingIterator):
 
         record = SweepRecord(N)
         fp_output_available = False
-        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
-        reason = "Maximum iterations reached"
+        # The reason a spent budget reports, on every route (#3002, ruling 2)
+        reason = BUDGET_SPENT
         integrates = [p.spatial_measure().integrate for p in self._problems]
         dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
+            # The owner's refusals answer at every sweep, so a BC changed during the solve is refused at the next one
+            # (#3005; #3002 stage 2a, ruling A). Stage 2b moves this call into the coupled driver.
+            for state in states:
+                state.read_owner()
             Us_new: list[NDArray] = [np.empty(0)] * N
             Ms_new: list[NDArray] = [np.empty(0)] * N
             terminals: list[NDArray] = [np.empty(0)] * N
@@ -297,6 +303,26 @@ class GraphMFGSolver(BaseCouplingIterator):
                     M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
                 Ms_new[k] = M_k
 
+            # --- Damping, per node and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given. The next iterate is never an input array
+            # (`DampingRun.update`), so the map's outputs stay what the change below measures. ---
+            Us_next: list[NDArray] = [np.empty(0)] * N
+            Ms_next: list[NDArray] = [np.empty(0)] * N
+            for k in range(N):
+                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
+                Us_next[k], Ms_next[k] = states[k].write_back(U_k, M_k, terminals[k])
+            fp_output_available = True
+
+            # The FP-output rule every coupled route reads, on the nodes' total mass, Graph's invariant (#2997; #3002
+            # stage 2a, ruling A), before the change is measured, which refuses a non-finite one (#2578). Stage 2b
+            # moves this call into the coupled driver.
+            stop = fp_output_stop(
+                Us_new, Ms_new, Us_next, Ms_next, Ms, each_component=False, site="GraphMFGSolver", iteration=iteration
+            )
+            if stop is not None:
+                record.diverged()
+                return self._result(Us_next, Ms_next, record, False, stop, fp_output_available)
+
             # --- Convergence: the sweep's output against its input, BEFORE damping ---
             # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
             # and on the map's output: after damping the change is `theta` times this one, so the
@@ -305,7 +331,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             per_node = [sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(N)]
             worst = worst_sweep_change(per_node, "node")
             record.measured(per_node)
-            converged, reason = check_convergence_criteria(
+            met, criteria_reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -313,21 +339,15 @@ class GraphMFGSolver(BaseCouplingIterator):
                 self._tol,
                 self._abs_tol,
             )
-
-            # --- Damping, per node and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
-            # terminal row to the u(T) this sweep's HJB solve was given ---
             for k in range(N):
-                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
-                Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_node[k]):
                     logger.warning(f"GraphMFGSolver[node {k}]: {message}")
 
-            Us_full = Us_new
-            Ms = Ms_new
-            fp_output_available = True
+            Us_full = Us_next
+            Ms = Ms_next
 
-            if converged:
-                return self._result(Us_full, Ms, record, True, reason, fp_output_available)
+            if met:
+                return self._result(Us_full, Ms, record, True, criteria_reason, fp_output_available)
 
         return self._result(Us_full, Ms, record, False, reason, fp_output_available)
 

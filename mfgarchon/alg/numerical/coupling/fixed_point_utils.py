@@ -24,7 +24,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Sequence
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
@@ -412,10 +412,8 @@ def preserve_terminal_condition(
 def value_function_is_finite(U: np.ndarray) -> bool:
     """Whether a value function is usable as an FP drift.
 
-    Split out of :func:`diverged_value_function` for the one caller that needs the question
-    without the answer: ``BlockIterator._gauss_seidel_step`` must SKIP its FP solve, while the
-    loop above it publishes and stops. Two sites, two jobs, one predicate -- restating
-    ``np.all(np.isfinite(...))`` at the second one is the shape #1718 exists to remove.
+    The predicate :func:`diverged_value_function` asks, which a caller that needs the question without the answer
+    can ask too, rather than restating ``np.all(np.isfinite(...))`` (#1718).
     """
     return bool(np.all(np.isfinite(U)))
 
@@ -478,6 +476,70 @@ def diverged_value_function(
     )
     published = np.asarray(U_new).copy()
     return preserve_terminal_condition(published, U_terminal)
+
+
+#: The reason a solve reports when its budget is spent, on every coupled route (#3002, the approver's ruling 2).
+BUDGET_SPENT = "Maximum iterations reached"
+
+#: The growth of the FP output's mass, against level 0's, past which a coupled solve is diverging (#1489 S5).
+FP_MASS_BLOWUP_FACTOR = 1e4
+
+
+def fp_output_stop(
+    U_new: Sequence[np.ndarray],
+    M_new: Sequence[np.ndarray],
+    U: Sequence[np.ndarray],
+    M: Sequence[np.ndarray],
+    M_old: Sequence[np.ndarray],
+    *,
+    each_component: bool,
+    site: str,
+    iteration: int,
+) -> str | None:
+    """The stop a sweep's FP output calls for, or None: one rule on every coupled route (#2997's folded item; #3002
+    class line 1, the approver's ruling 3(a)).
+
+    Each argument holds one array per component: the map's HJB and FP outputs ``U_new`` and ``M_new``, the iterate after
+    the update and the write-back ``U`` and ``M``, and the density the sweep was handed ``M_old``. It runs after the
+    write-back and before the sweep's change is measured, which refuses a non-finite change (#2578).
+
+    - **The magnitude** (#1489 S5): ``'diverged_mass_blowup'`` once the FP output's total ``|M|`` passes
+      ``FP_MASS_BLOWUP_FACTOR`` times level 0's, on the mass of the route's own invariant: each component's mass when
+      ``each_component``, else their total. A finite but blown-up density passes the check below. A legitimate solve
+      conserves its mass, or loses it through an absorbing boundary.
+    - **A non-finite iterate** (#688): ``'diverged_nan'``. The warning names the array that is non-finite, and the
+      density the sweep was handed, and guesses no cause (#2845).
+
+    The caller publishes ``U`` and ``M`` as they are, the iterate the stopped sweep produced.
+    """
+    groups = [[k] for k in range(len(M_new))] if each_component else [list(range(len(M_new)))]
+    for group in groups:
+        m0_mass = sum(float(np.sum(np.abs(M[k][0]))) if M[k].size else 0.0 for k in group)
+        m_mass = sum(float(np.sum(np.abs(M_new[k]))) for k in group)
+        if np.isfinite(m_mass) and m_mass > FP_MASS_BLOWUP_FACTOR * (m0_mass + 1e-300):
+            logger.warning(
+                "FP density blew up in iteration %d (total |M|=%.2e, %.1e x the initial), reported by %s; the coupled "
+                "solve is diverging -- enable stabilization. Terminating early (Issue #1489).",
+                iteration + 1,
+                m_mass,
+                m_mass / (m0_mass + 1e-300),
+                site,
+            )
+            return "diverged_mass_blowup"
+    if all(np.all(np.isfinite(u)) for u in U) and all(np.all(np.isfinite(m)) for m in M):
+        return None
+    hjb_bad = not all(np.all(np.isfinite(u)) for u in U_new)
+    fp_bad = not all(np.all(np.isfinite(m)) for m in M_new)
+    bad = [name for name, is_bad in (("the value function", hjb_bad), ("the density", fp_bad)) if is_bad]
+    logger.warning(
+        "NaN/Inf in %s in iteration %d, reported by %s: the density the sweep was handed has a minimum of %.3e. "
+        "Terminating early.",
+        " and ".join(bad) or "the damped iterate",
+        iteration + 1,
+        site,
+        min(float(np.nanmin(m)) for m in M_old),
+    )
+    return "diverged_nan"
 
 
 def _face_neighbours(n: int, span: int | None) -> np.ndarray:

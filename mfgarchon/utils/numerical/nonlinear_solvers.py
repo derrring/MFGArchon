@@ -371,133 +371,23 @@ class NewtonSolver(NonlinearSolver):
             Parameter names 'F' and 'jacobian' intentionally differ from
             base class 'func' for better API clarity in Newton context.
         """
-        import time
-
-        start_time = time.time()
-        # Convert to numpy array to handle scalars
-        x_current = np.asarray(x0, dtype=float).copy()
-        original_shape = np.asarray(x0).shape
-        is_scalar = original_shape == ()
-
-        residual_history = []
-        jacobian_evals = 0
-
-        # Use provided jacobian or default
-        jac_func = jacobian or self.jacobian_func
-
-        # Local flag for JAX usage (can be disabled if tracing fails)
-        use_jax_autodiff = self.use_jax
-
+        run = self.run(F, x0, jacobian)
         for iteration in range(self.max_iterations):
-            # Evaluate residual
-            F_current = F(x_current)
-            residual_norm = np.linalg.norm(F_current.flatten())
-            residual_history.append(float(residual_norm))
-
-            # Check convergence
-            stop = residual_norm < self.tolerance if converged is None else converged(x_current, F_current)[0]
+            F_current, residual_norm = run.evaluate()
+            stop = residual_norm < self.tolerance if converged is None else converged(run.x, F_current)[0]
             if stop:
-                solver_time = time.time() - start_time
-                result = x_current.item() if is_scalar else x_current
-                return result, SolverInfo(
-                    converged=True,
-                    iterations=iteration + 1,
-                    residual=residual_norm,
-                    residual_history=residual_history,
-                    solver_time=solver_time,
-                    jacobian_evals=jacobian_evals,
-                )
+                return run.converged(iteration, residual_norm)
+            stopped = run.step(F_current, residual_norm, iteration)
+            if stopped is not None:
+                return stopped
+        return run.exhausted()
 
-            # Compute Jacobian
-            if jac_func is not None:
-                J = jac_func(x_current)
-                jacobian_evals += 1
-            elif use_jax_autodiff:
-                # Use JAX automatic differentiation (O(1) Jacobian)
-                try:
-                    J = compute_jacobian(F, x_current, original_shape, mode="reverse")
-                    jacobian_evals += 1
-                except Exception as e:
-                    # JAX tracing failed (e.g., function uses numpy operations)
-                    # Fall back to finite differences for this iteration
-                    # and disable JAX for remaining iterations
-                    use_jax_autodiff = False
-                    warnings.warn(
-                        f"JAX autodiff failed: {e!r}. "
-                        "Falling back to finite-difference Jacobian (O(N) complexity). "
-                        "For better performance, use JAX-compatible functions (jax.numpy).",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
-                    J = self._finite_difference_jacobian(F, x_current)
-                    jacobian_evals += 1
-            else:
-                # Fallback: finite difference Jacobian (O(N) complexity)
-                J = self._finite_difference_jacobian(F, x_current)
-                jacobian_evals += 1
-
-            # Solve linear system: J δx = -F
-            delta_x = self._solve_linear_system(J, -F_current.flatten(), original_shape)
-
-            # Line search (on by default; Issue #1745)
-            if self.line_search:
-                alpha = self._backtracking_line_search(F, x_current, delta_x, F_current)
-                if alpha == 0.0:
-                    return self._stop(
-                        x_current,
-                        is_scalar,
-                        iteration,
-                        residual_norm,
-                        residual_history,
-                        start_time,
-                        jacobian_evals,
-                        reason="line_search_failed",
-                        detail=(
-                            "no step along the Newton direction reduced the residual. The "
-                            "direction may be wrong (check the Jacobian) or the iterate may "
-                            "be at a local minimum of ||F|| that is not a root."
-                        ),
-                    )
-            else:
-                alpha = 1.0
-
-            # Divergence guard, always on. PETSc keeps SNESSetDivergenceTolerance active
-            # regardless of line search for the same reason: a run that has grown this far past
-            # its starting residual is not going to recover, and the remaining iterations only
-            # delay the diagnosis.
-            if residual_norm > self.divergence_tolerance * residual_history[0]:
-                return self._stop(
-                    x_current,
-                    is_scalar,
-                    iteration,
-                    residual_norm,
-                    residual_history,
-                    start_time,
-                    jacobian_evals,
-                    reason="diverged",
-                    detail=(
-                        f"residual grew to {residual_norm:.3e}, more than "
-                        f"{self.divergence_tolerance:g}x the initial {residual_history[0]:.3e}."
-                    ),
-                )
-
-            # Update
-            x_current = x_current + alpha * delta_x
-
-        # Maximum iterations reached
-        solver_time = time.time() - start_time
-        F_final = F(x_current)
-        residual_final = np.linalg.norm(F_final.flatten())
-
-        result = x_current.item() if is_scalar else x_current
-        return result, SolverInfo(
-            converged=False,
-            iterations=self.max_iterations,
-            residual=float(residual_final),
-            residual_history=residual_history,
-            solver_time=solver_time,
-            jacobian_evals=jacobian_evals,
-        )
+    def run(
+        self, F: Callable[[NDArray], NDArray], x0: NDArray, jacobian: Callable[[NDArray], Any] | None = None
+    ) -> NewtonRun:
+        """One solve's state, whose `NewtonRun.step` is the one implementation of a Newton step: `solve`'s loop is made
+        of it, and so is the Newton phase of a coupled solve (#3002, stage 2a)."""
+        return NewtonRun(self, F, x0, jacobian)
 
     def _finite_difference_jacobian(
         self,
@@ -578,6 +468,7 @@ class NewtonSolver(NonlinearSolver):
         *,
         reason: str,
         detail: str,
+        stacklevel: int = 3,
     ):
         """Stop with a NAMED outcome rather than exhausting the iteration budget.
 
@@ -587,7 +478,7 @@ class NewtonSolver(NonlinearSolver):
         SNES_DIVERGED_DTOL, KINSOL KIN_LINESEARCH_NONCONV. The reason travels in `extra` so the
         SolverInfo signature is unchanged.
         """
-        warnings.warn(f"Newton stopped: {reason}. {detail}", RuntimeWarning, stacklevel=3)
+        warnings.warn(f"Newton stopped: {reason}. {detail}", RuntimeWarning, stacklevel=stacklevel)
         return (
             x_current.item() if is_scalar else x_current,
             SolverInfo(
@@ -649,6 +540,157 @@ class NewtonSolver(NonlinearSolver):
         # only chance to act on it. PETSc types this as SNES_DIVERGED_LINE_SEARCH rather than
         # continuing; the previous code returned ~1e-6 and burned the remaining iterations.
         return 0.0
+
+
+class NewtonRun:
+    """One Newton solve's state: the iterate, its residual history, the Jacobian evaluations, and whether JAX is still
+    used for the Jacobian (a tracing failure turns it off for the rest of the solve). Built by `NewtonSolver.run`.
+
+    Each iteration is `evaluate`, then the caller's stop test, then `step`. ``stacklevel`` places a warning `step`
+    raises at the caller of the method that calls it, as `NewtonSolver.solve`'s own warnings were placed at its caller.
+    """
+
+    def __init__(
+        self,
+        solver: NewtonSolver,
+        F: Callable[[NDArray], NDArray],
+        x0: NDArray,
+        jacobian: Callable[[NDArray], Any] | None,
+        stacklevel: int = 3,
+    ) -> None:
+        self.solver = solver
+        self.F = F
+        self.start_time = time.time()
+        # Convert to numpy array to handle scalars
+        self.x = np.asarray(x0, dtype=float).copy()
+        self.original_shape = np.asarray(x0).shape
+        self.is_scalar = self.original_shape == ()
+        self.residual_history: list[float] = []
+        self.jacobian_evals = 0
+        # Use provided jacobian or default
+        self.jac_func = jacobian or solver.jacobian_func
+        # Local flag for JAX usage (can be disabled if tracing fails)
+        self.use_jax_autodiff = solver.use_jax
+        self.stacklevel = stacklevel
+
+    def evaluate(self) -> tuple[NDArray, float]:
+        """F at the iterate, and its norm, appended to the residual history."""
+        F_current = self.F(self.x)
+        residual_norm = np.linalg.norm(F_current.flatten())
+        self.residual_history.append(float(residual_norm))
+        return F_current, residual_norm
+
+    def converged(self, iteration: int, residual_norm: float) -> tuple[Any, SolverInfo]:
+        """The iterate, reported converged at ``iteration`` (0-based)."""
+        solver_time = time.time() - self.start_time
+        result = self.x.item() if self.is_scalar else self.x
+        return result, SolverInfo(
+            converged=True,
+            iterations=iteration + 1,
+            residual=residual_norm,
+            residual_history=self.residual_history,
+            solver_time=solver_time,
+            jacobian_evals=self.jacobian_evals,
+        )
+
+    def step(self, F_current: NDArray, residual_norm: float, iteration: int) -> tuple[Any, SolverInfo] | None:
+        """One Newton step from the iterate, whose residual is ``F_current``: the Jacobian, the linear solve, the line
+        search and the divergence guard. Returns a named stop, or None after moving the iterate."""
+        solver = self.solver
+        # Compute Jacobian
+        if self.jac_func is not None:
+            J = self.jac_func(self.x)
+            self.jacobian_evals += 1
+        elif self.use_jax_autodiff:
+            # Use JAX automatic differentiation (O(1) Jacobian)
+            try:
+                J = compute_jacobian(self.F, self.x, self.original_shape, mode="reverse")
+                self.jacobian_evals += 1
+            except Exception as e:
+                # JAX tracing failed (e.g., function uses numpy operations)
+                # Fall back to finite differences for this iteration
+                # and disable JAX for remaining iterations
+                self.use_jax_autodiff = False
+                warnings.warn(
+                    f"JAX autodiff failed: {e!r}. "
+                    "Falling back to finite-difference Jacobian (O(N) complexity). "
+                    "For better performance, use JAX-compatible functions (jax.numpy).",
+                    RuntimeWarning,
+                    stacklevel=self.stacklevel,
+                )
+                J = solver._finite_difference_jacobian(self.F, self.x)
+                self.jacobian_evals += 1
+        else:
+            # Fallback: finite difference Jacobian (O(N) complexity)
+            J = solver._finite_difference_jacobian(self.F, self.x)
+            self.jacobian_evals += 1
+
+        # Solve linear system: J δx = -F
+        delta_x = solver._solve_linear_system(J, -F_current.flatten(), self.original_shape)
+
+        # Line search (on by default; Issue #1745)
+        if solver.line_search:
+            alpha = solver._backtracking_line_search(self.F, self.x, delta_x, F_current)
+            if alpha == 0.0:
+                return solver._stop(
+                    self.x,
+                    self.is_scalar,
+                    iteration,
+                    residual_norm,
+                    self.residual_history,
+                    self.start_time,
+                    self.jacobian_evals,
+                    reason="line_search_failed",
+                    detail=(
+                        "no step along the Newton direction reduced the residual. The "
+                        "direction may be wrong (check the Jacobian) or the iterate may "
+                        "be at a local minimum of ||F|| that is not a root."
+                    ),
+                    stacklevel=self.stacklevel + 1,
+                )
+        else:
+            alpha = 1.0
+
+        # Divergence guard, always on. PETSc keeps SNESSetDivergenceTolerance active
+        # regardless of line search for the same reason: a run that has grown this far past
+        # its starting residual is not going to recover, and the remaining iterations only
+        # delay the diagnosis.
+        if residual_norm > solver.divergence_tolerance * self.residual_history[0]:
+            return solver._stop(
+                self.x,
+                self.is_scalar,
+                iteration,
+                residual_norm,
+                self.residual_history,
+                self.start_time,
+                self.jacobian_evals,
+                reason="diverged",
+                detail=(
+                    f"residual grew to {residual_norm:.3e}, more than "
+                    f"{solver.divergence_tolerance:g}x the initial {self.residual_history[0]:.3e}."
+                ),
+                stacklevel=self.stacklevel + 1,
+            )
+
+        # Update
+        self.x = self.x + alpha * delta_x
+        return None
+
+    def exhausted(self, iterations: int | None = None) -> tuple[Any, SolverInfo]:
+        """The iterate once the budget is spent: F evaluated there for its residual, without a stop test."""
+        solver_time = time.time() - self.start_time
+        F_final = self.F(self.x)
+        residual_final = np.linalg.norm(F_final.flatten())
+
+        result = self.x.item() if self.is_scalar else self.x
+        return result, SolverInfo(
+            converged=False,
+            iterations=self.solver.max_iterations if iterations is None else iterations,
+            residual=float(residual_final),
+            residual_history=self.residual_history,
+            solver_time=solver_time,
+            jacobian_evals=self.jacobian_evals,
+        )
 
 
 class PolicyIterationSolver(NonlinearSolver):

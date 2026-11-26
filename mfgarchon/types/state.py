@@ -7,7 +7,6 @@ through the hooks system for advanced customization.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
@@ -101,4 +100,3 @@ class SolverStatistics(NamedTuple):
 
 # Additional type aliases for internal use
 ResidualHistory = list[float]
-IterationCallback = Callable[[SpatialTemporalState], str | None]

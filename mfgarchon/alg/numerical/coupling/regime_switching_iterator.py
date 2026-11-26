@@ -39,8 +39,10 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     resolve_source_kwarg,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    BUDGET_SPENT,
     check_convergence_criteria,
     diverged_value_function,
+    fp_output_stop,
     fp_solver_sig_params,
     hjb_solver_sig_params,
     resolve_fp_drift_kwargs,
@@ -487,12 +489,16 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
         record = SweepRecord(K)
         fp_output_available = False
-        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
-        reason = "Maximum iterations reached"
+        # The reason a spent budget reports, on every route (#3002, ruling 2)
+        reason = BUDGET_SPENT
         integrates = [p.spatial_measure().integrate for p in self._problems]
         dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
+            # The owner's refusals answer at every sweep, so a BC changed during the solve is refused at the next one
+            # (#3005; #3002 stage 2a, ruling A). Stage 2b moves this call into the coupled driver.
+            for state in states:
+                state.read_owner()
             Us_new: list[Any] = [None] * K
             Ms_new: list[Any] = [None] * K
             terminals: list[Any] = [None] * K
@@ -595,6 +601,33 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # factor, not in the source (see _make_fp_source, Issue #1681).
                 Ms_new[k] = self._undo_integrating_factor(k, self._outflow_rate(k, K, Q), N_k)
 
+            # --- Damping, per regime and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given. The next iterate is never an input array
+            # (`DampingRun.update`), so the map's outputs stay what the change below measures. ---
+            Us_next: list[Any] = [None] * K
+            Ms_next: list[Any] = [None] * K
+            for k in range(K):
+                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
+                Us_next[k], Ms_next[k] = states[k].write_back(U_k, M_k, terminals[k])
+            fp_output_available = True
+
+            # The FP-output rule every coupled route reads, on the regimes' total mass, RegimeSwitching's invariant: a
+            # regime's own mass grows from zero by inflow (#2997; #3002 stage 2a, ruling 3(a) and ruling A), before the
+            # change is measured, which refuses a non-finite one (#2578). Stage 2b moves this call into the driver.
+            stop = fp_output_stop(
+                Us_new,
+                Ms_new,
+                Us_next,
+                Ms_next,
+                Ms,
+                each_component=False,
+                site="RegimeSwitchingIterator",
+                iteration=iteration,
+            )
+            if stop is not None:
+                record.diverged()
+                return self._result(Us_next, Ms_next, record, False, stop, fp_output_available)
+
             # --- Convergence: the sweep's output against its input, BEFORE damping ---
             # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
             # and on the map's output: after damping the change is `theta` times this one, so the
@@ -607,7 +640,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             ]
             worst = worst_sweep_change(per_regime, "regime")
             record.measured(per_regime)
-            converged, reason = check_convergence_criteria(
+            met, criteria_reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -615,21 +648,15 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 self._tol,
                 self._abs_tol,
             )
-
-            # --- Damping, per regime and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
-            # terminal row to the u(T) this sweep's HJB solve was given ---
             for k in range(K):
-                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
-                Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_regime[k]):
                     logger.warning(f"RegimeSwitchingIterator[regime {k}]: {message}")
 
-            Us_full = Us_new
-            Ms = Ms_new
-            fp_output_available = True
+            Us_full = Us_next
+            Ms = Ms_next
 
-            if converged:
-                return self._result(Us_full, Ms, record, True, reason, fp_output_available)
+            if met:
+                return self._result(Us_full, Ms, record, True, criteria_reason, fp_output_available)
 
         return self._result(Us_full, Ms, record, False, reason, fp_output_available)
 

@@ -710,17 +710,18 @@ class BaseCouplingIterator(ABC):
 
         **Which value iterate to hand over is the CALLER's, and this docstring must not universalise
         it.** The HJB source binds the previous iterate, so the nonlocal term reads ``J[v_old]``
-        (#1259). The FP source binds whichever iterate the FP solve itself consumes, which is
-        ``U_new`` for three of the four builder-routed loops -- ``FixedPointIterator``,
-        ``FictitiousPlayIterator`` and ``BlockIterator._gauss_seidel_step`` -- and ``U_old`` for
-        ``BlockIterator._jacobi_step``, inherited by ``BlockJacobiIterator``, which updates both
-        fields from the same old state by construction.
+        (#1259). The FP source binds whichever iterate the FP solve itself consumes, which the coupled
+        driver's sweep map decides by its order between the fields (`FixedPointStep`, #3002): ``U_new``
+        under Gauss-Seidel -- ``FixedPointIterator``, ``FictitiousPlayIterator``,
+        ``BlockGaussSeidelIterator`` and Newton's warm-up -- and ``U_old`` under Jacobi, for
+        ``BlockJacobiIterator``, which updates both fields from the same old state by construction.
 
         Two corrections are recorded here rather than silently applied, because both were introduced
         while fixing this same class of defect. An earlier draft said "the FP source binds the NEW
         one", false of an exported public class; the draft that replaced it cited
-        ``BlockJacobiIterator._iterate``, **a method that does not exist** -- the real one is
-        ``BlockIterator._jacobi_step`` -- which is the hallucinated-symbol defect this branch also
+        ``BlockJacobiIterator._iterate``, **a method that does not exist** -- the real one was
+        ``BlockIterator._jacobi_step``, since replaced by the driver's sweep map -- which is the hallucinated-symbol
+        defect this branch also
         fixed in ``core/mfg_problem.py``, reintroduced in the line asserting the correction.
 
         This method is where every BUILDER-ROUTED loop composes, which is not the same as the only

@@ -34,7 +34,7 @@ from .base_mfg import (
 )
 from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
-from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
+from .fixed_point_utils import BUDGET_SPENT, diverged_value_function, fp_output_stop, hjb_solver_sig_params
 from .iteration_state import IterationState
 
 if TYPE_CHECKING:
@@ -254,9 +254,13 @@ class MultiPopulationIterator:
         converged = False
         record = SweepRecord(K)
         fp_output_available = False
-        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
-        reason = "Maximum iterations reached"
+        # The reason a spent budget reports, on every route (#3002, ruling 2)
+        reason = BUDGET_SPENT
         for iteration in range(max_iterations):
+            # The owner's refusals answer at every sweep, so a BC changed during the solve is refused at the next one
+            # (#3005; #3002 stage 2a, ruling A). Stage 2b moves this call into the coupled driver.
+            for state in states:
+                state.read_owner()
             M_old = [m.copy() for m in M]
             # The value function is half of the coupled unknown and was never captured, so the
             # convergence test below could not see it (#1684 item 5). A Picard sweep can settle m
@@ -391,6 +395,25 @@ class MultiPopulationIterator:
                 # The UNDAMPED map output is what the convergence test needs; see the block below.
                 M_map[k] = M_new_k
 
+            # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given. The change below reads the copies taken at the
+            # sweep's start and the map's outputs, which the update leaves alone.
+            for k in range(K):
+                U_k, M_k = runs[k].update(iteration, U_old[k], U_map[k], M_old[k], M_map[k])
+                U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
+            fp_output_available = True
+
+            # The FP-output rule every coupled route reads, on each population's own mass, MultiPopulation's invariant
+            # (#2997; #3002 stage 2a, ruling 3(a) and ruling A), before the change is measured, which refuses a
+            # non-finite one (#2578). Stage 2b moves this call into the coupled driver.
+            stop = fp_output_stop(
+                U_map, M_map, U, M, M_old, each_component=True, site="MultiPopulationIterator", iteration=iteration
+            )
+            if stop is not None:
+                reason = stop
+                record.diverged()
+                break
+
             # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
             # step.
             #
@@ -409,15 +432,9 @@ class MultiPopulationIterator:
             ]
             worst = worst_sweep_change(per_population, "population")
             record.measured(per_population)
-
-            # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
-            # terminal row to the u(T) this sweep's HJB solve was given.
             for k in range(K):
-                U_k, M_k = runs[k].update(iteration, U_old[k], U_map[k], M_old[k], M_map[k])
-                U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_population[k]):
                     logger.warning(f"MultiPopulationIterator[population {k}]: {message}")
-            fp_output_available = True
 
             per_pop_m = [f"{change['l2distm_rel']:.2e}" for change in per_population]
             per_pop_u = [f"{change['l2distu_rel']:.2e}" for change in per_population]
@@ -427,7 +444,7 @@ class MultiPopulationIterator:
                 f"per_pop_m={per_pop_m}, per_pop_u={per_pop_u}"
             )
 
-            converged, reason = check_convergence_criteria(
+            met, criteria_reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -435,7 +452,8 @@ class MultiPopulationIterator:
                 tolerance,
                 absolute_tolerance,
             )
-            if converged:
+            if met:
+                converged, reason = True, criteria_reason
                 break
 
         return coupled_result(

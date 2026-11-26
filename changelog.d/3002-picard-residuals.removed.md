@@ -1,0 +1,2 @@
+- **`NewtonMFGSolver.picard_residuals`, and the `"picard_residuals"` key of its result's metadata** (#3002, the approver's ruling 6). Each warm-up sweep's change is in the result's histories, `error_history_U` and `error_history_M`, as on every route; computing the residual norm cost one more HJB and FP solve per warm-up sweep.
+- **`mfgarchon.types.state.IterationCallback`**, an alias nothing read. A coupled route's callback has one convention, `callback(iteration, U, M, error_U, error_M)`, where `False` stops (#2886).

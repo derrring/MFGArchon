@@ -94,8 +94,8 @@ class IterationState:
     `start`. `MFGResidual` builds its state when it is built, and Newton when it builds its residual; FixedPoint,
     FictitiousPlay and the Block iterators build theirs at the first solve or the first warm-start accessor called, and
     Graph, RegimeSwitching and MultiPopulation at each solve. Every coupled route calls `start` at each solve, so a BC
-    changed between two solves of one iterator is read too. A BC changed during one solve is not: the state does not
-    read at each sweep (#3002).
+    changed between two solves of one iterator is read too, and `read_owner` before every step of every phase, so a BC
+    changed during one solve is read at the next step (#3002, stage 2a).
     """
 
     def __init__(
@@ -118,6 +118,12 @@ class IterationState:
         self._warm_start: tuple[np.ndarray, np.ndarray] | None = None
         # m(0) as `start` read it, for the solve that follows: the FP's initial datum and the write-back's level 0.
         self.m0: np.ndarray | None = None
+
+    def read_owner(self) -> None:
+        """Read the problem's BC from its owner, so the owner's refusals answer at the next step of a solve whose BC
+        changed during it, whatever BC the pair carries (#3005; #3002 stage 2a): the coupled driver calls it before
+        every step of every phase, and Graph, RegimeSwitching and MultiPopulation before each sweep."""
+        self.problem.get_boundary_conditions()
 
     def initial_density(self) -> np.ndarray:
         """m(0): the problem's initial density, in this state's shape."""

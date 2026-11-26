@@ -137,8 +137,10 @@ def test_newtons_reason_says_how_it_stopped(stop, max_iterations, monkeypatch):
         ), reason
     else:
         assert not stops, stops
+        # The solve's budget, spent in the Newton phase, reads as on every route (#3002, ruling 2)
         assert reason.startswith(
-            "Newton max iterations; its last verdict, on the iterate before the one returned: inner_hjb_not_converged"
+            "Maximum iterations reached; its last verdict, on the iterate before the one returned: "
+            "inner_hjb_not_converged"
         ), reason
 
 

@@ -29,7 +29,6 @@ References:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -47,13 +46,9 @@ from .base_mfg import (
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_backend,
 )
+from .coupled_driver import CoupledDriver, FixedPointStep
 from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
-from .fixed_point_utils import (
-    check_convergence_criteria,
-    diverged_value_function,
-    resolve_fp_drift_kwargs,
-)
 from .iteration_state import IterationState
 
 logger = get_logger(__name__)
@@ -193,6 +188,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         tolerance: float | None = None,
         *,
         iteration_callback: Callable[[int, np.ndarray, np.ndarray, float, float], bool | None] | None = None,
+        track_measure_field: bool = False,
         absolute_tolerance: float | None = None,
         verbose: bool = True,
     ) -> SolverResult:
@@ -201,11 +197,14 @@ class FictitiousPlayIterator(BaseCouplingIterator):
 
         Args:
             config: Solver configuration (overrides instance config)
-            max_iterations: Maximum iterations (legacy parameter)
+            max_iterations: The sweeps the solve may run (legacy parameter); None is 100, and 0 runs none (#3002)
             tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
-            iteration_callback: Optional callback for custom logging per iteration.
+            iteration_callback: Optional callback called after each iteration.
                 Signature: (iteration, U, M, error_U, error_M) -> bool | None
-                Return True to stop early, None/False to continue.
+                Return False to stop early; True or None continues: the convention every coupled route reads (#2886).
+                Before #3002 stage 2a this route read the opposite: True stopped and False continued.
+            track_measure_field: If True, store each iterate as a MeasureField snapshot in
+                SolverResult.metadata["measure_field"] (#956). Default False.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
             verbose: Show progress (default True). A config in force governs progress instead, through its
                 ``picard.verbose``, as its ``picard`` fields decide the budget and the tolerances (#2922).
@@ -224,188 +223,65 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             final_absolute_tolerance = solve_config.picard.absolute_tolerance
             verbose = solve_config.picard.verbose
         else:
-            final_max_iterations = max_iterations or 100
+            final_max_iterations = 100 if max_iterations is None else max_iterations
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
 
         # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997), which refuses a geometry
         # other than a CartesianGrid for this route.
         state = self._iteration_state()
-        time_step = self.problem.dt
-        integrate = self.problem.spatial_measure().integrate  # #2555
-
         # #2250: the owner's allocation refuses a backend that cannot carry a solve, reading self.backend here.
         self.U, self.M = state.start(self.backend)
-        M_initial = state.m0
-
-        # Initialize error tracking. NaN until a sweep measures its change: a sweep that diverged before it was measured
-        # has no change, and a 1.0 there read as one (#2997).
-        self.l2distu_abs = np.full(final_max_iterations, np.nan)
-        self.l2distm_abs = np.full(final_max_iterations, np.nan)
-        self.l2distu_rel = np.full(final_max_iterations, np.nan)
-        self.l2distm_rel = np.full(final_max_iterations, np.nan)
-        self.learning_rate_history = []
-        record = self._record = SweepRecord(1)
-        # True once self.M holds a density this solve's FP produced: what its mass_conservation_error measures (#1717)
-        fp_output_available = False
         policy = damping_for_the_solve(
             "FictitiousPlayIterator", self.damping, DampingPolicy.fictitious_play(), solve_config
         )
         run = DampingRun(policy)
-        self.iterations_run = 0
 
-        # Main Fictitious Play iteration loop
-        converged = False
-        convergence_reason = "Maximum iterations reached"
-
-        # Progress bar (Issue #587 Protocol pattern)
-        from mfgarchon.utils.progress import create_progress_bar
-
-        iter_range = create_progress_bar(
-            range(final_max_iterations),
+        # One driver loop for every coupled route (#3002 stage 2a). The sweep map is FixedPoint's; fictitious play is
+        # its damping, m_{n+1} = (1 - alpha_n) m_n + alpha_n m_candidate with U the best response taken whole unless
+        # the policy averages it too, and its rates are recorded (#2997). The verdict reads the map's residual, not
+        # the averaged step, which shrinks under a decaying alpha whether or not the belief is near a fixed point
+        # (#2415, #1684 item 7).
+        with CoupledDriver(
+            "Fictitious Play",
+            state,
+            self.hjb_solver,
+            budget=final_max_iterations,
+            tolerance=final_tolerance,
+            absolute_tolerance=final_absolute_tolerance,
+            iteration_callback=iteration_callback,
             verbose=verbose,
-            desc="Fictitious Play",
-        )
+            track_measure_field=track_measure_field,
+            track_rates=True,
+        ) as driver:
+            self._record = driver.record
+            driver.snapshot(self.U, self.M)
+            step = FixedPointStep(self, state, run, order="gauss_seidel", site="FictitiousPlayIterator")
+            outcome = driver.run_fixed_point(step, self.U, self.M, driver.budget)
+        self.U, self.M = outcome.U, outcome.M
+        self.iterations_run = driver.sweeps
+        self.l2distu_abs = driver.histories["l2distu_abs"]
+        self.l2distm_abs = driver.histories["l2distm_abs"]
+        self.l2distu_rel = driver.histories["l2distu_rel"]
+        self.l2distm_rel = driver.histories["l2distm_rel"]
+        self.learning_rate_history = driver.rates
+        metadata: dict[str, Any] = {"learning_rate_history": self.learning_rate_history}
+        if driver.measure_field is not None:
+            metadata["measure_field"] = driver.measure_field
 
-        for k in iter_range:
-            iter_start = time.time()
-
-            U_old = self.U.copy()
-            M_old = self.M.copy()
-            # u(T) at the density this iteration's HJB solve uses (#1642 stage 2), for the solve, the restore and the
-            # re-imposition alike.
-            U_terminal = state.terminal_at(M_old[-1])
-
-            # Compute learning rate for this iteration
-            alpha = run.theta("M", k)
-            self.learning_rate_history.append(alpha)
-
-            # 1. Solve HJB backward — progress handled via context routing (#934)
-            # Issue #2207: this call composed no source at all before -- a problem carrying
-            # source_term_hjb / nonlocal_operator solved here without it, bit-identically
-            # to one that carried neither. The iterates are now required and the builder
-            # composes.
-            hjb_kwargs = self._build_hjb_kwargs(
-                M=M_old, U=U_old, volatility=self.volatility, volatility_kind=self.volatility_kind
-            )
-            U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **hjb_kwargs)
-
-            # Issue #1718: the FP call below composes its drift from U_new, so a non-finite U_new
-            # makes the FP solver raise a CFL diagnostic for an HJB failure. One owner for the
-            # check, the terminal-condition restore, and which iterate gets published.
-            diverged = diverged_value_function(
-                U_new, U_terminal, site="FictitiousPlayIterator", density=M_old, iteration=k
-            )
-            if diverged is not None:
-                self.U = diverged
-                converged = False
-                convergence_reason = "diverged_nan"
-                self.iterations_run = k + 1
-                record.diverged()
-                break
-
-            # 2. Solve FP forward with new U.
-            # Issue #1043 Phase 2: route through single-source convention, same as
-            # FixedPointIterator.solve().
-            # Previously FictitiousPlay called _build_fp_kwargs(drift_field=U_new) which
-            # silently passed the value function U as the velocity alpha* to FPFDMSolver
-            # (wrong physics: FPFDMSolver treats drift_field as alpha, not potential).
-            fp_kwargs = self._build_fp_kwargs(
-                M=M_old, U=U_new, volatility=self.volatility, volatility_kind=self.volatility_kind
-            )
-            if self._fp_sig_params is not None:
-                drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                    self.problem,
-                    self._fp_sig_params,
-                    self.drift_field,
-                    U_new,
-                    M_old,
-                    drift_convention=self._fp_drift_convention,
-                    fp_solver=self.fp_solver,
-                )
-                fp_kwargs.update(drift_kwargs)
-                if use_positional_U:
-                    M_candidate = self.fp_solver.solve_fp_system(M_initial, U_new, **fp_kwargs)
-                else:
-                    M_candidate = self.fp_solver.solve_fp_system(M_initial, **fp_kwargs)
-            else:
-                effective_drift = self.drift_field if self.drift_field is not None else U_new
-                M_candidate = self.fp_solver.solve_fp_system(M_initial, effective_drift, **fp_kwargs)
-
-            # 3. Fictitious Play update: m_{n+1} = (1 - alpha_n) m_n + alpha_n m_candidate, and U the best response
-            # taken whole unless the policy averages it too (the policy, #2997)
-            self.U, self.M = run.update(k, U_old, U_new, M_old, M_candidate)
-
-            self.U, self.M = state.write_back(self.U, self.M, U_terminal)
-            fp_output_available = True
-
-            # Calculate convergence metrics
-            from mfgarchon.utils.convergence import sweep_change
-
-            # The residual of the map, M_candidate vs M_old -- not the averaged step. The step is
-            # exactly alpha * (M_candidate - M_old), so under a decaying alpha it shrinks whether or
-            # not the belief is near a fixed point: measured at 0f937601 with the floor removed, the
-            # default tolerance reported converged=True at sweep 359 with the map residual 3.57e-04
-            # on #1914's sigma=0 fixture (#2415). This is
-            # #1684 item 7, which FixedPointIterator already measures this way.
-            metrics = sweep_change(U_new, U_old, M_candidate, M_old, integrate, time_step)
-            # An adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
-            for message in run.observe(k, metrics):
-                logger.warning(message)
-            self.l2distu_abs[k] = metrics["l2distu_abs"]
-            self.l2distu_rel[k] = metrics["l2distu_rel"]
-            self.l2distm_abs[k] = metrics["l2distm_abs"]
-            self.l2distm_rel[k] = metrics["l2distm_rel"]
-            record.measured([metrics])
-
-            iter_time = time.time() - iter_start
-            self.iterations_run = k + 1
-
-            # Invoke iteration callback if provided (for text logging in non-TTY mode)
-            if iteration_callback is not None:
-                should_stop = iteration_callback(k, self.U, self.M, self.l2distu_rel[k], self.l2distm_rel[k])
-                if should_stop:
-                    convergence_reason = "Stopped by iteration callback"
-                    converged = False
-                    break
-
-            # Update progress metrics (Issue #587 Protocol - no hasattr needed)
-            iter_range.update_metrics(
-                U_err=f"{self.l2distu_rel[k]:.2e}",
-                M_err=f"{self.l2distm_rel[k]:.2e}",
-                alpha=f"{alpha:.3f}",
-                t=f"{iter_time:.1f}s",
-            )
-
-            # Check convergence
-            converged, convergence_reason = check_convergence_criteria(
-                self.l2distu_rel[k],
-                self.l2distm_rel[k],
-                self.l2distu_abs[k],
-                self.l2distm_abs[k],
-                final_tolerance,
-                final_absolute_tolerance,
-            )
-
-            if converged:
-                # Log convergence message (Issue #587 Protocol - no hasattr needed)
-                iter_range.log(convergence_reason)
-                break
-
-        # Construct result
         # The result, through the one owner every coupled route reads (#2997)
         return coupled_result(
             U=self.U,
             M=self.M,
-            record=record,
-            converged=converged,
-            reason=convergence_reason,
+            record=driver.record,
+            converged=driver.converged,
+            reason=driver.reason,
             solver_name=self.name,
             damping=policy,
             problems=[self.problem],
             fp_solvers=[self.fp_solver],
-            fp_output_available=fp_output_available,
-            metadata={"learning_rate_history": self.learning_rate_history},
+            fp_output_available=driver.fp_output_available,
+            metadata=metadata,
         )
 
     @property

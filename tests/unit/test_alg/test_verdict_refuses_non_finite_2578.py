@@ -6,7 +6,9 @@ in the first field did not. The verdict's owner refuses, naming the value.
 
 The multi-field iterators had the same defect one level up: each took builtin ``max`` over its
 populations, nodes or regimes before calling the owner, so a NaN in any field after the first never
-reached it. They aggregate through `worst_sweep_change`, which refuses and names the field's index.
+reached it. They aggregate through `worst_sweep_change`, which refuses and names the field's index. A solve's NaN
+density no longer reaches it: the FP-output rule every coupled route reads stops the solve first, on every field
+(#3002 stage 2a, class line 1).
 """
 
 from __future__ import annotations
@@ -113,6 +115,10 @@ _JUDGED_SWEEP = {"population": 1, "node": 1, "regime": 1}
 
 
 def _converged(kind: str, bad: int | None) -> bool:
+    return _solve(kind, bad).converged
+
+
+def _solve(kind: str, bad: int | None):
     """Solve a three-field ``kind`` problem up to its first judged sweep, with field ``bad``'s density NaN there."""
     sweep = _JUDGED_SWEEP[kind]
     ps = [_problem() for _ in range(3)]
@@ -120,20 +126,22 @@ def _converged(kind: str, bad: int | None) -> bool:
     fps = [_fp(p, sweep if k == bad else None) for k, p in enumerate(ps)]
     if kind == "population":
         multi = MultiPopulationProblem(populations=ps, population_names=["a", "b", "c"])
-        return MultiPopulationIterator(multi, hjbs, fps).solve(max_iterations=sweep, tolerance=1e3).converged
+        return MultiPopulationIterator(multi, hjbs, fps).solve(max_iterations=sweep, tolerance=1e3)
     if kind == "node":
         coupling = AdjacencyCoupling(np.ones((3, 3)) - np.eye(3), alpha=0.0, beta=0.0)
-        return GraphMFGSolver(ps, coupling, hjbs, fps, max_iterations=sweep, tolerance=1e3).solve().converged
+        return GraphMFGSolver(ps, coupling, hjbs, fps, max_iterations=sweep, tolerance=1e3).solve()
     config = RegimeSwitchingConfig(transition_matrix=np.zeros((3, 3)))
-    return RegimeSwitchingIterator(ps, config, hjbs, fps, max_iterations=sweep, tolerance=1e3).solve().converged
+    return RegimeSwitchingIterator(ps, config, hjbs, fps, max_iterations=sweep, tolerance=1e3).solve()
 
 
 @pytest.mark.parametrize("bad", [0, 1])
 @pytest.mark.parametrize("kind", sorted(_JUDGED_SWEEP))
-def test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index(kind, bad):
-    """Index 1 is the defect: builtin ``max`` over fields dropped it, and the solve reported converged."""
-    with pytest.raises(ValueError, match=rf"got l2distm_abs=nan, l2distm_rel=nan in {kind} k={bad} "):
-        _converged(kind, bad)
+def test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it(kind, bad):
+    """Index 1 is the defect: builtin ``max`` over fields dropped it, and the solve reported converged. The FP-output
+    rule reads every field, so the solve stops with the reason a non-finite FP output has on every route (#3002)."""
+    result = _solve(kind, bad)
+    assert not result.converged
+    assert result.metadata["convergence_reason"] == "diverged_nan"
 
 
 @pytest.mark.parametrize("kind", sorted(_JUDGED_SWEEP))

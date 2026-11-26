@@ -201,12 +201,12 @@ def test_each_component_takes_fixed_points_path(route, case, damping, coupling, 
     for key in ("l2distu_rel", "l2distm_rel"):
         worst = np.maximum(references[0].metadata[key], references[1].metadata[key])
         assert np.array_equal(result.metadata[key], worst), f"{key} is not the worst component's"
-    # The criteria's own reason at the stop: theirs for a met criterion, and empty where the budget ran out, as on FixedPoint
+    # The criteria's own reason for a met criterion, and the spent budget's where the budget ran out, as on FixedPoint (#3002)
     reason = result.metadata["convergence_reason"]
     assert (
         reason.startswith("Converged: ")
         if result.converged
-        else reason == references[0].metadata["convergence_reason"] == ""
+        else reason == references[0].metadata["convergence_reason"] == "Maximum iterations reached"
     )
     assert result.metadata["inner_hjb_failures"] == []
     assert result.execution_time > 0.0

@@ -366,7 +366,8 @@ def _newton(f, df):
     # 25 nodes, which still hold a negative, since its finite-difference Jacobian is the row's whole cost.
     problem = _coupled(1, coupling=f, coupling_dm=df)
     hjb, fp = _fem_pair(problem)
-    return NewtonMFGSolver(problem, hjb, fp, picard_warmup=1).solve(max_iterations=1, tolerance=1e-6, verbose=False), [
+    # A budget of 2: the warm-up's sweep, then the iterate the Newton phase judges, whose residual is what fails (#3002)
+    return NewtonMFGSolver(problem, hjb, fp, picard_warmup=1).solve(max_iterations=2, tolerance=1e-6, verbose=False), [
         fp
     ]
 
@@ -488,7 +489,7 @@ def test_the_sweep_guard_names_the_array_and_the_density_the_sweep_read(mfg_capl
         )
     hjb, fp = _fem_pair(problem)
     with (
-        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_iterator"),
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
         np.errstate(invalid="ignore", divide="ignore"),
     ):
         result = FixedPointIterator(problem, hjb, fp, damping=DampingPolicy.constant(0.5)).solve(
@@ -598,7 +599,7 @@ def test_a_tracked_sweep_the_guard_ends_records_no_snapshot(mfg_caplog):
 
     iterator.fp_solver.solve_fp_system = goes_non_finite
     with (
-        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_iterator"),
+        mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.coupling.fixed_point_utils"),
         warnings.catch_warnings(),
     ):
         warnings.simplefilter("ignore")
