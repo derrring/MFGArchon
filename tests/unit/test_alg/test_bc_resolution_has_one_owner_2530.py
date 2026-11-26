@@ -50,12 +50,6 @@ _PHI = "pads or differentiates a level-set function, a geometry field no solver 
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
     ("mfgarchon/core/mfg_components.py", "get_boundary_conditions"): (5, "the owner"),
-    ("mfgarchon/core/mfg_components.py", "using_resolved_bc"): (
-        3,
-        "a dependent: sets the provider-resolved BC on the geometry and on a components BC beside it, and restores "
-        "them; on a grid after set_boundary_conditions(None) the restore writes back the grid's answered default "
-        "as a declaration (#2639)",
-    ),
     ("mfgarchon/core/mfg_problem.py", "__init__"): (
         2,
         "D2's hand-over: the components BC becomes the legacy grid's declaration; it picks nothing",

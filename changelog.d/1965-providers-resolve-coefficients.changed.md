@@ -1,5 +1,5 @@
 A `BCValueProvider` may now sit on `BCSegment.alpha` or `.beta`, not only on `.value`, and its
-result is no longer coerced with `float()`.
+result is no longer coerced with `float()`. The provider concept, with everything this entry describes, was removed later in this release (#2424).
 
 **Scope: this is the resolution layer only.** A *scalar* coefficient from a provider flows all the
 way through. A *field* one does not yet — the consumers still narrow it, and there is as yet no

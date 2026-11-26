@@ -497,8 +497,8 @@ def test_the_network_fp_refuses_to_name_what_its_step_holds_at_a_node_bc():
     """FPNetworkSolver's step holds an ABSORBING node at 0 whatever it is handed (#1478), and the protocol refuses to name
     it, by #2991, rather than answer None: a real answer would need the step's SOURCE time, its CUSTOM rules' reading of
     the field and its order of conditions. Without a node BC the step holds nothing and the protocol answers None.
-    GraphMFGSolver reaches a network with node BCs, with NetworkPolicyIterationHJBSolver, and this refusal fires there;
-    the other cold-start routes refuse one before their cold start (#2568, #2923)."""
+    No coupled route reaches this refusal: each refuses a network geometry by name before its cold start reads the FP
+    (#2568, #2923)."""
     from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
     from mfgarchon.extensions.topology import NetworkMFGProblem
     from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC

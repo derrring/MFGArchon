@@ -401,8 +401,8 @@ def assemble_robin_terms(
     ``NO_FLUX`` on the FP side is ``J.n = 0``, owned by ``FPResolver``.
 
     Returns ``(None, None)`` when nothing contributes — no Robin segments and no Neumann segment
-    with ``g != 0`` — so the natural/Dirichlet paths stay byte-unchanged. Callable /
-    ``BCValueProvider`` ``g`` and ``beta == 0`` (pure Dirichlet) fail loud — only constant ``g``
+    with ``g != 0`` — so the natural/Dirichlet paths stay byte-unchanged. A callable
+    ``g`` and ``beta == 0`` (pure Dirichlet) fail loud — only constant ``g``
     is implemented (Issue #1237).
     """
     if bc is None:
@@ -492,7 +492,7 @@ def assemble_robin_terms(
             alpha, beta = 0.0, 1.0
         else:
             # The coefficients are read by the one owner (#2512 row B2): a constant each, by the constant contract; a
-            # callable refused naming #1237, and a provider with no iteration state to resolve it refused (#1979).
+            # callable refused naming #1237.
             alpha, beta = segment_robin_coefficients(
                 segment, where=f"the FEM Robin operator of segment {segment.name!r}"
             )

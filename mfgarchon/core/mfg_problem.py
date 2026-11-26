@@ -708,10 +708,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.solver_compatible = {}  # type: dict[str, bool]
         self.solver_recommendations = {}  # type: dict[str, str]
 
-        # Issue #1068: explicit None-init for BC fallback slot (ConditionsMixin.using_resolved_bc).
-        # Avoids hasattr() in the fallback path when geometry has no set_boundary_conditions().
-        self._temp_resolved_bc = None  # type: BoundaryConditions | None
-
         if hjb_geometry is not None and fp_geometry is not None:
             # Dual geometry mode: separate geometries for HJB and FP
             if geometry is not None:

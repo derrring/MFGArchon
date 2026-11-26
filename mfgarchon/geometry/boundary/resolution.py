@@ -16,7 +16,7 @@ that implement the ``BCResolver`` protocol.
 
 Architecture (Issue #848, see BC_ENFORCEMENT_ARCHITECTURE.md):
 
-- **Layer 1 -- Specification**: types.py, conditions.py, providers.py
+- **Layer 1 -- Specification**: types.py, conditions.py
 - **Layer 2 -- Resolution**: resolution.py (THIS MODULE)
 - **Layer 3 -- Enforcement**: calculators.py, enforcement.py, ghost_cells.py
 - **Layer 4 -- Application**: applicator_*.py, dispatch.py
@@ -41,7 +41,6 @@ from .conditions import (
     BoundaryConditions,
     no_flux_bc,
 )
-from .providers import is_provider
 from .types import BCSegment, BCType
 
 # =============================================================================
@@ -160,7 +159,7 @@ _PASSTHROUGH_MAP: dict[BCType, MathBCType] = {
 }
 
 
-def _resolve_passthrough(seg: BCSegment, state: dict[str, Any] | None = None) -> ResolvedBC | None:
+def _resolve_passthrough(seg: BCSegment) -> ResolvedBC | None:
     """Resolve BC types that are equation-independent.
 
     Returns None if the BCType requires equation-specific resolution.
@@ -172,12 +171,10 @@ def _resolve_passthrough(seg: BCSegment, state: dict[str, Any] | None = None) ->
     from .types import segment_robin_coefficients, segment_value
 
     where = f"the BC resolver's passthrough of segment {seg.name!r}"
-    value = segment_value(seg, t=None, x=None, where=where, state=state)
+    value = segment_value(seg, t=None, x=None, where=where)
     # Only a Robin segment's coefficients are read; a resolved BC of another type carries the field defaults, which
     # its consumers read only in their Robin arm.
-    alpha, beta = (
-        segment_robin_coefficients(seg, where=where, state=state) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
-    )
+    alpha, beta = segment_robin_coefficients(seg, where=where) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
     return ResolvedBC(
         math_type=math_type,
         value=value,
@@ -194,9 +191,6 @@ class HJBResolver:
     Resolution rules:
         - NO_FLUX, REFLECTING -> NEUMANN(g=0): value function has zero normal
           gradient at reflecting walls (optimal control points inward).
-        - A BCValueProvider in segment.value is resolved with ``solver_state``: on a passthrough
-          segment by `boundary_value`, keeping the segment's type; on NO_FLUX or REFLECTING, to
-          ROBIN(alpha=0, beta=1) carrying the computed value.
         - All other types: passthrough.
     """
 
@@ -207,27 +201,13 @@ class HJBResolver:
     ) -> ResolvedBC:
         """Resolve a BCSegment for HJB equation."""
         # Check passthrough types first
-        # A provider on a passthrough segment (a Robin value, say) is resolved there, with the state, by the one owner
-        # (#2512 row B2). #2598 read it with no state, so the provider was refused and this resolver's own provider
-        # branch never ran (review 1 of #2601, C6); b10b9e65 resolved it here.
-        result = _resolve_passthrough(segment, state=solver_state)
+        result = _resolve_passthrough(segment)
         if result is not None:
             return result
 
         # Equation-specific: NO_FLUX and REFLECTING
         if segment.bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
-            # Check for dynamic provider
-            if is_provider(segment.value):
-                resolved_value = segment.value.compute(solver_state)
-                return ResolvedBC(
-                    math_type=MathBCType.ROBIN,
-                    value=float(resolved_value),
-                    alpha=0.0,
-                    beta=1.0,
-                    segment_name=segment.name,
-                    original_bc_type=segment.bc_type,
-                )
-            # Default: zero gradient (du/dn = 0)
+            # Zero gradient (du/dn = 0)
             return ResolvedBC(
                 math_type=MathBCType.NEUMANN,
                 value=0.0,
@@ -311,7 +291,7 @@ class FPResolver:
                 cannot be allowed to be the silent option.
         """
         # Check passthrough types first
-        result = _resolve_passthrough(segment, state=solver_state)
+        result = _resolve_passthrough(segment)
         if result is not None:
             return result
 
@@ -353,7 +333,7 @@ def resolve_bc(
         bc: Boundary condition specification from Layer 1.
         resolver: Solver-specific resolver (e.g., HJBResolver, FPResolver).
         solver_state: PDE coefficients and current solution state.
-            Passed to resolver.resolve() and to BCValueProviders.
+            Passed to resolver.resolve().
             Standard keys: 'drift', 'diffusion', 'density', 'geometry', 'time'.
 
     Returns:
@@ -489,7 +469,7 @@ def to_boundary_conditions(
         dimension: Spatial dimension (optional, inferred if possible).
 
     Returns:
-        BoundaryConditions object with concrete values (no providers).
+        BoundaryConditions object with concrete values.
     """
     if not resolved:
         return no_flux_bc(dimension=dimension or 1)

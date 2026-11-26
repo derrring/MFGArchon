@@ -14,7 +14,7 @@ use names defined in a neighbouring docstring. `doctest`'s unit of isolation is 
 under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 21 modules
 below are the ones whose examples already pass, all 161 of them.
 
-**So this covers 21 of 165 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
+**So this covers 21 of 163 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
 statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses every docstring
 block that parses as Python; running it prints how many.
@@ -170,7 +170,7 @@ def test_every_example_in_this_module_still_runs(module_name):
 
 
 def test_the_allowlist_states_its_own_coverage():
-    """A list of 21 modules must not read as a claim about the package's 165.
+    """A list of 21 modules must not read as a claim about the package's 163.
 
     This is the positive control on the file's honesty rather than on the code: it fails if the package grows modules
     with examples and the list stays put without the docstring above being updated to say so. The ratio is the thing a
@@ -194,10 +194,10 @@ def test_the_allowlist_states_its_own_coverage():
             if any(t.examples for t in doctest.DocTestFinder().find(module)):
                 with_examples += 1
 
-    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 21 <= 165 holds
+    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 21 <= 163 holds
     # however few of the listed modules carry examples, and the property it names is actually tested above by
     # `assert tests` per module (review of #2351). The ratio is what this test is for, and it is asserted
-    # EXACTLY: a docstring that says "21 of 165" stops being true at any other count, so any other count fires.
+    # EXACTLY: a docstring that says "21 of 163" stops being true at any other count, so any other count fires.
     # #2422 took it from 182 to 181 by deleting a module that carried examples, #2583 to 180 by withdrawing
     # FP-GFDM's, #2648 to 179 by deleting `core.mfg_components_nested`, and #2648's ruling 6 to 178 by deleting
     # `geometry.graph.maze_config`. The retirement docstrings of #2002 took it to 177 by withdrawing the
@@ -209,8 +209,9 @@ def test_the_allowlist_states_its_own_coverage():
     # `utils.numerical._compat.gfdm_operators`, and `factory.solver_factory`'s only examples, `create_solver`'s.
     # #2938's stage 2c took it to 166 by deleting `estimate_density_from_particles`, whose docstring held
     # `density_estimation`'s only examples. #2997's stage 1a took it to 165 by deleting `utils.iteration.schedules`, the
-    # old schedule registry, which the damping policy's schedules replace.
-    assert with_examples == 165, (
-        f"modules carrying examples moved {165} -> {with_examples}. This file's docstring states the ratio "
-        f"21 of 165; update it and this number together, or the coverage claim overstates itself silently."
+    # old schedule registry, which the damping policy's schedules replace. #2424 took it to 163 by deleting
+    # `geometry.boundary.providers`, and `using_resolved_bc`, whose example was `core.mfg_components`' only one.
+    assert with_examples == 163, (
+        f"modules carrying examples moved {163} -> {with_examples}. This file's docstring states the ratio "
+        f"21 of 163; update it and this number together, or the coverage claim overstates itself silently."
     )

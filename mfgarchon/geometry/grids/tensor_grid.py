@@ -736,18 +736,10 @@ class TensorProductGrid(
 
     def set_boundary_conditions(self, bc) -> None:
         """
-        Set boundary conditions for this grid (Issue #625).
-
-        This method allows runtime BC updates, primarily used by the
-        FixedPointIterator to set resolved BC (with providers computed
-        to concrete values) during iteration.
+        Set boundary conditions for this grid (Issue #625): a runtime BC update.
 
         Args:
             bc: BoundaryConditions object (or None to clear)
-
-        Note:
-            Prefer using problem.using_resolved_bc() context manager
-            which handles save/restore automatically.
         """
         if bc is not None:
             # Validate dimension if BC has one set

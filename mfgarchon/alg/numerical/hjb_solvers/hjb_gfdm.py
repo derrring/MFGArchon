@@ -110,8 +110,7 @@ _TENSOR_VOLATILITY_REFUSAL = (
 def _bc_row(segment: BCSegment) -> tuple:
     """The boundary row HJB-GFDM writes for ``segment`` (``_bc_row_for_point``): a value row for DIRICHLET and a
     normal-derivative row for NEUMANN and NO_FLUX, each with the segment's datum; ROBIN's with its coefficients, as
-    stored, since points are classified at construction, before any provider is resolved. A type GFDM writes no row
-    for is compared by type."""
+    stored. A type GFDM writes no row for is compared by type."""
     if segment.bc_type is BCType.DIRICHLET:
         return ("value", segment.value)
     if segment.bc_type in (BCType.NEUMANN, BCType.NO_FLUX):
@@ -706,8 +705,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         else:
             # No BC was handed to this solver, so this is the problem's, from its one owner (#2530).
             self.boundary_conditions = self.get_boundary_conditions()
-            # Geometry-sourced BC may be re-resolved per Picard iteration by the
-            # coupling layer (using_resolved_bc); refresh at solve time (Issue #1118).
+            # A geometry-sourced BC is re-read at each solve, as FDM re-reads it (Issue #1118).
             self._bc_from_geometry = True
         # Issue #1456: fail loud now if the resolved BC requests a type GFDM cannot honor at all
         # (REFLECTING / EXTRAPOLATION_*). Periodic and general-Robin sub-cases pass the type-level
@@ -1174,7 +1172,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         (priority, then a Dirichlet condition before another), so a corner of a Dirichlet face whose neighbour outranks
         it takes a value-copy row. A GFDM normal-gradient row is never installed: at taylor_order 2 it has mixed signs,
         0 of 40 rows with the M-matrix pattern on an 11 x 11 no-flux box (#1689 comment 6246936251). Refused by name: a
-        no-flux or Neumann datum not verifiably 0 (a nonzero, complex, callable or provider value), and a Robin face
+        no-flux or Neumann datum not verifiably 0 (a nonzero, complex, callable or unrecognised value), and a Robin face
         (the research's affine correction is not ported); a periodic face (#2713); a reflecting point on a boundary
         read from ``domain_sdf`` or off the axis-aligned faces of the box;
         and a face whose points off its corners carry both a Dirichlet and a reflecting condition (a door: exp09's
@@ -1403,18 +1401,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         GFDM snapshots ``self.boundary_conditions`` and the preclassified
         ``_bc_segment_per_point`` map at ``__init__``; FDM instead re-reads
         ``get_boundary_conditions()`` every solve (``HJBFDMSolver``). When the
-        coupling layer resolves a provider per Picard iteration via
-        ``problem.using_resolved_bc`` (Issue #625), it swaps
-        ``geometry.boundary_conditions`` for a new object whose segments carry
-        the resolved scalar value. Without this refresh the GFDM/Howard
-        path would solve every iteration against the construction-time BC,
-        silently freezing the provider at its first value.
+        geometry's BC is replaced between solves, this refresh carries the new
+        one into the solver, which would otherwise solve against the
+        construction-time BC (Issue #1118).
 
         No-op when:
-        - BC came from an explicit constructor argument (static, never resolved);
-        - the live geometry BC is the same object as the cached snapshot
-          (``with_resolved_providers`` fast-paths ``return self`` for
-          provider-free BC, so the object is unchanged).
+        - BC came from an explicit constructor argument (static);
+        - the live geometry BC is the same object as the cached snapshot.
         """
         if not self._bc_from_geometry:
             return
@@ -2538,8 +2531,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             case BCType.ROBIN:
                 # Issue #1118 PR2b: ROBIN(alpha=0, beta=1),
                 # whose equation beta*(n.grad u) = g reduces to n.grad u = g — exactly the
-                # Neumann normal-derivative row with RHS = the resolved scalar g (segment.value
-                # is a plain float after with_resolved_providers). Delegate to the SAME builder
+                # Neumann normal-derivative row with RHS = the scalar g. Delegate to the SAME builder
                 # the NEUMANN/NO_FLUX arm uses: single coefficient source, no second ROBIN
                 # stencil (the dual-source BC bug class). General Robin (alpha != 0) adds an
                 # alpha*u term the normal-derivative row cannot represent, and beta != 1 would
@@ -3590,7 +3582,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
         # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
         # nearest-interior copy). Still deferred to PR2b: ROBIN / PERIODIC (no row builder on
-        # either path) and BCValueProvider coupling. Inspect
+        # either path). Inspect
         # segments directly: for a mixed BC, `boundary_conditions.type` raises and
         # `_bc_config["type"]` is a meaningless 'periodic' fallback, so neither is reliable.
         # Issue #1118 PR2b: ROBIN is now consumable by the value-form row builder, but only
@@ -3607,20 +3599,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                         f"inner_solver='howard' supports no-flux/Neumann/Dirichlet/Robin BC; "
                         f"segment {getattr(seg, 'name', '?')!r} is {seg_type!r}. PERIODIC parity "
                         f"is deferred (Issue #1118 PR2b)."
-                    )
-                if callable(getattr(getattr(seg, "value", None), "compute", None)):
-                    # Providers are resolved UPSTREAM by the coupling layer
-                    # (problem.using_resolved_bc -> with_resolved_providers swaps in a float,
-                    # keeping bc_type=ROBIN) and Part 1's per-solve refresh transports that float
-                    # into the solver. By the time Howard runs, no segment should still carry a
-                    # callable .compute; if one does, the coupling layer failed to resolve it (or
-                    # a static BC carries a raw provider) — a real bug, not a deferred feature.
-                    raise AssertionError(
-                        f"inner_solver='howard': segment {getattr(seg, 'name', '?')!r} still "
-                        f"carries an unresolved BCValueProvider (callable .compute) at solve "
-                        f"time. Providers must be resolved by the coupling layer "
-                        f"(using_resolved_bc / with_resolved_providers) before reaching the "
-                        f"solver (Issue #1118 PR2b)."
                     )
         else:
             try:

@@ -22,7 +22,7 @@
   - **`np.matrix([[0.7]])`** was refused; it is read as 0.7, as a one-element array is.
   - **Exceptions to "a container reads as its element":** a fully masked numeric array is 0 (the mask means no
     datum), and a constant of more than one element is read whole: 0 if all zero, refused otherwise.
-- **A provider's result is one number, read as a callable's return is**, by `boundary_value` with a `state`.
+- **A provider's result is one number, read as a callable's return is**, by `boundary_value` with a `state`. Providers, with this bullet's readers of them, were removed later in this release (#2424).
   - Before, the owner returned a provider's non-scalar result raw. It is now refused, naming #2600, the planned
     per-node capability.
   - **`resolve_bc` resolves a provider on the value of every passthrough segment**, with the solver state, for

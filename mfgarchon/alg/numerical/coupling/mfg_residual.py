@@ -28,7 +28,6 @@ import numpy as np
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
-    assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
@@ -137,7 +136,6 @@ class MFGResidual:
             drift_field: Optional drift override for non-MFG problems
         """
         self.problem = problem
-        assert_bc_providers_resolvable(self.problem, "MFGResidual (NewtonMFGSolver)")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         assert_paired_solver_geometry(hjb_solver, fp_solver, "MFGResidual", problem=problem)

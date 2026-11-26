@@ -24,7 +24,6 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
-from mfgarchon.geometry.boundary.providers import ConstantProvider
 from mfgarchon.utils.non_finite_read import NonFiniteReadError
 
 SIGMA, T, NT = 0.4, 0.5, 10
@@ -177,7 +176,6 @@ def test_meshless_refuses_an_explicit_density(value):
 _READABLE = [0.7, np.float32(0.7), np.int64(1), np.array(0.7), np.array([0.7]), Fraction(7, 10), lambda x: 0.7]
 _READABLE_IDS = ["float", "float32", "int64", "0-d", "size-1", "Fraction", "callable"]
 _UNREADABLE = [
-    ConstantProvider(0.7),
     "0.7",
     np.array([0.7, 0.7]),
     Decimal("0.7"),
@@ -192,7 +190,6 @@ _UNREADABLE = [
     np.False_,
 ]
 _UNREADABLE_IDS = [
-    "provider",
     "str",
     "2-element",
     "Decimal",

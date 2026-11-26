@@ -593,8 +593,8 @@ Where a value is judged:
     `ImplicitApplicator.apply`, `MeshfreeApplicator.apply`, `apply_field_bc` and `apply_particles`, the FEM's
     `assemble_robin_terms`, and, reading a segment's Robin coefficients, HJB-FDM's `compute_hjb_residual`,
     `compute_hjb_jacobian` and `solve_hjb_timestep_newton`, `HJBGFDMSolver.solve_hjb_system` and
-    `HJBHowardSolver.solve_hjb_system` (GFDM's Robin rows), and `FPResolver.resolve` and `HJBResolver.resolve` (a
-    provider's resolved coefficient). A value of a type the reader cannot read keeps its `NotImplementedError`;
+    `HJBHowardSolver.solve_hjb_system` (GFDM's Robin rows), and `FPResolver.resolve` and `HJBResolver.resolve`.
+    A value of a type the reader cannot read keeps its `NotImplementedError`;
   - a `volatility=` override array. It decides the diffusion branch before any step runs (scalar, field or tensor;
     diagonal or not; equal to the volatility the solver was built with or not), and that decision consumes every
     entry;
@@ -1736,6 +1736,7 @@ method surface*), are not removed yet.
 | `problem.spatial_discretization` | `problem.geometry.Nx` (intervals) or `problem.geometry.Nx_points` (points). It held one count or the other depending on the constructor (#1889); the `spatial_discretization=` argument stays and counts intervals |
 | `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
 | `AdjointConsistentProvider`, `NormalDriftProvider` | nothing |
+| `BCValueProvider`, `BaseBCValueProvider`, `ConstantProvider`, `is_provider`, `resolve_provider`, `BCProviderState`; `BoundaryConditions.has_providers` and `with_resolved_providers`; `MFGProblem.using_resolved_bc`; the `state=` argument of `BCSegment.get_value` | nothing: a boundary value is a constant or a callable g(t, x) (#2424) |
 
 The `removed` changelog fragment of the removal before 1.0 lists the names it deleted and what replaces them.
 

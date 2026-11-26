@@ -4613,9 +4613,6 @@
     "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_a_neumann_corner_row_is_exact_along_the_face_whose_datum_it_carries": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_a_robin_coefficient_provider_does_not_stop_construction": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_every_refusal_the_owner_makes_is_reported_per_point": [
       "optimal_control_sign"
     ],
@@ -7430,9 +7427,6 @@
     "tests/unit/test_alg/test_one_bc_owner_2530.py::test_hjb_sl_builds_its_gradient_on_the_bc_it_resolved": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_one_bc_owner_2530.py::test_inside_using_resolved_bc_the_components_bc_is_resolved_with_the_grids": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_one_bc_owner_2530.py::test_on_the_legacy_route_each_solver_solves_the_bc_the_owner_returns[FP-FDM]": [
       "optimal_control_sign",
       "fp_initial_condition_written_at_final_index"
@@ -8375,9 +8369,6 @@
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_the_verdict_reads_the_sweep_that_met_the_criteria[odd_solves-<lambda>]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_a_dirichlet_frame_valued_by_a_provider_constructs": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]": [
@@ -9534,9 +9525,6 @@
     "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-np.bool_]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-provider]": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-str]": [
       "optimal_control_sign"
     ],
@@ -9571,9 +9559,6 @@
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-np.bool_]": [
-      "optimal_control_sign"
-    ],
-    "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-provider]": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-str]": [
@@ -11550,9 +11535,6 @@
     "tests/unit/test_core/test_no_hasattr_cluster_a.py::TestCapabilityDispatchBehavior::test_separable_lagrangian_yields_separable_hamiltonian": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_core/test_no_hasattr_cluster_a.py::TestCapabilityDispatchBehavior::test_temp_resolved_bc_initialized_to_none": [
-      "optimal_control_sign"
-    ],
     "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]": [
       "drift_coefficient_2x",
       "optimal_control_sign"
@@ -12978,22 +12960,22 @@
     "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx_points-[21, 21]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1487-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1479-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1539-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1531-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1598-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1590-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1636-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1628-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1684-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1676-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1730-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1722-]": [
       "grid_interval_count_reads_as_points"
     ],
     "tests/unit/test_geometry/test_tensor_operators.py::TestBoundaryConditions::test_no_flux_bc": [
@@ -14627,12 +14609,12 @@
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101, 51]]",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx-[20, 20]]",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[562-grid.refine(2).Nx_points-[21, 21]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1487-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1539-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1598-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1636-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1684-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1730-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1479-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1531-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1590-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1628-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1676-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1722-]",
         "tests/unit/test_operators/test_interface_jump.py::TestInterfaceJumpOperator1D::test_1d_gradient_jump",
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
@@ -15207,7 +15189,7 @@
       "verify": "_owner_on_nan() == \"returns\""
     },
     "optimal_control_sign": {
-      "kill_count": 3233,
+      "kill_count": 3227,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_dispatcher_uses_potential_field_not_drift_field",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_fp_dispatch_produces_potential_field",
@@ -16364,7 +16346,6 @@
         "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_a_bc_with_its_own_sdf_is_classified_by_the_faces_its_sdf_gives",
         "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_a_curved_sdf_boundary_takes_the_normal_the_uniform_path_writes",
         "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_a_neumann_corner_row_is_exact_along_the_face_whose_datum_it_carries",
-        "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_a_robin_coefficient_provider_does_not_stop_construction",
         "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_every_refusal_the_owner_makes_is_reported_per_point",
         "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_gfdm_judges_a_corner_by_the_row_it_writes",
         "tests/unit/test_alg/test_gfdm_point_owner_2512.py::test_r1_reads_the_corner_face_by_the_row_gfdm_writes",
@@ -17081,7 +17062,6 @@
         "tests/unit/test_alg/test_one_bc_owner_2530.py::test_hjb_fdm_builds_its_gradients_on_the_bc_it_resolved[gradient_upwind]",
         "tests/unit/test_alg/test_one_bc_owner_2530.py::test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges",
         "tests/unit/test_alg/test_one_bc_owner_2530.py::test_hjb_sl_builds_its_gradient_on_the_bc_it_resolved",
-        "tests/unit/test_alg/test_one_bc_owner_2530.py::test_inside_using_resolved_bc_the_components_bc_is_resolved_with_the_grids",
         "tests/unit/test_alg/test_one_bc_owner_2530.py::test_on_the_legacy_route_each_solver_solves_the_bc_the_owner_returns[FP-FDM]",
         "tests/unit/test_alg/test_one_bc_owner_2530.py::test_on_the_legacy_route_each_solver_solves_the_bc_the_owner_returns[FP-FVM]",
         "tests/unit/test_alg/test_one_bc_owner_2530.py::test_on_the_legacy_route_each_solver_solves_the_bc_the_owner_returns[FP-SL]",
@@ -17343,7 +17323,6 @@
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_the_verdict_reads_the_sweep_that_met_the_criteria[every_solve-<lambda>]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_the_verdict_reads_the_sweep_that_met_the_criteria[first_solve_only-<lambda>]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_the_verdict_reads_the_sweep_that_met_the_criteria[odd_solves-<lambda>]",
-        "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_a_dirichlet_frame_valued_by_a_provider_constructs",
         "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[jittered]",
         "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value[sobol]",
         "tests/unit/test_alg/test_positive_qp_fan_1689.py::test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost[0.25]",
@@ -17644,7 +17623,6 @@
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-nan]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-np.False_]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-np.bool_]",
-        "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-provider]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[fp-explicit-str]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-0-d bool]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-2-element]",
@@ -17655,7 +17633,6 @@
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-imaginary]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-np.False_]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-np.bool_]",
-        "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-provider]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_fem_refuses_a_dirichlet_value_it_cannot_read[hjb-shared-str]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_hjb_fem_holds_a_shared_dirichlet_of_every_readable_value[0-d]",
         "tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py::test_hjb_fem_holds_a_shared_dirichlet_of_every_readable_value[Fraction]",
@@ -18202,7 +18179,6 @@
         "tests/unit/test_core/test_network_mass_is_the_node_sum_2177.py::TestNetworkMassIsMeasuredOnTheNodes::test_a_grid_problem_still_uses_the_grid_measure",
         "tests/unit/test_core/test_network_mass_is_the_node_sum_2177.py::TestNetworkMassIsMeasuredOnTheNodes::test_no_false_positive_mass_warning_and_the_capture_works",
         "tests/unit/test_core/test_no_hasattr_cluster_a.py::TestCapabilityDispatchBehavior::test_separable_lagrangian_yields_separable_hamiltonian",
-        "tests/unit/test_core/test_no_hasattr_cluster_a.py::TestCapabilityDispatchBehavior::test_temp_resolved_bc_initialized_to_none",
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]",
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[1.0]",
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]",

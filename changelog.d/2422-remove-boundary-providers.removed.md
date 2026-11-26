@@ -17,7 +17,7 @@
     - `FixedPointIterator` resolves providers only around the HJB solve.
     - The condition it supplies is imposed already. `divergence_upwind` and `divergence_centered` zero the wall flux by construction, and FEM's natural boundary condition is the total flux.
   - **Kept:**
-    - the `BCValueProvider` protocol, `BaseBCValueProvider`, `ConstantProvider`, and the per-step resolution (`using_resolved_bc`, `with_resolved_providers`). A provider of your own still uses them: the HJB solvers read the resolved value.
+    - the `BCValueProvider` protocol, `BaseBCValueProvider`, `ConstantProvider`, and the per-step resolution (`using_resolved_bc`, `with_resolved_providers`). All four were removed later in this release (#2424), with the refusals below.
     - The refusals of a provider-valued wall coefficient stay. The FDM refusal no longer sends you to `FPFEMSolver`, which does not consume one either.
   - **Also:**
     - `geometry.boundary.types` imports `is_provider` at module level. The cycle that kept that import late ran through the removed `bc_coupling`.

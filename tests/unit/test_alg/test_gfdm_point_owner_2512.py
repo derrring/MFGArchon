@@ -205,25 +205,6 @@ def test_a_curved_sdf_boundary_takes_the_normal_the_uniform_path_writes():
         np.testing.assert_array_equal(mixed._bc_normal_per_point[i], normals[local])
 
 
-def test_a_robin_coefficient_provider_does_not_stop_construction():
-    """Review 1 of #2674, blocker 2. GFDM classifies at construction, before the coupling layer resolves any provider,
-    so its equivalence compares Robin coefficients as stored. Reading them through the resolving owner raised on a
-    ``beta`` given as a provider."""
-    from mfgarchon.geometry.boundary.providers import ConstantProvider
-
-    bc = BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(
-                name="robin", bc_type=BCType.ROBIN, alpha=0.0, beta=ConstantProvider(1.0), value=0.25, boundary="x_min"
-            ),
-            BCSegment(name="wall", bc_type=BCType.NO_FLUX),
-        ],
-    )
-    solver = _solver(bc)
-    assert solver._bc_segment_per_point[_index(solver, [0.0, 0.5])].name == "robin"
-
-
 def test_every_refusal_the_owner_makes_is_reported_per_point():
     """Review 1 of #2674, must-fix 1: a BC with no default and no segment on the y faces. The owner refuses those
     points; GFDM collects each refusal, with the owner's reason, into one message rather than raising the first.
@@ -280,22 +261,23 @@ def test_gfdms_equivalence_is_the_row_it_writes():
     """Review 1 of #2674, should-fix 1: two segments are one row when GFDM writes the same row for them -- the type,
     NEUMANN and NO_FLUX together, and the datum as stored -- and ``flux_capacity`` is not read (#2575)."""
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import _same_bc_row
-    from mfgarchon.geometry.boundary.providers import ConstantProvider
 
     def seg(bc_type, **kwargs):
         return BCSegment(name="s", bc_type=bc_type, **kwargs)
 
-    provider = ConstantProvider(1.0)
+    def beta():  # a coefficient GFDM does not read, compared as stored: equal only to itself
+        return 1.0
+
     assert _same_bc_row(seg(BCType.NEUMANN, value=0.0), seg(BCType.NO_FLUX))
     assert not _same_bc_row(seg(BCType.NEUMANN, value=1.0), seg(BCType.NO_FLUX))
     assert not _same_bc_row(seg(BCType.DIRICHLET, value=1.0), seg(BCType.DIRICHLET, value=2.0))
     assert not _same_bc_row(seg(BCType.DIRICHLET, value=0.0), seg(BCType.NEUMANN, value=0.0))
     assert _same_bc_row(seg(BCType.DIRICHLET, value=0.0, flux_capacity=0.1), seg(BCType.DIRICHLET, value=0.0))
-    robin = {"alpha": 0.0, "beta": provider}
+    robin = {"alpha": 0.0, "beta": beta}
     assert _same_bc_row(seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.25, **robin))
     assert not _same_bc_row(seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.5, **robin))
     assert not _same_bc_row(
-        seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.25, alpha=0.0, beta=ConstantProvider(1.0))
+        seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.25, alpha=0.0, beta=lambda: 1.0)
     )
 
 

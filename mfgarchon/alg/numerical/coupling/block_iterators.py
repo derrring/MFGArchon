@@ -45,7 +45,6 @@ from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
 from .base_mfg import (
     BaseCouplingIterator,
-    assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
@@ -141,7 +140,6 @@ class BlockIterator(BaseCouplingIterator):
                 damping, for this base class; its two subclasses default to ``DampingPolicy.constant(0.5)``.
         """
         super().__init__(problem)
-        assert_bc_providers_resolvable(self.problem, type(self).__name__)
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver

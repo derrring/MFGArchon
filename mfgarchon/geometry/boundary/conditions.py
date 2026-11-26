@@ -342,84 +342,6 @@ class BoundaryConditions:
         first = candidates[0]
         return first if all(_same_condition(segment, first) for segment in candidates[1:]) else None
 
-    # =========================================================================
-    # Dynamic BC Value Provider Support (Issue #625)
-    # =========================================================================
-
-    def has_providers(self) -> bool:
-        """
-        Check if any segment has a BCValueProvider value.
-
-        Used by FixedPointIterator to determine if BC resolution is needed
-        before passing to solvers.
-
-        Returns:
-            True if any segment carries a BCValueProvider in ``value``, ``alpha`` or ``beta``.
-
-        Example:
-            >>> if bc.has_providers():
-            ...     bc = bc.with_resolved_providers(state)
-
-        Note:
-            This is the gate in front of ``with_resolved_providers``, whose fast path returns
-            ``self`` unchanged when this is False. It must therefore cover exactly the fields
-            that method resolves. ~~``seg.value`` only~~ [CORRECTED 2026-08-16]: widening the
-            resolver without widening the gate would leave a provider on ``alpha`` silently
-            unresolved -- the caller would receive the provider object itself where a number was
-            expected, and the failure would surface far downstream as a type error in a ghost
-            formula rather than here.
-        """
-        from .providers import is_provider
-
-        return any(is_provider(getattr(seg, f)) for seg in self.segments for f in ("value", "alpha", "beta"))
-
-    def with_resolved_providers(
-        self,
-        state: dict[str, Any],
-    ) -> BoundaryConditions:
-        """
-        Create a new BoundaryConditions with all providers resolved to concrete values.
-
-        This is the primary method for the FixedPointIterator to resolve dynamic
-        BCs before passing them to solvers. Returns a new instance where all
-        BCValueProvider values have been replaced with their computed float values.
-
-        Args:
-            state: Iteration state dict passed to provider.compute().
-                   Standard keys: 'm_current', 'U_current', 'geometry', 'volatility'.
-
-        Returns:
-            New BoundaryConditions instance with concrete values (no providers)
-
-        Example:
-            >>> # In FixedPointIterator
-            >>> if problem.boundary_conditions.has_providers():
-            ...     resolved_bc = problem.boundary_conditions.with_resolved_providers(state)
-            ... else:
-            ...     resolved_bc = problem.boundary_conditions
-            >>> U_new = hjb_solver.solve(bc=resolved_bc, ...)
-        """
-        from .providers import is_provider
-
-        if not self.has_providers():
-            return self  # Fast path: no providers to resolve
-
-        resolved_segments = []
-        for seg in self.segments:
-            # `value`, `alpha` and `beta` may each carry a provider. The impermeable wall of a
-            # Fokker-Planck equation is Robin with `alpha` the outward normal drift,
-            # `D_pH(x, grad u) . n` -- a quantity that is only knowable from the current
-            # iterate, which is what a provider is for, and which lives on `alpha`, not on
-            # `value`. ~~only `value` was resolved~~ [CORRECTED 2026-08-16]
-            updates = {
-                field: getattr(seg, field).compute(state)
-                for field in ("value", "alpha", "beta")
-                if is_provider(getattr(seg, field))
-            }
-            resolved_segments.append(replace(seg, **updates) if updates else seg)
-
-        return replace(self, segments=resolved_segments)
-
     @property
     def type(self) -> str:
         """
@@ -2503,8 +2425,7 @@ def robin_bc(
       coefficients read:
       ``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, its row-sum lumped diagonal on P1 (#2845), load
       ``D*(1/beta)*int_dOmega g phi_i``.
-      Constant ``g`` only; ``beta == 0`` fails loud; a provider-valued ``alpha`` raises a bare
-      ``TypeError`` from ``float()``.
+      Constant ``g`` only; ``beta == 0`` fails loud.
     - ``HJBGFDMSolver`` -- the ``Robin(0, 1)`` case only, i.e. ``n . grad u = g``.
     - **Every grid FP solver refuses ROBIN at construction**, uniform and mixed alike: a shared one in
       ``fp_view_of_shared_bc`` (#2512), its own in ``_validate_bc_support`` (#1456, raising from
@@ -2512,7 +2433,7 @@ def robin_bc(
       the FDM boundary handlers are not passed ``boundary_conditions``, so they read none of
       ``alpha``/``beta``/``value``. Below the gate -- calling ``solve_timestep_full_nd`` directly,
       or mutating ``solver.boundary_conditions`` after construction (#2475) -- a ROBIN segment is
-      byte-identical to no-flux, and a provider-valued coefficient is accepted silently (#1979).
+      byte-identical to no-flux.
 
     The perturbation a Robin segment adds to an already-reflecting wall:
 

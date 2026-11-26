@@ -1,0 +1,5 @@
+- **A coupled route handed network problems refuses them by name** (#2923). `FictitiousPlayIterator`, `BlockGaussSeidelIterator`, `BlockJacobiIterator`, `NewtonMFGSolver`, `MultiPopulationIterator` and `RegimeSwitchingIterator` died when they were built, with `AttributeError: ... has no attribute 'has_providers'`, raised in the provider check #2424 removed.
+  - **The refusals that answer now:**
+    - two network populations meet `MultiPopulationIterator`'s refusal of their dimension (#2335);
+    - every other case meets the iterate owner's refusal of the geometry, as `FixedPointIterator` and `GraphMFGSolver` already did.
+  - **Measured** on a 3 × 3 grid network with and without a node BC, and on #2923's own two-population input.

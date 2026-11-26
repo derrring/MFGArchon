@@ -1,0 +1,20 @@
+- **The boundary-value provider concept is removed (#2424).** Breaking (pre-1.0). Nothing replaces it: a boundary value is a constant or a callable g(t, x), and `FixedPointIterator` no longer recomputes a boundary value from the iterate each sweep.
+  - **Gone:**
+    - `mfgarchon.geometry.boundary.providers`, with `BCValueProvider`, `BaseBCValueProvider`, `ConstantProvider`, `is_provider`, `resolve_provider` and `BCProviderState`, and their exports from `mfgarchon.geometry.boundary`;
+    - `BoundaryConditions.has_providers` and `with_resolved_providers`;
+    - `MFGProblem.using_resolved_bc`, and the `_temp_resolved_bc` slot only it wrote;
+    - `assert_bc_providers_resolvable`, and its refusal of a provider in `FictitiousPlayIterator`, both Block iterators, `MFGResidual` (Newton), `MultiPopulationIterator` and `RegimeSwitchingIterator`;
+    - the `state=` argument of `BCSegment.get_value`, and of `segment_value`, `boundary_value` and `segment_robin_coefficients`, which only a provider read;
+    - FP-FDM's refusal of a provider-valued wall coefficient, and the Howard path's guard on an unresolved provider.
+  - **What an object with a `compute` method meets now**, where a provider was accepted:
+    - **Given as a value, `alpha` or `beta` that its segment's type reads,** it is refused with `NotImplementedError`, naming its type and the reader. This was measured through `problem.solve()` (FDM), `FictitiousPlayIterator`, `FPFEMSolver` and HJB-GFDM's rows.
+    - **On a type that reads no field** (NO_FLUX, REFLECTING; `FIELDS_READ`) it is unread, as a number given there is. Through `problem.solve()` on a grid, FDM's ghost layer refuses it. `resolve_bc` with `HJBResolver`, which no solver in the package calls, used to read it there as ROBIN(alpha=0, beta=1, g), and now gives NEUMANN(0).
+    - **A callable object that also has a `compute` method** was a provider, and is now a callable g(t, x).
+  - **Unchanged:** a solve that uses no provider, bit for bit. This was measured on the seven coupled routes, on `problem.solve()` with a callable and a constant Dirichlet exit and on a 2-D no-flux grid, on an FEM FP solve and on HJB-GFDM's value-form rows.
+  - **Tests:**
+    - Deleted with the code they pinned: `test_providers_resolve_coefficients_1965.py`, and ten more tests of the removed code.
+    - `test_hjb_howard_solver.py`'s Robin solve takes its datum from the closed form its provider computed.
+    - The two equivalence tests that compared a provider-valued `beta` as stored compare a callable one.
+    - The discrimination kill matrix and baseline lose the six deleted node IDs, each a killer of `optimal_control_sign` only (3233 → 3227).
+    - The docstring keyword ratchet and the mypy scope baseline are re-recorded: they lost the provider module and its docstring examples.
+  - Pending fragments of this release that describe providers say they were removed later in this release.

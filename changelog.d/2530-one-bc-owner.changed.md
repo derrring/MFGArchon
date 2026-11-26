@@ -33,7 +33,7 @@
 
     `get_topology_per_dimension` and `needs_segment_aware_bc` now refuse a string.
   - **Inside `using_resolved_bc`**, a components BC is resolved together with the geometry's, so the two
-    declarations stay one.
+    declarations stay one. `using_resolved_bc` was removed later in this release (#2424).
   - **On implicit domains the channels now reach every solver.**
     - A solver on a geometry periodic on every axis used to receive no BC (None), and the particle solver the
       string `"periodic"`. It now receives `periodic_bc`.

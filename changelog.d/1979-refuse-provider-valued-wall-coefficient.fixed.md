@@ -1,4 +1,4 @@
-A provider-valued wall coefficient no longer disappears (#1979). `BCValueProvider` exists so a wall
+A provider-valued wall coefficient no longer disappears (#1979). The provider concept, and with it this refusal, was removed later in this release (#2424). `BCValueProvider` exists so a wall
 coefficient can be recomputed each Picard iterate — ~~that is what `AdjointConsistentProvider` and
 #1970's `NormalDriftProvider` are for, and both live on `alpha`, not on `value`~~
 **[CORRECTED 2026-09-28, #2422]** `AdjointConsistentProvider` sat on `value` and `NormalDriftProvider`
