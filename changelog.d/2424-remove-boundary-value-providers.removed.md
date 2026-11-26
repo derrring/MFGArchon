@@ -1,0 +1,31 @@
+- **The boundary-value provider concept is removed (#2424).** Breaking (pre-1.0). Nothing replaces it: a boundary value is a constant or a callable g(t, x), and `FixedPointIterator` no longer recomputes a boundary value from the iterate each sweep.
+  - **Gone:**
+    - `mfgarchon.geometry.boundary.providers`, with `BCValueProvider`, `BaseBCValueProvider`, `ConstantProvider`, `is_provider`, `resolve_provider` and `BCProviderState`, and their exports from `mfgarchon.geometry.boundary`;
+    - `BoundaryConditions.has_providers` and `with_resolved_providers`;
+    - `MFGProblem.using_resolved_bc`, and the `_temp_resolved_bc` slot only it wrote;
+    - `assert_bc_providers_resolvable`, and its refusal of a provider in `FictitiousPlayIterator`, both Block iterators, `MFGResidual` (Newton), `MultiPopulationIterator` and `RegimeSwitchingIterator`;
+    - the `state=` argument of `BCSegment.get_value`, and of `segment_value`, `boundary_value` and `segment_robin_coefficients`, which only a provider read;
+    - FP-FDM's refusal of a provider-valued wall coefficient, and the Howard path's guard on an unresolved provider.
+  - **What an object with a `compute` method meets now**, where a provider was accepted. Measured on a 1-D grid; the readers named are the ones run.
+    - **Where a reader reads the field, it refuses the object** with `NotImplementedError`, naming its type and the reader. This holds for:
+      - a Dirichlet value through `problem.solve()` (FDM) and through `FictitiousPlayIterator`;
+      - a Dirichlet value in `FPFEMSolver`;
+      - a Neumann value and a Robin `beta` in HJB-GFDM's rows;
+      - a NO_FLUX value through `problem.solve()`, whose FDM ghost layer reads it and refuses a str there too.
+    - **Main refuses, this change leaves unread** (the approver's ruling of 2026-11-26): where no reader reads the field, the object goes unread, as a str or `7.0` there does at main and here. #1979's refusal of a provider-valued wall coefficient covered the object alone. The cases, each from that refusal to a solve bitwise equal to the same BC without the entry:
+      - through `problem.solve()` (FDM), a NO_FLUX, NEUMANN or DIRICHLET segment's `alpha` or `beta`;
+      - with `HJBSemiLagrangianSolver` and `FPFDMSolver`, a NO_FLUX segment's value, `alpha` or `beta`, and a NEUMANN segment's `alpha` or `beta`.
+
+      These belong to #2648's class, a non-default entry on a field its type does not read.
+    - **`resolve_bc` with `HJBResolver`,** which no solver in the package calls, read the object on a NO_FLUX value as ROBIN(alpha=0, beta=1, g). It now gives NEUMANN(0).
+    - **A plain function that also has a `compute` attribute** was a provider, and is now read as a callable g(t, x).
+    - **An instance of a class with `__call__` and `compute`,** as a Dirichlet or a Neumann value through `problem.solve()`, is now refused by the callable binder, which reads a plain `def` or `lambda` (`TypeError`, `bind_user_callable`). As a Dirichlet value it solved, as a provider, at main. As a Neumann value it was refused at main too, by FP-FDM's refusal of a nonzero shared Neumann value (`NotImplementedError`). On a NO_FLUX segment's `alpha` or `beta`, or a DIRICHLET segment's `alpha`, it goes unread, as the item above says of an object with a `compute` method.
+  - **Unchanged, bit for bit:** every solve measured that uses no provider. That is the seven coupled routes; `problem.solve()` with a callable and with a constant Dirichlet exit, and on a 2-D no-flux grid; an FEM FP solve; and HJB-GFDM's value-form rows.
+  - **Tests:**
+    - Deleted with the code they pinned: `test_providers_resolve_coefficients_1965.py`, and ten more tests of the removed code.
+    - `test_a_network_problem_is_refused_by_name_2923.py` and `test_the_bc_owner_answers_on_every_coupled_route_3005.py` pin the two fixes in this release's `2424-…fixed.md` fragments.
+    - `test_hjb_howard_solver.py`'s Robin solve takes its datum from the closed form its provider computed.
+    - The two equivalence tests that compared a provider-valued `beta` as stored compare a callable one.
+    - The discrimination kill matrix and baseline lose the six deleted node IDs, each a killer of `optimal_control_sign` only (3233 → 3227).
+    - The docstring keyword ratchet is re-recorded: it lost the provider module's and the three provider methods' docstring examples. The mypy scope baseline is re-recorded with the deleted code's type errors gone, in `alg`, `core` and `geometry`.
+  - Sixteen pending fragments of this release describe providers, and each now says they were removed later in this release: 1686, 1689, 1894, 1936, 1965, 1979, 2294, 2378, 2422, 2512 (two), 2513, 2519, 2530, 2593 and 2975.

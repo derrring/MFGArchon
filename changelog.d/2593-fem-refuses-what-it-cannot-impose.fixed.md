@@ -4,6 +4,6 @@
     - every boolean is refused, `False` included, wherever it sits in an array (#2512);
     - whatever the library's test for a verifiably zero datum (`_describe_bc_value`) reads as zero is 0: `None` and an all-zero array, and also `"0"`, `Decimal("0")` and a fully masked array;
     - a callable `g(x)`, its parameter named `x`, is read at each DOF (#2512 row B2: a boundary value is called by name);
-    - anything else is refused: any other string or `Decimal`, every complex value, 0 included, a provider, an array of more than one element that is not all zero, a non-finite number.
+    - anything else is refused: any other string or `Decimal`, every complex value, 0 included, a provider (removed later in this release, #2424), an array of more than one element that is not all zero, a non-finite number.
     On FP-FEM's shared route a shared DIRICHLET is an exit, m = 0, whatever its value, so this changes one thing there: a shared `False`, imposed as 0 before, is refused. A shared `True` is still accepted, since the FP's view rewrites a nonzero value to 0 before the check. FP-FEM's own BC (#2532) is checked as HJB-FEM's is.
   - **A `default_bc=DIRICHLET` left to govern boundary facets no segment names** got the natural condition: a wall where an exit was asked for. FP-FEM's density stayed 1.0000 at x_max, and HJB-FEM held u = 0.0000 there, not 0.7. That default is now imposed, and segments' names, tags that hold no facet and nodes shared by two segments are the face owner's decisions (#2512, stage B1b: see its entry).

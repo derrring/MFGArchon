@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, read_region
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
@@ -30,8 +29,6 @@ if TYPE_CHECKING:
 
     from mfgarchon.geometry.protocols import SupportsRegionMarking
     from mfgarchon.types.callable_protocols import BoundCallable
-
-    from .providers import BCValueProvider
 
 
 def _compute_sdf_gradient(
@@ -517,7 +514,7 @@ class BCSegment:
     Attributes:
         name: Human-readable identifier for this segment
         bc_type: Type of boundary condition (Dirichlet, Neumann, etc.)
-        value: BC value: a constant, a callable g(t, x) named by its parameters ((t, x), (x) or (t)), or a provider
+        value: BC value: a constant, or a callable g(t, x) named by its parameters ((t, x), (x) or (t))
         boundary: Boundary location identifier (e.g., "left", "right", "x_min", "x_max")
         region: Axis-specific ranges defining segment extent
         sdf_region: SDF function defining segment region (phi < 0 means in segment)
@@ -571,16 +568,11 @@ class BCSegment:
 
     name: str
     bc_type: BCType
-    # BC value: a constant, a callable g(t, x) -- time first, bound by its parameter names (#2512 row B2) -- or a
-    # BCValueProvider (Issue #625), resolved by the coupling layer with the current iteration state.
+    # BC value: a constant, or a callable g(t, x) -- time first, bound by its parameter names (#2512 row B2).
     # Read it through `segment_value`, the one reading of it.
-    value: float | Callable | BCValueProvider = 0.0
+    value: float | Callable = 0.0
 
-    # Robin BC coefficients: alpha*u + beta*du/dn = g
-    # `float | BCValueProvider | NDArray` for the same reason `value` is: a provider may sit
-    # here and resolve to a field. `ResolvedBC` was widened for this in #1957; this class was
-    # the one left behind. The declared type is what a reader checks against, and it said
-    # `float` while the resolver stored an array.
+    # Robin BC coefficients: alpha*u + beta*du/dn = g, each a constant (`segment_robin_coefficients`)
     alpha: float | Any = 1.0  # Weight on u (Dirichlet term)
     beta: float | Any = 0.0  # Weight on du/dn (Neumann term)
 
@@ -676,12 +668,12 @@ class BCSegment:
             )
         # Bind a callable value now, so one written (x, t) or with unnamed parameters is refused when the segment is
         # built, not when a solver first reads it (#2512 row B2, user ruling).
-        if callable(self.value) and not is_provider(self.value):
+        if callable(self.value):
             self.value_binding()
         # A constant that is NaN or infinite is refused where the segment is built, by the one reading of a boundary
         # datum, `_read_constant`, which reads it again at use (#2974): only a field its type's readers read
         # (`FIELDS_READ`). A callable's returns are read at the construction probes by `_refuse_a_non_finite_source`,
-        # and at use; a provider's are computed at use.
+        # and at use.
         for name in FIELDS_READ[self.bc_type]:
             given = getattr(self, name)
             if _a_real_constant(given):
@@ -842,7 +834,6 @@ class BCSegment:
         self,
         point: np.ndarray,
         t: float | None = None,
-        state: dict[str, Any] | None = None,
     ) -> float:
         """
         Evaluate BC value at a point.
@@ -851,25 +842,19 @@ class BCSegment:
             point: Spatial coordinates as 1D array
             t: The time to read a time-dependent value at. With none, a value that declares ``t`` is refused,
                not read at a default time (#2512 row B2); a constant, or ``g(x)``, needs none.
-            state: Optional iteration state dict for BCValueProvider resolution
-                   (Issue #625). Required if value is a provider. Standard keys:
-                   'm_current', 'U_current', 'geometry', 'volatility', 'iteration'.
 
         Returns:
             BC value at this point and time
 
         Read through the one owner, `segment_value` (#2512 row B2): a callable is g(t, x), bound by its parameter
-        names, so ``point`` is passed as ``x`` and ``t`` as ``t``; a constant follows the owner's rules; a provider
-        is computed from ``state`` and refused without it.
+        names, so ``point`` is passed as ``x`` and ``t`` as ``t``; a constant follows the owner's rules.
 
         Raises:
-            NotImplementedError: If the value is a provider and ``state`` is not given, or a value the owner refuses.
+            NotImplementedError: If the value is one the owner refuses.
             TypeError: If a callable value, reassigned after the segment was built, cannot be bound by name.
             ValueError: If ``point`` is not one point of shape ``(d,)``.
         """
-        return segment_value(
-            self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", state=state, time_keyword="t"
-        )
+        return segment_value(self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", time_keyword="t")
 
     def __str__(self) -> str:
         """String representation."""
@@ -897,7 +882,7 @@ class BCSegment:
 
 def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
     """Whether ``value`` is a callable that declares ``t``, which an accessor called with no time cannot read."""
-    if not callable(value) or is_provider(value):
+    if not callable(value):
         return False
     bound = segment.value_binding() if segment is not None else bind_boundary_value(value)
     return "t" in bound.passes
@@ -923,7 +908,6 @@ def segment_value(
     t: float | None,
     x: NDArray | None,
     where: str,
-    state: dict[str, Any] | None = None,
     time_keyword: str | None = None,
 ) -> Any:
     """The one reading of a boundary segment's value, for every reader (#2512 row B2): `boundary_value`, with the
@@ -942,8 +926,7 @@ def segment_value(
         t=t,
         x=x,
         where=where,
-        state=state,
-        binding=segment.value_binding() if callable(segment.value) and not is_provider(segment.value) else None,
+        binding=segment.value_binding() if callable(segment.value) else None,
         time_keyword=time_keyword,
     )
 
@@ -955,7 +938,6 @@ def boundary_value(
     t: float | None,
     x: NDArray | None,
     where: str,
-    state: dict[str, Any] | None = None,
     binding: BoundCallable | None = None,
     time_keyword: str | None = None,
 ) -> Any:
@@ -971,33 +953,13 @@ def boundary_value(
     and the refusal says to pass it; a reader with no time to take advises a value that needs none. It returns one
     number at the point.
 
-    **A constant, and what a callable or a provider returns**, are read by one function, `_read_constant`, in three
+    **A constant, and what a callable returns**, are read by one function, `_read_constant`, in three
     layers. First the dtype: an array, masked or not, must have an integer or a floating dtype, and any other array
     is refused at the container, whatever it holds, as is a boolean or complex scalar. Then one unwrap: an array of
     one element is that element, and a return of more than one number is refused. Then the value:
     ``None`` (0 for a constant, refused for a return), a masked element and whatever `_describe_bc_value` calls zero
     are 0, a finite real a float holds is its value, and anything else, a non-finite number included, is refused.
-
-    **A** ``BCValueProvider`` is resolved with ``state``, and its result is read as a return is: one number, since
-    a value per node is a separate capability (#2600). Without ``state`` it is refused (``NotImplementedError``): the
-    coupling layer resolves providers before a solve (`with_resolved_providers`).
     """
-    if is_provider(value):
-        if state is None:
-            raise NotImplementedError(
-                f"{kind} has a value of type {type(value).__name__}, a BCValueProvider, and {where} has no "
-                "iteration state to resolve it with: providers are resolved by the coupling layer before a solve "
-                "(with_resolved_providers)."
-            )
-        # A provider returns one number, read as a return is (#2512 row B2; one value per node is #2600).
-        return _read_constant(
-            value.compute(state),
-            kind=f"{kind} (what its provider computed)",
-            where=where,
-            returned=True,
-            advice="compute one real number",
-            many=" A value per node is a planned capability, tracked in #2600.",
-        )
     if callable(value):
         bound = binding if binding is not None else bind_boundary_value(value)
         if "t" in bound.passes and t is None:
@@ -1064,7 +1026,7 @@ _VALUE_ADVICE = "give a real number, a real array of one element, or a callable 
 def _a_real_constant(value: Any) -> bool:
     """Whether a segment's ``value``, ``alpha`` or ``beta`` is a real number given as such, a Python or numpy real or a
     numeric array of one element, which `BCSegment.__post_init__` reads where the segment is built (#2974). A bool, a
-    callable, a provider or anything else is left to its reader at use, as before."""
+    callable or anything else is left to its reader at use, as before."""
     if isinstance(value, (bool, np.bool_)):
         return False
     if isinstance(value, numbers.Real):
@@ -1079,7 +1041,7 @@ def _a_real_constant(value: Any) -> bool:
 def _read_constant(
     value: Any, *, kind: str, where: str, returned: bool = False, advice: str = _VALUE_ADVICE, many: str = ""
 ) -> float:
-    """A constant boundary value, or what a callable or a provider returned: `boundary_value`'s contract, in layers.
+    """A constant boundary value, or what a callable returned: `boundary_value`'s contract, in layers.
 
     1. **dtype:** an array, masked or not, must have an integer or a floating dtype, and any other array is refused
        at the container; so is a boolean or complex scalar.
@@ -1146,19 +1108,16 @@ def _read_constant(
     return constant
 
 
-def segment_robin_coefficients(
-    segment: BCSegment, *, where: str, state: dict[str, Any] | None = None, as_stored: bool = False
-) -> tuple[Any, Any]:
+def segment_robin_coefficients(segment: BCSegment, *, where: str, as_stored: bool = False) -> tuple[Any, Any]:
     """The one reading of a segment's Robin coefficients ``(alpha, beta)``, for every reader (#2512 row B2).
 
-    Each is a constant, read by `boundary_value`'s constant contract, or a provider resolved with ``state``. A
+    Each is a constant, read by `boundary_value`'s constant contract. A
     callable coefficient is refused: no reader evaluates one per point or per time (#1237). ``None`` is refused
     rather than read as 0, as `BoundaryConditions` validation refuses it for a Robin segment.
 
-    ``as_stored=True`` returns the two coefficients as the segment stores them, a provider unresolved, for a reader
-    that only compares two segments and writes no row -- an equivalence: the owner's `_same_condition`, HJB-GFDM's
-    `_same_bc_row`, the interpolation applicator's `_same_enforcement`. Such a comparison may run before the coupling
-    layer resolves any provider: HJB-GFDM classifies its points at construction (#2512 row B1).
+    ``as_stored=True`` returns the two coefficients as the segment stores them, unread, for a reader that only
+    compares two segments and writes no row -- an equivalence: the owner's `_same_condition`, HJB-GFDM's
+    `_same_bc_row`, the interpolation applicator's `_same_enforcement` (#2512 row B1).
     """
     if as_stored:
         return tuple(getattr(segment, name) for name in ("alpha", "beta"))
@@ -1168,32 +1127,22 @@ def segment_robin_coefficients(
         kind = f"{segment.bc_type.name.replace('_', ' ').title()} segment {segment.name!r}'s {name}"
         if coefficient is None:
             raise NotImplementedError(f"{kind} is None; {where} needs a number (#2512 row B2).")
-        if callable(coefficient) and not is_provider(coefficient):
+        if callable(coefficient):
             raise NotImplementedError(
                 f"{kind} is a callable; a Robin coefficient is one constant per segment, since no reader evaluates "
                 f"one per point or per time, so {where} cannot read it (#1237)."
             )
         if isinstance(coefficient, np.ndarray) and coefficient.size > 1:
-            # A provider may resolve a coefficient to a field along the wall (`with_resolved_providers` keeps it); no
-            # reader takes one yet. A planned capability, not a malformed input.
+            # No reader takes a coefficient per node yet: a planned capability, not a malformed input.
             raise NotImplementedError(
                 f"{kind} is a field of {coefficient.size} values along the wall; {where} reads one number per "
                 "segment. A coefficient per node is a planned capability, tracked in #2600."
             )
-        returned = is_provider(coefficient)
-        if returned:
-            if state is None:
-                raise NotImplementedError(
-                    f"{kind} is a BCValueProvider, and {where} has no iteration state to resolve it with: providers "
-                    "are resolved by the coupling layer before a solve (with_resolved_providers)."
-                )
-            coefficient = coefficient.compute(state)
         coefficients.append(
             _read_constant(
                 coefficient,
                 kind=kind,
                 where=where,
-                returned=returned,
                 advice="give a real number, or a real array of one element: a Robin coefficient is one constant per segment",
                 many=" A coefficient per node is a planned capability, tracked in #2600.",
             )

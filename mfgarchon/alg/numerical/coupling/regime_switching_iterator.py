@@ -31,7 +31,6 @@ import numpy as np
 
 from mfgarchon.alg.numerical.coupling.base_mfg import (
     BaseCouplingIterator,
-    assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
@@ -175,10 +174,6 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # Use first problem as representative for base class
         super().__init__(problems[0])
         self._problems = problems
-        # Guard EVERY regime's problem, not just problems[0] (self.problem): each regime solves its
-        # own HJB and none of them resolves BC providers (Issue #1563).
-        for _k, _p in enumerate(problems):
-            assert_bc_providers_resolvable(_p, f"RegimeSwitchingIterator[regime {_k}]")
         self._regime = regime_config
         self._hjb = hjb_solvers
         self._fp = fp_solvers

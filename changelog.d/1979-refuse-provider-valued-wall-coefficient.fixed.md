@@ -1,10 +1,10 @@
-A provider-valued wall coefficient no longer disappears (#1979). `BCValueProvider` exists so a wall
+A provider-valued wall coefficient was refused rather than dropped (#1979), until the provider concept, and with it this refusal, was removed later in this release (#2424). `BCValueProvider` exists so a wall
 coefficient can be recomputed each Picard iterate — ~~that is what `AdjointConsistentProvider` and
 #1970's `NormalDriftProvider` are for, and both live on `alpha`, not on `value`~~
 **[CORRECTED 2026-09-28, #2422]** `AdjointConsistentProvider` sat on `value` and `NormalDriftProvider`
 on `alpha`; #2422 removes both in this same release, because no FP solver recomputes a wall
-coefficient per iterate and the conservative schemes need none. The refusals below stay, for a
-provider of the user's own. Two consumers took one and did the wrong thing with it.
+coefficient per iterate and the conservative schemes need none. The refusals below stayed, for a
+provider of the user's own, until that removal. Two consumers took one and did the wrong thing with it.
 
 **FDM**: `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers take no
 `boundary_conditions` argument at all, so nothing read `alpha` and the segment assembled
@@ -61,5 +61,6 @@ guards verified mutation-red: removing the FDM one fails 2 of 7, removing the FE
 **[2026-09-28, #2422: that file was deleted in #2227 (`18d8cc80`). The FDM refusal is pinned by
 `test_solver_bc_support_census_1975.py::test_a_provider_valued_coefficient_is_refused_rather_than_dropped`;
 the FEM `alpha`/`beta` one has no pin (`test_fem_inhomogeneous_neumann_2294.py` pins the separate `value` guard).]**
+**[#2424: both refusals, and that pin, were removed with providers later in this release.]**
 
 Unblocks #1970, which is in draft pending this. (#1970 then merged, and #2422 removed what it added.)

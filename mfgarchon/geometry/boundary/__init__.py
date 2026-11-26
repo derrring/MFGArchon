@@ -5,7 +5,7 @@ Provides boundary condition specifications for 1D, 2D, and nD domains,
 supporting Dirichlet, Neumann, Robin, periodic, and no-flux conditions.
 
 Architecture (4-layer model, see BC_ENFORCEMENT_ARCHITECTURE.md):
-- **Layer 1 — Specification**: types.py, conditions.py, providers.py
+- **Layer 1 — Specification**: types.py, conditions.py
 - **Layer 2 — Resolution**: resolution.py (BCResolver, MathBCType, ResolvedBC)
 - **Layer 3 — Enforcement**: calculators.py, enforcement.py, ghost_cells.py
 - **Layer 4 — Application**: applicator_*.py, dispatch.py
@@ -65,15 +65,6 @@ from .dispatch import (
     validate_bc_compatibility,
 )
 
-# Dynamic BC value providers (Issue #625)
-from .providers import (
-    BaseBCValueProvider,
-    BCValueProvider,
-    ConstantProvider,
-    is_provider,
-    resolve_provider,
-)
-
 # Layer 2: Resolution (Issue #848 Phase 3)
 from .resolution import (
     BCResolver,
@@ -125,12 +116,6 @@ __all__ = [
     "robin_bc",
     "mixed_bc",
     "mixed_bc_from_regions",
-    # Dynamic BC providers
-    "BCValueProvider",
-    "BaseBCValueProvider",
-    "ConstantProvider",
-    "is_provider",
-    "resolve_provider",
     # Layer 2: Resolution
     "MathBCType",
     "ResolvedBC",

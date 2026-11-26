@@ -485,11 +485,6 @@ class HJBFDMSolver(BaseHJBSolver):
             U_coupling_prev: Previous coupling iteration estimate
             volatility: Volatility override (None uses problem.volatility, with its kind)
             volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
-
-        Note:
-            A BCValueProvider stored in a BCSegment is resolved each iteration by the
-            FixedPointIterator via problem.using_resolved_bc(state).
-            See mfgarchon/geometry/boundary/providers.py for details.
         """
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
@@ -582,7 +577,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 volatility_kind=volatility_kind,
                 use_upwind=self.use_upwind,
                 numerical_hamiltonian=self.numerical_hamiltonian,
-                bc=bc,  # Uses Robin BC from geometry; providers resolved by iterator (Issue #625)
+                bc=bc,
                 domain_bounds=domain_bounds,
                 source_term=source_term,
                 cross_density=cross_density,  # Issue #1071

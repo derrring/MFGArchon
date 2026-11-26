@@ -17,10 +17,10 @@
     - `FixedPointIterator` resolves providers only around the HJB solve.
     - The condition it supplies is imposed already. `divergence_upwind` and `divergence_centered` zero the wall flux by construction, and FEM's natural boundary condition is the total flux.
   - **Kept:**
-    - the `BCValueProvider` protocol, `BaseBCValueProvider`, `ConstantProvider`, and the per-step resolution (`using_resolved_bc`, `with_resolved_providers`). A provider of your own still uses them: the HJB solvers read the resolved value.
-    - The refusals of a provider-valued wall coefficient stay. The FDM refusal no longer sends you to `FPFEMSolver`, which does not consume one either.
+    - the `BCValueProvider` protocol, `BaseBCValueProvider`, `ConstantProvider`, and the per-step resolution (`using_resolved_bc`, `with_resolved_providers`). All four were removed later in this release (#2424), with the refusals in the next item.
+    - The refusals of a provider-valued wall coefficient stay (until #2424's removal, as the item above says). The FDM refusal no longer sends you to `FPFEMSolver`, which does not consume one either.
   - **Also:**
-    - `geometry.boundary.types` imports `is_provider` at module level. The cycle that kept that import late ran through the removed `bc_coupling`.
+    - `geometry.boundary.types` imports `is_provider` at module level. The cycle that kept that import late ran through the removed `bc_coupling`. The import went with providers later in this release (#2424).
     - The adjoint diagnostics' boundary recommendation no longer names the removed builder.
     - Robin(α=0, β=1) is described as the condition n·∇u = g in the eight places that called it "the adjoint-consistent case". `README.md` no longer advertises an adjoint-consistent provider pattern, and FEM's refusals of a non-constant boundary value or coefficient no longer advise resolving "an adjoint-consistent BC" to a constant.
   - **Fragments in this release, corrected:**
@@ -29,7 +29,7 @@
     - #1979's is corrected in place where it described the two providers.
   - **Tests.**
     - Tests that pinned the removed code go with it: `test_adjoint_bc_coupling.py`, `test_normal_drift_provider_1970.py`, and one test each in the #1965, #2376 and #2378 files.
-    - Tests that used a provider to exercise the kept machinery keep their assertions. Howard's provider-valued Robin tests now use a provider local to the test, and the #1979 refusal pin uses `ConstantProvider`. Howard's load-bearing test goes red when the GFDM boundary refresh is made a no-op.
+    - Tests that used a provider to exercise the kept machinery keep their assertions. Howard's provider-valued Robin tests now use a provider local to the test, and the #1979 refusal pin uses `ConstantProvider`. Howard's load-bearing test, which went red when the GFDM boundary refresh was made a no-op, was one of Howard's two provider tests, which went with providers later in this release (#2424); its Robin solve test stays, with the datum's closed form.
     - The discrimination kill matrix is re-recorded at `8107cedf`. Every kill it lost belonged to a deleted test:
       - `diffusion_scalar_2x` 185 → 184;
       - `ghost_spacing_ignored` 79 → 73;

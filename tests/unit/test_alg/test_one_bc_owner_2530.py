@@ -167,32 +167,11 @@ def test_the_legacy_route_builds_its_grid_with_the_components_bc():
     assert _legacy(None).get_boundary_conditions().declares_the_same_as(no_flux_bc(dimension=1))
 
 
-def test_inside_using_resolved_bc_the_components_bc_is_resolved_with_the_grids():
-    """The context sets the provider-resolved BC on the grid; the components BC, the same declaration, is resolved
-    with it, or the owner would compare resolved against unresolved and refuse (#2530 D1)."""
-    from mfgarchon.geometry.boundary import BaseBCValueProvider
-
-    class _Half(BaseBCValueProvider):
-        def compute(self, state):
-            return 0.5
-
-    with_provider = BoundaryConditions(
-        dimension=1, segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=_Half())]
-    )
-    problem = _legacy(with_provider)
-    with problem.using_resolved_bc({"geometry": problem.geometry}):
-        inside = problem.get_boundary_conditions()
-        assert inside.segments[0].value == 0.5
-    after = problem.get_boundary_conditions()
-    assert isinstance(after.segments[0].value, _Half)
-    assert problem.components.boundary_conditions is with_provider
-
-
 # --- D4: no BC ---------------------------------------------------------------------------------------------------
 
 
 def test_a_mesh_with_no_bc_on_any_channel_is_refused_by_name_and_the_advice_runs():
-    """#2589's probe: a mesh with no BC reached `has_providers()` on None from inside the Picard loop."""
+    """#2589's probe: a mesh with no BC is refused by name when the solve reads its BC."""
     from mfgarchon.geometry.meshes import Mesh1D
 
     def problem_on(mesh):

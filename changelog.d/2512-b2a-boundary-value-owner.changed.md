@@ -80,7 +80,7 @@
   - **The FP's shared-Neumann reader refuses a complex value.** It read `np.complex128(1j)` as zero flux, since
     `float()` drops the imaginary part.
   - **A `BCValueProvider`** read by a reader with no iteration state is refused with `NotImplementedError`,
-    naming the reader; the coupling layer resolves providers before a solve.
+    naming the reader; the coupling layer resolves providers before a solve. Providers were removed later in this release (#2424).
 - **The callable binder no longer advises positional binding where it is refused next** (#2512, row B2). For a
   role whose parameters are reordered, time first (a boundary value, a potential), its refusal of a callable
   whose parameters match no slot also offered taking them positionally, in that order, which is refused next.

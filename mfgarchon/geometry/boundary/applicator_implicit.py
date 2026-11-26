@@ -39,7 +39,6 @@ import numpy as np
 
 from .applicator_base import GridType
 from .applicator_meshfree import MeshfreeApplicator, the_one_condition
-from .providers import is_provider
 from .types import BCType, segment_robin_coefficients, segment_value
 
 if TYPE_CHECKING:
@@ -235,7 +234,7 @@ class ImplicitApplicator(MeshfreeApplicator):
         if segment.bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
             return 0.0
         where = f"the implicit applicator's {segment.bc_type.name} boundary"
-        if callable(segment.value) and not is_provider(segment.value):
+        if callable(segment.value):
             return np.array(
                 [
                     segment_value(segment, t=time, x=np.asarray(p, dtype=float), where=where, time_keyword="time")

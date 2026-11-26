@@ -272,7 +272,6 @@ CALLABLE_CALLS_ALLOWED = {
     ("mfgarchon/alg/numerical/adjoint/verification.py", "verify_duality"): "non-boundary: L_hjb, L_fp_adjoint",
     ("mfgarchon/alg/numerical/coupling/coupled_result.py", "_override"): "non-boundary: a method",
     ("mfgarchon/alg/numerical/coupling/fixed_point_utils.py", "read_inner_solve_failures"): "non-boundary: a method",
-    ("mfgarchon/alg/numerical/coupling/multi_population_iterator.py", "__init__"): "non-boundary: a population getter",
     ("mfgarchon/core/mfg_problem.py", "spatial_measure"): "non-boundary: get_spacing",
     ("mfgarchon/geometry/boundary/invariants.py", "mass_drift"): "non-boundary: integrate",
     ("mfgarchon/visualization/convergence_plots.py", "plot_from_monitor"): "non-boundary: get_plot_data",

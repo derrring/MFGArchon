@@ -17,7 +17,7 @@
   row only one of `{i-1, i, i+1}` is congruent mod 3 and the columns do not alias. A second
   implementation of this operator is what caused the defect, so the fix does not add one. The
   tridiagonality is asserted against a fourth probe rather than assumed: BC providers resolve at
-  iteration time (#574), so the shape cannot be taken on trust from the type.
+  iteration time (#574), so the shape cannot be taken on trust from the type. Providers were removed later in this release (#2424).
 - **Cost**: the FD fallback is unchanged (`4.28` vs `4.25` ms at Nx=21, `359` vs `361` ms at 1601 —
   four O(Nx) applications against an O(Nx²) loop). The analytic path stays O(Nx) and sub-millisecond
   (`0.89` vs `0.13` ms at Nx=1601), so #1607's reason for it survives.

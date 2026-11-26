@@ -298,11 +298,10 @@ def test_a_bc_with_only_an_sdf_reads_each_points_face_from_it():
 
 def test_two_robin_segments_are_compared_as_stored():
     """Review 1 of #2674, blocker 2's family: an equivalence compares two segments and writes no row, so it reads a
-    Robin coefficient as stored -- a provider is equal only to itself -- and does not resolve it. The owner's
-    ``_same_condition`` resolved them and raised on a provider, so ``uniform_segment`` did; so did the interpolation
-    applicator's ``_same_enforcement``. With ``beta = 1.0`` on both, the control, the BC is uniform."""
+    Robin coefficient as stored -- an object no reader reads, a callable here, is equal only to itself -- and does not
+    read it through the owner, which would refuse it. ``uniform_segment`` and the interpolation applicator's
+    ``_same_enforcement`` compare so. With ``beta = 1.0`` on both, the control, the BC is uniform."""
     from mfgarchon.geometry.boundary.applicator_interpolation import _same_enforcement
-    from mfgarchon.geometry.boundary.providers import ConstantProvider
 
     def robins(beta):
         return BoundaryConditions(
@@ -313,8 +312,8 @@ def test_two_robin_segments_are_compared_as_stored():
             ],
         )
 
-    provided = robins(ConstantProvider(1.0))
-    assert provided.uniform_segment is None
-    assert _same_enforcement(provided.segments[0], provided.segments[0])
-    assert not _same_enforcement(provided.segments[0], provided.segments[1])
+    stored = robins(lambda: 1.0)
+    assert stored.uniform_segment is None
+    assert _same_enforcement(stored.segments[0], stored.segments[0])
+    assert not _same_enforcement(stored.segments[0], stored.segments[1])
     assert robins(1.0).uniform_segment.name == "ra"

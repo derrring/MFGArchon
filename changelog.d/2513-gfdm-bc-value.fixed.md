@@ -5,5 +5,5 @@
   - **Results that need re-running:** any GFDM solve with a nonzero value on a uniform Neumann or Dirichlet BC, or with a nonzero per-face Dirichlet value on the Newton path, was solved for a different BC. A per-face Dirichlet value of 0, the common exit case, was unaffected. A uniform `dirichlet_bc` on the Newton path returned NaN for any value, 0 included.
   - Three further behaviour changes follow from the same fix:
     - **Uniform `robin_bc(alpha=0, beta=1, value=g)` is accepted** and solves identically to `neumann_bc(value=g)`. It used to reach the row with no segment, default alpha to 1 and be refused. Robin with alpha ≠ 0 or beta ≠ 1 is still refused, now with the right coefficient named.
-    - **An unresolved `BCValueProvider` in an explicitly passed uniform BC raises on the Newton path,** as it already did on Howard, instead of solving with 0.
+    - **An unresolved `BCValueProvider` in an explicitly passed uniform BC raises on the Newton path,** as it already did on Howard, instead of solving with 0. Providers were removed later in this release (#2424).
   - Not covered: with `use_ghost_nodes=True` the Neumann value is still dropped (pre-existing, #2516).

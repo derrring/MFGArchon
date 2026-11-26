@@ -471,9 +471,6 @@ class TestAgainstAPackageGeometry:
         branch, which is `pass`. This applicator did not, and `apply()` routes NEUMANN and NO_FLUX
         into one branch where a non-zero value becomes `interior + dx*g`.
 
-        Not hypothetical: `with_resolved_providers`, the documented pre-solve step, turns
-        `BCSegment(NO_FLUX, value=<provider>)` into a uniform NO_FLUX segment carrying a number.
-
         REFLECTING is the same zero flux. Since the applicator reads the BC's one condition (#2717), a REFLECTING
         segment beside a NO_FLUX default dispatches on REFLECTING, which fell to a fallback imposing u = 0 (review 2).
         """

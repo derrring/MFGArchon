@@ -379,31 +379,6 @@ def test_a_robin_coefficient_the_assembly_cannot_read_gives_the_no_flux_result()
     )
 
 
-def test_a_provider_valued_coefficient_is_refused_rather_than_dropped():
-    """#1979, fixed. This test used to pin the DEFECT -- it asserted that a coupled wall coefficient
-    produced a byte-identical no-flux wall with no diagnostic -- and carried its own retirement
-    instruction: "if it RAISES, #1979 is fixed -- assert the refusal instead". It raises. This is
-    that assertion.
-
-    Recorded so the history is not lost: before the fix, a ROBIN segment carrying an
-    `AdjointConsistentProvider` (since removed, #2422) on `alpha` assembled `np.array_equal` to a
-    plain NO_FLUX wall. The wall a user wired a coupled coefficient to AVOID was returned as though
-    it were their request. The library ships no provider for `alpha` any more (#2422), but a user's
-    own still reaches this path; the refusal keys on `is_provider`, so any provider exercises it.
-    """
-    from mfgarchon.geometry.boundary.providers import ConstantProvider
-
-    bc = _mixed(BCType.ROBIN, alpha=ConstantProvider(1.0), beta=-0.045, value=0.0)
-    with pytest.raises(NotImplementedError, match=r"provider-valued wall coefficient"):
-        _step(bc)
-
-    # Control: a float coefficient must still assemble, or the refusal is a blanket one and every
-    # ordinary wall is broken. (It still equals the no-flux result -- the handlers do not read
-    # coefficients at all, which is #1979's actual mechanism and is not what this PR changes.)
-    got = _step(_mixed(BCType.ROBIN, alpha=1.0, beta=-0.045, value=0.0))
-    assert np.array_equal(got, _step(_mixed(BCType.NO_FLUX)))
-
-
 def test_an_unsupported_bc_raises_at_construction():
     """The gate reads `supported_bc_types` (the protocol property), not the private attribute."""
     from mfgarchon import Conditions, MFGProblem, Model

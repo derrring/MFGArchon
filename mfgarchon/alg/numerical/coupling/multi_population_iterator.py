@@ -23,7 +23,6 @@ from mfgarchon.core.hamiltonian import _terms_reading_every_population, _why_not
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
-    assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
@@ -139,10 +138,6 @@ class MultiPopulationIterator:
         self.fp_solvers = fp_solvers
         self.damping = damping_argument(damping, "MultiPopulationIterator") or DampingPolicy.constant(0.5)
         K = multi_problem.K
-        _get_pop = getattr(multi_problem, "get_population", None)
-        if callable(_get_pop):
-            for _k in range(K):
-                assert_bc_providers_resolvable(_get_pop(_k), f"MultiPopulationIterator[population {_k}]")
 
         if len(hjb_solvers) != K:
             raise ValueError(f"Need {K} HJB solvers, got {len(hjb_solvers)}")

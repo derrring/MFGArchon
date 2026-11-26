@@ -286,29 +286,6 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
             HJBGFDMSolver(_lq_problem(4), positive_qp_fan=GuardedFanParameters(widened_caps_deg=()), **with_howard)
 
 
-def test_a_dirichlet_frame_valued_by_a_provider_constructs():
-    """The scheme's boundary check reads each point's condition type and evaluates no value, so a Dirichlet frame whose
-    value a provider resolves per iteration is admitted (#2750 review 1)."""
-    pytest.importorskip("cvxpy", reason="positive_qp_fan requires cvxpy (the `numerical` extra)")
-    from mfgarchon.geometry.boundary import ConstantProvider
-
-    bc = BoundaryConditions(
-        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=ConstantProvider(0.0))],
-        dimension=2,
-        domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
-    )
-    points, boundary = _cloud(225, "jittered")
-    HJBGFDMSolver(
-        _lq_problem(4),
-        collocation_points=points,
-        boundary_indices=boundary,
-        boundary_conditions=bc,
-        delta=4.0,
-        monotonicity_scheme="positive_qp_fan",
-        inner_solver="howard",
-    )
-
-
 def test_the_positive_laplacian_scales_with_the_cloud():
     """The cloud scaled from a box of side 20 to one of side 1e-3 gives the Laplacian scaled by (20 / 1e-3)^2: the
     row's QP is solved in units of the node's h6. Solved in the cloud's own units, CLARABEL called

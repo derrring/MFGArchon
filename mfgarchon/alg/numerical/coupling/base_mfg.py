@@ -84,30 +84,6 @@ def damping_for_the_solve(
     return given if given is not None else default
 
 
-def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
-    """Fail loud if ``problem`` carries a dynamic BC provider this coupling loop cannot resolve.
-
-    RFC #1574 / Issue #1563: only ``FixedPointIterator`` resolves a ``BCValueProvider`` stored in
-    a ``BCSegment`` -- it calls
-    ``problem.using_resolved_bc(state)`` each Picard step (fixed_point_iterator.py). The other
-    coupling loops do not, so a provider would otherwise reach the solver unresolved: a deep GFDM
-    row-builder ``ValueError``, or a silent miss on a non-Robin provider segment. Raise up front
-    (naming the loop) instead of surfacing the failure deep in the solver, or not at all.
-    """
-    # A problem without grid BC resolution (a network problem, or a lightweight test stub) cannot
-    # carry a grid BCValueProvider, so there is nothing to guard -- skip rather than AttributeError.
-    _get_bc = getattr(problem, "get_boundary_conditions", None)
-    if not callable(_get_bc):
-        return
-    if _get_bc().has_providers():
-        raise NotImplementedError(
-            f"{iterator_name} does not resolve dynamic BC providers (a BCValueProvider stored in a "
-            f"BCSegment). Only FixedPointIterator resolves them per iteration (Issue #625/#1563). "
-            f"Use FixedPointIterator for a provider-valued boundary condition, or a statically-valued "
-            f"BC with this loop."
-        )
-
-
 def _declared_points(solver: Any) -> Any:
     """``solver.dof_points``, or None for a solver that declares none. An AttributeError raised while a declared
     ``dof_points`` is read propagates, where ``getattr`` with a default would read it as no declaration (#2775)."""
@@ -270,12 +246,11 @@ def assert_paired_solver_sigma(
     with one mean passed. Two callables are not compared (see ``_volatilities_differ``).
 
     With ``problem`` -- the one the coupling loop solves -- and no ``override``, the pair's volatility
-    must also be that problem's. Each solver reads its own problem's volatility, and the loop hands
-    ``problem``'s to the boundary-condition providers, so a pair built from another problem would
-    solve its interior at one volatility and resolve its boundary at another. Until #2378 part 2a,
-    ``MFGProblem.solve`` forwarded its volatility as an override and so papered over that case in
-    Expert Mode; it now raises here instead. An override is forwarded to both solvers and to the
-    providers, so it needs no such check. Each solver's problem is compared, and a solver built from
+    must also be that problem's. Each solver reads its own problem's volatility, so a pair built
+    from another problem would solve at that problem's volatility, not the one of the problem the
+    loop solves. Until #2378 part 2a, ``MFGProblem.solve`` forwarded its volatility as an override
+    and so papered over that case in Expert Mode; it now raises here instead. An override is
+    forwarded to both solvers, so it needs no such check. Each solver's problem is compared, and a solver built from
     ``problem`` itself is skipped. Here, unlike between the pair, two callables are compared -- by
     identity, the only comparison an opaque callable admits: a pair built for another problem's
     callable volatility is refused (#2420 review, round 2), and one built from this problem, or

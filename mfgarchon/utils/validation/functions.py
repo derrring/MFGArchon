@@ -546,7 +546,6 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
     )
     from mfgarchon.core.mfg_problem import _call_problem_source, wall_values
     from mfgarchon.geometry.boundary import BoundaryConditions
-    from mfgarchon.geometry.boundary.providers import is_provider
     from mfgarchon.geometry.boundary.types import FIELDS_READ, _read_constant
     from mfgarchon.types.callable_protocols import (
         DENSITY_SLOTS,
@@ -751,7 +750,7 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
             segment = conditions.segment_for_point(q, geometry=problem.geometry)
         except _EVALUATION_ERRORS:
             continue
-        if segment.bc_type not in imposing_a_value or not callable(segment.value) or is_provider(segment.value):
+        if segment.bc_type not in imposing_a_value or not callable(segment.value):
             continue
         binding = segment.value_binding()
         for t in hjb_times:

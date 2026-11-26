@@ -71,15 +71,6 @@ class TestNoHashattrStructural:
             label="HamiltonianMixin.get_hjb_hamiltonian_jacobian_contrib",
         )
 
-    def test_mfg_components_using_resolved_bc_no_hasattr(self):
-        """ConditionsMixin.using_resolved_bc must not use hasattr() (line 972)."""
-        from mfgarchon.core.mfg_components import ConditionsMixin
-
-        _assert_no_hasattr(
-            ConditionsMixin.using_resolved_bc,
-            label="ConditionsMixin.using_resolved_bc",
-        )
-
     def test_hamiltonian_regularize_no_hasattr(self):
         """ControlCostBase.regularize must not use hasattr() (line 298)."""
         from mfgarchon.core.hamiltonian import ControlCostBase
@@ -251,33 +242,3 @@ class TestCapabilityDispatchBehavior:
         # Should not raise regardless of whether dp returns array or scalar
         jac = H.jacobian_fd(t=0.0, x=x, m=m, p=p, dx=0.01, scheme="central")
         assert jac is not None
-
-    def test_temp_resolved_bc_initialized_to_none(self):
-        """MFGProblem._temp_resolved_bc is initialized to None (explicit None-init)."""
-        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-        from mfgarchon.core.mfg_components import MFGComponents
-        from mfgarchon.geometry import TensorProductGrid
-        from mfgarchon.geometry.boundary import no_flux_bc
-
-        H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
-        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[10], boundary_conditions=no_flux_bc(dimension=1))
-
-        from mfgarchon.core.mfg_problem import MFGProblem
-
-        comp = MFGComponents(
-            hamiltonian=H,
-            m_initial=lambda x: np.ones_like(x[0]),
-            u_terminal=lambda x: np.zeros_like(x[0]),
-        )
-        problem = MFGProblem(
-            geometry=grid,
-            components=comp,
-            volatility=0.1,
-            T=1.0,
-            Nt=5,
-        )
-        # Must be explicitly initialized, not set at runtime
-        assert hasattr(problem, "_temp_resolved_bc"), (
-            "MFGProblem must declare _temp_resolved_bc in __init__ (not lazily)."
-        )
-        assert problem._temp_resolved_bc is None, "_temp_resolved_bc must start as None."

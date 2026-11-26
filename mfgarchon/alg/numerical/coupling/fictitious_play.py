@@ -40,7 +40,6 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
     BaseCouplingIterator,
-    assert_bc_providers_resolvable,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
@@ -136,7 +135,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         volatility_kind: str | None = None,
     ):
         super().__init__(problem)
-        assert_bc_providers_resolvable(self.problem, "FictitiousPlayIterator")
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
         # again in allocate_iterate, at the start of each solve, which also catches a name or bad type assigned
         # to self.backend after construction (a public attribute -- see resolve_backend).

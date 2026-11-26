@@ -280,20 +280,19 @@ def _describe_bc_value(value: Any) -> object | None:
     """A description if this BC value is not verifiably zero, else None. One owner for that question,
     read by `describe_inhomogeneous_bc_data` and `fp_view_of_shared_bc`.
 
-    ``float()`` is reached only for things it accepts: an array or a provider would otherwise raise
-    TypeError out of a capability gate, and an all-zero array is a legitimate ``g = 0`` that must not
-    crash. A complex value, zero included, is not verifiably zero: a boundary datum is real, and ``float()``
-    on a NumPy complex scalar drops the imaginary part, which read ``np.complex128(1j)`` as zero. The value
+    ``float()`` is tried last. Where it raises OverflowError the value is described as one no float holds
+    (``10**400``), and where it raises TypeError or ValueError as unrecognised (a str); a ``Decimal`` too large for a
+    float reads as ``inf``. Any other error propagates: an object whose ``__float__`` raises RuntimeError raises it,
+    and a ragged list raises ValueError from ``np.iscomplexobj``, before ``float()``. An array is read before it, since
+    an all-zero array is a legitimate ``g = 0``. A complex value, zero included, is not verifiably zero: a boundary
+    datum is real, and ``float()`` on a NumPy complex scalar drops the imaginary part, which read
+    ``np.complex128(1j)`` as zero. The value
     owner (`types.boundary_value`) refuses complex too, so the two give one verdict (#2512 row B2).
     """
     import numpy as np
 
-    from mfgarchon.geometry.boundary.providers import is_provider
-
     if value is None:
         return None
-    if is_provider(value):
-        return "<provider>"
     if callable(value):
         return "<callable>"
     if np.iscomplexobj(value):
@@ -350,7 +349,7 @@ def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str) -> Any:
     - a NEUMANN whose g is not provably zero is **refused** (user ruling 2026-10-09). Its g is the HJB's
       boundary cost and says nothing about the agents' mass at the wall, and a mass flux through the
       wall is not a Neumann condition, so the two equations' BCs are specified separately. "Not provably
-      zero" is `describe_inhomogeneous_bc_data`'s answer, so a callable or a provider is refused rather
+      zero" is `describe_inhomogeneous_bc_data`'s answer, so a callable or an unrecognised object is refused rather
       than assumed zero, and the ``default_bc`` fall-through is checked too (#1686);
     - a ROBIN, as a segment or the ``default_bc``, is **refused**, whatever its coefficients (user ruling
       2026-10-10). On the shared BC it is the HJB's alpha*u + beta*du/dn = g. An FP Robin condition is on
@@ -540,7 +539,7 @@ def describe_inhomogeneous_bc_data(
       reachable through ``default_bc=NEUMANN, default_value=g``, and #1802's first guard
       reproduced that hole 300 lines away, which is why this lives in one place now.
 
-    Anything that cannot be compared to zero here -- a provider, a callable, an
+    Anything that cannot be compared to zero here -- a callable, an
     unrecognised type -- is **described rather than assumed homogeneous**, so the caller
     refuses it. ``isinstance(value, (int, float))`` alone would accept
     ``neumann_bc(value=lambda t: 5.0)`` and discard it silently, which is the behaviour

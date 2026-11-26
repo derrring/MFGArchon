@@ -15,7 +15,8 @@
   in the module: copied boundary nodes are stencil sources, and a mirror row goes on every node within reach, where
   the paper places one only where the plain row fails. Refused by name: an obstacle in a domain with a reflecting
   face, a door (a face part Dirichlet, part reflecting), a boundary read from `domain_sdf`, a no-flux or Neumann
-  datum not verifiably 0 (a nonzero, complex, callable or provider value), a Robin face, a periodic face, a node
+  datum not verifiably 0 (a nonzero, complex, callable or provider value; providers were removed later in this
+  release, #2424), a Robin face, a periodic face, a node
   within reach that no mirror row places or that has no complete physical fan, and a boundary condition adopted after
   construction that reflects on other faces, or gives a value-copy row at other points, than the operator was built
   with. Before, every face other than Dirichlet was refused.

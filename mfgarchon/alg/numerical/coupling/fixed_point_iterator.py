@@ -353,21 +353,8 @@ class FixedPointIterator(BaseCouplingIterator):
                 # diverged step and the re-imposition after the update all read this one.
                 U_terminal = state.terminal_at(M_old[-1])
 
-                # Build iteration state for BC provider resolution (Issue #625)
-                # This state is passed to BCValueProvider.compute() for dynamic BCs
-                bc_resolution_state = {
-                    "m_current": M_old,
-                    "U_current": U_old,
-                    "geometry": self.problem.geometry,
-                    # The volatility the solve uses, as supplied; a scalar-only provider declares
-                    # itself with scalar_volatility (#2376).
-                    "volatility": self.volatility if self.volatility is not None else self.problem.volatility,
-                    "iteration": iiter,
-                }
-
                 # 1. Solve HJB backward with current M (transient subtask)
                 # Issue #614: Use hierarchical subtask for inner solver visibility
-                # Issue #625: Resolve BC providers before HJB solve
                 # Issue #922: Compose source terms from problem fields
                 # Issue #1259: Pass U_old so nonlocal_operator J[v] uses previous iterate.
                 # Issue #2207: the composition itself moved into _build_hjb_kwargs. Passing the
@@ -378,14 +365,13 @@ class FixedPointIterator(BaseCouplingIterator):
                 # required parameter cannot bind them. #2207 names that as out of scope.
                 # Issue #934: Context routing handles progress automatically —
                 # solver's create_progress_bar detects parent HierarchicalProgress
-                with self.problem.using_resolved_bc(bc_resolution_state):
-                    kwargs = self._build_hjb_kwargs(
-                        M=M_old,
-                        U=U_old,
-                        volatility=self.volatility,
-                        volatility_kind=self.volatility_kind,
-                    )
-                    U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
+                kwargs = self._build_hjb_kwargs(
+                    M=M_old,
+                    U=U_old,
+                    volatility=self.volatility,
+                    volatility_kind=self.volatility_kind,
+                )
+                U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
                 inner_failures = read_inner_solve_failures(self.hjb_solver)
 
                 # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it. The FP source and
