@@ -29,7 +29,7 @@
     - #1979's is corrected in place where it described the two providers.
   - **Tests.**
     - Tests that pinned the removed code go with it: `test_adjoint_bc_coupling.py`, `test_normal_drift_provider_1970.py`, and one test each in the #1965, #2376 and #2378 files.
-    - Tests that used a provider to exercise the kept machinery keep their assertions. Howard's provider-valued Robin tests now use a provider local to the test, and the #1979 refusal pin uses `ConstantProvider`. Howard's load-bearing test goes red when the GFDM boundary refresh is made a no-op. Those provider tests went with providers later in this release (#2424).
+    - Tests that used a provider to exercise the kept machinery keep their assertions. Howard's provider-valued Robin tests now use a provider local to the test, and the #1979 refusal pin uses `ConstantProvider`. Howard's load-bearing test goes red when the GFDM boundary refresh is made a no-op. Howard's two provider tests went with providers later in this release (#2424); its Robin solve test stays, with the datum's closed form.
     - The discrimination kill matrix is re-recorded at `8107cedf`. Every kill it lost belonged to a deleted test:
       - `diffusion_scalar_2x` 185 → 184;
       - `ghost_spacing_ignored` 79 → 73;

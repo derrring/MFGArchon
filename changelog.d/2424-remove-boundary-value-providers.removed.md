@@ -19,7 +19,7 @@
       These belong to #2648's class, a non-default entry on a field its type does not read.
     - **`resolve_bc` with `HJBResolver`,** which no solver in the package calls, read the object on a NO_FLUX value as ROBIN(alpha=0, beta=1, g). It now gives NEUMANN(0).
     - **A plain function that also has a `compute` attribute** was a provider, and is now read as a callable g(t, x).
-    - **An instance of a class with `__call__` and `compute`** solved as a provider. It is now refused by the callable binder, which reads a plain `def` or `lambda` (`TypeError`, `bind_user_callable`).
+    - **An instance of a class with `__call__` and `compute`** is now refused by the callable binder, which reads a plain `def` or `lambda` (`TypeError`, `bind_user_callable`). As a Dirichlet value through `problem.solve()` it solved, as a provider, at main. As a Neumann value it was refused at main too, by FP-FDM's refusal of a nonzero shared Neumann value (`NotImplementedError`).
   - **Unchanged, bit for bit:** every solve measured that uses no provider. That is the seven coupled routes; `problem.solve()` with a callable and with a constant Dirichlet exit, and on a 2-D no-flux grid; an FEM FP solve; and HJB-GFDM's value-form rows.
   - **Tests:**
     - Deleted with the code they pinned: `test_providers_resolve_coefficients_1965.py`, and ten more tests of the removed code.
@@ -27,5 +27,5 @@
     - `test_hjb_howard_solver.py`'s Robin solve takes its datum from the closed form its provider computed.
     - The two equivalence tests that compared a provider-valued `beta` as stored compare a callable one.
     - The discrimination kill matrix and baseline lose the six deleted node IDs, each a killer of `optimal_control_sign` only (3233 → 3227).
-    - The docstring keyword ratchet and the mypy scope baseline are re-recorded: they lost the provider module and its docstring examples.
+    - The docstring keyword ratchet is re-recorded: it lost the provider module's and the three provider methods' docstring examples. The mypy scope baseline is re-recorded with the deleted code's type errors gone, in `alg`, `core` and `geometry`.
   - Sixteen pending fragments of this release describe providers, and each now says they were removed later in this release: 1686, 1689, 1894, 1936, 1965, 1979, 2294, 2378, 2422, 2512 (two), 2513, 2519, 2530, 2593 and 2975.

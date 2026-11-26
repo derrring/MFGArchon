@@ -88,10 +88,11 @@ class IterationState:
         terminal_binding: The HJB solver's binding of a terminal coupling, for ``problem.terminal_value``.
         unstructured_mesh: Whether the route runs on an unstructured mesh.
 
-    Each `start`, which every coupled route calls at each solve, reads the problem's boundary conditions from their one
-    owner, ``problem.get_boundary_conditions()``, whatever boundary conditions the pair carries, so the owner's refusals
-    answer on every coupled route (#3005): two declarations that differ (#2530), a FLUX on the shared BC (#2581), a
-    geometry that declares none (#2589).
+    The state reads the problem's boundary conditions from their one owner, ``problem.get_boundary_conditions()``,
+    whatever boundary conditions the pair carries, so the owner's refusals answer on every coupled route (#3005): two
+    declarations that differ (#2530), and a FLUX on the shared BC (#2581). It reads them when it is built, which is when
+    `MFGResidual` is, and at each `start`, which every coupled route calls at each solve, so a BC changed between two
+    solves of one iterator is read too.
     """
 
     def __init__(
@@ -104,6 +105,7 @@ class IterationState:
         terminal_binding: CouplingBinding | None,
         unstructured_mesh: bool = False,
     ) -> None:
+        problem.get_boundary_conditions()
         self.problem = problem
         self.fp_solver = fp_solver
         self.reader = reader
