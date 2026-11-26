@@ -90,9 +90,12 @@ class IterationState:
 
     The state reads the problem's boundary conditions from their one owner, ``problem.get_boundary_conditions()``,
     whatever boundary conditions the pair carries, so the owner's refusals answer on every coupled route (#3005): two
-    declarations that differ (#2530), and a FLUX on the shared BC (#2581). It reads them when it is built, which is when
-    `MFGResidual` is, and at each `start`, which every coupled route calls at each solve, so a BC changed between two
-    solves of one iterator is read too.
+    declarations that differ (#2530), and a FLUX on the shared BC (#2581). It reads them when it is built and at each
+    `start`. `MFGResidual` builds its state when it is built, and Newton when it builds its residual; FixedPoint,
+    FictitiousPlay and the Block iterators build theirs at the first solve or the first warm-start accessor called, and
+    Graph, RegimeSwitching and MultiPopulation at each solve. Every coupled route calls `start` at each solve, so a BC
+    changed between two solves of one iterator is read too. A BC changed during one solve is not: the state does not
+    read at each sweep (#3002).
     """
 
     def __init__(

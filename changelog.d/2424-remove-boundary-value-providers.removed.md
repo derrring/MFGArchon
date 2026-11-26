@@ -19,7 +19,7 @@
       These belong to #2648's class, a non-default entry on a field its type does not read.
     - **`resolve_bc` with `HJBResolver`,** which no solver in the package calls, read the object on a NO_FLUX value as ROBIN(alpha=0, beta=1, g). It now gives NEUMANN(0).
     - **A plain function that also has a `compute` attribute** was a provider, and is now read as a callable g(t, x).
-    - **An instance of a class with `__call__` and `compute`** is now refused by the callable binder, which reads a plain `def` or `lambda` (`TypeError`, `bind_user_callable`). As a Dirichlet value through `problem.solve()` it solved, as a provider, at main. As a Neumann value it was refused at main too, by FP-FDM's refusal of a nonzero shared Neumann value (`NotImplementedError`).
+    - **An instance of a class with `__call__` and `compute`,** as a Dirichlet or a Neumann value through `problem.solve()`, is now refused by the callable binder, which reads a plain `def` or `lambda` (`TypeError`, `bind_user_callable`). As a Dirichlet value it solved, as a provider, at main. As a Neumann value it was refused at main too, by FP-FDM's refusal of a nonzero shared Neumann value (`NotImplementedError`). On a NO_FLUX segment's `alpha` or `beta`, or a DIRICHLET segment's `alpha`, it goes unread, as the item above says of an object with a `compute` method.
   - **Unchanged, bit for bit:** every solve measured that uses no provider. That is the seven coupled routes; `problem.solve()` with a callable and with a constant Dirichlet exit, and on a 2-D no-flux grid; an FEM FP solve; and HJB-GFDM's value-form rows.
   - **Tests:**
     - Deleted with the code they pinned: `test_providers_resolve_coefficients_1965.py`, and ten more tests of the removed code.

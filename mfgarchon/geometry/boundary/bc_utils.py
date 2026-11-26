@@ -280,9 +280,11 @@ def _describe_bc_value(value: Any) -> object | None:
     """A description if this BC value is not verifiably zero, else None. One owner for that question,
     read by `describe_inhomogeneous_bc_data` and `fp_view_of_shared_bc`.
 
-    ``float()`` is tried last, so nothing raises out of a capability gate: a number no float holds is described as such,
-    and an object it cannot read as unrecognised. An array is read before it, since an all-zero array is a legitimate
-    ``g = 0``. A complex value, zero included, is not verifiably zero: a boundary datum is real, and ``float()``
+    ``float()`` is tried last. Where it raises OverflowError the value is described as one no float holds
+    (``10**400``), and where it raises TypeError or ValueError as unrecognised (a str); a ``Decimal`` too large for a
+    float reads as ``inf``. Any other error propagates: an object whose ``__float__`` raises RuntimeError raises it,
+    and a ragged list raises ValueError from ``np.iscomplexobj``, before ``float()``. An array is read before it, since
+    an all-zero array is a legitimate ``g = 0``. A complex value, zero included, is not verifiably zero: a boundary datum is real, and ``float()``
     on a NumPy complex scalar drops the imaginary part, which read ``np.complex128(1j)`` as zero. The value
     owner (`types.boundary_value`) refuses complex too, so the two give one verdict (#2512 row B2).
     """

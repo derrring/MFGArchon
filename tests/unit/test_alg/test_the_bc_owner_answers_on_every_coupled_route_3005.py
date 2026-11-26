@@ -1,17 +1,18 @@
 """The boundary-condition owner's refusals answer on every coupled route, whatever BC its solvers carry (#3005).
 
-`IterationState.start`, which every coupled route calls per component at each solve, reads the problem's BC from its
-one owner, `problem.get_boundary_conditions()` (#3005). When both solvers carry their own BC, no solver asks the owner,
-so this read is the one that refuses two declarations that differ (#2530) and a FLUX on the shared BC (#2581). Up to
-e14eecd6 GraphMFGSolver never asked; FixedPoint asked every sweep, through `using_resolved_bc`, and the six other routes
-when built, through the provider check #2424 deleted.
+`IterationState`, which every coupled route builds per component, reads the problem's BC from its one owner,
+`problem.get_boundary_conditions()`, when it is built and at each `start` (#3005). When both solvers carry their own
+BC, no solver asks the owner, so these reads are the ones that refuse two declarations that differ (#2530) and a FLUX
+on the shared BC (#2581): the constructor's when a route builds its state, and `start`'s on a second solve of a route
+that keeps it. Up to e14eecd6 GraphMFGSolver never asked; FixedPoint asked every sweep, through `using_resolved_bc`,
+and the six other routes when built, through the provider check #2424 deleted.
 
 `MFGResidual` used on its own builds its state when it is built, and refuses there, as it did at e14eecd6.
 
 The pin this fix owes (AGENTS.md § Review before merge). Its refusal cases fail at 56aa9fba, where every route solved
 them, and Graph's two at e14eecd6; `MFGResidual`'s fail at 93377355, where the state read the owner only at `start`. The
-control, one declaration, solves on every route. The second test fails at 56aa9fba, and with the read only in the
-constructor.
+control, one declaration, solves on every route. The second test fails at 56aa9fba, at e14eecd6 on every route but
+FixedPoint, and with the read only in the constructor.
 """
 
 import pytest
@@ -141,8 +142,8 @@ def test_the_owner_refuses_what_it_refuses_on_every_route(route, case):
 
 @pytest.mark.parametrize("route", _ROUTES)
 def test_a_bc_changed_between_two_solves_is_refused_at_the_next(route):
-    """The owner is read at each solve, not once per iterator: FixedPoint, FictitiousPlay and Block build their state
-    once, and FixedPoint refused this second solve at e14eecd6, reading the owner every sweep."""
+    """The owner is read at each solve, not once per iterator: FixedPoint, FictitiousPlay, Block and Newton build their
+    state once, and FixedPoint refused this second solve at e14eecd6, reading the owner every sweep."""
     problems, solve = _build(route, no_flux_bc(dimension=1), None)
     solve()
     for problem in problems:
