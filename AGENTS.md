@@ -371,15 +371,17 @@ So state which of these the fix ends with, in the PR body, in this order of pref
 Adding tests must be justified by a failure they discriminate, not by "should test more". Assert on
 the relevant disagreement, not merely on validity; every defect above sat on a covered line.
 
-**Each behaviour of the code that the PR body states meets a mutant** (user ruling, 2026-11-26).
-Before review 1, and before the next review for a sentence a fix round adds: for each sentence that
-says what the library does on some input, alter the code it describes at each site it covers, in a
-detached worktree as § *Admission* runs the sweep, and name the test that turns red, a `slow` one run
-by path included. The body names the mutant and the test beside the sentence, or in the evidence
-comment it links. A sentence with none either gains a pin § *Admission* admits, or goes under the
-body's *Known pin gaps* with its reason: § *Admission* admits no pin, or there is no oracle yet, with
-the issue that records it. Either reason closes the sentence out; for a claimed fix, only the second
-does (§ *Review before merge*).
+**Each behaviour the change gives the library, as the PR body states it, meets a mutant** (user
+ruling, 2026-11-26). Before review 1, and before the next review for a sentence a fix round adds: for
+each sentence that says what the change makes the library do on some input, alter the code it
+describes, in a detached worktree as § *Admission* runs the sweep, and name the test that turns red,
+a `slow` one run by path included; the body names the mutant and the test beside the sentence. A
+sentence that carries its own command and sha (a census count, a reach case, a fuzz result) is
+evidence already, and this does not apply to it. A sentence with no red test either gains a pin
+§ *Admission* admits, or goes under the body's *Known pin gaps* with its reason: § *Admission* admits
+no pin, or there is no oracle yet, with the issue that records it. Either reason closes the sentence
+out; for a claimed fix, only the second does (§ *Review before merge*). A named mutant catches what a
+reviewer would otherwise find a round later.
 
 ---
 
@@ -405,7 +407,7 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 
 1. the fact the defect is about — the quantity, meaning, layout or decision several components must agree on — named, with its tracking issue;
 2. its population: every place that decides the fact and every place that reads it, found by the census in item 3, each with the source it asks and whether it agrees with the others on identical inputs. A member is a place that decides on its own, other than the owner the plan names, or a reader that disagrees with the owner; a place that reads the owner and agrees with it is not a member, and a place that decides on its own is a member even when a pin shows it agrees today. A control the census must find at both shas, outside the count; the count at the base sha and at the head sha. The table is posted on the fact's tracking issue, which the class line links, and the PR body carries its counts; the plan's author opens that issue if none exists, one issue per fact;
-3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. Its candidates also include, drawn by script, every caller and reader of each symbol the change deletes, moves or alters in behaviour (a docstring or comment alone is not a change in behaviour), under `mfgarchon/` and through its public API traced up to the entry points. The symbols are named at plan and read again from the diff at the head; their callers are drawn at the base sha, and at the head for those still present. Item 2's definition decides which candidates are members. The census states what its finder cannot follow (a `getattr`, a registry, a method name several classes share), and has a control reached through a re-export. A list of the routes or classes the fact is thought to reach is not enough on its own. The plan names the inputs, configurations and uses the census holds constant. The plan's approver names the census, and runs it if the author has not (user ruling, 2026-11-26);
+3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. Its candidates also include, drawn by script, every caller and reader of each symbol (a function, method, class, attribute or module-level name) that the change deletes, moves or alters in behaviour (a docstring or comment alone is not a change in behaviour): direct callers under `mfgarchon/`, followed up to a name the public API exports. The symbols are named at plan and read again from the diff at the head; their callers are drawn at the base sha, and at the head for those still present. Item 2's definition decides which candidates are members. The census states what its finder cannot follow (a `getattr`, a registry, a method name several classes share), and item 2's control is one reached through a re-export. A list of the routes or classes the fact is thought to reach is not enough on its own, because it holds only the places its author expected. The plan names the inputs, configurations and uses the census holds constant, its axes (user ruling, 2026-11-26). The plan's approver names the census, and runs it if the author has not;
 4. what a case the census did not select does at the head, per arm: reads right, raises, reds a test enumerating the class, or returns silently; one case on an axis the census held constant, with its output. If silent, the open issue;
 5. class fix (head count 0: the owner is the one deciding place, and no reader disagrees with it; the others deleted or made readers of it) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
@@ -420,7 +422,7 @@ The class line is checked when the plan is approved, and again at review (§ *Re
 
 How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan, unless *Before filing an issue* ledgers it as low priority. A raise: *Before filing an issue*.
 
-A census is written once per fact, at plan, by script, and re-run at the head; it holds for its sha only, and the next plan in that fact re-runs it. Its draw of the change's callers belongs to each change (item 3), and a member the head's draw finds that the plan's did not is a missed member. A review tries one case on an axis it held constant, from the plan's list or outside it. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
+A census is written once per fact, at plan, by script, and re-run at the head; it holds for its sha only, and the next plan in that fact re-runs it. Its draw of the change's callers belongs to each change (item 3); a member present at the base sha that the head's draw finds and the plan's did not is a missed member. A review tries one case on an axis it held constant, one the plan names or another. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
 
 ### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
 
@@ -482,7 +484,7 @@ Feature process: issue (labelled) → branch → core code in `mfgarchon/<sub>` 
 1. **Open a new issue** when the finding needs a separate decision, or when folding would lose its priority or size, even if an open issue's fix or approved staged plan covers it. A default-path wrong result "pre-empts as before" (#2573), so folding it into a lower-priority issue loses its priority.
 2. **Fold it** when an open issue's fix would also fix the finding, or when an open issue carries an approved staged plan for the finding's family whose change would remove it. Being in the same family is not enough: the fix or the plan must cover it. Comment there with the reproducer, and add a checklist line (`- [ ]`) under `## Folded findings` in that issue's body, creating the heading if it is absent and leaving the rest of the body unchanged.
 3. **Reopen** a closed issue with the same cause, rather than filing a new one.
-4. **Ledger it**, during the #2512 phase, when it is a low-priority behaviour defect off the default path, a duplicate or a dead surface: one line in the phase ledger, #2573, with the command that shows it. A pin gap, where the code is right and only the pin could be stronger, goes under "Known pin gaps" in the body of the PR it concerns. Anything where `problem.solve()` with the default scheme can return a wrong result without an error, and any medium-or-higher behaviour defect, is never a ledger line.
+4. **Ledger it**, during the #2512 phase, when it is a low-priority behaviour defect off the default path, a duplicate or a dead surface: one line in the phase ledger, #2573, with the command that shows it. A pin gap, where the code is right and only the pin could be stronger, and a sentence § *Closing out a fix* sends there, go under "Known pin gaps" in the body of the PR they concern. Anything where `problem.solve()` with the default scheme can return a wrong result without an error, and any medium-or-higher behaviour defect, is never a ledger line.
 5. Otherwise **open a new issue**: the finding needs a fix that no open issue makes (different code or owner).
 
 **Before merging** (user ruling, 2026-10-18). Search open issues for the functions and files the diff changes (`gh issue list --search "<name>" --limit 1000`, again with no `in:` qualifier), and judge each hit as still live or fixed. An issue the diff fixes is closed by reference (`Fixes #N`) or, found at merge, closed with the commit named. Report each issue the merge closed beyond the PR's `Fixes` list, or that there was none.
