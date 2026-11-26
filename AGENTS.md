@@ -371,12 +371,15 @@ So state which of these the fix ends with, in the PR body, in this order of pref
 Adding tests must be justified by a failure they discriminate, not by "should test more". Assert on
 the relevant disagreement, not merely on validity; every defect above sat on a covered line.
 
-**Each behaviour the PR body states meets a mutant before review 1** (user ruling, 2026-11-26). For
-every sentence that says what the change does, delete or alter the code it describes and name the
-test that turns red. A sentence with no such test goes under the body's *Known pin gaps* with its
-reason, or out of the body; a pin is written only where § *Admission* admits it. A claimed fix with
-no pin is a Blocker at review (§ *Review before merge*), and this check runs before the review that
-would find it.
+**Each behaviour of the code that the PR body states meets a mutant** (user ruling, 2026-11-26).
+Before review 1, and before the next review for a sentence a fix round adds: for each sentence that
+says what the library does on some input, alter the code it describes at each site it covers, in a
+detached worktree as § *Admission* runs the sweep, and name the test that turns red, a `slow` one run
+by path included. The body names the mutant and the test beside the sentence, or in the evidence
+comment it links. A sentence with none either gains a pin § *Admission* admits, or goes under the
+body's *Known pin gaps* with its reason: § *Admission* admits no pin, or there is no oracle yet, with
+the issue that records it. Either reason closes the sentence out; for a claimed fix, only the second
+does (§ *Review before merge*).
 
 ---
 
@@ -402,7 +405,7 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 
 1. the fact the defect is about — the quantity, meaning, layout or decision several components must agree on — named, with its tracking issue;
 2. its population: every place that decides the fact and every place that reads it, found by the census in item 3, each with the source it asks and whether it agrees with the others on identical inputs. A member is a place that decides on its own, other than the owner the plan names, or a reader that disagrees with the owner; a place that reads the owner and agrees with it is not a member, and a place that decides on its own is a member even when a pin shows it agrees today. A control the census must find at both shas, outside the count; the count at the base sha and at the head sha. The table is posted on the fact's tracking issue, which the class line links, and the PR body carries its counts; the plan's author opens that issue if none exists, one issue per fact;
-3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. Besides that selection, its population takes in, mechanically, every caller and reader, in the package and through what it exports, of each symbol the change deletes or alters: named at plan and drawn again from the diff at the head. A list of the routes or classes the fact is thought to reach is not enough on its own (user ruling, 2026-11-26). The plan names the axes the census holds constant (a tolerance, divergence, a helper used on its own, which solver carries the BC), and item 4's case is taken from them. The plan's approver names the census, and runs it if the author has not;
+3. a census selected by what is called, handed or held, or by input and route, not by the found defect's own predicate. Its candidates also include, drawn by script, every caller and reader of each symbol the change deletes, moves or alters in behaviour (a docstring or comment alone is not a change in behaviour), under `mfgarchon/` and through its public API traced up to the entry points. The symbols are named at plan and read again from the diff at the head; their callers are drawn at the base sha, and at the head for those still present. Item 2's definition decides which candidates are members. The census states what its finder cannot follow (a `getattr`, a registry, a method name several classes share), and has a control reached through a re-export. A list of the routes or classes the fact is thought to reach is not enough on its own. The plan names the inputs, configurations and uses the census holds constant. The plan's approver names the census, and runs it if the author has not (user ruling, 2026-11-26);
 4. what a case the census did not select does at the head, per arm: reads right, raises, reds a test enumerating the class, or returns silently; one case on an axis the census held constant, with its output. If silent, the open issue;
 5. class fix (head count 0: the owner is the one deciding place, and no reader disagrees with it; the others deleted or made readers of it) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
@@ -417,7 +420,7 @@ The class line is checked when the plan is approved, and again at review (§ *Re
 
 How soon a class is searched follows its worst known member. Wrong with no error on `problem.solve()`'s default scheme, warned or not: class fix and census now. Off it: an issue and its own plan, unless *Before filing an issue* ledgers it as low priority. A raise: *Before filing an issue*.
 
-A census is written once per fact, at plan, by script, and re-run at the head; it holds for its sha only, and the next plan in that fact re-runs it. A review tries one case on an axis it held constant. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
+A census is written once per fact, at plan, by script, and re-run at the head; it holds for its sha only, and the next plan in that fact re-runs it. Its draw of the change's callers belongs to each change (item 3), and a member the head's draw finds that the plan's did not is a missed member. A review tries one case on an axis it held constant, from the plan's list or outside it. A missed member goes to the approver. A second miss, or a second blocker in code the previous round added, returns to the plan.
 
 ### A PR stays at its plan ⚠️ (user ruling, 2026-10-25)
 
@@ -447,7 +450,7 @@ Do **not** edit: `mfgarchon/utils/version.py` (reads `importlib.metadata`; `mfga
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises and re-reviewing. Local-green ≠ correct. A review blocks only on substance (user ruling, 2026-10-08):
-  - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it; or a partial fix that no admission in § *Local patches are the anti-pattern* covers, whatever its class line says. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
+  - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it, unless the body lists it under *Known pin gaps* as having no oracle yet, with the issue that records it (user ruling, 2026-11-26); or a partial fix that no admission in § *Local patches are the anti-pattern* covers, whatever its class line says. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
   - **A refusal, a warning and the advice in either say what was run**: what has cleared the case, and on what. They state no universal ("any", "always", a mechanism given as the reason for every case), because one input nobody ran refutes it, and the review then rebuilds the sentence rather than the fix.
   - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem; or a missing or incomplete class line, or a false number in one. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
   - **Should-fix**: wording, clarity, style. Fix it or file it; it never blocks.
