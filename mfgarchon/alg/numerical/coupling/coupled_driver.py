@@ -36,6 +36,7 @@ import numpy as np
 from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .base_mfg import handed
 from .coupled_result import SweepRecord
 from .fixed_point_utils import (
     BUDGET_SPENT,
@@ -117,14 +118,15 @@ class FixedPointStep:
         """T's HJB half: u solved backward at the density ``M_in``, with the problem's sources composed (#2207)."""
         it = self.iterator
         kwargs = it._build_hjb_kwargs(M=M_in, U=U_in, volatility=it.volatility, volatility_kind=it.volatility_kind)
-        return it.hjb_solver.solve_hjb_system(M_in, U_terminal, U_in, **kwargs)
+        args, own = handed(M_in, U_terminal, U_in, **kwargs)
+        return it.hjb_solver.solve_hjb_system(*args, **own)
 
     def fp(self, U_for_fp: NDArray, M_in: NDArray) -> NDArray:
         """T's FP half: m solved forward from m(0), driven by ``U_for_fp`` through the one drift convention (#1233). The
         FP solver's signature was read when the route was built, which refuses one it cannot read (`solver_signature`)."""
         M_initial = self.state.m0
         if self.fp_solve is not None:
-            return self.fp_solve(M_initial, U_for_fp)
+            return self.fp_solve(*handed(M_initial, U_for_fp)[0])
         it = self.iterator
         kwargs = it._build_fp_kwargs(M=M_in, U=U_for_fp, volatility=it.volatility, volatility_kind=it.volatility_kind)
         drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
@@ -137,9 +139,8 @@ class FixedPointStep:
             fp_solver=it.fp_solver,
         )
         kwargs.update(drift_kwargs)
-        if use_positional_U:
-            return it.fp_solver.solve_fp_system(M_initial, U_for_fp, **kwargs)
-        return it.fp_solver.solve_fp_system(M_initial, **kwargs)
+        args, own = handed(M_initial, U_for_fp, **kwargs) if use_positional_U else handed(M_initial, **kwargs)
+        return it.fp_solver.solve_fp_system(*args, **own)
 
     def measured(self, U_new: NDArray, M_new: NDArray, U_in: NDArray, M_in: NDArray) -> tuple[NDArray, NDArray]:
         """The outputs the change is measured on: T's own."""
@@ -369,16 +370,13 @@ class CoupledDriver:
             started = time.time()
             if self.rates is not None:
                 self.rates.append(step.run.theta("M", k))
-            # The sweep's input, copied: a solver may write into what it is handed, and the update, the measure and the
-            # write-back read the input as it was (each loop before the driver copied it the same way).
-            U_old, M_old = U.copy(), M.copy()
-            evaluation = self.evaluate(k, step, U_old, M_old)
+            evaluation = self.evaluate(k, step, U, M)
             self.sweeps += 1
             ran += 1
             if evaluation.stop is not None:
                 U, M = evaluation.published
                 return Outcome(U, M, "diverged", ran, detail={"sweep": k})
-            U, M = step.advance(k, U_old, M_old, evaluation)
+            U, M = step.advance(k, U, M, evaluation)
             self.fp_output_available = True
             self.snapshot(U, M)
             self._measured(k, evaluation.metrics, started)

@@ -27,6 +27,7 @@ from .base_mfg import (
     assert_paired_solver_sigma,
     damping_argument,
     fp_solve_kwargs,
+    handed,
     hjb_coupling_binding,
     hjb_solve_kwargs,
     hjb_terminal_binding,
@@ -310,12 +311,14 @@ class MultiPopulationIterator:
                     U=U[k],
                     binding=hjb_coupling_binding(solver_k),
                 )
+                # Every array handed to a solver is copied (`handed`, #3002 class line 7)
                 if honors_cross_density:
-                    U_map[k] = solver_k.solve_hjb_system(
+                    args, own = handed(
                         M[k], U_terminal_k, U[k], cross_density=(None if K == 1 else m_all), **hjb_kwargs
                     )
                 else:
-                    U_map[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k], **hjb_kwargs)
+                    args, own = handed(M[k], U_terminal_k, U[k], **hjb_kwargs)
+                U_map[k] = solver_k.solve_hjb_system(*args, **own)
 
                 # Issue #1718: check before the NEXT population is solved, not after the loop. Every
                 # population's HJB is solved before any FP runs, so one population's NaN would reach
@@ -366,7 +369,8 @@ class MultiPopulationIterator:
                 fp_kwargs = fp_solve_kwargs(prob_k, self._fp_sig_params[k], type(fp_k).__name__, M=M[k], U=U_map[k])
 
                 if getattr(prob_k, "spatial_dimension", None) == 0:
-                    M_new_k = fp_k.solve_fp_system(m0_k, potential_field=U_map[k], show_progress=False, **fp_kwargs)
+                    args, own = handed(m0_k, potential_field=U_map[k], show_progress=False, **fp_kwargs)
+                    M_new_k = fp_k.solve_fp_system(*args, **own)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                         prob_k,
@@ -380,9 +384,10 @@ class MultiPopulationIterator:
                         fp_solver=fp_k,
                     )
                     if use_positional_U:
-                        M_new_k = fp_k.solve_fp_system(m0_k, U_map[k], show_progress=False, **fp_kwargs)
+                        args, own = handed(m0_k, U_map[k], show_progress=False, **fp_kwargs)
                     else:
-                        M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs, **fp_kwargs)
+                        args, own = handed(m0_k, show_progress=False, **drift_kwargs, **fp_kwargs)
+                    M_new_k = fp_k.solve_fp_system(*args, **own)
 
                 # The UNDAMPED map output is what the convergence test needs; see the block below.
                 M_map[k] = M_new_k

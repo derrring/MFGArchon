@@ -532,6 +532,18 @@ def hjb_terminal_binding(hjb_solver: Any) -> CouplingBinding | None:
     return hjb_solver.terminal_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
 
 
+def handed(*args: Any, **kwargs: Any) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """What a coupled route hands a solver: each array argument copied, every other argument as it is (#3002 class line 7,
+    the approver's ruling of 2026-11-27). The route reads its own arrays after the call (the guard, the measure, the
+    update, the write-back, Newton's iterate, the next sweep's m(0)), and a caller-supplied solver may write into what it
+    is handed. Every solver call of a coupled route goes through this, once per call."""
+
+    def own(value: Any) -> Any:
+        return value.copy() if isinstance(value, np.ndarray) else value
+
+    return tuple(own(a) for a in args), {k: own(v) for k, v in kwargs.items()}
+
+
 def solver_signature(solver: Any, half: str) -> set[str]:
     """The parameter names of ``solver``'s solve method for its ``half`` of a coupled solve: ``"HJB"`` reads
     ``solve_hjb_system``, ``"FP"`` reads ``solve_fp_system``. The one reader every coupled route builds with (#2209;

@@ -572,6 +572,51 @@ def test_newtons_cold_start_is_not_reported_as_measured(stop, measured):
     assert (result.mass_conservation_error is not None) is measured, f"{stop}: {result.mass_conservation_error!r}"
 
 
+def _writes_into_its_input(solver, method: str):
+    """After its solve, zero every array the call was handed, as a caller-supplied solver may."""
+    solve = getattr(solver, method)
+
+    @functools.wraps(solve)
+    def writing(*args, **kwargs):
+        out = np.array(solve(*args, **kwargs), dtype=float)
+        for value in list(args) + list(kwargs.values()):
+            if isinstance(value, np.ndarray) and value.dtype.kind == "f":
+                value[...] = 0.0
+        return out
+
+    setattr(solver, method, writing)
+    return solver
+
+
+ALIASING_ROWS = [(route, None) for route in ROUTES if route != "Newton"] + [("Newton", 3), ("Newton", 0), ("Newton", 1)]
+
+
+@pytest.mark.parametrize("half", ["HJB", "FP"])
+@pytest.mark.parametrize(("route", "warmup"), ALIASING_ROWS)
+def test_a_solver_that_writes_into_its_input_leaves_the_solve_unchanged(route, warmup, half):
+    """Class line 7 (the approver's ruling of 2026-11-27): a route reads the arrays it handed a solver after the call,
+    so it hands copies (`base_mfg.handed`). The oracle is the same solve with the plain solver. Newton runs its warm-up
+    only (picard_warmup 3), its post-warm-up check and phase (0), and a warm-up sweep then its phase (1), which reaches
+    the finite-difference probes and the line search. Mutant: a hand-off passing its own arrays, which at 8598206f
+    changed every route's result or raised."""
+    problems = _problems(route)
+    kw = {} if warmup is None else {"picard_warmup": warmup}
+
+    def run(writing):
+        hjbs, fps = [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
+        if writing:
+            for solver in hjbs if half == "HJB" else fps:
+                _writes_into_its_input(solver, "solve_hjb_system" if half == "HJB" else "solve_fp_system")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return _solve(route, problems, hjbs, fps, sweeps=3, **kw)
+
+    plain, writing = run(False), run(True)
+    for k in range(len(problems)):
+        assert np.array_equal(_published(writing, k, "U"), _published(plain, k, "U")), f"{route}, {half}: U moved"
+        assert np.array_equal(_published(writing, k, "M"), _published(plain, k, "M")), f"{route}, {half}: M moved"
+
+
 def test_newtons_result_carries_the_records_it_takes():
     """Mutant: Newton's result built without the driver's measure field and rate history (review 1, B3)."""
     p = _problem()

@@ -34,6 +34,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
+    handed,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
@@ -527,12 +528,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # u(T) at the density this regime's HJB solve uses (#1642 stage 2): the solve and the write-back after
                 # the update both read it.
                 terminal_k = terminals[k] = states[k].terminal_at(M_k[-1])
-                U_k = self._hjb[k].solve_hjb_system(
-                    M_k,
-                    terminal_k,  # terminal condition
-                    Us_full[k],  # previous iterate
-                    **hjb_kwargs,
-                )
+                # The density, u(T) and the previous iterate, each copied (`handed`, #3002 class line 7)
+                args, own = handed(M_k, terminal_k, Us_full[k], **hjb_kwargs)
+                U_k = self._hjb[k].solve_hjb_system(*args, **own)
                 Us_new[k] = U_k
 
                 # Issue #1718: every regime's HJB is solved before any FP runs, and `_make_fp_source`
@@ -586,10 +584,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     fp_solver=self._fp[k],
                 )
                 fp_kwargs.update(drift_kwargs)
-                if use_positional_U:
-                    N_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
-                else:
-                    N_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
+                args, own = handed(m0_k, Us_new[k], **fp_kwargs) if use_positional_U else handed(m0_k, **fp_kwargs)
+                N_k = self._fp[k].solve_fp_system(*args, **own)
                 # The solve returned n^k; the diagonal outflow lives in the integrating
                 # factor, not in the source (see _make_fp_source, Issue #1681).
                 Ms_new[k] = self._undo_integrating_factor(k, self._outflow_rate(k, K, Q), N_k)

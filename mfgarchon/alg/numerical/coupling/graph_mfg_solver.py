@@ -29,6 +29,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     damping_argument,
+    handed,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     solver_signature,
@@ -240,12 +241,9 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # the update both read it.
                 terminals[k] = states[k].terminal_at(Ms[k][-1])
 
-                U_k = self._hjb[k].solve_hjb_system(
-                    Ms[k],
-                    terminals[k],  # terminal condition
-                    Us_full[k],  # previous iterate
-                    source_term=hjb_source,
-                )
+                # The density, u(T) and the previous iterate, each copied (`handed`, #3002 class line 7)
+                args, own = handed(Ms[k], terminals[k], Us_full[k], source_term=hjb_source)
+                U_k = self._hjb[k].solve_hjb_system(*args, **own)
                 Us_new[k] = U_k
 
                 # Issue #1718: check before the next node is solved. Every node's HJB runs before any
@@ -294,10 +292,8 @@ class GraphMFGSolver(BaseCouplingIterator):
                     fp_solver=self._fp[k],
                 )
                 fp_kwargs.update(drift_kwargs)
-                if use_positional_U:
-                    M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
-                else:
-                    M_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
+                args, own = handed(m0_k, Us_new[k], **fp_kwargs) if use_positional_U else handed(m0_k, **fp_kwargs)
+                M_k = self._fp[k].solve_fp_system(*args, **own)
                 Ms_new[k] = M_k
 
             # The FP-output rule every coupled route reads, on the nodes' total mass, Graph's invariant (#2997; #3002

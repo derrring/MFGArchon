@@ -29,6 +29,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
     assert_paired_solver_geometry,
+    handed,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
@@ -225,7 +226,8 @@ class MFGResidual:
             )
         )
 
-        return self.hjb_solver.solve_hjb_system(M, self.terminal_at(M), U_prev, **kwargs)
+        args, own = handed(M, self.terminal_at(M), U_prev, **kwargs)
+        return self.hjb_solver.solve_hjb_system(*args, **own)
 
     def compute_fp_output(self, U: NDArray, M: NDArray | None = None) -> NDArray:
         """
@@ -287,9 +289,8 @@ class MFGResidual:
         )
         kwargs.update(drift_kwargs)
 
-        if use_positional_U:
-            return self.fp_solver.solve_fp_system(self.M_initial, U, **kwargs)
-        return self.fp_solver.solve_fp_system(self.M_initial, **kwargs)
+        args, own = handed(self.M_initial, U, **kwargs) if use_positional_U else handed(self.M_initial, **kwargs)
+        return self.fp_solver.solve_fp_system(*args, **own)
 
     def compute_residual(
         self,
