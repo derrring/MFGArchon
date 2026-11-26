@@ -135,13 +135,15 @@ def mass_conservation_error(
     None means not measured (#1672), and None and 0.0 are different statements:
     - ``measured`` is False when no FP step of this solve completed: M is then the cold start or a warm start, not this
       solve's density (#1717);
+    - a density that is not finite has no drift to measure: a solve the FP-output rule stopped publishes its FP output
+      with its bad values kept (#3002, the approver's ruling E);
     - a geometry with no measure has no total mass.
 
     An FP solver whose state holds what the grid density discards, the particles still alive, reports its own number
     (`mass_conservation_error_override`, #2188). A total over components cannot combine such a number with the others,
     so under `MassInvariant.TOTAL` it leaves the top level None, and each component's number stands.
     """
-    if not measured:
+    if not measured or not all(np.all(np.isfinite(np.asarray(M, dtype=float))) for M in Ms):
         return None, [None] * len(Ms)
     overrides = [_override(solver) for solver in fp_solvers]
     histories = [

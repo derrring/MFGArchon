@@ -29,7 +29,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from mfgarchon.config.damping import DampingPolicy
-from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 
@@ -40,15 +39,12 @@ from .base_mfg import (
     damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
-from .coupled_driver import CoupledDriver, FixedPointStep
+from .coupled_driver import CoupledDriver, FixedPointStep, ResidualMap
 from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
 from .fixed_point_utils import (
     BUDGET_SPENT,
-    check_convergence_criteria,
-    diverged_value_function,
     read_inner_solve_failures,
-    refuse_convergence_over_failed_inner_solves,
     verdict_reads_inner_failures,
 )
 from .mfg_residual import MFGResidual
@@ -70,14 +66,6 @@ logger = get_logger(__name__)
 
 #: The verdict's read of the inner HJB record, before any verdict has run.
 _NOT_READ = object()
-
-
-class _MapDivergedError(Exception):
-    """A verdict's map output, the HJB half, is non-finite: the shared guard has published it (#2997 ruling 10)."""
-
-    def __init__(self, U: NDArray, M: NDArray, sweep: int) -> None:
-        super().__init__(sweep)
-        self.U, self.M, self.sweep = U, M, sweep
 
 
 class NewtonMFGSolver(BaseCouplingIterator):
@@ -209,6 +197,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # The change of the map's output against its input at each sweep: the warm-up's sweeps, then each iterate the
         # Newton phase's verdict judges, a diverged one as NaN (#2997 ruling 7, stage 1c).
         self._record = SweepRecord(1)
+        self._driver: CoupledDriver | None = None
         # True once M holds this solve's density: a warm-up sweep's FP output, or a Newton step's iterate (#1717)
         self._fp_output_available = False
         # The warm-up sweeps the last solve ran: the Newton phase's iterations count from there
@@ -267,45 +256,23 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self._fp_output_available = False
         self._warmup_sweeps = 0
         self.newton_residuals = []
-        outer_verdict = self._outer_verdict(tolerance, absolute_tolerance)
-
-        last_reason = [""]
         self._verdict_inner_failures: object = _NOT_READ
-        # The 0-based index of the sweep the next verdict judges: the warm-up's sweeps come first, then one per iterate.
-        judged = [0]
-        # The change the latest verdict read, so the exit that ends on the post-warm-up verdict can record it.
-        last_change: list[dict[str, float]] = []
+        last_reason = [""]
 
-        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray, record: bool = True) -> tuple[bool, str]:
-            # The verdict reads the map's change, and U + F_HJB is the map's HJB output: the shared guard sees it first,
-            # as on every other route, so a non-finite one stops the solve instead of reaching #2578's refusal of a
-            # non-finite change (#2997 ruling 10).
-            sweep = judged[0]
-            judged[0] += 1
-            published = diverged_value_function(
-                U + F_HJB, self.mfg_residual.terminal_at(M), site="NewtonMFGSolver", density=M, iteration=sweep
-            )
-            if published is not None:
-                raise _MapDivergedError(published, M, sweep)
-            # Read right after the residual that produced F_HJB, so the HJB record is that solve's: a residual whose
-            # HJB half has non-roots is not converged, whatever its norm (#1878, #2644).
-            converged, reason, metrics = outer_verdict(U, M, F_HJB, F_FP)
-            last_change[:] = [metrics]
-            if record:
-                self._record.measured([metrics])
-            self._verdict_inner_failures = read_inner_solve_failures(self.mfg_residual.hjb_solver)
-            converged, last_reason[0] = refuse_convergence_over_failed_inner_solves(
-                converged, reason, self._verdict_inner_failures
-            )
-            return converged, last_reason[0]
+        def on_verdict(converged: bool, reason: str) -> None:
+            # The last verdict's reason and the inner HJB steps it read, for the final reason and the result (#2644)
+            last_reason[0] = reason
+            self._verdict_inner_failures = driver.inner_failures
 
         # The warm start, or the owner's cold start (#2997): u(T) at m(0) in every row of U, and m(0) with the FP's
         # prescribed values in M.
         state = self.mfg_residual.state
         U, M = state.start()
+        residual_map = ResidualMap(self.mfg_residual, "NewtonMFGSolver")
 
         # One driver loop for every coupled route (#3002 stage 2a): a warm-up phase of FixedPoint's sweep map and
-        # damping, then a Newton phase of `NewtonRun.step` on the residual of the Jacobi map. The budget counts both.
+        # damping, then a Newton phase of `NewtonRun.step` on the residual of the Jacobi map. The budget counts both, and
+        # every evaluation whose change a verdict reads goes through the driver's one pipeline (plan v1.1).
         with CoupledDriver(
             "Newton",
             state,
@@ -319,6 +286,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             track_rates=track_rate_history,
         ) as driver:
             self._record = driver.record
+            self._driver = driver
             driver.snapshot(U, M)
 
             # Phase 1: the Picard warm-up, for robustness. A met criterion ends the solve with the iterate that sweep's
@@ -333,31 +301,35 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 self._warmup_sweeps = outcome.sweeps
                 self._fp_output_available = driver.fp_output_available
                 if outcome.stop is not None:
-                    # A diverged warm-up publishes what it has, and the warm-up count says how far it got (#1718, #1672)
+                    # A stopped warm-up publishes what the pipeline published, and the warm-up count says how far it got
+                    # (#1718, #1672)
                     self.U, self.M = U, M
                     self._solution_computed = True
                     if outcome.stop == "diverged":
                         self.picard_warmup = outcome.sweeps
                     return self._create_result(driver.converged, driver.reason)
-            judged[0] = driver.sweeps
 
             # The Newton phase gets what the warm-up left of the budget, bounded by newton_max_iterations (#3002)
             remaining = min(driver.remaining, self.newton_max_iterations)
             if remaining <= 0:
                 self.U, self.M = U, M
                 self._solution_computed = True
-                return self._create_result(False, driver.reason)
+                # The bound that ran out names the stop: the solve's budget, or newton_max_iterations within it
+                reason = BUDGET_SPENT if driver.remaining <= 0 else "Newton max iterations"
+                return self._create_result(False, reason)
 
-            # Check if already converged after Picard: the outer verdict on the Picard residual (#2565)
-            _, F_HJB, F_FP = self.mfg_residual.compute_residual(U, M, return_components=True)
-            try:
-                # Recorded only if it ends the solve (below): otherwise the Newton phase's first verdict judges this same
-                # iterate and records it.
-                converged_after_warmup = verdict(U, M, F_HJB, F_FP, record=False)[0]
-            except _MapDivergedError as stop:
-                return self._stop_on_a_diverged_map(stop)
+            # The post-warm-up check: the outer verdict on the Picard residual at the warm-up's iterate (#2565), an
+            # evaluation of the map like any other, so it goes through the pipeline. It is recorded only if it ends the
+            # solve; otherwise the Newton phase's first verdict judges this same iterate and records it.
+            check_index = driver.sweeps
+            evaluation = driver.evaluate(check_index, residual_map, U, M)
+            if evaluation.stop is not None:
+                return self._stop_on_a_diverged_map(*evaluation.published, check_index, driver)
+            _met, converged_after_warmup, reason = driver._verdict(evaluation.metrics)
+            on_verdict(converged_after_warmup, reason)
             if converged_after_warmup:
-                self._record.measured([last_change[0]])
+                driver.record.measured([evaluation.metrics])
+                driver.sweeps += 1
                 self.U = U
                 self.M = M
                 self._solution_computed = True
@@ -373,20 +345,24 @@ class NewtonMFGSolver(BaseCouplingIterator):
             )
             self.mfg_residual.reset_evaluation_count()
             newton = newton_solver.run(self.mfg_residual.residual_function, self.mfg_residual.pack_state(U, M))
-            try:
-                outcome = driver.run_newton(
-                    newton,
-                    remaining,
-                    lambda x, F: verdict(*self.mfg_residual.unpack_state(x), *self.mfg_residual.unpack_state(F)),
-                    self.mfg_residual.unpack_state,
-                    lambda: last_change[0],
-                )
-            except _MapDivergedError as stop:
-                return self._stop_on_a_diverged_map(stop)
+            outcome = driver.run_newton(
+                newton,
+                remaining,
+                residual_map,
+                check_index + 1,
+                self.mfg_residual.state.pack,
+                self.mfg_residual.unpack_state,
+                on_verdict,
+            )
+            if outcome.stop == "diverged":
+                return self._stop_on_a_diverged_map(outcome.U, outcome.M, outcome.detail["sweep"], driver)
 
         self.U, self.M = outcome.U, outcome.M
         self.newton_residuals = newton.residual_history
-        if outcome.sweeps > 0:
+        # The iterate Newton returns is a density this solve produced once a step has moved it; before that it is where
+        # the phase began, the warm-up's output or the cold start (#1717; #3002 class line 6, review 1's B6). An
+        # evaluation run is not a step: at the base this read `iterations > 0`, and reported the cold start's drift.
+        if newton.steps_taken > 0:
             self._fp_output_available = True
         self._solution_computed = True
         if outcome.stop == "callback":
@@ -412,54 +388,24 @@ class NewtonMFGSolver(BaseCouplingIterator):
             )
         return self._create_result(converged=newton_info.converged, reason=reason, newton_info=newton_info)
 
-    def _outer_verdict(
-        self, tolerance: float, absolute_tolerance: float | None
-    ) -> Callable[[NDArray, NDArray, NDArray, NDArray], tuple[bool, str, dict[str, float]]]:
-        """``(U, M, F_HJB, F_FP) -> (converged, reason, metrics)``: the owners' verdict on the Picard residual (#2565), and
-        the change it read.
-
-        The residual ``F = Phi(x) - x`` is the map's output against its input, the kind of pair `sweep_change`
-        measures for every other coupling iterator; so ``U + F_HJB`` and ``M + F_FP`` are the map's output.
-        Newton's map is the Jacobi one -- the FP is fed the input U -- where FixedPointIterator's is
-        Gauss-Seidel; the two have the same fixed point.
-        """
-        integrate = self.problem.spatial_measure().integrate
-        dt = self.problem.dt
-
-        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str, dict[str, float]]:
-            metrics = sweep_change(U + F_HJB, U, M + F_FP, M, integrate, dt)
-            converged, reason = self._judge(metrics, tolerance, absolute_tolerance)
-            return converged, reason, metrics
-
-        return verdict
-
-    @staticmethod
-    def _judge(metrics: dict[str, float], tolerance: float, absolute_tolerance: float | None) -> tuple[bool, str]:
-        """The criteria on one sweep's change (`check_convergence_criteria`), which every verdict of the solve reads: a
-        warm-up sweep's and the map's at each iterate Newton evaluates (#2997)."""
-        return check_convergence_criteria(
-            metrics["l2distu_rel"],
-            metrics["l2distm_rel"],
-            metrics["l2distu_abs"],
-            metrics["l2distm_abs"],
-            tolerance,
-            absolute_tolerance,
-        )
-
     def _iteration_state(self) -> IterationState:
         return self.mfg_residual.state
 
-    def _stop_on_a_diverged_map(self, stop: _MapDivergedError) -> SolverResult:
-        """Publish what the guard published and stop: the iterate the verdict judged, with the map's non-finite HJB
-        output as U (#1718's contract), after ``stop.sweep`` less the warm-up's sweeps Newton iterations. The judged
-        sweep counts, its change NaN (#2997)."""
-        self.U, self.M = stop.U, stop.M
+    def _stop_on_a_diverged_map(self, U: NDArray, M: NDArray, sweep: int, driver: CoupledDriver) -> SolverResult:
+        """Publish what the pipeline published at evaluation ``sweep`` and stop: the HJB guard's (#1718) or the FP-output
+        rule's pair (the approver's ruling E), with the reason the driver gave, after ``sweep`` less the warm-up's sweeps
+        Newton iterations. The stopped evaluation counts, its change NaN (#2997)."""
+        self.U, self.M = U, M
         self.newton_residuals = []
         self._solution_computed = True
-        self._record.diverged()
-        if stop.sweep > self._warmup_sweeps:
-            self._fp_output_available = True
-        return self._create_result(False, "diverged_nan", newton_iterations=stop.sweep - self._warmup_sweeps)
+        # The density the stop publishes: the FP output under the FP-output rule (the driver says so), else the iterate the
+        # evaluation was handed, which a step produced only from the Newton phase's second iterate on. The post-warm-up
+        # check (evaluation `warmup`) and the phase's first iterate (`warmup + 1`) are both at the warm-up's output, the
+        # cold start when there was no warm-up (#1717; #3002 class line 6).
+        self._fp_output_available = (
+            self._fp_output_available or driver.fp_output_available or sweep > self._warmup_sweeps + 1
+        )
+        return self._create_result(False, driver.reason, newton_iterations=sweep - self._warmup_sweeps)
 
     def _verdict_failures(self) -> object:
         """The inner HJB steps the last verdict read, or the latest solve's where no verdict ran; None when the solver
@@ -489,6 +435,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
         if newton_info is not None:
             info["final_residual"] = newton_info.residual
             info["jacobian_evaluations"] = newton_info.extra.get("jacobian_evals", 0)
+        # The driver's records any route may take (#3002, ruling 7)
+        driver = self._driver
+        if driver is not None and driver.measure_field is not None:
+            info["measure_field"] = driver.measure_field
+        if driver is not None and driver.rates is not None:
+            info["learning_rate_history"] = driver.rates
 
         return coupled_result(
             U=self.U,

@@ -37,14 +37,13 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
+    solver_signature,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     BUDGET_SPENT,
     check_convergence_criteria,
     diverged_value_function,
     fp_output_stop,
-    fp_solver_sig_params,
-    hjb_solver_sig_params,
     resolve_fp_drift_kwargs,
     verdict_reads_inner_failures,
 )
@@ -184,10 +183,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # (resolve_fp_drift_kwargs), exactly as the single-solver iterators do via
         # _init_solver_signatures. One set per regime k because regimes may use different FP
         # solver types.
-        self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
+        self._fp_sig_params_k = [solver_signature(fp, "FP") for fp in fp_solvers]  # refuses one it cannot read (#2209)
         # Issue #2666: the HJB twin, so each regime's source -- the cross-regime term plus the problem's
         # own -- goes through resolve_source_kwarg like every other coupling loop's.
-        self._hjb_sig_params_k = [hjb_solver_sig_params(h) for h in hjb_solvers]
+        self._hjb_sig_params_k = [solver_signature(h, "HJB") for h in hjb_solvers]
         # Issue #1489 (S1): per-regime FP drift-input convention, parallel to _fp_sig_params_k, so
         # resolve_fp_drift_kwargs routes each regime by convention rather than param presence.
         self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
@@ -516,17 +515,14 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     compose_hjb_source(self._problems[k], M_k, Us_full[k], reader="RegimeSwitchingIterator"),
                 )
                 hjb_sig_params_k = self._hjb_sig_params_k[k]
-                if hjb_sig_params_k is not None:
-                    hjb_kwargs = resolve_source_kwarg(
-                        hjb_sig_params_k,
-                        hjb_source,
-                        type(self._hjb[k]).__name__,
-                        "solve_hjb_system",
-                        "HJB",
-                        origin=_REGIME_SOURCE_ORIGIN.format(term="cross-regime term sum_j Q[k,j](u_k - u_j)"),
-                    )
-                else:
-                    hjb_kwargs = {"source_term": hjb_source}
+                hjb_kwargs = resolve_source_kwarg(
+                    hjb_sig_params_k,
+                    hjb_source,
+                    type(self._hjb[k]).__name__,
+                    "solve_hjb_system",
+                    "HJB",
+                    origin=_REGIME_SOURCE_ORIGIN.format(term="cross-regime term sum_j Q[k,j](u_k - u_j)"),
+                )
 
                 # u(T) at the density this regime's HJB solve uses (#1642 stage 2): the solve and the write-back after
                 # the update both read it.
@@ -572,61 +568,47 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # Mirrors FixedPointIterator.solve() / fictitious_play (#1299), per-regime: each
                 # regime has its own problem (Hamiltonian/geometry) and FP solver signature.
                 fp_sig_params_k = self._fp_sig_params_k[k]
-                if fp_sig_params_k is not None:
-                    fp_kwargs: dict[str, Any] = resolve_source_kwarg(
-                        fp_sig_params_k,
-                        fp_source,
-                        type(self._fp[k]).__name__,
-                        "solve_fp_system",
-                        "FP",
-                        origin=_REGIME_SOURCE_ORIGIN.format(term="inflow sum_j Q[j,k] m_j"),
-                    )
-                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self._problems[k],
-                        fp_sig_params_k,
-                        None,
-                        Us_new[k],
-                        Ms[k],
-                        drift_convention=self._fp_drift_convention_k[k],
-                        fp_solver=self._fp[k],
-                    )
-                    fp_kwargs.update(drift_kwargs)
-                    if use_positional_U:
-                        N_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
-                    else:
-                        N_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
+                fp_kwargs: dict[str, Any] = resolve_source_kwarg(
+                    fp_sig_params_k,
+                    fp_source,
+                    type(self._fp[k]).__name__,
+                    "solve_fp_system",
+                    "FP",
+                    origin=_REGIME_SOURCE_ORIGIN.format(term="inflow sum_j Q[j,k] m_j"),
+                )
+                drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                    self._problems[k],
+                    fp_sig_params_k,
+                    None,
+                    Us_new[k],
+                    Ms[k],
+                    drift_convention=self._fp_drift_convention_k[k],
+                    fp_solver=self._fp[k],
+                )
+                fp_kwargs.update(drift_kwargs)
+                if use_positional_U:
+                    N_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
                 else:
-                    N_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
+                    N_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
                 # The solve returned n^k; the diagonal outflow lives in the integrating
                 # factor, not in the source (see _make_fp_source, Issue #1681).
                 Ms_new[k] = self._undo_integrating_factor(k, self._outflow_rate(k, K, Q), N_k)
 
-            # --- Damping, per regime and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
-            # terminal row to the u(T) this sweep's HJB solve was given. The next iterate is never an input array
-            # (`DampingRun.update`), so the map's outputs stay what the change below measures. ---
-            Us_next: list[Any] = [None] * K
-            Ms_next: list[Any] = [None] * K
-            for k in range(K):
-                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
-                Us_next[k], Ms_next[k] = states[k].write_back(U_k, M_k, terminals[k])
-            fp_output_available = True
-
             # The FP-output rule every coupled route reads, on the regimes' total mass, RegimeSwitching's invariant: a
-            # regime's own mass grows from zero by inflow (#2997; #3002 stage 2a, ruling 3(a) and ruling A), before the
-            # change is measured, which refuses a non-finite one (#2578). Stage 2b moves this call into the driver.
+            # regime's own mass grows from zero by inflow (#2997; #3002 stage 2a, rulings 3(a) and A), before the change is
+            # measured, which refuses a non-finite one (#2578). A stop publishes the sweep's HJB and FP outputs (ruling E).
+            # Stage 2b moves this call into the coupled driver.
             stop = fp_output_stop(
-                Us_new,
                 Ms_new,
-                Us_next,
-                Ms_next,
                 Ms,
+                integrates,
                 each_component=False,
                 site="RegimeSwitchingIterator",
                 iteration=iteration,
             )
             if stop is not None:
                 record.diverged()
-                return self._result(Us_next, Ms_next, record, False, stop, fp_output_available)
+                return self._result(Us_new, Ms_new, record, False, stop, True)
 
             # --- Convergence: the sweep's output against its input, BEFORE damping ---
             # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
@@ -648,12 +630,18 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 self._tol,
                 self._abs_tol,
             )
+
+            # --- Damping, per regime and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given ---
             for k in range(K):
+                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
+                Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_regime[k]):
                     logger.warning(f"RegimeSwitchingIterator[regime {k}]: {message}")
 
-            Us_full = Us_next
-            Ms = Ms_next
+            Us_full = Us_new
+            Ms = Ms_new
+            fp_output_available = True
 
             if met:
                 return self._result(Us_full, Ms, record, True, criteria_reason, fp_output_available)

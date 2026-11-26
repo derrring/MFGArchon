@@ -201,8 +201,8 @@ class FixedPointIterator(BaseCouplingIterator):
             tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
             iteration_callback: Optional callback called after each Picard iteration.
                 Signature: callback(iteration, U, M, error_U, error_M) -> bool | None
-                Return False to stop early; True or None continues. The convention every coupled route reads
-                (#2886). If None (default), no callback is invoked.
+                Return False to stop early; True or None continues. The convention every coupled route that takes
+                a callback reads (#2886). If None (default), no callback is invoked.
             track_measure_field: If True, store each Picard iterate as a
                 MeasureField snapshot for sensitivity analysis. The resulting
                 GridMeasureField is attached to SolverResult.metadata["measure_field"].

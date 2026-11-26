@@ -33,6 +33,7 @@ from .base_mfg import (
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
     resolve_volatility_kwarg,
+    solver_signature,
 )
 from .fixed_point_utils import resolve_fp_drift_kwargs
 from .iteration_state import IterationState
@@ -157,12 +158,13 @@ class MFGResidual:
         self.solution_shape = self.state.solution_shape
         self.M_initial: NDArray = self.state.initial_density()
 
-        # Cache solver method signatures for parameter passing
-        self._hjb_sig_params: set[str] | None = None
-        self._fp_sig_params: set[str] | None = None
         # Issue #1489 (S1): FP solver's declared drift-input convention (routes drift vs potential).
         self._fp_drift_convention: DriftConvention | None = None
-        self._cache_solver_signatures()
+        # The solvers' signatures, through the one reader every coupled route builds with, which refuses one it cannot
+        # read (#2209; #3002 class line 5)
+        self._hjb_sig_params = solver_signature(self.hjb_solver, "HJB")
+        self._fp_sig_params = solver_signature(self.fp_solver, "FP")
+        self._fp_drift_convention = getattr(self.fp_solver, "_drift_convention", None)
 
         # Evaluation counter for diagnostics
         self.residual_evaluations = 0
@@ -170,25 +172,6 @@ class MFGResidual:
     def terminal_at(self, M: NDArray) -> NDArray:
         """u(T) for the density trajectory ``M``: the owner's terminal value at ``M[-1]`` (#1642, #2997)."""
         return self.state.terminal_at(M[-1])
-
-    def _cache_solver_signatures(self) -> None:
-        """Cache solver method signatures for parameter passing."""
-        import inspect
-
-        try:
-            sig = inspect.signature(self.hjb_solver.solve_hjb_system)
-            self._hjb_sig_params = set(sig.parameters.keys())
-        except AttributeError:
-            self._hjb_sig_params = None
-
-        try:
-            sig = inspect.signature(self.fp_solver.solve_fp_system)
-            self._fp_sig_params = set(sig.parameters.keys())
-        except AttributeError:
-            self._fp_sig_params = None
-
-        # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
-        self._fp_drift_convention = getattr(self.fp_solver, "_drift_convention", None)
 
     def compute_hjb_output(self, M: NDArray, U_prev: NDArray) -> NDArray:
         """
@@ -211,37 +194,36 @@ class MFGResidual:
         """
         kwargs: dict[str, Any] = {}
 
-        if self._hjb_sig_params is not None:
-            if "show_progress" in self._hjb_sig_params:
-                kwargs["show_progress"] = False
-            # Issue #1783: one owner with Picard. This site carried a private copy that
-            # silently dropped the field for a solver taking **kwargs -- three lines above a
-            # branch already raising for exactly that situation with source_term (#1430).
-            kwargs.update(
-                resolve_volatility_kwarg(
-                    self._hjb_sig_params,
-                    self.volatility,
-                    self.volatility_kind,
-                    self.problem,
-                    type(self.hjb_solver).__name__,
-                    "solve_hjb_system",
-                    "HJB",
-                )
+        if "show_progress" in self._hjb_sig_params:
+            kwargs["show_progress"] = False
+        # Issue #1783: one owner with Picard. This site carried a private copy that
+        # silently dropped the field for a solver taking **kwargs -- three lines above a
+        # branch already raising for exactly that situation with source_term (#1430).
+        kwargs.update(
+            resolve_volatility_kwarg(
+                self._hjb_sig_params,
+                self.volatility,
+                self.volatility_kind,
+                self.problem,
+                type(self.hjb_solver).__name__,
+                "solve_hjb_system",
+                "HJB",
             )
-            # Issue #1430: fail loud like the Picard path (Issue #1424) instead of silently
-            # dropping a composed source the solver cannot accept. Compose unconditionally; if
-            # the problem defines a source but this HJB solver's signature lacks source_term,
-            # raise rather than solve the wrong problem. (Picard: base_mfg._build_hjb_kwargs.)
-            hjb_source = compose_hjb_source(self.problem, M, U_prev, reader="MFGResidual")
-            kwargs.update(
-                resolve_source_kwarg(
-                    self._hjb_sig_params,
-                    hjb_source,
-                    type(self.hjb_solver).__name__,
-                    "solve_hjb_system",
-                    "HJB",
-                )
+        )
+        # Issue #1430: fail loud like the Picard path (Issue #1424) instead of silently
+        # dropping a composed source the solver cannot accept. Compose unconditionally; if
+        # the problem defines a source but this HJB solver's signature lacks source_term,
+        # raise rather than solve the wrong problem. (Picard: base_mfg._build_hjb_kwargs.)
+        hjb_source = compose_hjb_source(self.problem, M, U_prev, reader="MFGResidual")
+        kwargs.update(
+            resolve_source_kwarg(
+                self._hjb_sig_params,
+                hjb_source,
+                type(self.hjb_solver).__name__,
+                "solve_hjb_system",
+                "HJB",
             )
+        )
 
         return self.hjb_solver.solve_hjb_system(M, self.terminal_at(M), U_prev, **kwargs)
 
@@ -270,9 +252,6 @@ class MFGResidual:
             M_new: Density field from FP solve
         """
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "MFGResidual.compute_fp_output")
-        if self._fp_sig_params is None:
-            return self.fp_solver.solve_fp_system(self.M_initial, U)
-
         params = self._fp_sig_params
         kwargs: dict[str, Any] = {}
         if "show_progress" in params:

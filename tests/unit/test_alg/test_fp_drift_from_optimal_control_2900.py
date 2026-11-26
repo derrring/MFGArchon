@@ -23,9 +23,10 @@ import numpy as np
 
 import mfgarchon.alg.numerical
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.coupling.base_mfg import solver_signature
 from mfgarchon.alg.numerical.coupling.block_iterators import BlockIterator
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
-from mfgarchon.alg.numerical.coupling.fixed_point_utils import fp_solver_sig_params, resolve_fp_drift_kwargs
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import resolve_fp_drift_kwargs
 from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
 from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
@@ -411,7 +412,7 @@ def test_a_density_that_is_not_the_trajectory_is_refused_by_name(shape):
 
     def route(M):
         return resolve_fp_drift_kwargs(
-            problem, fp_solver_sig_params(fp), None, U, M, drift_convention=fp._drift_convention, fp_solver=fp
+            problem, solver_signature(fp, "FP"), None, U, M, drift_convention=fp._drift_convention, fp_solver=fp
         )
 
     assert "drift_field" in _quietly(lambda: route(np.ones((11, 21))))[0]

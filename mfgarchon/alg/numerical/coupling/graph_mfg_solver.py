@@ -31,12 +31,12 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     damping_argument,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
+    solver_signature,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     BUDGET_SPENT,
     check_convergence_criteria,
     fp_output_stop,
-    fp_solver_sig_params,
     resolve_fp_drift_kwargs,
     verdict_reads_inner_failures,
 )
@@ -142,7 +142,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         # can route the value function through the drift-convention dispatcher
         # (resolve_fp_drift_kwargs), exactly as the single-solver iterators do via
         # _init_solver_signatures. One set per node because nodes may use different FP solvers.
-        self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
+        self._fp_sig_params_k = [solver_signature(fp, "FP") for fp in fp_solvers]  # refuses one it cannot read (#2209)
         # Issue #1489 (S1): per-node FP drift-input convention, parallel to _fp_sig_params_k, so
         # resolve_fp_drift_kwargs routes each node by convention rather than param presence.
         self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
@@ -284,44 +284,36 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # node has its own problem (Hamiltonian/geometry) and FP solver signature.
                 fp_kwargs: dict[str, Any] = {"source_term": fp_source}
                 fp_sig_params_k = self._fp_sig_params_k[k]
-                if fp_sig_params_k is not None:
-                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self._problems[k],
-                        fp_sig_params_k,
-                        None,
-                        Us_new[k],
-                        Ms[k],
-                        drift_convention=self._fp_drift_convention_k[k],
-                        fp_solver=self._fp[k],
-                    )
-                    fp_kwargs.update(drift_kwargs)
-                    if use_positional_U:
-                        M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
-                    else:
-                        M_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
+                drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                    self._problems[k],
+                    fp_sig_params_k,
+                    None,
+                    Us_new[k],
+                    Ms[k],
+                    drift_convention=self._fp_drift_convention_k[k],
+                    fp_solver=self._fp[k],
+                )
+                fp_kwargs.update(drift_kwargs)
+                if use_positional_U:
+                    M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
                 else:
-                    M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
+                    M_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
                 Ms_new[k] = M_k
 
-            # --- Damping, per node and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
-            # terminal row to the u(T) this sweep's HJB solve was given. The next iterate is never an input array
-            # (`DampingRun.update`), so the map's outputs stay what the change below measures. ---
-            Us_next: list[NDArray] = [np.empty(0)] * N
-            Ms_next: list[NDArray] = [np.empty(0)] * N
-            for k in range(N):
-                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
-                Us_next[k], Ms_next[k] = states[k].write_back(U_k, M_k, terminals[k])
-            fp_output_available = True
-
             # The FP-output rule every coupled route reads, on the nodes' total mass, Graph's invariant (#2997; #3002
-            # stage 2a, ruling A), before the change is measured, which refuses a non-finite one (#2578). Stage 2b
-            # moves this call into the coupled driver.
+            # stage 2a, ruling A), before the change is measured, which refuses a non-finite one (#2578). A stop publishes
+            # the sweep's HJB and FP outputs (the approver's ruling E). Stage 2b moves this call into the coupled driver.
             stop = fp_output_stop(
-                Us_new, Ms_new, Us_next, Ms_next, Ms, each_component=False, site="GraphMFGSolver", iteration=iteration
+                Ms_new,
+                Ms,
+                integrates,
+                each_component=False,
+                site="GraphMFGSolver",
+                iteration=iteration,
             )
             if stop is not None:
                 record.diverged()
-                return self._result(Us_next, Ms_next, record, False, stop, fp_output_available)
+                return self._result(Us_new, Ms_new, record, False, stop, True)
 
             # --- Convergence: the sweep's output against its input, BEFORE damping ---
             # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
@@ -339,12 +331,18 @@ class GraphMFGSolver(BaseCouplingIterator):
                 self._tol,
                 self._abs_tol,
             )
+
+            # --- Damping, per node and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given ---
             for k in range(N):
+                U_k, M_k = runs[k].update(iteration, Us_full[k], Us_new[k], Ms[k], Ms_new[k])
+                Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_node[k]):
                     logger.warning(f"GraphMFGSolver[node {k}]: {message}")
 
-            Us_full = Us_next
-            Ms = Ms_next
+            Us_full = Us_new
+            Ms = Ms_new
+            fp_output_available = True
 
             if met:
                 return self._result(Us_full, Ms, record, True, criteria_reason, fp_output_available)

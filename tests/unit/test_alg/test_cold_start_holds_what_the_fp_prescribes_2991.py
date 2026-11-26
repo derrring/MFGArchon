@@ -183,7 +183,7 @@ def test_the_cold_start_holds_the_fps_prescribed_value_at_its_later_levels(route
     sweep, are the FP's prescribed value p(t_n), not the caller's 7.0. At level 0 the HJB is handed the caller's 7.0.
 
     The first is read by a recorder on the HJB's `solve_hjb_system`, wrapped so the signature the iterators read
-    (`hjb_solver_sig_params`) is the solver's own; its control is that the route returns the same density with the
+    (`solver_signature`) is the solver's own; its control is that the route returns the same density with the
     recorder as without it, and that the recorder saw a call."""
     *_, mesh, p_at = ARMS[arm]
     unrecorded = _solve(route, arm, 1)

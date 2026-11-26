@@ -532,9 +532,31 @@ def hjb_terminal_binding(hjb_solver: Any) -> CouplingBinding | None:
     return hjb_solver.terminal_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
 
 
+def solver_signature(solver: Any, half: str) -> set[str]:
+    """The parameter names of ``solver``'s solve method for its ``half`` of a coupled solve: ``"HJB"`` reads
+    ``solve_hjb_system``, ``"FP"`` reads ``solve_fp_system``. The one reader every coupled route builds with (#2209;
+    #3002 class line 5, the user's ruling of 2026-11-26).
+
+    A signature `inspect` cannot read is refused here, when the route is built. A route hands the value function, the
+    problem's composed source and a volatility override by the keywords these names show. Before the refusal, an FP solver
+    whose signature could not be read was handed U positionally, into its second parameter, which `FPFDMSolver` reads as a
+    drift, and neither the source nor a volatility override; an HJB solver was handed neither of the two.
+    """
+    method = {"HJB": "solve_hjb_system", "FP": "solve_fp_system"}[half]
+    try:
+        return set(inspect.signature(getattr(solver, method)).parameters)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError(
+            f"{type(solver).__name__}.{method}: the {half} solver's signature cannot be read "
+            f"({type(error).__name__}: {error}). A coupled route hands the value function, the problem's source and a "
+            "volatility override by the keywords the signature shows, so it refuses a solver whose signature "
+            "inspect.signature cannot read (#2209)."
+        ) from error
+
+
 def hjb_solve_kwargs(
     problem: Any,
-    params: set[str] | None,
+    params: set[str],
     solver_name: str,
     *,
     M: np.ndarray,
@@ -553,16 +575,10 @@ def hjb_solve_kwargs(
     (``RegimeSwitchingIterator``'s cross-regime term) composes it with ``compose_hjb_source`` and forwards the
     sum through ``resolve_source_kwarg``; neither decision is restated there.
 
-    ``params`` is the solver's ``solve_hjb_system`` parameter names, ``None`` when introspection failed. ``binding`` is
+    ``params`` is the solver's ``solve_hjb_system`` parameter names (`solver_signature`). ``binding`` is
     the solver's binding of the coupling cost (`hjb_coupling_binding`); off a grid the source has no other.
     """
     kwargs: dict[str, Any] = {}
-    if params is None:
-        # KNOWN HOLE, tracked separately: signature introspection failed, so both the
-        # volatility resolution and the source guard below are skipped and a live source is
-        # dropped here in silence -- the same shape as #2207 one level up. Deciding what an
-        # unreadable signature should mean (refuse, or assume it accepts) is not this change's.
-        return kwargs
     source_term = compose_hjb_source(problem, M, U, binding=binding, reader=solver_name)
     kwargs.update(
         resolve_volatility_kwarg(params, volatility, volatility_kind, problem, solver_name, "solve_hjb_system", "HJB")
@@ -573,7 +589,7 @@ def hjb_solve_kwargs(
 
 def fp_solve_kwargs(
     problem: Any,
-    params: set[str] | None,
+    params: set[str],
     solver_name: str,
     *,
     M: np.ndarray,
@@ -584,11 +600,8 @@ def fp_solve_kwargs(
 ) -> dict[str, Any]:
     """The kwargs an FP solve receives from ``problem``: its composed source, a ``drift_field`` the caller
     passes, and any volatility override. :func:`hjb_solve_kwargs`'s twin, with the same callers and the same
-    history (#2666). ``params`` is the solver's ``solve_fp_system`` parameter names, ``None`` when
-    introspection failed."""
+    history (#2666). ``params`` is the solver's ``solve_fp_system`` parameter names (`solver_signature`)."""
     kwargs: dict[str, Any] = {}
-    if params is None:
-        return kwargs  # same hole as the HJB side; see there.
     source_term = compose_fp_source(problem, M, U)
     if "drift_field" in params and drift_field is not None:
         kwargs["drift_field"] = drift_field
@@ -611,6 +624,10 @@ class BaseCouplingIterator(ABC):
     in ``__init__`` to enable ``_build_hjb_kwargs`` / ``_build_fp_kwargs``.
     """
 
+    #: The parameter names of the HJB and FP solvers' solve methods, read when the route is built (`solver_signature`).
+    _hjb_sig_params: set[str]
+    _fp_sig_params: set[str]
+
     def __init__(self, problem: MFGProblem) -> None:
         """
         Initialize the MFG solver with a problem definition.
@@ -621,8 +638,6 @@ class BaseCouplingIterator(ABC):
         self.problem = problem
         self.warm_start_data: dict[str, Any] | None = None
         self._solution_computed: bool = False
-        self._hjb_sig_params: set[str] | None = None
-        self._fp_sig_params: set[str] | None = None
         # Issue #1489 (S1): the FP solver's declared drift-input convention, cached beside its
         # signature so resolve_fp_drift_kwargs can route by convention rather than param presence.
         self._fp_drift_convention: DriftConvention | None = None
@@ -647,16 +662,8 @@ class BaseCouplingIterator(ABC):
         self._fp_solver_name = type(fp_solver).__name__
         self._hjb_coupling_binding = hjb_coupling_binding(hjb_solver)
         self._hjb_terminal_binding = hjb_terminal_binding(hjb_solver)
-        try:
-            sig = inspect.signature(hjb_solver.solve_hjb_system)
-            self._hjb_sig_params = set(sig.parameters.keys())
-        except (AttributeError, ValueError):
-            self._hjb_sig_params = None
-        try:
-            sig = inspect.signature(fp_solver.solve_fp_system)
-            self._fp_sig_params = set(sig.parameters.keys())
-        except (AttributeError, ValueError):
-            self._fp_sig_params = None
+        self._hjb_sig_params = solver_signature(hjb_solver, "HJB")
+        self._fp_sig_params = solver_signature(fp_solver, "FP")
         # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
         self._fp_drift_convention = getattr(fp_solver, "_drift_convention", None)
 

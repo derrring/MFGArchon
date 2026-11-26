@@ -8,7 +8,6 @@ These utilities are used by both legacy and config-aware fixed-point iterator im
 from __future__ import annotations
 
 import functools
-import inspect
 import time
 from collections import Counter
 from contextlib import contextmanager
@@ -27,41 +26,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
-    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.utils.solver_result import SolverResult
 
 _Solver = TypeVar("_Solver")
 _Params = ParamSpec("_Params")
 _Result = TypeVar("_Result", bound="SolverResult")
-
-
-def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
-    """Return the parameter names of ``fp_solver.solve_fp_system`` (or ``None``).
-
-    Mirrors :meth:`BaseCouplingIterator._init_solver_signatures` for iterators that hold a
-    *list* of per-subsystem FP solvers (regime-switching, graph MFG) and therefore cache one
-    signature set per solver rather than a single shared one. The cached set is the
-    ``fp_sig_params`` argument of :func:`resolve_fp_drift_kwargs`, which decides whether the
-    value function is routed via ``potential_field`` (smooth separable $H$, FP derives the
-    velocity) or ``drift_field`` (Issue #1315).
-    """
-    try:
-        return set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
-    except (AttributeError, ValueError):
-        return None
-
-
-def hjb_solver_sig_params(hjb_solver: BaseHJBSolver) -> set[str] | None:
-    """Return the parameter names of ``hjb_solver.solve_hjb_system`` (or ``None``).
-
-    :func:`fp_solver_sig_params`'s HJB twin, for an iterator that holds one HJB solver per
-    population and hands each set to :func:`~.base_mfg.hjb_solve_kwargs` (#2666).
-    """
-    try:
-        return set(inspect.signature(hjb_solver.solve_hjb_system).parameters.keys())
-    except (AttributeError, ValueError):
-        return None
 
 
 def cold_start_density_at_level(M_initial: np.ndarray, fp_solver: BaseFPSolver, level: int) -> np.ndarray:
@@ -481,69 +451,74 @@ def diverged_value_function(
 #: The reason a solve reports when its budget is spent, on every coupled route (#3002, the approver's ruling 2).
 BUDGET_SPENT = "Maximum iterations reached"
 
-#: The growth of the FP output's mass, against level 0's, past which a coupled solve is diverging (#1489 S5).
+#: The growth of a level's mass in the FP output, against level 0's, past which a coupled solve is diverging (#1489 S5).
 FP_MASS_BLOWUP_FACTOR = 1e4
 
 
 def fp_output_stop(
-    U_new: Sequence[np.ndarray],
     M_new: Sequence[np.ndarray],
-    U: Sequence[np.ndarray],
-    M: Sequence[np.ndarray],
-    M_old: Sequence[np.ndarray],
+    M_in: Sequence[np.ndarray],
+    integrates: Sequence[Callable[[np.ndarray], Any]],
     *,
     each_component: bool,
     site: str,
     iteration: int,
 ) -> str | None:
-    """The stop a sweep's FP output calls for, or None: one rule on every coupled route (#2997's folded item; #3002
-    class line 1, the approver's ruling 3(a)).
+    """The stop an evaluation's FP output calls for, or None: one rule on every coupled route and every phase (#2997's
+    folded item; #3002 class line 1, the approver's rulings 3(a) and 2 of 2026-11-26).
 
-    Each argument holds one array per component: the map's HJB and FP outputs ``U_new`` and ``M_new``, the iterate after
-    the update and the write-back ``U`` and ``M``, and the density the sweep was handed ``M_old``. It runs after the
-    write-back and before the sweep's change is measured, which refuses a non-finite change (#2578).
+    Each argument holds one entry per component: the FP output ``M_new`` of one evaluation of the sweep map, the density
+    ``M_in`` that evaluation was handed, and the integral of the component's problem's own measure,
+    ``problem.spatial_measure().integrate``. It runs before the evaluation's change is
+    measured, which refuses a non-finite change (#2578). On a stop the caller publishes that evaluation's HJB output
+    and ``M_new``, its bad values kept, as the HJB guard publishes its HJB output (#1718; the approver's ruling E).
 
-    - **The magnitude** (#1489 S5): ``'diverged_mass_blowup'`` once the FP output's total ``|M|`` passes
-      ``FP_MASS_BLOWUP_FACTOR`` times level 0's, on the mass of the route's own invariant: each component's mass when
-      ``each_component``, else their total. A finite but blown-up density passes the check below. A legitimate solve
-      conserves its mass, or loses it through an absorbing boundary.
-    - **A non-finite FP output or iterate** (#688): ``'diverged_nan'``. The FP output is read as well as the iterate:
-      the write-back re-imposes m(0) at level 0, so a non-finite level 0 of the output leaves the iterate finite and
-      would reach the measure's refusal instead. The warning names the array that is non-finite, and the density the
-      sweep was handed, and guesses no cause (#2845).
-
-    The caller publishes ``U`` and ``M`` as they are, the iterate the stopped sweep produced.
+    - **The magnitude** (#1489 S5): ``'diverged_mass_blowup'`` once the largest level's mass of ``|M_new|`` passes
+      ``FP_MASS_BLOWUP_FACTOR`` times level 0's mass of ``|M_in|``, which is m(0)'s. The mass is the problem's own
+      measure at each level, the one the verdict path measures through (`sweep_change`, `initial_mass`, #2555), which
+      an FEM mesh has where its geometry has no integral of its own (the approver's ruling of 2026-11-26). It is each
+      component's when ``each_component``, else their total, the route's invariant, and it is the integral of
+      ``|M|``, equal to the mass where the density is non-negative: a conservative scheme can keep the signed integral
+      at its initial value while the density grows in alternating signs, which an FEM solve does. A measure that
+      cannot integrate the output gives no mass, and the magnitude half then reads nothing for it; the non-finite
+      half still runs.
+    - **A non-finite FP output** (#688): ``'diverged_nan'``. The warning names it, and the density the evaluation was
+      handed, and guesses no cause (#2845).
     """
+
+    def level_masses(M: np.ndarray, integrate: Callable[[np.ndarray], Any]) -> np.ndarray | None:
+        try:
+            return np.asarray(integrate(np.abs(M)), dtype=float).reshape(-1)
+        except (ValueError, NotImplementedError):
+            return None
+
     groups = [[k] for k in range(len(M_new))] if each_component else [list(range(len(M_new)))]
     for group in groups:
-        m0_mass = sum(float(np.sum(np.abs(M[k][0]))) if M[k].size else 0.0 for k in group)
-        m_mass = sum(float(np.sum(np.abs(M_new[k]))) for k in group)
-        if np.isfinite(m_mass) and m_mass > FP_MASS_BLOWUP_FACTOR * (m0_mass + 1e-300):
+        new = [level_masses(M_new[k], integrates[k]) for k in group]
+        handed = [level_masses(M_in[k], integrates[k]) for k in group]
+        if any(m is None for m in new) or any(m is None for m in handed):
+            continue
+        level_mass = np.sum(new, axis=0)
+        initial_mass = float(sum(float(m[0]) for m in handed))
+        largest = float(np.max(level_mass)) if level_mass.size else 0.0
+        if np.isfinite(largest) and largest > FP_MASS_BLOWUP_FACTOR * (initial_mass + 1e-300):
             logger.warning(
-                "FP density blew up in iteration %d (total |M|=%.2e, %.1e x the initial), reported by %s; the coupled "
-                "solve is diverging -- enable stabilization. Terminating early (Issue #1489).",
+                "FP density blew up in iteration %d: a level's mass reached %.2e, %.1e times the initial mass, "
+                "reported by %s. Terminating early (Issue #1489).",
                 iteration + 1,
-                m_mass,
-                m_mass / (m0_mass + 1e-300),
+                largest,
+                largest / (initial_mass + 1e-300),
                 site,
             )
             return "diverged_mass_blowup"
-    if (
-        all(np.all(np.isfinite(u)) for u in U)
-        and all(np.all(np.isfinite(m)) for m in M)
-        and all(np.all(np.isfinite(m)) for m in M_new)
-    ):
+    if all(np.all(np.isfinite(m)) for m in M_new):
         return None
-    hjb_bad = not all(np.all(np.isfinite(u)) for u in U_new)
-    fp_bad = not all(np.all(np.isfinite(m)) for m in M_new)
-    bad = [name for name, is_bad in (("the value function", hjb_bad), ("the density", fp_bad)) if is_bad]
     logger.warning(
-        "NaN/Inf in %s in iteration %d, reported by %s: the density the sweep was handed has a minimum of %.3e. "
-        "Terminating early.",
-        " and ".join(bad) or "the damped iterate",
+        "NaN/Inf in the density in iteration %d, reported by %s: the density the evaluation was handed has a minimum of "
+        "%.3e. Terminating early.",
         iteration + 1,
         site,
-        min(float(np.nanmin(m)) for m in M_old),
+        min(float(np.nanmin(m)) for m in M_in),
     )
     return "diverged_nan"
 
@@ -840,7 +815,7 @@ def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_den
 
 def resolve_fp_drift_kwargs(
     problem: object,
-    fp_sig_params: set[str] | None,
+    fp_sig_params: set[str],
     drift_field_override: object | None,
     U: np.ndarray,
     M: np.ndarray,
@@ -892,7 +867,7 @@ def resolve_fp_drift_kwargs(
 
     Args:
         problem: MFG problem (provides ``hamiltonian_class``, ``geometry``, ``dt``).
-        fp_sig_params: Parameter names of ``fp_solver.solve_fp_system`` (or ``None``).
+        fp_sig_params: Parameter names of ``fp_solver.solve_fp_system`` (`base_mfg.solver_signature`).
         drift_field_override: Caller-supplied drift override (array/callable), or ``None``.
         U: Current value function, shape ``(Nt+1, *spatial_shape)``.
         M: Current density, shape ``(Nt+1, *spatial_shape)`` (used only for non-smooth $H$).
@@ -922,9 +897,6 @@ def resolve_fp_drift_kwargs(
         neither ``drift_field`` nor ``potential_field`` (legacy positional-U interface),
         in which case the caller passes ``U`` positionally.
     """
-    if fp_sig_params is None:
-        return {}, True
-
     params = fp_sig_params
     drift_kwargs: dict = {}
 

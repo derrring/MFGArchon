@@ -31,10 +31,11 @@ from .base_mfg import (
     hjb_solve_kwargs,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
+    solver_signature,
 )
 from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
-from .fixed_point_utils import BUDGET_SPENT, diverged_value_function, fp_output_stop, hjb_solver_sig_params
+from .fixed_point_utils import BUDGET_SPENT, diverged_value_function, fp_output_stop
 from .iteration_state import IterationState
 
 if TYPE_CHECKING:
@@ -154,20 +155,11 @@ class MultiPopulationIterator:
                 problem=multi_problem.get_population(_k),
             )
 
-        # Issue #1043: cache each FP solver's solve_fp_system signature so the drift/potential
-        # convention can be resolved via the shared resolve_fp_drift_kwargs (same as single-pop).
-        import inspect
-
-        self._fp_sig_params: list[set[str] | None] = []
-        for fp in fp_solvers:
-            try:
-                self._fp_sig_params.append(set(inspect.signature(fp.solve_fp_system).parameters))
-            except (AttributeError, ValueError, TypeError):
-                self._fp_sig_params.append(None)
-
-        # Issue #2666: the HJB twin, for the population's source. Until it existed this loop handed the
-        # HJB solver no source at all, and a population's `source_term_hjb` was dropped in silence.
-        self._hjb_sig_params: list[set[str] | None] = [hjb_solver_sig_params(h) for h in hjb_solvers]
+        # Issue #1043: each FP solver's solve_fp_system signature, so the drift/potential convention is resolved via the
+        # shared resolve_fp_drift_kwargs (same as single-pop); and #2666's HJB twin, for the population's source. Both
+        # through the one reader every coupled route builds with, which refuses one it cannot read (#2209).
+        self._fp_sig_params: list[set[str]] = [solver_signature(fp, "FP") for fp in fp_solvers]
+        self._hjb_sig_params: list[set[str]] = [solver_signature(h, "HJB") for h in hjb_solvers]
 
         # Issue #1489 (S1): per-population FP drift-input convention, parallel to _fp_sig_params, so
         # resolve_fp_drift_kwargs routes each population by convention rather than param presence.
@@ -395,25 +387,6 @@ class MultiPopulationIterator:
                 # The UNDAMPED map output is what the convergence test needs; see the block below.
                 M_map[k] = M_new_k
 
-            # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
-            # terminal row to the u(T) this sweep's HJB solve was given. The change below reads the copies taken at the
-            # sweep's start and the map's outputs, which the update leaves alone.
-            for k in range(K):
-                U_k, M_k = runs[k].update(iteration, U_old[k], U_map[k], M_old[k], M_map[k])
-                U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
-            fp_output_available = True
-
-            # The FP-output rule every coupled route reads, on each population's own mass, MultiPopulation's invariant
-            # (#2997; #3002 stage 2a, ruling 3(a) and ruling A), before the change is measured, which refuses a
-            # non-finite one (#2578). Stage 2b moves this call into the coupled driver.
-            stop = fp_output_stop(
-                U_map, M_map, U, M, M_old, each_component=True, site="MultiPopulationIterator", iteration=iteration
-            )
-            if stop is not None:
-                reason = stop
-                record.diverged()
-                break
-
             # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
             # step.
             #
@@ -427,14 +400,39 @@ class MultiPopulationIterator:
             # #2555: each population's change is its relative L2 change in its OWN problem's measure,
             # and the criterion is the single-population one, fed the max over populations -- so u and
             # m no longer meet one tolerance in their own units.
+            # The FP-output rule every coupled route reads, on each population's own mass, MultiPopulation's invariant
+            # (#2997; #3002 stage 2a, rulings 3(a) and A), before the change is measured, which refuses a non-finite one
+            # (#2578). A stop publishes the sweep's HJB and FP outputs (ruling E). Stage 2b moves this call into the
+            # coupled driver.
+            stop = fp_output_stop(
+                M_map,
+                M_old,
+                integrates,
+                each_component=True,
+                site="MultiPopulationIterator",
+                iteration=iteration,
+            )
+            if stop is not None:
+                U[:], M[:] = U_map, M_map
+                fp_output_available = True
+                reason = stop
+                record.diverged()
+                break
+
             per_population = [
                 sweep_change(U_map[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)
             ]
             worst = worst_sweep_change(per_population, "population")
             record.measured(per_population)
+
+            # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
+            # terminal row to the u(T) this sweep's HJB solve was given.
             for k in range(K):
+                U_k, M_k = runs[k].update(iteration, U_old[k], U_map[k], M_old[k], M_map[k])
+                U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_population[k]):
                     logger.warning(f"MultiPopulationIterator[population {k}]: {message}")
+            fp_output_available = True
 
             per_pop_m = [f"{change['l2distm_rel']:.2e}" for change in per_population]
             per_pop_u = [f"{change['l2distu_rel']:.2e}" for change in per_population]

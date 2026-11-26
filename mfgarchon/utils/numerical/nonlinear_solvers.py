@@ -566,6 +566,8 @@ class NewtonRun:
         self.original_shape = np.asarray(x0).shape
         self.is_scalar = self.original_shape == ()
         self.residual_history: list[float] = []
+        # The steps that moved the iterate: until one has, the iterate is where the solve began (#1717)
+        self.steps_taken = 0
         self.jacobian_evals = 0
         # Use provided jacobian or default
         self.jac_func = jacobian or solver.jacobian_func
@@ -576,9 +578,13 @@ class NewtonRun:
     def evaluate(self) -> tuple[NDArray, float]:
         """F at the iterate, and its norm, appended to the residual history."""
         F_current = self.F(self.x)
+        return F_current, self.accept(F_current)
+
+    def accept(self, F_current: NDArray) -> float:
+        """The norm of ``F_current``, F at the iterate as its caller evaluated it, appended to the residual history."""
         residual_norm = np.linalg.norm(F_current.flatten())
         self.residual_history.append(float(residual_norm))
-        return F_current, residual_norm
+        return residual_norm
 
     def converged(self, iteration: int, residual_norm: float) -> tuple[Any, SolverInfo]:
         """The iterate, reported converged at ``iteration`` (0-based)."""
@@ -674,6 +680,7 @@ class NewtonRun:
 
         # Update
         self.x = self.x + alpha * delta_x
+        self.steps_taken += 1
         return None
 
     def exhausted(self, iterations: int | None = None) -> tuple[Any, SolverInfo]:

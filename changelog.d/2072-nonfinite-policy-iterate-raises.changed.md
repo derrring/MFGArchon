@@ -31,8 +31,8 @@ and not to a broken fixture.
 
 **Not resolved here, and worth a decision:** the coupled loops' HJB guard, `diverged_value_function` in
 `coupling/fixed_point_utils.py` (#1717, #1718), exists for a diverged HJB — the loop publishes the field, sets
-`convergence_reason = "diverged_nan"`, and terminates in a structured way, with a docstring arguing that a silent or
-escaping outcome is the worse one. A Howard
+`convergence_reason = "diverged_nan"`, and terminates in a structured way, with a docstring arguing that publishing the
+diverged iterate beats keeping the last finite one, which would trade a misattributed diagnostic for a silent one. A Howard
 divergence now escapes as an uncaught `RuntimeError` instead. That path never fired for Howard before
 either (the fallback made the field finite), so this is not a regression — but Howard and Newton now
 differ at the coupling layer for the same physical failure, and #2079 tracks it along with the silent
