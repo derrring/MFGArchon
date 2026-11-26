@@ -126,8 +126,8 @@ def _reason(result) -> str:
 
 
 def _bad_fp(problem, at: int, how: str) -> FPFDMSolver:
-    """An FP-FDM solver whose output goes bad from its ``at``-th solve: one entry NaN or +inf, or the whole output
-    times 1e5, finite (#1489's blow-up)."""
+    """An FP-FDM solver whose output goes bad from its ``at``-th solve: one entry NaN or +inf, one entry of level 0
+    NaN, which the write-back re-imposes, or the whole output times 1e5, finite (#1489's blow-up)."""
     fp = FPFDMSolver(problem)
     solve, calls = fp.solve_fp_system, [0]
 
@@ -138,6 +138,8 @@ def _bad_fp(problem, at: int, how: str) -> FPFDMSolver:
         if calls[0] >= at:
             if how == "nan":
                 M[3, 4] = np.nan
+            elif how == "nan at level 0":
+                M[0, 4] = np.nan
             elif how == "inf":
                 M[3, 4] = np.inf
             else:
@@ -154,13 +156,15 @@ def _bad_fp(problem, at: int, how: str) -> FPFDMSolver:
         ("NaN at sweep 1", 1, "nan", "diverged_nan"),
         ("NaN at sweep 2", 2, "nan", "diverged_nan"),
         ("+inf at sweep 2", 2, "inf", "diverged_nan"),
+        ("NaN at level 0 only, at sweep 2", 2, "nan at level 0", "diverged_nan"),
         ("x1e5 from sweep 2", 2, "x1e5", "diverged_mass_blowup"),
     ],
 )
 @pytest.mark.parametrize("route", ROUTES)
 def test_an_fp_output_the_solve_cannot_use_stops_it_on_every_route(route, case, at, how, reason):
     """Mutant: the driver's or a component loop's `fp_output_stop` call removed, or its magnitude half; the NaN rows
-    then raise #2578's refusal of a non-finite change, and the x1e5 rows run their budget out."""
+    then raise #2578's refusal of a non-finite change, and the x1e5 rows run their budget out. The level-0 row reds
+    under the rule reading the iterate only, as FixedPoint's guard did."""
     problems = _problems(route)
     hjbs = [HJBFDMSolver(p) for p in problems]
     fps = [_bad_fp(p, at, how) for p in problems]

@@ -507,8 +507,10 @@ def fp_output_stop(
       ``FP_MASS_BLOWUP_FACTOR`` times level 0's, on the mass of the route's own invariant: each component's mass when
       ``each_component``, else their total. A finite but blown-up density passes the check below. A legitimate solve
       conserves its mass, or loses it through an absorbing boundary.
-    - **A non-finite iterate** (#688): ``'diverged_nan'``. The warning names the array that is non-finite, and the
-      density the sweep was handed, and guesses no cause (#2845).
+    - **A non-finite FP output or iterate** (#688): ``'diverged_nan'``. The FP output is read as well as the iterate:
+      the write-back re-imposes m(0) at level 0, so a non-finite level 0 of the output leaves the iterate finite and
+      would reach the measure's refusal instead. The warning names the array that is non-finite, and the density the
+      sweep was handed, and guesses no cause (#2845).
 
     The caller publishes ``U`` and ``M`` as they are, the iterate the stopped sweep produced.
     """
@@ -526,7 +528,11 @@ def fp_output_stop(
                 site,
             )
             return "diverged_mass_blowup"
-    if all(np.all(np.isfinite(u)) for u in U) and all(np.all(np.isfinite(m)) for m in M):
+    if (
+        all(np.all(np.isfinite(u)) for u in U)
+        and all(np.all(np.isfinite(m)) for m in M)
+        and all(np.all(np.isfinite(m)) for m in M_new)
+    ):
         return None
     hjb_bad = not all(np.all(np.isfinite(u)) for u in U_new)
     fp_bad = not all(np.all(np.isfinite(m)) for m in M_new)
