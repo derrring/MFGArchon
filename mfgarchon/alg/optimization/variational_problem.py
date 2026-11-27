@@ -241,7 +241,7 @@ class VariationalMFGProblem:
 
             @jit
             def jax_lagrangian(t, x, v, m):
-                return lagrangian(t=t, x=line_coordinates(x), v=v, m=m)
+                return lagrangian(t=t, x=(x,), v=v, m=m)
 
             self._jax_lagrangian = jax_lagrangian
 
@@ -252,7 +252,7 @@ class VariationalMFGProblem:
 
             @jit
             def jax_terminal_cost(x):
-                return terminal(x=line_coordinates(x))
+                return terminal(x=(x,))
 
             self._jax_terminal_cost = jax_terminal_cost
 
@@ -278,7 +278,7 @@ class VariationalMFGProblem:
         if self.use_jax and hasattr(self, "_jax_lagrangian"):
             return self._jax_lagrangian(t, x, v, m)
         elif self.components.lagrangian_func:
-            return self._bound("lagrangian_func")(t=t, x=line_coordinates(x), v=v, m=m)
+            return self._bound("lagrangian_func")(t=t, x=(x,), v=v, m=m)
         else:
             raise ValueError("No Lagrangian function defined")
 
@@ -295,7 +295,7 @@ class VariationalMFGProblem:
         if self.use_jax and hasattr(self, "_jax_terminal_cost"):
             return self._jax_terminal_cost(x)
         elif self.components.terminal_cost_func:
-            return self._bound_terminal_cost()(x=line_coordinates(x))
+            return self._bound_terminal_cost()(x=(x,))
         else:
             return 0.0  # Default: no terminal cost
 
@@ -316,7 +316,7 @@ class VariationalMFGProblem:
 
         # ∂L/∂x (force term)
         if self.components.lagrangian_dx_func:
-            derivatives["dx"] = self._bound("lagrangian_dx_func")(t=t, x=line_coordinates(x), v=v, m=m)
+            derivatives["dx"] = self._bound("lagrangian_dx_func")(t=t, x=(x,), v=v, m=m)
         else:
             # Numerical derivative
             eps = 1e-8
@@ -326,7 +326,7 @@ class VariationalMFGProblem:
 
         # ∂L/∂v (momentum)
         if self.components.lagrangian_dv_func:
-            derivatives["dv"] = self._bound("lagrangian_dv_func")(t=t, x=line_coordinates(x), v=v, m=m)
+            derivatives["dv"] = self._bound("lagrangian_dv_func")(t=t, x=(x,), v=v, m=m)
         else:
             # Numerical derivative
             eps = 1e-8
@@ -336,7 +336,7 @@ class VariationalMFGProblem:
 
         # ∂L/∂m (population interaction)
         if self.components.lagrangian_dm_func:
-            derivatives["dm"] = self._bound("lagrangian_dm_func")(t=t, x=line_coordinates(x), v=v, m=m)
+            derivatives["dm"] = self._bound("lagrangian_dm_func")(t=t, x=(x,), v=v, m=m)
         else:
             # Numerical derivative
             eps = 1e-8
@@ -393,7 +393,7 @@ class VariationalMFGProblem:
             """∂H/∂m from Lagrangian coupling"""
             if self.components.lagrangian_dm_func:
                 # For velocity-independent coupling, ∂H/∂m = ∂L/∂m
-                return self._bound("lagrangian_dm_func")(t=t, x=line_coordinates(x), v=p, m=m)
+                return self._bound("lagrangian_dm_func")(t=t, x=(x,), v=p, m=m)
             else:
                 return 0.0
 

@@ -2,26 +2,32 @@
 ``types/callable_protocols.py`` (plan v2, #2875 comment 7219629907, approved in 7219680642).
 
 What this file reads, by AST over ``mfgarchon/`` outside the owner module. An *x position* is:
-- the ``x=`` argument of a call, and the ``"x"`` entry of a dict a call unpacks with ``**`` (inline, bound to a name, or
-  in an if-expression);
-- the first argument of `coordinate_tuple`, `point_tuple` and `point_at`, which take a tuple as it is;
+- the ``x=`` argument of a call, the ``"x"`` entry of a dict a call unpacks with ``**`` (inline, bound to a name, or in
+  an if-expression), and the ``"x"`` entry of a dict handed to a binder's ``check_on``;
+- the first argument of `coordinate_tuple` and `point_at`, which take a tuple as it is, and of `point_tuple`, which
+  rebuilds a tuple's entries as floats;
 - an argument handed, by position or by name, to a parameter named ``x`` or to a parameter that carries an x on: one its
   function hands, as it is, to an x position. The carry is followed through calls, closures and the arguments a
   ``functools.partial`` is made with, to a fixpoint.
 
 No x position holds a value built outside the owner: a tuple or list display, a comprehension, a ``tuple(...)`` or
-``list(...)`` call, a call of a package function that returns one of these, a call of one that returns one of its own
-arguments (followed to that argument), or a name bound to any of these in the function or one enclosing it. At the
-owner's first argument only a tuple counts, since the owner reads a list as an array. A lambda's body is read as its
-function's.
+``list(...)`` call, ``np.meshgrid(...)``, the ``next(...)`` of a ``zip(...)`` or ``itertools.product(...)``, a call of a
+package function that returns one of these, a call of one that returns one of its own arguments (followed to that
+argument), or a name bound to any of these by a plain or an annotated assignment in the function or one enclosing it. At
+`point_tuple`'s first argument only a tuple counts, since it reads a list as an array. At the first argument of
+`coordinate_tuple` and `point_at` the rule is stricter: it is the enclosing function's own parameter, or an allowance in
+``OWNER_ARGUMENTS`` names its expression. A lambda's body is read as its function's.
 
 A caller's own ``x``, handed to a public method, is outside the fact and reaches the body as main hands it. Those relay
-sites are named in ``RELAYS``: each hands on the ``x`` it was given, a point its owner builds, or a point main derives
-from it (``DERIVED``). An allowance in ``DERIVED`` that covers nothing fails.
+sites are named in ``RELAYS``: each hands on its own parameter, or a form main gives it, named with its expression in
+``DERIVED`` (a value built from it, which the scan flags) or ``RELAY_FORMS`` (the owner called on it, or an arithmetic
+step from it). An allowance in ``OWNER_ARGUMENTS``, ``DERIVED`` or ``RELAY_FORMS`` that covers nothing fails.
 
-What the scan cannot follow: a callee named through ``getattr`` or found in a registry, a function or method name that
-several definitions share (followed neither as a callee nor as a helper), the arguments a ``functools.partial`` object
-is later called with, ``*args`` and ``**kwargs`` forwarding, a class's constructor, and a value kept on an attribute.
+What the scan cannot follow: a callee named through ``getattr`` or found in a registry; a function or method name that
+several definitions share (followed neither as a callee nor as a helper); the arguments a ``functools.partial`` object is
+later called with; ``*args`` and ``**kwargs`` forwarding; a class's constructor; a value kept on an attribute; a carrier
+parameter its own function rebinds; a lambda bound to a name and called as a carrier; a name bound by a tuple target, a
+``for`` target or a walrus; and a tuple-returning call outside the package other than those named above.
 The raw Hamiltonian doors are also held at runtime, by
 ``test_a_control_has_ps_shape_2875.py::test_each_read_hands_x_in_its_owners_form``.
 Each rule runs on planted sources first, which it must flag.
@@ -40,11 +46,21 @@ import mfgarchon
 PACKAGE = Path(mfgarchon.__file__).resolve().parent
 OWNER = "types/callable_protocols.py"
 BUILT = (ast.Tuple, ast.List, ast.ListComp, ast.GeneratorExp)
-TAKES_A_TUPLE = {"coordinate_tuple", "point_tuple", "point_at"}
-OWNER_FUNCTIONS = {*TAKES_A_TUPLE, "grid_coordinates", "line_coordinates"}
+AS_IT_IS = {"coordinate_tuple", "point_at"}
+REBUILDS = {"point_tuple"}
+OWNER_FUNCTIONS = {*AS_IT_IS, *REBUILDS, "grid_coordinates", "line_coordinates"}
+TUPLE_ITERATORS = {"zip", "product"}
 
-# Where a caller's own x reaches a body (the approver's rulings in 7216681260 and 7219629907)
+# Where a caller's own x reaches a body (the approver's rulings in 7216681260, 7219629907 and on review 2)
 RELAYS = {
+    "alg/optimization/variational_problem.py": [
+        "VariationalMFGProblem._setup_jax_functions.jax_lagrangian",
+        "VariationalMFGProblem._setup_jax_functions.jax_terminal_cost",
+        "VariationalMFGProblem.compute_lagrangian_derivatives",
+        "VariationalMFGProblem.convert_to_hamiltonian.hamiltonian_dm",
+        "VariationalMFGProblem.evaluate_lagrangian",
+        "VariationalMFGProblem.evaluate_terminal_cost",
+    ],
     "core/hamiltonian.py": [
         "CongestionHamiltonian._value",
         "CongestionHamiltonian.optimal_control",
@@ -88,11 +104,70 @@ RELAYS = {
     "utils/drift_helpers.py": ["composite_drift._composite_drift"],
 }
 
-# The points main derives from a caller's x at a relay site: its finite-difference steps, kept as main builds them
+# The points main builds from a caller's x at a relay site, by the value handed and its expression: the finite-difference
+# steps, and a point on a line taken as the one-entry tuple (x,)
+_ON_A_LINE = {"(x,)": "(x,)"}
+_STEPS = {"x_plus": "(*x[:i], x[i] + eps, *x[i + 1:])", "x_minus": "(*x[:i], x[i] - eps, *x[i + 1:])"}
 DERIVED = {
+    "alg/optimization/variational_problem.py": {
+        "VariationalMFGProblem._setup_jax_functions.jax_lagrangian": _ON_A_LINE,
+        "VariationalMFGProblem._setup_jax_functions.jax_terminal_cost": _ON_A_LINE,
+        "VariationalMFGProblem.compute_lagrangian_derivatives": _ON_A_LINE,
+        "VariationalMFGProblem.convert_to_hamiltonian.hamiltonian_dm": _ON_A_LINE,
+        "VariationalMFGProblem.evaluate_lagrangian": _ON_A_LINE,
+        "VariationalMFGProblem.evaluate_terminal_cost": _ON_A_LINE,
+    },
+    "core/hamiltonian.py": {"HamiltonianBase._finite_diff_dx": _STEPS, "SeparableHamiltonian.dx": _STEPS},
+}
+
+# Main's other forms at a relay site, which the scan does not flag, by the value handed and its expression: the owner
+# called on the caller's x (a batch read point by point, the dimension stated, the stand-in where none is given), and an
+# arithmetic step from it
+_AT_A_POINT = {"point_at(x, i)": "point_at(x, i)"}
+_STAND_IN = {"x": "point_tuple(np.zeros(max(d, 1)))"}
+RELAY_FORMS = {
+    "alg/optimization/variational_problem.py": {
+        "VariationalMFGProblem.compute_lagrangian_derivatives": {"x + eps": "x + eps", "x - eps": "x - eps"},
+    },
     "core/hamiltonian.py": {
-        "HamiltonianBase._finite_diff_dx": {"x_plus", "x_minus"},
-        "SeparableHamiltonian.dx": {"x_plus", "x_minus"},
+        "HamiltonianBase.dm": _AT_A_POINT,
+        "HamiltonianBase.dp": _AT_A_POINT,
+        "LagrangianBase.proximal.objective": _STAND_IN,
+        "LagrangianBase.proximal.objective_nd": _STAND_IN,
+    },
+    "core/stochastic/stochastic_problem.py": {
+        "StochasticMFGProblem.g_conditional": {"x": "coordinate_tuple(x, self.dimension)"},
+    },
+}
+
+# Arguments of coordinate_tuple and point_at that are not the enclosing function's own parameter, by expression: each an
+# array of the library's own points, the owner's own output (_call_problem_source), or the caller's own x on the line
+# that rebinds it to the owner's (g_conditional)
+OWNER_ARGUMENTS = {
+    "alg/numerical/fem/fp_fem_solver.py": {"FPFEMSolver._build_advection": {"np.moveaxis(x_qp, 0, -1)"}},
+    "alg/numerical/fp_solvers/fp_fvm.py": {"FPFVMSolver._face_velocity_from_potential": {"seam"}},
+    "alg/numerical/fp_solvers/fp_particle.py": {"FPParticleSolver._solve_fp_system_callable_drift": {"particles_t"}},
+    "alg/numerical/hjb_solvers/base_hjb.py": {"_refuse_a_non_finite_hjb_term": {"points[bad]"}},
+    "alg/numerical/hjb_solvers/hjb_gfdm.py": {"HJBGFDMSolver._solve_backward_howard": {"_pts"}},
+    "alg/numerical/hjb_solvers/hjb_howard.py": {"HJBHowardSolver._howard_step": {"pts"}},
+    "alg/numerical/meshless_galerkin/fp_solver.py": {
+        "MeshlessGalerkinFPSolver._build_advection": {"self._disc.dof_coordinates"}
+    },
+    "alg/numerical/weak_form_hjb_solver.py": {
+        "WeakFormHJBSolver._solve_timestep_newton": {"x_grid"},
+        "WeakFormHJBSolver.solve_hjb_system": {"self._disc.dof_coordinates"},
+    },
+    "core/hamiltonian.py": {"_state_x": {"state.x"}},
+    "core/mfg_components.py": {"ConditionsMixin._condition_on_grid": {"grid"}},
+    "core/mfg_problem.py": {"_call_problem_source": {"coordinates"}},
+    "core/stochastic/stochastic_problem.py": {"StochasticMFGProblem.g_conditional": {"x"}},
+    "operators/interaction/energy_functionals.py": {"potential_reader.read": {"points"}},
+    "utils/manufactured.py": {"_drift_coefficient": {"np.zeros_like(probes)"}, "fp_source.source": {"pts"}},
+    "utils/pde_coefficients.py": {"points_of": {"np.stack(grid, axis=-1)"}},
+    "utils/validation/components.py": {"_evaluate_callable_on_grid": {"points"}},
+    "utils/validation/functions.py": {
+        "_read_source": {"np.asarray(x, dtype=float)"},
+        "_refuse_a_non_finite_source": {"probe"},
     },
 }
 
@@ -103,6 +178,7 @@ class Site:
     line: int
     function: str
     value: str
+    derivation: str
     what: str
 
     def __str__(self) -> str:
@@ -148,11 +224,15 @@ def _positional(fn: ast.AST) -> list[str]:
 
 
 def _bound_to(fn: ast.AST, name: str) -> list[ast.AST]:
-    return [
-        node.value
-        for node in _own_nodes(fn)
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
-    ]
+    """What a plain or an annotated assignment in ``fn`` binds ``name`` to."""
+    bound = []
+    for node in _own_nodes(fn):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            bound.append(node.value)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                bound.append(node.value)
+    return bound
 
 
 def _bindings(chain: list[ast.AST], name: str) -> list[ast.AST]:
@@ -175,10 +255,16 @@ def _parameter_of(chain: list[ast.AST], name: str) -> ast.AST | None:
     return None
 
 
+def _derivation(value: ast.AST, chain: list[ast.AST]) -> str:
+    """The expression ``value`` stands for: what a name is bound to, or the value itself."""
+    bound = _bindings(chain, value.id) if isinstance(value, ast.Name) else []
+    return " | ".join(sorted({ast.unparse(v) for v in bound})) if bound else ast.unparse(value)
+
+
 class PackageIndex:
     """What a call's callee does with what it is handed, across the package outside the owner: the functions that return
     a value they build, those that return one of their parameters as it is, and the parameters that carry an x on, with
-    the kind of x position each reaches ("x", or "owner" for the owner's first argument)."""
+    the kind of x position each reaches ("x", or "owner" for `point_tuple`'s first argument)."""
 
     def __init__(self, sources: dict[str, str]):
         self.scopes = []
@@ -219,6 +305,7 @@ class PackageIndex:
                         holder = _parameter_of(chain, value.id) if isinstance(value, ast.Name) else None
                         if holder is None or self.unique.get(holder.name) is not holder:
                             continue
+                        kind = "x" if kind == "as it is" else kind
                         carried = self.carriers.setdefault(holder.name, {})
                         if carried.get(value.id) not in ("x", kind):
                             carried[value.id] = "x" if "x" in (kind, carried.get(value.id)) else kind
@@ -228,21 +315,25 @@ class PackageIndex:
         return "x" if param == "x" else self.carriers.get(callee, {}).get(param)
 
     def x_positions(self, call: ast.Call, chain: list[ast.AST]):
-        """Each value ``call`` hands to an x position, with the kind of that position."""
+        """Each value ``call`` hands to an x position, with the kind of that position: "x", "owner" (`point_tuple`'s
+        first argument) or "as it is" (the first argument of `coordinate_tuple` or `point_at`)."""
         name = _name(call)
+        dicts = []
         for keyword in call.keywords:
             if keyword.arg == "x":
                 yield keyword.value, "x"
             elif keyword.arg is None:
                 unpacked = keyword.value
-                held = _bindings(chain, unpacked.id) if isinstance(unpacked, ast.Name) else [unpacked]
-                for value in held:
-                    for dict_node in (n for n in ast.walk(value) if isinstance(n, ast.Dict)):
-                        for key, entry in zip(dict_node.keys, dict_node.values, strict=True):
-                            if isinstance(key, ast.Constant) and key.value == "x":
-                                yield entry, "x"
-        if name in TAKES_A_TUPLE and call.args and not isinstance(call.args[0], ast.Starred):
-            yield call.args[0], "owner"
+                dicts += _bindings(chain, unpacked.id) if isinstance(unpacked, ast.Name) else [unpacked]
+        if name == "check_on" and call.args:
+            dicts.append(call.args[0])
+        for value in dicts:
+            for dict_node in (n for n in ast.walk(value) if isinstance(n, ast.Dict)):
+                for key, entry in zip(dict_node.keys, dict_node.values, strict=True):
+                    if isinstance(key, ast.Constant) and key.value == "x":
+                        yield entry, "x"
+        if name in AS_IT_IS | REBUILDS and call.args and not isinstance(call.args[0], ast.Starred):
+            yield call.args[0], "as it is" if name in AS_IT_IS else "owner"
         args, method = call.args, isinstance(call.func, ast.Attribute)
         if name == "partial" and call.args:
             target = call.args[0]
@@ -283,8 +374,10 @@ class PackageIndex:
         if not isinstance(value, ast.Call):
             return False
         name = _name(value)
-        if name == "tuple" or (name == "list" and not tuples_only) or name in self.builders:
+        if name in ("tuple", "meshgrid") or (name == "list" and not tuples_only) or name in self.builders:
             return True
+        if name == "next" and value.args and isinstance(value.args[0], ast.Call):
+            return _name(value.args[0]) in TUPLE_ITERATORS
         callee = self.unique.get(name)
         passed = self.passes.get(name, set())
         if callee is None or not passed:
@@ -311,66 +404,61 @@ def deciding_sites(source: str, path: str, index: PackageIndex | None = None) ->
             if not isinstance(node, ast.Call):
                 continue
             for value, kind in index.x_positions(node, chain):
-                if index.built(value, chain, tuples_only=kind == "owner"):
+                if kind == "as it is":
+                    own = isinstance(value, ast.Name) and chain and _parameter_of(chain[:1], value.id) is chain[0]
+                    if own:
+                        continue
+                    what = "hands its owner a value that is not its own parameter"
+                elif index.built(value, chain, tuples_only=kind == "owner"):
                     what = "hands its owner a tuple it built" if kind == "owner" else "hands x as a value it built"
-                    found.append(Site(path, node.lineno, qual, ast.unparse(value)[:60], what))
+                else:
+                    continue
+                found.append(Site(path, node.lineno, qual, ast.unparse(value), _derivation(value, chain), what))
     return found
 
 
-def against_allowances(found: list[Site], derived: dict[str, dict[str, set[str]]]) -> tuple[list[Site], list[str]]:
-    """The sites no allowance covers, and the allowances that cover no site."""
+def against_allowances(
+    found: list[Site], derived: dict[str, dict[str, dict[str, str]]], arguments: dict[str, dict[str, set[str]]]
+) -> tuple[list[Site], list[str]]:
+    """The sites no allowance covers, and the allowances that cover no site: ``derived`` by the value handed and its
+    expression, ``arguments`` by the owner's argument."""
     covered = set()
     left = []
     for site in found:
-        if site.value in derived.get(site.path, {}).get(site.function, set()):
+        if site.what.startswith("hands its owner a value that is not"):
+            if site.value in arguments.get(site.path, {}).get(site.function, set()):
+                covered.add((site.path, site.function, site.value))
+                continue
+        elif derived.get(site.path, {}).get(site.function, {}).get(site.value) == site.derivation:
             covered.add((site.path, site.function, site.value))
-        else:
-            left.append(site)
-    unused = [
-        f"{path}: {function} derives no {value}"
-        for path, functions in derived.items()
-        for function, values in functions.items()
-        for value in sorted(values)
-        if (path, function, value) not in covered
-    ]
+            continue
+        left.append(site)
+    allowed = [(p, f, v) for p, fs in derived.items() for f, vs in fs.items() for v in vs]
+    allowed += [(p, f, v) for p, fs in arguments.items() for f, vs in fs.items() for v in vs]
+    unused = [f"{p}: {f} hands no {v}" for p, f, v in sorted(allowed) if (p, f, v) not in covered]
     return left, unused
 
 
-def _the_callers(value: ast.AST, chain: list[ast.AST], derived: set[str], depth: int = 0) -> bool:
-    """Whether ``value`` is a caller's own x as it was given, a point its owner builds, or a point main derives."""
-    if depth > 6:
-        return False
-    if isinstance(value, ast.IfExp):
-        return _the_callers(value.body, chain, derived, depth + 1) and _the_callers(
-            value.orelse, chain, derived, depth + 1
-        )
-    if isinstance(value, ast.Call):
-        return _name(value) in OWNER_FUNCTIONS
-    if not isinstance(value, ast.Name):
-        return False
-    if value.id in derived:
-        return True
-    for fn in chain:
-        bound = _bound_to(fn, value.id)
-        if bound or value.id in _params(fn):
-            return (value.id in _params(fn) or bool(bound)) and all(
-                _the_callers(v, chain, derived, depth + 1) for v in bound
-            )
-    return False
-
-
-def relay_defects(source: str, path: str, names: list[str], index: PackageIndex | None = None) -> list[str]:
-    """For each named relay site in ``source``: missing, relaying nothing, or handing on an x other than the caller's,
-    the owner's, or one ``DERIVED`` allows."""
+def relay_defects(
+    source: str,
+    path: str,
+    names: list[str],
+    index: PackageIndex | None = None,
+    derived: dict[str, dict[str, dict[str, str]]] | None = None,
+    forms: dict[str, dict[str, dict[str, str]]] | None = None,
+) -> tuple[list[str], set[tuple[str, str, str]]]:
+    """For each named relay site in ``source``: missing, relaying nothing, or handing on anything but its own parameter or
+    a point an allowance names by its expression. Returns the defects and the ``forms`` allowances it used."""
     index = index or PackageIndex({path: source})
+    derived = DERIVED if derived is None else derived
+    forms = RELAY_FORMS if forms is None else forms
     functions = {qual: [fn, *enclosing] for qual, fn, enclosing in _functions(ast.parse(source))}
-    defects = []
+    defects, used = [], set()
     for name in names:
         chain = functions.get(name)
         if chain is None:
             defects.append(f"{name}: no such function")
             continue
-        derived = DERIVED.get(path, {}).get(name, set())
         handed = [
             value
             for node in _own_nodes(chain[0])
@@ -379,10 +467,17 @@ def relay_defects(source: str, path: str, names: list[str], index: PackageIndex 
         ]
         if not handed:
             defects.append(f"{name}: relays no x")
-        defects += [
-            f"{name}: hands on x as {ast.unparse(v)[:60]}" for v in handed if not _the_callers(v, chain, derived)
-        ]
-    return defects
+        for value in handed:
+            text, expression = ast.unparse(value), _derivation(value, chain)
+            if isinstance(value, ast.Name) and _parameter_of(chain, value.id) is not None:
+                continue
+            if derived.get(path, {}).get(name, {}).get(text) == expression:
+                continue
+            if forms.get(path, {}).get(name, {}).get(text) == expression:
+                used.add((path, name, text))
+                continue
+            defects.append(f"{name}: hands on x as {text}" + (f" = {expression}" if expression != text else ""))
+    return defects, used
 
 
 def _package_sources() -> dict[str, str]:
@@ -396,7 +491,11 @@ def _package_sources() -> dict[str, str]:
         ("body(x=tuple(p))", "hands x as a value it built"),
         ("body(x=[a[k] for k in range(2)])", "hands x as a value it built"),
         ("def door(p):\n    pts = tuple(p)\n    return body(x=pts)", "hands x as a value it built"),
+        ("def door(p):\n    pts: tuple = tuple(p)\n    return body(x=pts)", "hands x as a value it built"),
+        ("body(x=np.meshgrid(a, b))", "hands x as a value it built"),
+        ("body(x=next(zip(a, b)))", "hands x as a value it built"),
         ('body(**{"t": 0.0, "x": tuple(q)})', "hands x as a value it built"),
+        ('bound.check_on({"t": 0.0, "x": (grid,)})', "hands x as a value it built"),
         (
             'def door(t, q):\n    slots = {"t": t, "x": tuple(q)}\n    return body(**slots)',
             "hands x as a value it built",
@@ -418,11 +517,12 @@ def _package_sources() -> dict[str, str]:
             "def prox(x=None):\n    x = tuple(z) if x is None else x\n\n    def objective(a):\n        return body(x=x)\n\n    return objective",
             "hands x as a value it built",
         ),
-        ("coordinate_tuple(tuple(p), 2)", "hands its owner a tuple it built"),
-        ("point_at((a, b), 0)", "hands its owner a tuple it built"),
-        # The owner handed a tuple through a helper that returns its argument as it is (review 1's mut_launder)
+        ("point_tuple(tuple(p))", "hands its owner a tuple it built"),
+        ("coordinate_tuple(np.meshgrid(a, b), 2)", "hands its owner a value that is not its own parameter"),
+        ("def door(p):\n    q = p\n    return point_at(q, 0)", "hands its owner a value that is not its own parameter"),
+        # The owner handed a tuple through a helper that returns its argument (review 1's mut_launder)
         (
-            "def launder(v):\n    return v\n\n\ndef door(p):\n    built = tuple(p)\n    return coordinate_tuple(launder(built), 2)",
+            "def launder(v):\n    return v\n\n\ndef door(p):\n    built = tuple(p)\n    return point_tuple(launder(built))",
             "hands its owner a tuple it built",
         ),
         # The carry through a plain call: rows goes to a parameter named otherwise, which hands it on as x
@@ -436,6 +536,11 @@ def _package_sources() -> dict[str, str]:
             "def door(p):\n    rows = tuple(p)\n    return terms(f, rows)",
             "hands x as a value it built",
         ),
+        # The carry into the owner: a parameter handed to coordinate_tuple carries, so its caller's tuple is read there
+        (
+            "def wrap(points, d):\n    return coordinate_tuple(points, d)\n\n\ndef door(p):\n    return wrap(tuple(p), 2)",
+            "hands x as a value it built",
+        ),
     ],
 )
 def test_the_scan_flags_a_planted_construction(planted, flagged):
@@ -446,43 +551,62 @@ def test_the_scan_flags_a_planted_construction(planted, flagged):
 
 def test_the_scan_passes_what_the_owner_builds_and_a_name_handed_on():
     clean = (
-        "body(x=coordinate_tuple(p, 2))\nbody(x=point_tuple(q))\nbody(x=line_coordinates(s))\nbody(x=x)\n"
+        "def door(p, q, s, x):\n    body(x=coordinate_tuple(p, 2))\n    body(x=point_tuple(q))\n"
+        "    body(x=line_coordinates(s))\n    body(x=x)\n\n\n"
         "point_tuple([a, b])\n"
         'frame.agg({"x": ["mean", "std"]})\n'
-        "def terms(o, rows):\n    return o(x=rows)\n\n\ndef door(p, d):\n    return terms(f, coordinate_tuple(p, d))\n"
+        "def wrap(p, d):\n    return coordinate_tuple(p, d)\n\n\n"
+        "def at(x, i):\n    return point_at(x, i)\n\n\n"
+        "def terms(o, rows):\n    return o(x=rows)\n\n\ndef caller(p, d):\n    return terms(f, coordinate_tuple(p, d))\n"
     )
     assert deciding_sites(clean, "a/door.py") == []
     assert deciding_sites("body(x=(1.0,))", OWNER) == []
 
 
 def test_an_allowance_that_covers_nothing_fails():
-    found = deciding_sites("def step(x):\n    x_plus = (x[0] + 1.0,)\n    return body(x=x_plus)", "a/door.py")
-    assert against_allowances(found, {"a/door.py": {"step": {"x_plus"}}}) == ([], [])
-    left, unused = against_allowances(found, {"a/door.py": {"step": {"x_plus", "x_minus"}, "gone": {"x_plus"}}})
-    assert left == []
-    assert unused == ["a/door.py: step derives no x_minus", "a/door.py: gone derives no x_plus"]
+    source = "def step(x):\n    x_plus = (x[0] + 1.0,)\n    return body(x=x_plus)\n\n\ndef rows(g):\n    return point_at(g.T, 0)"
+    found = deciding_sites(source, "a/door.py")
+    derived = {"a/door.py": {"step": {"x_plus": "(x[0] + 1.0,)"}}}
+    arguments = {"a/door.py": {"rows": {"g.T"}}}
+    assert against_allowances(found, derived, arguments) == ([], [])
+    other_step = {"a/door.py": {"step": {"x_plus": "(x[0] - 1.0,)"}}}
+    assert [s.value for s in against_allowances(found, other_step, arguments)[0]] == ["x_plus"]
+    left, unused = against_allowances(
+        found, {"a/door.py": {"step": {"x_plus": "(x[0] + 1.0,)", "x_minus": "(x[0] - 1.0,)"}}}, {"a/door.py": {}}
+    )
+    assert [s.value for s in left] == ["g.T"]
+    assert unused == ["a/door.py: step hands no x_minus"]
 
 
-def test_the_relay_check_flags_a_relay_that_builds_and_one_that_relays_nothing():
+def test_the_relay_check_flags_a_relay_that_builds_converts_or_relays_nothing():
     source = (
         "class H:\n"
         "    def dp(self, x):\n        return self(x=tuple(x))\n"
         "    def dm(self, x):\n        return 0.0\n"
         "    def ok(self, x):\n        return self(x=x)\n"
-        "    def through(self, x):\n        return self(x=point_at(x, 0))\n"
+        "    def through(self, x):\n        return self(x=point_tuple(x))\n"
+        "    def step(self, x):\n        x_plus = (x[0] + 1.0,)\n        return self(x=x_plus)\n"
+        "    def at(self, x, i):\n        return self(x=point_at(x, i))\n"
     )
-    assert relay_defects(source, "a/h.py", ["H.dp", "H.dm", "H.ok", "H.through", "H.gone"]) == [
+    names = ["H.dp", "H.dm", "H.ok", "H.through", "H.step", "H.at", "H.gone"]
+    allowed = {"a/h.py": {"H.step": {"x_plus": "(x[0] - 1.0,)"}}}
+    forms = {"a/h.py": {"H.at": {"point_at(x, i)": "point_at(x, i)"}}}
+    defects, used = relay_defects(source, "a/h.py", names, derived=allowed, forms=forms)
+    assert defects == [
         "H.dp: hands on x as tuple(x)",
         "H.dm: relays no x",
+        "H.through: hands on x as point_tuple(x)",
+        "H.step: hands on x as x_plus = (x[0] + 1.0,)",
         "H.gone: no such function",
     ]
+    assert used == {("a/h.py", "H.at", "point_at(x, i)")}
 
 
 def test_only_the_owner_decides_the_form_of_x():
     sources = _package_sources()
     index = PackageIndex(sources)
     found = [site for path, source in sources.items() for site in deciding_sites(source, path, index)]
-    left, unused = against_allowances(found, DERIVED)
+    left, unused = against_allowances(found, DERIVED, OWNER_ARGUMENTS)
     assert left == [], "\n".join(str(s) for s in left)
     assert unused == [], "\n".join(unused)
 
@@ -490,5 +614,17 @@ def test_only_the_owner_decides_the_form_of_x():
 def test_each_relay_site_hands_on_the_x_it_was_given():
     sources = _package_sources()
     index = PackageIndex(sources)
-    defects = [d for path, names in RELAYS.items() for d in relay_defects(sources[path], path, names, index)]
+    defects, used = [], set()
+    for path, names in RELAYS.items():
+        found, hit = relay_defects(sources[path], path, names, index)
+        defects += found
+        used |= hit
+    unused = [
+        f"{p}: {f} hands no {v}"
+        for p, fs in RELAY_FORMS.items()
+        for f, vs in fs.items()
+        for v in vs
+        if (p, f, v) not in used
+    ]
     assert defects == [], "\n".join(defects)
+    assert unused == [], "\n".join(unused)
