@@ -66,7 +66,7 @@ def _problem(*, dimension=1, n=11, hamiltonian=None, u_terminal=lambda x: 0.0, m
 
 
 def _read(body, x=(A, B), slots=cp.REGION_SLOTS, **slot_values):
-    return cp.bind_user_callable(body, slots, role="r")(x=x, **slot_values)
+    return cp.bind_user_callable(body, slots, role="r")(x=cp.caller_coordinates(x), **slot_values)
 
 
 # ---------------------------------------------------------------------------------------------- what a body is given
@@ -203,7 +203,9 @@ def test_a_body_that_writes_into_its_field_sees_the_callers_field_once():
         return x[0] + m
 
     density = np.ones(5)
-    read = cp.bind_user_callable(doubles, cp.COEFFICIENT_SLOTS, role="drift")(t=0.0, x=(A,), m=density)
+    read = cp.bind_user_callable(doubles, cp.COEFFICIENT_SLOTS, role="drift")(
+        t=0.0, x=cp.caller_coordinates((A,)), m=density
+    )
     np.testing.assert_array_equal(density, np.full(5, 2.0))
     np.testing.assert_allclose(read, A + 2.0, rtol=0, atol=1e-15)
 
@@ -335,10 +337,10 @@ def test_points_with_no_coordinate_axis_are_refused(points, dimension):
 
 def test_a_door_that_hands_one_point_has_nothing_to_compare_and_the_first_batch_is_still_checked():
     bound = cp.bind_user_callable(lambda x: np.sum(x), cp.REGION_SLOTS, role="r")
-    assert bound(x=(0.3, 0.6)) == pytest.approx(0.9)
+    assert bound(x=cp.point_tuple([0.3, 0.6])) == pytest.approx(0.9)
     assert not bound.checked
     with pytest.raises(ValueError, match="on a batch of 5 points"):
-        bound(x=(A, B))
+        bound(x=cp.caller_coordinates((A, B)))
 
 
 def test_the_check_runs_once():
@@ -349,10 +351,10 @@ def test_the_check_runs_once():
         return x[0]
 
     bound = cp.bind_user_callable(counted, cp.REGION_SLOTS, role="r")
-    bound(x=(A,))
+    bound(x=cp.caller_coordinates((A,)))
     first = len(calls)
     assert first > 1, "the first batch is read together and at its samples"
-    bound(x=(A,))
+    bound(x=cp.caller_coordinates((A,)))
     assert len(calls) == first + 1
 
 
@@ -740,7 +742,8 @@ def test_the_check_reads_a_hamiltonians_dp_as_well_as_its_value():
 
 
 def test_a_lagrangians_proximal_hands_its_stand_in_x_as_a_tuple():
-    """With no ``x`` given, the search still calls the Lagrangian, and that call reads the contract's form."""
+    """With no ``x`` given, the search still calls the Lagrangian, and that call reads the contract's form, built by its
+    owner (#2875). Mutant: proximal's stand-in built as its own ``tuple(...)``, a plain tuple."""
     seen = []
 
     class _Recording(LagrangianBase):
@@ -750,7 +753,7 @@ def test_a_lagrangians_proximal_hands_its_stand_in_x_as_a_tuple():
 
     _Recording().proximal(0.5, np.array([0.4]))
     assert seen
-    assert set(seen) == {tuple}
+    assert set(seen) == {cp.Coordinates}
 
 
 @pytest.mark.parametrize("dimension", [1, 2, 3])
@@ -859,7 +862,7 @@ def test_a_door_with_no_field_reads_no_entry_from_a_batch_shaped_return(slots):
     x = (np.linspace(0.0, 1.0, 7),)
     held = np.linspace(0.1, 0.9, 7)
     with pytest.raises(ValueError, match="no entry per point"):
-        cp.bind_user_callable(lambda x: held, slots, role="r")(x=x, t=0.0)
+        cp.bind_user_callable(lambda x: held, slots, role="r")(x=cp.caller_coordinates(x), t=0.0)
 
 
 @pytest.mark.parametrize(
@@ -871,14 +874,14 @@ def test_a_door_that_does_not_say_so_reads_no_fixed_array(slots):
     x = (np.linspace(0.0, 1.0, 7), np.linspace(1.0, 2.0, 7))
     held = np.array([[0.3, 0.1], [0.1, 0.2]])
     with pytest.raises(ValueError, match=r"a return of shape \(2, 2\) has no entry per point"):
-        cp.bind_user_callable(lambda x: held, slots, role="r")(x=x, t=0.0)
+        cp.bind_user_callable(lambda x: held, slots, role="r")(x=cp.caller_coordinates(x), t=0.0)
 
 
 def test_a_constant_vector_drift_is_refused_by_the_check():
     x = (np.linspace(0.0, 1.0, 7), np.linspace(1.0, 2.0, 7))
     with pytest.raises(ValueError, match=r"a return of shape \(2,\) has no entry per point"):
         cp.bind_user_callable(lambda t, x, m: np.array([0.1, 0.2]), cp.COEFFICIENT_SLOTS, role="drift_field")(
-            x=x, t=0.0, m=np.ones(7)
+            x=cp.caller_coordinates(x), t=0.0, m=np.ones(7)
         )
 
 
@@ -1066,11 +1069,11 @@ def _module_level_potential(t, x):
 
 def test_an_object_holding_a_binding_pickles_and_reads_the_same_after():
     bound = cp.bind_user_callable(_module_level_potential, cp.POTENTIAL_SLOTS, role="potential")
-    before = bound(t=0.25, x=(A,))
+    before = bound(t=0.25, x=cp.caller_coordinates((A,)))
     assert bound.checked
     again = pickle.loads(pickle.dumps(bound))
     assert again.checked
-    np.testing.assert_array_equal(again(t=0.25, x=(A,)), before)
+    np.testing.assert_array_equal(again(t=0.25, x=cp.caller_coordinates((A,))), before)
 
 
 def test_a_hamiltonian_holding_a_user_potential_pickles_and_reads_the_same_after():
@@ -1109,7 +1112,7 @@ def _doors_that_keep_a_body():
     )
     drift = composite_drift([lambda t, x, m: _misread(x)])
     return {
-        "binder": lambda points: bound(x=(points[:, 0],)),
+        "binder": lambda points: bound(x=cp.coordinate_tuple(points[:, 0], 1)),
         "solver source": lambda points: cp.evaluate_solver_source(source, t=0.0, x=points, dimension=1),
         "region": lambda points: cp.read_region(region, points),
         "measure field": lambda points: field.evaluate(0.0, points, None),
@@ -1140,10 +1143,10 @@ def test_a_batch_whose_compared_rows_are_one_point_leaves_the_body_uncompared():
     )
     first = np.r_[np.full(20, 0.5), 0.9]
     assert set(first[cp.spread_samples(first.size, 3)]) == {0.5}, "the rows the comparison reads"
-    bound(x=(first,))
+    bound(x=cp.caller_coordinates((first,)))
     assert not bound.checked
     with pytest.raises(ValueError, match="reads differently"):
-        bound(x=(np.linspace(0.1, 0.9, 6),))
+        bound(x=cp.caller_coordinates((np.linspace(0.1, 0.9, 6),)))
 
 
 def test_the_comparison_reads_copies_of_every_array_it_hands():
@@ -1560,7 +1563,7 @@ def test_a_batch_of_exactly_d_points_is_cycled_with_its_field():
     with x, or a right body is refused for the broadcast (review 1's survivor K21)."""
     read = cp.bind_user_callable(lambda t, x, m: x[0] + m, cp.COEFFICIENT_SLOTS, role="drift")
     np.testing.assert_allclose(
-        read(t=0.0, x=(np.array([0.1, 0.2]), np.array([0.3, 0.4])), m=np.array([0.5, 0.6])),
+        read(t=0.0, x=cp.caller_coordinates((np.array([0.1, 0.2]), np.array([0.3, 0.4]))), m=np.array([0.5, 0.6])),
         [0.6, 0.8],
         rtol=0,
         atol=1e-15,

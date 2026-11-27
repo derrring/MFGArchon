@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
-from mfgarchon.types.callable_protocols import CONDITION_SLOTS, _remembered
+from mfgarchon.types.callable_protocols import CONDITION_SLOTS, _remembered, line_coordinates
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
@@ -259,7 +259,7 @@ class BaseVariationalSolver(BaseOptimizationSolver):
             for i in range(n_time_points):
                 if self.problem.components.m_initial:
                     m_initial = _remembered(self.problem.components.m_initial, CONDITION_SLOTS, "m_initial")
-                    density_guess[i, :] = [m_initial(t=0.0, x=(x,)) for x in self.x_grid]
+                    density_guess[i, :] = [m_initial(t=0.0, x=line_coordinates(x)) for x in self.x_grid]
                 else:
                     density_guess[i, :] = 1.0 / (xmax - xmin)
 

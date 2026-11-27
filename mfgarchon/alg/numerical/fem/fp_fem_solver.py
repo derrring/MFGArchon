@@ -15,9 +15,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.geometry.boundary import BCType
+from mfgarchon.types.callable_protocols import coordinate_tuple
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
@@ -241,7 +244,11 @@ class FPFEMSolver(WeakFormFPSolver):
         x_qp = self._basis.global_coordinates().value
         m_qp = self._basis.interpolate(m_n).value
         alpha = checked_control(
-            H.optimal_control(x=tuple(x_qp), m=m_qp, p=du.grad, t=t), du.grad, reader="FPFEMSolver", source=H, m=m_qp
+            H.optimal_control(x=coordinate_tuple(np.moveaxis(x_qp, 0, -1), dim), m=m_qp, p=du.grad, t=t),
+            du.grad,
+            reader="FPFEMSolver",
+            source=H,
+            m=m_qp,
         )
 
         @BilinearForm

@@ -12,7 +12,7 @@ import scipy.sparse as sparse
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf, to_numpy
 from mfgarchon.core.hamiltonian import HEvalState, _population_rows, checked_control
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, run_a_naming_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
@@ -1119,7 +1119,7 @@ def _refuse_a_non_finite_hjb_term(
         refuse({"volatility": lambda: _per_row(volatility, n)[bad]})
     if H_values is not None and not np.all(np.isfinite(_per_row(H_values, n)[bad])):
         H = problem.hamiltonian_class
-        rows = tuple(points[bad, k] for k in range(points.shape[1]))
+        rows = coordinate_tuple(points[bad], points.shape[1])
         cross = None if cross_rows is None else np.asarray(cross_rows, dtype=float)[:, bad]
         refuse(_hamiltonian_terms_at(problem, current_time, rows))
         entered = _a_handed_density_that_entered(

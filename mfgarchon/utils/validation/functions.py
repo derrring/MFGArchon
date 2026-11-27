@@ -553,6 +553,8 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
         REGION_SLOTS,
         SOURCE_TERM_SLOTS,
         _remembered,
+        coordinate_tuple,
+        point_tuple,
     )
     from mfgarchon.utils.validation import ValidationError
 
@@ -664,7 +666,7 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
     points = _interior_probe_nodes(grid)
     rows = _node_rows(grid, points, geometry) if points else []
     probe = np.asarray(points, dtype=float).reshape(len(points), grid.shape[1])
-    x = tuple(probe[:, k] for k in range(grid.shape[1]))
+    x = coordinate_tuple(probe, grid.shape[1])
     m = m_all[rows]
     if after_binding:
         _refuse_a_non_finite_read_of_the_bound_terms(problem, grid, probe, rows, m_all, interior, read, stop_if_refused)
@@ -755,7 +757,7 @@ def _refuse_a_non_finite_source(problem: Any, *, after_binding: bool = False) ->
         binding = segment.value_binding()
         for t in hjb_times:
             try:
-                returned = binding(t=t, x=tuple(float(c) for c in q))
+                returned = binding(t=t, x=point_tuple(q))
             except _EVALUATION_ERRORS:
                 continue
             _read_constant(

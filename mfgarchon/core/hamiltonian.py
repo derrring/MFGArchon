@@ -79,7 +79,9 @@ from mfgarchon.types.callable_protocols import (
     Slots,
     _refuse_unless_equal,
     bound_attribute,
+    caller_coordinates,
     coordinate_tuple,
+    moved,
     point_at,
     point_tuple,
     refuse_overridden,
@@ -1952,8 +1954,9 @@ class HamiltonianBase(MFGOperatorBase):
         grad = np.zeros(d)
 
         for i in range(d):
-            x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
-            x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
+            # Relayed in the form the caller handed x in (the approver's ruling of 2026-11-27 on #2875)
+            x_plus = moved(x, i, eps)
+            x_minus = moved(x, i, -eps)
 
             H_plus = self(x=x_plus, m=m, p=p, t=t)
             H_minus = self(x=x_minus, m=m, p=p, t=t)
@@ -2304,7 +2307,7 @@ class LagrangianBase(MFGOperatorBase):
 
         # Dummy x, m if not provided
         if x is None:
-            x = tuple(np.zeros(max(d, 1)))
+            x = point_tuple(np.zeros(max(d, 1)))
         if m is None:
             m = 0.0
 
@@ -2416,7 +2419,11 @@ class SeparableLagrangian(LagrangianBase):
         its own evaluate_hamiltonian by exactly 2(V+f).
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
-        V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
+        V = (
+            np.asarray(_bound_potential(self)(x=caller_coordinates(x), t=t)).item()
+            if self._potential is not None
+            else 0.0
+        )
         f_m = _read_of_the_density(self, "_coupling", m, _own_rows(m)) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
@@ -2430,7 +2437,11 @@ class SeparableLagrangian(LagrangianBase):
         H_ctrl = self.control_cost.evaluate(p_arr)
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
-        V = np.asarray(_bound_potential(self)(x=x, t=t)).item() if self._potential is not None else 0.0
+        V = (
+            np.asarray(_bound_potential(self)(x=caller_coordinates(x), t=t)).item()
+            if self._potential is not None
+            else 0.0
+        )
         f_m = _read_of_the_density(self, "_coupling", m, _own_rows(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
@@ -2951,9 +2962,9 @@ class SeparableHamiltonian(HamiltonianBase):
         if not is_batch and isinstance(H_control, np.ndarray):
             H_control = float(H_control.sum())
 
-        # Potential term (Issue #929: auto-detect vectorized callable)
+        # Potential term (Issue #929: auto-detect vectorized callable); the caller's x, relayed as it is (#2875)
         if self._potential is not None:
-            V = _read_of_the_potential(self, "_potential", x, t)
+            V = _read_of_the_potential(self, "_potential", caller_coordinates(x), t)
             V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
@@ -3048,9 +3059,12 @@ class SeparableHamiltonian(HamiltonianBase):
         eps = self.finite_diff_eps
         d = len(x)
         grad = np.zeros(d)
+        # The potential is bound, so the point it reads is the owner's: a caller's tuple marked as it is, and a caller's
+        # array read as one point, as the tuple this built from it before (#2875)
+        point = caller_coordinates(x) if isinstance(x, tuple) else point_tuple(x)
         for i in range(d):
-            x_plus = (*x[:i], x[i] + eps, *x[i + 1 :])
-            x_minus = (*x[:i], x[i] - eps, *x[i + 1 :])
+            x_plus = moved(point, i, eps)
+            x_minus = moved(point, i, -eps)
             grad[i] = _central_difference(
                 np.asarray(_bound_potential(self)(x=x_plus, t=t)).item(),
                 np.asarray(_bound_potential(self)(x=x_minus, t=t)).item(),
@@ -3196,9 +3210,9 @@ class CongestionHamiltonian(HamiltonianBase):
 
         H_kinetic = H_kinetic / c_m
 
-        # Potential term V(t, x)
+        # Potential term V(t, x); the caller's x, relayed as it is (#2875)
         if self._potential is not None:
-            V = _read_of_the_potential(self, "_potential", x, t)
+            V = _read_of_the_potential(self, "_potential", caller_coordinates(x), t)
             V = np.broadcast_to(V, (p_arr.shape[0],)) if is_batch else V.item()
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0

@@ -35,6 +35,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import Mesh1D, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.types.callable_protocols import Coordinates
 
 T, NT, SIGMA = 0.5, 10, 0.3
 
@@ -47,6 +48,10 @@ FORMS = {
 }
 
 
+# The type of every x a read hands Formed.optimal_control, for the form test below
+X_FORMS: list[type] = []
+
+
 def _separable(form, *, only_0d=False, only_rows=None, only_shape=None):
     """A SeparableHamiltonian whose control is the library's in another form. ``only_0d``: only where p is 0-d;
     ``only_rows``: only where p has that many rows; ``only_shape``: only where p has the reader's shape, so a problem's
@@ -55,6 +60,7 @@ def _separable(form, *, only_0d=False, only_rows=None, only_shape=None):
 
     class Formed(SeparableHamiltonian):
         def optimal_control(self, t, x, p, m):
+            X_FORMS.append(type(x))
             alpha = super().optimal_control(t=t, x=x, p=p, m=m)
             if (
                 (only_0d and np.ndim(p) != 0)
@@ -352,6 +358,23 @@ def test_each_read_refuses_a_control_of_another_shape(read, form):
     )
     with pytest.raises(ValueError, match=message):
         _quiet(lambda: run(form))
+
+
+# A network door hands a node, not coordinates, and the form of that x is #3012's; cone_policy reads a control cost's
+# optimal_control(p), which takes no x
+X_READS = [read for read in READS if not read.startswith("network") and read != "cone_policy"]
+
+
+@pytest.mark.parametrize("read", X_READS)
+def test_each_read_hands_x_in_its_owners_form(read):
+    """#2875: what a library door hands a Hamiltonian's optimal_control as x is built by its one owner, as
+    `Coordinates` (types/callable_protocols.py), at the faces, the periodic seam, the quadrature points, the particles,
+    the nodes and the probes alike. Mutants: FVM's faces, FVM's seam or FEM's quadrature points built as the door's own
+    ``tuple(...)``, a plain tuple."""
+    X_FORMS.clear()
+    _quiet(lambda: READS[read][2]("library"))
+    assert X_FORMS, f"{read}: no read reached optimal_control"
+    assert set(X_FORMS) == {Coordinates}, f"{read}: {sorted(t.__name__ for t in set(X_FORMS))}"
 
 
 @pytest.mark.parametrize("read", list(READS))
