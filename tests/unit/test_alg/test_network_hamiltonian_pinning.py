@@ -93,7 +93,7 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
     t = 0.4
 
     for i in range(N):
-        nbrs = prob.get_node_neighbors(i)
+        nbrs = prob.geometry.get_neighbors(i)
         method_val = prob.hamiltonian(t=t, node=i, neighbors=nbrs, p=u, m=m)
         object_val = float(H(x=np.array([i]), m=m, p=u, t=t))
         assert method_val == object_val, f"node {i} ({case}): method={method_val!r} object={object_val!r}"
@@ -163,7 +163,7 @@ def test_network_hamiltonian_minimize_consistency():
     assert abs(control2 - 0.5) < 1e-9, f"one-sided control at node2 should be 0.5, got {control2}"
     assert abs(control2 - envelope2) < 1e-9, f"H control != envelope 0.5*sum(alpha^2): {control2} vs {envelope2}"
 
-    method2 = prob.hamiltonian(t=t, node=2, neighbors=prob.get_node_neighbors(2), p=u, m=m)
+    method2 = prob.hamiltonian(t=t, node=2, neighbors=prob.geometry.get_neighbors(2), p=u, m=m)
     assert abs(method2 - float(H(x=np.array([2]), m=m, p=u, t=t))) < 1e-9, "RK45 method H must equal object H"
 
 
@@ -245,7 +245,7 @@ def test_network_hamiltonian_method_equals_object():
         prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=10, components=comps)
         obj = prob.hamiltonian_class
         for node in range(prob.num_nodes):
-            nbrs = prob.get_node_neighbors(node)
+            nbrs = prob.geometry.get_neighbors(node)
             method_val = prob.hamiltonian(t=0.1, node=node, neighbors=nbrs, p=p5, m=m5)
             object_val = float(obj(x=node, m=m5, p=p5, t=0.1))
             assert method_val == object_val, f"method != object at node {node} (single-source broken)"
@@ -338,7 +338,7 @@ def test_hamiltonian_dm_single_sourced_analytic():
     for node in range(N):
         # analytic default derivative == -m[node]; problem method delegates to the object
         assert H.dm(x=node, m=m, p=p, t=0.0) == pytest.approx(-m[node])
-        dm_method = prob.hamiltonian_dm(t=0.0, node=node, neighbors=prob.get_node_neighbors(node), p=p, m=m)
+        dm_method = prob.hamiltonian_dm(t=0.0, node=node, neighbors=prob.geometry.get_neighbors(node), p=p, m=m)
         assert dm_method == pytest.approx(-m[node])
         assert dm_method == H.dm(x=node, m=m, p=p, t=0.0)
 
@@ -365,7 +365,7 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
     for node in range(5):
         # no crash for any node, and matches the analytic derivative -0.6*m[node]
         assert H.dm(x=node, m=m, p=p, t=0.0) == pytest.approx(-0.6 * m[node], abs=1e-4)
-        dm_method = prob.hamiltonian_dm(t=0.0, node=node, neighbors=prob.get_node_neighbors(node), p=p, m=m)
+        dm_method = prob.hamiltonian_dm(t=0.0, node=node, neighbors=prob.geometry.get_neighbors(node), p=p, m=m)
         assert dm_method == pytest.approx(-0.6 * m[node], abs=1e-4)
 
 
@@ -387,10 +387,10 @@ def test_a_custom_dm_and_lagrangian_receive_each_argument_by_its_name():
     comps = NetworkMFGComponents(hamiltonian_dm_func=dm, lagrangian_func=lagrangian)
     prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
     m, p = np.array([0.1, 0.2, 0.3]), np.array([7.0, 8.0, 9.0])
-    prob.hamiltonian_dm(t=0.25, node=1, neighbors=prob.get_node_neighbors(1), p=p, m=m)
+    prob.hamiltonian_dm(t=0.25, node=1, neighbors=prob.geometry.get_neighbors(1), p=p, m=m)
     prob.lagrangian(t=0.25, node=1, velocity=np.array([5.0]), m=m)
     assert seen == {
-        "dm": (0.25, 1, list(prob.get_node_neighbors(1)), 7.0, 0.2),
+        "dm": (0.25, 1, list(prob.geometry.get_neighbors(1)), 7.0, 0.2),
         "lagrangian": (0.25, 1, 5.0, 0.2),
     }
 

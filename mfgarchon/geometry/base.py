@@ -1749,6 +1749,17 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         """Total number of nodes in the graph."""
         ...
 
+    def node_x(self, index: int) -> int:
+        """Node ``index`` in the form a network body reads ``x``: an ``int``, the node ``NETWORK_HAMILTONIAN_SLOTS``
+        names (#3012). A door that hands a network Hamiltonian a node builds it here."""
+        node = int(index)
+        if node != index or not 0 <= node < self.num_spatial_points:
+            raise ValueError(
+                f"{type(self).__name__} has nodes 0 to {self.num_spatial_points - 1}, and {index!r} is not one of them "
+                "(#3012)."
+            )
+        return node
+
     @abstractmethod
     def get_spatial_grid(self) -> NDArray:
         """

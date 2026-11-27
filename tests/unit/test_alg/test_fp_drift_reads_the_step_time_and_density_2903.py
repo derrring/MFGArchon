@@ -64,9 +64,9 @@ class _Control:
     kept."""
 
     def _shaped(self, t, x, p, m, base):
-        self.reads.append(
-            (float(t), tuple(np.array(c, dtype=float) for c in x), None if m is None else np.array(m, dtype=float))
-        )
+        # x is a coordinate tuple off a network, and on one the node, an int, as the network geometry hands it (#3012)
+        where = tuple(np.array(c, dtype=float) for c in x) if isinstance(x, tuple) else int(x)
+        self.reads.append((float(t), where, None if m is None else np.array(m, dtype=float)))
         if self.kind == "write" and isinstance(m, np.ndarray):
             np.maximum(m, WRITE_FLOOR, out=m)
         alpha = np.asarray(base(t=t, x=x, p=p, m=m), dtype=float)

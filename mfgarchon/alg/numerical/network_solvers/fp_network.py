@@ -24,7 +24,7 @@ Key algorithms:
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from mfgarchon.extensions.topology import NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
 
 
 class FPNetworkSolver(BaseFPSolver):
@@ -196,10 +197,11 @@ class FPNetworkSolver(BaseFPSolver):
             )
         self._current_rates: dict | None = None  # Issue #913: precomputed per timestep
 
-        # Network properties
-        self.num_nodes = problem.num_nodes
-        self.adjacency_matrix = problem.get_adjacency_matrix()
-        self.laplacian_matrix = problem.get_laplacian_matrix()
+        # The graph is the geometry's (#1472 stage 1)
+        self.network = cast("NetworkGeometry", problem.geometry)
+        self.num_nodes = self.network.num_nodes
+        self.adjacency_matrix = self.network.network_data.adjacency_matrix
+        self.laplacian_matrix = self.network.network_data.laplacian_matrix
 
         # Time discretization
         self.dt = problem.T / problem.Nt
@@ -216,7 +218,7 @@ class FPNetworkSolver(BaseFPSolver):
         # Graph divergence operator structure
         self.divergence_ops = {}
         for i in range(self.num_nodes):
-            neighbors = self.network_problem.get_node_neighbors(i)
+            neighbors = self.network.get_neighbors(i)
             self.divergence_ops[i] = neighbors
 
         # Stability constraint for explicit schemes
@@ -472,7 +474,7 @@ class FPNetworkSolver(BaseFPSolver):
             # Diffusion term: -σ²/2 * Δ_G m
             diffusion_term = 0.0
             for j in neighbors:
-                edge_weight = self.network_problem.network_data.get_edge_weight(i, j)
+                edge_weight = self.network.network_data.get_edge_weight(i, j)
                 diffusion_term += edge_weight * (m_current[j] - m_current[i])
             diffusion_term *= self.diffusion_coefficient
 
@@ -498,7 +500,7 @@ class FPNetworkSolver(BaseFPSolver):
 
             # Diffusion terms (implicit)
             for j in neighbors:
-                edge_weight = self.network_problem.network_data.get_edge_weight(i, j)
+                edge_weight = self.network.network_data.get_edge_weight(i, j)
                 coeff = self.dt * self.diffusion_coefficient * edge_weight
 
                 A[i, i] += coeff
@@ -542,7 +544,7 @@ class FPNetworkSolver(BaseFPSolver):
                     "Ensure the NetworkMFGProblem wired its Hamiltonian."
                 )
             alpha = checked_control(
-                H_class.optimal_control(x=np.array([i]), m=m, p=u, t=t),
+                H_class.optimal_control(x=self.network.node_x(i), m=m, p=u, t=t),
                 u,
                 reader="FPNetworkSolver",
                 source=H_class,

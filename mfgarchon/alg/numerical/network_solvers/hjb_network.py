@@ -22,7 +22,7 @@ Key algorithms:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -35,6 +35,7 @@ from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
 
 
 def _network_diffusion(
@@ -135,18 +136,18 @@ class NetworkHJBSolver(BaseHJBSolver):
         self.scheme = scheme
         self.tolerance = tolerance
 
-        # Network properties. Read inside try/except rather than guarded by `hasattr`: the
-        # fail-fast policy names try-except as the replacement for `hasattr`, and it covers the
-        # wider case -- a problem carrying `num_nodes` but no adjacency accessor fails here too,
-        # where a single-attribute guard would have waved it through to the next line.
+        # The graph is the geometry's (#1472 stage 1). Read inside try/except rather than guarded by `hasattr`: the
+        # fail-fast policy names try-except as the replacement for `hasattr`, and it covers the wider case -- a geometry
+        # carrying `num_nodes` but no network data fails here too.
+        self.network = cast("NetworkGeometry", problem.geometry)
         try:
-            self.num_nodes = problem.num_nodes
-            self.adjacency_matrix = problem.get_adjacency_matrix()
-            self.laplacian_matrix = problem.get_laplacian_matrix()
+            self.num_nodes = self.network.num_nodes
+            self.adjacency_matrix = self.network.network_data.adjacency_matrix
+            self.laplacian_matrix = self.network.network_data.laplacian_matrix
         except AttributeError as exc:
             raise NotImplementedError(
-                f"{type(self).__name__} requires a network problem -- one carrying `num_nodes`, an "
-                f"adjacency matrix and a graph Laplacian. This problem's geometry is "
+                f"{type(self).__name__} requires a problem on a network geometry -- one carrying `num_nodes` and "
+                f"network data, its adjacency matrix and graph Laplacian. This problem's geometry is "
                 f"{type(problem.geometry).__name__} and it is missing {exc}. The network solvers "
                 f"discretize on nodes and edges and have no continuous-domain path (Issue #2045)."
             ) from exc
@@ -162,7 +163,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # Precompute neighbor lists for Hamiltonian evaluation
         self.gradient_ops: dict[int, list[int]] = {}
         for i in range(self.num_nodes):
-            self.gradient_ops[i] = self.network_problem.get_node_neighbors(i)
+            self.gradient_ops[i] = self.network.get_neighbors(i)
 
     def solve_hjb_system(
         self,
@@ -232,7 +233,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # density_coupling` re-derived the coupling on the raw stacked `m`, diverging from the object's
         # `_extract_own_density` for multi-population `m` and corrupting `h_control = h_total - source`.
         H = self.network_problem.hamiltonian_class
-        return np.array([H.source_term(x=i, m=m, t=t) for i in range(self.num_nodes)])
+        return np.array([H.source_term(x=self.network.node_x(i), m=m, t=t) for i in range(self.num_nodes)])
 
     def _solve_ode(
         self,
@@ -476,7 +477,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
 
         return {
             i: checked_control(
-                H.optimal_control(x=np.array([i]), m=m, p=u, t=t),
+                H.optimal_control(x=self.network.node_x(i), m=m, p=u, t=t),
                 u,
                 reader="NetworkPolicyIterationHJBSolver",
                 source=H,
@@ -514,7 +515,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                 if a > 0.0:
                     A[i, i] += a
                     A[i, j] -= a
-                    w = self.network_problem.network_data.get_edge_weight(i, j)
+                    w = self.network.network_data.get_edge_weight(i, j)
                     control_cost += 0.5 * a * a / w
             # b: u_next/dt + L(alpha), with L = c(alpha) + V + f the cost-signed running cost. At the
             # optimal-policy fixed point (generator action = 2*H_control, c = H_control) this reduces

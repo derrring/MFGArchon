@@ -44,10 +44,28 @@ from mfgarchon.types.callable_protocols import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from scipy.sparse import csr_matrix
-
     from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
     from mfgarchon.types.callable_protocols import Slots
+
+
+def _node(x: Any, method: str) -> int:
+    """The node a `NetworkHamiltonian` method reads from ``x``: an ``int``, the form the network geometry's ``node_x``
+    hands at the library's doors (#3012), or an array holding one integer, the form a direct caller hands. A value read
+    otherwise would be misread, so it is refused by name: an array of more than one entry, of which only the first would
+    be read, and a value that is not an integer, which would be truncated to one."""
+    entries = np.asarray(x)
+    if entries.size != 1:
+        raise TypeError(
+            f"NetworkHamiltonian.{method} reads x as one node, an int or an array holding one integer, and was handed "
+            f"an array of {entries.size} entries (#3012)."
+        )
+    value = entries.reshape(()).item()
+    if not isinstance(value, (int, float)) or not float(value).is_integer():
+        raise TypeError(
+            f"NetworkHamiltonian.{method} reads x as one node, an int or an array holding one integer, and was handed "
+            f"{value!r}, which is not an integer (#3012)."
+        )
+    return int(value)
 
 
 # The network's user callables and their slots (#2375 ruling 8), bound by `NetworkHamiltonian`.
@@ -164,11 +182,11 @@ class NetworkHamiltonian(HamiltonianBase):
     def __call__(self, t, x, p, m):
         """Evaluate H at node x with density m and costate p.
 
-        x: node index (int or array with single int)
+        x: the node, an int or an array holding one integer (`_node`)
         m: density vector, shape (N,) — this population's density.
         p: costate vector at all nodes, shape (N,)
         """
-        node = int(np.asarray(x).flat[0])
+        node = _node(x, "__call__")
         m_arr = np.atleast_1d(m)
         p_arr = np.atleast_1d(p)
 
@@ -222,7 +240,7 @@ class NetworkHamiltonian(HamiltonianBase):
         """Node potential ``V(t, node)`` — the single source for ``NetworkMFGProblem.node_potential``
         (Issue #1470 Strand A). ``0.0`` when no ``node_potential_func`` is set.
         """
-        node = int(np.asarray(x).flat[0])
+        node = _node(x, "node_potential_value")
         return float(self._bound("_node_potential")(t=t, node=node)) if self._node_potential else 0.0
 
     def coupling_value(self, t, x, m):
@@ -233,7 +251,7 @@ class NetworkHamiltonian(HamiltonianBase):
         single-population ``m`` (byte-identical to the legacy raw ``m[node]``) and slices the own
         population for stacked ``K*N`` ``m``.
         """
-        node = int(np.asarray(x).flat[0])
+        node = _node(x, "coupling_value")
         if self._node_interaction is not None:
             return float(self._bound("_node_interaction")(t=t, node=node, m=m))
         return 0.5 * float(self._extract_own_density(m)[node]) ** 2
@@ -248,7 +266,7 @@ class NetworkHamiltonian(HamiltonianBase):
         mirrored form ``max(u_j - u_i, 0)`` is not reachable. Rates are non-negative by construction (a valid
         conservative CTMC generator). Returns an array of rates to neighbors (zero for non-neighbors).
         """
-        node = int(np.asarray(x).flat[0])
+        node = _node(x, "optimal_control")
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
@@ -267,7 +285,7 @@ class NetworkHamiltonian(HamiltonianBase):
         ``alpha*_ij = w_ij max(s*(u_i-u_j),0) >= 0``. So both the rate orientation and the gradient sign
         are oriented downhill (``s = +1``), and ``dp`` equals the
         generator action ``-Q^{alpha*} u``."""
-        node = int(np.asarray(x).flat[0])
+        node = _node(x, "dp")
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
@@ -289,7 +307,7 @@ class NetworkHamiltonian(HamiltonianBase):
         as ``hamiltonian_dm_func`` (#1545). This is the single source for
         ``NetworkMFGProblem.hamiltonian_dm``.
         """
-        node = int(np.asarray(x).flat[0])
+        node = _node(x, "dm")
         if self._hamiltonian_dm_func is not None:
             neighbors = self.network_data.get_neighbors(node)
             return float(
@@ -426,8 +444,7 @@ class NetworkMFGProblem(MFGProblem):
             raise ValueError("NetworkMFGProblem requires a graph geometry (pass geometry=...).")
         network_geometry = geometry  # local name; the remainder of __init__ uses network_geometry
 
-        # Network properties - set first before calling super()
-        self.network_geometry = network_geometry
+        # Network properties - set first before calling super(); the graph itself is the geometry's (#1472 stage 1)
         self.network_data = network_geometry.network_data
 
         # Issue #910: the problem's NetworkHamiltonian, which the parent wires as the problem's Hamiltonian.
@@ -489,27 +506,6 @@ class NetworkMFGProblem(MFGProblem):
         self.is_network_problem = True
         self.num_nodes = network_geometry.num_nodes
         self.spatial_dimension = 0  # Discrete network, not continuous space
-
-        # Network-specific matrices
-        self.adjacency_matrix: csr_matrix | None = None
-        self.laplacian_matrix: csr_matrix | None = None
-        self.incidence_matrix: csr_matrix | None = None
-
-        self._initialize_network_operators()
-
-    def _initialize_network_operators(self):
-        """Initialize network-specific operators and matrices."""
-        if self.network_data is None:
-            raise ValueError("Network data not available. Create network first.")
-
-        self.adjacency_matrix = self.network_data.adjacency_matrix
-        self.laplacian_matrix = self.network_data.laplacian_matrix
-        self.incidence_matrix = self.network_data.incidence_matrix
-
-        # Store network properties
-        self.is_directed = self.network_data.is_directed
-        self.is_weighted = self.network_data.is_weighted
-        self.num_edges = self.network_data.num_edges
 
     # Network-specific MFG components
 
@@ -642,45 +638,20 @@ class NetworkMFGProblem(MFGProblem):
     # solvers use num_nodes; graph geometry has no continuum coordinates. The former dummies (Nx =
     # num_nodes - 1, xmin = 0, xmax = num_nodes - 1, Dx = 1) invited nonsense continuum code paths.
 
-    # Network-specific properties
-
-    def get_network_statistics(self) -> dict[str, Any]:
-        """Get comprehensive network statistics."""
-        from mfgarchon.geometry.graph.network_geometry import compute_network_statistics
-
-        if self.network_data is None:
-            raise ValueError("Network data not initialized")
-        return compute_network_statistics(self.network_data)
-
-    def get_adjacency_matrix(self) -> csr_matrix:
-        """Get network adjacency matrix."""
-        if self.adjacency_matrix is None:
-            raise ValueError("Adjacency matrix not initialized")
-        return self.adjacency_matrix
-
-    def get_laplacian_matrix(self) -> csr_matrix:
-        """Get network Laplacian matrix."""
-        if self.laplacian_matrix is None:
-            raise ValueError("Laplacian matrix not initialized")
-        return self.laplacian_matrix
-
-    def get_node_neighbors(self, node: int) -> list[int]:
-        """Get neighbors of a specific node."""
-        if self.network_data is None:
-            return []  # No neighbors if no network data
-        return self.network_data.get_neighbors(node)
-
     def __str__(self) -> str:
         """String representation of network MFG problem."""
-        stats = self.get_network_statistics()
+        from mfgarchon.geometry.graph.network_geometry import compute_network_statistics
+
+        data = self.network_data
+        stats = compute_network_statistics(data)
         network_type = "Unknown"
-        if self.network_data is not None and hasattr(self.network_data, "network_type"):
-            network_type = getattr(self.network_data.network_type, "value", str(self.network_data.network_type))
+        if hasattr(data, "network_type"):
+            network_type = getattr(data.network_type, "value", str(data.network_type))
 
         return (
             f"NetworkMFGProblem({self.problem_name})\n"
             f"  Network: {network_type}\n"
-            f"  Nodes: {self.num_nodes}, Edges: {self.num_edges}\n"
+            f"  Nodes: {self.num_nodes}, Edges: {data.num_edges}\n"
             f"  Time: T={self.T}, Nt={self.Nt}\n"
             f"  Connected: {stats['is_connected']}\n"
             f"  Average degree: {stats['average_degree']:.2f}"
