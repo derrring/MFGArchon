@@ -2304,7 +2304,7 @@ class LagrangianBase(MFGOperatorBase):
 
         # Dummy x, m if not provided
         if x is None:
-            x = tuple(np.zeros(max(d, 1)))
+            x = point_tuple(np.zeros(max(d, 1)))
         if m is None:
             m = 0.0
 

@@ -71,7 +71,7 @@ from mfgarchon.geometry.boundary.applicator_base import (
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_every_face, repeated_endpoint_mirror
 from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
-from mfgarchon.types.callable_protocols import VOLATILITY_SLOTS, _remembered, evaluate_solver_source
+from mfgarchon.types.callable_protocols import VOLATILITY_SLOTS, _remembered, evaluate_solver_source, point_tuple
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.numerical.mass_fabrication_gate import MAX_CLIP_MASS_FABRICATION, refuse_what_a_flux_takes_negative
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
@@ -1489,7 +1489,7 @@ def _tensor_at_step(
     axes = _grid_axes(grid)
     bound = _remembered(tensor_field, VOLATILITY_SLOTS, "volatility")  # one state across the steps
     for idx in np.ndindex(shape):
-        x_coords = tuple(axes[d][idx[d]] for d in range(ndim))
+        x_coords = point_tuple([axes[d][idx[d]] for d in range(ndim)])
         Sigma[idx] = bound(t=t, x=x_coords, m=M_current[idx])
     CoefficientField(tensor_field, None, "volatility", dimension=ndim).validate_tensor_psd(Sigma)
     return Sigma

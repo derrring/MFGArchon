@@ -1031,7 +1031,10 @@ coordinate, of one point or of every point. The library may hand either, so a bo
 
 A door that holds the points states their dimension. It hands them as it holds them: a problem's conditions and
 potential in one row, `(N,)`, and a solver's drift, volatility and sources at the grid's shape, `(Nx, Ny)`. A door that
-reads one point hands a tuple of scalars, at $d = 1$ too.
+reads one point hands a tuple of scalars, at $d = 1$ too. A method you call with one point of your own as a coordinate
+tuple, such as a Hamiltonian's `dp` or `optimal_control`, hands the body that tuple itself, except a default `dx`, which
+hands it the finite-difference steps it builds from it, as tuples. A `VariationalMFGProblem` method takes `x` on a line,
+a scalar or an array, and hands the body the one-entry tuple of it.
 
 A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
 predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since

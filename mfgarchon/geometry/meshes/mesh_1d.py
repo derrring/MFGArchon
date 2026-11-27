@@ -13,7 +13,7 @@ import numpy as np
 
 from mfgarchon.geometry.base import UnstructuredMesh
 from mfgarchon.geometry.meshes.mesh_data import MeshData
-from mfgarchon.types.callable_protocols import REGION_SLOTS, _remembered
+from mfgarchon.types.callable_protocols import REGION_SLOTS, _remembered, line_coordinates
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -144,7 +144,7 @@ class Mesh1D(UnstructuredMesh):
 
         while x < self.xmax:
             # Determine local mesh size
-            h = refinement(x=(x,)) * (self.length / self.num_elements)
+            h = refinement(x=line_coordinates(x)) * (self.length / self.num_elements)
             x_new = min(x + h, self.xmax)
             vertices.append(x_new)
             x = x_new

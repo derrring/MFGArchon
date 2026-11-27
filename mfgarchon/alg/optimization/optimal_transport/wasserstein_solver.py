@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, REGION_SLOTS, _remembered
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, REGION_SLOTS, _remembered, line_coordinates
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
@@ -269,7 +269,7 @@ class WassersteinMFGSolver(BaseOptimizationSolver):
             # Use problem-specific initial density
             initial_density = _remembered(initial_density, REGION_SLOTS, "initial_density")
             for i, x in enumerate(self.spatial_grid):
-                densities[0, i] = initial_density(x=(x,))
+                densities[0, i] = initial_density(x=line_coordinates(x))
         else:
             # Default: Gaussian initial density
             center = (xmin + xmax) / 2
@@ -338,7 +338,7 @@ class WassersteinMFGSolver(BaseOptimizationSolver):
             for t, density in enumerate(densities):
                 time = self.time_grid[t] if t < len(self.time_grid) else self.time_grid[-1]
                 for i, x in enumerate(self.spatial_grid):
-                    total_cost += running_cost(t=time, x=(x,), m=density[i]) * self.dx * self.dt
+                    total_cost += running_cost(t=time, x=line_coordinates(x), m=density[i]) * self.dx * self.dt
 
         return total_cost
 

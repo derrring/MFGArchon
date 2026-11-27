@@ -29,6 +29,7 @@ from mfgarchon.types.callable_protocols import (
     VARIATIONAL_LAGRANGIAN_SLOTS,
     BoundCallable,
     bound_attribute,
+    line_coordinates,
 )
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -233,7 +234,9 @@ class VariationalMFGProblem:
         if self.components.lagrangian_func is not None:
             lagrangian = self._bound("lagrangian_func")  # resolved before tracing
             # A tracer cannot be compared, so its reads are compared here, on the grid.
-            lagrangian.check_on({"t": 0.0, "x": (self.x,), "v": np.zeros_like(self.x), "m": np.ones_like(self.x)})
+            lagrangian.check_on(
+                {"t": 0.0, "x": line_coordinates(self.x), "v": np.zeros_like(self.x), "m": np.ones_like(self.x)}
+            )
             lagrangian.checked = True
 
             @jit
@@ -244,7 +247,7 @@ class VariationalMFGProblem:
 
         if self.components.terminal_cost_func is not None:
             terminal = self._bound_terminal_cost()  # resolved before tracing
-            terminal.check_on({"x": (self.x,)})
+            terminal.check_on({"x": line_coordinates(self.x)})
             terminal.checked = True
 
             @jit

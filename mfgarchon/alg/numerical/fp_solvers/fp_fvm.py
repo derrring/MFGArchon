@@ -86,7 +86,7 @@ from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
-from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.types.callable_protocols import coordinate_tuple, evaluate_solver_source, grid_coordinates, point_tuple
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read, refuse_the_first_read_that_entered
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
@@ -363,7 +363,7 @@ class FPFVMSolver(BaseFPSolver):
             p_d = np.diff(u_slice, axis=d) / dx
             nodes_d = axes[d]
             face_coord = 0.5 * (nodes_d[:-1] + nodes_d[1:])
-            x_faces = tuple(np.meshgrid(*axes[:d], face_coord, *axes[d + 1 :], indexing="ij"))
+            x_faces = grid_coordinates([*axes[:d], face_coord, *axes[d + 1 :]])
             lo = [slice(None)] * ndim
             hi = [slice(None)] * ndim
             lo[d] = slice(0, shape[d] - 1)
@@ -378,10 +378,11 @@ class FPFVMSolver(BaseFPSolver):
                 p_wrap = wrap / dx
                 # Seam face between x[-1] and x[0]+L; position is unused by a separable H but kept
                 # face-consistent for a general (x-dependent) control cost.
-                x_wrap = tuple(
-                    np.squeeze(entry, axis=d)
-                    for entry in np.meshgrid(*axes[:d], [nodes_d[-1] + 0.5 * dx], *axes[d + 1 :], indexing="ij")
+                seam = np.squeeze(
+                    np.stack(np.meshgrid(*axes[:d], [nodes_d[-1] + 0.5 * dx], *axes[d + 1 :], indexing="ij"), axis=-1),
+                    axis=d,
                 )
+                x_wrap = point_tuple(seam) if ndim == 1 else coordinate_tuple(seam, ndim)
                 m_wrap = 0.5 * (np.take(m_slice, 0, axis=d) + np.take(m_slice, -1, axis=d))
                 alpha_w = checked_control(
                     H.optimal_control(x=x_wrap, m=m_wrap, p=p_wrap, t=t),

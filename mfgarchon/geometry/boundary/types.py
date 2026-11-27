@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
-from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, read_region
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, _remembered, point_tuple, read_region
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 
 if TYPE_CHECKING:
@@ -985,7 +985,7 @@ def boundary_value(
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
         # One point, so the body reads a tuple of scalars and there is no batch read to compare.
-        slots = {"t": t} if x is None else {"t": t, "x": tuple(np.asarray(x, dtype=float))}
+        slots = {"t": t} if x is None else {"t": t, "x": point_tuple(x)}
         return _read_constant(
             bound(**slots),
             kind=f"{kind} (what its callable returned)",

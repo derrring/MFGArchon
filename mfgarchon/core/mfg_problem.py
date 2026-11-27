@@ -69,7 +69,7 @@ def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray
     """
     coordinates = coordinate_tuple(x, problem.dimension)
     if np.ndim(m) > 1 and np.size(coordinates[0]) == np.size(m):  # one entry per coordinate, of the density's shape
-        coordinates = tuple(np.reshape(entry, np.shape(m)) for entry in coordinates)
+        coordinates = coordinate_tuple(coordinates, problem.dimension, shape=np.shape(m))
     return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=coordinates, m=m, v=v, t=t)
 
 

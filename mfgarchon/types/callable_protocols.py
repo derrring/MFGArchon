@@ -95,19 +95,42 @@ REGION_SLOTS = Slots(("x",))
 EXACT_SOLUTION_SLOTS = Slots(("t", "x"))
 
 
-def coordinate_tuple(points: Any, dimension: int) -> tuple[Any, ...]:
+def coordinate_tuple(points: Any, dimension: int, *, shape: tuple[int, ...] | None = None) -> tuple[Any, ...]:
     """``points`` in the form every user callable reads ``x``: one entry per coordinate, each a scalar or an array, with
     the coordinate axis first (user ruling, 2026-11-04). ``dimension`` is what tells ``(N,)`` apart, N points on a line or
-    one point in N dimensions, so the door that holds the points states it.
+    one point in N dimensions, so the door that holds the points states it. A tuple is taken as already in that form.
+    ``shape``, where the door states one, is the shape each entry is given, such as the density's grid shape.
     """
     if isinstance(points, tuple):
-        return points
-    array = np.asarray(points, dtype=float)
-    if dimension == 1:
-        return (array[..., 0] if array.ndim >= 2 and array.shape[-1] == 1 else array,)
-    if array.ndim == 0 or array.shape[-1] != dimension:
-        raise ValueError(f"points of shape {array.shape} hold no coordinate axis of length {dimension}")
-    return tuple(np.moveaxis(array, -1, 0))
+        coordinates = points
+    else:
+        array = np.asarray(points, dtype=float)
+        if dimension == 1:
+            coordinates = (array[..., 0] if array.ndim >= 2 and array.shape[-1] == 1 else array,)
+        elif array.ndim == 0 or array.shape[-1] != dimension:
+            raise ValueError(f"points of shape {array.shape} hold no coordinate axis of length {dimension}")
+        else:
+            coordinates = tuple(np.moveaxis(array, -1, 0))
+    if shape is None:
+        return coordinates
+    return tuple(np.reshape(entry, shape) for entry in coordinates)
+
+
+def grid_coordinates(axes: Sequence[Any]) -> tuple[Any, ...]:
+    """The points of the tensor grid that ``axes``, one 1-D array of nodes per coordinate, span, in the form a body reads
+    ``x``: one entry per coordinate, each of the grid's shape (``np.meshgrid`` with ``indexing="ij"``)."""
+    return tuple(np.meshgrid(*axes, indexing="ij"))
+
+
+def line_coordinates(x: Any) -> tuple[Any, ...]:
+    """Points on a line, ``d = 1``: ``x`` a scalar for one point or an array of the points, as the one-entry coordinate
+    tuple, the entry as it is, so an array library's own array (jax's, under ``jit``) stays one. A tuple is refused: it
+    is in a form already, and the door that holds it states which."""
+    if isinstance(x, tuple):
+        raise TypeError(
+            f"line_coordinates takes one coordinate, a scalar or an array, and was handed a tuple of {len(x)}"
+        )
+    return (x,)
 
 
 def point_tuple(point: Any) -> tuple[Any, ...]:

@@ -28,7 +28,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.types.callable_protocols import STATE_CONSTRAINT_SLOTS, VELOCITY_CONSTRAINT_SLOTS, _remembered
+from mfgarchon.types.callable_protocols import (
+    STATE_CONSTRAINT_SLOTS,
+    VELOCITY_CONSTRAINT_SLOTS,
+    _remembered,
+    line_coordinates,
+)
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
 
@@ -439,7 +444,7 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
                 for i in range(self.Nt):
                     for x in self.x_grid:
                         t = self.t_grid[i]
-                        violation = max(0.0, constraint_func(t=t, x=(x,)))
+                        violation = max(0.0, constraint_func(t=t, x=line_coordinates(x)))
                         max_state_violation = max(max_state_violation, violation)
             constraints["state_constraints"] = max_state_violation
 
@@ -453,7 +458,7 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
                     for j, x in enumerate(self.x_grid):
                         t = self.t_grid[i]
                         v = velocity[i, j]
-                        violation = max(0.0, constraint_func(t=t, x=(x,), v=v))
+                        violation = max(0.0, constraint_func(t=t, x=line_coordinates(x), v=v))
                         max_velocity_violation = max(max_velocity_violation, violation)
             constraints["velocity_constraints"] = max_velocity_violation
         else:

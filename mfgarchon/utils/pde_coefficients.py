@@ -18,6 +18,7 @@ from mfgarchon.types.callable_protocols import (
     _remembered,
     bind_user_callable,
     coordinate_tuple,
+    grid_coordinates,
     point_tuple,
 )
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
@@ -412,8 +413,8 @@ def points_of(grid: Any, dimension: int) -> tuple[Any, ...]:
     (#2875)."""
     if isinstance(grid, (list, tuple)):
         if len({np.shape(axis) for axis in grid}) == 1 and np.ndim(grid[0]) == len(grid):
-            return tuple(grid)  # already a meshgrid
-        return tuple(np.meshgrid(*grid, indexing="ij"))
+            return coordinate_tuple(np.stack(grid, axis=-1), dimension)  # already a meshgrid
+        return grid_coordinates(grid)
     return coordinate_tuple(grid, dimension)
 
 
