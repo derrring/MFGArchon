@@ -9,6 +9,8 @@ Stage 1 holds:
   assignment stores on an attribute a value read from a graph (``GRAPH_READS``), except those ``HOLDERS_ALLOWED`` names
   with why: a solver's copy taken at construction, which the geometry's graph generation guards; a member stage 2
   removes; or a name the census matches that is not the network's graph. An allowance that covers nothing fails.
+- **A Hamiltonian reads a graph only through the network geometry it is bound to,** and refuses by name to read one
+  unbound or to bind a geometry with no graph.
 - **A rebuilt graph reaches the Hamiltonian and the problem, and is refused at a solver built before it,** through the
   generation the geometry advances on each build.
 - **A network solver refuses by name, at construction, a problem that lacks what it reads** (#2045).
@@ -234,6 +236,22 @@ def test_a_rebuilt_graph_reaches_the_hamiltonian_and_the_problem():
     assert network.network_data is not old
     assert problem.hamiltonian_class.network_data is network.network_data
     assert problem.network_data is network.network_data
+
+
+def test_a_hamiltonian_reads_a_graph_only_through_a_network_geometry_it_is_bound_to():
+    """An unbound `NetworkHamiltonian` refuses by name at its first read of the graph, and ``bind`` refuses by name a
+    geometry that holds no graph. Mutants: either refusal removed, so the read fails on ``None`` or the bind succeeds."""
+    pytest.importorskip("igraph")
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    with pytest.raises(RuntimeError, match=r"bound to no network geometry"):
+        NetworkHamiltonian().source_term(t=0.0, x=0, m=np.zeros(3))
+    with pytest.raises(TypeError, match=r"bind takes a network geometry.*TensorProductGrid"):
+        NetworkHamiltonian().bind(
+            TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[5], boundary_conditions=no_flux_bc(dimension=1))
+        )
 
 
 @pytest.mark.parametrize("solver", ["FPNetworkSolver", "NetworkHJBSolver", "NetworkPolicyIterationHJBSolver"])
