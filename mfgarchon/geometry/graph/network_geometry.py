@@ -290,10 +290,27 @@ class NetworkGeometry(GraphGeometry):
         super().__init__(boundary_conditions=boundary_conditions)  # Issue #1471: node-BC on the geometry
         self._num_nodes = num_nodes
         self.network_type = network_type
-        self.network_data: NetworkData | None = None
+        self._network_data: NetworkData | None = None
+        self._graph_generation = 0
         self.backend_preference = backend_preference
         self.backend_manager = get_backend_manager(backend_preference)
         self._regions: dict[str, np.ndarray] = {}
+
+    @property
+    def network_data(self) -> NetworkData | None:
+        """The network's graph. The geometry is its one holder: a Hamiltonian, a problem and a solver read it here (#1472)."""
+        return self._network_data
+
+    @network_data.setter
+    def network_data(self, data: NetworkData | None) -> None:
+        self._network_data = data
+        self._graph_generation += 1
+
+    @property
+    def graph_generation(self) -> int:
+        """How many times the graph has been built. A reader that keeps what it computed from the graph records this when it
+        reads it, and refuses to go on once it has moved: the graph it read is no longer the geometry's (#1472)."""
+        return self._graph_generation
 
     # =========================================================================
     # Pickle Support (Phase 5 of Issue #435)

@@ -1751,9 +1751,16 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
 
     def node_x(self, index: int) -> int:
         """Node ``index`` in the form a network body reads ``x``: an ``int``, the node ``NETWORK_HAMILTONIAN_SLOTS``
-        names (#3012). A door that hands a network Hamiltonian a node builds it here."""
+        names (#3012). A door that hands a network Hamiltonian a node builds it here. ``index`` is an ``int`` or a numpy
+        integer, one of the graph's nodes; a bool, a float, a string or any other value is refused by name, and so is an
+        index off the graph."""
+        if isinstance(index, (bool, np.bool_)) or not isinstance(index, (int, np.integer)):
+            raise TypeError(
+                f"{type(self).__name__}.node_x takes a node index, an int or a numpy integer, and was handed {index!r} of "
+                f"type {type(index).__name__} (#3012)."
+            )
         node = int(index)
-        if node != index or not 0 <= node < self.num_spatial_points:
+        if not 0 <= node < self.num_spatial_points:
             raise ValueError(
                 f"{type(self).__name__} has nodes 0 to {self.num_spatial_points - 1}, and {index!r} is not one of them "
                 "(#3012)."

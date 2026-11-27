@@ -35,12 +35,11 @@ igraph = pytest.importorskip("igraph")
 def _build_H(prob: NetworkMFGProblem) -> NetworkHamiltonian:
     """The object exactly as ``NetworkMFGProblem.__init__`` builds it, from the stored components."""
     return NetworkHamiltonian(
-        network_data=prob.network_data,
         hamiltonian_func=prob.components.hamiltonian_func,
         hamiltonian_dm_func=prob.components.hamiltonian_dm_func,
         node_potential_func=prob.components.node_potential_func,
         node_interaction_func=prob.components.node_interaction_func,
-    )
+    ).bind(prob.geometry)
 
 
 @pytest.mark.parametrize("case", ["default", "interaction", "custom"])
@@ -283,7 +282,7 @@ def test_source_term_single_source_and_multipop_slice():
         )
 
     # Multi-population: population 1's source reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
-    H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
+    H1 = NetworkHamiltonian(population_index=1).bind(prob.geometry)
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
         assert H1.source_term(x=node, m=m_stacked, t=0.0) == pytest.approx(
@@ -343,7 +342,7 @@ def test_hamiltonian_dm_single_sourced_analytic():
         assert dm_method == H.dm(x=node, m=m, p=p, t=0.0)
 
     # Multi-population: population 1's dm reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
-    H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
+    H1 = NetworkHamiltonian(population_index=1).bind(prob.geometry)
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
         assert H1.dm(x=node, m=m_stacked, p=p, t=0.0) == pytest.approx(-0.9)

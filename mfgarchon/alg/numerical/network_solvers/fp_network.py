@@ -24,7 +24,7 @@ Key algorithms:
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -72,6 +72,35 @@ if TYPE_CHECKING:
 
     from mfgarchon.extensions.topology import NetworkMFGProblem
     from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
+
+
+def refuse_a_problem_a_network_solver_cannot_read(problem: Any, solver: str, reads: tuple[str, ...]) -> None:
+    """Refuse by name, at construction, a problem that lacks an attribute a network solver reads from it (#2045, #1472
+    stage 1). ``reads`` are dotted attribute paths on the problem."""
+    missing = []
+    for path in reads:
+        held = problem
+        try:
+            for name in path.split("."):
+                held = getattr(held, name)
+        except AttributeError:
+            missing.append(path)
+    if missing:
+        raise NotImplementedError(
+            f"{solver} reads {', '.join(missing)} from its problem, which this {type(problem).__name__} on a "
+            f"{type(problem.geometry).__name__} lacks. Until #1472's stage 2, a network solve takes a NetworkMFGProblem "
+            "on a network geometry (Issue #2045)."
+        )
+
+
+def refuse_a_rebuilt_graph(solver: str, network: NetworkGeometry, generation: int) -> None:
+    """Refuse a solve once the network geometry's graph has been rebuilt since ``solver`` read it at construction: the
+    operators it built then are the old graph's, and the Hamiltonian reads the new one (#1472)."""
+    if network.graph_generation != generation:
+        raise RuntimeError(
+            f"The network geometry's graph was rebuilt after this {solver} was built, so the operators it built from the "
+            f"graph then are not the geometry's graph now. Build the {solver} again on the rebuilt graph (#1472)."
+        )
 
 
 class FPNetworkSolver(BaseFPSolver):
@@ -132,6 +161,11 @@ class FPNetworkSolver(BaseFPSolver):
             tolerance: Convergence tolerance
         """
         super().__init__(problem)
+        refuse_a_problem_a_network_solver_cannot_read(
+            problem,
+            "FPNetworkSolver",
+            ("geometry.network_data", "_node_applicator", "hamiltonian_class.has_custom_hamiltonian"),
+        )
 
         self.network_problem = problem
         H = problem.hamiltonian_class
@@ -199,6 +233,7 @@ class FPNetworkSolver(BaseFPSolver):
 
         # The graph is the geometry's (#1472 stage 1)
         self.network = cast("NetworkGeometry", problem.geometry)
+        self._graph_generation = self.network.graph_generation
         self.num_nodes = self.network.num_nodes
         self.adjacency_matrix = self.network.network_data.adjacency_matrix
         self.laplacian_matrix = self.network.network_data.laplacian_matrix
@@ -276,6 +311,7 @@ class FPNetworkSolver(BaseFPSolver):
         Returns:
             (Nt+1, num_nodes) density evolution.
         """
+        refuse_a_rebuilt_graph("FPNetworkSolver", self.network, self._graph_generation)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(

@@ -1037,8 +1037,9 @@ hands it the finite-difference steps it builds from it, as tuples. A `Variationa
 a scalar or an array, and hands the body the one-entry tuple of it.
 
 On a network a node plays `x`. The network solvers hand a network Hamiltonian the node as an `int`, which the network
-geometry's `node_x` builds (#3012). A `NetworkHamiltonian` method you call yourself takes the node as an `int` or as an
-array holding one integer, and refuses by name an array of more than one entry and a value that is not an integer.
+geometry's `node_x` builds (#3012). A `NetworkHamiltonian` method you call yourself takes the node as an `int`, a numpy
+integer or an array of one integer entry, one of the graph's nodes, and refuses any other form by name, through the
+geometry's `node_x`.
 
 A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
 predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since

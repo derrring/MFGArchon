@@ -29,6 +29,10 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
+from mfgarchon.alg.numerical.network_solvers.fp_network import (
+    refuse_a_problem_a_network_solver_cannot_read,
+    refuse_a_rebuilt_graph,
+)
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
@@ -112,6 +116,16 @@ class NetworkHJBSolver(BaseHJBSolver):
             tolerance: ODE solver tolerance (rtol for solve_ivp)
         """
         super().__init__(problem)
+        refuse_a_problem_a_network_solver_cannot_read(
+            problem,
+            type(self).__name__,
+            (
+                "geometry.network_data",
+                "hamiltonian",
+                "apply_boundary_conditions",
+                "hamiltonian_class.has_custom_hamiltonian",
+            ),
+        )
 
         self.network_problem = problem
 
@@ -128,29 +142,15 @@ class NetworkHJBSolver(BaseHJBSolver):
                 f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
             )
 
-        # Issue #2045: refuse a non-network problem in the same shape the node-BC check above
-        # uses, rather than letting the first network-only attribute read raise AttributeError.
-        # `NetworkPolicyIterationHJBSolver` sets `_honors_node_bc`, so it SKIPS that check and
-        # used to fall through to here -- an unguarded read that told the caller nothing about
-        # why the solver was inapplicable, and was indistinguishable from a defect in the solver.
         self.scheme = scheme
         self.tolerance = tolerance
 
-        # The graph is the geometry's (#1472 stage 1). Read inside try/except rather than guarded by `hasattr`: the
-        # fail-fast policy names try-except as the replacement for `hasattr`, and it covers the wider case -- a geometry
-        # carrying `num_nodes` but no network data fails here too.
+        # The graph is the geometry's (#1472 stage 1), refused above when the geometry holds none (Issue #2045)
         self.network = cast("NetworkGeometry", problem.geometry)
-        try:
-            self.num_nodes = self.network.num_nodes
-            self.adjacency_matrix = self.network.network_data.adjacency_matrix
-            self.laplacian_matrix = self.network.network_data.laplacian_matrix
-        except AttributeError as exc:
-            raise NotImplementedError(
-                f"{type(self).__name__} requires a problem on a network geometry -- one carrying `num_nodes` and "
-                f"network data, its adjacency matrix and graph Laplacian. This problem's geometry is "
-                f"{type(problem.geometry).__name__} and it is missing {exc}. The network solvers "
-                f"discretize on nodes and edges and have no continuous-domain path (Issue #2045)."
-            ) from exc
+        self._graph_generation = self.network.graph_generation
+        self.num_nodes = self.network.num_nodes
+        self.adjacency_matrix = self.network.network_data.adjacency_matrix
+        self.laplacian_matrix = self.network.network_data.laplacian_matrix
 
         # Time discretization
         self.dt = problem.T / problem.Nt
@@ -188,6 +188,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
+        refuse_a_rebuilt_graph(type(self).__name__, self.network, self._graph_generation)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
@@ -218,7 +219,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         H = np.zeros(self.num_nodes)
         for i in range(self.num_nodes):
             neighbors = self.gradient_ops[i]
-            H[i] = self.network_problem.hamiltonian(t=t, node=i, neighbors=neighbors, p=u, m=m)
+            H[i] = self.network_problem.hamiltonian(t=t, node=self.network.node_x(i), neighbors=neighbors, p=u, m=m)
         return H
 
     def _source_terms(self, m: np.ndarray, t: float) -> np.ndarray:
@@ -372,6 +373,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Solve HJB using policy iteration; ``volatility`` as `NetworkHJBSolver.solve_hjb_system` reads it."""
+        refuse_a_rebuilt_graph(type(self).__name__, self.network, self._graph_generation)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(

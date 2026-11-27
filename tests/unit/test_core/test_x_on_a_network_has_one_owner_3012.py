@@ -1,14 +1,18 @@
 """#3012: the form of the node the library hands a network Hamiltonian as ``x`` has one owner, the network geometry's
-``node_x`` (#1472 plan v1, #1472 comment 7224953131, approved in 7224969065, item 1).
+``node_x`` (#1472 plan v1, #1472 comment 7224953131, approved in 7224969065, item 1; stage 1's plan v2, 7226702955,
+approved in 7226717273).
 
-By AST over the network solvers and ``extensions/topology.py``: each value a call hands as ``x=`` is the geometry's
-``node_x(...)``, a parameter of the function the call is in (a node that function was handed), or a name bound only to
-``_node(x, ...)``, `NetworkHamiltonian`'s read of the node it was handed. What the scan cannot follow: a node handed by
-position, a name bound otherwise than by a plain assignment, and a call outside these files.
+By AST over the network solvers and ``extensions/topology.py``, an *x position* is a value a call hands as ``x=``, or
+hands as ``node=`` to one of the network problem's relays that pass the node on as ``x`` (``NODE_RELAYS``). Each is the
+geometry's ``node_x(...)``, a parameter of the function the call is in (a node that function was handed), or a name bound
+only to ``_node(x, ...)``, `NetworkHamiltonian`'s read of the node it was handed. What the scan cannot follow: a node
+handed by position, a name bound otherwise than by a plain assignment, a relay other than ``NODE_RELAYS``, and a call
+outside these files.
 
 At runtime, a recording `NetworkHamiltonian` subclass takes the type of each ``x`` the three network solvers hand it.
-And ``_node`` reads an ``int`` or an array holding one integer as the node, and refuses by name an array of more than one
-entry, of which main read only the first, and a value that is not an integer, which main truncated.
+And `NetworkHamiltonian`'s read of a node takes what ``node_x`` takes, through ``node_x``: an ``int``, a numpy integer, or a
+one-entry array of integer dtype, one of the graph's nodes. It refuses by name every other form main read, each of which
+main read as a node (the cases below).
 """
 
 from __future__ import annotations
@@ -22,13 +26,15 @@ import pytest
 import numpy as np
 
 import mfgarchon
-from mfgarchon.extensions.topology import NetworkHamiltonian, NetworkMFGComponents, NetworkMFGProblem, _node
+from mfgarchon.extensions.topology import NetworkHamiltonian, NetworkMFGComponents, NetworkMFGProblem
 
 PACKAGE = Path(mfgarchon.__file__).resolve().parent
 FILES = [
     *sorted(str(p.relative_to(PACKAGE)) for p in (PACKAGE / "alg/numerical/network_solvers").glob("*.py")),
     "extensions/topology.py",
 ]
+# The network problem's methods that take the node as ``node=`` and hand it on to its Hamiltonian as ``x``
+NODE_RELAYS = {"hamiltonian", "hamiltonian_dm", "node_potential", "density_coupling"}
 
 
 def _functions(tree: ast.AST):
@@ -52,8 +58,12 @@ def _own_calls(fn: ast.AST):
         yield from _own_calls(child)
 
 
+def _callee(call: ast.Call) -> str:
+    return getattr(call.func, "attr", getattr(call.func, "id", ""))
+
+
 def _the_owners(value: ast.AST, fn: ast.AST, enclosing: list[ast.AST]) -> bool:
-    if isinstance(value, ast.Call) and getattr(value.func, "attr", "") == "node_x":
+    if isinstance(value, ast.Call) and _callee(value) == "node_x":
         return True
     if not isinstance(value, ast.Name):
         return False
@@ -63,20 +73,24 @@ def _the_owners(value: ast.AST, fn: ast.AST, enclosing: list[ast.AST]) -> bool:
         if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == value.id for t in n.targets)
     ]
     if bound:
-        return all(isinstance(v, ast.Call) and getattr(v.func, "id", "") == "_node" for v in bound)
+        return all(isinstance(v, ast.Call) and _callee(v) == "_node" for v in bound)
     return any(
         value.id in [a.arg for a in (*f.args.posonlyargs, *f.args.args, *f.args.kwonlyargs)] for f in [fn, *enclosing]
     )
 
 
 def node_doors(source: str, path: str) -> list[str]:
-    """Each ``x=`` in ``source`` that is not the geometry's node, a node the function was handed, or one `_node` read."""
+    """Each x position in ``source`` that is not the geometry's node, a node the function was handed, or one `_node`
+    read."""
     found = []
     for fn, enclosing in _functions(ast.parse(source)):
         for call in _own_calls(fn):
             for keyword in call.keywords:
-                if keyword.arg == "x" and not _the_owners(keyword.value, fn, enclosing):
-                    found.append(f"{path}:{call.lineno} in {fn.name} hands x as {ast.unparse(keyword.value)}")
+                position = keyword.arg == "x" or (keyword.arg == "node" and _callee(call) in NODE_RELAYS)
+                if position and not _the_owners(keyword.value, fn, enclosing):
+                    found.append(
+                        f"{path}:{call.lineno} in {fn.name} hands {keyword.arg} as {ast.unparse(keyword.value)}"
+                    )
     return found
 
 
@@ -87,6 +101,9 @@ def node_doors(source: str, path: str) -> list[str]:
         "def sources(self):\n    return [H.source_term(x=i, m=m, t=t) for i in range(n)]",
         "def rate(self, i):\n    return H.optimal_control(x=int(i), m=m, p=u, t=t)",
         "def value(self, x):\n    node = int(np.asarray(x).flat[0])\n    return self.source_term(x=node, m=m, t=t)",
+        # The relay review 1 found (B3): the node handed as node= to the problem, which hands it on as x
+        "def batch(self, i):\n    return self.network_problem.hamiltonian(t=t, node=np.array([i]), neighbors=n, p=u, m=m)",
+        "def batch(self):\n    return [self.network_problem.hamiltonian(t=t, node=i, p=u, m=m) for i in range(n)]",
     ],
 )
 def test_the_scan_flags_a_planted_door(planted):
@@ -95,9 +112,11 @@ def test_the_scan_flags_a_planted_door(planted):
 
 def test_the_scan_passes_the_owners_node_and_a_node_handed_on():
     clean = (
-        "def rate(self, i):\n    return H.optimal_control(x=self.geometry.node_x(i), m=m, p=u, t=t)\n\n\n"
+        "def rate(self, i):\n    return H.optimal_control(x=self.network.node_x(i), m=m, p=u, t=t)\n\n\n"
+        "def batch(self, i):\n    return self.network_problem.hamiltonian(t=t, node=self.network.node_x(i), p=u, m=m)\n\n\n"
         "def relay(self, t, node, m):\n    return H.source_term(x=node, m=m, t=t)\n\n\n"
-        "def read(self, t, x, m):\n    node = _node(x, 'dm')\n    return self.coupling_value(x=node, m=m, t=t)\n"
+        "def read(self, t, x, m):\n    node = self._node(x, 'dm')\n    return self.coupling_value(x=node, m=m, t=t)\n\n\n"
+        "def condition(self):\n    return [density(t=0.0, node=i) for i in range(n)]\n"
     )
     assert node_doors(clean, "a/door.py") == []
 
@@ -107,10 +126,16 @@ def test_only_the_geometry_decides_the_form_of_a_node():
     assert found == [], "\n".join(found)
 
 
-def _recording_problem():
+def _network():
     pytest.importorskip("igraph")
     from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
+    network = GridNetwork(width=3, height=2)
+    network.create_network()
+    return network
+
+
+def _recording_problem():
     class Recording(NetworkHamiltonian):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -128,12 +153,11 @@ def _recording_problem():
             self.forms.add(type(x))
             return super().optimal_control(t=t, x=x, p=p, m=m)
 
-    network = GridNetwork(width=3, height=2)
-    network.create_network()
+    network = _network()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         problem = NetworkMFGProblem(geometry=network, T=0.2, Nt=4, components=NetworkMFGComponents())
-    H = Recording(network_data=network.network_data)
+    H = Recording().bind(network)
     problem.components._hamiltonian_class = H  # the backing field of MFGProblem.hamiltonian_class
     assert problem.hamiltonian_class is H
     return problem, H
@@ -162,12 +186,11 @@ def test_each_network_solver_hands_its_hamiltonian_the_node_as_an_int(solver):
 
 
 @pytest.mark.parametrize(
-    ("x", "node"),
-    [(2, 2), (np.int64(2), 2), (np.array([2]), 2), (np.array([[2]]), 2), (2.0, 2)],
-    ids=["int", "numpy int", "one-entry array", "one-entry 2-D array", "integral float"],
+    "x", [2, np.int64(2), np.array([2]), np.array([[2]])], ids=["int", "numpy int", "one-entry array", "1x1 array"]
 )
-def test_a_node_main_reads_is_read_as_the_same_node(x, node):
-    assert _node(x, "__call__") == node
+def test_a_node_the_contract_names_is_read_as_that_node(x):
+    """Mutant: the read refuses a one-entry array, a form main read and the contract names."""
+    assert NetworkHamiltonian().bind(_network())._node(x, "__call__") == 2
 
 
 @pytest.mark.parametrize(
@@ -175,12 +198,48 @@ def test_a_node_main_reads_is_read_as_the_same_node(x, node):
     [
         (np.array([1, 2]), "an array of 2 entries"),
         (np.array([], dtype=int), "an array of 0 entries"),
-        (2.5, "2.5, which is not an integer"),
+        (np.array([2.0]), "of dtype float64"),
+        (2.5, "was handed 2.5"),
+        (2.0, "was handed 2.0"),
+        (np.float64(2.0), "of type float64"),
+        (True, "of type bool"),
+        (np.bool_(True), "of type bool"),
+        ("2", "was handed '2'"),
+        (2 + 0j, "of type complex"),
+        ([2], "of type list"),
+        ((2,), "of type tuple"),
+        (-1, "-1 is not one of them"),
+        (6, "6 is not one of them"),
     ],
-    ids=["two entries", "no entry", "not an integer"],
+    ids=[
+        "two entries",
+        "no entry",
+        "float array",
+        "not an integer",
+        "integral float",
+        "numpy float",
+        "bool",
+        "numpy bool",
+        "string",
+        "complex",
+        "list",
+        "tuple",
+        "negative",
+        "off the graph",
+    ],
 )
-def test_a_node_main_misreads_is_refused_by_name(x, message):
-    """Main read ``int(np.asarray(x).flat[0])``: node 1 for ``[1, 2]`` and node 2 for ``2.5``. Mutant: the size check, or
-    the integer check, removed."""
-    with pytest.raises(TypeError, match=message):
-        _node(x, "optimal_control")
+def test_a_node_the_contract_does_not_name_is_refused_by_name(x, message):
+    """Main read each of these as a node, through ``int(np.asarray(x).flat[0])``. Mutants: the array's size check, its
+    dtype check, ``node_x``'s type check, and its range check, each removed."""
+    with pytest.raises((TypeError, ValueError), match=message):
+        NetworkHamiltonian().bind(_network())._node(x, "optimal_control")
+
+
+def test_the_geometry_refuses_an_index_off_the_graph():
+    """S2 of #3014's review 1: ``node_x`` refuses an index that is not one of the graph's nodes. Mutant: its range check
+    removed."""
+    network = _network()
+    assert network.node_x(5) == 5
+    for index in (-1, 6):
+        with pytest.raises(ValueError, match=f"{index} is not one of them"):
+            network.node_x(index)

@@ -19,8 +19,9 @@ Key differences from continuous MFG:
 
 from __future__ import annotations
 
+import copy
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
@@ -44,28 +45,8 @@ from mfgarchon.types.callable_protocols import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
+    from mfgarchon.geometry.graph.network_geometry import NetworkData, NetworkGeometry
     from mfgarchon.types.callable_protocols import Slots
-
-
-def _node(x: Any, method: str) -> int:
-    """The node a `NetworkHamiltonian` method reads from ``x``: an ``int``, the form the network geometry's ``node_x``
-    hands at the library's doors (#3012), or an array holding one integer, the form a direct caller hands. A value read
-    otherwise would be misread, so it is refused by name: an array of more than one entry, of which only the first would
-    be read, and a value that is not an integer, which would be truncated to one."""
-    entries = np.asarray(x)
-    if entries.size != 1:
-        raise TypeError(
-            f"NetworkHamiltonian.{method} reads x as one node, an int or an array holding one integer, and was handed "
-            f"an array of {entries.size} entries (#3012)."
-        )
-    value = entries.reshape(()).item()
-    if not isinstance(value, (int, float)) or not float(value).is_integer():
-        raise TypeError(
-            f"NetworkHamiltonian.{method} reads x as one node, an int or an array holding one integer, and was handed "
-            f"{value!r}, which is not an integer (#3012)."
-        )
-    return int(value)
 
 
 # The network's user callables and their slots (#2375 ruling 8), bound by `NetworkHamiltonian`.
@@ -84,10 +65,11 @@ class NetworkHamiltonian(HamiltonianBase):
     Accepts either a callable H(t, node, neighbors, p, m) or provides
     a default quadratic Hamiltonian on edges.
 
+    It holds no graph: ``bind(geometry)`` returns a copy bound to a network geometry, whose graph it reads at each read
+    (#1472). A problem binds the Hamiltonian it is given.
+
     Parameters
     ----------
-    network_data : NetworkData
-        Graph structure (adjacency, edge weights).
     hamiltonian_func : callable or None
         Custom whole H(t, node, neighbors, p, m) -> float, cost-signed (control - V - f). Only
         NetworkHJBSolver honours it (any solve_ivp scheme, on a geometry without node BCs); policy
@@ -114,12 +96,10 @@ class NetworkHamiltonian(HamiltonianBase):
         "hamiltonian_func": "takes p and m, which the network solvers are handed by their caller, not the problem (#2974)",
         "node_interaction_func": "takes m, which the network solvers are handed by their caller, not the problem (#2974)",
         "hamiltonian_dm_func": "read only by NetworkMFGProblem.hamiltonian_dm, which no library code calls (#2573)",
-        "network_data": "the graph, not a value",
     }
 
     def __init__(
         self,
-        network_data,
         hamiltonian_func=None,
         hamiltonian_dm_func=None,
         node_potential_func=None,
@@ -140,12 +120,11 @@ class NetworkHamiltonian(HamiltonianBase):
                 "hamiltonian_func, with the cost sign, or drop hamiltonian_func and pass them with the "
                 "built-in control."
             )
-        self.network_data = network_data
+        self._geometry: NetworkGeometry | None = None
         self._hamiltonian_func = hamiltonian_func
         self._hamiltonian_dm_func = hamiltonian_dm_func
         self._node_potential = node_potential_func
         self._node_interaction = node_interaction_func
-        self._num_nodes: int | None = None
         # Each user callable is bound at acceptance and invoked by keyword (#2375 ruling 8)
         for attr, slots in _USER_CALLABLE_SLOTS.items():
             if getattr(self, attr) is not None:
@@ -161,11 +140,53 @@ class NetworkHamiltonian(HamiltonianBase):
         """
         return self._hamiltonian_func is not None
 
+    def bind(self, geometry: NetworkGeometry) -> NetworkHamiltonian:
+        """A copy of this Hamiltonian bound to ``geometry``, a network geometry, whose graph it reads at each read (#1472)."""
+        try:
+            geometry.network_data  # noqa: B018 -- the read is the check
+        except AttributeError:
+            raise TypeError(
+                f"NetworkHamiltonian.bind takes a network geometry, one that holds a graph (network_data), and was handed "
+                f"a {type(geometry).__name__} (#1472)."
+            ) from None
+        bound = copy.copy(self)
+        bound._geometry = geometry
+        return bound
+
+    @property
+    def geometry(self) -> NetworkGeometry:
+        """The network geometry this Hamiltonian is bound to (`bind`)."""
+        if self._geometry is None:
+            raise RuntimeError(
+                "This NetworkHamiltonian is bound to no network geometry, so it has no graph to read: bind it with "
+                ".bind(geometry), as a problem does with the one it is given (#1472)."
+            )
+        return self._geometry
+
+    @property
+    def network_data(self) -> NetworkData:
+        """The graph of the geometry it is bound to, read at each read (#1472)."""
+        return self.geometry.network_data
+
     @property
     def num_nodes(self) -> int:
-        if self._num_nodes is None:
-            self._num_nodes = self.network_data.num_nodes
-        return self._num_nodes
+        return self.geometry.num_nodes
+
+    def _node(self, x: Any, method: str) -> int:
+        """The node a method reads from ``x``: an int, a numpy integer, or a one-entry array of integer dtype, through the
+        bound geometry's `node_x`, which hands the node at the library's doors and refuses any other form by name (#3012).
+        An array of other than one entry, or of a dtype that is not an integer's, is refused here."""
+        if isinstance(x, np.ndarray):
+            if x.size != 1 or not np.issubdtype(x.dtype, np.integer):
+                raise TypeError(
+                    f"NetworkHamiltonian.{method} reads x as one node, an int or an array holding one integer, and was "
+                    f"handed an array of {x.size} entries of dtype {x.dtype} (#3012)."
+                )
+            x = x.reshape(()).item()
+        try:
+            return self.geometry.node_x(x)
+        except (TypeError, ValueError) as error:
+            raise type(error)(f"NetworkHamiltonian.{method}: {error}") from None
 
     def _extract_own_density(self, m: np.ndarray) -> np.ndarray:
         """Extract this population's density from stacked m_all.
@@ -186,7 +207,7 @@ class NetworkHamiltonian(HamiltonianBase):
         m: density vector, shape (N,) — this population's density.
         p: costate vector at all nodes, shape (N,)
         """
-        node = _node(x, "__call__")
+        node = self._node(x, "__call__")
         m_arr = np.atleast_1d(m)
         p_arr = np.atleast_1d(p)
 
@@ -240,7 +261,7 @@ class NetworkHamiltonian(HamiltonianBase):
         """Node potential ``V(t, node)`` — the single source for ``NetworkMFGProblem.node_potential``
         (Issue #1470 Strand A). ``0.0`` when no ``node_potential_func`` is set.
         """
-        node = _node(x, "node_potential_value")
+        node = self._node(x, "node_potential_value")
         return float(self._bound("_node_potential")(t=t, node=node)) if self._node_potential else 0.0
 
     def coupling_value(self, t, x, m):
@@ -251,7 +272,7 @@ class NetworkHamiltonian(HamiltonianBase):
         single-population ``m`` (byte-identical to the legacy raw ``m[node]``) and slices the own
         population for stacked ``K*N`` ``m``.
         """
-        node = _node(x, "coupling_value")
+        node = self._node(x, "coupling_value")
         if self._node_interaction is not None:
             return float(self._bound("_node_interaction")(t=t, node=node, m=m))
         return 0.5 * float(self._extract_own_density(m)[node]) ** 2
@@ -266,7 +287,7 @@ class NetworkHamiltonian(HamiltonianBase):
         mirrored form ``max(u_j - u_i, 0)`` is not reachable. Rates are non-negative by construction (a valid
         conservative CTMC generator). Returns an array of rates to neighbors (zero for non-neighbors).
         """
-        node = _node(x, "optimal_control")
+        node = self._node(x, "optimal_control")
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
@@ -285,7 +306,7 @@ class NetworkHamiltonian(HamiltonianBase):
         ``alpha*_ij = w_ij max(s*(u_i-u_j),0) >= 0``. So both the rate orientation and the gradient sign
         are oriented downhill (``s = +1``), and ``dp`` equals the
         generator action ``-Q^{alpha*} u``."""
-        node = _node(x, "dp")
+        node = self._node(x, "dp")
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
@@ -307,7 +328,7 @@ class NetworkHamiltonian(HamiltonianBase):
         as ``hamiltonian_dm_func`` (#1545). This is the single source for
         ``NetworkMFGProblem.hamiltonian_dm``.
         """
-        node = _node(x, "dm")
+        node = self._node(x, "dm")
         if self._hamiltonian_dm_func is not None:
             neighbors = self.network_data.get_neighbors(node)
             return float(
@@ -444,20 +465,16 @@ class NetworkMFGProblem(MFGProblem):
             raise ValueError("NetworkMFGProblem requires a graph geometry (pass geometry=...).")
         network_geometry = geometry  # local name; the remainder of __init__ uses network_geometry
 
-        # Network properties - set first before calling super(); the graph itself is the geometry's (#1472 stage 1)
-        self.network_data = network_geometry.network_data
-
         # Issue #910: the problem's NetworkHamiltonian, which the parent wires as the problem's Hamiltonian.
         # Construction's checks read none of it on a network geometry (#2901, stage 1c-iii).
         num_nodes = network_geometry.num_nodes
         net_components = components or NetworkMFGComponents()
         network_hamiltonian = NetworkHamiltonian(
-            network_data=network_geometry.network_data,
             hamiltonian_func=net_components.hamiltonian_func,
             hamiltonian_dm_func=net_components.hamiltonian_dm_func,
             node_potential_func=net_components.node_potential_func,
             node_interaction_func=net_components.node_interaction_func,
-        )
+        ).bind(network_geometry)
         parent_components = MFGComponents(
             hamiltonian=network_hamiltonian,
             m_initial=lambda x: 1.0 / num_nodes,
@@ -504,7 +521,6 @@ class NetworkMFGProblem(MFGProblem):
 
         # Override spatial properties for network
         self.is_network_problem = True
-        self.num_nodes = network_geometry.num_nodes
         self.spatial_dimension = 0  # Discrete network, not continuous space
 
     # Network-specific MFG components
@@ -637,6 +653,16 @@ class NetworkMFGProblem(MFGProblem):
     # not part of the base MFGProblem interface and no network-path consumer reads them — the network
     # solvers use num_nodes; graph geometry has no continuum coordinates. The former dummies (Nx =
     # num_nodes - 1, xmin = 0, xmax = num_nodes - 1, Dx = 1) invited nonsense continuum code paths.
+
+    @property
+    def network_data(self) -> NetworkData:
+        """The graph of the problem's network geometry, read at each read: the geometry is its one holder (#1472)."""
+        return cast("NetworkGeometry", self.geometry).network_data
+
+    @property
+    def num_nodes(self) -> int:
+        """The node count of the problem's network geometry, read at each read (#1472)."""
+        return cast("NetworkGeometry", self.geometry).num_nodes
 
     def __str__(self) -> str:
         """String representation of network MFG problem."""
