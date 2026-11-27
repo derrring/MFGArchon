@@ -40,7 +40,7 @@ from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import call_handed
-from .coupled_result import DensityRecord, SweepRecord
+from .coupled_result import DensityRecord, MassInvariant, SweepRecord
 from .fixed_point_utils import (
     BUDGET_SPENT,
     FPOutputRule,
@@ -252,7 +252,8 @@ class CoupledDriver:
         # What produced the density the solve publishes: the one decider of whether it is measured (#1717; #3008)
         self.density = DensityRecord()
         # The FP-output rule, which holds this solve's references (the user's ruling of 2026-11-27)
-        self.fp_output_rule = FPOutputRule([state.problem.spatial_measure().integrate])
+        # One component: its own mass and the total are the same mass
+        self.fp_output_rule = FPOutputRule([state.problem.spatial_measure().integrate], MassInvariant.EACH)
         self.inner_failures: object = None
         self.rates: list[float] | None = [] if track_rates else None
         # The change of each sweep, NaN until measured, as the routes' l2dist* attributes report it

@@ -21,6 +21,7 @@ from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_ch
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import call_handed
+from .coupled_result import MassInvariant
 
 logger = get_logger(__name__)
 
@@ -455,17 +456,18 @@ def diverged_value_function(
 BUDGET_SPENT = "Maximum iterations reached"
 
 
-def validate_budget(budget: object, route: str) -> int:
-    """``budget`` as the count of sweeps a coupled solve may run, or a refusal naming ``route``, the route's class: one
-    rule on every coupled route (#3002 class line 2). Every evaluation that is a sweep of the solve counts, every
-    phase's, and 0 runs none."""
+def validate_budget(budget: object, route: str, name: str = "max_iterations") -> int:
+    """``budget`` as a count of sweeps a coupled solve may run, or a refusal naming ``route``, the route's class, and
+    ``name``, the keyword that set it: one rule on every coupled route (#3002 class line 2). Every evaluation that is a
+    sweep of the solve counts, every phase's, and 0 runs none. Newton's ``newton_max_iterations``, which bounds its
+    phase within the budget, is read through it too (review 3's B2)."""
     if not isinstance(budget, (int, np.integer)) or isinstance(budget, bool) or budget < 0:
-        raise ValueError(f"{route}: max_iterations is a count of sweeps, an int >= 0, not {budget!r}")
+        raise ValueError(f"{route}: {name} is a count of sweeps, an int >= 0, not {budget!r}")
     return int(budget)
 
 
-#: The growth of a component's largest level mass in the FP output, against the same figure in its solve's first FP
-#: output, past which a coupled solve is diverging (#1489 S5; the user's ruling of 2026-11-27).
+#: The growth of the FP output's largest level mass, against the same figure in its solve's first FP output, past which
+#: a coupled solve is diverging (#1489 S5; the user's ruling of 2026-11-27).
 FP_MASS_BLOWUP_FACTOR = 1e4
 
 
@@ -482,28 +484,43 @@ class FPOutputRule:
 
     - **A non-finite FP output** (#688): ``'diverged_nan'``, at any evaluation. The warning names it, and the density
       the evaluation was handed, and guesses no cause (#2845).
-    - **The magnitude** (#1489 S5): a component's figure is its largest level mass of ``|M|`` over t, the integral of
-      ``|M|``, equal to the mass where the density is non-negative: a conservative scheme can keep the signed integral
-      at its initial value while the density grows in alternating signs, which an FEM solve does. The solve's first FP
-      output sets each component's reference and is judged on the non-finite half only. From the second evaluation on,
-      a component whose figure passes ``FP_MASS_BLOWUP_FACTOR`` times its reference stops the solve with
-      ``'diverged_mass_blowup'``. The reference is the solve's own output, not m(0)'s mass, which a source or an inflow
-      does not keep. A reference of 0, or a component whose measure cannot integrate its output, leaves that
-      component's magnitude unread for the solve, and a warning says so when the reference is set.
+    - **The magnitude** (#1489 S5): a figure is a largest level mass of ``|M|`` over t, the integral of ``|M|``, equal
+      to the mass where the density is non-negative: a conservative scheme can keep the signed integral at its initial
+      value while the density grows in alternating signs, which an FEM solve does. Which mass is read is the mass the
+      route's model conserves, ``invariant``, the `MassInvariant` its result's ``mass_conservation_error`` reads:
+      under ``EACH``, one figure per component; under ``TOTAL``, one figure, the max over t of the sum over components
+      of the level mass of ``|M|`` at t (not the sum of each component's max), since the components exchange mass and
+      one can start near empty and fill from another (review 3's B1). The solve's first FP output sets each figure's reference and is judged on the non-finite half
+      only. From the second evaluation on, a figure that passes ``FP_MASS_BLOWUP_FACTOR`` times its reference stops the
+      solve with ``'diverged_mass_blowup'``. The reference is the solve's own output, not m(0)'s mass, which a source
+      or an inflow does not keep. A reference of 0, or a component whose measure cannot integrate its output, leaves
+      that figure unread for the solve, and a warning says so when the reference is set.
     """
 
-    def __init__(self, integrates: Sequence[Callable[[np.ndarray], Any]]) -> None:
+    def __init__(self, integrates: Sequence[Callable[[np.ndarray], Any]], invariant: MassInvariant) -> None:
         self._integrates = list(integrates)
-        # Per component, the figure of the solve's first FP output; None until that output is judged
+        self._invariant = invariant
+        # Per figure, its value in the solve's first FP output; None until that output is judged
         self._references: list[float | None] | None = None
 
     @staticmethod
-    def _figure(M: np.ndarray, integrate: Callable[[np.ndarray], Any]) -> float | None:
+    def _level_masses(M: np.ndarray, integrate: Callable[[np.ndarray], Any]) -> np.ndarray | None:
         try:
             level_masses = np.asarray(integrate(np.abs(M)), dtype=float).reshape(-1)
         except (ValueError, NotImplementedError):
             return None
-        return float(np.max(level_masses)) if level_masses.size else None
+        return level_masses if level_masses.size else None
+
+    def _figures(self, M_new: Sequence[np.ndarray]) -> list[float | None]:
+        levels = [self._level_masses(M, integrate) for M, integrate in zip(M_new, self._integrates, strict=True)]
+        if self._invariant is MassInvariant.TOTAL:
+            if any(level is None for level in levels):
+                return [None]
+            return [float(np.max(np.sum(levels, axis=0)))]
+        return [None if level is None else float(np.max(level)) for level in levels]
+
+    def _name(self, k: int) -> str:
+        return "the components' total" if self._invariant is MassInvariant.TOTAL else f"component {k}"
 
     def stop(self, M_new: Sequence[np.ndarray], M_in: Sequence[np.ndarray], *, site: str, iteration: int) -> str | None:
         """The stop for one evaluation: ``M_new`` holds each component's FP output, ``M_in`` the density each was
@@ -518,27 +535,27 @@ class FPOutputRule:
                 min(float(np.nanmin(m)) for m in M_in),
             )
             return "diverged_nan"
-        figures = [self._figure(M, integrate) for M, integrate in zip(M_new, self._integrates, strict=True)]
+        figures = self._figures(M_new)
         if self._references is None:
             self._references = figures
             unread = [k for k, reference in enumerate(figures) if not reference]
             if unread:
                 logger.warning(
-                    "%s: the FP-output rule reads no magnitude for component(s) %s on this solve: their first FP output "
-                    "has no level mass the problem's measure reads (%s). Non-finite FP output still stops the solve.",
+                    "%s: the FP-output rule reads no magnitude for %s on this solve: the first FP output has no level "
+                    "mass the problem's measure reads (%s). Non-finite FP output still stops the solve.",
                     site,
-                    unread,
+                    "the components' total" if self._invariant is MassInvariant.TOTAL else f"component(s) {unread}",
                     ", ".join("not integrable" if figures[k] is None else "0" for k in unread),
                 )
             return None
         for k, (figure, reference) in enumerate(zip(figures, self._references, strict=True)):
             if reference and figure is not None and figure > FP_MASS_BLOWUP_FACTOR * reference:
                 logger.warning(
-                    "FP density blew up in iteration %d, reported by %s: component %d's largest level mass reached "
-                    "%.2e, %.1e times the same figure in the solve's first FP output. Terminating early (Issue #1489).",
+                    "FP density blew up in iteration %d, reported by %s: the largest level mass of %s reached %.2e, "
+                    "%.1e times the same figure in the solve's first FP output. Terminating early (Issue #1489).",
                     iteration + 1,
                     site,
-                    k,
+                    self._name(k),
                     figure,
                     figure / reference,
                 )

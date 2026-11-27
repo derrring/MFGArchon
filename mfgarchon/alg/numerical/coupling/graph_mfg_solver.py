@@ -20,7 +20,7 @@ Issue #962: GraphMFGSolver — unified orchestrator for network MFG types 2 and 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -124,6 +124,10 @@ class GraphMFGSolver(BaseCouplingIterator):
     >>> result = solver.solve()
     """
 
+    #: The mass this route's model conserves, the nodes exchange mass through the coupling: what its result's `mass_conservation_error` and its FP-output
+    #: rule's magnitude both read (`MassInvariant`; #3002 class line 1, review 3's B1)
+    MASS_INVARIANT: ClassVar[MassInvariant] = MassInvariant.TOTAL
+
     def __init__(
         self,
         problems: list[MFGProblem],
@@ -224,9 +228,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         # The reason a spent budget reports, on every route (#3002, ruling 2)
         reason = BUDGET_SPENT
         integrates = [p.spatial_measure().integrate for p in self._problems]
-        # The FP-output rule every coupled route reads, each node against its own first FP output (#2997; #3002 class
-        # line 1, the user's ruling of 2026-11-27). Stage 2b moves it into the coupled driver.
-        fp_output_rule = FPOutputRule(integrates)
+        # The FP-output rule every coupled route reads, on the mass the route conserves (#2997; #3002 class line 1, the
+        # user's ruling of 2026-11-27 and review 3's B1). Stage 2b moves it into the coupled driver.
+        fp_output_rule = FPOutputRule(integrates, self.MASS_INVARIANT)
         dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
@@ -370,7 +374,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             fp_solvers=self._fp,
             fp_output_available=fp_output_available,
             component_names=[str(k) for k in range(self._N)],
-            invariant=MassInvariant.TOTAL,
+            invariant=self.MASS_INVARIANT,
         )
         return self._last_result
 

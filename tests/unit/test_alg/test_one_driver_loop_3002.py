@@ -47,6 +47,7 @@ from mfgarchon.alg.numerical.coupling import (
     FictitiousPlayIterator,
     FixedPointIterator,
 )
+from mfgarchon.alg.numerical.coupling.coupled_result import MassInvariant
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import FPOutputRule
 from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
@@ -286,35 +287,83 @@ def test_the_magnitude_reads_each_levels_mass_not_their_sum():
     healthy = np.tile(_level_of_mass_one(integrate), (20001, 1))
     grown = healthy.copy()
     grown[7] *= 2e4
-    rule = FPOutputRule([integrate])
+    rule = FPOutputRule([integrate], MassInvariant.EACH)
     assert rule.stop([healthy], [healthy], site="test", iteration=0) is None
     assert rule.stop([healthy], [healthy], site="test", iteration=1) is None
     assert rule.stop([grown], [healthy], site="test", iteration=2) == "diverged_mass_blowup"
 
 
-def test_the_magnitude_reference_is_each_components_first_output_and_a_zero_one_reads_nothing(mfg_caplog):
-    """The user's ruling of 2026-11-27: each component's reference is its own first FP output's figure, and a reference
-    of 0 leaves that component's magnitude unread, with a warning. Mutants: the components' figures summed, against
-    which component 1's 1e5-fold growth is a 100-fold one; a reference of 0 read as one, which stops the second
+def test_the_magnitude_reads_the_mass_the_route_conserves_and_a_zero_reference_reads_nothing(mfg_caplog):
+    """The user's ruling of 2026-11-27, on the mass the route's model conserves (review 3's B1). Under
+    ``MassInvariant.EACH`` each component's reference is its own first FP output's figure, so component 1's 1e5-fold
+    growth stops the solve; under ``TOTAL`` the components' total is one figure, against which the same outputs are a
+    100-fold growth, and a 1e5-fold growth of the total stops it. A reference of 0 leaves its figure unread, with a
+    warning. Mutants: the components' figures summed under EACH; a reference of 0 read as one, which stops the second
     output."""
     integrate = _problem().spatial_measure().integrate
     level = np.tile(_level_of_mass_one(integrate), (6, 1))
-    rule = FPOutputRule([integrate, integrate])
+    rule = FPOutputRule([integrate, integrate], MassInvariant.EACH)
     assert rule.stop([level, 1e-3 * level], [level, level], site="test", iteration=0) is None
     assert rule.stop([level, 1e2 * level], [level, level], site="test", iteration=1) == "diverged_mass_blowup"
+    total = FPOutputRule([integrate, integrate], MassInvariant.TOTAL)
+    assert total.stop([level, 1e-3 * level], [level, level], site="test", iteration=0) is None
+    assert total.stop([level, 1e2 * level], [level, level], site="test", iteration=1) is None
+    assert total.stop([level, 1e5 * level], [level, level], site="test", iteration=2) == "diverged_mass_blowup"
 
     logger = "mfgarchon.alg.numerical.coupling.fixed_point_utils"
-    zero = FPOutputRule([integrate])
+    zero = FPOutputRule([integrate], MassInvariant.EACH)
     with mfg_caplog.at_level(logging.WARNING, logger=logger):
         assert zero.stop([0.0 * level], [level], site="test", iteration=0) is None
     assert any("reads no magnitude for component(s) [0]" in m for m in mfg_caplog.messages), mfg_caplog.messages
     assert zero.stop([1e9 * level], [level], site="test", iteration=1) is None
 
 
+def test_the_magnitude_stop_names_what_it_measured(mfg_caplog):
+    """The warning a magnitude stop gives names the figure it read, its value and its ratio to the first FP output's,
+    and advises nothing. Mutant: the text before this PR, "total |M| ... x the initial; ... enable stabilization"."""
+    integrate = _problem().spatial_measure().integrate
+    level = np.tile(_level_of_mass_one(integrate), (6, 1))
+    rule = FPOutputRule([integrate], MassInvariant.EACH)
+    logger = "mfgarchon.alg.numerical.coupling.fixed_point_utils"
+    with mfg_caplog.at_level(logging.WARNING, logger=logger):
+        assert rule.stop([level], [level], site="the site", iteration=0) is None
+        assert rule.stop([1e5 * level], [level], site="the site", iteration=1) == "diverged_mass_blowup"
+    stops = [m for m in mfg_caplog.messages if "blew up" in m]
+    assert len(stops) == 1, mfg_caplog.messages
+    assert (
+        "reported by the site: the largest level mass of component 0 reached 1.00e+05, 1.0e+05 times the same "
+        in (stops[0])
+    ), stops[0]
+    assert "figure in the solve's first FP output" in stops[0], stops[0]
+    assert "stabili" not in stops[0], stops[0]
+
+
+@pytest.mark.parametrize("seed", [1e-12, 1e-6])
+@pytest.mark.parametrize("route", ["Graph", "RegimeSwitching"])
+def test_a_route_whose_components_exchange_mass_reads_their_total(route, seed):
+    """A chain 0 -> 1 -> 2 with all the mass in component 0 (review 3's B1): component 1 starts at ``seed`` and component
+    2 at 1e-12, since a problem refuses a mass of 0, and both fill from the exchange. Graph and RegimeSwitching conserve
+    the total (`MassInvariant.TOTAL`), so the magnitude reads it. Mutant: the rule per component on these routes, which
+    stopped both with 'diverged_mass_blowup' at sweep 2 at f95d7a86; at 8598206f they ran."""
+    with pytest.warns(UserWarning, match=r"initial density mass "):
+        problems = [_problem(0.5), _problem(0.5, initial_mass=seed), _problem(0.5, initial_mass=1e-12)]
+    hjbs, fps = [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if route == "Graph":
+            coupling = AdjacencyCoupling(np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]]))
+            result = GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=4, tolerance=1e-30).solve()
+        else:
+            Q = np.array([[-1.0, 1.0, 0.0], [0.0, -1.0, 1.0], [0.0, 0.0, 0.0]])
+            config = RegimeSwitchingConfig(transition_matrix=Q)
+            result = RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=4, tolerance=1e-30).solve()
+    assert _reason(result) == "Maximum iterations reached", f"{route}, seed {seed:g}: {_reason(result)!r}"
+
+
 @pytest.mark.parametrize("route", ROUTES)
 def test_a_source_that_adds_mass_is_not_read_as_a_blow_up(route):
     """m(0) of mass 1e-5 and an FP source adding mass 1 per unit time: a healthy solve whose level mass grows 3e4-fold
-    from m(0)'s (the text lane's N1 of review 2, where every route stopped at its second sweep). The reference is the
+    from m(0)'s (the text lane's N1 of review 2, where every route stopped at its first sweep). The reference is the
     solve's first FP output, which the source has already filled. Mutant: the reference taken from m(0)'s mass."""
     with pytest.warns(UserWarning, match=r"initial density mass 1e-05 "):
         problems = _problems(route, initial_mass=1e-5, fp_source=1.0)
@@ -407,6 +456,17 @@ def test_a_negative_budget_is_refused(route):
         ValueError, match=rf"{CLASSES[route]}: max_iterations is a count of sweeps, an int >= 0, not -1"
     ):
         _solve(route, problems, [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems], sweeps=-1)
+
+
+@pytest.mark.parametrize("bound", [-1, 2.0, True])
+def test_newtons_phase_bound_is_refused_as_the_budget_is(bound):
+    """``newton_max_iterations`` is read through the budget's rule (review 3's B2), before any sweep. Mutant: the bound
+    read as given; at f95d7a86 -1 ran the budget with no Newton step."""
+    p = _problem()
+    with pytest.raises(
+        ValueError, match=rf"NewtonMFGSolver: newton_max_iterations is a count of sweeps, an int >= 0, not {bound!r}"
+    ):
+        _solve("Newton", [p], [HJBFDMSolver(p)], [FPFDMSolver(p)], sweeps=3, newton_max_iterations=bound)
 
 
 @pytest.mark.parametrize(("sweeps", "counted"), [(1, 1), (2, 2), (3, 3)])

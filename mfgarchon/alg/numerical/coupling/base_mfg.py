@@ -832,6 +832,8 @@ class BaseCouplingIterator(ABC):
         Raises:
             NotImplementedError: on a route with no single iterate owner, whose `_iteration_state` returns None:
                 GraphMFGSolver and RegimeSwitchingIterator, and any subclass that does not return one.
+            ValueError: from `IterationState.set_warm_start`, when U or M is not of the iterate's shape, or holds a
+                non-finite value, naming the field and the count (#3002 class line 1).
         """
         U_prev, M_prev = previous_solution
         state = self._iteration_state()

@@ -45,6 +45,7 @@ from .damping_run import DampingRun
 from .fixed_point_utils import (
     BUDGET_SPENT,
     read_inner_solve_failures,
+    validate_budget,
     verdict_reads_inner_failures,
 )
 from .mfg_residual import MFGResidual
@@ -286,6 +287,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
             self._record = driver.record
             self._driver = driver
             driver.snapshot(U, M)
+            # The Newton phase's bound, refused before any sweep runs, by the rule the budget is (#3002 class line 2)
+            newton_bound = validate_budget(self.newton_max_iterations, type(self).__name__, "newton_max_iterations")
 
             # Phase 1: the Picard warm-up, for robustness. A met criterion ends the solve with the iterate that sweep's
             # update produced, whether or not its verdict is refused over failed inner HJB steps (#1878).
@@ -307,7 +310,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
                     return self._create_result(driver.converged, driver.reason)
 
             # The Newton phase gets what the warm-up left of the budget, bounded by newton_max_iterations (#3002)
-            remaining = min(driver.remaining, self.newton_max_iterations)
+            remaining = min(driver.remaining, newton_bound)
             if remaining <= 0:
                 self.U, self.M = U, M
                 self._solution_computed = True

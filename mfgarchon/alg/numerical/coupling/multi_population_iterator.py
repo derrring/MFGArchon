@@ -13,7 +13,7 @@ Reuses standard HJB/FP solvers — this class only coordinates.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
@@ -133,6 +133,10 @@ class MultiPopulationIterator:
     >>> result.U  # K value functions, of shape (K, Nt+1, *shape)
     >>> result.M  # K densities, of the same shape
     """
+
+    #: The mass this route's model conserves, the populations exchange none: what its result's `mass_conservation_error` and its FP-output
+    #: rule's magnitude both read (`MassInvariant`; #3002 class line 1, review 3's B1)
+    MASS_INVARIANT: ClassVar[MassInvariant] = MassInvariant.EACH
 
     def __init__(
         self,
@@ -255,9 +259,9 @@ class MultiPopulationIterator:
         density = DensityRecord()
         # The reason a spent budget reports, on every route (#3002, ruling 2)
         reason = BUDGET_SPENT
-        # The FP-output rule every coupled route reads, each population against its own first FP output (#2997; #3002
-        # class line 1, the user's ruling of 2026-11-27). Stage 2b moves it into the coupled driver.
-        fp_output_rule = FPOutputRule(integrates)
+        # The FP-output rule every coupled route reads, on the mass the route conserves (#2997; #3002 class line 1, the
+        # user's ruling of 2026-11-27 and review 3's B1). Stage 2b moves it into the coupled driver.
+        fp_output_rule = FPOutputRule(integrates, self.MASS_INVARIANT)
         for iteration in range(validate_budget(max_iterations, type(self).__name__)):  # #3002 class line 2
             # The owner's refusals answer at every sweep, so a BC changed during the solve is refused at the next one
             # (#3005; #3002 stage 2a, ruling A). Stage 2b moves this call into the coupled driver.
@@ -480,5 +484,5 @@ class MultiPopulationIterator:
             fp_solvers=self.fp_solvers,
             fp_output_available=density.measured,
             component_names=list(self.multi_problem.population_names),
-            invariant=MassInvariant.EACH,
+            invariant=self.MASS_INVARIANT,
         )
