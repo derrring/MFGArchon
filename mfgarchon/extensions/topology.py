@@ -179,7 +179,7 @@ class NetworkHamiltonian(HamiltonianBase):
         if isinstance(x, np.ndarray):
             if x.size != 1 or not np.issubdtype(x.dtype, np.integer):
                 raise TypeError(
-                    f"NetworkHamiltonian.{method} reads x as one node, an int or an array holding one integer, and was "
+                    f"NetworkHamiltonian.{method} reads x as one node, an int, a numpy integer or an array of one integer entry, and was "
                     f"handed an array of {x.size} entries of dtype {x.dtype} (#3012)."
                 )
             x = x.reshape(()).item()
@@ -203,7 +203,7 @@ class NetworkHamiltonian(HamiltonianBase):
     def __call__(self, t, x, p, m):
         """Evaluate H at node x with density m and costate p.
 
-        x: the node, an int or an array holding one integer (`_node`)
+        x: the node, an int, a numpy integer or an array of one integer entry (`_node`)
         m: density vector, shape (N,) — this population's density.
         p: costate vector at all nodes, shape (N,)
         """
