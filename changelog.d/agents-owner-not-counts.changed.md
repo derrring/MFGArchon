@@ -2,10 +2,11 @@
   2026-11-27), in § *Local patches are the anti-pattern*, § *A PR stays at its plan*, § *Closing out a fix* and
   § *Review before merge*.
   - A class line states its fact, its owner, the check that holds it after the merge (a structural one-owner test,
-    shown to fail on a planted second decider, where the census's finder can follow the deciding places; otherwise
-    pins that move on each input the census's axes name when the owner's answer changes) and class or partial fix.
+    shown to fail on a planted second decider, where the census's finder can follow the deciding places; otherwise,
+    and for the readers the plan's list counts as members, pins that move on each input the census's axes name
+    when the owner's answer changes) and class or partial fix.
     A partial fix's check lists each remaining member as an allowance or a strict xfail naming the stage, ruling
-    or issue that removes it, and an allowance that covers nothing fails it. Where no check can be written yet, the
+    or issue that removes it; in any check, an allowance that covers nothing fails it. Where no check can be written yet, the
     body lists it under *Known pin gaps* as having no oracle yet, with its issue.
   - The census's list goes in the plan and its head run in an evidence comment; the counts at two shas and the
     table on the tracking issue are no longer asked for. The census's control stays, found at both shas.
