@@ -1,48 +1,52 @@
-"""#2875: the form of the ``x`` a body is handed has one owner, ``types/callable_protocols.py`` (the approver's rulings in
-#2875 comments 7216531026 and 7216681260).
+"""#2875: the form of the ``x`` the library builds from its own points and hands a user body in reach has one owner,
+``types/callable_protocols.py`` (plan v2, #2875 comment 7219629907, approved in 7219680642).
 
-The owner builds that ``x`` as `Coordinates`, a tuple subclass, and `BoundCallable` refuses any other tuple. A public
-method a caller calls with its own ``x`` relays it in the caller's form, and those relay sites are named below.
+What this file reads, by AST over ``mfgarchon/`` outside the owner module. An *x position* is:
+- the ``x=`` argument of a call, and the ``"x"`` entry of a dict a call unpacks with ``**`` (inline, bound to a name, or
+  in an if-expression);
+- the first argument of `coordinate_tuple`, `point_tuple` and `point_at`, which take a tuple as it is;
+- an argument handed, by position or by name, to a parameter named ``x`` or to a parameter that carries an x on: one its
+  function hands, as it is, to an x position. The carry is followed through calls, closures and the arguments a
+  ``functools.partial`` is made with, to a fixpoint.
 
-What this file reads, by AST over ``mfgarchon/``:
-- only the owner module constructs `Coordinates`;
-- no ``x`` a call is handed is a tuple or list its caller builds itself: a display, a comprehension, a ``tuple(...)`` or
-  ``list(...)`` call, a call of a package function that returns one it builds, or a name bound to one of these in the
-  function or in one enclosing it. That covers ``x=``, the ``"x"`` entry of a dict a call unpacks with ``**`` (inline,
-  or bound to a name, in an if-expression too), and the argument handed by position to a parameter named ``x`` of a
-  package function whose name is unique; a lambda's body is read as its function's;
-- the owner is not handed such a tuple to mark, since `coordinate_tuple` and `caller_coordinates` take a tuple as it is;
-- each named relay site hands on the ``x`` it was given, through the owner where it reaches a bound body, and builds
-  none, and each still relays.
+No x position holds a value built outside the owner: a tuple or list display, a comprehension, a ``tuple(...)`` or
+``list(...)`` call, a call of a package function that returns one of these, a call of one that returns one of its own
+arguments (followed to that argument), or a name bound to any of these in the function or one enclosing it. At the
+owner's first argument only a tuple counts, since the owner reads a list as an array. A lambda's body is read as its
+function's.
 
-It cannot see an ``x`` handed to a parameter named otherwise (`base_hjb`'s refused rows go to ``rows``), a method name
-several classes share, or a tuple built two calls away. Those doors are held by the binder's refusal where the body is
-bound, and by ``test_a_control_has_ps_shape_2875.py::test_each_read_hands_x_in_its_owners_form`` where it is a
-Hamiltonian's method.
-Each scan runs on planted sources first, which it must flag.
+A caller's own ``x``, handed to a public method, is outside the fact and reaches the body as main hands it. Those relay
+sites are named in ``RELAYS``: each hands on the ``x`` it was given, a point its owner builds, or a point main derives
+from it (``DERIVED``). An allowance in ``DERIVED`` that covers nothing fails.
+
+What the scan cannot follow: a callee named through ``getattr`` or found in a registry, a function or method name that
+several definitions share (followed neither as a callee nor as a helper), the arguments a ``functools.partial`` object
+is later called with, ``*args`` and ``**kwargs`` forwarding, a class's constructor, and a value kept on an attribute.
+The raw Hamiltonian doors are also held at runtime, by
+``test_a_control_has_ps_shape_2875.py::test_each_read_hands_x_in_its_owners_form``.
+Each rule runs on planted sources first, which it must flag.
 """
 
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-import numpy as np
-
 import mfgarchon
-from mfgarchon.core.hamiltonian import HamiltonianBase
-from mfgarchon.types import callable_protocols as cp
 
 PACKAGE = Path(mfgarchon.__file__).resolve().parent
 OWNER = "types/callable_protocols.py"
 BUILT = (ast.Tuple, ast.List, ast.ListComp, ast.GeneratorExp)
-MARKS_AS_IT_IS = {"coordinate_tuple", "caller_coordinates"}
+TAKES_A_TUPLE = {"coordinate_tuple", "point_tuple", "point_at"}
+OWNER_FUNCTIONS = {*TAKES_A_TUPLE, "grid_coordinates", "line_coordinates"}
 
-# Where a caller's own x reaches a body: each hands on what it was given (the approver's ruling of 2026-11-27)
+# Where a caller's own x reaches a body (the approver's rulings in 7216681260 and 7219629907)
 RELAYS = {
     "core/hamiltonian.py": [
+        "CongestionHamiltonian._value",
         "CongestionHamiltonian.optimal_control",
         "DualHamiltonian.__call__",
         "DualHamiltonian.__call__.neg_objective",
@@ -66,11 +70,43 @@ RELAYS = {
         "LagrangianBase.optimal_control",
         "LagrangianBase.proximal.objective",
         "LagrangianBase.proximal.objective_nd",
+        "SeparableHamiltonian._value",
         "SeparableHamiltonian.dx",
         "SeparableLagrangian.__call__",
         "SeparableLagrangian.evaluate_hamiltonian",
     ],
+    "core/mfg_problem.py": [
+        "MFGProblem.__init__.vola_value",
+        "MFGProblem.diffusion.diffusion",
+        "MFGProblem._compose_state_penalty_into_potential.composed_potential",
+    ],
+    "core/stochastic/stochastic_problem.py": [
+        "StochasticMFGProblem.H_conditional",
+        "StochasticMFGProblem.g_conditional",
+        "StochasticMFGProblem.create_conditional_problem._FrozenNoiseHamiltonian.__call__",
+    ],
+    "utils/drift_helpers.py": ["composite_drift._composite_drift"],
 }
+
+# The points main derives from a caller's x at a relay site: its finite-difference steps, kept as main builds them
+DERIVED = {
+    "core/hamiltonian.py": {
+        "HamiltonianBase._finite_diff_dx": {"x_plus", "x_minus"},
+        "SeparableHamiltonian.dx": {"x_plus", "x_minus"},
+    },
+}
+
+
+@dataclass(frozen=True)
+class Site:
+    path: str
+    line: int
+    function: str
+    value: str
+    what: str
+
+    def __str__(self) -> str:
+        return f"{self.path}:{self.line} in {self.function or '<module>'} {self.what}: {self.value}"
 
 
 def _name(call: ast.Call) -> str:
@@ -102,6 +138,15 @@ def _own_nodes(fn: ast.AST):
         yield from _own_nodes(child)
 
 
+def _params(fn: ast.AST) -> list[str]:
+    args = fn.args
+    return [a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)]
+
+
+def _positional(fn: ast.AST) -> list[str]:
+    return [a.arg for a in (*fn.args.posonlyargs, *fn.args.args)]
+
+
 def _bound_to(fn: ast.AST, name: str) -> list[ast.AST]:
     return [
         node.value
@@ -110,174 +155,312 @@ def _bound_to(fn: ast.AST, name: str) -> list[ast.AST]:
     ]
 
 
-class PackageIndex:
-    """What a call site's callee does with what it is handed, across the package: the functions that return a tuple they
-    build (outside the owner), and each uniquely named function's parameters."""
-
-    def __init__(self, sources: dict[str, str]):
-        defs: dict[str, list[tuple[str, ast.FunctionDef]]] = {}
-        for path, source in sources.items():
-            for _, fn, _ in _functions(ast.parse(source)):
-                defs.setdefault(fn.name, []).append((path, fn))
-        unique = {name: found[0] for name, found in defs.items() if len(found) == 1}
-        self.builders = {
-            name
-            for name, (path, fn) in unique.items()
-            if path != OWNER
-            and any(
-                isinstance(r, ast.Return) and r.value is not None and _built(r.value, set()) for r in _own_nodes(fn)
-            )
-        }
-        self.params = {name: [a.arg for a in (*fn.args.posonlyargs, *fn.args.args)] for name, (_, fn) in unique.items()}
-
-
-def _built(node: ast.AST, builders: set[str]) -> bool:
-    if isinstance(node, ast.IfExp):
-        return _built(node.body, builders) or _built(node.orelse, builders)
-    return isinstance(node, BUILT) or (isinstance(node, ast.Call) and _name(node) in {"tuple", "list", *builders})
-
-
 def _bindings(chain: list[ast.AST], name: str) -> list[ast.AST]:
-    """What ``name`` is bound to in the innermost of ``chain`` (a function and those enclosing it) that binds it."""
+    """What ``name`` is bound to in the innermost of ``chain`` (a function and those enclosing it) that binds it or takes
+    it as a parameter; nothing, for a parameter it does not rebind."""
     for fn in chain:
         bound = _bound_to(fn, name)
-        if bound:
+        if bound or name in _params(fn):
             return bound
     return []
 
 
-def _built_here(value: ast.AST, chain: list[ast.AST], builders: set[str]) -> bool:
-    if _built(value, builders):
-        return True
-    return isinstance(value, ast.Name) and any(_built(v, builders) for v in _bindings(chain, value.id))
-
-
-def _x_by_position(call: ast.Call, index: PackageIndex) -> ast.AST | None:
-    """The argument ``call`` hands by position to a parameter named x, for a callee the index names uniquely."""
-    params = index.params.get(_name(call))
-    if params is None:
-        return None
-    if isinstance(call.func, ast.Attribute) and params[:1] in (["self"], ["cls"]):
-        params = params[1:]
-    for argument, param in zip(call.args, params, strict=False):
-        if param == "x" and not isinstance(argument, ast.Starred):
-            return argument
+def _parameter_of(chain: list[ast.AST], name: str) -> ast.AST | None:
+    """The function in ``chain`` whose parameter ``name`` is, where no function inside it rebinds the name."""
+    for fn in chain:
+        if _bound_to(fn, name):
+            return None
+        if name in _params(fn):
+            return fn
     return None
 
 
-def deciding_sites(source: str, path: str, index: PackageIndex | None = None) -> list[str]:
-    """The places in ``source`` that decide x's form outside its owner. ``index`` names the package's tuple-building
-    helpers and its functions' parameters; by default, those ``source`` itself defines."""
+class PackageIndex:
+    """What a call's callee does with what it is handed, across the package outside the owner: the functions that return
+    a value they build, those that return one of their parameters as it is, and the parameters that carry an x on, with
+    the kind of x position each reaches ("x", or "owner" for the owner's first argument)."""
+
+    def __init__(self, sources: dict[str, str]):
+        self.scopes = []
+        defs: dict[str, list[ast.AST]] = {}
+        for path, source in sources.items():
+            if path == OWNER:
+                continue
+            tree = ast.parse(source)
+            self.scopes.append((path, "", [], tree))
+            for qual, fn, enclosing in _functions(tree):
+                self.scopes.append((path, qual, [fn, *enclosing], fn))
+                defs.setdefault(fn.name, []).append(fn)
+        self.unique = {name: found[0] for name, found in defs.items() if len(found) == 1}
+        returns = {
+            name: [r.value for r in _own_nodes(fn) if isinstance(r, ast.Return) and r.value is not None]
+            for name, fn in self.unique.items()
+        }
+        self.passes = {
+            name: {v.id for v in values if isinstance(v, ast.Name) and _parameter_of([fn], v.id) is fn}
+            for name, values in returns.items()
+            if (fn := self.unique[name])
+        }
+        self.builders: set[str] = set()
+        self.carriers: dict[str, dict[str, str]] = {}
+        changed = True
+        while changed:
+            changed = False
+            for name, values in returns.items():
+                fn = self.unique[name]
+                if name not in self.builders and any(self.built(v, [fn], tuples_only=False) for v in values):
+                    self.builders.add(name)
+                    changed = True
+            for _, _, chain, scope in self.scopes:
+                for node in _own_nodes(scope):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    for value, kind in self.x_positions(node, chain):
+                        holder = _parameter_of(chain, value.id) if isinstance(value, ast.Name) else None
+                        if holder is None or self.unique.get(holder.name) is not holder:
+                            continue
+                        carried = self.carriers.setdefault(holder.name, {})
+                        if carried.get(value.id) not in ("x", kind):
+                            carried[value.id] = "x" if "x" in (kind, carried.get(value.id)) else kind
+                            changed = True
+
+    def _kind(self, callee: str, param: str) -> str | None:
+        return "x" if param == "x" else self.carriers.get(callee, {}).get(param)
+
+    def x_positions(self, call: ast.Call, chain: list[ast.AST]):
+        """Each value ``call`` hands to an x position, with the kind of that position."""
+        name = _name(call)
+        for keyword in call.keywords:
+            if keyword.arg == "x":
+                yield keyword.value, "x"
+            elif keyword.arg is None:
+                unpacked = keyword.value
+                held = _bindings(chain, unpacked.id) if isinstance(unpacked, ast.Name) else [unpacked]
+                for value in held:
+                    for dict_node in (n for n in ast.walk(value) if isinstance(n, ast.Dict)):
+                        for key, entry in zip(dict_node.keys, dict_node.values, strict=True):
+                            if isinstance(key, ast.Constant) and key.value == "x":
+                                yield entry, "x"
+        if name in TAKES_A_TUPLE and call.args and not isinstance(call.args[0], ast.Starred):
+            yield call.args[0], "owner"
+        args, method = call.args, isinstance(call.func, ast.Attribute)
+        if name == "partial" and call.args:
+            target = call.args[0]
+            name = getattr(target, "id", getattr(target, "attr", ""))
+            args, method = call.args[1:], isinstance(target, ast.Attribute)
+        callee = self.unique.get(name)
+        if callee is None:
+            return
+        positional = _positional(callee)
+        if method and positional[:1] in (["self"], ["cls"]):
+            positional = positional[1:]
+        for argument, param in zip(args, positional, strict=False):
+            if isinstance(argument, ast.Starred):
+                break
+            kind = self._kind(name, param)
+            if kind:
+                yield argument, kind
+        for keyword in call.keywords:
+            if keyword.arg not in (None, "x"):
+                kind = self._kind(name, keyword.arg)
+                if kind:
+                    yield keyword.value, kind
+
+    def built(self, value: ast.AST, chain: list[ast.AST], *, tuples_only: bool, depth: int = 0) -> bool:
+        """Whether ``value`` is built outside the owner: a tuple only, where ``tuples_only``."""
+        if depth > 8:
+            return False
+        if isinstance(value, ast.IfExp):
+            return self.built(value.body, chain, tuples_only=tuples_only, depth=depth + 1) or self.built(
+                value.orelse, chain, tuples_only=tuples_only, depth=depth + 1
+            )
+        if isinstance(value, ast.Tuple) or (not tuples_only and isinstance(value, BUILT)):
+            return True
+        if isinstance(value, ast.Name):
+            return any(
+                self.built(v, chain, tuples_only=tuples_only, depth=depth + 1) for v in _bindings(chain, value.id)
+            )
+        if not isinstance(value, ast.Call):
+            return False
+        name = _name(value)
+        if name == "tuple" or (name == "list" and not tuples_only) or name in self.builders:
+            return True
+        callee = self.unique.get(name)
+        passed = self.passes.get(name, set())
+        if callee is None or not passed:
+            return False
+        positional = _positional(callee)
+        if isinstance(value.func, ast.Attribute) and positional[:1] in (["self"], ["cls"]):
+            positional = positional[1:]
+        handed = [a for a, p in zip(value.args, positional, strict=False) if p in passed]
+        handed += [k.value for k in value.keywords if k.arg in passed]
+        return any(self.built(a, chain, tuples_only=tuples_only, depth=depth + 1) for a in handed)
+
+
+def deciding_sites(source: str, path: str, index: PackageIndex | None = None) -> list[Site]:
+    """The places in ``source`` that decide x's form outside its owner. ``index`` reads the package's helpers and
+    carriers; by default, those ``source`` itself defines."""
     if path == OWNER:
         return []
     tree = ast.parse(source)
     index = index or PackageIndex({path: source})
-    builders = index.builders
     found = []
-    scopes = [([], tree)] + [([fn, *enclosing], fn) for _, fn, enclosing in _functions(tree)]
-    for chain, scope in scopes:
+    scopes = [("", [], tree)] + [(qual, [fn, *enclosing], fn) for qual, fn, enclosing in _functions(tree)]
+    for qual, chain, scope in scopes:
         for node in _own_nodes(scope):
             if not isinstance(node, ast.Call):
                 continue
-            where = f"{path}:{node.lineno}"
-            if _name(node) == "Coordinates":
-                found.append(f"{where} constructs Coordinates")
-            if _name(node) in MARKS_AS_IT_IS and node.args and _built_here(node.args[0], chain, builders):
-                found.append(f"{where} has {_name(node)} mark a tuple it built")
-            for keyword in node.keywords:
-                if keyword.arg == "x" and _built_here(keyword.value, chain, builders):
-                    found.append(f"{where} hands x as a tuple it built: {ast.unparse(keyword.value)[:60]}")
-                if keyword.arg is None:
-                    unpacked = keyword.value
-                    held = _bindings(chain, unpacked.id) if isinstance(unpacked, ast.Name) else [unpacked]
-                    for value in held:
-                        for dict_node in (n for n in ast.walk(value) if isinstance(n, ast.Dict)):
-                            for key, entry in zip(dict_node.keys, dict_node.values, strict=True):
-                                if (
-                                    isinstance(key, ast.Constant)
-                                    and key.value == "x"
-                                    and _built_here(entry, chain, builders)
-                                ):
-                                    found.append(f"{where} holds x as a tuple it built: {ast.unparse(entry)[:60]}")
-            positional = _x_by_position(node, index)
-            if positional is not None and _built_here(positional, chain, builders):
-                found.append(f"{where} hands x by position as a tuple it built: {ast.unparse(positional)[:60]}")
+            for value, kind in index.x_positions(node, chain):
+                if index.built(value, chain, tuples_only=kind == "owner"):
+                    what = "hands its owner a tuple it built" if kind == "owner" else "hands x as a value it built"
+                    found.append(Site(path, node.lineno, qual, ast.unparse(value)[:60], what))
     return found
 
 
-def relay_defects(source: str, names: list[str]) -> list[str]:
-    """For each named relay site in ``source``: missing, relaying nothing, or handing on an x it built."""
-    functions = {name: fn for name, fn, _ in _functions(ast.parse(source))}
+def against_allowances(found: list[Site], derived: dict[str, dict[str, set[str]]]) -> tuple[list[Site], list[str]]:
+    """The sites no allowance covers, and the allowances that cover no site."""
+    covered = set()
+    left = []
+    for site in found:
+        if site.value in derived.get(site.path, {}).get(site.function, set()):
+            covered.add((site.path, site.function, site.value))
+        else:
+            left.append(site)
+    unused = [
+        f"{path}: {function} derives no {value}"
+        for path, functions in derived.items()
+        for function, values in functions.items()
+        for value in sorted(values)
+        if (path, function, value) not in covered
+    ]
+    return left, unused
+
+
+def _the_callers(value: ast.AST, chain: list[ast.AST], derived: set[str], depth: int = 0) -> bool:
+    """Whether ``value`` is a caller's own x as it was given, a point its owner builds, or a point main derives."""
+    if depth > 6:
+        return False
+    if isinstance(value, ast.IfExp):
+        return _the_callers(value.body, chain, derived, depth + 1) and _the_callers(
+            value.orelse, chain, derived, depth + 1
+        )
+    if isinstance(value, ast.Call):
+        return _name(value) in OWNER_FUNCTIONS
+    if not isinstance(value, ast.Name):
+        return False
+    if value.id in derived:
+        return True
+    for fn in chain:
+        bound = _bound_to(fn, value.id)
+        if bound or value.id in _params(fn):
+            return (value.id in _params(fn) or bool(bound)) and all(
+                _the_callers(v, chain, derived, depth + 1) for v in bound
+            )
+    return False
+
+
+def relay_defects(source: str, path: str, names: list[str], index: PackageIndex | None = None) -> list[str]:
+    """For each named relay site in ``source``: missing, relaying nothing, or handing on an x other than the caller's,
+    the owner's, or one ``DERIVED`` allows."""
+    index = index or PackageIndex({path: source})
+    functions = {qual: [fn, *enclosing] for qual, fn, enclosing in _functions(ast.parse(source))}
     defects = []
     for name in names:
-        fn = functions.get(name)
-        if fn is None:
+        chain = functions.get(name)
+        if chain is None:
             defects.append(f"{name}: no such function")
             continue
+        derived = DERIVED.get(path, {}).get(name, set())
         handed = [
-            k.value for node in _own_nodes(fn) if isinstance(node, ast.Call) for k in node.keywords if k.arg == "x"
+            value
+            for node in _own_nodes(chain[0])
+            if isinstance(node, ast.Call)
+            for value, _ in index.x_positions(node, chain)
         ]
         if not handed:
             defects.append(f"{name}: relays no x")
-        for value in handed:
-            if isinstance(value, ast.Name) and value.id == "x":
-                continue
-            if isinstance(value, ast.Call) and _name(value) == "caller_coordinates":
-                continue
-            bound = _bound_to(fn, value.id) if isinstance(value, ast.Name) else []
-            if bound and all(isinstance(v, ast.Call) and _name(v) == "moved" for v in bound):
-                continue
-            defects.append(f"{name}: hands on x as {ast.unparse(value)[:60]}")
+        defects += [
+            f"{name}: hands on x as {ast.unparse(v)[:60]}" for v in handed if not _the_callers(v, chain, derived)
+        ]
     return defects
+
+
+def _package_sources() -> dict[str, str]:
+    return {str(path.relative_to(PACKAGE)): path.read_text() for path in sorted(PACKAGE.rglob("*.py"))}
 
 
 @pytest.mark.parametrize(
     ("planted", "flagged"),
     [
-        ("Coordinates((1.0, 2.0))", "constructs Coordinates"),
-        ("body(x=(a, b))", "hands x as a tuple it built"),
-        ("body(x=tuple(p))", "hands x as a tuple it built"),
-        ("body(x=[a[k] for k in range(2)])", "hands x as a tuple it built"),
-        ("def door(p):\n    pts = tuple(p)\n    return body(x=pts)", "hands x as a tuple it built"),
-        ('body(**{"t": 0.0, "x": tuple(q)})', "holds x as a tuple it built"),
+        ("body(x=(a, b))", "hands x as a value it built"),
+        ("body(x=tuple(p))", "hands x as a value it built"),
+        ("body(x=[a[k] for k in range(2)])", "hands x as a value it built"),
+        ("def door(p):\n    pts = tuple(p)\n    return body(x=pts)", "hands x as a value it built"),
+        ('body(**{"t": 0.0, "x": tuple(q)})', "hands x as a value it built"),
         (
             'def door(t, q):\n    slots = {"t": t, "x": tuple(q)}\n    return body(**slots)',
-            "holds x as a tuple it built",
+            "hands x as a value it built",
         ),
         (
             'def door(t, q):\n    slots = {"t": t} if q is None else {"t": t, "x": tuple(q)}\n    return body(**slots)',
-            "holds x",
+            "hands x as a value it built",
         ),
-        ("def points(g):\n    return tuple(g)\n\n\nbody(x=points(q))", "hands x as a tuple it built"),
+        ("def points(g):\n    return tuple(g)\n\n\nbody(x=points(q))", "hands x as a value it built"),
         (
             "def read(o, x, t):\n    return o(x=x, t=t)\n\n\ndef door(p):\n    x = tuple(p)\n    return read(f, x, 0.0)",
-            "by position",
+            "hands x as a value it built",
         ),
         (
             "def read(o, x):\n    return o(x=x)\n\n\ndef door(p):\n    x = tuple(p)\n    return lambda: read(f, x)",
-            "by position",
+            "hands x as a value it built",
         ),
         (
             "def prox(x=None):\n    x = tuple(z) if x is None else x\n\n    def objective(a):\n        return body(x=x)\n\n    return objective",
-            "hands x as a tuple it built",
+            "hands x as a value it built",
         ),
-        ("coordinate_tuple(tuple(p), 2)", "has coordinate_tuple mark a tuple it built"),
-        ("caller_coordinates((a, b))", "has caller_coordinates mark a tuple it built"),
+        ("coordinate_tuple(tuple(p), 2)", "hands its owner a tuple it built"),
+        ("point_at((a, b), 0)", "hands its owner a tuple it built"),
+        # The owner handed a tuple through a helper that returns its argument as it is (review 1's mut_launder)
+        (
+            "def launder(v):\n    return v\n\n\ndef door(p):\n    built = tuple(p)\n    return coordinate_tuple(launder(built), 2)",
+            "hands its owner a tuple it built",
+        ),
+        # The carry through a plain call: rows goes to a parameter named otherwise, which hands it on as x
+        (
+            "def terms(o, rows):\n    return o(x=rows)\n\n\ndef door(p):\n    rows = tuple(p)\n    return terms(f, rows)",
+            "hands x as a value it built",
+        ),
+        # The carry through functools.partial: rows is bound to a parameter that hands it on as x
+        (
+            "def read(o, at):\n    return o(x=at)\n\n\ndef terms(o, rows):\n    return partial(read, o, rows)\n\n\n"
+            "def door(p):\n    rows = tuple(p)\n    return terms(f, rows)",
+            "hands x as a value it built",
+        ),
     ],
 )
 def test_the_scan_flags_a_planted_construction(planted, flagged):
     found = deciding_sites(planted, "a/door.py")
-    assert len(found) == 1, found
-    assert flagged in found[0], found
+    assert len(found) == 1, [str(s) for s in found]
+    assert flagged in found[0].what, str(found[0])
 
 
 def test_the_scan_passes_what_the_owner_builds_and_a_name_handed_on():
     clean = (
         "body(x=coordinate_tuple(p, 2))\nbody(x=point_tuple(q))\nbody(x=line_coordinates(s))\nbody(x=x)\n"
+        "point_tuple([a, b])\n"
         'frame.agg({"x": ["mean", "std"]})\n'
+        "def terms(o, rows):\n    return o(x=rows)\n\n\ndef door(p, d):\n    return terms(f, coordinate_tuple(p, d))\n"
     )
     assert deciding_sites(clean, "a/door.py") == []
-    assert deciding_sites("Coordinates((1.0,))", OWNER) == []
+    assert deciding_sites("body(x=(1.0,))", OWNER) == []
+
+
+def test_an_allowance_that_covers_nothing_fails():
+    found = deciding_sites("def step(x):\n    x_plus = (x[0] + 1.0,)\n    return body(x=x_plus)", "a/door.py")
+    assert against_allowances(found, {"a/door.py": {"step": {"x_plus"}}}) == ([], [])
+    left, unused = against_allowances(found, {"a/door.py": {"step": {"x_plus", "x_minus"}, "gone": {"x_plus"}}})
+    assert left == []
+    assert unused == ["a/door.py: step derives no x_minus", "a/door.py: gone derives no x_plus"]
 
 
 def test_the_relay_check_flags_a_relay_that_builds_and_one_that_relays_nothing():
@@ -286,8 +469,9 @@ def test_the_relay_check_flags_a_relay_that_builds_and_one_that_relays_nothing()
         "    def dp(self, x):\n        return self(x=tuple(x))\n"
         "    def dm(self, x):\n        return 0.0\n"
         "    def ok(self, x):\n        return self(x=x)\n"
+        "    def through(self, x):\n        return self(x=point_at(x, 0))\n"
     )
-    assert relay_defects(source, ["H.dp", "H.dm", "H.ok", "H.gone"]) == [
+    assert relay_defects(source, "a/h.py", ["H.dp", "H.dm", "H.ok", "H.through", "H.gone"]) == [
         "H.dp: hands on x as tuple(x)",
         "H.dm: relays no x",
         "H.gone: no such function",
@@ -295,52 +479,16 @@ def test_the_relay_check_flags_a_relay_that_builds_and_one_that_relays_nothing()
 
 
 def test_only_the_owner_decides_the_form_of_x():
-    sources = {str(path.relative_to(PACKAGE)): path.read_text() for path in sorted(PACKAGE.rglob("*.py"))}
+    sources = _package_sources()
     index = PackageIndex(sources)
-    found = []
-    for path, source in sources.items():
-        found += deciding_sites(source, path, index)
-    assert found == [], "\n".join(found)
+    found = [site for path, source in sources.items() for site in deciding_sites(source, path, index)]
+    left, unused = against_allowances(found, DERIVED)
+    assert left == [], "\n".join(str(s) for s in left)
+    assert unused == [], "\n".join(unused)
 
 
-@pytest.mark.parametrize("path", sorted(RELAYS))
-def test_each_relay_site_hands_on_the_x_it_was_given(path):
-    assert relay_defects((PACKAGE / path).read_text(), RELAYS[path]) == []
-
-
-def test_the_binder_refuses_a_tuple_its_door_built():
-    """The binder reads x the owner built and refuses a tuple a door built itself, by name. Mutant: the refusal of an
-    unmarked tuple removed."""
-    bound = cp.bind_user_callable(lambda x: x[0], cp.REGION_SLOTS, role="r")
-    assert bound(x=cp.point_tuple([0.25, 0.5])) == 0.25
-    with pytest.raises(TypeError, match=r"a tuple it built itself as x, not one from coordinate_tuple"):
-        bound(x=(0.25, 0.5))
-
-
-class _Recorder(HamiltonianBase):
-    def __init__(self):
-        super().__init__()
-        self.seen = []
-
-    def __call__(self, t, x, p, m):
-        self.seen.append(type(x))
-        return float(np.sum(np.asarray(x, dtype=float) ** 2))
-
-
-@pytest.mark.parametrize(
-    ("x", "form"),
-    [
-        (np.array([0.3, 0.6]), np.ndarray),
-        ((0.3, 0.6), tuple),
-        (cp.point_tuple([0.3, 0.6]), cp.Coordinates),
-    ],
-    ids=["array", "plain tuple", "owner's coordinates"],
-)
-def test_a_finite_difference_hands_on_the_callers_form(x, form):
-    """The approver's ruling of 2026-11-27: a point the library derives from the caller's x keeps the caller's form, an
-    array an array of its shape and a tuple a tuple of its kind. Mutant: the perturbed point built as a plain tuple, as
-    before, which turns an array into a tuple."""
-    H = _Recorder()
-    grad = H._finite_diff_dx(x, m=1.0, p=np.zeros(2), t=0.0)
-    np.testing.assert_allclose(grad, [0.6, 1.2], rtol=1e-5)
-    assert set(H.seen) == {form}
+def test_each_relay_site_hands_on_the_x_it_was_given():
+    sources = _package_sources()
+    index = PackageIndex(sources)
+    defects = [d for path, names in RELAYS.items() for d in relay_defects(sources[path], path, names, index)]
+    assert defects == [], "\n".join(defects)

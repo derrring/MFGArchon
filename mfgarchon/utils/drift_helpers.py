@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, _remembered, bind_user_callable, caller_coordinates
+from mfgarchon.types.callable_protocols import COEFFICIENT_SLOTS, _remembered, bind_user_callable
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -218,7 +218,6 @@ def composite_drift(drift_list: Sequence[Callable]) -> Callable:
     def _composite_drift(t: float, x: tuple, m: np.ndarray) -> np.ndarray:
         """Sum of multiple drift contributions."""
         total = None
-        x = caller_coordinates(x)
         for drift_fn in bound:
             contribution = drift_fn(t=t, x=x, m=m)
             if total is None:

@@ -15,7 +15,6 @@ from mfgarchon.types.callable_protocols import (
     COEFFICIENT_SLOTS,
     REGION_SLOTS,
     VOLATILITY_SLOTS,
-    Coordinates,
     _remembered,
     bind_user_callable,
     coordinate_tuple,
@@ -408,7 +407,7 @@ def resolve_diffusion_source(
     return float(source)
 
 
-def points_of(grid: Any, dimension: int) -> Coordinates:
+def points_of(grid: Any, dimension: int) -> tuple[Any, ...]:
     """A solver's ``grid`` as the coordinate tuple a coefficient reads: per-axis node vectors, as a `CartesianGrid` declares
     them, become one array per coordinate of the density's shape; points, of shape ``(..., d)``, one entry per coordinate
     (#2875)."""

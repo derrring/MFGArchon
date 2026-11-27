@@ -18,7 +18,6 @@ from mfgarchon.core.measure_field import FunctionalMeasureField
 from mfgarchon.types.callable_protocols import (
     SOURCE_TERM_SLOTS,
     bind_user_callable,
-    point_tuple,
 )
 
 _X = (0.3,)
@@ -42,7 +41,7 @@ def test_named_slots_are_passed_by_name_and_an_omitted_one_is_not_passed():
         seen.update(t=t, x=x[0], m=m)
         return 0.0
 
-    bind_user_callable(source, SOURCE_TERM_SLOTS, role="source_term_hjb")(t=1.0, x=point_tuple(2.0), v=3.0, m=4.0)
+    bind_user_callable(source, SOURCE_TERM_SLOTS, role="source_term_hjb")(t=1.0, x=(2.0,), v=3.0, m=4.0)
     assert seen == {"t": 1.0, "x": 2.0, "m": 4.0}
 
 
@@ -135,7 +134,7 @@ def test_a_conditional_hamiltonian_may_leave_out_time(callable_, expected):
     from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS
 
     bound = bind_user_callable(callable_, CONDITIONAL_HAMILTONIAN_SLOTS, role="conditional_hamiltonian")
-    assert bound(t=0.5, x=point_tuple(0.1), p=0.2, m=0.3, theta=0.9) == expected
+    assert bound(t=0.5, x=(0.1,), p=0.2, m=0.3, theta=0.9) == expected
 
 
 # ---------------------------------------------------------------------------

@@ -35,7 +35,6 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import Mesh1D, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
-from mfgarchon.types.callable_protocols import Coordinates
 
 T, NT, SIGMA = 0.5, 10, 0.3
 
@@ -48,8 +47,8 @@ FORMS = {
 }
 
 
-# The type of every x a read hands Formed.optimal_control, for the form test below
-X_FORMS: list[type] = []
+# Every x a read hands Formed.optimal_control, for the form test below
+X_FORMS: list = []
 
 
 def _separable(form, *, only_0d=False, only_rows=None, only_shape=None):
@@ -60,7 +59,7 @@ def _separable(form, *, only_0d=False, only_rows=None, only_shape=None):
 
     class Formed(SeparableHamiltonian):
         def optimal_control(self, t, x, p, m):
-            X_FORMS.append(type(x))
+            X_FORMS.append(x)
             alpha = super().optimal_control(t=t, x=x, p=p, m=m)
             if (
                 (only_0d and np.ndim(p) != 0)
@@ -363,18 +362,23 @@ def test_each_read_refuses_a_control_of_another_shape(read, form):
 # A network door hands a node, not coordinates, and the form of that x is #3012's; cone_policy reads a control cost's
 # optimal_control(p), which takes no x
 X_READS = [read for read in READS if not read.startswith("network") and read != "cone_policy"]
+# The dimension of each read's points, 1 where not named; the manufactured source also measures its drift once at d = 1
+# when it is built, before its evaluation points exist (utils/manufactured.py)
+X_DIMENSIONS = {"velocity route nD": {2}, "manufactured coefficient": {2}, "manufactured source": {1, 2}}
 
 
 @pytest.mark.parametrize("read", X_READS)
 def test_each_read_hands_x_in_its_owners_form(read):
-    """#2875: what a library door hands a Hamiltonian's optimal_control as x is built by its one owner, as
-    `Coordinates` (types/callable_protocols.py), at the faces, the periodic seam, the quadrature points, the particles,
-    the nodes and the probes alike. Mutants: FVM's faces, FVM's seam or FEM's quadrature points built as the door's own
-    ``tuple(...)``, a plain tuple."""
+    """#2875: what a library door hands a Hamiltonian's optimal_control as x is in the form its owner builds
+    (types/callable_protocols.py): a tuple with one entry per coordinate, the entries scalars or arrays of one shape, at
+    the faces, the periodic seam, the quadrature points, the particles, the nodes and the probes alike. Mutant: FEM's
+    quadrature points handed as the ``(N, d)`` array."""
     X_FORMS.clear()
     _quiet(lambda: READS[read][2]("library"))
     assert X_FORMS, f"{read}: no read reached optimal_control"
-    assert set(X_FORMS) == {Coordinates}, f"{read}: {sorted(t.__name__ for t in set(X_FORMS))}"
+    assert {type(x) for x in X_FORMS} == {tuple}, f"{read}: {sorted({type(x).__name__ for x in X_FORMS})}"
+    assert all(len({np.shape(entry) for entry in x}) == 1 for x in X_FORMS), f"{read}: entries of several shapes"
+    assert {len(x) for x in X_FORMS} == X_DIMENSIONS.get(read, {1}), f"{read}: {sorted({len(x) for x in X_FORMS})}"
 
 
 @pytest.mark.parametrize("read", list(READS))

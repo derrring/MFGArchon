@@ -51,10 +51,10 @@ def test_no_solver_calls_its_source_term_directly():
 
 def test_the_variational_lagrangian_callables_are_bound_time_first():
     """`VariationalMFGComponents`' Lagrangian and its derivatives read (t, x, v, m) by name."""
-    from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable, point_tuple
+    from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
 
     bound = bind_user_callable(lambda t, x, v, m: (t, x[0], v, m), VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
-    assert bound(t=1, x=point_tuple(2), v=3, m=4) == (1, 2, 3, 4)
+    assert bound(t=1, x=(2,), v=3, m=4) == (1, 2, 3, 4)
 
 
 def test_no_variational_lagrangian_callable_is_called_directly():

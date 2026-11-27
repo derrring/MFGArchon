@@ -28,7 +28,6 @@ from mfgarchon.types.callable_protocols import (
     _remembered,
     bind_user_callable,
     bound_attribute,
-    caller_coordinates,
     coordinate_tuple,
     refuse_methods_out_of_order,
 )
@@ -618,7 +617,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 _D_callable = bind_user_callable(diffusion, VOLATILITY_SLOTS, role="diffusion")
 
                 def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
-                    D = _D(t=t, x=caller_coordinates(x), m=m)
+                    D = _D(t=t, x=x, m=m)
                     kind = _callable_output_kind(D, _kind, self.dimension, _evaluation_shape(x, m))
                     return volatility_from_diffusion(D, kind=kind)
             else:
@@ -1363,7 +1362,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             bound = bound_attribute(self, "_volatility", VOLATILITY_SLOTS, role="volatility")
 
             def diffusion(t, x, m):
-                value = bound(t=t, x=caller_coordinates(x), m=m)
+                value = bound(t=t, x=x, m=m)
                 output_kind = _callable_output_kind(value, kind, self.dimension, _evaluation_shape(x, m))
                 return diffusion_from_volatility(value, kind=output_kind)
 
@@ -1980,7 +1979,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         def composed_potential(t: float, x: Any) -> Any:
             import numpy as _np
 
-            x = caller_coordinates(x)  # a caller's own tuple, relayed as it is (#2875)
             wall = scale * wall_values(penalty, x)
             if previous is None:
                 squeezed = wall.squeeze()

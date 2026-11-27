@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import functools
 import inspect
-import sys
 import types
 import weakref
 from dataclasses import dataclass
@@ -96,43 +95,34 @@ REGION_SLOTS = Slots(("x",))
 EXACT_SOLUTION_SLOTS = Slots(("t", "x"))
 
 
-class Coordinates(tuple):
-    """``x`` as the library builds it for a body (#2875): a tuple with one entry per coordinate, each a scalar or an array
-    of one shape, the coordinate axis first. Only this module constructs one, in `coordinate_tuple`, `grid_coordinates`,
-    `line_coordinates`, `point_tuple`, `point_at`, `moved` and `caller_coordinates`, and `BoundCallable` refuses any other
-    tuple, so a door that builds its own fails at its first read. It is a tuple, so a body reads it as one."""
-
-    __slots__ = ()
-
-
-def coordinate_tuple(points: Any, dimension: int, *, shape: tuple[int, ...] | None = None) -> Coordinates:
+def coordinate_tuple(points: Any, dimension: int, *, shape: tuple[int, ...] | None = None) -> tuple[Any, ...]:
     """``points`` in the form every user callable reads ``x``: one entry per coordinate, each a scalar or an array, with
     the coordinate axis first (user ruling, 2026-11-04). ``dimension`` is what tells ``(N,)`` apart, N points on a line or
     one point in N dimensions, so the door that holds the points states it. A tuple is taken as already in that form.
     ``shape``, where the door states one, is the shape each entry is given, such as the density's grid shape.
     """
     if isinstance(points, tuple):
-        coordinates = points if isinstance(points, Coordinates) else Coordinates(points)
+        coordinates = points
     else:
         array = np.asarray(points, dtype=float)
         if dimension == 1:
-            coordinates = Coordinates((array[..., 0] if array.ndim >= 2 and array.shape[-1] == 1 else array,))
+            coordinates = (array[..., 0] if array.ndim >= 2 and array.shape[-1] == 1 else array,)
         elif array.ndim == 0 or array.shape[-1] != dimension:
             raise ValueError(f"points of shape {array.shape} hold no coordinate axis of length {dimension}")
         else:
-            coordinates = Coordinates(np.moveaxis(array, -1, 0))
+            coordinates = tuple(np.moveaxis(array, -1, 0))
     if shape is None:
         return coordinates
-    return Coordinates(np.reshape(entry, shape) for entry in coordinates)
+    return tuple(np.reshape(entry, shape) for entry in coordinates)
 
 
-def grid_coordinates(axes: Sequence[Any]) -> Coordinates:
+def grid_coordinates(axes: Sequence[Any]) -> tuple[Any, ...]:
     """The points of the tensor grid that ``axes``, one 1-D array of nodes per coordinate, span, in the form a body reads
     ``x``: one entry per coordinate, each of the grid's shape (``np.meshgrid`` with ``indexing="ij"``)."""
-    return Coordinates(np.meshgrid(*axes, indexing="ij"))
+    return tuple(np.meshgrid(*axes, indexing="ij"))
 
 
-def line_coordinates(x: Any) -> Coordinates:
+def line_coordinates(x: Any) -> tuple[Any, ...]:
     """Points on a line, ``d = 1``: ``x`` a scalar for one point or an array of the points, as the one-entry coordinate
     tuple, the entry as it is, so an array library's own array (jax's, under ``jit``) stays one. A tuple is refused: it
     is in a form already, and the door that holds it states which."""
@@ -140,39 +130,20 @@ def line_coordinates(x: Any) -> Coordinates:
         raise TypeError(
             f"line_coordinates takes one coordinate, a scalar or an array, and was handed a tuple of {len(x)}"
         )
-    return Coordinates((x,))
+    return (x,)
 
 
-def moved(x: Any, axis: int, delta: float) -> Any:
-    """``x`` with coordinate ``axis`` moved by ``delta``, in the form ``x`` came in (the approver's ruling of 2026-11-27 on
-    #2875): an array stays an array of its shape, coordinates the library built stay its coordinates, and any other tuple
-    stays a plain tuple."""
-    if isinstance(x, tuple):
-        entries = (*x[:axis], x[axis] + delta, *x[axis + 1 :])
-        return Coordinates(entries) if isinstance(x, Coordinates) else entries
-    shifted = np.array(x, dtype=float, copy=True)
-    shifted[..., axis] += delta
-    return shifted
-
-
-def point_tuple(point: Any) -> Coordinates:
+def point_tuple(point: Any) -> tuple[Any, ...]:
     """One point in the form a body reads it, a tuple of scalars: ``point`` is a scalar or of shape ``(d,)``, ``d = 1``
     included, where `coordinate_tuple` would read ``(1,)`` as a batch of one point on a line. A door that holds one
     point hands it so, and a body reading ``x[0]`` gets a number."""
-    return Coordinates(np.atleast_1d(np.asarray(point, dtype=float)))
+    return tuple(np.atleast_1d(np.asarray(point, dtype=float)))
 
 
-def point_at(x: tuple[Any, ...], index: int) -> Coordinates:
+def point_at(x: tuple[Any, ...], index: int) -> tuple[Any, ...]:
     """Point ``index`` of a batch in coordinate-tuple form, as a tuple of scalars. An entry that is already a scalar holds
     for every point."""
-    return Coordinates(np.ravel(entry)[index] if np.ndim(entry) else entry for entry in x)
-
-
-def caller_coordinates(x: Any) -> Any:
-    """A caller's own ``x``, handed on by a public door to a body it binds (the approver's ruling of 2026-11-27 on #2875):
-    a tuple keeps its content and is marked, and any other form is handed on as it is, so the binder refuses it by name
-    as before. The caller chose the form, so the door decides nothing."""
-    return Coordinates(x) if isinstance(x, tuple) and not isinstance(x, Coordinates) else x
+    return tuple(np.ravel(entry)[index] if np.ndim(entry) else entry for entry in x)
 
 
 # What a refusal advises for a callable that cannot be bound by name. In words, never a lambda: one written from the slots
@@ -628,25 +599,9 @@ class BoundCallable:
                     f"{type(values['x']).__name__}, and x is a coordinate tuple: this is a defect in the door that "
                     f"called it (#2875)."
                 )
-            if not isinstance(values["x"], Coordinates):
-                raise TypeError(
-                    f"the library handed {getattr(self.fn, '__qualname__', self.fn)!r} a tuple it built itself as x, "
-                    f"not one from coordinate_tuple, point_tuple or point_at: this is a defect in the door that called "
-                    f"it, {_door_site()} (#2875)."
-                )
             if not self.state.checked:
                 self.check_on(values)
         return self._read(**values)
-
-
-def _door_site() -> str:
-    """The first frame outside this module on the stack: the door a refusal of its x names."""
-    frame = sys._getframe(1)
-    while frame is not None and frame.f_code.co_filename == __file__:
-        frame = frame.f_back
-    if frame is None:
-        return "outside any frame"
-    return f"{frame.f_code.co_filename.rsplit('mfgarchon/', 1)[-1]}:{frame.f_lineno} in {frame.f_code.co_name}"
 
 
 def bound_attribute(owner: Any, attr: str, slots: Slots, *, role: str) -> BoundCallable:

@@ -74,7 +74,7 @@ def _bind(slots):
 
 
 def _call(bound, order):
-    return bound(**{slot: cp.point_tuple(_AT[slot]) if slot == "x" else _AT[slot] for slot in order})
+    return bound(**{slot: (_AT[slot],) if slot == "x" else _AT[slot] for slot in order})
 
 
 @pytest.mark.parametrize("name", list(_TABLES))
@@ -321,7 +321,7 @@ def test_what_a_raw_hamiltonian_is_told_about_a_frozen_measure_is_accepted_and_r
     with pytest.raises(TypeError, match="passing the frozen value by keyword"):
         cp.bind_user_callable(functools.partial(H, m=0.5), cp.HAMILTONIAN_SLOTS, role="r")
     bound = cp.bind_user_callable(lambda t, x, p: H(t=t, x=x, p=p, m=0.5), cp.HAMILTONIAN_SLOTS, role="r")
-    assert bound(t=0.25, x=cp.point_tuple(3.0), p=2.0, m=7.0) == 703.0
+    assert bound(t=0.25, x=(3.0,), p=2.0, m=7.0) == 703.0
 
 
 def test_a_frozen_slot_with_no_readable_signature_is_refused_where_it_would_be_passed_by_name():
