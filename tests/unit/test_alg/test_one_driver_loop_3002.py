@@ -316,7 +316,8 @@ def test_a_source_that_adds_mass_is_not_read_as_a_blow_up(route):
     """m(0) of mass 1e-5 and an FP source adding mass 1 per unit time: a healthy solve whose level mass grows 3e4-fold
     from m(0)'s (the text lane's N1 of review 2, where every route stopped at its second sweep). The reference is the
     solve's first FP output, which the source has already filled. Mutant: the reference taken from m(0)'s mass."""
-    problems = _problems(route, initial_mass=1e-5, fp_source=1.0)
+    with pytest.warns(UserWarning, match=r"initial density mass 1e-05 "):
+        problems = _problems(route, initial_mass=1e-5, fp_source=1.0)
     hjbs, fps = [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
