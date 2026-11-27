@@ -237,8 +237,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
             absolute_tolerance: Opt-in absolute bound on the same change, as for the other coupling
                 iterators.
             verbose: Show the progress display
-            iteration_callback: Optional ``callback(iteration, U, M, error_U, error_M)`` after each warm-up sweep and
-                each Newton iterate judged; a return of False stops the solve, True or None continues (#2886)
+            iteration_callback: Optional ``callback(iteration, U, M, error_U, error_M)``. It is called after warm-up
+                sweep k's update, with ``iteration=k`` and the iterate the update left, and after the Newton phase's
+                verdict on each iterate, before its step, with the evaluation's index; an evaluation, update or verdict
+                that ends the solve before the call makes none. The post-warm-up check, index W after W warm-up sweeps,
+                makes no call: the Newton phase's first call, at W + 1, receives the iterate the check judged. A return
+                of False stops the solve, True or None continues (#2886)
             track_measure_field: If True, store each warm-up iterate as a MeasureField snapshot in
                 SolverResult.metadata["measure_field"] (#956)
             track_rate_history: If True, record each warm-up sweep's M damping rate in
