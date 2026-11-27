@@ -66,7 +66,7 @@ class NetworkHamiltonian(HamiltonianBase):
     a default quadratic Hamiltonian on edges.
 
     It holds no graph: ``bind(geometry)`` returns a copy bound to a network geometry, whose graph it reads at each read
-    (#1472). A problem binds the Hamiltonian it is given.
+    (#1472). `NetworkMFGProblem` binds the one it builds; until #1472's stage 2 no other problem binds the one it is given.
 
     Parameters
     ----------
@@ -143,12 +143,17 @@ class NetworkHamiltonian(HamiltonianBase):
     def bind(self, geometry: NetworkGeometry) -> NetworkHamiltonian:
         """A copy of this Hamiltonian bound to ``geometry``, a network geometry, whose graph it reads at each read (#1472)."""
         try:
-            geometry.network_data  # noqa: B018 -- the read is the check
+            data = geometry.network_data
         except AttributeError:
             raise TypeError(
                 f"NetworkHamiltonian.bind takes a network geometry, one that holds a graph (network_data), and was handed "
                 f"a {type(geometry).__name__} (#1472)."
             ) from None
+        if data is None:
+            raise ValueError(
+                f"NetworkHamiltonian.bind takes a network geometry whose graph is built, and this {type(geometry).__name__} "
+                f"holds none (network_data is None): build it with create_network() first (#1472)."
+            )
         bound = copy.copy(self)
         bound._geometry = geometry
         return bound
@@ -159,7 +164,8 @@ class NetworkHamiltonian(HamiltonianBase):
         if self._geometry is None:
             raise RuntimeError(
                 "This NetworkHamiltonian is bound to no network geometry, so it has no graph to read: bind it with "
-                ".bind(geometry), as a problem does with the one it is given (#1472)."
+                ".bind(geometry) before handing it to a problem: only NetworkMFGProblem binds one, the one it builds, until "
+                "#1472's stage 2."
             )
         return self._geometry
 
@@ -173,13 +179,13 @@ class NetworkHamiltonian(HamiltonianBase):
         return self.geometry.num_nodes
 
     def _node(self, x: Any, method: str) -> int:
-        """The node a method reads from ``x``: an int, a numpy integer, or a one-entry array of integer dtype, through the
-        bound geometry's `node_x`, which hands the node at the library's doors and refuses any other form by name (#3012).
-        An array of other than one entry, or of a dtype that is not an integer's, is refused here."""
+        """The node a method reads from ``x`` (#3012). A one-entry array of integer dtype is unwrapped here and any other
+        array refused; the rest goes to the bound geometry's `node_x`, which hands the node at the library's doors, takes
+        an int or a numpy integer that is one of the graph's nodes, and refuses anything else by name."""
         if isinstance(x, np.ndarray):
             if x.size != 1 or not np.issubdtype(x.dtype, np.integer):
                 raise TypeError(
-                    f"NetworkHamiltonian.{method} reads x as one node, an int, a numpy integer or an array of one integer entry, and was "
+                    f"NetworkHamiltonian.{method} reads x as one node, an int, a numpy integer or a one-entry array of integer dtype, and was "
                     f"handed an array of {x.size} entries of dtype {x.dtype} (#3012)."
                 )
             x = x.reshape(()).item()
@@ -203,7 +209,7 @@ class NetworkHamiltonian(HamiltonianBase):
     def __call__(self, t, x, p, m):
         """Evaluate H at node x with density m and costate p.
 
-        x: the node, an int, a numpy integer or an array of one integer entry (`_node`)
+        x: the node, an int, a numpy integer or a one-entry array of integer dtype (`_node`)
         m: density vector, shape (N,) — this population's density.
         p: costate vector at all nodes, shape (N,)
         """

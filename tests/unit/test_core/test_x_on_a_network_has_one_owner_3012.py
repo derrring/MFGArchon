@@ -10,9 +10,9 @@ handed by position, a name bound otherwise than by a plain assignment, a relay o
 outside these files.
 
 At runtime, a recording `NetworkHamiltonian` subclass takes the type of each ``x`` the three network solvers hand it.
-And `NetworkHamiltonian`'s read of a node takes what ``node_x`` takes, through ``node_x``: an ``int``, a numpy integer, or a
-one-entry array of integer dtype, one of the graph's nodes. It refuses by name every other form main read, each of which
-main read as a node (the cases below).
+And `NetworkHamiltonian`'s read of a node takes an ``int``, a numpy integer, or a one-entry array of integer dtype, one of
+the graph's nodes: it unwraps such an array, refuses any other, and reads the rest through ``node_x``. It refuses by name
+each other form in the cases below.
 """
 
 from __future__ import annotations
@@ -208,6 +208,7 @@ def test_a_node_the_contract_names_is_read_as_that_node(x):
         (2 + 0j, "of type complex"),
         ([2], "of type list"),
         ((2,), "of type tuple"),
+        (np.array([2], dtype=object), "of dtype object"),
         (-1, "-1 is not one of them"),
         (6, "6 is not one of them"),
     ],
@@ -224,13 +225,16 @@ def test_a_node_the_contract_names_is_read_as_that_node(x):
         "complex",
         "list",
         "tuple",
+        "object array",
         "negative",
         "off the graph",
     ],
 )
 def test_a_node_the_contract_does_not_name_is_refused_by_name(x, message):
-    """Main read each of these as a node, through ``int(np.asarray(x).flat[0])``. Mutants: the array's size check, its
-    dtype check, ``node_x``'s type check, and its range check, each removed."""
+    """Main took the node through ``int(np.asarray(x).flat[0])``, which read each of these but the empty array as a node
+    (the empty array raised ``IndexError``). An index off the graph reached the user's callables as itself and raised
+    ``IndexError`` where a read indexes the graph, ``optimal_control`` among them. Mutants: the array's size check, its
+    dtype check (the object array then reads as node 2), ``node_x``'s type check, and its range check, each removed."""
     with pytest.raises((TypeError, ValueError), match=message):
         NetworkHamiltonian().bind(_network())._node(x, "optimal_control")
 

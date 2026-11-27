@@ -98,6 +98,8 @@ class NetworkHJBSolver(BaseHJBSolver):
     # `components.boundary_nodes`, so it cannot honor a node BC: `False`. The
     # `NetworkPolicyIterationHJBSolver` subclass — which applies them each step — overrides to `True`.
     _honors_node_bc: bool = False
+    # What a solve reads from its problem, refused by name at construction when absent (Issue #2045)
+    _problem_reads: tuple[str, ...] = ("geometry.network_data", "hamiltonian")
 
     def __init__(
         self,
@@ -116,16 +118,7 @@ class NetworkHJBSolver(BaseHJBSolver):
             tolerance: ODE solver tolerance (rtol for solve_ivp)
         """
         super().__init__(problem)
-        refuse_a_problem_a_network_solver_cannot_read(
-            problem,
-            type(self).__name__,
-            (
-                "geometry.network_data",
-                "hamiltonian",
-                "apply_boundary_conditions",
-                "hamiltonian_class.has_custom_hamiltonian",
-            ),
-        )
+        refuse_a_problem_a_network_solver_cannot_read(problem, type(self).__name__, self._problem_reads)
 
         self.network_problem = problem
 
@@ -145,7 +138,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         self.scheme = scheme
         self.tolerance = tolerance
 
-        # The graph is the geometry's (#1472 stage 1), refused above when the geometry holds none (Issue #2045)
+        # The graph is the geometry's (#1472 stage 1); a problem whose geometry is not a network's is refused above (Issue #2045)
         self.network = cast("NetworkGeometry", problem.geometry)
         self._graph_generation = self.network.graph_generation
         self.num_nodes = self.network.num_nodes
@@ -312,6 +305,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     # `problem.apply_boundary_conditions` (the node-Dirichlet pin over `boundary_nodes`) at every
     # timestep in `solve_hjb_system`, so it honors a node BC and is exempt from the base gate.
     _honors_node_bc: bool = True
+    _problem_reads = (
+        *NetworkHJBSolver._problem_reads,
+        "apply_boundary_conditions",
+        "hamiltonian_class.has_custom_hamiltonian",
+    )
 
     def __init__(
         self,
