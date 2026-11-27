@@ -543,9 +543,10 @@ def test_a_bc_changed_by_the_callback_is_refused_before_newtons_step():
 
 
 def test_a_bc_changed_inside_newtons_last_step_is_refused_before_the_last_f():
-    """With one Newton step in the budget, the BC changes at the step's first HJB solve, a probe; the owner is read
-    before the F of the exhausted budget. Mutant: that read removed, and the solve returns an iterate evaluated on the
-    refused BC."""
+    """With a budget of one Newton iterate, the BC changes at its step's first HJB solve, a probe, and no iterate's
+    evaluation follows: the owner is read before the F of the exhausted budget. Mutant: that read removed, and the solve
+    returns an iterate whose F was evaluated on the refused BC. A budget of 2 would not reach that read, since the
+    second iterate's evaluation reads the owner first."""
     p = _problem()
     hjb, fp = _gfdm_pair(p, "both")
     solve, armed = hjb.solve_hjb_system, []
@@ -558,13 +559,13 @@ def test_a_bc_changed_inside_newtons_last_step_is_refused_before_the_last_f():
 
     hjb.solve_hjb_system = changing
     with pytest.raises(ValueError, match=r"declares its"):
-        # Budget 2: the post-warm-up check, then one Newton iterate, its step and the exhausted budget's F
+        # Budget 1, no warm-up: one Newton iterate, its step, and the exhausted budget's F
         _solve(
             "Newton",
             [p],
             [hjb],
             [fp],
-            sweeps=2,
+            sweeps=1,
             tol=1e-30,
             picard_warmup=0,
             iteration_callback=lambda *a: armed.append(1),
