@@ -13,7 +13,8 @@ Stage 1 holds:
   unbound or to bind a geometry that holds no graph or whose graph is not built.
 - **A rebuilt graph reaches the Hamiltonian and the problem, and is refused at a solver built before it,** through the
   generation the geometry advances on each build.
-- **A network solver refuses by name, at construction, a problem that lacks what it reads** (#2045).
+- **A network solver refuses by name, at construction, a problem that lacks what it reads** (#2045), and nothing it
+  does not read.
 
 What the scans cannot follow: a read through ``getattr``, a graph object stored in a container rather than on an
 attribute (the solvers' neighbour lists), and a value held under a local name more than one assignment back.
@@ -321,6 +322,30 @@ def test_a_network_solver_refuses_a_problem_it_cannot_read_at_construction(solve
     }[solver]
     with pytest.raises(NotImplementedError, match="from its problem, which this MFGProblem on a GridNetwork lacks"):
         cls(problem)
+
+
+def test_each_hjb_solver_refuses_only_what_it_reads():
+    """`NetworkHJBSolver` never reads a problem's ``apply_boundary_conditions`` and builds without it; policy iteration
+    reads it, and refuses by name a problem that lacks it. Mutants: the base solver's reads widened to policy
+    iteration's (review 2's MF4), or policy iteration's narrowed to the base solver's."""
+    pytest.importorskip("igraph")
+    from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver, NetworkPolicyIterationHJBSolver
+    from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    class WithoutNodeBC(NetworkMFGProblem):
+        @property
+        def apply_boundary_conditions(self):
+            raise AttributeError("apply_boundary_conditions")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = WithoutNodeBC(geometry=GridNetwork(width=3, height=2), T=0.2, Nt=4, components=NetworkMFGComponents())
+        NetworkHJBSolver(problem)
+    with pytest.raises(
+        NotImplementedError, match=r"NetworkPolicyIterationHJBSolver reads apply_boundary_conditions from"
+    ):
+        NetworkPolicyIterationHJBSolver(problem)
 
 
 @pytest.mark.xfail(strict=True, reason=STAGE_2)
