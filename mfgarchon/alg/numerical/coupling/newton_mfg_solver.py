@@ -198,8 +198,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # Newton phase's verdict judges, a diverged one as NaN (#2997 ruling 7, stage 1c).
         self._record = SweepRecord(1)
         self._driver: CoupledDriver | None = None
-        # True once M holds this solve's density: a warm-up sweep's FP output, or a Newton step's iterate (#1717)
-        self._fp_output_available = False
         # The warm-up sweeps the last solve ran: the Newton phase's iterations count from there
         self._warmup_sweeps = 0
 
@@ -253,7 +251,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
         # A capped exit is offered for a standalone FP solve only, as on every coupled route (#2581)
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "NewtonMFGSolver.solve")
         budget = 30 if max_iterations is None else max_iterations
-        self._fp_output_available = False
         self._warmup_sweeps = 0
         self.newton_residuals = []
         self._verdict_inner_failures: object = _NOT_READ
@@ -277,6 +274,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             "Newton",
             state,
             self.mfg_residual.hjb_solver,
+            reader="NewtonMFGSolver",
             budget=budget,
             tolerance=tolerance,
             absolute_tolerance=absolute_tolerance,
@@ -299,7 +297,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 outcome = driver.run_fixed_point(step, U, M, warmup, reason_prefix="Picard warm-up: ")
                 U, M = outcome.U, outcome.M
                 self._warmup_sweeps = outcome.sweeps
-                self._fp_output_available = driver.fp_output_available
                 if outcome.stop is not None:
                     # A stopped warm-up publishes what the pipeline published, and the warm-up count says how far it got
                     # (#1718, #1672)
@@ -359,11 +356,6 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         self.U, self.M = outcome.U, outcome.M
         self.newton_residuals = newton.residual_history
-        # The iterate Newton returns is a density this solve produced once a step has moved it; before that it is where
-        # the phase began, the warm-up's output or the cold start (#1717; #3002 class line 6, review 1's B6). An
-        # evaluation run is not a step: at the base this read `iterations > 0`, and reported the cold start's drift.
-        if newton.steps_taken > 0:
-            self._fp_output_available = True
         self._solution_computed = True
         if outcome.stop == "callback":
             return self._create_result(driver.converged, driver.reason)
@@ -392,19 +384,14 @@ class NewtonMFGSolver(BaseCouplingIterator):
         return self.mfg_residual.state
 
     def _stop_on_a_diverged_map(self, U: NDArray, M: NDArray, sweep: int, driver: CoupledDriver) -> SolverResult:
-        """Publish what the pipeline published at evaluation ``sweep`` and stop: the HJB guard's (#1718) or the FP-output
-        rule's pair (the approver's ruling E), with the reason the driver gave, after ``sweep`` less the warm-up's sweeps
-        Newton iterations. The stopped evaluation counts, its change NaN (#2997)."""
+        """Publish what the driver published and stop, with the reason it gave: the HJB guard's (#1718) or the FP-output
+        rule's pair at evaluation ``sweep`` (the approver's ruling E), whose change counts as NaN (#2997), or the iterate
+        the post-update rule judged after the step from evaluation ``sweep``. The Newton iterations reported are
+        ``sweep`` less the warm-up's sweeps. Whether the published density is measured is the driver's one decision
+        (#3002 class line 6)."""
         self.U, self.M = U, M
         self.newton_residuals = []
         self._solution_computed = True
-        # The density the stop publishes: the FP output under the FP-output rule (the driver says so), else the iterate the
-        # evaluation was handed, which a step produced only from the Newton phase's second iterate on. The post-warm-up
-        # check (evaluation `warmup`) and the phase's first iterate (`warmup + 1`) are both at the warm-up's output, the
-        # cold start when there was no warm-up (#1717; #3002 class line 6).
-        self._fp_output_available = (
-            self._fp_output_available or driver.fp_output_available or sweep > self._warmup_sweeps + 1
-        )
         return self._create_result(False, driver.reason, newton_iterations=sweep - self._warmup_sweeps)
 
     def _verdict_failures(self) -> object:
@@ -452,7 +439,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             damping=self.damping,
             problems=[self.problem],
             fp_solvers=[self.fp_solver],
-            fp_output_available=self._fp_output_available,
+            fp_output_available=driver is not None and driver.fp_output_available,
             metadata=info,
         )
 

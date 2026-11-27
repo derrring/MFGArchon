@@ -5,6 +5,7 @@ hands over:
 
 - `SweepRecord`: each sweep's change, per component, as `sweep_change` measured it. The iteration count, the absolute
   histories, the relative histories in the metadata, and each component's own histories are read from it.
+- `DensityRecord`: what produced the density a solve publishes, and so whether its drift is a measurement.
 - `mass_conservation_error`: the drift of the mass the route's model conserves, per component and at the top level.
 - `refuse_components_off_one_grid`: a route with a component axis pairs its components' levels step for step and
   holds one array per field, so its components share one time grid and one shape.
@@ -46,6 +47,28 @@ class MassInvariant(Enum):
     out-degree at every node, a symmetric one or a directed cycle among them. An adjacency where the two differ at some
     node changes the total by design, as a custom ``coupling_fp`` can, and its drift is then the coupling's net source,
     to be read against the coupling as a wall's loss is. A component's own drift is partly the exchange."""
+
+
+class DensityRecord:
+    """What produced the density a coupled solve publishes, and from it whether that density is measured: the one
+    decider every coupled route asks (#1717; #3002 class line 6, #3008). A route keeps one per solve and counts on it
+    each event that hands the solve a density of its own making.
+    """
+
+    def __init__(self) -> None:
+        #: FP outputs the FP-output rule published on a stop (the approver's ruling E)
+        self.fp_outputs_published = 0
+        #: Fixed-point updates carried forward
+        self.updates = 0
+        #: Newton steps that moved the iterate (`NewtonRun.steps_taken`)
+        self.newton_steps = 0
+
+    @property
+    def measured(self) -> bool:
+        """Whether the density the solve publishes is one it produced: an FP output it published, an iterate a
+        fixed-point update carried forward, or one a Newton step moved. The start, cold or warm, is not, nor a density
+        a stop publishes as it was handed before any of these."""
+        return self.fp_outputs_published > 0 or self.updates > 0 or self.newton_steps > 0
 
 
 class SweepRecord:
@@ -133,26 +156,29 @@ def mass_conservation_error(
     """``(top level, per component)``: max over t of ``|mass(t) / mass(0) - 1|``, the drift from the initial mass.
 
     None means not measured (#1672), and None and 0.0 are different statements:
-    - ``measured`` is False when no FP step of this solve completed: M is then the cold start or a warm start, not this
-      solve's density (#1717);
-    - a density that is not finite has no drift to measure: a solve the FP-output rule stopped publishes its FP output
-      with its bad values kept (#3002, the approver's ruling E);
+    - ``measured`` is False when the density is not one this solve produced (`DensityRecord.measured`): M is then the
+      cold start or a warm start (#1717);
+    - a component whose density is not finite has no drift to measure: a solve the FP-output rule or the post-update
+      rule stopped publishes it with its bad values kept (#3002, the approver's ruling E). That component's figure is
+      None and the other components' stand; the top level is then None, since the worst drift, or the total's, is not
+      known (#3002 class line 6, review 2's code N6);
     - a geometry with no measure has no total mass.
 
     An FP solver whose state holds what the grid density discards, the particles still alive, reports its own number
     (`mass_conservation_error_override`, #2188). A total over components cannot combine such a number with the others,
     so under `MassInvariant.TOTAL` it leaves the top level None, and each component's number stands.
     """
-    if not measured or not all(np.all(np.isfinite(np.asarray(M, dtype=float))) for M in Ms):
+    if not measured:
         return None, [None] * len(Ms)
-    overrides = [_override(solver) for solver in fp_solvers]
+    finite = [bool(np.all(np.isfinite(np.asarray(M, dtype=float)))) for M in Ms]
+    overrides = [_override(solver) if ok else None for solver, ok in zip(fp_solvers, finite, strict=True)]
     histories = [
-        None if override is not None else _mass_history(M, geometry, reader)
-        for M, geometry, override in zip(Ms, geometries, overrides, strict=True)
+        None if override is not None or not ok else _mass_history(M, geometry, reader)
+        for M, geometry, override, ok in zip(Ms, geometries, overrides, finite, strict=True)
     ]
     per_component = [
-        override if override is not None else (None if mass is None else _drift(mass))
-        for override, mass in zip(overrides, histories, strict=True)
+        None if not ok else override if override is not None else (None if mass is None else _drift(mass))
+        for override, mass, ok in zip(overrides, histories, finite, strict=True)
     ]
     if invariant is MassInvariant.EACH:
         if any(drift is None for drift in per_component):

@@ -205,7 +205,7 @@ def test_each_library_control_is_read_at_the_exact_gradient_at_its_face(dimensio
     x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
     U, _ = _degree_two(x)
     M = _density(x)
-    kwargs, _ = resolve_fp_drift_kwargs(
+    kwargs = resolve_fp_drift_kwargs(
         problem,
         set(inspect.signature(fp.solve_fp_system).parameters),
         None,

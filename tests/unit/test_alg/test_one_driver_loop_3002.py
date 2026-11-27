@@ -3,21 +3,26 @@
 Each test is a mutation-verified convention pin of a fact several routes decided on their own before the driver (AGENTS.md
 § Admission, class 1): each goes red under the mutant its docstring and the PR body name.
 
-- **Class line 1, an FP output a solve cannot use** (#2997's folded item): a non-finite one stops with
-  ``'diverged_nan'`` and one whose level's mass passes the magnitude check with ``'diverged_mass_blowup'``, on all seven
-  routes and at Newton's post-warm-up check and Newton phase; the stop publishes the stopped evaluation's HJB and FP
-  outputs. At 8598206f only FixedPoint stopped, and not on a NaN at level 0. On a non-finite output the others raised
-  #2578's refusal; on ×1e5, four ran their budget out, Graph's FP raised its negative-density refusal, and Newton
-  reported a line-search failure.
-- **Class line 2, the budget and its report** (ruling 2): ``max_iterations=0`` runs no sweep, and a spent budget reads
-  ``"Maximum iterations reached"``, on all seven; ``newton_max_iterations`` bounds Newton's phase within the budget.
+- **Class line 1, an iterate a solve cannot use** (#2997's folded item): a non-finite FP output stops with
+  ``'diverged_nan'``, and one whose largest level mass passes 1e4 times its solve's first FP output's with
+  ``'diverged_mass_blowup'``, on all seven routes and at Newton's post-warm-up check and Newton phase; the stop
+  publishes the stopped evaluation's HJB and FP outputs. A source that fills the domain is not read as a blow-up. An
+  update that leaves a non-finite iterate, a damping's or a Newton step's, stops with ``'diverged_nan'`` and publishes
+  it; a non-finite warm start is refused where it is set.
+- **Class line 2, the budget and its report** (ruling 2): ``max_iterations=0`` runs no sweep, a negative one is refused
+  naming the route's class, and a spent budget reads ``"Maximum iterations reached"``, on all seven;
+  ``newton_max_iterations`` bounds Newton's phase within the budget.
 - **Class line 3, the callback's convention** (#2886, ruling 4): False stops, with the verdict read at that iterate;
   True and None continue. FictitiousPlay read the opposite.
 - **Class line 4, the owner's refusals during one solve** (#3005): a BC changed during a solve, so that the problem
   declares two that differ, is refused at the next step on every route, whichever solver carries its own BC, Newton's
-  post-warm-up check and phase included.
-- **Class line 5, a solver whose signature cannot be read** (#2209): refused when the route is built, on every route.
-- **Class line 6, whether a published density is measured** (#1717): Newton's cold start is not reported as measured.
+  post-warm-up check and phase included, and before each Newton step and the F of an exhausted budget.
+- **Class line 5, what a route hands a solver** (#2209): a solver whose signature cannot be read, and an FP solver whose
+  signature names neither ``potential_field`` nor ``drift_field``, are refused when the route is built, on every route.
+- **Class line 6, whether a published density is measured** (#1717): Newton's cold start is not reported as measured,
+  a stop after a Newton step is, and MultiPopulation reports each finite population's drift.
+- **Class line 7, a solver writing into what it is handed** (#3009): the solve is unchanged, on every route and phase,
+  for every method a route calls.
 - **Newton's warm-up sweep** makes one HJB solve and one FP solve (ruling 6: ``picard_residuals`` is removed).
 - **The order between the fields** is the sweep map's option: Block Jacobi's map is Newton's residual's, and differs
   from the Gauss-Seidel map in M only.
@@ -28,6 +33,7 @@ d = 1 expresses every one of these: they are stops, counts, a return convention 
 from __future__ import annotations
 
 import functools
+import logging
 import warnings
 
 import pytest
@@ -41,6 +47,7 @@ from mfgarchon.alg.numerical.coupling import (
     FictitiousPlayIterator,
     FixedPointIterator,
 )
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import FPOutputRule
 from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
@@ -54,6 +61,7 @@ from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
+from mfgarchon.utils.numerical.nonlinear_solvers import NewtonRun
 
 ROUTES = [
     "FixedPoint",
@@ -68,9 +76,12 @@ ROUTES = [
 ONE_COMPONENT = ["FixedPoint", "FictitiousPlay", "Block GS", "Block Jacobi", "Newton"]
 
 
-def _problem(centre: float = 0.3) -> MFGProblem:
+def _problem(centre: float = 0.3, *, initial_mass: float = 1.0, fp_source: float | None = None) -> MFGProblem:
+    """The fixture: m(0) a Gaussian of mass ``initial_mass`` at ``centre``; ``fp_source``, when given, an FP source
+    adding that much mass per unit time at every point."""
     xs = np.linspace(0.0, 1.0, 11)
-    mass = np.trapezoid(np.exp(-40 * (xs - centre) ** 2), xs)
+    mass = np.trapezoid(np.exp(-40 * (xs - centre) ** 2), xs) / initial_mass
+    source = {} if fp_source is None else {"source_term_fp": lambda x, m, v, t: fp_source * np.ones_like(m)}
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
@@ -83,44 +94,66 @@ def _problem(centre: float = 0.3) -> MFGProblem:
             T=0.3,
         ),
         Nt=5,
+        **source,
     )
 
 
 def _solve(route, problems, hjbs, fps, *, sweeps, tol=1e-12, **kw):
-    """One solve of ``route`` on its problems and solvers, ``sweeps`` its budget."""
+    """One solve of ``route`` on its problems and solvers, ``sweeps`` its budget; ``damping`` and ``adjoint_mode``, when
+    given, go to the route's constructor."""
+    ctor = {key: kw.pop(key) for key in ("damping", "adjoint_mode") if key in kw}
     if route == "FixedPoint":
         # The pins run below HJB-FDM's default Newton tolerance; FixedPoint's warning about it (#1081) is the fixture's
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=r"HJB newton_tolerance", category=UserWarning)
-            return FixedPointIterator(problems[0], hjbs[0], fps[0]).solve(
+            return FixedPointIterator(problems[0], hjbs[0], fps[0], **ctor).solve(
                 max_iterations=sweeps, tolerance=tol, verbose=False, **kw
             )
     if route == "FictitiousPlay":
-        return FictitiousPlayIterator(problems[0], hjbs[0], fps[0]).solve(
+        return FictitiousPlayIterator(problems[0], hjbs[0], fps[0], **ctor).solve(
             max_iterations=sweeps, tolerance=tol, verbose=False, **kw
         )
     if route in ("Block GS", "Block Jacobi"):
         cls = BlockGaussSeidelIterator if route == "Block GS" else BlockJacobiIterator
-        return cls(problems[0], hjbs[0], fps[0]).solve(max_iterations=sweeps, tolerance=tol, verbose=False, **kw)
+        return cls(problems[0], hjbs[0], fps[0], **ctor).solve(
+            max_iterations=sweeps, tolerance=tol, verbose=False, **kw
+        )
     if route == "Newton":
         warmup = kw.pop("picard_warmup", 3)
         newton_max = kw.pop("newton_max_iterations", 20)
-        solver = NewtonMFGSolver(problems[0], hjbs[0], fps[0], picard_warmup=warmup, newton_max_iterations=newton_max)
+        solver = NewtonMFGSolver(
+            problems[0], hjbs[0], fps[0], picard_warmup=warmup, newton_max_iterations=newton_max, **ctor
+        )
         return solver.solve(max_iterations=sweeps, tolerance=tol, verbose=False, **kw)
     if route == "Graph":
         coupling = AdjacencyCoupling(np.array([[0.0, 1.0], [1.0, 0.0]]))
-        return GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=sweeps, tolerance=tol).solve()
+        return GraphMFGSolver(problems, coupling, hjbs, fps, max_iterations=sweeps, tolerance=tol, **ctor).solve()
     if route == "RegimeSwitching":
         config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]]))
-        return RegimeSwitchingIterator(problems, config, hjbs, fps, max_iterations=sweeps, tolerance=tol).solve()
+        return RegimeSwitchingIterator(
+            problems, config, hjbs, fps, max_iterations=sweeps, tolerance=tol, **ctor
+        ).solve()
     multi = MultiPopulationProblem(populations=problems, population_names=["a", "b"][: len(problems)])
-    return MultiPopulationIterator(multi, hjbs, fps).solve(max_iterations=sweeps, tolerance=tol)
+    return MultiPopulationIterator(multi, hjbs, fps, **ctor).solve(max_iterations=sweeps, tolerance=tol)
 
 
-def _problems(route):
-    return (
-        [_problem(0.3), _problem(0.7)] if route in ("Graph", "RegimeSwitching", "MultiPopulation") else [_problem(0.3)]
-    )
+def _problems(route, **kw):
+    if route in ("Graph", "RegimeSwitching", "MultiPopulation"):
+        return [_problem(0.3, **kw), _problem(0.7, **kw)]
+    return [_problem(0.3, **kw)]
+
+
+#: Each route's class, which its refusals name
+CLASSES = {
+    "FixedPoint": "FixedPointIterator",
+    "FictitiousPlay": "FictitiousPlayIterator",
+    "Block GS": "BlockGaussSeidelIterator",
+    "Block Jacobi": "BlockJacobiIterator",
+    "Newton": "NewtonMFGSolver",
+    "Graph": "GraphMFGSolver",
+    "RegimeSwitching": "RegimeSwitchingIterator",
+    "MultiPopulation": "MultiPopulationIterator",
+}
 
 
 def _reason(result) -> str:
@@ -189,9 +222,10 @@ def _published(result, k: int, field: str):
 )
 @pytest.mark.parametrize("route", ROUTES)
 def test_an_fp_output_the_solve_cannot_use_stops_it_on_every_route(route, case, at, how, reason):
-    """Mutant: the driver's or a component loop's `fp_output_stop` call removed, or its magnitude half; the NaN rows
-    then raise #2578's refusal of a non-finite change, and the x1e5 rows run their budget out. The level-0 row reds
-    under the rule reading the iterate only, as FixedPoint's guard did."""
+    """Mutants: the driver's or a component loop's FP-output rule removed, and every NaN row, the level-0 one included,
+    raises #2578's refusal of a non-finite change, since the measure runs before the update; its magnitude half
+    removed, and no x1e5 row stops on ``'diverged_mass_blowup'``. The x1e5 rows grow from sweep 2, against sweep 1's
+    output, the solve's first."""
     problems = _problems(route)
     hjbs = [_recording_hjb(p) for p in problems]
     fps = [_bad_fp(p, at, how) for p in problems]
@@ -214,19 +248,19 @@ def test_an_fp_output_the_solve_cannot_use_stops_it_on_every_route(route, case, 
 
 
 @pytest.mark.parametrize(
-    ("how", "reason"),
+    ("site", "at", "how", "reason"),
     [
-        ("nan", "diverged_nan"),
-        ("nan at level 0", "diverged_nan"),
-        ("inf", "diverged_nan"),
-        ("x1e5", "diverged_mass_blowup"),
-    ],
+        (site, at, how, reason)
+        for site, at in (("the post-warm-up check", 1), ("the Newton phase", 2))
+        for how, reason in (("nan", "diverged_nan"), ("nan at level 0", "diverged_nan"), ("inf", "diverged_nan"))
+    ]
+    + [("the Newton phase", 2, "x1e5", "diverged_mass_blowup")],
 )
-@pytest.mark.parametrize(("site", "at"), [("the post-warm-up check", 1), ("the Newton phase", 2)])
 def test_an_fp_output_at_newtons_residual_sites_stops_it(site, at, how, reason):
-    """With no warm-up, FP solve 1 is the post-warm-up check's and FP solve 2 the Newton phase's first iterate. Mutant:
-    the pipeline's FP-output rule bypassed at Newton's residual map; the NaN rows then raise #2578's refusal, and the
-    x1e5 rows stop at the line search."""
+    """With no warm-up, FP solve 1 is the post-warm-up check's and FP solve 2 the Newton phase's first iterate. FP
+    solve 1 is the solve's first FP output, the magnitude's reference, so the x1e5 row grows from solve 2. Mutant: the
+    pipeline's FP-output rule bypassed at Newton's residual map; the NaN rows then raise #2578's refusal, and the x1e5
+    row stops at the line search."""
     p = _problem()
     hjb, fp = _recording_hjb(p), _bad_fp(p, at, how)
     with warnings.catch_warnings():
@@ -238,22 +272,109 @@ def test_an_fp_output_at_newtons_residual_sites_stops_it(site, at, how, reason):
     assert np.array_equal(result.U, hjb.last, equal_nan=True), f"{site}: U is not the HJB output"
 
 
-def test_the_magnitude_reads_each_levels_mass_not_their_sum():
-    """A solve that keeps every level's mass at m(0)'s, over 20001 levels, against one level grown 2e4-fold. Mutant: the
-    magnitude as the space-time sum against level 0, which stops the first, healthy one (the false stop review 1 measured
-    at Nt = 9500)."""
-    from mfgarchon.alg.numerical.coupling.fixed_point_utils import fp_output_stop
-
-    integrate = _problem().spatial_measure().integrate
+def _level_of_mass_one(integrate):
     xs = np.linspace(0.0, 1.0, 11)
     level = np.exp(-40 * (xs - 0.3) ** 2)
-    level = level / float(np.asarray(integrate(level[None, :])).reshape(-1)[0])
-    healthy = np.tile(level, (20001, 1))
+    return level / float(np.asarray(integrate(level[None, :])).reshape(-1)[0])
+
+
+def test_the_magnitude_reads_each_levels_mass_not_their_sum():
+    """A solve whose every level keeps m(0)'s mass, over 20001 levels, against one level grown 2e4-fold. Mutant: the
+    figure as the space-time sum, which a 2e4-fold level moves by a factor of 2 and does not stop (the sum against level
+    0 was review 1's false stop at Nt = 9500)."""
+    integrate = _problem().spatial_measure().integrate
+    healthy = np.tile(_level_of_mass_one(integrate), (20001, 1))
     grown = healthy.copy()
     grown[7] *= 2e4
-    stop = functools.partial(fp_output_stop, each_component=True, site="test", iteration=0)
-    assert stop([healthy], [healthy], [integrate]) is None
-    assert stop([grown], [healthy], [integrate]) == "diverged_mass_blowup"
+    rule = FPOutputRule([integrate])
+    assert rule.stop([healthy], [healthy], site="test", iteration=0) is None
+    assert rule.stop([healthy], [healthy], site="test", iteration=1) is None
+    assert rule.stop([grown], [healthy], site="test", iteration=2) == "diverged_mass_blowup"
+
+
+def test_the_magnitude_reference_is_each_components_first_output_and_a_zero_one_reads_nothing(mfg_caplog):
+    """The user's ruling of 2026-11-27: each component's reference is its own first FP output's figure, and a reference
+    of 0 leaves that component's magnitude unread, with a warning. Mutants: the components' figures summed, against
+    which component 1's 1e5-fold growth is a 100-fold one; a reference of 0 read as one, which stops the second
+    output."""
+    integrate = _problem().spatial_measure().integrate
+    level = np.tile(_level_of_mass_one(integrate), (6, 1))
+    rule = FPOutputRule([integrate, integrate])
+    assert rule.stop([level, 1e-3 * level], [level, level], site="test", iteration=0) is None
+    assert rule.stop([level, 1e2 * level], [level, level], site="test", iteration=1) == "diverged_mass_blowup"
+
+    logger = "mfgarchon.alg.numerical.coupling.fixed_point_utils"
+    zero = FPOutputRule([integrate])
+    with mfg_caplog.at_level(logging.WARNING, logger=logger):
+        assert zero.stop([0.0 * level], [level], site="test", iteration=0) is None
+    assert any("reads no magnitude for component(s) [0]" in m for m in mfg_caplog.messages), mfg_caplog.messages
+    assert zero.stop([1e9 * level], [level], site="test", iteration=1) is None
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_source_that_adds_mass_is_not_read_as_a_blow_up(route):
+    """m(0) of mass 1e-5 and an FP source adding mass 1 per unit time: a healthy solve whose level mass grows 3e4-fold
+    from m(0)'s (the text lane's N1 of review 2, where every route stopped at its second sweep). The reference is the
+    solve's first FP output, which the source has already filled. Mutant: the reference taken from m(0)'s mass."""
+    problems = _problems(route, initial_mass=1e-5, fp_source=1.0)
+    hjbs, fps = [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = _solve(route, problems, hjbs, fps, sweeps=4)
+    assert "diverged" not in _reason(result), f"{route}: {_reason(result)!r}"
+    largest = max(
+        float(np.max(_problem().spatial_measure().integrate(_published(result, k, "M")))) for k in range(len(problems))
+    )
+    assert largest > 1e4 * 1e-5, f"{route}: the fixture's mass grew only to {largest:.3e}"
+
+
+def _inf_at_the_first_update() -> DampingPolicy:
+    """A damping whose U factor is 1 / log(k + 1), inf at sweep 0: T's outputs stay finite, the update does not."""
+    return DampingPolicy.from_mapping(
+        {"U": {"theta": 0.5, "schedule": lambda k: 1.0 / np.log(k + 1.0)}, "M": {"theta": 0.5}}
+    )
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_update_that_leaves_a_non_finite_iterate_stops_the_solve(route):
+    """The post-update rule (review 2's code N1): an update can make a non-finite iterate of finite outputs, and the
+    stop publishes that iterate as it is. Newton's row is its warm-up sweep. Mutant: the rule removed; FixedPoint and
+    Block Gauss-Seidel then reported converged=True over a non-finite U at a tolerance of 1e12 (q6 at 0247587c)."""
+    problems = _problems(route)
+    hjbs, fps = [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = _solve(route, problems, hjbs, fps, sweeps=3, tol=1e12, damping=_inf_at_the_first_update())
+    assert not result.converged
+    assert _reason(result) == "diverged_nan", f"{route}: {_reason(result)!r}"
+    assert result.iterations == 1
+    assert not all(np.all(np.isfinite(_published(result, k, "U"))) for k in range(len(problems)))
+
+
+def test_a_newton_step_that_leaves_a_non_finite_iterate_stops_the_solve(monkeypatch):
+    """The post-update rule after Newton's step: the stop publishes the iterate the step left. Mutant: the rule removed
+    after the step; the next evaluation's HJB guard then publishes its own output instead."""
+    left = {}
+    step = NewtonRun.step
+
+    def poisoning(self, *args, **kwargs):
+        out = step(self, *args, **kwargs)
+        if out is None:
+            self.x = self.x.copy()
+            self.x[-3] = np.nan  # an entry of M's last level
+            left["x"] = self.x.copy()
+        return out
+
+    monkeypatch.setattr(NewtonRun, "step", poisoning)
+    p = _problem()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = _solve("Newton", [p], [HJBFDMSolver(p)], [FPFDMSolver(p)], sweeps=4, picard_warmup=0)
+    assert _reason(result) == "diverged_nan", _reason(result)
+    assert result.metadata["newton_iterations"] == 1
+    size = result.U.size
+    assert np.array_equal(result.U.ravel(), left["x"][:size]), "U is not the iterate the step left"
+    assert np.array_equal(result.M.ravel(), left["x"][size:], equal_nan=True), "M is not the iterate the step left"
 
 
 # --- Class line 2 ---------------------------------------------------------------------------------------------------
@@ -275,12 +396,16 @@ def test_a_budget_of_zero_runs_no_sweep_and_a_spent_budget_says_so(route):
         assert _reason(result) == "Maximum iterations reached", f"{route} at {sweeps}: {_reason(result)!r}"
 
 
-@pytest.mark.parametrize("route", ["FixedPoint", "FictitiousPlay", "Block GS", "Block Jacobi", "Newton"])
+@pytest.mark.parametrize("route", ROUTES)
 def test_a_negative_budget_is_refused(route):
-    """The driver's budget is a count of sweeps (ruling 2). Mutant: its refusal of a negative one removed."""
-    p = _problem()
-    with pytest.raises(ValueError, match=r"max_iterations is a count of sweeps, an int >= 0, not -1"):
-        _solve(route, [p], [HJBFDMSolver(p)], [FPFDMSolver(p)], sweeps=-1)
+    """The budget is a count of sweeps on every route (ruling 2; the text lane's N3 of review 2), and the refusal names
+    the route's class (S1). Mutant: `validate_budget`'s refusal removed; Graph, RegimeSwitching and MultiPopulation
+    accepted -1 at 0247587c."""
+    problems = _problems(route)
+    with pytest.raises(
+        ValueError, match=rf"{CLASSES[route]}: max_iterations is a count of sweeps, an int >= 0, not -1"
+    ):
+        _solve(route, problems, [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems], sweeps=-1)
 
 
 @pytest.mark.parametrize(("sweeps", "counted"), [(1, 1), (2, 2), (3, 3)])
@@ -381,6 +506,69 @@ def test_a_bc_changed_in_newtons_phase_is_refused_at_its_next_step():
     _changes_the_bc_after(hjb, [p], solves=2)
     with pytest.raises(ValueError, match=r"declares its"):
         _solve("Newton", [p], [hjb], [fp], sweeps=6, tol=1e-30, picard_warmup=1)
+
+
+def _counting(hjb):
+    """Count the HJB solver's solves in ``hjb.solves``."""
+    solve = hjb.solve_hjb_system
+    hjb.solves = 0
+
+    @functools.wraps(solve)
+    def counted(*args, **kwargs):
+        hjb.solves += 1
+        return solve(*args, **kwargs)
+
+    hjb.solve_hjb_system = counted
+    return hjb
+
+
+def test_a_bc_changed_by_the_callback_is_refused_before_newtons_step():
+    """The owner is read before each Newton step, so the step's finite-difference probes and line-search trials run
+    under it (review 2's text N4). The callback changes the BC at the Newton phase's first iterate. Mutant: the read
+    before the step removed; the step then evaluates the map on the refused BC, 266 HJB solves at 0247587c, before the
+    next iterate's read refuses it."""
+    p = _problem()
+    hjb, fp = _gfdm_pair(p, "both")
+    _counting(hjb)
+    at_change = []
+
+    def callback(*args):
+        p.components.boundary_conditions = dirichlet_bc(dimension=1, value=0.7)
+        at_change.append(hjb.solves)
+
+    with pytest.raises(ValueError, match=r"declares its"):
+        _solve("Newton", [p], [hjb], [fp], sweeps=6, tol=1e-30, picard_warmup=0, iteration_callback=callback)
+    assert at_change, "the callback never ran"
+    assert hjb.solves == at_change[0], f"{hjb.solves - at_change[0]} HJB solves on the refused BC"
+
+
+def test_a_bc_changed_inside_newtons_last_step_is_refused_before_the_last_f():
+    """With one Newton step in the budget, the BC changes at the step's first HJB solve, a probe; the owner is read
+    before the F of the exhausted budget. Mutant: that read removed, and the solve returns an iterate evaluated on the
+    refused BC."""
+    p = _problem()
+    hjb, fp = _gfdm_pair(p, "both")
+    solve, armed = hjb.solve_hjb_system, []
+
+    @functools.wraps(solve)
+    def changing(*args, **kwargs):
+        if armed:
+            p.components.boundary_conditions = dirichlet_bc(dimension=1, value=0.7)
+        return solve(*args, **kwargs)
+
+    hjb.solve_hjb_system = changing
+    with pytest.raises(ValueError, match=r"declares its"):
+        # Budget 2: the post-warm-up check, then one Newton iterate, its step and the exhausted budget's F
+        _solve(
+            "Newton",
+            [p],
+            [hjb],
+            [fp],
+            sweeps=2,
+            tol=1e-30,
+            picard_warmup=0,
+            iteration_callback=lambda *a: armed.append(1),
+        )
 
 
 # --- Newton's warm-up, and the order between the fields ---------------------------------------------------------------
@@ -522,6 +710,70 @@ def test_a_solver_whose_signature_cannot_be_read_is_refused_when_the_route_is_bu
         _solve(route, problems, hjbs, fps, sweeps=1)
 
 
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_fp_solver_whose_signature_names_neither_drift_keyword_is_refused(route):
+    """The user's ruling of 2026-11-27 (q3): a route hands the value function by ``potential_field`` or ``drift_field``,
+    so an FP solver taking neither is refused when the route is built, a ``(*args, **kwargs)`` wrapper included; the
+    advice, naming the parameter ``potential_field``, solves as the plain solver does (RegimeSwitching hands every
+    regime a source, so the wrapper names ``source_term`` too). Mutant: the refusal removed;
+    the route then handed U positionally, into FP-FDM's drift (q3 at 0247587c)."""
+    problems = _problems(route)
+
+    def plain():
+        return [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
+
+    def opaque(original):
+        def wrapper(*args, **kwargs):
+            return original(*args, **kwargs)
+
+        return wrapper
+
+    def named(original):
+        def wrapper(M_initial, potential_field=None, source_term=None, **kwargs):
+            return original(M_initial, potential_field=potential_field, source_term=source_term, **kwargs)
+
+        return wrapper
+
+    hjbs, fps = plain()
+    for fp in fps:
+        fp.solve_fp_system = opaque(fp.solve_fp_system)
+    with pytest.raises(
+        ValueError, match=r"names neither potential_field nor drift_field \(it reads \['args', 'kwargs'\]\)"
+    ):
+        _solve(route, problems, hjbs, fps, sweeps=2)
+
+    hjbs, fps = plain()
+    for fp in fps:
+        fp.solve_fp_system = named(fp.solve_fp_system)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        advised = _solve(route, problems, hjbs, fps, sweeps=2)
+        reference = _solve(route, problems, *plain(), sweeps=2)
+    for k in range(len(problems)):
+        assert np.array_equal(_published(advised, k, "M"), _published(reference, k, "M")), f"{route}: M differs"
+
+
+@pytest.mark.parametrize("route", ONE_COMPONENT)
+@pytest.mark.parametrize("field", ["U", "M"])
+def test_a_non_finite_warm_start_is_refused_where_it_is_set(route, field):
+    """The start is an iterate the solve carries forward, published as it is at a budget of 0 (amendment 1 to plan
+    v1.2). Mutant: the refusal removed from `IterationState.set_warm_start`."""
+    p = _problem()
+    hjb, fp = HJBFDMSolver(p), FPFDMSolver(p)
+    if route == "FixedPoint":
+        solver = FixedPointIterator(p, hjb, fp)
+    elif route == "FictitiousPlay":
+        solver = FictitiousPlayIterator(p, hjb, fp)
+    elif route == "Newton":
+        solver = NewtonMFGSolver(p, hjb, fp)
+    else:
+        solver = (BlockGaussSeidelIterator if route == "Block GS" else BlockJacobiIterator)(p, hjb, fp)
+    U, M = np.zeros((6, 11)), np.ones((6, 11))
+    (U if field == "U" else M)[2, 3] = np.nan
+    with pytest.raises(ValueError, match=rf"the warm start's {field} holds 1 non-finite value"):
+        solver.set_warm_start_data((U, M))
+
+
 def _nan_hjb_at(problem, at: int) -> HJBFDMSolver:
     hjb = HJBFDMSolver(problem)
     solve, calls = hjb.solve_hjb_system, [0]
@@ -545,17 +797,41 @@ def _nan_hjb_at(problem, at: int) -> HJBFDMSolver:
         ("the HJB guard at the first iterate", False),
         ("a named stop at the first iterate", False),
         ("a callback stop after one step", True),
+        ("the HJB guard after one step", True),
     ],
 )
-def test_newtons_cold_start_is_not_reported_as_measured(stop, measured):
+def test_newtons_cold_start_is_not_reported_as_measured(stop, measured, monkeypatch):
     """Class line 6 (#1717; review 1's B6): with no warm-up, Newton's first iterate is the cold start, and a stop there
-    publishes it; its mass is not a measurement of this solve. After one step the iterate is Newton's, and measured.
-    Mutant: the flag decided by evaluations run rather than steps taken, which reported the cold start's drift as 0.0
-    (the named stop and the HJB guard at 8598206f)."""
+    publishes it; its mass is not a measurement of this solve. After one step the iterate is Newton's, and measured,
+    whichever stop publishes it: the driver's `DensityRecord` decides for every stop (review 2's code N5). Mutants: the
+    flag decided by evaluations run rather than steps taken, which reported the cold start's drift as 0.0 (the named
+    stop and the HJB guard at 8598206f); the record never counting a Newton step, which reds the last two rows."""
     p = _problem()
     hjb, fp, callback = HJBFDMSolver(p), FPFDMSolver(p), None
     if stop == "the HJB guard at the first iterate":
         hjb = _nan_hjb_at(p, 2)  # HJB solve 1 is the post-warm-up check's, at the same iterate
+    elif stop == "the HJB guard after one step":
+        # The HJB solve after the first step that moved the iterate is the second iterate's evaluation
+        armed, step = [], NewtonRun.step
+
+        def arming(self, *args, **kwargs):
+            out = step(self, *args, **kwargs)
+            if out is None:
+                armed.append(1)
+            return out
+
+        monkeypatch.setattr(NewtonRun, "step", arming)
+        hjb = HJBFDMSolver(p)
+        solve = hjb.solve_hjb_system
+
+        @functools.wraps(solve)
+        def poisoned(*args, **kwargs):
+            U = np.array(solve(*args, **kwargs), dtype=float)
+            if armed:
+                U[2, 3] = np.nan
+            return U
+
+        hjb.solve_hjb_system = poisoned
     elif stop == "a named stop at the first iterate":
         fp = _bad_fp(p, 1, "x1e3")  # under the magnitude: the line search fails
     else:
@@ -569,44 +845,87 @@ def test_newtons_cold_start_is_not_reported_as_measured(stop, measured):
         warnings.simplefilter("ignore")
         result = _solve("Newton", [p], [hjb], [fp], sweeps=4, picard_warmup=0, iteration_callback=callback)
     assert not result.converged
+    if stop == "the HJB guard after one step":
+        assert _reason(result) == "diverged_nan", _reason(result)
     assert (result.mass_conservation_error is not None) is measured, f"{stop}: {result.mass_conservation_error!r}"
 
 
-def _writes_into_its_input(solver, method: str):
-    """After its solve, zero every array the call was handed, as a caller-supplied solver may."""
-    solve = getattr(solver, method)
+def test_multipopulation_reports_the_drift_of_each_finite_population():
+    """A stop that publishes one population's non-finite density leaves that population's drift unmeasured, and the
+    worst over populations unknown; the other population's drift stands (review 2's code N6). Mutant: every
+    population's drift None whenever one density is not finite."""
+    problems = _problems("MultiPopulation")
+    fps = [FPFDMSolver(problems[0]), _bad_fp(problems[1], 2, "nan")]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = _solve("MultiPopulation", problems, [HJBFDMSolver(p) for p in problems], fps, sweeps=4)
+    assert _reason(result) == "diverged_nan"
+    drifts = [entry["mass_conservation_error"] for entry in result.metadata["per_component"]]
+    assert isinstance(drifts[0], float), drifts
+    assert drifts[1] is None, drifts
+    assert result.mass_conservation_error is None
 
-    @functools.wraps(solve)
-    def writing(*args, **kwargs):
-        out = np.array(solve(*args, **kwargs), dtype=float)
-        for value in list(args) + list(kwargs.values()):
-            if isinstance(value, np.ndarray) and value.dtype.kind == "f":
-                value[...] = 0.0
-        return out
 
-    setattr(solver, method, writing)
-    return solver
+class _Writer:
+    """A solver as a route reaches it: every method the route calls through this proxy zeroes, after the call, every
+    array it was handed, as a caller-supplied solver may. It covers each method by construction, whatever its name;
+    the solver's calls on itself do not pass through it. ``writes`` False forwards unchanged, the oracle's twin."""
+
+    def __init__(self, inner, writes: bool) -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_writes", writes)
+
+    @property
+    def __class__(self):  # isinstance reads the solver's class, as the routes' capability checks do
+        return type(self._inner)
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not (callable(attr) and self._writes):
+            return attr
+
+        @functools.wraps(attr)
+        def writing(*args, **kwargs):
+            out = attr(*args, **kwargs)
+            for value in list(args) + list(kwargs.values()):
+                if isinstance(value, np.ndarray) and value.dtype.kind == "f" and value.flags.writeable:
+                    value[...] = 0.0
+            return out
+
+        return writing
+
+    def __setattr__(self, name, value):
+        setattr(self._inner, name, value)
 
 
-ALIASING_ROWS = [(route, None) for route in ROUTES if route != "Newton"] + [("Newton", 3), ("Newton", 0), ("Newton", 1)]
+ALIASING_ROWS = (
+    [(route, None, "off") for route in ROUTES if route != "Newton"]
+    + [("Newton", 3, "off"), ("Newton", 0, "off"), ("Newton", 1, "off")]
+    + [("Block GS", None, "jacobian_transpose"), ("Block Jacobi", None, "jacobian_transpose")]
+)
 
 
 @pytest.mark.parametrize("half", ["HJB", "FP"])
-@pytest.mark.parametrize(("route", "warmup"), ALIASING_ROWS)
-def test_a_solver_that_writes_into_its_input_leaves_the_solve_unchanged(route, warmup, half):
+@pytest.mark.parametrize(("route", "warmup", "adjoint"), ALIASING_ROWS)
+def test_a_solver_that_writes_into_its_input_leaves_the_solve_unchanged(route, warmup, adjoint, half):
     """Class line 7 (the approver's ruling of 2026-11-27): a route reads the arrays it handed a solver after the call,
-    so it hands copies (`base_mfg.handed`). The oracle is the same solve with the plain solver. Newton runs its warm-up
-    only (picard_warmup 3), its post-warm-up check and phase (0), and a warm-up sweep then its phase (1), which reaches
-    the finite-difference probes and the line search. Mutant: a hand-off passing its own arrays, which at 8598206f
-    changed every route's result or raised."""
+    so it hands copies (`base_mfg.call_handed`), whatever the method. The oracle is the same solve through a proxy that
+    does not write. Newton runs its warm-up only (picard_warmup 3), its post-warm-up check and phase (0), and a warm-up
+    sweep then its phase (1), which reaches the finite-difference probes and the line search; Block runs with
+    ``adjoint_mode`` off and on, which calls `build_linearized_operator` and `solve_fp_step_adjoint_mode`. Mutant: a
+    hand-off passing its own arrays, which at 8598206f changed every route's result or raised, and at 0247587c
+    changed Block's adjoint results (review 2's code N3)."""
     problems = _problems(route)
     kw = {} if warmup is None else {"picard_warmup": warmup}
+    if adjoint != "off":
+        kw["adjoint_mode"] = adjoint
 
-    def run(writing):
+    def run(writes):
         hjbs, fps = [HJBFDMSolver(p) for p in problems], [FPFDMSolver(p) for p in problems]
-        if writing:
-            for solver in hjbs if half == "HJB" else fps:
-                _writes_into_its_input(solver, "solve_hjb_system" if half == "HJB" else "solve_fp_system")
+        if half == "HJB":
+            hjbs = [_Writer(solver, writes) for solver in hjbs]
+        else:
+            fps = [_Writer(solver, writes) for solver in fps]
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             return _solve(route, problems, hjbs, fps, sweeps=3, **kw)
@@ -615,6 +934,37 @@ def test_a_solver_that_writes_into_its_input_leaves_the_solve_unchanged(route, w
     for k in range(len(problems)):
         assert np.array_equal(_published(writing, k, "U"), _published(plain, k, "U")), f"{route}, {half}: U moved"
         assert np.array_equal(_published(writing, k, "M"), _published(plain, k, "M")), f"{route}, {half}: M moved"
+
+
+class _ReportsNegative(FPFDMSolver):
+    """An FP-FDM solver that reports on the density a solve returns, as the weak-form family does (#2845): the coupled
+    route hands it the result's M after the solve."""
+
+    reports_negative_density = True
+
+    def negative_density_of(self, M):
+        return {"minimum": float(np.min(M))}
+
+    def warn_negative_density(self, report):
+        pass
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_solver_that_writes_into_the_density_it_reports_on_leaves_the_result_unchanged(route):
+    """Class line 7: `_report_negative_density` hands each FP solver the density the result returns, after the solve,
+    and a census that could not follow its loop missed the call. Mutant: that call handed the result's own M, which a
+    writing solver then zeroes in the result."""
+    problems = _problems(route)
+
+    def run(writes):
+        fps = [_Writer(_ReportsNegative(p), writes) for p in problems]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return _solve(route, problems, [HJBFDMSolver(p) for p in problems], fps, sweeps=2)
+
+    plain, writing = run(False), run(True)
+    for k in range(len(problems)):
+        assert np.array_equal(_published(writing, k, "M"), _published(plain, k, "M")), f"{route}: M moved"
 
 
 def test_newtons_result_carries_the_records_it_takes():

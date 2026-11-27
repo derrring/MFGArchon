@@ -129,9 +129,7 @@ class TestFictitiousPlayFPDriftConvention:
         _, U, M = state
 
         fp_sig_params = set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
-        drift_kwargs, use_positional = resolve_fp_drift_kwargs(
-            problem, fp_sig_params, drift_field_override=None, U=U, M=M
-        )
+        drift_kwargs = resolve_fp_drift_kwargs(problem, fp_sig_params, drift_field_override=None, U=U, M=M)
 
         assert "potential_field" in drift_kwargs, (
             "resolve_fp_drift_kwargs must produce {'potential_field': U} for smooth "
@@ -141,7 +139,6 @@ class TestFictitiousPlayFPDriftConvention:
             "resolve_fp_drift_kwargs must not put U into drift_field for smooth H "
             "(that is the pre-fix bug — U as alpha* semantic)."
         )
-        assert not use_positional
 
     def test_pre_fix_drift_field_produces_wrong_M(self, problem, solvers, state):
         """Verify the pre-fix bug: passing U as drift_field=alpha* produces wrong M.
@@ -153,7 +150,7 @@ class TestFictitiousPlayFPDriftConvention:
 
         fp_sig_params = set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
         # post-fix: correct dispatch via resolve_fp_drift_kwargs
-        drift_kwargs, _ = resolve_fp_drift_kwargs(problem, fp_sig_params, None, U, M)
+        drift_kwargs = resolve_fp_drift_kwargs(problem, fp_sig_params, None, U, M)
 
         # pre-fix: wrong dispatch (U as drift_field = velocity alpha*)
         with warnings.catch_warnings():
@@ -179,8 +176,8 @@ class TestFictitiousPlayFPDriftConvention:
 
         fp_sig_params = set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
         # Both paths use the same resolve_fp_drift_kwargs helper after the fix
-        drift_kwargs_fp, _ = resolve_fp_drift_kwargs(problem, fp_sig_params, None, U, M)
-        drift_kwargs_pi, _ = resolve_fp_drift_kwargs(problem, fp_sig_params, None, U, M)
+        drift_kwargs_fp = resolve_fp_drift_kwargs(problem, fp_sig_params, None, U, M)
+        drift_kwargs_pi = resolve_fp_drift_kwargs(problem, fp_sig_params, None, U, M)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -344,7 +341,7 @@ class TestBlockIteratorFPDriftConvention:
         drift_field_only_sig = {"M_initial", "drift_field"}  # no "potential_field"
 
         # Post-fix: resolve_fp_drift_kwargs with non-smooth H + drift_field-only sig
-        drift_kwargs, _ = resolve_fp_drift_kwargs(problem_nonsmooth, drift_field_only_sig, None, U, M)
+        drift_kwargs = resolve_fp_drift_kwargs(problem_nonsmooth, drift_field_only_sig, None, U, M)
         # Must be drift_field=alpha* (computed velocity), NOT drift_field=U
         assert "drift_field" in drift_kwargs, (
             "Non-smooth H + drift_field-only sig: resolve_fp_drift_kwargs must produce "
@@ -501,13 +498,10 @@ class TestBlockIteratorFPDriftConvention:
 
         U, M = _realistic_U(problem, fp_solver, hjb_solver)
         fp_sig_params = set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
-        drift_kwargs, use_positional = resolve_fp_drift_kwargs(
-            problem, fp_sig_params, drift_field_override=None, U=U, M=M
-        )
+        drift_kwargs = resolve_fp_drift_kwargs(problem, fp_sig_params, drift_field_override=None, U=U, M=M)
 
         assert "potential_field" in drift_kwargs
         assert "drift_field" not in drift_kwargs
-        assert not use_positional
 
 
 # ---------------------------------------------------------------------------

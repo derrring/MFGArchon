@@ -137,12 +137,19 @@ class IterationState:
         ).reshape(self.shape)
 
     def set_warm_start(self, U: np.ndarray, M: np.ndarray) -> None:
-        """Start the next solve from ``(U, M)``, copied, each of this state's shape ``(Nt + 1, *shape)``."""
+        """Start the next solve from ``(U, M)``, copied, each of this state's shape ``(Nt + 1, *shape)`` and finite: the
+        start is an iterate the solve carries forward, and publishes as it is when its budget is 0 (#3002 class line 1)."""
         for name, array in (("U", U), ("M", M)):
             if np.shape(array) != self.solution_shape:
                 raise ValueError(
                     f"{self.reader}: the warm start's {name} has shape {np.shape(array)}, and this problem's iterate "
                     f"has shape {self.solution_shape} (Nt + 1 levels of the state's shape {self.shape})"
+                )
+            finite = np.isfinite(np.asarray(array, dtype=float))
+            if not np.all(finite):
+                raise ValueError(
+                    f"{self.reader}: the warm start's {name} holds {int(finite.size - np.count_nonzero(finite))} "
+                    "non-finite value(s); a solve starts from finite values (#3002)"
                 )
         self._warm_start = (np.array(U, dtype=float, copy=True), np.array(M, dtype=float, copy=True))
 

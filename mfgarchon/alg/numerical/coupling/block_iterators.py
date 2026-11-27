@@ -46,6 +46,7 @@ from .base_mfg import (
     BaseCouplingIterator,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    call_handed,
     damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
@@ -297,8 +298,13 @@ class BlockIterator(BaseCouplingIterator):
             if self.adjoint_verify:
                 self._verify_adjoint_at_step(U_k, M_current, k)
 
-            M_next = self.fp_solver.solve_fp_step_adjoint_mode(
-                M_current, A_fp, volatility=sigma, time=k * self.problem.dt, volatility_kind=sigma_kind
+            M_next = call_handed(
+                self.fp_solver.solve_fp_step_adjoint_mode,
+                M_current,
+                A_fp,
+                volatility=sigma,
+                time=k * self.problem.dt,
+                volatility_kind=sigma_kind,
             )
             M_solution[k + 1] = M_next
 
@@ -317,7 +323,7 @@ class BlockIterator(BaseCouplingIterator):
         hjb_solver = self.hjb_solver
         if not isinstance(hjb_solver, LinearizedOperatorCapable):
             raise NotImplementedError(self._no_linearised_operator(hjb_solver))
-        return hjb_solver.build_linearized_operator(U_k, M_current, time=time)
+        return call_handed(hjb_solver.build_linearized_operator, U_k, M_current, time=time)
 
     def _interior_flat_indices(self) -> NDArray:
         """Flat indices of the nodes that are on no boundary face, from the adjoint module's own face enumeration."""
@@ -361,7 +367,7 @@ class BlockIterator(BaseCouplingIterator):
                 f"adjoint_verify=False, or use a solver that assembles a matrix operator (FPFDMSolver)."
             )
         try:
-            return build(U_k)
+            return call_handed(build, U_k)
         except NotImplementedError as exc:
             # `build_advection_operator` refuses from three sites -- the coefficient (#1542, the class
             # `jacobian_transpose` exists to serve, #707), the scheme, and the geometry -- so this says which LAYER
@@ -532,6 +538,7 @@ class BlockIterator(BaseCouplingIterator):
             method_name,
             state,
             self.hjb_solver,
+            reader=type(self).__name__,
             budget=100 if max_iterations is None else max_iterations,
             tolerance=tolerance,
             absolute_tolerance=absolute_tolerance,

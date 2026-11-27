@@ -25,18 +25,24 @@ from mfgarchon.utils.mfg_logging import get_logger
 from .base_mfg import (
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    call_handed,
     damping_argument,
     fp_solve_kwargs,
-    handed,
     hjb_coupling_binding,
     hjb_solve_kwargs,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     solver_signature,
 )
-from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
+from .coupled_result import DensityRecord, MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
-from .fixed_point_utils import BUDGET_SPENT, diverged_value_function, fp_output_stop
+from .fixed_point_utils import (
+    BUDGET_SPENT,
+    FPOutputRule,
+    diverged_value_function,
+    updated_iterate_stop,
+    validate_budget,
+)
 from .iteration_state import IterationState
 
 if TYPE_CHECKING:
@@ -246,10 +252,13 @@ class MultiPopulationIterator:
         # the last finite sweep's: the #1672 shape, the best-looking number attached to the worst solve (#2997).
         converged = False
         record = SweepRecord(K)
-        fp_output_available = False
+        density = DensityRecord()
         # The reason a spent budget reports, on every route (#3002, ruling 2)
         reason = BUDGET_SPENT
-        for iteration in range(max_iterations):
+        # The FP-output rule every coupled route reads, each population against its own first FP output (#2997; #3002
+        # class line 1, the user's ruling of 2026-11-27). Stage 2b moves it into the coupled driver.
+        fp_output_rule = FPOutputRule(integrates)
+        for iteration in range(validate_budget(max_iterations, type(self).__name__)):  # #3002 class line 2
             # The owner's refusals answer at every sweep, so a BC changed during the solve is refused at the next one
             # (#3005; #3002 stage 2a, ruling A). Stage 2b moves this call into the coupled driver.
             for state in states:
@@ -311,14 +320,18 @@ class MultiPopulationIterator:
                     U=U[k],
                     binding=hjb_coupling_binding(solver_k),
                 )
-                # Every array handed to a solver is copied (`handed`, #3002 class line 7)
+                # Every array handed to a solver is copied (`call_handed`, #3002 class line 7)
                 if honors_cross_density:
-                    args, own = handed(
-                        M[k], U_terminal_k, U[k], cross_density=(None if K == 1 else m_all), **hjb_kwargs
+                    U_map[k] = call_handed(
+                        solver_k.solve_hjb_system,
+                        M[k],
+                        U_terminal_k,
+                        U[k],
+                        cross_density=(None if K == 1 else m_all),
+                        **hjb_kwargs,
                     )
                 else:
-                    args, own = handed(M[k], U_terminal_k, U[k], **hjb_kwargs)
-                U_map[k] = solver_k.solve_hjb_system(*args, **own)
+                    U_map[k] = call_handed(solver_k.solve_hjb_system, M[k], U_terminal_k, U[k], **hjb_kwargs)
 
                 # Issue #1718: check before the NEXT population is solved, not after the loop. Every
                 # population's HJB is solved before any FP runs, so one population's NaN would reach
@@ -369,10 +382,11 @@ class MultiPopulationIterator:
                 fp_kwargs = fp_solve_kwargs(prob_k, self._fp_sig_params[k], type(fp_k).__name__, M=M[k], U=U_map[k])
 
                 if getattr(prob_k, "spatial_dimension", None) == 0:
-                    args, own = handed(m0_k, potential_field=U_map[k], show_progress=False, **fp_kwargs)
-                    M_new_k = fp_k.solve_fp_system(*args, **own)
+                    M_new_k = call_handed(
+                        fp_k.solve_fp_system, m0_k, potential_field=U_map[k], show_progress=False, **fp_kwargs
+                    )
                 else:
-                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                    drift_kwargs = resolve_fp_drift_kwargs(
                         prob_k,
                         self._fp_sig_params[k],
                         None,
@@ -383,11 +397,7 @@ class MultiPopulationIterator:
                         drift_convention=self._fp_drift_convention[k],
                         fp_solver=fp_k,
                     )
-                    if use_positional_U:
-                        args, own = handed(m0_k, U_map[k], show_progress=False, **fp_kwargs)
-                    else:
-                        args, own = handed(m0_k, show_progress=False, **drift_kwargs, **fp_kwargs)
-                    M_new_k = fp_k.solve_fp_system(*args, **own)
+                    M_new_k = call_handed(fp_k.solve_fp_system, m0_k, show_progress=False, **drift_kwargs, **fp_kwargs)
 
                 # The UNDAMPED map output is what the convergence test needs; see the block below.
                 M_map[k] = M_new_k
@@ -405,21 +415,12 @@ class MultiPopulationIterator:
             # #2555: each population's change is its relative L2 change in its OWN problem's measure,
             # and the criterion is the single-population one, fed the max over populations -- so u and
             # m no longer meet one tolerance in their own units.
-            # The FP-output rule every coupled route reads, on each population's own mass, MultiPopulation's invariant
-            # (#2997; #3002 stage 2a, rulings 3(a) and A), before the change is measured, which refuses a non-finite one
-            # (#2578). A stop publishes the sweep's HJB and FP outputs (ruling E). Stage 2b moves this call into the
-            # coupled driver.
-            stop = fp_output_stop(
-                M_map,
-                M_old,
-                integrates,
-                each_component=True,
-                site="MultiPopulationIterator",
-                iteration=iteration,
-            )
+            # The FP-output rule, before the change is measured, which refuses a non-finite one (#2578). A stop publishes
+            # the sweep's HJB and FP outputs (ruling E).
+            stop = fp_output_rule.stop(M_map, M_old, site="MultiPopulationIterator", iteration=iteration)
             if stop is not None:
                 U[:], M[:] = U_map, M_map
-                fp_output_available = True
+                density.fp_outputs_published += 1
                 reason = stop
                 record.diverged()
                 break
@@ -428,7 +429,6 @@ class MultiPopulationIterator:
                 sweep_change(U_map[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)
             ]
             worst = worst_sweep_change(per_population, "population")
-            record.measured(per_population)
 
             # Damping, per population and field (the policy, #2997), then the write-back: level 0 to m(0), and U's
             # terminal row to the u(T) this sweep's HJB solve was given.
@@ -437,7 +437,16 @@ class MultiPopulationIterator:
                 U[k], M[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_population[k]):
                     logger.warning(f"MultiPopulationIterator[population {k}]: {message}")
-            fp_output_available = True
+            density.updates += 1
+            # The post-update rule every coupled route reads (#3002 class line 1); a stop publishes the iterate it judged
+            stop = updated_iterate_stop(
+                U, M, producer="by the sweep's update", site="MultiPopulationIterator", iteration=iteration
+            )
+            if stop is not None:
+                reason = stop
+                record.diverged()
+                break
+            record.measured(per_population)
 
             per_pop_m = [f"{change['l2distm_rel']:.2e}" for change in per_population]
             per_pop_u = [f"{change['l2distu_rel']:.2e}" for change in per_population]
@@ -469,7 +478,7 @@ class MultiPopulationIterator:
             damping=self.damping,
             problems=[self.multi_problem.get_population(k) for k in range(K)],
             fp_solvers=self.fp_solvers,
-            fp_output_available=fp_output_available,
+            fp_output_available=density.measured,
             component_names=list(self.multi_problem.population_names),
             invariant=MassInvariant.EACH,
         )

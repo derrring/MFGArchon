@@ -415,7 +415,7 @@ def test_a_density_that_is_not_the_trajectory_is_refused_by_name(shape):
             problem, solver_signature(fp, "FP"), None, U, M, drift_convention=fp._drift_convention, fp_solver=fp
         )
 
-    assert "drift_field" in _quietly(lambda: route(np.ones((11, 21))))[0]
+    assert "drift_field" in _quietly(lambda: route(np.ones((11, 21))))
     with pytest.raises(NotImplementedError, match=rf"M of shape \({shape[0]}, {shape[1]}\), not a density trajectory"):
         route(np.ones(shape))
 

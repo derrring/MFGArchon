@@ -99,7 +99,7 @@ def test_value_function_solver_nonsmooth_h_raises():
 def test_velocity_solver_nonsmooth_h_routes_drift_field():
     problem = _problem(L1ControlCost(lambda_=1.0))
     U, M = _state(problem)
-    drift_kwargs, use_positional = resolve_fp_drift_kwargs(
+    drift_kwargs = resolve_fp_drift_kwargs(
         problem,
         _VELOCITY_ONLY_SIG,
         None,
@@ -109,7 +109,6 @@ def test_velocity_solver_nonsmooth_h_routes_drift_field():
     )
     assert "drift_field" in drift_kwargs
     assert "potential_field" not in drift_kwargs
-    assert not use_positional
     alpha_star = drift_kwargs["drift_field"]
     assert alpha_star is not U, "must be a computed alpha*, not U passed through"
     assert np.all(np.isfinite(alpha_star))
@@ -124,7 +123,7 @@ def test_smooth_h_routes_potential_field_unchanged(convention):
     problem = _problem(QuadraticControlCost(control_cost=1.0))
     U, M = _state(problem)
     sig = _VALUE_FUNCTION_SIG if convention is DriftConvention.VALUE_FUNCTION else _VELOCITY_BOTH_SIG
-    drift_kwargs, use_positional = resolve_fp_drift_kwargs(
+    drift_kwargs = resolve_fp_drift_kwargs(
         problem,
         sig,
         None,
@@ -135,7 +134,6 @@ def test_smooth_h_routes_potential_field_unchanged(convention):
     assert "potential_field" in drift_kwargs
     assert "drift_field" not in drift_kwargs
     assert drift_kwargs["potential_field"] is U
-    assert not use_positional
 
 
 # (d) drift_convention=None -> pre-#1489 behavior preserved (byte-identical fallback).
@@ -146,17 +144,14 @@ def test_none_convention_preserves_legacy_behavior():
     U, M = _state(problem)
 
     # None -> old behavior: non-smooth H + drift_field in params -> use_velocity -> drift_field.
-    drift_kwargs, use_positional = resolve_fp_drift_kwargs(
-        problem, _VALUE_FUNCTION_SIG, None, U, M, drift_convention=None
-    )
+    drift_kwargs = resolve_fp_drift_kwargs(problem, _VALUE_FUNCTION_SIG, None, U, M, drift_convention=None)
     assert "drift_field" in drift_kwargs
     assert "potential_field" not in drift_kwargs
-    assert not use_positional
 
     # Smooth H + None -> potential_field=U (unchanged legacy path).
     smooth_problem = _problem(QuadraticControlCost(control_cost=1.0))
     Us, Ms = _state(smooth_problem)
-    dk_smooth, _ = resolve_fp_drift_kwargs(smooth_problem, _VALUE_FUNCTION_SIG, None, Us, Ms, drift_convention=None)
+    dk_smooth = resolve_fp_drift_kwargs(smooth_problem, _VALUE_FUNCTION_SIG, None, Us, Ms, drift_convention=None)
     assert dk_smooth["potential_field"] is Us
 
 
@@ -204,7 +199,7 @@ def test_resolver_emits_only_kwargs_the_receiving_solver_takes():
     for solver_cls in (FPFDMSolver, FPFVMSolver, FPParticleSolver, FPSLSolver):
         method = solver_cls.solve_fp_system
         sig_params = set(inspect.signature(method).parameters)
-        emitted, _ = resolve_fp_drift_kwargs(
+        emitted = resolve_fp_drift_kwargs(
             problem, sig_params, None, U, M, drift_convention=solver_cls._drift_convention
         )
         unknown = set(emitted) - sig_params

@@ -29,7 +29,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
     assert_paired_solver_geometry,
-    handed,
+    call_handed,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_source_kwarg,
@@ -226,8 +226,7 @@ class MFGResidual:
             )
         )
 
-        args, own = handed(M, self.terminal_at(M), U_prev, **kwargs)
-        return self.hjb_solver.solve_hjb_system(*args, **own)
+        return call_handed(self.hjb_solver.solve_hjb_system, M, self.terminal_at(M), U_prev, **kwargs)
 
     def compute_fp_output(self, U: NDArray, M: NDArray | None = None) -> NDArray:
         """
@@ -278,7 +277,7 @@ class MFGResidual:
         fp_source = compose_fp_source(self.problem, M, U)
         kwargs.update(resolve_source_kwarg(params, fp_source, type(self.fp_solver).__name__, "solve_fp_system", "FP"))
 
-        drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+        drift_kwargs = resolve_fp_drift_kwargs(
             self.problem,
             params,
             self.drift_field,
@@ -289,8 +288,7 @@ class MFGResidual:
         )
         kwargs.update(drift_kwargs)
 
-        args, own = handed(self.M_initial, U, **kwargs) if use_positional_U else handed(self.M_initial, **kwargs)
-        return self.fp_solver.solve_fp_system(*args, **own)
+        return call_handed(self.fp_solver.solve_fp_system, self.M_initial, **kwargs)
 
     def compute_residual(
         self,

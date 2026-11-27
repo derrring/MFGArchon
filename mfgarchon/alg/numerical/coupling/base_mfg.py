@@ -17,7 +17,8 @@ from .source_composition import compose_fp_source, compose_hjb_source
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
 
     from .iteration_state import IterationState
@@ -532,16 +533,18 @@ def hjb_terminal_binding(hjb_solver: Any) -> CouplingBinding | None:
     return hjb_solver.terminal_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
 
 
-def handed(*args: Any, **kwargs: Any) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    """What a coupled route hands a solver: each array argument copied, every other argument as it is (#3002 class line 7,
-    the approver's ruling of 2026-11-27). The route reads its own arrays after the call (the guard, the measure, the
-    update, the write-back, Newton's iterate, the next sweep's m(0)), and a caller-supplied solver may write into what it
-    is handed. Every solver call of a coupled route goes through this, once per call."""
+def call_handed[**P, R](solver_method: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+    """Call a solver's method as a coupled route does: each array argument copied, every other argument as it is (#3002
+    class line 7, the approver's ruling of 2026-11-27). The route reads its own arrays after the call (the guard, the
+    measure, the update, the write-back, Newton's iterate, the next sweep's m(0)), and a caller-supplied solver may write
+    into what it is handed. Every solver call of a coupled route that passes an array goes through this, whatever the
+    method. It is typed by the method's own signature, so a type checker reads each call against it."""
 
     def own(value: Any) -> Any:
         return value.copy() if isinstance(value, np.ndarray) else value
 
-    return tuple(own(a) for a in args), {k: own(v) for k, v in kwargs.items()}
+    call: Callable[..., R] = solver_method
+    return call(*(own(a) for a in args), **{k: own(v) for k, v in kwargs.items()})
 
 
 def solver_signature(solver: Any, half: str) -> set[str]:
@@ -553,10 +556,14 @@ def solver_signature(solver: Any, half: str) -> set[str]:
     problem's composed source and a volatility override by the keywords these names show. Before the refusal, an FP solver
     whose signature could not be read was handed U positionally, into its second parameter, which `FPFDMSolver` reads as a
     drift, and neither the source nor a volatility override; an HJB solver was handed neither of the two.
+
+    An FP signature that names neither ``potential_field`` nor ``drift_field`` is refused too, a ``(*args, **kwargs)``
+    wrapper's included: the route has no keyword to hand the value function by, and handing it positionally put it
+    where `FPFDMSolver` reads a drift (the user's ruling of 2026-11-27).
     """
     method = {"HJB": "solve_hjb_system", "FP": "solve_fp_system"}[half]
     try:
-        return set(inspect.signature(getattr(solver, method)).parameters)
+        params = set(inspect.signature(getattr(solver, method)).parameters)
     except (AttributeError, TypeError, ValueError) as error:
         raise ValueError(
             f"{type(solver).__name__}.{method}: the {half} solver's signature cannot be read "
@@ -564,6 +571,13 @@ def solver_signature(solver: Any, half: str) -> set[str]:
             "volatility override by the keywords the signature shows, so it refuses a solver whose signature "
             "inspect.signature cannot read (#2209)."
         ) from error
+    if half == "FP" and not params & {"potential_field", "drift_field"}:
+        raise ValueError(
+            f"{type(solver).__name__}.{method}: the FP solver's signature names neither potential_field nor drift_field "
+            f"(it reads {sorted(params)}). A coupled route hands the value function by one of those two keywords, so it "
+            "refuses an FP solver that takes neither: name the parameter that takes U potential_field (#2209)."
+        )
+    return params
 
 
 def hjb_solve_kwargs(
@@ -639,6 +653,14 @@ class BaseCouplingIterator(ABC):
     #: The parameter names of the HJB and FP solvers' solve methods, read when the route is built (`solver_signature`).
     _hjb_sig_params: set[str]
     _fp_sig_params: set[str]
+    #: The route's HJB and FP solvers, on the routes that hold one pair; Graph, RegimeSwitching and MultiPopulation hold
+    #: one per component and do not set these.
+    hjb_solver: BaseHJBSolver
+    fp_solver: BaseFPSolver
+    #: The caller's overrides on those routes, which their constructors take and their hand-off reads.
+    volatility: float | np.ndarray | Any | None
+    volatility_kind: str | None
+    drift_field: np.ndarray | Callable | Any | None
 
     def __init__(self, problem: MFGProblem) -> None:
         """

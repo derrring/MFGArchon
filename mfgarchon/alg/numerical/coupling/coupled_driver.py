@@ -4,15 +4,18 @@ FixedPointIterator, FictitiousPlayIterator, the Block iterators and NewtonMFGSol
 is a configuration of the driver: its phases, the map each phase evaluates, its share of the budget, and a damping
 policy.
 
-**One per-step pipeline** (`CoupledDriver.evaluate`, plan v1.1 on #3002). Every evaluation of the sweep map T whose
-output reaches a measure or a verdict goes through it, in every phase: a fixed-point phase's sweep, Newton's warm-up
-sweep, its post-warm-up check, and the iterate each Newton step's verdict judges. The phase supplies T's two halves and
-their order; the driver applies, in this order, the owner read (`IterationState.read_owner`, #3005), T's HJB half and
-the inner-failure record (#1878), the HJB guard (#1718), T's FP half, the FP-output rule (`fp_output_stop`, #2997), and
-the measure. A stop publishes the evaluation's HJB output and, after the FP half, its FP output with its bad values
-kept (the approver's ruling E). The Newton step's own evaluations of F, the finite-difference Jacobian's probes and
-the line search's trials, feed the Jacobian and the Armijo test and are outside it (ruling D); a non-finite probe is
-#2996's folded item.
+**One per-step pipeline** (`CoupledDriver.evaluate`, plans v1.1 and v1.2 on #3002). Every evaluation of the sweep map
+T whose output reaches a measure or a verdict goes through it, in every phase: a fixed-point phase's sweep, Newton's
+warm-up sweep, its post-warm-up check, and the iterate each Newton step's verdict judges. The phase supplies T's two
+halves and their order. The driver reads the owner (`IterationState.read_owner`, #3005), then runs T's HJB half and
+records its inner failures (#1878). On a Gauss-Seidel map it then applies the HJB guard (#1718) and runs T's FP half; on
+a Jacobi map it runs the FP half, fed the input U, and then the guard. The FP-output rule (`FPOutputRule`, #2997) and
+the measure follow. A stop publishes the evaluation's HJB output and, after the FP half, its FP output with its bad
+values kept (the approver's ruling E). After each update, a fixed-point sweep's or a Newton step's, the post-update
+rule (`updated_iterate_stop`) reads the iterate, and a stop publishes it as it is. The Newton step's own evaluations of
+F, the finite-difference Jacobian's probes and the line search's trials, feed the Jacobian and the Armijo test and are
+outside the verdict rules (ruling D); a non-finite probe is #2996's folded item. The owner is read before each Newton
+step, so its probes and trials are evaluated under the owner too, and before the F of an exhausted budget.
 
 - **The fixed-point step** (`FixedPointStep`): T through the iterator's hand-off (`hjb_solve_kwargs`,
   `fp_solve_kwargs`, `resolve_fp_drift_kwargs`), Gauss-Seidel or Jacobi between the fields, then `DampingRun.update`.
@@ -36,16 +39,18 @@ import numpy as np
 from mfgarchon.utils.convergence import sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .base_mfg import handed
-from .coupled_result import SweepRecord
+from .base_mfg import call_handed
+from .coupled_result import DensityRecord, SweepRecord
 from .fixed_point_utils import (
     BUDGET_SPENT,
+    FPOutputRule,
     check_convergence_criteria,
     diverged_value_function,
-    fp_output_stop,
     read_inner_solve_failures,
     refuse_convergence_over_failed_inner_solves,
     resolve_fp_drift_kwargs,
+    updated_iterate_stop,
+    validate_budget,
 )
 
 if TYPE_CHECKING:
@@ -55,8 +60,10 @@ if TYPE_CHECKING:
 
     from mfgarchon.utils.numerical.nonlinear_solvers import NewtonRun, SolverInfo
 
+    from .base_mfg import BaseCouplingIterator
     from .damping_run import DampingRun
     from .iteration_state import IterationState
+    from .mfg_residual import MFGResidual
 
 logger = get_logger(__name__)
 
@@ -83,14 +90,14 @@ class FixedPointStep:
 
     ``iterator`` is the route: a `BaseCouplingIterator` that holds its pair (``hjb_solver``, ``fp_solver``), its
     overrides (``volatility``, ``volatility_kind``, ``drift_field``) and its solvers' signatures
-    (``_init_solver_signatures``), which the base class does not declare. ``order`` is ``"gauss_seidel"`` or
+    (``_init_solver_signatures``). ``order`` is ``"gauss_seidel"`` or
     ``"jacobi"``. ``site`` names the route in the guards' warnings. ``fp_solve``, when given, replaces the FP half's
     hand-off: Block's ``adjoint_mode`` solves the FP with the transposed HJB operator (#622).
     """
 
     def __init__(
         self,
-        iterator: Any,
+        iterator: BaseCouplingIterator,
         state: IterationState,
         run: DampingRun,
         *,
@@ -118,18 +125,18 @@ class FixedPointStep:
         """T's HJB half: u solved backward at the density ``M_in``, with the problem's sources composed (#2207)."""
         it = self.iterator
         kwargs = it._build_hjb_kwargs(M=M_in, U=U_in, volatility=it.volatility, volatility_kind=it.volatility_kind)
-        args, own = handed(M_in, U_terminal, U_in, **kwargs)
-        return it.hjb_solver.solve_hjb_system(*args, **own)
+        return call_handed(it.hjb_solver.solve_hjb_system, M_in, U_terminal, U_in, **kwargs)
 
     def fp(self, U_for_fp: NDArray, M_in: NDArray) -> NDArray:
         """T's FP half: m solved forward from m(0), driven by ``U_for_fp`` through the one drift convention (#1233). The
-        FP solver's signature was read when the route was built, which refuses one it cannot read (`solver_signature`)."""
+        FP solver's signature was read when the route was built, which refuses one it cannot read or that names neither
+        ``potential_field`` nor ``drift_field`` (`solver_signature`)."""
         M_initial = self.state.m0
         if self.fp_solve is not None:
-            return self.fp_solve(*handed(M_initial, U_for_fp)[0])
+            return call_handed(self.fp_solve, M_initial, U_for_fp)
         it = self.iterator
         kwargs = it._build_fp_kwargs(M=M_in, U=U_for_fp, volatility=it.volatility, volatility_kind=it.volatility_kind)
-        drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+        drift_kwargs = resolve_fp_drift_kwargs(
             it.problem,
             it._fp_sig_params,
             it.drift_field,
@@ -139,8 +146,7 @@ class FixedPointStep:
             fp_solver=it.fp_solver,
         )
         kwargs.update(drift_kwargs)
-        args, own = handed(M_initial, U_for_fp, **kwargs) if use_positional_U else handed(M_initial, **kwargs)
-        return it.fp_solver.solve_fp_system(*args, **own)
+        return call_handed(it.fp_solver.solve_fp_system, M_initial, **kwargs)
 
     def measured(self, U_new: NDArray, M_new: NDArray, U_in: NDArray, M_in: NDArray) -> tuple[NDArray, NDArray]:
         """The outputs the change is measured on: T's own."""
@@ -163,7 +169,7 @@ class ResidualMap:
 
     order = "jacobi"
 
-    def __init__(self, residual: Any, site: str) -> None:
+    def __init__(self, residual: MFGResidual, site: str) -> None:
         self.residual = residual
         self.site = site
         self.integrate = residual.problem.spatial_measure().integrate
@@ -185,9 +191,10 @@ class ResidualMap:
 
 @dataclass
 class Outcome:
-    """How a phase ended: ``stop`` is None when its budget ran out, else ``"met"``, ``"diverged"`` (the HJB guard or
-    the FP-output rule, its reason the driver's), ``"callback"``, or a Newton phase's named stop. ``newton_info`` is
-    the Newton phase's `SolverInfo`; ``sweep`` is the index of the evaluation a ``"diverged"`` stop met."""
+    """How a phase ended: ``stop`` is None when its budget ran out, else ``"met"``, ``"diverged"`` (the HJB guard, the
+    FP-output rule or the post-update rule, its reason the driver's), ``"callback"``, or a Newton phase's named stop.
+    ``newton_info`` is the Newton phase's `SolverInfo`; ``detail["sweep"]`` is the index of the evaluation a
+    ``"diverged"`` stop met, or of the evaluation whose update the post-update rule stopped."""
 
     U: NDArray
     M: NDArray
@@ -203,6 +210,7 @@ class CoupledDriver:
 
     Args:
         route: The route's name, in the progress display.
+        reader: The route's class, which a refusal names.
         state: The iterate's owner (#2997), whose `read_owner` runs before every step (#3005).
         hjb_solver: The HJB solver whose inner failures the verdict reads (#1878).
         budget: Sweeps the solve may run, every phase's; 0 runs none.
@@ -220,6 +228,7 @@ class CoupledDriver:
         state: IterationState,
         hjb_solver: Any,
         *,
+        reader: str,
         budget: int,
         tolerance: float,
         absolute_tolerance: float | None,
@@ -228,12 +237,10 @@ class CoupledDriver:
         track_measure_field: bool = False,
         track_rates: bool = False,
     ) -> None:
-        if not isinstance(budget, (int, np.integer)) or isinstance(budget, bool) or budget < 0:
-            raise ValueError(f"{route}: max_iterations is a count of sweeps, an int >= 0, not {budget!r}")
+        self.budget = validate_budget(budget, reader)
         self.route = route
         self.state = state
         self.hjb_solver = hjb_solver
-        self.budget = int(budget)
         self.tolerance = tolerance
         self.absolute_tolerance = absolute_tolerance
         self.iteration_callback = iteration_callback
@@ -242,8 +249,10 @@ class CoupledDriver:
         self.converged = False
         self.reason = BUDGET_SPENT
         self.sweeps = 0
-        # True once the iterate holds a density this solve's FP produced: what mass_conservation_error measures (#1717)
-        self.fp_output_available = False
+        # What produced the density the solve publishes: the one decider of whether it is measured (#1717; #3008)
+        self.density = DensityRecord()
+        # The FP-output rule, which holds this solve's references (the user's ruling of 2026-11-27)
+        self.fp_output_rule = FPOutputRule([state.problem.spatial_measure().integrate])
         self.inner_failures: object = None
         self.rates: list[float] | None = [] if track_rates else None
         # The change of each sweep, NaN until measured, as the routes' l2dist* attributes report it
@@ -279,6 +288,11 @@ class CoupledDriver:
 
     def __exit__(self, *exc: object) -> None:
         self._progress_cm.__exit__(*exc)
+
+    @property
+    def fp_output_available(self) -> bool:
+        """Whether the density the solve publishes is one it produced (`DensityRecord.measured`)."""
+        return self.density.measured
 
     @property
     def remaining(self) -> int:
@@ -332,9 +346,10 @@ class CoupledDriver:
         return True
 
     def evaluate(self, k: int, the_map: Any, U_in: NDArray, M_in: NDArray) -> Evaluation:
-        """One evaluation of ``the_map`` at ``(U_in, M_in)``, through every per-step rule, in this order: the owner read
-        (#3005), the HJB half and the inner-failure record (#1878), the HJB guard (#1718), the FP half, the FP-output
-        rule (#2997), and the measure. ``k`` is the evaluation's 0-based index, which the guards' warnings report."""
+        """One evaluation of ``the_map`` at ``(U_in, M_in)``, through every per-step rule: the owner read (#3005), the HJB
+        half and the inner-failure record (#1878); then the HJB guard (#1718) and the FP half on a Gauss-Seidel map, or
+        the FP half and then the guard on a Jacobi map; the FP-output rule (#2997), and the measure. ``k`` is the
+        evaluation's 0-based index, which the guards' warnings report."""
         self.state.read_owner()
         U_terminal = the_map.terminal(M_in)
         U_new = the_map.hjb(U_in, M_in, U_terminal)
@@ -348,11 +363,11 @@ class CoupledDriver:
             return Evaluation(U_new, None, U_terminal, stop="diverged_nan", published=(diverged, M_in))
         if M_new is None:
             M_new = the_map.fp(U_new, M_in)
-        stop = fp_output_stop([M_new], [M_in], [the_map.integrate], each_component=True, site=the_map.site, iteration=k)
+        stop = self.fp_output_rule.stop([M_new], [M_in], site=the_map.site, iteration=k)
         if stop is not None:
             self.reason = stop
             self.record.diverged()
-            self.fp_output_available = True
+            self.density.fp_outputs_published += 1
             return Evaluation(U_new, M_new, U_terminal, stop=stop, published=(U_new, M_new))
         U_measured, M_measured = the_map.measured(U_new, M_new, U_in, M_in)
         metrics = sweep_change(U_measured, U_in, M_measured, M_in, the_map.integrate, the_map.time_step)
@@ -377,7 +392,12 @@ class CoupledDriver:
                 U, M = evaluation.published
                 return Outcome(U, M, "diverged", ran, detail={"sweep": k})
             U, M = step.advance(k, U, M, evaluation)
-            self.fp_output_available = True
+            self.density.updates += 1
+            stop = updated_iterate_stop([U], [M], producer="by the sweep's update", site=step.site, iteration=k)
+            if stop is not None:
+                self.reason = stop
+                self.record.diverged()
+                return Outcome(U, M, "diverged", ran, detail={"sweep": k})
             self.snapshot(U, M)
             self._measured(k, evaluation.metrics, started)
             if self._callback_stops(k, U, M, evaluation.metrics):
@@ -401,9 +421,10 @@ class CoupledDriver:
     ) -> Outcome:
         """Up to ``budget`` Newton steps of ``newton``. At each, the iterate's evaluation goes through the pipeline, its
         residual ``F = (U + F_HJB, M + F_FP) - (U, M)`` is packed for Newton, the verdict judges its change (refused over
-        the failed inner steps of that evaluation), the callback runs, then the step. ``first_index`` is the index of
-        the first iterate's evaluation. When the budget is spent, F is evaluated at the last iterate without a verdict,
-        as `NewtonSolver.solve` does."""
+        the failed inner steps of that evaluation), the callback runs, the owner is read, then the step, and the
+        post-update rule reads the iterate it moved. ``first_index`` is the index of the first iterate's evaluation.
+        When the budget is spent, the owner is read and F is evaluated at the last iterate without a verdict, as
+        `NewtonSolver.solve` does."""
         for iteration in range(budget):
             started = time.time()
             k = first_index + iteration
@@ -431,11 +452,20 @@ class CoupledDriver:
             )
             if self._callback_stops(k, U_x, M_x, evaluation.metrics):
                 return Outcome(U_x, M_x, "callback", iteration + 1)
+            # The step's probes and line-search trials evaluate the map under the owner too (#3005)
+            self.state.read_owner()
             stopped = newton.step(F_current, residual_norm, iteration)
             if stopped is not None:
                 x, info = stopped
                 U, M = unpack(x)
                 return Outcome(U, M, str(info.extra.get("reason")), iteration + 1, newton_info=info)
+            self.density.newton_steps = newton.steps_taken
+            U_step, M_step = unpack(newton.x)
+            stop = updated_iterate_stop([U_step], [M_step], producer="by Newton's step", site=the_map.site, iteration=k)
+            if stop is not None:
+                self.reason = stop
+                return Outcome(U_step, M_step, "diverged", iteration + 1, detail={"sweep": k})
+        self.state.read_owner()
         x, info = newton.exhausted(budget)
         U, M = unpack(x)
         return Outcome(U, M, None, budget, newton_info=info)

@@ -283,6 +283,7 @@ class FixedPointIterator(BaseCouplingIterator):
             "MFG Picard",
             state,
             self.hjb_solver,
+            reader=type(self).__name__,
             budget=final_max_iterations,
             tolerance=final_tolerance,
             absolute_tolerance=final_absolute_tolerance,

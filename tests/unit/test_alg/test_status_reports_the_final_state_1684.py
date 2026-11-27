@@ -116,7 +116,7 @@ def _problem():
 class _StaticFP(FPFDMSolver):
     """Returns the same density every sweep, so `max|dM|` is exactly 0 from sweep 2 on."""
 
-    def solve_fp_system(self, m_initial, *args, source_term=None, volatility=None, **kwargs):
+    def solve_fp_system(self, m_initial, *args, potential_field=None, source_term=None, volatility=None, **kwargs):
         # `source_term` / `volatility_field` are named because the base class refuses a bare
         # **kwargs that would swallow them (#2020). This stub honours neither, and the fixture
         # supplies neither, so silence is correct here rather than a quiet drop.

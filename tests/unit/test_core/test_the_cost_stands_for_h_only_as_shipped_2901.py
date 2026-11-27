@@ -385,7 +385,7 @@ def test_the_fp_route_reads_the_hamiltonians_own_smoothness(monkeypatch):
 
     def recording(*args, **kwargs):
         out = original(*args, **kwargs)
-        seen.append(tuple(sorted(out[0])))
+        seen.append(tuple(sorted(out)))
         return out
 
     for module in list(sys.modules.values()):

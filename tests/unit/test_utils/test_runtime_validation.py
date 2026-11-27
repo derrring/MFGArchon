@@ -11,6 +11,8 @@ Tests that:
 Follows the pattern of test_array_field_validation.py.
 """
 
+import inspect
+
 import pytest
 
 import numpy as np
@@ -31,6 +33,12 @@ from mfgarchon.utils.validation.runtime import (
 )
 
 _NX = 11
+
+# FP-FDM's solve signature, less `self`, for the Mock FP solvers below: a coupled route reads it and refuses one that
+# names neither potential_field nor drift_field, as a bare Mock's (*args, **kwargs) does (#2209)
+_FP_SIGNATURE = inspect.signature(FPFDMSolver.solve_fp_system).replace(
+    parameters=list(inspect.signature(FPFDMSolver.solve_fp_system).parameters.values())[1:]
+)
 
 
 def _divergence_probe_problem():
@@ -213,6 +221,7 @@ def test_fixed_point_nan_early_termination():
 
     # Mock FP solver: returns valid density
     fp_solver = Mock(spec=FPFDMSolver)
+    fp_solver.solve_fp_system.__signature__ = _FP_SIGNATURE
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.return_value = np.ones((num_time_steps, *spatial_shape)) / Nx
@@ -269,17 +278,16 @@ def test_fp_is_not_solved_after_hjb_returns_nonfinite():
     u_seen_by_fp = []
 
     def fp_side_effect(*args, **kwargs):
-        # The value function reaches FP through one of several channels depending on the
-        # solver's signature -- positionally with a Mock, but as potential_field= or
-        # drift_field= with a real solver (resolve_fp_drift_kwargs). Scan every array
-        # argument rather than one named channel, so hardening this double into
-        # Mock(spec=FPFDMSolver) cannot silently disarm the assertion.
+        # The value function reaches FP as potential_field= or drift_field=, whichever the solver's signature
+        # names (resolve_fp_drift_kwargs). Scan every array argument rather than one named channel, so a change of
+        # channel cannot silently disarm the assertion.
         candidates = [a for a in args if isinstance(a, np.ndarray)]
         candidates += [v for v in kwargs.values() if isinstance(v, np.ndarray)]
         u_seen_by_fp.append(any(not np.all(np.isfinite(c)) for c in candidates))
         return np.ones(shape) / Nx
 
     fp_solver = Mock(spec=FPFDMSolver)
+    fp_solver.solve_fp_system.__signature__ = _FP_SIGNATURE
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = fp_side_effect
@@ -318,6 +326,7 @@ def test_mass_conservation_is_unmeasured_when_fp_never_ran():
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
     fp_solver = Mock(spec=FPFDMSolver)
+    fp_solver.solve_fp_system.__signature__ = _FP_SIGNATURE
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
@@ -361,6 +370,7 @@ def test_mass_conservation_is_still_measured_when_fp_ran_before_the_divergence()
     # A density that sheds mass down the time axis: a real, measurable conservation defect.
     losing_mass = np.ones(shape) / Nx * np.linspace(1.0, 0.1, shape[0])[:, None]
     fp_solver = Mock(spec=FPFDMSolver)
+    fp_solver.solve_fp_system.__signature__ = _FP_SIGNATURE
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: losing_mass
@@ -401,6 +411,7 @@ def test_terminal_condition_survives_an_hjb_divergence():
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
     fp_solver = Mock(spec=FPFDMSolver)
+    fp_solver.solve_fp_system.__signature__ = _FP_SIGNATURE
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.prescribed_density.return_value = None  # its step holds no node the cold start asks about (#2991)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
