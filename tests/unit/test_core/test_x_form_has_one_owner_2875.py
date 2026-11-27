@@ -3,9 +3,9 @@
 
 What this file reads, by AST over ``mfgarchon/`` outside the owner module. An *x position* is:
 - the ``x=`` argument of a call, the ``"x"`` entry of a dict a call unpacks with ``**`` (inline, bound to a name, or in
-  an if-expression), and the ``"x"`` entry of a dict handed to a binder's ``check_on``;
-- the first argument of `coordinate_tuple` and `point_at`, which take a tuple as it is, and of `point_tuple`, which
-  rebuilds a tuple's entries as floats;
+  an if-expression), and the ``"x"`` entry of a dict display handed by position to a binder's ``check_on``;
+- the first argument, by position, of `coordinate_tuple` and `point_at`, which take a tuple as it is, and of
+  `point_tuple`, which rebuilds a tuple's entries as floats;
 - an argument handed, by position or by name, to a parameter named ``x`` or to a parameter that carries an x on: one its
   function hands, as it is, to an x position. The carry is followed through calls, closures and the arguments a
   ``functools.partial`` is made with, to a fixpoint.
@@ -14,9 +14,10 @@ No x position holds a value built outside the owner: a tuple or list display, a 
 ``list(...)`` call, ``np.meshgrid(...)``, the ``next(...)`` of a ``zip(...)`` or ``itertools.product(...)``, a call of a
 package function that returns one of these, a call of one that returns one of its own arguments (followed to that
 argument), or a name bound to any of these by a plain or an annotated assignment in the function or one enclosing it. At
-`point_tuple`'s first argument only a tuple counts, since it reads a list as an array. At the first argument of
-`coordinate_tuple` and `point_at` the rule is stricter: it is the enclosing function's own parameter, or an allowance in
-``OWNER_ARGUMENTS`` names its expression. A lambda's body is read as its function's.
+the owner's first arguments only a tuple counts, since the owner reads a list as an array. The first argument of
+`coordinate_tuple` and `point_at` is also the enclosing function's own parameter, or an allowance in ``OWNER_ARGUMENTS``
+names its expression; a tuple built outside the owner fails there before any allowance is read, so an allowance that
+names a variable does not cover a tuple bound to it. A lambda's body is read as its function's.
 
 A caller's own ``x``, handed to a public method, is outside the fact and reaches the body as main hands it. Those relay
 sites are named in ``RELAYS``: each hands on its own parameter, or a form main gives it, named with its expression in
@@ -27,7 +28,8 @@ What the scan cannot follow: a callee named through ``getattr`` or found in a re
 several definitions share (followed neither as a callee nor as a helper); the arguments a ``functools.partial`` object is
 later called with; ``*args`` and ``**kwargs`` forwarding; a class's constructor; a value kept on an attribute; a carrier
 parameter its own function rebinds; a lambda bound to a name and called as a carrier; a name bound by a tuple target, a
-``for`` target or a walrus; and a tuple-returning call outside the package other than those named above.
+``for`` target or a walrus; a tuple-returning call outside the package other than those named above; a dict handed to
+``check_on`` by a name or by keyword; and the owner's first argument passed by keyword.
 The raw Hamiltonian doors are also held at runtime, by
 ``test_a_control_has_ps_shape_2875.py::test_each_read_hands_x_in_its_owners_form``.
 Each rule runs on planted sources first, which it must flag.
@@ -404,7 +406,9 @@ def deciding_sites(source: str, path: str, index: PackageIndex | None = None) ->
             if not isinstance(node, ast.Call):
                 continue
             for value, kind in index.x_positions(node, chain):
-                if kind == "as it is":
+                if kind == "as it is" and index.built(value, chain, tuples_only=True):
+                    what = "hands its owner a tuple it built"
+                elif kind == "as it is":
                     own = isinstance(value, ast.Name) and chain and _parameter_of(chain[:1], value.id) is chain[0]
                     if own:
                         continue
@@ -518,7 +522,8 @@ def _package_sources() -> dict[str, str]:
             "hands x as a value it built",
         ),
         ("point_tuple(tuple(p))", "hands its owner a tuple it built"),
-        ("coordinate_tuple(np.meshgrid(a, b), 2)", "hands its owner a value that is not its own parameter"),
+        ("coordinate_tuple(np.meshgrid(a, b), 2)", "hands its owner a tuple it built"),
+        ("def door(s):\n    pts = tuple(s)\n    return coordinate_tuple(pts, 2)", "hands its owner a tuple it built"),
         ("def door(p):\n    q = p\n    return point_at(q, 0)", "hands its owner a value that is not its own parameter"),
         # The owner handed a tuple through a helper that returns its argument (review 1's mut_launder)
         (
@@ -576,6 +581,11 @@ def test_an_allowance_that_covers_nothing_fails():
     )
     assert [s.value for s in left] == ["g.T"]
     assert unused == ["a/door.py: step hands no x_minus"]
+    # An allowance that names a variable does not cover a tuple bound to it (review 3's MF-1)
+    built = deciding_sites("def door(s):\n    pts = tuple(s)\n    return coordinate_tuple(pts, 2)", "a/door.py")
+    left, unused = against_allowances(built, {}, {"a/door.py": {"door": {"pts"}}})
+    assert [(s.value, s.what) for s in left] == [("pts", "hands its owner a tuple it built")]
+    assert unused == ["a/door.py: door hands no pts"]
 
 
 def test_the_relay_check_flags_a_relay_that_builds_converts_or_relays_nothing():
