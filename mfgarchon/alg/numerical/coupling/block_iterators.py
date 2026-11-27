@@ -30,7 +30,6 @@ References:
 
 from __future__ import annotations
 
-import time
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
@@ -47,21 +46,19 @@ from .base_mfg import (
     BaseCouplingIterator,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    call_handed,
     damping_argument,
     refuse_a_capped_exit_in_a_coupled_solve,
 )
-from .coupled_result import SweepRecord, coupled_result
+from .coupled_driver import CoupledDriver, FixedPointStep
+from .coupled_result import coupled_result
 from .damping_run import DampingRun
-from .fixed_point_utils import (
-    check_convergence_criteria,
-    diverged_value_function,
-    resolve_fp_drift_kwargs,
-    value_function_is_finite,
-)
 from .iteration_state import IterationState
 from .source_composition import fp_source_is_active
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
@@ -191,10 +188,6 @@ class BlockIterator(BaseCouplingIterator):
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-        # m(0) and the latest sweep's u(T), which the step functions read
-        self._M_initial: NDArray | None = None
-        self._U_terminal: NDArray | None = None
-
         # The iterate's owner (#2997), built on first use: the geometry it sizes the state from is checked there.
         self._state: IterationState | None = None
 
@@ -237,61 +230,6 @@ class BlockIterator(BaseCouplingIterator):
             f"{type(hjb_solver).__name__} builds none (#707, #2338): it does not satisfy "
             f"`LinearizedOperatorCapable`. Use HJBFDMSolver, or adjoint_mode='off'."
         )
-
-    def _solve_hjb(
-        self,
-        M: NDArray,
-        U_terminal: NDArray,
-        U_prev: NDArray,
-    ) -> NDArray:
-        """Solve HJB equation with given density."""
-        # Issue #934: Progress handled via context routing
-        # Issue #2207: same omission as FictitiousPlay -- no source was composed here at all.
-        kwargs = self._build_hjb_kwargs(M=M, U=U_prev, volatility=self.volatility, volatility_kind=self.volatility_kind)
-        return self.hjb_solver.solve_hjb_system(M, U_terminal, U_prev, **kwargs)
-
-    def _solve_fp(self, M_initial: NDArray, U: NDArray, M_current: NDArray | None = None) -> NDArray:
-        """Solve FP equation with given value function.
-
-        Args:
-            M_initial: Initial density m_0 for the FP forward solve.
-            U: Value function (potential or velocity source, resolved by convention).
-            M_current: Current density estimate at this iteration.  Used only for
-                non-smooth Hamiltonians where the optimal control alpha* depends on m
-                (via ``compute_fp_velocity_field``).  If ``None``, falls back to
-                ``M_initial`` (safe default for smooth-separable H).
-        """
-        # Issue #622: Use adjoint mode if enabled
-        if self.adjoint_mode != "off":
-            return self._solve_fp_strict_adjoint(M_initial, U)
-
-        _M_curr = M_current if M_current is not None else M_initial
-
-        if self._fp_sig_params is not None:
-            kwargs = self._build_fp_kwargs(
-                M=_M_curr, U=U, volatility=self.volatility, volatility_kind=self.volatility_kind
-            )
-            # Issue #1043 Phase 2: route through single-source convention, same as
-            # FixedPointIterator.solve().
-            # Previously used a sig-probe heuristic (Issue #919) that put U directly
-            # into potential_field/drift_field without Hamiltonian-smoothness dispatch —
-            # incorrect for solvers where drift_field is alpha* (e.g. FPFVMSolver).
-            drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                self.problem,
-                self._fp_sig_params,
-                self.drift_field,
-                U,
-                _M_curr,
-                drift_convention=self._fp_drift_convention,
-                fp_solver=self.fp_solver,
-            )
-            kwargs.update(drift_kwargs)
-            if use_positional_U:
-                return self.fp_solver.solve_fp_system(M_initial, U, **kwargs)
-            else:
-                return self.fp_solver.solve_fp_system(M_initial, **kwargs)
-        else:
-            return self.fp_solver.solve_fp_system(M_initial, U)
 
     def _solve_fp_strict_adjoint(self, M_initial: NDArray, U: NDArray) -> NDArray:
         """
@@ -360,8 +298,13 @@ class BlockIterator(BaseCouplingIterator):
             if self.adjoint_verify:
                 self._verify_adjoint_at_step(U_k, M_current, k)
 
-            M_next = self.fp_solver.solve_fp_step_adjoint_mode(
-                M_current, A_fp, volatility=sigma, time=k * self.problem.dt, volatility_kind=sigma_kind
+            M_next = call_handed(
+                self.fp_solver.solve_fp_step_adjoint_mode,
+                M_current,
+                A_fp,
+                volatility=sigma,
+                time=k * self.problem.dt,
+                volatility_kind=sigma_kind,
             )
             M_solution[k + 1] = M_next
 
@@ -380,7 +323,7 @@ class BlockIterator(BaseCouplingIterator):
         hjb_solver = self.hjb_solver
         if not isinstance(hjb_solver, LinearizedOperatorCapable):
             raise NotImplementedError(self._no_linearised_operator(hjb_solver))
-        return hjb_solver.build_linearized_operator(U_k, M_current, time=time)
+        return call_handed(hjb_solver.build_linearized_operator, U_k, M_current, time=time)
 
     def _interior_flat_indices(self) -> NDArray:
         """Flat indices of the nodes that are on no boundary face, from the adjoint module's own face enumeration."""
@@ -424,7 +367,7 @@ class BlockIterator(BaseCouplingIterator):
                 f"adjoint_verify=False, or use a solver that assembles a matrix operator (FPFDMSolver)."
             )
         try:
-            return build(U_k)
+            return call_handed(build, U_k)
         except NotImplementedError as exc:
             # `build_advection_operator` refuses from three sites -- the coefficient (#1542, the class
             # `jacobian_transpose` exists to serve, #707), the scheme, and the geometry -- so this says which LAYER
@@ -542,97 +485,42 @@ class BlockIterator(BaseCouplingIterator):
             logger.warning(f"Failed to generate adjoint report: {e}")
             return None
 
-    def _jacobi_step(
-        self,
-        U_old: NDArray,
-        M_old: NDArray,
-        M_initial: NDArray,
-        U_terminal: NDArray,
-    ) -> tuple[NDArray, NDArray]:
-        """
-        Perform one Jacobi block iteration.
-
-        Both HJB and FP use values from the previous iteration.
-
-        Returns:
-            (U_new, M_new): Updated value function and density
-        """
-        # Both solves use OLD values (can be parallelized)
-        U_new = self._solve_hjb(M_old, U_terminal, U_old)
-        M_new = self._solve_fp(M_initial, U_old, M_current=M_old)  # Uses U_old, not U_new
-
-        return U_new, M_new
-
-    def _gauss_seidel_step(
-        self,
-        U_old: NDArray,
-        M_old: NDArray,
-        M_initial: NDArray,
-        U_terminal: NDArray,
-    ) -> tuple[NDArray, NDArray]:
-        """
-        Perform one Gauss-Seidel block iteration.
-
-        FP uses the freshly computed U from HJB.
-
-        Returns:
-            (U_new, M_new): Updated value function and density
-        """
-        # First solve HJB with old M
-        U_new = self._solve_hjb(M_old, U_terminal, U_old)
-
-        # Then solve FP with NEW U (sequential dependency)
-
-        # Issue #1718: do not hand a non-finite U to FP. It would compose a drift from NaN and
-        # raise "Check CFL condition" -- an FP diagnostic, with actively wrong advice, for an HJB
-        # failure. Only the predicate is asked here; publishing and stopping belong to the loop
-        # that owns them and are done there. `_jacobi_step` needs no such skip: its FP consumes
-        # U_old, so a diverged U_new reaches nothing until the loop guard has already stopped.
-        if not value_function_is_finite(U_new):
-            return U_new, M_old
-        M_new = self._solve_fp(M_initial, U_new, M_current=M_old)  # Uses U_new
-
-        return U_new, M_new
-
     @verdict_reads_inner_failures(lambda self: [self.hjb_solver], fp_solvers_of=lambda self: [self.fp_solver])
     def solve(
         self,
-        max_iterations: int = 100,
+        max_iterations: int | None = None,
         tolerance: float = 1e-5,
         verbose: bool = True,
         absolute_tolerance: float | None = None,
+        *,
+        iteration_callback: Callable[[int, NDArray, NDArray, float, float], bool | None] | None = None,
+        track_measure_field: bool = False,
+        track_rate_history: bool = False,
     ) -> SolverResult:
         """
         Solve MFG system using block iteration.
 
         Args:
-            max_iterations: Maximum iterations
+            max_iterations: The sweeps the solve may run; None is 100, and 0 runs none (#3002)
             tolerance: Bound on the relative L2 change of one sweep (docs/user/CONVENTIONS.md § 9)
-            verbose: Print progress information
+            verbose: Show the progress display
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
+            iteration_callback: Optional ``callback(iteration, U, M, error_U, error_M)`` after each sweep; a return of
+                False stops the solve, True or None continues (#2886)
+            track_measure_field: If True, store each iterate as a MeasureField snapshot in
+                SolverResult.metadata["measure_field"] (#956)
+            track_rate_history: If True, record each sweep's M damping rate in
+                SolverResult.metadata["learning_rate_history"]
 
         Returns:
             SolverResult with solution and convergence info
         """
         refuse_a_capped_exit_in_a_coupled_solve([self.fp_solver], "BlockIterator.solve")
-        start_time = time.time()
-
-        time_step = self.problem.dt
-        integrate = self.problem.spatial_measure().integrate  # #2555
 
         # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997)
         state = self._iteration_state()
-        if verbose and state.warm_start() is not None:
-            print(f"Using warm start ({self.method.value})")
         self.U, self.M = state.start()
-        self._M_initial = state.m0
-
-        # Every sweep run, through the result's one owner (#2997)
-        record = SweepRecord(1)
-        # True once self.M holds a density this solve's FP produced: what its mass_conservation_error measures (#1717)
-        fp_output_available = False
         run = DampingRun(self.damping)
-        self.iterations_run = 0
 
         # Issue #704: Reset adjoint verification counter
         if self.adjoint_verify:
@@ -640,108 +528,45 @@ class BlockIterator(BaseCouplingIterator):
             self._adjoint_rows_compared = 0
             self._adjoint_max_rel_error = 0.0
 
-        # Select iteration step function
-        if self.method == BlockMethod.JACOBI:
-            step_fn = self._jacobi_step
-            method_name = "Block Jacobi"
-        else:
-            step_fn = self._gauss_seidel_step
-            method_name = "Block Gauss-Seidel"
-
-        if verbose:
-            print(f"Starting {method_name} iteration (damping={self.damping})")
-
-        # Progress bar (Issue #587 Protocol pattern)
-        from mfgarchon.utils.progress import create_progress_bar
-
-        iter_range = create_progress_bar(
-            range(max_iterations),
+        # The order between the fields is the sweep map's option (#3002 stage 2a): Jacobi feeds the FP the input U,
+        # and its two solves could run in parallel; Gauss-Seidel feeds it the HJB's output.
+        jacobi = self.method == BlockMethod.JACOBI
+        method_name = "Block Jacobi" if jacobi else "Block Gauss-Seidel"
+        # Issue #622: in adjoint mode the FP is solved with the transposed HJB operator
+        fp_solve = self._solve_fp_strict_adjoint if self.adjoint_mode != "off" else None
+        with CoupledDriver(
+            method_name,
+            state,
+            self.hjb_solver,
+            reader=type(self).__name__,
+            budget=100 if max_iterations is None else max_iterations,
+            tolerance=tolerance,
+            absolute_tolerance=absolute_tolerance,
+            iteration_callback=iteration_callback,
             verbose=verbose,
-            desc=method_name,
-        )
-
-        converged = False
-        convergence_reason = "Maximum iterations reached"
-
-        for iiter in iter_range:
-            iter_start = time.time()
-
-            U_old = self.U.copy()
-            M_old = self.M.copy()
-            # u(T) at the density this iteration's HJB solve uses: both steps solve the HJB with M_old (#1642 stage 2).
-            self._U_terminal = state.terminal_at(M_old[-1])
-
-            # Perform block iteration step
-            U_new, M_new = step_fn(U_old, M_old, self._M_initial, self._U_terminal)
-
-            # Issue #1718: publish the diverged iterate and stop. The Gauss-Seidel step above has
-            # already declined to run FP on it, so `M_new` is the previous density -- which would
-            # otherwise read as zero change and satisfy the convergence test below.
-            diverged = diverged_value_function(
-                U_new, self._U_terminal, site=f"BlockIterator[{method_name}]", density=M_old, iteration=iiter
+            track_measure_field=track_measure_field,
+            track_rates=track_rate_history,
+        ) as driver:
+            driver.snapshot(self.U, self.M)
+            step = FixedPointStep(
+                self,
+                state,
+                run,
+                order="jacobi" if jacobi else "gauss_seidel",
+                site=f"BlockIterator[{method_name}]",
+                fp_solve=fp_solve,
             )
-            if diverged is not None:
-                self.U = diverged
-                converged = False
-                convergence_reason = "diverged_nan"
-                # The diverged sweep counts, its change NaN, as on every route (#2997)
-                self.iterations_run = iiter + 1
-                record.diverged()
-                break
-
-            # Damping, per field (the policy, #2997)
-            self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
-
-            self.U, self.M = state.write_back(self.U, self.M, self._U_terminal)
-            fp_output_available = True
-
-            # Calculate convergence metrics
-            from mfgarchon.utils.convergence import sweep_change
-
-            # The block's output against its input, not the damped `self.U - U_old`, which is
-            # `theta * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
-            metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
-            # An adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
-            for message in run.observe(iiter, metrics):
-                logger.warning(message)
-
-            record.measured([metrics])
-
-            iter_time = time.time() - iter_start
-            self.iterations_run = iiter + 1
-
-            # Update progress metrics (Issue #587 Protocol - no hasattr needed)
-            iter_range.update_metrics(
-                U_err=f"{metrics['l2distu_rel']:.2e}",
-                M_err=f"{metrics['l2distm_rel']:.2e}",
-                t=f"{iter_time:.1f}s",
-            )
-
-            # Check convergence
-            converged, convergence_reason = check_convergence_criteria(
-                metrics["l2distu_rel"],
-                metrics["l2distm_rel"],
-                metrics["l2distu_abs"],
-                metrics["l2distm_abs"],
-                tolerance,
-                absolute_tolerance,
-            )
-
-            if converged:
-                # Log convergence message (Issue #587 Protocol - no hasattr needed)
-                iter_range.log(convergence_reason)
-                break
-
-        elapsed = time.time() - start_time
-
-        if verbose:
-            status = "converged" if converged else "not converged"
-            print(f"{method_name} {status} in {self.iterations_run} iterations ({elapsed:.2f}s)")
-
+            outcome = driver.run_fixed_point(step, self.U, self.M, driver.budget)
+        self.U, self.M = outcome.U, outcome.M
+        self.iterations_run = driver.sweeps
         self._solution_computed = True
 
         # Block's own metadata; the fields every route has are the result owner's (#2997)
         metadata: dict[str, Any] = {"method": self.method.value, "adjoint_mode": self.adjoint_mode}
+        if driver.measure_field is not None:
+            metadata["measure_field"] = driver.measure_field
+        if driver.rates is not None:
+            metadata["learning_rate_history"] = driver.rates
 
         # Issue #704: Include adjoint verification results
         if self.adjoint_verify:
@@ -764,14 +589,14 @@ class BlockIterator(BaseCouplingIterator):
         return coupled_result(
             U=self.U,
             M=self.M,
-            record=record,
-            converged=converged,
-            reason=convergence_reason,
+            record=driver.record,
+            converged=driver.converged,
+            reason=driver.reason,
             solver_name=self.name,
             damping=self.damping,
             problems=[self.problem],
             fp_solvers=[self.fp_solver],
-            fp_output_available=fp_output_available,
+            fp_output_available=driver.fp_output_available,
             metadata=metadata,
         )
 

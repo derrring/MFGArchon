@@ -165,10 +165,11 @@ class TestNewtonMFGSolverHybrid:
         _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
         assert info["picard_iterations"] == 5, f"Picard iterations: {info['picard_iterations']}"
-        assert len(info.get("picard_residuals", [])) > 0, "No Picard residuals recorded"
+        # Each warm-up sweep's change is in the record's histories (#3002: picard_residuals is removed)
+        assert len(newton_result.error_history_U) >= 5, "No Picard warm-up sweeps recorded"
 
-    def test_picard_residuals_decreasing(self, moderate_problem):
-        """Test that Picard warm-up reduces residual (on average)."""
+    def test_picard_warmup_change_decreasing(self, moderate_problem):
+        """Test that the Picard warm-up's sweeps shrink their change (on average), read from the record's histories."""
         hjb_solver = HJBFDMSolver(moderate_problem)
         fp_solver = FPFDMSolver(moderate_problem)
 
@@ -184,13 +185,13 @@ class TestNewtonMFGSolverHybrid:
         newton_result = newton_solver.solve(max_iterations=12, tolerance=1e-6, verbose=False)
         _U, _M, info = newton_result.U, newton_result.M, newton_result.metadata
 
-        picard_residuals = info.get("picard_residuals", [])
-        if len(picard_residuals) >= 2:
-            # Residuals should generally decrease (allow some noise)
-            first_half_avg = np.mean(picard_residuals[: len(picard_residuals) // 2])
-            second_half_avg = np.mean(picard_residuals[len(picard_residuals) // 2 :])
+        warmup_changes = np.asarray(newton_result.error_history_U)[: info["picard_iterations"]]
+        if len(warmup_changes) >= 2:
+            # The change should generally decrease (allow some noise)
+            first_half_avg = np.mean(warmup_changes[: len(warmup_changes) // 2])
+            second_half_avg = np.mean(warmup_changes[len(warmup_changes) // 2 :])
             # Not a strict test - just verify no dramatic divergence
-            assert second_half_avg < first_half_avg * 10, "Picard residuals increasing rapidly"
+            assert second_half_avg < first_half_avg * 10, "Picard warm-up changes increasing rapidly"
 
     def test_no_picard_warmup(self, moderate_problem):
         """Test Newton solver without Picard warm-up."""

@@ -262,7 +262,9 @@ class TestWhatTheRefusalDoesToCallers:
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
         class _BlowsUp(FPFDMSolver):
-            def solve_fp_system(self, m_initial, *args, source_term=None, volatility=None, **kwargs):
+            def solve_fp_system(
+                self, m_initial, *args, potential_field=None, source_term=None, volatility=None, **kwargs
+            ):
                 assert source_term is None, "this stub cannot honour a source term"
                 assert volatility is None, "this stub cannot honour a volatility field"
                 return 1e6 * np.tile(np.asarray(m_initial, dtype=float), (self.problem.Nt + 1, 1))

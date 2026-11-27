@@ -10,7 +10,6 @@ Modern fixed-point iterator for MFG systems with full feature support:
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -29,15 +28,9 @@ from .base_mfg import (
     refuse_a_capped_exit_in_a_coupled_solve,
     resolve_backend,
 )
+from .coupled_driver import CoupledDriver, FixedPointStep
 from .coupled_result import SweepRecord, coupled_result
 from .damping_run import DampingRun
-from .fixed_point_utils import (
-    check_convergence_criteria,
-    diverged_value_function,
-    read_inner_solve_failures,
-    refuse_convergence_over_failed_inner_solves,
-    resolve_fp_drift_kwargs,
-)
 from .iteration_state import IterationState
 
 logger = get_logger(__name__)
@@ -195,6 +188,7 @@ class FixedPointIterator(BaseCouplingIterator):
         *,
         iteration_callback: IterationCallback | None = None,
         track_measure_field: bool = False,
+        track_rate_history: bool = False,
         absolute_tolerance: float | None = None,
         verbose: bool | None = None,
     ) -> SolverResult:
@@ -203,16 +197,18 @@ class FixedPointIterator(BaseCouplingIterator):
 
         Args:
             config: Solver configuration (overrides instance config)
-            max_iterations: Maximum iterations (legacy parameter)
+            max_iterations: The sweeps the solve may run (legacy parameter); None is 100, and 0 runs none (#3002)
             tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
             iteration_callback: Optional callback called after each Picard iteration.
-                Signature: callback(iteration, U, M, error_U, error_M) -> bool
-                Return True to continue, False to stop early.
-                If None (default), no callback is invoked.
+                Signature: callback(iteration, U, M, error_U, error_M) -> bool | None
+                Return False to stop early; True or None continues. The convention every coupled route that takes
+                a callback reads (#2886). If None (default), no callback is invoked.
             track_measure_field: If True, store each Picard iterate as a
                 MeasureField snapshot for sensitivity analysis. The resulting
                 GridMeasureField is attached to SolverResult.metadata["measure_field"].
                 Each snapshot stores (ParticleMeasure from M_k, U_k). Default False.
+            track_rate_history: If True, record each sweep's M damping rate in
+                SolverResult.metadata["learning_rate_history"]. Default False.
             absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
             verbose: Show the progress display; None decides by the terminal (``should_show_progress``). A config in
                 force governs progress instead, through its ``picard.verbose``, as its ``picard`` fields decide the budget
@@ -242,7 +238,7 @@ class FixedPointIterator(BaseCouplingIterator):
             final_absolute_tolerance = solve_config.picard.absolute_tolerance
             verbose = solve_config.picard.verbose
         else:
-            final_max_iterations = max_iterations or 100
+            final_max_iterations = 100 if max_iterations is None else max_iterations
             final_tolerance = tolerance or 1e-6
             final_absolute_tolerance = absolute_tolerance
             from mfgarchon.utils.progress import should_show_progress
@@ -271,307 +267,43 @@ class FixedPointIterator(BaseCouplingIterator):
                 stacklevel=SOLVE_CALLER_STACKLEVEL,
             )
 
-        num_time_steps = self.problem.Nt + 1
         # The iterate's layout, its cold or warm start, and m(0), from its one owner (#2997): the grid's shape, or the
         # pair's DOF count on an unstructured mesh (#1489 S6), checked against the geometry there.
         state = self._iteration_state()
-        from mfgarchon.geometry.base import CartesianGrid
-
-        is_grid = isinstance(self.problem.geometry, CartesianGrid)
-        time_step = self.problem.dt
-        # #2555: the change a sweep makes is measured in the problem's own spatial measure, the one
-        # `initial_mass` is measured in, so the same relative accuracy stops at the same sweep in any
-        # dimension and on any extent.
-        integrate = self.problem.spatial_measure().integrate
-
         # #2250: the owner's allocation refuses a backend that cannot carry a solve; it reads self.backend here, so a
         # backend assigned after construction, as this repository's own acceleration example does, is checked too.
         self.U, self.M = state.start(self.backend)
-        M_initial = state.m0
-
-        # Initialize error tracking. NaN until a sweep measures its change: a sweep that diverged before it was measured
-        # has no change, and a 1.0 there read as one (#2997).
-        self.l2distu_abs = np.full(final_max_iterations, np.nan)
-        self.l2distm_abs = np.full(final_max_iterations, np.nan)
-        self.l2distu_rel = np.full(final_max_iterations, np.nan)
-        self.l2distm_rel = np.full(final_max_iterations, np.nan)
-        self.iterations_run = 0
-        record = self._record = SweepRecord(1)
 
         # The damping this solve applies, with its own adapted bases, histories and Anderson memory (#2997)
         policy = damping_for_the_solve("FixedPointIterator", self.damping, DampingPolicy.constant(0.5), solve_config)
         run = DampingRun(policy)
 
-        # Layer 2: Initialize MeasureField for sensitivity tracking (#956)
-        measure_field = None
-        if track_measure_field:
-            if not is_grid:
-                raise NotImplementedError(
-                    "track_measure_field uses GridMeasureField (get_spatial_grid) and is only "
-                    "supported for CartesianGrid geometry, not unstructured mesh."
-                )
-            from mfgarchon.core.measure import ParticleMeasure
-            from mfgarchon.core.measure_field import GridMeasureField
-
-            grid_1d = self.problem.geometry.get_spatial_grid().ravel()
-            measure_field = GridMeasureField(grid_1d, np.linspace(0, self.problem.T, num_time_steps))
-            # Store initial iterate (use terminal density as measure representative)
-            mu_init = ParticleMeasure.from_density(self.M[-1], grid_1d)
-            measure_field.add_snapshot(mu_init, self.U.copy())
-
-        # Main fixed-point iteration loop
-        converged = False
-        convergence_reason = "Maximum iterations reached"
-        # True once self.M holds a density this solve's FP produced. The mass-conservation
-        # measurement below is meaningful only then: before that, self.M is the cold start
-        # (which no solve produced; with nothing prescribed its mass is constant and measures as
-        # exactly 0.0, #2991) or a warm start
-        # (some other solve's output). Set where self.M is assigned, not at the exits, so
-        # that a break after a completed FP step still reports its real number (Issue #1717).
-        fp_output_available = False
-        # What the HJB solver said about its inner solves in the latest sweep (#1878).
-        inner_failures = None
-        # Hierarchical progress for Picard iterations (Issue #614)
-        from mfgarchon.utils.progress import HierarchicalProgress
-
-        with HierarchicalProgress(verbose=verbose) as progress:
-            # Add main Picard task with initial metrics
-            picard_task = progress.add_task(
-                "MFG Picard",
-                total=final_max_iterations,
-                iter=f"0/{final_max_iterations}",
-                err_U=0.0,
-                err_M=0.0,
-            )
-
-            for iiter in range(final_max_iterations):
-                iter_start = time.time()
-
-                U_old = self.U.copy()
-                M_old = self.M.copy()
-                # u(T) at the density this iteration's HJB solve uses (#1642 stage 2): the solve, the restore after a
-                # diverged step and the re-imposition after the update all read this one.
-                U_terminal = state.terminal_at(M_old[-1])
-
-                # 1. Solve HJB backward with current M (transient subtask)
-                # Issue #614: Use hierarchical subtask for inner solver visibility
-                # Issue #922: Compose source terms from problem fields
-                # Issue #1259: Pass U_old so nonlocal_operator J[v] uses previous iterate.
-                # Issue #2207: the composition itself moved into _build_hjb_kwargs. Passing the
-                # iterates is now the only way to call the builder, which closes the two loops that
-                # went through it and composed nothing (FictitiousPlay, Block). It does NOT reach
-                # RegimeSwitchingIterator or GraphMFGSolver: both are BaseCouplingIterator
-                # subclasses that call solve_*_system directly and never touch the builders, so a
-                # required parameter cannot bind them. #2207 names that as out of scope.
-                # Issue #934: Context routing handles progress automatically —
-                # solver's create_progress_bar detects parent HierarchicalProgress
-                kwargs = self._build_hjb_kwargs(
-                    M=M_old,
-                    U=U_old,
-                    volatility=self.volatility,
-                    volatility_kind=self.volatility_kind,
-                )
-                U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
-                inner_failures = read_inner_solve_failures(self.hjb_solver)
-
-                # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it. The FP source and
-                # drift below are composed from U_new, so a non-finite U_new makes the FP solver fail
-                # first and report a CFL condition -- an FP diagnostic for an HJB failure. Worse, that
-                # exception escapes the loop, so the #1078 HJB-vs-FP attribution further down never runs.
-                #
-                # The check itself moved to `diverged_value_function` (#1718): a pre-merge review of
-                # #1717 found six more coupling loops with this same shape and no check at all, so the
-                # decisions it encodes -- publish the diverged iterate, restore the terminal row, copy
-                # before restoring -- now have one owner instead of being restated seven times.
-                diverged = diverged_value_function(
-                    U_new, U_terminal, site="FixedPointIterator", density=M_old, iteration=iiter
-                )
-                if diverged is not None:
-                    self.U = diverged
-                    convergence_reason = "diverged_nan"
-                    self.iterations_run = iiter + 1
-                    record.diverged()
-                    break
-
-                # 2. Solve FP forward with new U (transient subtask)
-                # Issue #614: Use hierarchical subtask for inner solver visibility
-                # Issue #922 / #2207: the FP source is composed inside the builder, from the
-                # iterates handed in -- M_old and the NEW U, which is the pairing this side has
-                # always used and differs from the HJB side's (U_old).
-                # Issue #934: Context routing handles progress automatically
-                kwargs = self._build_fp_kwargs(
-                    M=M_old,
-                    U=U_new,
-                    volatility=self.volatility,
-                    volatility_kind=self.volatility_kind,
-                )
-
-                # Drift/potential logic (FP-specific, not in _build_fp_kwargs).
-                # Issue #1233: single-sourced via resolve_fp_drift_kwargs, shared with
-                # the Newton MFGResidual so both coupling paths use one convention.
-                if self._fp_sig_params is not None:
-                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self.problem,
-                        self._fp_sig_params,
-                        self.drift_field,
-                        U_new,
-                        M_old,
-                        drift_convention=self._fp_drift_convention,
-                        fp_solver=self.fp_solver,
-                    )
-                    kwargs.update(drift_kwargs)
-                    if use_positional_U:
-                        M_new = self.fp_solver.solve_fp_system(M_initial, U_new, **kwargs)
-                    else:
-                        M_new = self.fp_solver.solve_fp_system(M_initial, **kwargs)
-                else:
-                    M_new = self.fp_solver.solve_fp_system(M_initial, U_new)
-
-                # 3. Damping, per field, or Anderson acceleration on U (the policy, #2997)
-                self.U, self.M = run.update(iiter, U_old, U_new, M_old, M_new)
-
-                # self.M now carries a density this solve's FP produced, so the end-of-solve
-                # mass measurement has something real to measure -- including if a later
-                # iteration breaks before its own FP step (Issue #1717).
-                fp_output_available = True
-
-                self.U, self.M = state.write_back(self.U, self.M, U_terminal)
-
-                # Issue #1489 (S5): a FINITE but blown-up density (e.g. the pre-overflow divergence,
-                # total mass ~5.9e4 before it becomes inf) passes the isfinite check below and would be
-                # reported converged/valid. Guard the magnitude too: a total mass that has GROWN by many
-                # orders relative to the initial is diverging (a legitimate solve conserves, or under
-                # absorbing BC decreases — an increase of 1e4x is a blow-up, not a valid state).
-                m0_mass = float(np.sum(np.abs(self.M[0]))) if self.M.size else 0.0
-                m_mass = float(np.sum(np.abs(M_new)))
-                if np.isfinite(m_mass) and m_mass > 1e4 * (m0_mass + 1e-300):
-                    convergence_reason = "diverged_mass_blowup"
-                    logger.warning(
-                        "FP density blew up in iteration %d (total |M|=%.2e, %.1e x the initial); the "
-                        "coupled solve is diverging — enable stabilization. Terminating early (Issue #1489).",
-                        iiter + 1,
-                        m_mass,
-                        m_mass / (m0_mass + 1e-300),
-                    )
-                    self.iterations_run = iiter + 1
-                    record.diverged()
-                    break
-
-                # Issue #688: Early termination on NaN/Inf (runtime safety). It says which array is non-finite and
-                # what the sweep was handed, and guesses no cause (#2845).
-                if not np.all(np.isfinite(self.U)) or not np.all(np.isfinite(self.M)):
-                    hjb_bad = not np.all(np.isfinite(U_new))
-                    fp_bad = not np.all(np.isfinite(M_new))
-                    bad = [
-                        name for name, is_bad in (("the value function", hjb_bad), ("the density", fp_bad)) if is_bad
-                    ]
-                    convergence_reason = "diverged_nan"
-                    logger.warning(
-                        "NaN/Inf in %s in iteration %d, reported by FixedPointIterator: the density the sweep was handed has "
-                        "a minimum of %.3e. Terminating early.",
-                        " and ".join(bad) or "the damped iterate",
-                        iiter + 1,
-                        float(np.nanmin(M_old)),
-                    )
-                    self.iterations_run = iiter + 1
-                    record.diverged()
-                    break
-
-                # Layer 2: Record MeasureField snapshot (#956), after the guards above, which end a
-                # sweep that has no measure to record.
-                # Use terminal density M[-1] as the measure representative —
-                # it varies most across Picard iterates (M[0] is fixed by IC).
-                if measure_field is not None:
-                    from mfgarchon.core.measure import ParticleMeasure
-
-                    grid_1d = self.problem.geometry.get_spatial_grid().ravel()
-                    mu_k = ParticleMeasure.from_density(self.M[-1], grid_1d)
-                    measure_field.add_snapshot(mu_k, self.U.copy())
-
-                # Calculate convergence metrics
-                from mfgarchon.utils.convergence import sweep_change
-
-                # The Picard residual is between the MAP'S OUTPUT and its input, U_new vs U_old.
-                # `self.U` is that output after damping or Anderson, so measuring it conflates
-                # "we stopped moving" with "we reached the fixed point" -- and at theta -> 0 the
-                # first happens without the second (Issue #1684 item 7, the same shape as item 6
-                # one level up). Measured on a 21-point no-flux fixture, iteration 2: the reported
-                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as theta went 1.0 -> 0.1, a factor
-                # of 7.3 bought by the damping factor rather than by progress toward the fixed
-                # point. Convergence is a property of the map; damping is a property of the path.
-                metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
-                self.l2distu_abs[iiter] = metrics["l2distu_abs"]
-                self.l2distu_rel[iiter] = metrics["l2distu_rel"]
-                self.l2distm_abs[iiter] = metrics["l2distm_abs"]
-                self.l2distm_rel[iiter] = metrics["l2distm_rel"]
-                record.measured([metrics])
-
-                iter_time = time.time() - iter_start
-                self.iterations_run = iiter + 1
-
-                # Update main task progress with metrics (Issue #614)
-                progress.update(
-                    picard_task,
-                    iter=f"{iiter + 1}/{final_max_iterations}",
-                    err_U=self.l2distu_rel[iiter],
-                    err_M=self.l2distm_rel[iiter],
-                    time=f"{iter_time:.1f}s",
-                )
-
-                # Issue #583: an adaptive field adapts on its own history; the run reads the measure from this sweep's change (#2997)
-                for message in run.observe(iiter, metrics):
-                    logger.warning(message)
-
-                # Issue #614: Invoke user callback if provided
-                if iteration_callback is not None:
-                    should_continue = iteration_callback(
-                        iiter,
-                        self.U,
-                        self.M,
-                        self.l2distu_rel[iiter],
-                        self.l2distm_rel[iiter],
-                    )
-                    if should_continue is False:
-                        # A user abort is not evidence of convergence, and it is not evidence
-                        # against it either -- so evaluate the real criteria at this iterate and
-                        # report what they say. Setting `converged = True` here (Issue #1684 item
-                        # 2) made an abort at iteration 1 report success at l2distu_rel 1.000e+00
-                        # while the same problem run to 3 iterations reported FAILURE at
-                        # 3.259e-01: the aborted run claimed convergence at three times the error
-                        # of the run that admitted it had not converged.
-                        converged, _criteria_reason = refuse_convergence_over_failed_inner_solves(
-                            *check_convergence_criteria(
-                                self.l2distu_rel[iiter],
-                                self.l2distm_rel[iiter],
-                                self.l2distu_abs[iiter],
-                                self.l2distm_abs[iiter],
-                                final_tolerance,
-                                final_absolute_tolerance,
-                            ),
-                            inner_failures,
-                        )
-                        convergence_reason = (
-                            f"callback_stopped ({_criteria_reason})" if _criteria_reason else "callback_stopped"
-                        )
-                        break
-
-                # Check convergence
-                criteria_met, convergence_reason = check_convergence_criteria(
-                    self.l2distu_rel[iiter],
-                    self.l2distm_rel[iiter],
-                    self.l2distu_abs[iiter],
-                    self.l2distm_abs[iiter],
-                    final_tolerance,
-                    final_absolute_tolerance,
-                )
-                converged, convergence_reason = refuse_convergence_over_failed_inner_solves(
-                    criteria_met, convergence_reason, inner_failures
-                )
-
-                # A met criterion stops the loop either way: the map has stopped moving, and further
-                # sweeps of a map whose HJB half returns non-roots only re-certify the same point (#1878).
-                if criteria_met:
-                    break
+        # One driver loop for every coupled route (#3002 stage 2a): the Gauss-Seidel sweep map, then the damping
+        with CoupledDriver(
+            "MFG Picard",
+            state,
+            self.hjb_solver,
+            reader=type(self).__name__,
+            budget=final_max_iterations,
+            tolerance=final_tolerance,
+            absolute_tolerance=final_absolute_tolerance,
+            iteration_callback=iteration_callback,
+            verbose=verbose,
+            track_measure_field=track_measure_field,
+            track_rates=track_rate_history,
+        ) as driver:
+            self._record = driver.record
+            # Layer 2: the initial iterate's snapshot, its terminal density as the measure's representative (#956)
+            driver.snapshot(self.U, self.M)
+            step = FixedPointStep(self, state, run, order="gauss_seidel", site="FixedPointIterator")
+            outcome = driver.run_fixed_point(step, self.U, self.M, driver.budget)
+        self.U, self.M = outcome.U, outcome.M
+        self.iterations_run = driver.sweeps
+        self.l2distu_abs = driver.histories["l2distu_abs"]
+        self.l2distm_abs = driver.histories["l2distm_abs"]
+        self.l2distu_rel = driver.histories["l2distu_rel"]
+        self.l2distm_rel = driver.histories["l2distm_rel"]
+        measure_field = driver.measure_field
 
         # FixedPoint's own metadata; the fields every route has are the result owner's (#2997)
         metadata: dict[str, Any] = {"anderson_used": policy.anderson is not None}
@@ -583,6 +315,8 @@ class FixedPointIterator(BaseCouplingIterator):
         # Layer 2: Attach MeasureField to metadata (#956)
         if measure_field is not None:
             metadata["measure_field"] = measure_field
+        if driver.rates is not None:
+            metadata["learning_rate_history"] = driver.rates
 
         if policy.U.adaptive or policy.M.adaptive:
             metadata["adaptive_damping"] = {
@@ -618,14 +352,14 @@ class FixedPointIterator(BaseCouplingIterator):
         return coupled_result(
             U=self.U,
             M=self.M,
-            record=record,
-            converged=converged,
-            reason=convergence_reason,
+            record=driver.record,
+            converged=driver.converged,
+            reason=driver.reason,
             solver_name=self.name,
             damping=policy,
             problems=[self.problem],
             fp_solvers=[self.fp_solver],
-            fp_output_available=fp_output_available,
+            fp_output_available=driver.fp_output_available,
             metadata=metadata,
         )
 

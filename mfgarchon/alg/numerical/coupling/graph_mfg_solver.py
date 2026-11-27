@@ -20,7 +20,7 @@ Issue #962: GraphMFGSolver — unified orchestrator for network MFG types 2 and 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -28,14 +28,19 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     BaseCouplingIterator,
     assert_paired_solver_geometry,
     assert_paired_solver_sigma,
+    call_handed,
     damping_argument,
     hjb_terminal_binding,
     refuse_a_capped_exit_in_a_coupled_solve,
+    solver_signature,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    BUDGET_SPENT,
+    FPOutputRule,
     check_convergence_criteria,
-    fp_solver_sig_params,
     resolve_fp_drift_kwargs,
+    updated_iterate_stop,
+    validate_budget,
     verdict_reads_inner_failures,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
@@ -51,7 +56,7 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .coupled_result import MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
+from .coupled_result import DensityRecord, MassInvariant, SweepRecord, coupled_result, refuse_components_off_one_grid
 from .damping_run import DampingRun
 from .fixed_point_utils import diverged_value_function
 from .iteration_state import IterationState
@@ -119,6 +124,10 @@ class GraphMFGSolver(BaseCouplingIterator):
     >>> result = solver.solve()
     """
 
+    #: The mass this route's model conserves, the nodes exchange mass through the coupling: what its result's `mass_conservation_error` and its FP-output
+    #: rule's magnitude both read (`MassInvariant`; #3002 class line 1, review 3's B1)
+    MASS_INVARIANT: ClassVar[MassInvariant] = MassInvariant.TOTAL
+
     def __init__(
         self,
         problems: list[MFGProblem],
@@ -140,11 +149,11 @@ class GraphMFGSolver(BaseCouplingIterator):
         # can route the value function through the drift-convention dispatcher
         # (resolve_fp_drift_kwargs), exactly as the single-solver iterators do via
         # _init_solver_signatures. One set per node because nodes may use different FP solvers.
-        self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
+        self._fp_sig_params_k = [solver_signature(fp, "FP") for fp in fp_solvers]  # refuses one it cannot read (#2209)
         # Issue #1489 (S1): per-node FP drift-input convention, parallel to _fp_sig_params_k, so
         # resolve_fp_drift_kwargs routes each node by convention rather than param presence.
         self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
-        self._max_iter = max_iterations
+        self._max_iter = validate_budget(max_iterations, type(self).__name__)  # #3002 class line 2
         self._tol = tolerance
         self._abs_tol = absolute_tolerance
         self.damping = damping_argument(damping, "GraphMFGSolver") or DampingPolicy.constant(0.5)
@@ -215,13 +224,20 @@ class GraphMFGSolver(BaseCouplingIterator):
         runs = [DampingRun(self.damping) for state in states]
 
         record = SweepRecord(N)
-        fp_output_available = False
-        # FixedPoint's reason for a solve that runs no sweep; every sweep replaces it with the criteria's (#2997).
-        reason = "Maximum iterations reached"
+        density = DensityRecord()
+        # The reason a spent budget reports, on every route (#3002, ruling 2)
+        reason = BUDGET_SPENT
         integrates = [p.spatial_measure().integrate for p in self._problems]
+        # The FP-output rule every coupled route reads, on the mass the route conserves (#2997; #3002 class line 1, the
+        # user's ruling of 2026-11-27 and review 3's B1). Stage 2b moves it into the coupled driver.
+        fp_output_rule = FPOutputRule(integrates, self.MASS_INVARIANT)
         dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
+            # The owner's refusals answer at every sweep, so a BC changed during the solve is refused at the next one
+            # (#3005; #3002 stage 2a, ruling A). Stage 2b moves this call into the coupled driver.
+            for state in states:
+                state.read_owner()
             Us_new: list[NDArray] = [np.empty(0)] * N
             Ms_new: list[NDArray] = [np.empty(0)] * N
             terminals: list[NDArray] = [np.empty(0)] * N
@@ -234,11 +250,9 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # the update both read it.
                 terminals[k] = states[k].terminal_at(Ms[k][-1])
 
-                U_k = self._hjb[k].solve_hjb_system(
-                    Ms[k],
-                    terminals[k],  # terminal condition
-                    Us_full[k],  # previous iterate
-                    source_term=hjb_source,
+                # The density, u(T) and the previous iterate, each copied (`call_handed`, #3002 class line 7)
+                U_k = call_handed(
+                    self._hjb[k].solve_hjb_system, Ms[k], terminals[k], Us_full[k], source_term=hjb_source
                 )
                 Us_new[k] = U_k
 
@@ -261,7 +275,7 @@ class GraphMFGSolver(BaseCouplingIterator):
                     # looping over values to find the NaN reaches it.
                     values = [Us_new[j] if j <= k else Us_full[j] for j in range(N)]
                     record.diverged()
-                    return self._result(values, Ms, record, False, "diverged_nan", fp_output_available)
+                    return self._result(values, Ms, record, False, "diverged_nan", density.measured)
 
             # --- FP step: solve N forward equations with coupling ---
             for k in range(N):
@@ -278,24 +292,25 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # node has its own problem (Hamiltonian/geometry) and FP solver signature.
                 fp_kwargs: dict[str, Any] = {"source_term": fp_source}
                 fp_sig_params_k = self._fp_sig_params_k[k]
-                if fp_sig_params_k is not None:
-                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self._problems[k],
-                        fp_sig_params_k,
-                        None,
-                        Us_new[k],
-                        Ms[k],
-                        drift_convention=self._fp_drift_convention_k[k],
-                        fp_solver=self._fp[k],
-                    )
-                    fp_kwargs.update(drift_kwargs)
-                    if use_positional_U:
-                        M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
-                    else:
-                        M_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
-                else:
-                    M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
-                Ms_new[k] = M_k
+                drift_kwargs = resolve_fp_drift_kwargs(
+                    self._problems[k],
+                    fp_sig_params_k,
+                    None,
+                    Us_new[k],
+                    Ms[k],
+                    drift_convention=self._fp_drift_convention_k[k],
+                    fp_solver=self._fp[k],
+                )
+                fp_kwargs.update(drift_kwargs)
+                Ms_new[k] = call_handed(self._fp[k].solve_fp_system, m0_k, **fp_kwargs)
+
+            # The FP-output rule, before the change is measured, which refuses a non-finite one (#2578). A stop publishes
+            # the sweep's HJB and FP outputs (the approver's ruling E).
+            stop = fp_output_rule.stop(Ms_new, Ms, site="GraphMFGSolver", iteration=iteration)
+            if stop is not None:
+                record.diverged()
+                density.fp_outputs_published += 1
+                return self._result(Us_new, Ms_new, record, False, stop, density.measured)
 
             # --- Convergence: the sweep's output against its input, BEFORE damping ---
             # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
@@ -304,8 +319,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             # change in its own problem's measure, and the criterion takes the max over nodes (#2555).
             per_node = [sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(N)]
             worst = worst_sweep_change(per_node, "node")
-            record.measured(per_node)
-            converged, reason = check_convergence_criteria(
+            met, criteria_reason = check_convergence_criteria(
                 worst["l2distu_rel"],
                 worst["l2distm_rel"],
                 worst["l2distu_abs"],
@@ -321,15 +335,23 @@ class GraphMFGSolver(BaseCouplingIterator):
                 Us_new[k], Ms_new[k] = states[k].write_back(U_k, M_k, terminals[k])
                 for message in runs[k].observe(iteration, per_node[k]):
                     logger.warning(f"GraphMFGSolver[node {k}]: {message}")
+            density.updates += 1
+            # The post-update rule every coupled route reads (#3002 class line 1); a stop publishes the iterate it judged
+            stop = updated_iterate_stop(
+                Us_new, Ms_new, producer="by the sweep's update", site="GraphMFGSolver", iteration=iteration
+            )
+            if stop is not None:
+                record.diverged()
+                return self._result(Us_new, Ms_new, record, False, stop, density.measured)
+            record.measured(per_node)
 
             Us_full = Us_new
             Ms = Ms_new
-            fp_output_available = True
 
-            if converged:
-                return self._result(Us_full, Ms, record, True, reason, fp_output_available)
+            if met:
+                return self._result(Us_full, Ms, record, True, criteria_reason, density.measured)
 
-        return self._result(Us_full, Ms, record, False, reason, fp_output_available)
+        return self._result(Us_full, Ms, record, False, reason, density.measured)
 
     def _result(
         self,
@@ -352,7 +374,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             fp_solvers=self._fp,
             fp_output_available=fp_output_available,
             component_names=[str(k) for k in range(self._N)],
-            invariant=MassInvariant.TOTAL,
+            invariant=self.MASS_INVARIANT,
         )
         return self._last_result
 

@@ -39,6 +39,8 @@ it found was one the regime site does not have.
 
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 import numpy as np
@@ -293,8 +295,8 @@ def test_regime_switching_stops_and_attributes():
 def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     """The site whose guard was inert, and the only one that needed a spy to see it.
 
-    `_run_picard_warmup`'s `break` leaves only the warmup loop. `solve()` then calls
-    `compute_residual_norm(U, M)`, which composes an FP solve from U -- so the diverged value
+    Before #3002 the warm-up was its own loop, `_run_picard_warmup`, whose `break` left only that loop, and
+    `solve()` then called `compute_residual_norm(U, M)`, which composed an FP solve from U -- so the diverged value
     function reached FP anyway and raised the same CFL misattribution, and the site's observable
     behaviour was byte-identical before and after the guard was added.
 
@@ -306,6 +308,7 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     calls = []
     original = FPFDMSolver.solve_fp_system
 
+    @functools.wraps(original)  # the route reads the solver's signature (#2209)
     def spy(self, m_initial, *a, **kw):
         arrays = [x for x in list(a) + list(kw.values()) if isinstance(x, np.ndarray)]
         calls.append(any(not np.all(np.isfinite(x)) for x in arrays))

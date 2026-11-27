@@ -51,13 +51,11 @@ SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _OUTER = "an outer coupling or MFG loop: its verdict reaches the caller in SolverResult.converged, out of the class"
 #: (file under mfgarchon/alg/, function) -> (loop count, why it does not route through the owner).
 ALLOWED = {
-    ("numerical/coupling/block_iterators.py", "BlockIterator.solve"): (1, _OUTER),
-    ("numerical/coupling/fictitious_play.py", "FictitiousPlayIterator.solve"): (1, _OUTER),
-    ("numerical/coupling/fixed_point_iterator.py", "FixedPointIterator.solve"): (1, _OUTER),
+    ("numerical/coupling/coupled_driver.py", "CoupledDriver.run_fixed_point"): (1, _OUTER),
+    ("numerical/coupling/coupled_driver.py", "CoupledDriver.run_newton"): (1, f"{_OUTER}; a Newton phase"),
     ("numerical/coupling/graph_mfg_solver.py", "GraphMFGSolver.solve"): (1, _OUTER),
     ("numerical/coupling/multi_population_iterator.py", "MultiPopulationIterator.solve"): (1, _OUTER),
     ("numerical/coupling/regime_switching_iterator.py", "RegimeSwitchingIterator.solve"): (1, _OUTER),
-    ("numerical/coupling/newton_mfg_solver.py", "NewtonMFGSolver._run_picard_warmup"): (1, f"{_OUTER}; a warm-up"),
     ("optimization/optimal_transport/wasserstein_solver.py", "WassersteinMFGSolver.solve"): (1, _OUTER),
     ("optimization/variational_solvers/primal_dual_solver.py", "PrimalDualMFGSolver.solve"): (1, _OUTER),
     ("numerical/continuation/homotopy.py", "HomotopyContinuation._corrector"): (

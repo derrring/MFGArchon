@@ -8,7 +8,6 @@ These utilities are used by both legacy and config-aware fixed-point iterator im
 from __future__ import annotations
 
 import functools
-import inspect
 import time
 from collections import Counter
 from contextlib import contextmanager
@@ -21,47 +20,21 @@ from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .base_mfg import call_handed
+from .coupled_result import MassInvariant
+
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Sequence
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
-    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.utils.solver_result import SolverResult
 
 _Solver = TypeVar("_Solver")
 _Params = ParamSpec("_Params")
 _Result = TypeVar("_Result", bound="SolverResult")
-
-
-def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
-    """Return the parameter names of ``fp_solver.solve_fp_system`` (or ``None``).
-
-    Mirrors :meth:`BaseCouplingIterator._init_solver_signatures` for iterators that hold a
-    *list* of per-subsystem FP solvers (regime-switching, graph MFG) and therefore cache one
-    signature set per solver rather than a single shared one. The cached set is the
-    ``fp_sig_params`` argument of :func:`resolve_fp_drift_kwargs`, which decides whether the
-    value function is routed via ``potential_field`` (smooth separable $H$, FP derives the
-    velocity) or ``drift_field`` (Issue #1315).
-    """
-    try:
-        return set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
-    except (AttributeError, ValueError):
-        return None
-
-
-def hjb_solver_sig_params(hjb_solver: BaseHJBSolver) -> set[str] | None:
-    """Return the parameter names of ``hjb_solver.solve_hjb_system`` (or ``None``).
-
-    :func:`fp_solver_sig_params`'s HJB twin, for an iterator that holds one HJB solver per
-    population and hands each set to :func:`~.base_mfg.hjb_solve_kwargs` (#2666).
-    """
-    try:
-        return set(inspect.signature(hjb_solver.solve_hjb_system).parameters.keys())
-    except (AttributeError, ValueError):
-        return None
 
 
 def cold_start_density_at_level(M_initial: np.ndarray, fp_solver: BaseFPSolver, level: int) -> np.ndarray:
@@ -241,7 +214,8 @@ def _report_negative_density(result: SolverResult, fp_solvers: list[Any]) -> Non
         if not getattr(solver, "reports_negative_density", False):
             reports.append(None)
             continue
-        report = solver.negative_density_of(density)
+        # The density the result returns, copied (`call_handed`, #3002 class line 7)
+        report = call_handed(solver.negative_density_of, density)
         solver.warn_negative_density(report)
         reports.append(report)
     if any(report is not None for report in reports):
@@ -412,10 +386,8 @@ def preserve_terminal_condition(
 def value_function_is_finite(U: np.ndarray) -> bool:
     """Whether a value function is usable as an FP drift.
 
-    Split out of :func:`diverged_value_function` for the one caller that needs the question
-    without the answer: ``BlockIterator._gauss_seidel_step`` must SKIP its FP solve, while the
-    loop above it publishes and stops. Two sites, two jobs, one predicate -- restating
-    ``np.all(np.isfinite(...))`` at the second one is the shape #1718 exists to remove.
+    The predicate :func:`diverged_value_function` asks, which a caller that needs the question without the answer
+    can ask too, rather than restating ``np.all(np.isfinite(...))`` (#1718).
     """
     return bool(np.all(np.isfinite(U)))
 
@@ -478,6 +450,138 @@ def diverged_value_function(
     )
     published = np.asarray(U_new).copy()
     return preserve_terminal_condition(published, U_terminal)
+
+
+#: The reason a solve reports when its budget is spent, on every coupled route (#3002, the approver's ruling 2).
+BUDGET_SPENT = "Maximum iterations reached"
+
+
+def validate_budget(budget: object, route: str, name: str = "max_iterations") -> int:
+    """``budget`` as a count of sweeps a coupled solve may run, or a refusal naming ``route``, the route's class, and
+    ``name``, the keyword that set it: one rule on every coupled route (#3002 class line 2). Every evaluation that is a
+    sweep of the solve counts, every phase's, and 0 runs none. Newton's ``newton_max_iterations``, which bounds its
+    phase within the budget, is read through it too (review 3's B2)."""
+    if not isinstance(budget, (int, np.integer)) or isinstance(budget, bool) or budget < 0:
+        raise ValueError(f"{route}: {name} is a count of sweeps, an int >= 0, not {budget!r}")
+    return int(budget)
+
+
+#: The growth of the FP output's largest level mass, against the same figure in its solve's first FP output, past which
+#: a coupled solve is diverging (#1489 S5; the user's ruling of 2026-11-27).
+FP_MASS_BLOWUP_FACTOR = 1e4
+
+
+class FPOutputRule:
+    """The stop an evaluation's FP output calls for, or None: one rule on every coupled route and every phase (#2997's
+    folded item; #3002 class line 1, the approver's rulings 3(a) and 2 of 2026-11-26 and the user's of 2026-11-27).
+
+    One rule serves one solve, since it holds that solve's references. ``integrates`` holds, per component, the
+    integral of that component's problem's own measure, ``problem.spatial_measure().integrate``: the one the verdict
+    path measures through (`sweep_change`, `initial_mass`, #2555), which an FEM mesh has where its geometry has no
+    integral of its own. `stop` runs before the evaluation's change is measured, which refuses a non-finite change
+    (#2578). On a stop the caller publishes that evaluation's HJB output and its FP output, bad values kept, as the HJB
+    guard publishes its HJB output (#1718; the approver's ruling E).
+
+    - **A non-finite FP output** (#688): ``'diverged_nan'``, at any evaluation. The warning names it, and the density
+      the evaluation was handed, and guesses no cause (#2845).
+    - **The magnitude** (#1489 S5): a figure is a largest level mass of ``|M|`` over t, the integral of ``|M|``, equal
+      to the mass where the density is non-negative: a conservative scheme can keep the signed integral at its initial
+      value while the density grows in alternating signs, which an FEM solve does. Which mass is read is the mass the
+      route's model conserves, ``invariant``, the `MassInvariant` its result's ``mass_conservation_error`` reads:
+      under ``EACH``, one figure per component; under ``TOTAL``, one figure, the max over t of the sum over components
+      of the level mass of ``|M|`` at t (not the sum of each component's max), since the components exchange mass and
+      one can start near empty and fill from another (review 3's B1). The solve's first FP output sets each figure's reference and is judged on the non-finite half
+      only. From the second evaluation on, a figure that passes ``FP_MASS_BLOWUP_FACTOR`` times its reference stops the
+      solve with ``'diverged_mass_blowup'``. The reference is the solve's own output, not m(0)'s mass, which a source
+      or an inflow does not keep. A reference of 0, or a component whose measure cannot integrate its output, leaves
+      that figure unread for the solve, and a warning says so when the reference is set.
+    """
+
+    def __init__(self, integrates: Sequence[Callable[[np.ndarray], Any]], invariant: MassInvariant) -> None:
+        self._integrates = list(integrates)
+        self._invariant = invariant
+        # Per figure, its value in the solve's first FP output; None until that output is judged
+        self._references: list[float | None] | None = None
+
+    @staticmethod
+    def _level_masses(M: np.ndarray, integrate: Callable[[np.ndarray], Any]) -> np.ndarray | None:
+        try:
+            level_masses = np.asarray(integrate(np.abs(M)), dtype=float).reshape(-1)
+        except (ValueError, NotImplementedError):
+            return None
+        return level_masses if level_masses.size else None
+
+    def _figures(self, M_new: Sequence[np.ndarray]) -> list[float | None]:
+        levels = [self._level_masses(M, integrate) for M, integrate in zip(M_new, self._integrates, strict=True)]
+        if self._invariant is MassInvariant.TOTAL:
+            if any(level is None for level in levels):
+                return [None]
+            return [float(np.max(np.sum(levels, axis=0)))]
+        return [None if level is None else float(np.max(level)) for level in levels]
+
+    def _name(self, k: int) -> str:
+        return "the components' total" if self._invariant is MassInvariant.TOTAL else f"component {k}"
+
+    def stop(self, M_new: Sequence[np.ndarray], M_in: Sequence[np.ndarray], *, site: str, iteration: int) -> str | None:
+        """The stop for one evaluation: ``M_new`` holds each component's FP output, ``M_in`` the density each was
+        handed; ``site`` names the route, and ``iteration`` is the evaluation's 0-based index, both of which the
+        warnings report."""
+        if not all(np.all(np.isfinite(m)) for m in M_new):
+            logger.warning(
+                "NaN/Inf in the density in iteration %d, reported by %s: the density the evaluation was handed has a "
+                "minimum of %.3e. Terminating early.",
+                iteration + 1,
+                site,
+                min(float(np.nanmin(m)) for m in M_in),
+            )
+            return "diverged_nan"
+        figures = self._figures(M_new)
+        if self._references is None:
+            self._references = figures
+            unread = [k for k, reference in enumerate(figures) if not reference]
+            if unread:
+                logger.warning(
+                    "%s: the FP-output rule reads no magnitude for %s on this solve: the first FP output has no level "
+                    "mass the problem's measure reads (%s). Non-finite FP output still stops the solve.",
+                    site,
+                    "the components' total" if self._invariant is MassInvariant.TOTAL else f"component(s) {unread}",
+                    ", ".join("not integrable" if figures[k] is None else "0" for k in unread),
+                )
+            return None
+        for k, (figure, reference) in enumerate(zip(figures, self._references, strict=True)):
+            if reference and figure is not None and figure > FP_MASS_BLOWUP_FACTOR * reference:
+                logger.warning(
+                    "FP density blew up in iteration %d, reported by %s: the largest level mass of %s reached %.2e, "
+                    "%.1e times the same figure in the solve's first FP output. Terminating early (Issue #1489).",
+                    iteration + 1,
+                    site,
+                    self._name(k),
+                    figure,
+                    figure / reference,
+                )
+                return "diverged_mass_blowup"
+        return None
+
+
+def updated_iterate_stop(
+    U: Sequence[np.ndarray], M: Sequence[np.ndarray], *, producer: str, site: str, iteration: int
+) -> str | None:
+    """``'diverged_nan'`` when an iterate a coupled solve carries forward is not finite, else None: one rule on every
+    coupled route, after every update (#3002 class line 1, review 2's code N1).
+
+    ``U`` and ``M`` hold each component's iterate as ``producer`` left it: a fixed-point sweep's damping (a schedule
+    or Anderson) and its write-back, or a Newton step. The FP-output rule reads T's outputs, and an update can make a
+    non-finite iterate of finite ones, as a damping schedule that returns inf does. On a stop the caller publishes the
+    iterate this judged, its bad values kept (the approver's ruling E)."""
+    if all(np.all(np.isfinite(u)) for u in U) and all(np.all(np.isfinite(m)) for m in M):
+        return None
+    logger.warning(
+        "NaN/Inf in the iterate %s produced in iteration %d, reported by %s. Terminating early.",
+        producer,
+        iteration + 1,
+        site,
+    )
+    return "diverged_nan"
 
 
 def _face_neighbours(n: int, span: int | None) -> np.ndarray:
@@ -772,7 +876,7 @@ def _what_the_router_read(problem: Any, fp_solver: Any, M: np.ndarray, cross_den
 
 def resolve_fp_drift_kwargs(
     problem: object,
-    fp_sig_params: set[str] | None,
+    fp_sig_params: set[str],
     drift_field_override: object | None,
     U: np.ndarray,
     M: np.ndarray,
@@ -781,7 +885,7 @@ def resolve_fp_drift_kwargs(
     cross_density: np.ndarray | None = None,
     drift_convention: DriftConvention | None = None,
     fp_solver: object | None = None,
-) -> tuple[dict, bool]:
+) -> dict:
     """Resolve how the value function enters ``solve_fp_system`` (drift vs potential).
 
     Single-source for the FP drift/potential convention shared by the Picard
@@ -824,7 +928,7 @@ def resolve_fp_drift_kwargs(
 
     Args:
         problem: MFG problem (provides ``hamiltonian_class``, ``geometry``, ``dt``).
-        fp_sig_params: Parameter names of ``fp_solver.solve_fp_system`` (or ``None``).
+        fp_sig_params: Parameter names of ``fp_solver.solve_fp_system`` (`base_mfg.solver_signature`).
         drift_field_override: Caller-supplied drift override (array/callable), or ``None``.
         U: Current value function, shape ``(Nt+1, *spatial_shape)``.
         M: Current density, shape ``(Nt+1, *spatial_shape)`` (used only for non-smooth $H$).
@@ -848,15 +952,9 @@ def resolve_fp_drift_kwargs(
             ``potential_field``.
 
     Returns:
-        ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
-        ``{"drift_field": ...}`` or ``{"potential_field": ...}`` to merge into the
-        solver kwargs, and ``use_positional_U`` is ``True`` iff the FP solver exposes
-        neither ``drift_field`` nor ``potential_field`` (legacy positional-U interface),
-        in which case the caller passes ``U`` positionally.
+        One of ``{}``, ``{"drift_field": ...}`` or ``{"potential_field": ...}``, to merge into the solver kwargs. A
+        signature that names neither keyword is refused when the route is built (`base_mfg.solver_signature`).
     """
-    if fp_sig_params is None:
-        return {}, True
-
     params = fp_sig_params
     drift_kwargs: dict = {}
 
@@ -974,5 +1072,4 @@ def resolve_fp_drift_kwargs(
                 "`potential_field` support (e.g. FPFDMSolver). Issue #1420 (G-017 V2)."
             )
 
-    use_positional_U = not ("drift_field" in params or "potential_field" in params)
-    return drift_kwargs, use_positional_U
+    return drift_kwargs

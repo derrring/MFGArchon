@@ -17,7 +17,8 @@ from .source_composition import compose_fp_source, compose_hjb_source
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import CouplingBinding, MFGProblem
 
     from .iteration_state import IterationState
@@ -532,9 +533,56 @@ def hjb_terminal_binding(hjb_solver: Any) -> CouplingBinding | None:
     return hjb_solver.terminal_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
 
 
+def call_handed[**P, R](solver_method: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+    """Call a solver's method as a coupled route does: each array argument copied, every other argument as it is (#3002
+    class line 7, the approver's ruling of 2026-11-27). The route reads its own arrays after the call (the guard, the
+    measure, the update, the write-back, Newton's iterate, the next sweep's m(0)), and a caller-supplied solver may write
+    into what it is handed. Every solver call of a coupled route that passes an array goes through this, whatever the
+    method. It is typed by the method's own signature, so a type checker reads each call against it."""
+
+    def own(value: Any) -> Any:
+        return value.copy() if isinstance(value, np.ndarray) else value
+
+    call: Callable[..., R] = solver_method
+    return call(*(own(a) for a in args), **{k: own(v) for k, v in kwargs.items()})
+
+
+def solver_signature(solver: Any, half: str) -> set[str]:
+    """The parameter names of ``solver``'s solve method for its ``half`` of a coupled solve: ``"HJB"`` reads
+    ``solve_hjb_system``, ``"FP"`` reads ``solve_fp_system``. The one reader every coupled route builds with (#2209;
+    #3002 class line 5, the user's ruling of 2026-11-26).
+
+    A signature `inspect` cannot read is refused here, when the route is built. A route hands the value function, the
+    problem's composed source and a volatility override by the keywords these names show. Before the refusal, an FP solver
+    whose signature could not be read was handed U positionally, into its second parameter, which `FPFDMSolver` reads as a
+    drift, and neither the source nor a volatility override; an HJB solver was handed neither of the two.
+
+    An FP signature that names neither ``potential_field`` nor ``drift_field`` is refused too, a ``(*args, **kwargs)``
+    wrapper's included: the route has no keyword to hand the value function by, and handing it positionally put it
+    where `FPFDMSolver` reads a drift (the user's ruling of 2026-11-27).
+    """
+    method = {"HJB": "solve_hjb_system", "FP": "solve_fp_system"}[half]
+    try:
+        params = set(inspect.signature(getattr(solver, method)).parameters)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError(
+            f"{type(solver).__name__}.{method}: the {half} solver's signature cannot be read "
+            f"({type(error).__name__}: {error}). A coupled route hands the value function, the problem's source and a "
+            "volatility override by the keywords the signature shows, so it refuses a solver whose signature "
+            "inspect.signature cannot read (#2209)."
+        ) from error
+    if half == "FP" and not params & {"potential_field", "drift_field"}:
+        raise ValueError(
+            f"{type(solver).__name__}.{method}: the FP solver's signature names neither potential_field nor drift_field "
+            f"(it reads {sorted(params)}). A coupled route hands the value function by one of those two keywords, so it "
+            "refuses an FP solver that takes neither: name the parameter that takes U potential_field (#2209)."
+        )
+    return params
+
+
 def hjb_solve_kwargs(
     problem: Any,
-    params: set[str] | None,
+    params: set[str],
     solver_name: str,
     *,
     M: np.ndarray,
@@ -553,16 +601,10 @@ def hjb_solve_kwargs(
     (``RegimeSwitchingIterator``'s cross-regime term) composes it with ``compose_hjb_source`` and forwards the
     sum through ``resolve_source_kwarg``; neither decision is restated there.
 
-    ``params`` is the solver's ``solve_hjb_system`` parameter names, ``None`` when introspection failed. ``binding`` is
+    ``params`` is the solver's ``solve_hjb_system`` parameter names (`solver_signature`). ``binding`` is
     the solver's binding of the coupling cost (`hjb_coupling_binding`); off a grid the source has no other.
     """
     kwargs: dict[str, Any] = {}
-    if params is None:
-        # KNOWN HOLE, tracked separately: signature introspection failed, so both the
-        # volatility resolution and the source guard below are skipped and a live source is
-        # dropped here in silence -- the same shape as #2207 one level up. Deciding what an
-        # unreadable signature should mean (refuse, or assume it accepts) is not this change's.
-        return kwargs
     source_term = compose_hjb_source(problem, M, U, binding=binding, reader=solver_name)
     kwargs.update(
         resolve_volatility_kwarg(params, volatility, volatility_kind, problem, solver_name, "solve_hjb_system", "HJB")
@@ -573,7 +615,7 @@ def hjb_solve_kwargs(
 
 def fp_solve_kwargs(
     problem: Any,
-    params: set[str] | None,
+    params: set[str],
     solver_name: str,
     *,
     M: np.ndarray,
@@ -584,11 +626,8 @@ def fp_solve_kwargs(
 ) -> dict[str, Any]:
     """The kwargs an FP solve receives from ``problem``: its composed source, a ``drift_field`` the caller
     passes, and any volatility override. :func:`hjb_solve_kwargs`'s twin, with the same callers and the same
-    history (#2666). ``params`` is the solver's ``solve_fp_system`` parameter names, ``None`` when
-    introspection failed."""
+    history (#2666). ``params`` is the solver's ``solve_fp_system`` parameter names (`solver_signature`)."""
     kwargs: dict[str, Any] = {}
-    if params is None:
-        return kwargs  # same hole as the HJB side; see there.
     source_term = compose_fp_source(problem, M, U)
     if "drift_field" in params and drift_field is not None:
         kwargs["drift_field"] = drift_field
@@ -611,6 +650,18 @@ class BaseCouplingIterator(ABC):
     in ``__init__`` to enable ``_build_hjb_kwargs`` / ``_build_fp_kwargs``.
     """
 
+    #: The parameter names of the HJB and FP solvers' solve methods, read when the route is built (`solver_signature`).
+    _hjb_sig_params: set[str]
+    _fp_sig_params: set[str]
+    #: The route's HJB and FP solvers, on the routes that hold one pair; Graph, RegimeSwitching and MultiPopulation hold
+    #: one per component and do not set these.
+    hjb_solver: BaseHJBSolver
+    fp_solver: BaseFPSolver
+    #: The caller's overrides on those routes, which their constructors take and their hand-off reads.
+    volatility: float | np.ndarray | Any | None
+    volatility_kind: str | None
+    drift_field: np.ndarray | Callable | Any | None
+
     def __init__(self, problem: MFGProblem) -> None:
         """
         Initialize the MFG solver with a problem definition.
@@ -621,8 +672,6 @@ class BaseCouplingIterator(ABC):
         self.problem = problem
         self.warm_start_data: dict[str, Any] | None = None
         self._solution_computed: bool = False
-        self._hjb_sig_params: set[str] | None = None
-        self._fp_sig_params: set[str] | None = None
         # Issue #1489 (S1): the FP solver's declared drift-input convention, cached beside its
         # signature so resolve_fp_drift_kwargs can route by convention rather than param presence.
         self._fp_drift_convention: DriftConvention | None = None
@@ -647,16 +696,8 @@ class BaseCouplingIterator(ABC):
         self._fp_solver_name = type(fp_solver).__name__
         self._hjb_coupling_binding = hjb_coupling_binding(hjb_solver)
         self._hjb_terminal_binding = hjb_terminal_binding(hjb_solver)
-        try:
-            sig = inspect.signature(hjb_solver.solve_hjb_system)
-            self._hjb_sig_params = set(sig.parameters.keys())
-        except (AttributeError, ValueError):
-            self._hjb_sig_params = None
-        try:
-            sig = inspect.signature(fp_solver.solve_fp_system)
-            self._fp_sig_params = set(sig.parameters.keys())
-        except (AttributeError, ValueError):
-            self._fp_sig_params = None
+        self._hjb_sig_params = solver_signature(hjb_solver, "HJB")
+        self._fp_sig_params = solver_signature(fp_solver, "FP")
         # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
         self._fp_drift_convention = getattr(fp_solver, "_drift_convention", None)
 
@@ -710,17 +751,18 @@ class BaseCouplingIterator(ABC):
 
         **Which value iterate to hand over is the CALLER's, and this docstring must not universalise
         it.** The HJB source binds the previous iterate, so the nonlocal term reads ``J[v_old]``
-        (#1259). The FP source binds whichever iterate the FP solve itself consumes, which is
-        ``U_new`` for three of the four builder-routed loops -- ``FixedPointIterator``,
-        ``FictitiousPlayIterator`` and ``BlockIterator._gauss_seidel_step`` -- and ``U_old`` for
-        ``BlockIterator._jacobi_step``, inherited by ``BlockJacobiIterator``, which updates both
-        fields from the same old state by construction.
+        (#1259). The FP source binds whichever iterate the FP solve itself consumes, which the coupled
+        driver's sweep map decides by its order between the fields (`FixedPointStep`, #3002): ``U_new``
+        under Gauss-Seidel -- ``FixedPointIterator``, ``FictitiousPlayIterator``,
+        ``BlockGaussSeidelIterator`` and Newton's warm-up -- and ``U_old`` under Jacobi, for
+        ``BlockJacobiIterator``, which updates both fields from the same old state by construction.
 
         Two corrections are recorded here rather than silently applied, because both were introduced
         while fixing this same class of defect. An earlier draft said "the FP source binds the NEW
         one", false of an exported public class; the draft that replaced it cited
-        ``BlockJacobiIterator._iterate``, **a method that does not exist** -- the real one is
-        ``BlockIterator._jacobi_step`` -- which is the hallucinated-symbol defect this branch also
+        ``BlockJacobiIterator._iterate``, **a method that does not exist** -- the real one was
+        ``BlockIterator._jacobi_step``, since replaced by the driver's sweep map -- which is the hallucinated-symbol
+        defect this branch also
         fixed in ``core/mfg_problem.py``, reintroduced in the line asserting the correction.
 
         This method is where every BUILDER-ROUTED loop composes, which is not the same as the only
@@ -790,6 +832,8 @@ class BaseCouplingIterator(ABC):
         Raises:
             NotImplementedError: on a route with no single iterate owner, whose `_iteration_state` returns None:
                 GraphMFGSolver and RegimeSwitchingIterator, and any subclass that does not return one.
+            ValueError: from `IterationState.set_warm_start`, when U or M is not of the iterate's shape, naming the
+                field and both shapes, or holds a non-finite value, naming the field and how many (#3002 class line 1).
         """
         U_prev, M_prev = previous_solution
         state = self._iteration_state()

@@ -9244,22 +9244,22 @@
     "tests/unit/test_alg/test_true_adjoint.py::TestRequiresHamiltonianClass::test_raises_without_hamiltonian_class": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[node-0]": [
+    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[node-0]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[node-1]": [
+    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[node-1]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[population-0]": [
+    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[population-0]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[population-1]": [
+    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[population-1]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[regime-0]": [
+    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[regime-0]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[regime-1]": [
+    "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[regime-1]": [
       "optimal_control_sign"
     ],
     "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_the_same_solve_without_a_nan_converges_at_that_sweep[node]": [
@@ -17533,12 +17533,12 @@
         "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_coefficients_match_analytical_dh_dp",
         "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_transpose_column_sum_property",
         "tests/unit/test_alg/test_true_adjoint.py::TestRequiresHamiltonianClass::test_raises_without_hamiltonian_class",
-        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[node-0]",
-        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[node-1]",
-        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[population-0]",
-        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[population-1]",
-        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[regime-0]",
-        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_is_refused_by_index[regime-1]",
+        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[node-0]",
+        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[node-1]",
+        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[population-0]",
+        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[population-1]",
+        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[regime-0]",
+        "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_a_nan_density_in_any_field_of_a_multi_field_solve_stops_it[regime-1]",
         "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_the_same_solve_without_a_nan_converges_at_that_sweep[node]",
         "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_the_same_solve_without_a_nan_converges_at_that_sweep[population]",
         "tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py::test_the_same_solve_without_a_nan_converges_at_that_sweep[regime]",
