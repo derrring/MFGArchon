@@ -280,9 +280,12 @@ def _level_of_mass_one(integrate):
 
 
 def test_the_magnitude_reads_each_levels_mass_not_their_sum():
-    """A solve whose every level keeps m(0)'s mass, over 20001 levels, against one level grown 2e4-fold. Mutant: the
-    figure as the space-time sum, which a 2e4-fold level moves by a factor of 2 and does not stop (the sum against level
-    0 was review 1's false stop at Nt = 9500)."""
+    """A solve whose every level keeps m(0)'s mass, over 20001 levels, against one level grown 2e4-fold, per component
+    and on the components' total. Mutants: the figure as the space-time sum, which a 2e4-fold level moves by a factor
+    of 2 or less and does not stop (the sum against level 0 was review 1's false stop at Nt = 9500), under ``EACH`` and
+    under ``TOTAL``. Then two components whose largest levels differ in the first output, mass 1 at levels 0 and 5 and
+    1e-3 elsewhere, against both grown to 7e3 at level 2: the total's largest level, 1.001 then 1.4e4, stops the solve.
+    Mutant: the total as the sum of each component's largest level, 2 then 1.4e4, which does not stop."""
     integrate = _problem().spatial_measure().integrate
     healthy = np.tile(_level_of_mass_one(integrate), (20001, 1))
     grown = healthy.copy()
@@ -291,6 +294,19 @@ def test_the_magnitude_reads_each_levels_mass_not_their_sum():
     assert rule.stop([healthy], [healthy], site="test", iteration=0) is None
     assert rule.stop([healthy], [healthy], site="test", iteration=1) is None
     assert rule.stop([grown], [healthy], site="test", iteration=2) == "diverged_mass_blowup"
+    total = FPOutputRule([integrate, integrate], MassInvariant.TOTAL)
+    assert total.stop([healthy, healthy], [healthy, healthy], site="test", iteration=0) is None
+    assert total.stop([healthy, healthy], [healthy, healthy], site="test", iteration=1) is None
+    assert total.stop([grown, healthy], [healthy, healthy], site="test", iteration=2) == "diverged_mass_blowup"
+
+    one = _level_of_mass_one(integrate)
+    first = [np.tile(1e-3 * one, (6, 1)) for _ in range(2)]
+    first[0][0], first[1][5] = one, one
+    later = np.tile(1e-3 * one, (6, 1))
+    later[2] = 7e3 * one
+    total = FPOutputRule([integrate, integrate], MassInvariant.TOTAL)
+    assert total.stop(first, first, site="test", iteration=0) is None
+    assert total.stop([later, later], first, site="test", iteration=1) == "diverged_mass_blowup"
 
 
 def test_the_magnitude_reads_the_mass_the_route_conserves_and_a_zero_reference_reads_nothing(mfg_caplog):
@@ -298,8 +314,10 @@ def test_the_magnitude_reads_the_mass_the_route_conserves_and_a_zero_reference_r
     ``MassInvariant.EACH`` each component's reference is its own first FP output's figure, so component 1's 1e5-fold
     growth stops the solve; under ``TOTAL`` the components' total is one figure, against which the same outputs are a
     100-fold growth, and a 1e5-fold growth of the total stops it. A reference of 0 leaves its figure unread, with a
-    warning. Mutants: the components' figures summed under EACH; a reference of 0 read as one, which stops the second
-    output."""
+    warning, and so does a component under ``TOTAL`` whose measure cannot integrate its output: the total of the
+    others is not the mass the route conserves. Mutants: the components' figures summed under EACH; a reference of 0
+    read as one, which stops the second output; the total read over the components that integrate, which stops on
+    component 0's 1e5-fold growth."""
     integrate = _problem().spatial_measure().integrate
     level = np.tile(_level_of_mass_one(integrate), (6, 1))
     rule = FPOutputRule([integrate, integrate], MassInvariant.EACH)
@@ -317,10 +335,24 @@ def test_the_magnitude_reads_the_mass_the_route_conserves_and_a_zero_reference_r
     assert any("reads no magnitude for component(s) [0]" in m for m in mfg_caplog.messages), mfg_caplog.messages
     assert zero.stop([1e9 * level], [level], site="test", iteration=1) is None
 
+    def not_integrable(M):
+        raise NotImplementedError("this measure integrates nothing")
+
+    mfg_caplog.clear()
+    partial = FPOutputRule([integrate, not_integrable], MassInvariant.TOTAL)
+    with mfg_caplog.at_level(logging.WARNING, logger=logger):
+        assert partial.stop([level, level], [level, level], site="test", iteration=0) is None
+    assert any(
+        "reads no magnitude for the components' total on this solve" in m and "(not integrable)" in m
+        for m in mfg_caplog.messages
+    ), mfg_caplog.messages
+    assert partial.stop([1e5 * level, level], [level, level], site="test", iteration=1) is None
+
 
 def test_the_magnitude_stop_names_what_it_measured(mfg_caplog):
     """The warning a magnitude stop gives names the figure it read, its value and its ratio to the first FP output's,
-    and advises nothing. Mutant: the text before this PR, "total |M| ... x the initial; ... enable stabilization"."""
+    and advises nothing: a component's figure under ``EACH``, the components' total under ``TOTAL``. Mutants: the text
+    before this PR, "total |M| ... x the initial; ... enable stabilization"; a component named under ``TOTAL``."""
     integrate = _problem().spatial_measure().integrate
     level = np.tile(_level_of_mass_one(integrate), (6, 1))
     rule = FPOutputRule([integrate], MassInvariant.EACH)
@@ -336,6 +368,20 @@ def test_the_magnitude_stop_names_what_it_measured(mfg_caplog):
     ), stops[0]
     assert "figure in the solve's first FP output" in stops[0], stops[0]
     assert "stabili" not in stops[0], stops[0]
+
+    mfg_caplog.clear()
+    total = FPOutputRule([integrate, integrate], MassInvariant.TOTAL)
+    with mfg_caplog.at_level(logging.WARNING, logger=logger):
+        assert total.stop([level, level], [level, level], site="the site", iteration=0) is None
+        assert total.stop([1e5 * level, 1e5 * level], [level, level], site="the site", iteration=1) == (
+            "diverged_mass_blowup"
+        )
+    stops = [m for m in mfg_caplog.messages if "blew up" in m]
+    assert len(stops) == 1, mfg_caplog.messages
+    assert (
+        "reported by the site: the largest level mass of the components' total reached 2.00e+05, 1.0e+05 times the "
+        in (stops[0])
+    ), stops[0]
 
 
 @pytest.mark.parametrize("seed", [1e-12, 1e-6])
