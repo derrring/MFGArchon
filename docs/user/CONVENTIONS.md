@@ -1031,7 +1031,9 @@ coordinate, of one point or of every point. The library may hand either, so a bo
 
 A door that holds the points states their dimension. It hands them as it holds them: a problem's conditions and
 potential in one row, `(N,)`, and a solver's drift, volatility and sources at the grid's shape, `(Nx, Ny)`. A door that
-reads one point hands a tuple of scalars, at $d = 1$ too.
+reads one point hands a tuple of scalars, at $d = 1$ too. A method you call with an `x` of your own, such as a Hamiltonian's
+`dp` or `optimal_control`, hands that `x` to the body unchanged, and a point it derives from it, such as a
+finite-difference step, keeps its form.
 
 A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
 predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since
