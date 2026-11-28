@@ -673,14 +673,21 @@ def test_a_network_problem_subclass_overriding_a_method_no_solver_reads_is_refus
     ("m_initial", "error", "message"),
     [
         (lambda x: "0.25", (TypeError, ValueError), r"numeric value, got str|a number at each node"),
+        (
+            lambda x: 0.25 if x != 2 else "0.25",
+            TypeError,
+            r"must return a number at each node, and returned str at node 2",
+        ),
+        (lambda x: np.array([0.25, 0.25]), ValueError, r"one number at each node, and returned shape \(2,\) at node 0"),
         (lambda x: 1.0 / x, ValueError, r"raised exception at node 0: float division by zero"),
     ],
-    ids=["a str", "raising at node 0"],
+    ids=["a str", "a str past node 0", "two entries", "raising at node 0"],
 )
 def test_a_network_condition_meets_the_condition_value_contract(m_initial, error, message):
     """B3 and B4 of review 1 of #3015: a network read of a `Conditions` callable meets the one condition-value contract,
-    as the grid route does: a str is refused, and the error of a callable raising at a node names the node and says x is
-    an int, not a coordinate tuple. Mutants: the network read coerces with float(); its error advises a tuple."""
+    as the grid route does: a str is refused, at a node the check reads or at one it does not, and so is more than one
+    number at a node; the error of a callable raising at a node names the node and says x is an int, not a coordinate
+    tuple. Mutants: the network read's value check or its size check removed; its error advises a tuple."""
     pytest.importorskip("igraph")
     from mfgarchon.geometry.graph.network_geometry import GridNetwork
     from mfgarchon.utils.validation import ValidationError

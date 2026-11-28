@@ -426,11 +426,10 @@ def _at_each_node(given: Callable | None, role: str, default: float) -> Callable
     value = _remembered(given, NODE_VALUE_SLOTS, role)
 
     def at_the_node(t: float, x: int) -> Any:
-        try:
+        from mfgarchon.utils.validation.components import noting_on_any_error
+
+        with noting_on_any_error(f"NetworkMFGComponents({role}=...) raised at node {x}."):
             return value(t=t, node=x)
-        except Exception as error:
-            error.add_note(f"NetworkMFGComponents({role}=...) raised at node {x}.")
-            raise
 
     return at_the_node
 

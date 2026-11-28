@@ -438,15 +438,28 @@ def network_nodes(geometry: GeometryProtocol) -> GraphGeometry | None:
     return cast("GraphGeometry", geometry) if geometry.geometry_type == GeometryType.NETWORK else None
 
 
+class noting_on_any_error:  # noqa: N801 -- read as a clause: `with noting_on_any_error(...)`
+    """Adds ``note`` to any error raised inside it, and lets the error propagate unchanged: it suppresses nothing, so it
+    is no handler (#1472)."""
+
+    def __init__(self, note: str) -> None:
+        self.note = note
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, kind: Any, error: BaseException | None, traceback: Any) -> bool:
+        if error is not None:
+            error.add_note(self.note)
+        return False
+
+
 def read_a_condition_at_a_node(bound: BoundCallable, network: GraphGeometry, index: int, time_value: float) -> Any:
     """What a bound condition returns at one node of ``network``, with the node as ``x`` through ``node_x``. An error it
     raises keeps its type, with a note naming the node and saying ``x`` is an int there (#1472)."""
     node = network.node_x(index)
-    try:
+    with noting_on_any_error(f"{bound.role} was read at node {node}; on a network, x is the node, an int (#1472)."):
         return bound.at_a_node(t=time_value, x=node)
-    except Exception as error:
-        error.add_note(f"{bound.role} was read at node {node}; on a network, x is the node, an int (#1472).")
-        raise
 
 
 def read_a_condition_at_network_nodes(
