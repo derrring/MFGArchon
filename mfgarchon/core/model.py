@@ -173,7 +173,8 @@ class Conditions:
     not a relaxation of this rule.
 
     Callable signature: read by the names it declares, on the grid's points at once, with ``x`` a
-    coordinate tuple and one number per point returned. A body that also names ``t`` is read at ``T``
+    coordinate tuple and one number per point returned; on a network, at each node, with ``x`` the node as an int
+    (#1472). A body that also names ``t`` is read at ``T``
     (``u_terminal``) or ``0`` (``m_initial``), wherever it writes it
     (docs/user/CONVENTIONS.md § Callable signatures).
 

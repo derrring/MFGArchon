@@ -122,14 +122,13 @@ class NetworkHJBSolver(BaseHJBSolver):
         refuse_a_problem_a_network_solver_cannot_read(problem, type(self).__name__, self._problem_reads)
 
         self.network_problem = problem
-
-        self._refuse_a_node_bc_it_does_not_apply(problem.geometry)
+        # The graph is the geometry's (#1472 stage 1); a problem whose geometry is not a network's is refused above (Issue #2045)
+        self.network = cast("NetworkGeometry", problem.geometry)
+        self._refuse_a_node_bc_it_does_not_apply(self.network)
 
         self.scheme = scheme
         self.tolerance = tolerance
 
-        # The graph is the geometry's (#1472 stage 1); a problem whose geometry is not a network's is refused above (Issue #2045)
-        self.network = cast("NetworkGeometry", problem.geometry)
         self._graph_generation = self.network.graph_generation
         self.num_nodes = self.network.num_nodes
         self.adjacency_matrix = self.network.network_data.adjacency_matrix
@@ -194,7 +193,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         n_time_points = M_density.shape[0]
         return self._solve_ode(U_terminal, M_density, n_time_points, diffusion)
 
-    def _refuse_a_node_bc_it_does_not_apply(self, geometry: Any) -> None:
+    def _refuse_a_node_bc_it_does_not_apply(self, geometry: NetworkGeometry) -> None:
         """Issue #1468/#1471: fail loud on a node BC this solver cannot honour. Node-BC lives on the geometry
         (GraphGeometry.has_explicit_boundary_conditions); the base ODE path applies only the terminal condition and
         never the node-BC, so it would be silently ignored. Read at construction and again at each solve, so a node BC

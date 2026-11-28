@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+    from mfgarchon.geometry.protocol import GeometryProtocol
     from mfgarchon.types import HamiltonianJacobians
 
 # Define a limit for values before squaring to prevent overflow within H
@@ -595,7 +596,7 @@ class ConditionsMixin:
     m_init: np.ndarray
     u_fin: np.ndarray
     dimension: int
-    geometry: Any
+    geometry: GeometryProtocol
 
     def _condition_on_grid(self, condition: Any, time_value: float, role: str) -> NDArray | None:
         """``condition`` on the problem's grid, read by the names it declares at ``time_value`` if it declares time
