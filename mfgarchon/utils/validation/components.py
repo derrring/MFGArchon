@@ -448,10 +448,9 @@ class noting_on_any_error:  # noqa: N801 -- read as a clause: `with noting_on_an
     def __enter__(self) -> None:
         return None
 
-    def __exit__(self, kind: Any, error: BaseException | None, traceback: Any) -> bool:
+    def __exit__(self, kind: Any, error: BaseException | None, traceback: Any) -> None:
         if error is not None:
             error.add_note(self.note)
-        return False
 
 
 def read_a_condition_at_a_node(bound: BoundCallable, network: GraphGeometry, index: int, time_value: float) -> Any:
