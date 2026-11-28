@@ -30,6 +30,7 @@ Stage 2b removes the remaining members, each a strict xfail or an allowance here
 from __future__ import annotations
 
 import ast
+import re
 import warnings
 from pathlib import Path
 
@@ -295,9 +296,9 @@ def test_a_solver_built_before_the_graph_was_rebuilt_refuses_to_solve(solver):
         solve()
 
 
-def _model_form(network, hamiltonian=None, m_initial=None, u_terminal=None, cls=None):
+def _model_form(network, hamiltonian=None, m_initial=None, u_terminal=None, cls=None, volatility=0.0, **problem_kw):
     """A problem in the model form on ``network``: a NetworkHamiltonian, the uniform density and a zero terminal value
-    where none is given."""
+    where none is given, and no volatility unless one is."""
     from mfgarchon import Conditions, MFGProblem, Model
     from mfgarchon.extensions.topology import NetworkHamiltonian
 
@@ -305,12 +306,15 @@ def _model_form(network, hamiltonian=None, m_initial=None, u_terminal=None, cls=
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return (cls or MFGProblem)(
-            model=Model(hamiltonian=NetworkHamiltonian() if hamiltonian is None else hamiltonian, volatility=0.0),
+            model=Model(
+                hamiltonian=NetworkHamiltonian() if hamiltonian is None else hamiltonian, volatility=volatility
+            ),
             domain=network,
             conditions=Conditions(
                 m_initial=m_initial or (lambda x: 1.0 / n), u_terminal=u_terminal or (lambda x: 0.0), T=0.3
             ),
             Nt=4,
+            **problem_kw,
         )
 
 
@@ -392,7 +396,7 @@ def test_the_model_form_on_a_network_binds_its_hamiltonian_and_solves_as_the_net
     hamiltonian = NetworkHamiltonian(node_potential_func=lambda t, node: 0.2 * node)
     network = GridNetwork(width=3, height=2)
     model_form = _model_form(
-        network, hamiltonian=hamiltonian, m_initial=lambda x: given[x], u_terminal=lambda x: 0.1 * x
+        network, hamiltonian=hamiltonian, m_initial=lambda x: given[x], u_terminal=lambda x: 0.1 * x, volatility=0.3
     )
     assert model_form.components.hamiltonian is hamiltonian
     assert model_form.hamiltonian_class.geometry is network
@@ -411,11 +415,15 @@ def test_the_model_form_on_a_network_binds_its_hamiltonian_and_solves_as_the_net
     n, nt = network.num_nodes, 4
     U = np.stack([np.linspace(0.0, 1.0, n) * (1 + 0.1 * k) for k in range(nt + 1)])
     solutions = []
+    # The model form's FP reads its D from the problem's volatility; the NetworkMFGProblem, which declares none, is
+    # handed the same D
+    diffusion = _solver("FPNetworkSolver")(model_form).diffusion_coefficient
     for problem in (model_form, reference):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             if solver == "FPNetworkSolver":
-                built = _solver(solver)(problem, diffusion_coefficient=0.05)
+                kw = {} if problem is model_form else {"diffusion_coefficient": diffusion}
+                built = _solver(solver)(problem, **kw)
                 solutions.append(built.solve_fp_system(problem.get_m_initial(), U, show_progress=False))
             else:
                 solutions.append(
@@ -427,7 +435,7 @@ def test_the_model_form_on_a_network_binds_its_hamiltonian_and_solves_as_the_net
 
 
 def test_a_conditions_callable_on_a_network_takes_each_node_as_an_int():
-    """The user's ruling (Q1, 7232886239): a `Conditions` callable on a network is read once at each node, with x the
+    """The user's ruling (Q1, 7232886239): a `Conditions` callable on a network is read at each node, with x the
     node as an int, through the network geometry's ``node_x``, by the check that reads it first and by the problem.
     Mutant: the per-node read removed, so the callable is handed the geometry's points."""
     pytest.importorskip("igraph")
@@ -482,7 +490,7 @@ def test_an_fp_solve_handed_no_initial_density_starts_from_the_problems(route):
         problem = _model_form(GridNetwork(width=4, height=1), m_initial=lambda x: [0.4, 0.3, 0.2, 0.1][x])
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            M = _solver("FPNetworkSolver")(problem, diffusion_coefficient=0.05).solve()
+            M = _solver("FPNetworkSolver")(problem).solve()
         np.testing.assert_array_equal(M[0], [0.4, 0.3, 0.2, 0.1])
         return
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
@@ -507,8 +515,9 @@ def test_an_fp_solve_handed_no_initial_density_starts_from_the_problems(route):
 @pytest.mark.parametrize("solver", SOLVER_NAMES)
 def test_a_node_bc_the_geometry_is_given_after_a_solver_is_built_is_the_one_read(solver):
     """P1 (review 1 of #3014): the geometry is the node BCs' one holder, read where they are applied (#1472 stage 2a).
-    A BC set after the solver is built is read: FP applies an ABSORBING node, policy iteration pins a DIRICHLET node, and
-    `NetworkHJBSolver`, which applies none, refuses at the solve. Mutants: each reader reads the BC at construction."""
+    A solver solves, the geometry is given a BC, and the solver solves again: FP applies an ABSORBING node, policy
+    iteration pins a DIRICHLET node, and `NetworkHJBSolver`, which applies none, refuses the second solve. Mutants: each
+    reader reads the BC when it is built, or at its first solve."""
     pytest.importorskip("igraph")
     from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
     from mfgarchon.geometry.graph.network_geometry import GridNetwork
@@ -516,22 +525,256 @@ def test_a_node_bc_the_geometry_is_given_after_a_solver_is_built_is_the_one_read
     network = GridNetwork(width=3, height=3)
     problem = _model_form(network)
     n, nt = network.num_nodes, problem.Nt
+    M_flat = np.full((nt + 1, n), 1.0 / n)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         built = _solver(solver)(problem, scheme="explicit") if solver == "FPNetworkSolver" else _solver(solver)(problem)
-    kind = GraphBCType.ABSORBING if solver == "FPNetworkSolver" else GraphBCType.DIRICHLET
-    network.set_boundary_conditions(GraphBCConfig(node_bcs=[NodeBC(nodes=[0], bc_type=kind, value=1.0)]))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+
+        def solve():
+            if solver == "FPNetworkSolver":
+                return built.solve_fp_system(M_initial=np.full(n, 1.0 / n), potential_field=np.zeros((nt + 1, n)))
+            return built.solve_hjb_system(M_density=M_flat, U_terminal=np.zeros(n), volatility=0.2)
+
+        before = solve()
+        kind = GraphBCType.ABSORBING if solver == "FPNetworkSolver" else GraphBCType.DIRICHLET
+        network.set_boundary_conditions(GraphBCConfig(node_bcs=[NodeBC(nodes=[0], bc_type=kind, value=1.0)]))
         if solver == "FPNetworkSolver":
-            M = built.solve_fp_system(M_initial=np.full(n, 1.0 / n), potential_field=np.zeros((nt + 1, n)))
-            np.testing.assert_array_equal(M[1:, 0], 0.0)
+            assert np.all(before[1:, 0] > 0.0)
+            np.testing.assert_array_equal(solve()[1:, 0], 0.0)
         elif solver == "NetworkPolicyIterationHJBSolver":
-            U = built.solve_hjb_system(M_density=np.full((nt + 1, n), 1.0 / n), U_terminal=np.zeros(n), volatility=0.2)
-            np.testing.assert_array_equal(U[:-1, 0], 1.0)
+            assert np.all(before[:-1, 0] != 1.0)
+            np.testing.assert_array_equal(solve()[:-1, 0], 1.0)
         else:
             with pytest.raises(NotImplementedError, match="does not support node boundary conditions"):
-                built.solve_hjb_system(M_density=np.full((nt + 1, n), 1.0 / n), U_terminal=np.zeros(n), volatility=0.2)
+                solve()
+
+
+@pytest.mark.parametrize(
+    ("solver", "given", "named"),
+    [
+        ("FPNetworkSolver", {"source_term_fp": lambda t, x, v, m: 1.0}, "source_term_fp="),
+        ("NetworkHJBSolver", {"source_term_hjb": lambda t, x, v, m: 1.0}, "source_term_hjb="),
+        ("NetworkPolicyIterationHJBSolver", {"source_term_hjb": lambda t, x, v, m: 1.0}, "source_term_hjb="),
+        ("NetworkHJBSolver", {"nonlocal_operator": object()}, "nonlocal_operator="),
+        ("NetworkPolicyIterationHJBSolver", {"nonlocal_operator": object()}, "nonlocal_operator="),
+        *(
+            (
+                name,
+                {"hamiltonian": {"hamiltonian_dm_func": lambda t, node, neighbors, p, m: 0.0}},
+                "hamiltonian_dm_func=",
+            )
+            for name in SOLVER_NAMES
+        ),
+        *((name, {"hamiltonian": {"population_index": 1}}, "population_index=1") for name in SOLVER_NAMES),
+    ],
+)
+def test_a_network_solver_refuses_at_construction_an_input_it_does_not_read(solver, given, named):
+    """Items 1-5 of stage 2a's plan v2 (7236116911): an input the problem was given and the solver would drop is refused
+    by name when the solver is built, not dropped from the solve. Mutants: each solver's refusal removed, or one input
+    left off it."""
+    pytest.importorskip("igraph")
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    kw = dict(given)
+    hamiltonian = NetworkHamiltonian(**kw.pop("hamiltonian")) if "hamiltonian" in kw else None
+    problem = _model_form(GridNetwork(width=3, height=2), hamiltonian=hamiltonian, **kw)
+    with pytest.raises(NotImplementedError, match=rf"{solver} does not read .*{re.escape(named)}"):
+        _solver(solver)(problem)
+
+
+def test_the_network_fp_reads_its_diffusion_from_the_owner_the_hjb_solvers_read():
+    """Q2 of plan v2's approval (7236127464): `FPNetworkSolver` resolves its D once, through `network_diffusion`: its
+    coefficient when given, refused where it disagrees with the volatility the problem declares; else the problem's
+    volatility. A `Model`'s volatility defaults to 0.1, so an explicit coefficient with a default `Model` is refused
+    unless the volatility is set to match. A `NetworkMFGProblem` declares none and keeps D = 0.1. Mutants: FP ignores
+    the problem's volatility; the disagreement is not refused; a NetworkMFGProblem reads its 0.0."""
+    pytest.importorskip("igraph")
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.extensions.topology import NetworkHamiltonian, NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+    from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
+
+    FP = _solver("FPNetworkSolver")
+    assert FP(_model_form(GridNetwork(width=3, height=2), volatility=0.3)).diffusion_coefficient == float(
+        diffusion_from_volatility(0.3)
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        default = MFGProblem(
+            model=Model(hamiltonian=NetworkHamiltonian()),
+            domain=GridNetwork(width=3, height=2),
+            conditions=Conditions(m_initial=lambda x: 1.0 / 6, u_terminal=lambda x: 0.0, T=0.3),
+            Nt=4,
+        )
+    assert FP(default).diffusion_coefficient == float(diffusion_from_volatility(0.1))
+    with pytest.raises(ValueError, match=r"diffusion_coefficient=0\.05\) disagrees with the problem's volatility"):
+        FP(default, diffusion_coefficient=0.05)
+    assert FP(default, diffusion_coefficient=0.005).diffusion_coefficient == 0.005
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        network_problem = NetworkMFGProblem(geometry=GridNetwork(width=3, height=2), T=0.3, Nt=4)
+    assert FP(network_problem).diffusion_coefficient == 0.1
+    assert FP(network_problem, diffusion_coefficient=0.05).diffusion_coefficient == 0.05
+
+
+def test_a_components_bc_on_a_network_is_refused_when_the_problem_is_built():
+    """Item 6: a network's node BCs are its geometry's (#1471), and no network solver reads `components.boundary_conditions`,
+    so the problem refuses it when it is built. Mutant: the owner's refusal not called at construction."""
+    pytest.importorskip("igraph")
+    from mfgarchon import MFGProblem
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+    from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    bc = GraphBCConfig(node_bcs=[NodeBC(nodes=[0], bc_type=GraphBCType.DIRICHLET, value=1.0)])
+    with pytest.raises(ValueError, match=r"components\.boundary_conditions is not read on a network"):
+        MFGProblem(
+            geometry=GridNetwork(width=3, height=2),
+            components=MFGComponents(
+                hamiltonian=NetworkHamiltonian(),
+                m_initial=lambda x: 1.0 / 6,
+                u_terminal=lambda x: 0.0,
+                boundary_conditions=bc,
+            ),
+            T=0.3,
+            Nt=4,
+        )
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "hamiltonian",
+        "hamiltonian_dm",
+        "lagrangian",
+        "node_potential",
+        "density_coupling",
+        "get_initial_density",
+        "get_terminal_value",
+        "terminal_value",
+        "get_initial_m",
+        "get_final_u",
+        "apply_boundary_conditions",
+    ],
+)
+def test_a_network_problem_subclass_overriding_a_method_no_solver_reads_is_refused(method):
+    """Item 8 (ruling B2 of review 1 of #3015): no network solver reads these through a `NetworkMFGProblem` subclass, or,
+    for the two terminal ones, a subclass's would be a second terminal source; a subclass overriding one is refused at
+    class creation. Mutant: one method left off the list."""
+    from mfgarchon.extensions.topology import NetworkMFGProblem
+
+    with pytest.raises(TypeError, match=rf"overrides NetworkMFGProblem's {method}, which no network solver reads"):
+        type("Overriding", (NetworkMFGProblem,), {method: lambda self, *args, **kwargs: None})
+
+
+@pytest.mark.parametrize(
+    ("m_initial", "error", "message"),
+    [
+        (lambda x: "0.25", (TypeError, ValueError), r"numeric value, got str|a number at each node"),
+        (lambda x: 1.0 / x, ValueError, r"raised exception at node 0: float division by zero"),
+    ],
+    ids=["a str", "raising at node 0"],
+)
+def test_a_network_condition_meets_the_condition_value_contract(m_initial, error, message):
+    """B3 and B4 of review 1 of #3015: a network read of a `Conditions` callable meets the one condition-value contract,
+    as the grid route does: a str is refused, and the error of a callable raising at a node names the node and says x is
+    an int, not a coordinate tuple. Mutants: the network read coerces with float(); its error advises a tuple."""
+    pytest.importorskip("igraph")
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+    from mfgarchon.utils.validation import ValidationError
+
+    with pytest.raises((ValidationError, *(error if isinstance(error, tuple) else (error,))), match=message) as caught:
+        _model_form(GridNetwork(width=4, height=1), m_initial=m_initial)
+    assert "coordinate tuple" not in str(caught.value)
+
+
+def test_a_network_condition_returning_a_one_entry_array_is_read_as_its_entry():
+    """B3: a one-entry array per node is read as its entry, as the grid route reads one. Mutant: the network read refuses
+    an array."""
+    pytest.importorskip("igraph")
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    problem = _model_form(GridNetwork(width=4, height=1), m_initial=lambda x: np.array([[0.4, 0.3, 0.2, 0.1][x]]))
+    np.testing.assert_array_equal(problem.get_m_initial(), [0.4, 0.3, 0.2, 0.1])
+
+
+def test_a_network_condition_raising_past_node_0_names_the_node():
+    """SF4 of review 1 of #3015: a condition raising at a node the check did not read, here node 2, keeps its type and is
+    named at that node. Mutant: the note removed."""
+    pytest.importorskip("igraph")
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    with pytest.raises(IndexError) as caught:
+        _model_form(GridNetwork(width=4, height=1), m_initial=lambda x: [0.5, 0.5][x])
+    assert any("read at node 2; on a network, x is the node, an int" in note for note in caught.value.__notes__)
+
+
+def test_a_network_problems_messages_and_info_name_its_own_inputs():
+    """SF2, SF3 and SF8 of review 1 of #3015: `get_problem_info` reads the problem's conditions source; a refusal of the
+    initial density names the input it came from; and a network problem given no Hamiltonian is told so. Mutants:
+    get_problem_info reads the components; the message names MFGComponents; the refusal says NoneType."""
+    pytest.importorskip("igraph")
+    from mfgarchon import MFGProblem
+    from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        given = NetworkMFGProblem(
+            geometry=GridNetwork(width=4, height=1),
+            T=0.3,
+            Nt=4,
+            components=NetworkMFGComponents(initial_node_density_func=lambda node: [0.4, 0.3, 0.2, 0.1][node]),
+        )
+    assert given.get_problem_info()["has_custom_initial"] is True
+    with pytest.raises(ValueError, match=r"Check NetworkMFGComponents\(initial_node_density_func=\.\.\.\)"):
+        NetworkMFGProblem(
+            geometry=GridNetwork(width=4, height=1),
+            T=0.3,
+            Nt=4,
+            components=NetworkMFGComponents(initial_node_density_func=lambda node: -1.0),
+        )
+    with pytest.raises(ValueError, match=r"Check Conditions\(m_initial=\.\.\.\)"):
+        _model_form(GridNetwork(width=4, height=1), m_initial=lambda x: -1.0)
+    with pytest.raises(TypeError, match=r"takes a NetworkHamiltonian, .* and was given none"):
+        MFGProblem(
+            geometry=GridNetwork(width=4, height=1),
+            components=NetworkMFGComponents(m_initial=lambda x: 0.25, u_terminal=lambda x: 0.0),
+            T=0.3,
+            Nt=4,
+        )
+
+
+def test_a_read_at_a_node_refuses_an_x_that_is_not_an_int():
+    """SF9 of review 1 of #3015: `BoundCallable.at_a_node` refuses an x that is not a node, a door defect `node_x` never
+    makes. Mutant: the check removed."""
+    from mfgarchon.types.callable_protocols import CONDITION_SLOTS, _remembered
+
+    bound = _remembered(lambda x: x, CONDITION_SLOTS, "m_initial")
+    assert bound.at_a_node(x=2) == 2
+    with pytest.raises(TypeError, match=r"x as float, and on a network x is a node, an int"):
+        bound.at_a_node(x=2.0)
+
+
+@pytest.mark.xfail(strict=True, reason=STAGE_2B)
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        ("mfgarchon.extensions.topology", "create_grid_mfg_problem"),
+        ("mfgarchon.extensions.topology", "create_random_mfg_problem"),
+        ("mfgarchon.extensions.topology", "create_scale_free_mfg_problem"),
+        ("mfgarchon.alg.numerical.coupling.network_mfg_solver", "create_network_mfg_solver"),
+        ("mfgarchon.alg.numerical.coupling.network_mfg_solver", "create_simple_network_solver"),
+    ],
+)
+def test_no_factory_declares_a_network_beside_the_model_form(module, name):
+    """M4 of review 1 of #3015: the five factories that build a NetworkMFGProblem, or a solver typed on one, are remaining
+    members of the class line, removed by 2b."""
+    import importlib
+
+    assert name not in vars(importlib.import_module(module))
 
 
 @pytest.mark.xfail(strict=True, reason=STAGE_2B)

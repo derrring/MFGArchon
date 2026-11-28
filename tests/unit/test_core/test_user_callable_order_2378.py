@@ -111,16 +111,13 @@ def test_the_extensions_register_their_own_method_orders():
             def H_conditional(self, x, p, m, theta, t):
                 return 0.0
 
-    # The network's own order: the node for x, its adjacency beside it (part 3b, ruling 2026-09-25).
-    with pytest.raises(TypeError, match=r"_OldNetwork\.hamiltonian takes \(node, neighbors, m, p, t\)"):
+    # A NetworkMFGProblem subclass overriding hamiltonian, in any order, is refused by name: no network solver reads it
+    # through a subclass (#1472 stage 2a), so the network's own order table went with it.
+    with pytest.raises(TypeError, match=r"_OldNetwork overrides NetworkMFGProblem's hamiltonian"):
 
         class _OldNetwork(NetworkMFGProblem):
-            def hamiltonian(self, node, neighbors, m, p, t):
+            def hamiltonian(self, t, node, neighbors, p, m):
                 return 0.0
-
-    class _Network(NetworkMFGProblem):
-        def hamiltonian(self, t, node, neighbors, p, m):
-            return 0.0
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,7 @@ Key algorithms:
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import TYPE_CHECKING, Any, cast
 
@@ -94,6 +95,45 @@ def refuse_a_problem_a_network_solver_cannot_read(problem: Any, solver: str, rea
         )
 
 
+def network_diffusion(
+    volatility: float | np.ndarray | None, volatility_kind: str | None, *, problem: Any, consumer: str
+) -> float:
+    """The network diffusion ``D = sigma^2/2`` a network solve reads, the one owner FP and the HJB solvers share
+    (Issue #1544, #1472 stage 2a).
+
+    The volatility is the one a solve reads (#2378): the per-solve override, else the problem's own, which is 0.0 on
+    a ``NetworkMFGProblem``. The HJB is ``-u_t - D Lap_G(u) + H = 0`` with ``Lap_G = -L``, ``L = deg - A`` the
+    problem's graph Laplacian, the operator ``FPNetworkSolver`` applies as ``D Lap_G(m)``. A scalar only: an array or
+    callable volatility is refused.
+    """
+    volatility, _ = resolve_volatility_override(volatility, volatility_kind, problem=problem, consumer=consumer)
+    if volatility is None:
+        return 0.0
+    if isinstance(volatility, np.ndarray) or callable(volatility):
+        raise NotImplementedError(
+            f"{consumer} takes a scalar volatility: a spatially varying or callable one is not supported on a "
+            "network (Issue #1544)."
+        )
+    return float(diffusion_from_volatility(float(volatility)))
+
+
+def refuse_what_a_network_solver_does_not_read(problem: Any, solver: str, sources: tuple[str, ...]) -> None:
+    """Refuse by name, at construction, an input of ``problem`` that ``solver`` does not read (#1472 stage 2a): one of
+    the problem's ``sources`` that it was given, a `NetworkHamiltonian`'s ``hamiltonian_dm_func``, which no network
+    solver reads, and a ``population_index`` other than 0, since a network solver hands one population's density."""
+    unread = [f"{name}=" for name in sources if getattr(problem, name) is not None]
+    hamiltonian = problem.hamiltonian_class
+    if hamiltonian.has_custom_dm:
+        unread.append("NetworkHamiltonian(hamiltonian_dm_func=...)")
+    if hamiltonian.population_index != 0:
+        unread.append(f"NetworkHamiltonian(population_index={hamiltonian.population_index})")
+    if unread:
+        raise NotImplementedError(
+            f"{solver} does not read {', '.join(unread)}, which this problem was given; it would be dropped from the "
+            "solve. Remove it (#1472)."
+        )
+
+
 def refuse_a_rebuilt_graph(solver: str, network: NetworkGeometry, generation: int) -> None:
     """Refuse a solve once the network geometry's graph has been rebuilt since ``solver`` read it at construction: the
     operators it built then are the old graph's, and the Hamiltonian reads the new one (#1472)."""
@@ -154,10 +194,10 @@ class FPNetworkSolver(BaseFPSolver):
             problem: Network MFG problem instance
             scheme: Time discretization ("explicit" or "implicit"). "upwind"/"flow" were removed
                 (Issue #1541): "upwind" was an identity map and "flow" was never implemented.
-            diffusion_coefficient: Network diffusion coefficient D = σ²/2, for this FP solver only:
-                `NetworkHJBSolver` does not read it. If None (default), falls back to 0.1 with a warning
-                (Issue #1532). For a coupled solve, pass the same `volatility=σ` to `solve_fp_system`
-                and to `NetworkHJBSolver.solve_hjb_system`, so both read one D (Issue #1544).
+            diffusion_coefficient: Network diffusion coefficient D = σ²/2. If None (default), the problem's
+                volatility gives it, the one the HJB solvers read (#1472); a NetworkMFGProblem declares none, so
+                there it falls back to 0.1 with a warning (Issue #1532). One that disagrees with the problem's
+                volatility is refused. A solve handed `volatility=σ` reads that instead, as the HJB solvers do.
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
@@ -166,8 +206,15 @@ class FPNetworkSolver(BaseFPSolver):
         refuse_a_problem_a_network_solver_cannot_read(
             problem,
             "FPNetworkSolver",
-            ("geometry.network_data", "hamiltonian_class.has_custom_hamiltonian"),
+            (
+                "geometry.network_data",
+                "hamiltonian_class.has_custom_hamiltonian",
+                "hamiltonian_class.has_custom_dm",
+                "hamiltonian_class.population_index",
+                "source_term_fp",
+            ),
         )
+        refuse_what_a_network_solver_does_not_read(problem, "FPNetworkSolver", ("source_term_fp",))
 
         self.network_problem = problem
         H = problem.hamiltonian_class
@@ -204,14 +251,9 @@ class FPNetworkSolver(BaseFPSolver):
                 f"and would duplicate 'explicit' if fixed, and 'flow' was never implemented. "
                 f"Use scheme='explicit'."
             )
-        # Issue #1532: no silent physical default. The network diffusion D=sigma^2/2 is decoupled
-        # from the problem (NetworkMFGProblem carries no sigma, unlike MFGProblem — sourcing it is
-        # the #1470 Strand C follow-up). For backward compatibility an unspecified diffusion still
-        # falls back to 0.1, but the solve WARNS when that fallback is silently relied on.
         # Issue #1683: highest drift already reported by this instance; see the report site.
         self._reported_mass_drift = 0.0
-        self._diffusion_was_defaulted = diffusion_coefficient is None
-        self.diffusion_coefficient = 0.1 if diffusion_coefficient is None else diffusion_coefficient
+        self.diffusion_coefficient = self._the_network_diffusion(problem, diffusion_coefficient)
         self.cfl_factor = cfl_factor
         self.max_iterations = max_iterations
         self.tolerance = tolerance
@@ -264,6 +306,31 @@ class FPNetworkSolver(BaseFPSolver):
             if self.dt > self.dt_stable:
                 print(f"Warning: dt={self.dt:.2e} > dt_stable={self.dt_stable:.2e}")
 
+    def _the_network_diffusion(self, problem: Any, diffusion_coefficient: float | None) -> float:
+        """The D this solver reads when a solve is handed no volatility, resolved once, through the owner the HJB
+        solvers read (`network_diffusion`, #1472 stage 2a): ``diffusion_coefficient`` when given, refused by name where
+        it disagrees with the volatility the problem declares; else the problem's volatility. A `NetworkMFGProblem`
+        declares none, so its default stands, D = 0.1, which a solve warns about (Issue #1532); 2b deletes that class
+        and this branch with it."""
+        from mfgarchon.extensions.topology import NetworkMFGProblem
+
+        declared = (
+            None
+            if isinstance(problem, NetworkMFGProblem)
+            else network_diffusion(None, None, problem=problem, consumer="FPNetworkSolver")
+        )
+        self._diffusion_was_defaulted = diffusion_coefficient is None and declared is None
+        if diffusion_coefficient is None:
+            return 0.1 if declared is None else declared
+        if declared is not None and not math.isclose(diffusion_coefficient, declared, rel_tol=1e-12, abs_tol=0.0):
+            raise ValueError(
+                f"FPNetworkSolver(diffusion_coefficient={diffusion_coefficient!r}) disagrees with the problem's "
+                f"volatility, whose diffusion is D = sigma^2/2 = {declared!r}: the network diffusion has one source. "
+                "Drop diffusion_coefficient= to read the problem's, or set the Model's volatility to "
+                "sqrt(2 * diffusion_coefficient); a Model's volatility defaults to 0.1 (#1472)."
+            )
+        return diffusion_coefficient
+
     def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:
         """None when the network carries no node BC, where the step applies none. With one,
         refused (#2991): the step holds an ABSORBING node at 0 and a SOURCE node at its value, and naming them would need
@@ -301,8 +368,8 @@ class FPNetworkSolver(BaseFPSolver):
                 - Callable: Function U(t, i) -> value (Phase 2, not yet supported).
             volatility: SDE volatility sigma (optional); D = sigma^2/2 internally
                 (Issue #1429 S0-15 — the base_fp contract, consistent with FDM/FVM/GFDM):
-                - None: Use the D-valued self.diffusion_coefficient constructor knob (backward
-                  compatible). The network problem carries no volatility of its own.
+                - None: the D this solver resolved at construction (`diffusion_coefficient`, else the
+                  problem's volatility; a NetworkMFGProblem declares none).
                 - float: constant SDE volatility sigma; the diffusion is D = sigma^2/2.
                 - np.ndarray/Callable: Phase 2 (not yet supported).
             volatility_kind: "field" or "tensor" for an array volatility (#2378); read by the
@@ -346,8 +413,8 @@ class FPNetworkSolver(BaseFPSolver):
         else:
             raise TypeError(f"potential_field must be None, np.ndarray, or Callable, got {type(potential_field)}")
 
-        # The volatility override, read by the one rule every solver uses (#2378). The network problem
-        # carries no volatility, so None falls back to the constructor's D, not to the problem.
+        # The volatility override, read by the one owner the HJB solvers read (#2378, #1472). With none, the D this
+        # solver resolved at construction stands.
         if volatility is not None or volatility_kind is not None:
             volatility, volatility_kind = resolve_volatility_override(
                 volatility, volatility_kind, problem=self.network_problem, consumer="FPNetworkSolver.solve_fp_system"
@@ -358,7 +425,7 @@ class FPNetworkSolver(BaseFPSolver):
             if self._diffusion_was_defaulted:
                 warnings.warn(
                     "FPNetworkSolver: network diffusion defaulted to D=0.1, decoupled from the "
-                    "problem's physics (NetworkMFGProblem carries no sigma). For a coupled solve, pass "
+                    "problem's physics (a NetworkMFGProblem declares no volatility). For a coupled solve, pass "
                     "the same volatility=sigma to solve_fp_system and to NetworkHJBSolver.solve_hjb_system; "
                     "diffusion_coefficient= is this solver's only, and the HJB does not read it "
                     "(Issues #1532, #1544).",

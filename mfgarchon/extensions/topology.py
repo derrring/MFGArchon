@@ -133,6 +133,12 @@ class NetworkHamiltonian(HamiltonianBase):
                 bound_attribute(self, attr, slots, role=attr.lstrip("_"))
 
     @property
+    def has_custom_dm(self) -> bool:
+        """True when a user-supplied ``hamiltonian_dm_func`` replaces the built-in dH/dm, which no network solver reads,
+        so each refuses it (#1472 stage 2a)."""
+        return self._hamiltonian_dm_func is not None
+
+    @property
     def has_custom_hamiltonian(self) -> bool:
         """True when a user-supplied ``hamiltonian_func`` replaces the built-in H.
 
@@ -418,7 +424,15 @@ def _at_each_node(given: Callable | None, role: str, default: float) -> Callable
     if given is None:
         return lambda x: default
     value = _remembered(given, NODE_VALUE_SLOTS, role)
-    return lambda t, x: value(t=t, node=x)
+
+    def at_the_node(t: float, x: int) -> Any:
+        try:
+            return value(t=t, node=x)
+        except Exception as error:
+            error.add_note(f"NetworkMFGComponents({role}=...) raised at node {x}.")
+            raise
+
+    return at_the_node
 
 
 class NetworkMFGProblem(MFGProblem):
@@ -447,15 +461,34 @@ class NetworkMFGProblem(MFGProblem):
     - H_i: Hamiltonian at node i
     """
 
-    # The network's methods take #2375 ruling 8's order with the node for x and its adjacency beside
-    # it (user ruling 2026-09-25); a subclass defining one out of order is refused at class creation.
-    _ruling8_methods: ClassVar[dict[str, Slots | None]] = {
-        "hamiltonian": NETWORK_HAMILTONIAN_SLOTS,
-        "hamiltonian_dm": NETWORK_HAMILTONIAN_SLOTS,
-        "lagrangian": NODE_LAGRANGIAN_SLOTS,
-        "node_potential": NODE_POTENTIAL_SLOTS,
-        "density_coupling": NODE_INTERACTION_SLOTS,
-    }
+    # The methods no network solver reads through a subclass (#1472 stage 2a): a subclass overriding one is refused at
+    # class creation, since the override would be dropped, or, for terminal_value and get_terminal_value, would be a
+    # second terminal source beside get_u_terminal. 2b deletes the class.
+    _NOT_OVERRIDDEN: ClassVar[tuple[str, ...]] = (
+        "hamiltonian",
+        "hamiltonian_dm",
+        "lagrangian",
+        "node_potential",
+        "density_coupling",
+        "get_initial_density",
+        "get_terminal_value",
+        "terminal_value",
+        "get_initial_m",
+        "get_final_u",
+        "apply_boundary_conditions",
+    )
+
+    _INITIAL_DENSITY_SOURCE: ClassVar[str | None] = "NetworkMFGComponents(initial_node_density_func=...)"
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        overridden = [name for name in NetworkMFGProblem._NOT_OVERRIDDEN if name in vars(cls)]
+        if overridden:
+            raise TypeError(
+                f"{cls.__name__} overrides NetworkMFGProblem's {', '.join(overridden)}, which no network solver reads "
+                "through a subclass. Declare the network in the model form instead: MFGProblem(model=Model("
+                "hamiltonian=NetworkHamiltonian(...)), domain=<network geometry>, conditions=Conditions(...)) (#1472)."
+            )
+        super().__init_subclass__(**kwargs)
 
     def __init__(
         self,
@@ -488,6 +521,11 @@ class NetworkMFGProblem(MFGProblem):
         # form's (Sigma = 0); a network solve takes its own at solve time (#1544).
         num_nodes = network_geometry.num_nodes
         net_components = components or NetworkMFGComponents()
+        if net_components.lagrangian_func is not None:
+            raise NotImplementedError(
+                "NetworkMFGComponents(lagrangian_func=...) is read by NetworkMFGProblem.lagrangian alone, which no "
+                "network solver calls, so the solve would drop it. Remove it (#1472)."
+            )
         network_hamiltonian = NetworkHamiltonian(
             hamiltonian_func=net_components.hamiltonian_func,
             hamiltonian_dm_func=net_components.hamiltonian_dm_func,

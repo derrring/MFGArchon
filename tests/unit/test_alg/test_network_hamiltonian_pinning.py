@@ -369,8 +369,9 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
 
 
 def test_a_custom_dm_and_lagrangian_receive_each_argument_by_its_name():
-    """#2378 phase 5 part 3b: `hamiltonian_dm_func` and `lagrangian_func` are bound like the other
-    network callables, time first. No other test binds either (#2405 review)."""
+    """#2378 phase 5 part 3b: `hamiltonian_dm_func` is bound like the other network callables, time first; no other
+    test binds it (#2405 review). `lagrangian_func`, which no network solver reads, is refused when the problem is built
+    (#1472 stage 2a)."""
     net = GridNetwork(width=3, height=1)
     net.create_network()
     seen = {}
@@ -383,15 +384,13 @@ def test_a_custom_dm_and_lagrangian_receive_each_argument_by_its_name():
         seen["lagrangian"] = (t, node, velocity[0], m[1])
         return 0.0
 
-    comps = NetworkMFGComponents(hamiltonian_dm_func=dm, lagrangian_func=lagrangian)
-    prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
     m, p = np.array([0.1, 0.2, 0.3]), np.array([7.0, 8.0, 9.0])
-    prob.hamiltonian_dm(t=0.25, node=1, neighbors=prob.geometry.get_neighbors(1), p=p, m=m)
-    prob.lagrangian(t=0.25, node=1, velocity=np.array([5.0]), m=m)
-    assert seen == {
-        "dm": (0.25, 1, list(prob.geometry.get_neighbors(1)), 7.0, 0.2),
-        "lagrangian": (0.25, 1, 5.0, 0.2),
-    }
+    NetworkHamiltonian(hamiltonian_dm_func=dm).bind(net).dm(t=0.25, x=1, p=p, m=m)
+    assert seen == {"dm": (0.25, 1, list(net.get_neighbors(1)), 7.0, 0.2)}
+    with pytest.raises(
+        NotImplementedError, match=r"lagrangian_func=\.\.\.\) is read by NetworkMFGProblem\.lagrangian alone"
+    ):
+        NetworkMFGProblem(geometry=net, components=NetworkMFGComponents(lagrangian_func=lagrangian), T=0.5, Nt=5)
 
 
 def test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign():

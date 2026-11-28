@@ -14,7 +14,7 @@ Issues:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -424,19 +424,54 @@ def _get_expected_ic_shape(
     return (geometry.num_spatial_points,)
 
 
-def read_a_condition_at_network_nodes(
-    bound: BoundCallable, geometry: GeometryProtocol, time_value: float, nodes: range | None = None
-) -> np.ndarray | None:
-    """A bound condition read at each node of a network geometry, or at ``nodes``, once per node, with the node as ``x``
-    through the geometry's ``node_x``: the form a network Hamiltonian takes (#1472, the user's ruling of 2026-11-28).
-    None off a network, where a condition is read at the geometry's points."""
+def is_a_condition_value(value: Any) -> bool:
+    """Whether a condition's read returned what the contract names, a number or an array of numbers: the one owner of
+    that check, on every geometry (#682, #1472)."""
+    return isinstance(value, (int, float, np.integer, np.floating, np.ndarray))
+
+
+def network_nodes(geometry: GeometryProtocol) -> GraphGeometry | None:
+    """The geometry as a network, whose conditions are read at each node with the node as ``x`` (#1472, the user's
+    ruling of 2026-11-28), or None off a network, where a condition is read at the geometry's points."""
     from mfgarchon.geometry.protocol import GeometryType
 
-    if geometry.geometry_type != GeometryType.NETWORK:
+    return cast("GraphGeometry", geometry) if geometry.geometry_type == GeometryType.NETWORK else None
+
+
+def read_a_condition_at_a_node(bound: BoundCallable, network: GraphGeometry, index: int, time_value: float) -> Any:
+    """What a bound condition returns at one node of ``network``, with the node as ``x`` through ``node_x``. An error it
+    raises keeps its type, with a note naming the node and saying ``x`` is an int there (#1472)."""
+    node = network.node_x(index)
+    try:
+        return bound.at_a_node(t=time_value, x=node)
+    except Exception as error:
+        error.add_note(f"{bound.role} was read at node {node}; on a network, x is the node, an int (#1472).")
+        raise
+
+
+def read_a_condition_at_network_nodes(
+    bound: BoundCallable, geometry: GeometryProtocol, time_value: float
+) -> np.ndarray | None:
+    """A bound condition read at each node of a network geometry, or None off a network. Each read is checked by the
+    contract's one owner, `is_a_condition_value`, and is one number: a number, or an array holding one (#1472)."""
+    network = network_nodes(geometry)
+    if network is None:
         return None
-    network = cast("GraphGeometry", geometry)
-    nodes = range(network.num_spatial_points) if nodes is None else nodes
-    return np.array([float(bound.at_a_node(t=time_value, x=network.node_x(i))) for i in nodes])
+    values = []
+    for index in range(network.num_spatial_points):
+        value = read_a_condition_at_a_node(bound, network, index, time_value)
+        node = network.node_x(index)
+        if not is_a_condition_value(value):
+            raise TypeError(
+                f"{bound.role} must return a number at each node, and returned {type(value).__name__} at node {node} (#1472)."
+            )
+        entries = np.asarray(value, dtype=float)
+        if entries.size != 1:
+            raise ValueError(
+                f"{bound.role} must return one number at each node, and returned shape {entries.shape} at node {node} (#1472)."
+            )
+        values.append(float(entries.reshape(())))
+    return np.array(values)
 
 
 def _validate_callable_ic(
@@ -479,20 +514,24 @@ def _validate_callable_ic(
 
     result.context["geometry_type"] = type(geometry).__name__
 
-    # Evaluate the callable at the sample point to check output quality: on a network, its first node (#1472)
+    # Evaluate the callable at the sample point to check output quality: on a network, at its first node, the node as x
+    network = network_nodes(geometry)
     try:
-        at_a_node = read_a_condition_at_network_nodes(bound, geometry, time_value, range(1))
-        value = at_a_node[0] if at_a_node is not None else bound(t=time_value, x=point_tuple(sample_point))
+        if network is None:
+            value = bound(t=time_value, x=point_tuple(sample_point))
+        else:
+            value = read_a_condition_at_a_node(bound, network, 0, time_value)
     except Exception as e:
-        result.add_error(
-            f"{name} callable raised exception at sample point {sample_point}: {e}",
-            location=name,
-            suggestion=f"x is a coordinate tuple: read {name}'s coordinates as x[0], x[1], ...",
+        where, advice = (
+            (f"sample point {sample_point}", f"x is a coordinate tuple: read {name}'s coordinates as x[0], x[1], ...")
+            if network is None
+            else (f"node {network.node_x(0)}", f"x is the node, an int: read {name} as a function of the node")
         )
+        result.add_error(f"{name} callable raised exception at {where}: {e}", location=name, suggestion=advice)
         return result
 
     # Check return type
-    if not isinstance(value, (int, float, np.integer, np.floating, np.ndarray)):
+    if not is_a_condition_value(value):
         result.add_error(
             f"{name} must return numeric value, got {type(value).__name__}",
             location=name,

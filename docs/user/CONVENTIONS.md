@@ -1040,10 +1040,12 @@ On a network a node plays `x`. The network solvers hand a network Hamiltonian th
 geometry's `node_x` builds (#3012). A `NetworkHamiltonian` method you call yourself takes the node as an `int`, a numpy
 integer or a one-entry array of integer dtype, one of the graph's nodes, and refuses any other form by name.
 
-A `Conditions` callable on a network, `m_initial` or `u_terminal`, is read once at each node, and takes the node as
-`x`: an `int`, which the network geometry's `node_x` builds, the form a network Hamiltonian takes (#1472, the user's
-ruling of 2026-11-28). It is never handed the nodes as an array. A problem on a network takes a `NetworkHamiltonian`,
-which it binds to its network geometry, and refuses any other Hamiltonian by name when it is built.
+A `Conditions` callable on a network, `m_initial` or `u_terminal`, is read at each node, and takes the node as `x`: an
+`int`, which the network geometry's `node_x` builds, the form a network Hamiltonian takes (#1472, the user's ruling of
+2026-11-28); the check that validates it reads node 0 first. It is never handed the nodes as an array, and returns one
+number at each node, a number or an array holding one, as on a grid. A problem on a network takes a
+`NetworkHamiltonian`, which it binds to its network geometry, and refuses any other Hamiltonian by name when it is
+built.
 
 A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
 predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since

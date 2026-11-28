@@ -847,8 +847,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.u_terminal: NDArray  # Terminal condition u(T, x)
         self.m_initialial: NDArray  # Initial density m(0, x)
 
-        # On a network, the Hamiltonian the problem is given, bound to its network geometry, before anything reads it
+        # On a network, the Hamiltonian the problem is given, bound to its network geometry, before anything reads it;
+        # and a components BC, which no network solver reads, refused by its owner now rather than dropped (#1472)
         self._bind_a_network_hamiltonian()
+        if self.is_network:
+            self.get_boundary_conditions()
 
         # Initialize functions
         self._initialize_functions()
@@ -2154,7 +2157,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 f"m_initial contains negative values (min={min_val:.6e}). "
                 "Initial density must be non-negative. "
-                "Check your m_initial function in MFGComponents."
+                f"Check {self._initial_density_source()}."
             )
 
         # Check 2: Non-zero mass (must have some mass to normalize)
@@ -2185,7 +2188,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if not np.isfinite(mass) or mass <= 0.0:
             raise ValueError(
                 f"m_initial has total mass {mass!r} on the {measure} measure. Initial density must "
-                "integrate to a positive value. Check your m_initial function in MFGComponents."
+                f"integrate to a positive value. Check {self._initial_density_source()}."
             )
 
         self.initial_mass = float(mass)
@@ -2334,9 +2337,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         given = self.components._hamiltonian_class
         if not isinstance(given, NetworkHamiltonian):
+            what = "none" if given is None else type(given).__name__
             raise TypeError(
                 f"A problem on a {type(self.geometry).__name__} takes a NetworkHamiltonian, whose methods the network "
-                f"solvers read, and was given {type(given).__name__} (#1472)."
+                f"solvers read, and was given {what} (#1472)."
             )
         self.components._hamiltonian_class = given.bind(cast("NetworkGeometry", self.geometry))
 
@@ -2455,6 +2459,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         weights = getattr(self.geometry, "measure_weights", None)
         return weights if not self.is_network and callable(weights) else None
 
+    #: Where a subclass that builds its conditions takes its initial density from, for the messages that name it
+    _INITIAL_DENSITY_SOURCE: ClassVar[str | None] = None
+
+    def _initial_density_source(self) -> str:
+        """The input the problem's initial density came from, as a message names it (#1472)."""
+        if self._INITIAL_DENSITY_SOURCE is not None:
+            return self._INITIAL_DENSITY_SOURCE
+        return "Conditions(m_initial=...)" if self._v1_model is not None else "MFGComponents(m_initial=...)"
+
     def _measure_initial_density(self) -> tuple[float, str]:
         """The initial density's total mass, and the name of the measure that produced it."""
         try:
@@ -2521,13 +2534,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             domain_info["Nx"] = self._get_num_intervals()
 
         if self.is_custom and self.components is not None:
+            # The conditions' one source: the Conditions in the model form, the components otherwise (#1472)
+            conditions = self._v1_conditions if self._v1_conditions is not None else self.components
             return {
                 "description": self.components.description,
                 "problem_type": self.components.problem_type,
                 "is_custom": True,
                 "has_custom_hamiltonian": True,
-                "has_custom_initial": self.components.m_initial is not None,
-                "has_custom_final": self.components.u_terminal is not None,
+                "has_custom_initial": conditions.m_initial is not None,
+                "has_custom_final": conditions.u_terminal is not None,
                 # Issue #673: jacobian_fd() always available on HamiltonianBase
                 "has_jacobian": self.components._hamiltonian_class is not None,
                 "parameters": self.components.parameters,

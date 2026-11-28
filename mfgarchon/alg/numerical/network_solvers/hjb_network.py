@@ -30,38 +30,17 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
 from mfgarchon.alg.numerical.network_solvers.fp_network import (
+    network_diffusion,
     refuse_a_problem_a_network_solver_cannot_read,
     refuse_a_rebuilt_graph,
+    refuse_what_a_network_solver_does_not_read,
 )
 from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
-from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
-from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
     from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
-
-
-def _network_diffusion(
-    volatility: float | np.ndarray | None, volatility_kind: str | None, *, problem: Any, consumer: str
-) -> float:
-    """The viscous term's ``D = sigma^2/2`` for a network HJB solve (Issue #1544).
-
-    The volatility is the one a solve reads (#2378): the per-solve override, else the problem's own, which is 0.0 on
-    a ``NetworkMFGProblem``. The HJB is ``-u_t - D Lap_G(u) + H = 0`` with ``Lap_G = -L``, ``L = deg - A`` the
-    problem's graph Laplacian, the operator ``FPNetworkSolver`` applies as ``D Lap_G(m)``. A scalar only, as that
-    solver takes; an array or callable volatility is refused, as there.
-    """
-    volatility, _ = resolve_volatility_override(volatility, volatility_kind, problem=problem, consumer=consumer)
-    if volatility is None:
-        return 0.0
-    if isinstance(volatility, np.ndarray) or callable(volatility):
-        raise NotImplementedError(
-            f"{consumer} takes a scalar volatility, as FPNetworkSolver does: a spatially varying or callable "
-            "one is not supported on a network (Issue #1544)."
-        )
-    return float(diffusion_from_volatility(float(volatility)))
 
 
 #: `_policies_equal`'s bound on a transition rate's change between policy iterations, `np.allclose`'s
@@ -100,7 +79,15 @@ class NetworkHJBSolver(BaseHJBSolver):
     # `NetworkPolicyIterationHJBSolver` subclass — which applies them each step — overrides to `True`.
     _honors_node_bc: bool = False
     # What a solve reads from its problem, refused by name at construction when absent (Issue #2045)
-    _problem_reads: tuple[str, ...] = ("geometry.network_data", "hamiltonian_class")
+    _problem_reads: tuple[str, ...] = (
+        "geometry.network_data",
+        "hamiltonian_class.has_custom_dm",
+        "hamiltonian_class.population_index",
+        "source_term_hjb",
+        "nonlocal_operator",
+    )
+    # The problem's sources this solver does not read, refused at construction (#1472 stage 2a)
+    _unread_sources: tuple[str, ...] = ("source_term_hjb", "nonlocal_operator")
 
     def __init__(
         self,
@@ -120,6 +107,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         """
         super().__init__(problem)
         refuse_a_problem_a_network_solver_cannot_read(problem, type(self).__name__, self._problem_reads)
+        refuse_what_a_network_solver_does_not_read(problem, type(self).__name__, self._unread_sources)
 
         self.network_problem = problem
         # The graph is the geometry's (#1472 stage 1); a problem whose geometry is not a network's is refused above (Issue #2045)
@@ -179,7 +167,7 @@ class NetworkHJBSolver(BaseHJBSolver):
             "its door",
             {"U_terminal": U_terminal},
         )
-        diffusion = _network_diffusion(
+        diffusion = network_diffusion(
             volatility, volatility_kind, problem=self.network_problem, consumer="NetworkHJBSolver.solve_hjb_system"
         )
         # Validate required parameters
@@ -384,7 +372,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             "its door",
             {"U_terminal": U_terminal},
         )
-        diffusion = _network_diffusion(
+        diffusion = network_diffusion(
             volatility,
             volatility_kind,
             problem=self.network_problem,

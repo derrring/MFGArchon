@@ -34,10 +34,6 @@ def _grid():
     return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
 
 
-def _own_density_dm(t, node, neighbors, p, m):
-    return -m[node]
-
-
 def _one_sided_h(t, node, neighbors, p, m):
     return 0.5 * sum(max(p[node] - p[j], 0.0) ** 2 for j in neighbors) - 0.5 * m[node] ** 2
 
@@ -57,7 +53,7 @@ def test_a_reader_of_the_built_in_rates_refuses_a_custom_h(solver, refusal):
         geometry=_network(),
         T=0.5,
         Nt=5,
-        components=NetworkMFGComponents(hamiltonian_func=_one_sided_h, hamiltonian_dm_func=_own_density_dm),
+        components=NetworkMFGComponents(hamiltonian_func=_one_sided_h),
     )
     with pytest.raises(NotImplementedError, match=refusal):
         solver(problem)
