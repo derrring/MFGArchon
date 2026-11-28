@@ -23,9 +23,9 @@
     "workflow": "excluded"
   },
   "counts": {
-    "alg": 513,
+    "alg": 510,
     "config": 0,
-    "core": 54,
+    "core": 51,
     "extensions": 2,
     "factory": 3,
     "geometry": 214,

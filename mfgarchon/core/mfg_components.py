@@ -595,10 +595,12 @@ class ConditionsMixin:
     m_init: np.ndarray
     u_fin: np.ndarray
     dimension: int
+    geometry: Any
 
     def _condition_on_grid(self, condition: Any, time_value: float, role: str) -> NDArray | None:
         """``condition`` on the problem's grid, read by the names it declares at ``time_value`` if it declares time
-        (#2431, #2875), or None with no grid to read it on. The grid is its first batch, so its reads are compared here."""
+        (#2431, #2875), or None with no grid to read it on. The grid is its first batch, so its reads are compared here.
+        On a network it is read at each node instead, with the node as x (#1472)."""
         bound = _remembered(condition, CONDITION_SLOTS, role)
         if "x" not in bound.passes:
             advice = keeping_what_it_froze(condition, "Name its space parameter x")
@@ -606,6 +608,12 @@ class ConditionsMixin:
                 f"{role} {getattr(condition, '__qualname__', condition)!r} takes time and no space. It is a function of "
                 f"space: {advice}."
             )
+        if self.geometry is not None:
+            from mfgarchon.utils.validation.components import read_a_condition_at_network_nodes
+
+            at_each_node = read_a_condition_at_network_nodes(bound, self.geometry, time_value)
+            if at_each_node is not None:
+                return at_each_node
         num_intervals = self._get_num_intervals()
         if self.dimension == 1 and num_intervals is not None:
             grid = np.asarray(self._get_spatial_grid_internal())[: num_intervals + 1]

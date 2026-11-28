@@ -68,8 +68,9 @@ def test_a_reader_of_the_built_in_rates_refuses_a_custom_h(solver, refusal):
 )
 def test_the_geometry_decides_whether_construction_reads_the_hamiltonian(domain, density, read):
     """A `SeparableHamiltonian`, which is no `NetworkHamiltonian`, with a soft wall, recording every read of its
-    sources. On a network geometry construction reads none of them; on a grid it reads them, which shows the recorder
-    records. A test of the Hamiltonian's type, or of how its methods are bound, would read it on the network."""
+    sources. On a network geometry construction refuses it by its type, reading none of them (#1472 stage 2a: a problem
+    on a network takes a `NetworkHamiltonian`); on a grid it reads them, which shows the recorder records. A test of how
+    its methods are bound would read it on the network."""
     reads: list[str] = []
 
     class Recording(SeparableHamiltonian):
@@ -100,11 +101,18 @@ def test_the_geometry_decides_whether_construction_reads_the_hamiltonian(domain,
     def wall(x):
         return np.ones(np.shape(x)[1:]) if np.ndim(x) >= 2 else 1.0
 
-    MFGProblem(
-        model=Model(hamiltonian=Recording(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
-        domain=domain(),
-        conditions=Conditions(m_initial=lambda x: density, u_terminal=lambda x: 0.0, T=0.5),
-        Nt=5,
-        state_penalty=wall,
-    )
+    def build():
+        return MFGProblem(
+            model=Model(hamiltonian=Recording(QuadraticControlCost(control_cost=1.0)), volatility=0.2),
+            domain=domain(),
+            conditions=Conditions(m_initial=lambda x: density, u_terminal=lambda x: 0.0, T=0.5),
+            Nt=5,
+            state_penalty=wall,
+        )
+
+    if read:
+        build()
+    else:
+        with pytest.raises(TypeError, match=r"takes a NetworkHamiltonian.*was given Recording"):
+            build()
     assert bool(reads) is read

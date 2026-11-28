@@ -13,8 +13,7 @@
     `SeparableHamiltonian` whose potential returns NaN;
   - a `state_penalty` that returns one value for a batch, on a network.
 
-  No network solver accepts a problem built through `MFGProblem` on a network. The geometry's declared type decides,
-  not the Hamiltonian's type, and these are now refused:
+  The geometry's declared type decides, not the Hamiltonian's type, and these are now refused:
   - a `NetworkHamiltonian` on any geometry that does not declare itself a network: the library's own on a grid, an
     implicit domain, a point cloud, a mesh or a maze built, and failed at solve (with `IndexError` on a
     `TensorProductGrid`);

@@ -14,7 +14,7 @@ Issues:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -29,7 +29,9 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.geometry.base import GraphGeometry
     from mfgarchon.geometry.protocol import GeometryProtocol
+    from mfgarchon.types.callable_protocols import BoundCallable
 
 
 def validate_components(
@@ -422,6 +424,21 @@ def _get_expected_ic_shape(
     return (geometry.num_spatial_points,)
 
 
+def read_a_condition_at_network_nodes(
+    bound: BoundCallable, geometry: GeometryProtocol, time_value: float, nodes: range | None = None
+) -> np.ndarray | None:
+    """A bound condition read at each node of a network geometry, or at ``nodes``, once per node, with the node as ``x``
+    through the geometry's ``node_x``: the form a network Hamiltonian takes (#1472, the user's ruling of 2026-11-28).
+    None off a network, where a condition is read at the geometry's points."""
+    from mfgarchon.geometry.protocol import GeometryType
+
+    if geometry.geometry_type != GeometryType.NETWORK:
+        return None
+    network = cast("GraphGeometry", geometry)
+    nodes = range(network.num_spatial_points) if nodes is None else nodes
+    return np.array([float(bound.at_a_node(t=time_value, x=network.node_x(i))) for i in nodes])
+
+
 def _validate_callable_ic(
     func: Callable,
     geometry: GeometryProtocol,
@@ -462,9 +479,10 @@ def _validate_callable_ic(
 
     result.context["geometry_type"] = type(geometry).__name__
 
-    # Evaluate the callable at the sample point to check output quality
+    # Evaluate the callable at the sample point to check output quality: on a network, its first node (#1472)
     try:
-        value = bound(t=time_value, x=point_tuple(sample_point))
+        at_a_node = read_a_condition_at_network_nodes(bound, geometry, time_value, range(1))
+        value = at_a_node[0] if at_a_node is not None else bound(t=time_value, x=point_tuple(sample_point))
     except Exception as e:
         result.add_error(
             f"{name} callable raised exception at sample point {sample_point}: {e}",

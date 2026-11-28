@@ -31,6 +31,7 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
@@ -88,8 +89,8 @@ def refuse_a_problem_a_network_solver_cannot_read(problem: Any, solver: str, rea
     if missing:
         raise NotImplementedError(
             f"{solver} reads {', '.join(missing)} from its problem, which this {type(problem).__name__} on a "
-            f"{type(problem.geometry).__name__} lacks. Until #1472's stage 2, a network solve takes a NetworkMFGProblem "
-            "on a network geometry (Issue #2045)."
+            f"{type(problem.geometry).__name__} lacks. A network solve takes a problem on a network geometry with a "
+            "NetworkHamiltonian, which the problem binds (#1472, Issue #2045)."
         )
 
 
@@ -133,7 +134,8 @@ class FPNetworkSolver(BaseFPSolver):
     # Node BCs (#1468, #1471, #1478): the network BC model is the geometry's `GraphBCConfig`, node-level and
     # without `segments`, so the inherited `_validate_bc_support` (which returns when `bc` has no `segments`)
     # is a structural no-op here. This solver honours the node BC itself: it applies it to the density each
-    # step through `_node_applicator.apply_fp`, and no longer renormalises mass (#1683). Pinned by
+    # step through the geometry's node-BC applicator, read at each solve (`GraphApplicator.of_the_geometry`), and no
+    # longer renormalises mass (#1683). Pinned by
     # `TestFPNetworkSolverAbsorbingNodeBC`.
 
     def __init__(
@@ -164,7 +166,7 @@ class FPNetworkSolver(BaseFPSolver):
         refuse_a_problem_a_network_solver_cannot_read(
             problem,
             "FPNetworkSolver",
-            ("geometry.network_data", "_node_applicator", "hamiltonian_class.has_custom_hamiltonian"),
+            ("geometry.network_data", "hamiltonian_class.has_custom_hamiltonian"),
         )
 
         self.network_problem = problem
@@ -186,7 +188,6 @@ class FPNetworkSolver(BaseFPSolver):
         # manufacture false conservation and hide the absorption. That gate is gone with the
         # renormalisation itself (#1683): the absorbing case was not a special case needing an
         # exemption, it was the case that made the general behaviour visible.
-        self._node_applicator = problem._node_applicator
 
         self.scheme = scheme
         # Issue #1541 / RFC #1574: scheme="upwind" was an identity map (the paired edge flows cancel
@@ -264,12 +265,12 @@ class FPNetworkSolver(BaseFPSolver):
                 print(f"Warning: dt={self.dt:.2e} > dt_stable={self.dt_stable:.2e}")
 
     def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:
-        """None when the network carries no node BC, where the step applies none (``_node_applicator is None``). With one,
+        """None when the network carries no node BC, where the step applies none. With one,
         refused (#2991): the step holds an ABSORBING node at 0 and a SOURCE node at its value, and naming them would need
         three things the step does not share -- a SOURCE value is read at t_n for level n + 1, a CUSTOM rule reads the
         field the step hands it, and the conditions apply in order, the last write winning. A graph whose node BCs are
         DIRICHLET or NEUMANN only, which do not touch the density, is refused too."""
-        if self._node_applicator is None:
+        if GraphApplicator.of_the_geometry(self.network) is None:
             return None
         raise NotImplementedError(
             f"{type(self).__name__}.prescribed_density: this network carries node boundary conditions, and the step "
@@ -312,6 +313,8 @@ class FPNetworkSolver(BaseFPSolver):
             (Nt+1, num_nodes) density evolution.
         """
         refuse_a_rebuilt_graph("FPNetworkSolver", self.network, self._graph_generation)
+        # The geometry's node BCs, read now: one given it after this solver was built is the one applied (#1472 stage 2a)
+        node_bc = GraphApplicator.of_the_geometry(self.network)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
@@ -454,8 +457,8 @@ class FPNetworkSolver(BaseFPSolver):
 
                 # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING ->
                 # the exit node's mass leaves, m -> 0). DIRICHLET / NEUMANN are no-ops on density.
-                if self._node_applicator is not None:
-                    M[n + 1, :] = self._node_applicator.apply_fp(M[n + 1, :], t)
+                if node_bc is not None:
+                    M[n + 1, :] = node_bc.apply_fp(M[n + 1, :], t)
 
             # Issue #1683: conservation is now reported, not imposed. This scheme conserves by
             # construction, so on a healthy solve the drift is at round-off and nothing is
@@ -635,7 +638,7 @@ class FPNetworkSolver(BaseFPSolver):
 
         This "interface compatibility" stub never called _precompute_transition_rates, so it (a) hit
         the wrong-signed legacy drift on a fresh solver and (b) reused stale last-timestep rates after
-        a solve, and it also skipped the geometry-owned node-BC (_node_applicator.apply_fp) and the
+        a solve, and it also skipped the geometry-owned node-BC (its applicator's apply_fp) and the
         #1478 mass-changing-BC renorm gate, manufacturing false conservation under an ABSORBING node.
         It has no callers. Rather than ship a silently-wrong single-step API, fail loud; use
         solve_fp_system, which precomputes rates and honors the node BC each step.

@@ -455,7 +455,7 @@ class FixedPointSolver(BaseSolver):
     def _initialize_state(self, problem) -> SpatialTemporalState:
         # Initialize u and m from problem
         u_init = problem.get_initial_value_function()
-        m_init = problem.get_initial_density()
+        m_init = problem.get_m_initial()
 
         return SpatialTemporalState(
             u=u_init,

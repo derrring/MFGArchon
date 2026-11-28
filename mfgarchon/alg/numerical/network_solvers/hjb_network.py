@@ -33,6 +33,7 @@ from mfgarchon.alg.numerical.network_solvers.fp_network import (
     refuse_a_problem_a_network_solver_cannot_read,
     refuse_a_rebuilt_graph,
 )
+from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
@@ -99,7 +100,7 @@ class NetworkHJBSolver(BaseHJBSolver):
     # `NetworkPolicyIterationHJBSolver` subclass — which applies them each step — overrides to `True`.
     _honors_node_bc: bool = False
     # What a solve reads from its problem, refused by name at construction when absent (Issue #2045)
-    _problem_reads: tuple[str, ...] = ("geometry.network_data", "hamiltonian")
+    _problem_reads: tuple[str, ...] = ("geometry.network_data", "hamiltonian_class")
 
     def __init__(
         self,
@@ -122,18 +123,7 @@ class NetworkHJBSolver(BaseHJBSolver):
 
         self.network_problem = problem
 
-        # Issue #1468/#1471: fail loud on a node BC this solver cannot honor. Node-BC now lives on the
-        # geometry (GraphGeometry.has_explicit_boundary_conditions); the base ODE path applies only
-        # the terminal condition and never the node-BC, so it would be silently ignored.
-        # `NetworkPolicyIterationHJBSolver` (which applies it) sets `_honors_node_bc`.
-        if not self._honors_node_bc and problem.geometry.has_explicit_boundary_conditions():
-            raise NotImplementedError(
-                f"{type(self).__name__} does not support node boundary conditions "
-                f"(the graph geometry carries an explicit node-BC config). The base network HJB "
-                f"integrates the backward ODE with terminal data only and never applies node-BC, so "
-                f"it would be silently ignored (Issue #1468, #1456, #1471). Use "
-                f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
-            )
+        self._refuse_a_node_bc_it_does_not_apply(problem.geometry)
 
         self.scheme = scheme
         self.tolerance = tolerance
@@ -182,6 +172,7 @@ class NetworkHJBSolver(BaseHJBSolver):
             (Nt+1, num_nodes) value function evolution
         """
         refuse_a_rebuilt_graph(type(self).__name__, self.network, self._graph_generation)
+        self._refuse_a_node_bc_it_does_not_apply(self.network)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
@@ -203,16 +194,31 @@ class NetworkHJBSolver(BaseHJBSolver):
         n_time_points = M_density.shape[0]
         return self._solve_ode(U_terminal, M_density, n_time_points, diffusion)
 
+    def _refuse_a_node_bc_it_does_not_apply(self, geometry: Any) -> None:
+        """Issue #1468/#1471: fail loud on a node BC this solver cannot honour. Node-BC lives on the geometry
+        (GraphGeometry.has_explicit_boundary_conditions); the base ODE path applies only the terminal condition and
+        never the node-BC, so it would be silently ignored. Read at construction and again at each solve, so a node BC
+        the geometry is given after this solver is built is refused too (#1472 stage 2a).
+        `NetworkPolicyIterationHJBSolver` (which applies it) sets `_honors_node_bc`."""
+        if not self._honors_node_bc and geometry.has_explicit_boundary_conditions():
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support node boundary conditions "
+                f"(the graph geometry carries an explicit node-BC config). The base network HJB "
+                f"integrates the backward ODE with terminal data only and never applies node-BC, so "
+                f"it would be silently ignored (Issue #1468, #1456, #1471). Use "
+                f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
+            )
+
     def _evaluate_hamiltonian_batch(self, u: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
         """Evaluate Hamiltonian at all nodes (Issue #960).
 
         Returns H_i for i = 0, ..., N-1 as a single array.
         Eliminates per-node Python loop from caller.
         """
+        H_class = self.network_problem.hamiltonian_class
         H = np.zeros(self.num_nodes)
         for i in range(self.num_nodes):
-            neighbors = self.gradient_ops[i]
-            H[i] = self.network_problem.hamiltonian(t=t, node=self.network.node_x(i), neighbors=neighbors, p=u, m=m)
+            H[i] = float(H_class(x=self.network.node_x(i), m=m, p=u, t=t))
         return H
 
     def _source_terms(self, m: np.ndarray, t: float) -> np.ndarray:
@@ -301,13 +307,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     2. Policy improvement: Update control policy
     """
 
-    # Issue #1468: unlike the base ODE solver, policy iteration applies
-    # `problem.apply_boundary_conditions` (the node-Dirichlet pin over `boundary_nodes`) at every
-    # timestep in `solve_hjb_system`, so it honors a node BC and is exempt from the base gate.
+    # Issue #1468: unlike the base ODE solver, policy iteration applies the geometry's node BCs (the node-Dirichlet pin)
+    # at every timestep in `solve_hjb_system`, read at each solve, so it honors a node BC and is exempt from the base gate.
     _honors_node_bc: bool = True
     _problem_reads = (
         *NetworkHJBSolver._problem_reads,
-        "apply_boundary_conditions",
         "hamiltonian_class.has_custom_hamiltonian",
     )
 
@@ -372,6 +376,8 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     ) -> np.ndarray:
         """Solve HJB using policy iteration; ``volatility`` as `NetworkHJBSolver.solve_hjb_system` reads it."""
         refuse_a_rebuilt_graph(type(self).__name__, self.network, self._graph_generation)
+        # The geometry's node BCs, read now: one given it after this solver was built is the one applied (#1472 stage 2a)
+        node_bc = GraphApplicator.of_the_geometry(self.network)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
@@ -410,7 +416,8 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             U[n, :] = self._policy_iteration_step(U[n + 1, :], m_current, t, diffusion, t_idx=n)
 
             # Apply boundary conditions
-            U[n, :] = self.network_problem.apply_boundary_conditions(U[n, :], t)
+            if node_bc is not None:
+                U[n, :] = node_bc.apply_hjb(U[n, :], t)
 
         return U
 

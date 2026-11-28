@@ -263,10 +263,9 @@ def _has_a_grid_probe(geometry: GeometryProtocol) -> bool:
 
     Nothing compares a network Hamiltonian's sources. With the built-in control, ``__call__``, the rates
     ``optimal_control`` returns and ``source_term`` come from one formula. With a custom ``hamiltonian_func``, both
-    readers of the rates, ``FPNetworkSolver`` and ``NetworkPolicyIterationHJBSolver``, refuse it (#1545). A Hamiltonian
-    handed to ``MFGProblem`` on a network through a model or its components, a ``NetworkHamiltonian`` subclass among
-    them, makes a problem no network solver accepts: the two HJB solvers refuse it by name, and ``FPNetworkSolver``
-    raises ``AttributeError`` (#2970). No network solver reads ``dm`` or ``dp``.
+    readers of the rates, ``FPNetworkSolver`` and ``NetworkPolicyIterationHJBSolver``, refuse it (#1545). A problem on
+    a network takes a ``NetworkHamiltonian``, which it binds to its geometry, and refuses any other by name when it is
+    built (#1472). No network solver reads ``dm`` or ``dp``.
     """
     from mfgarchon.geometry import GeometryType
 
@@ -440,7 +439,8 @@ def _refuse_a_non_finite_node_source(
             bound = bound_attribute(operator, attr, slots, role=parameter)
             name = f"{type(operator).__name__}'s {parameter}"
             for node in nodes_read:
-                neighbors = operator.network_data.get_neighbors(node)
+                # The graph is the geometry's, which the operator the caller gave may not yet be bound to (#1472)
+                neighbors = problem.geometry.network_data.get_neighbors(node)
                 read(
                     name,
                     lambda b=bound, q=slots, n=node, k=neighbors: held(b, q, t=0.0, node=n, neighbors=k),

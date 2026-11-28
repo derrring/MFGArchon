@@ -289,7 +289,7 @@ class BaseFPSolver(BaseNumericalSolver):
             Density evolution M(t,x) using default parameters.
         """
         # Get initial condition from problem
-        m0 = self.problem.get_initial_density()
+        m0 = self.problem.get_m_initial()
         return self.solve_fp_system(m0)
 
     def prescribed_density(self, level: int) -> tuple[np.ndarray, np.ndarray] | None:

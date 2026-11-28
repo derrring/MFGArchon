@@ -386,10 +386,9 @@ hand $x$ a node, and $p$ and $m$ one entry per node, so a grid probe hands a for
 Hamiltonian is or how its methods are bound. A network Hamiltonian's sources are compared nowhere, and need no
 comparison. With the built-in control, `__call__`, the rates `optimal_control` returns and `source_term` come from one
 formula. With a custom `hamiltonian_func`, `__call__` reads that function, and both readers of the rates,
-`FPNetworkSolver` and `NetworkPolicyIterationHJBSolver`, refuse it (#1545), so the two never meet in a solve. A
-Hamiltonian handed to `MFGProblem` on a network through a model or its components, a `NetworkHamiltonian` subclass
-among them, makes a problem no network solver accepts (#2970). No network solver reads `dm` or `dp`. Every other
-declared type keeps the probes (#2901, stage 1c-iii).
+`FPNetworkSolver` and `NetworkPolicyIterationHJBSolver`, refuse it (#1545), so the two never meet in a solve. A problem
+on a network takes a `NetworkHamiltonian`, which it binds to its geometry, and refuses any other by name when it is built
+(#1472). No network solver reads `dm` or `dp`. Every other declared type keeps the probes (#2901, stage 1c-iii).
 
 ### What construction refuses as non-finite
 
@@ -1016,7 +1015,8 @@ the FDM ghost layer, refuses one that declares `x`, even with a default, and one
 a meshfree `bc_value`, and a `value` reassigned later are bound when first read.
 
 **`u_terminal` and `m_initial` are functions of space.** `lambda x: ...` is read on the grid; `lambda t, x: ...` is read
-at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`.
+at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`. On a network they are read at each node, with the node as `x`
+(below).
 
 ### `x` is a coordinate tuple
 
@@ -1039,6 +1039,11 @@ a scalar or an array, and hands the body the one-entry tuple of it.
 On a network a node plays `x`. The network solvers hand a network Hamiltonian the node as an `int`, which the network
 geometry's `node_x` builds (#3012). A `NetworkHamiltonian` method you call yourself takes the node as an `int`, a numpy
 integer or a one-entry array of integer dtype, one of the graph's nodes, and refuses any other form by name.
+
+A `Conditions` callable on a network, `m_initial` or `u_terminal`, is read once at each node, and takes the node as
+`x`: an `int`, which the network geometry's `node_x` builds, the form a network Hamiltonian takes (#1472, the user's
+ruling of 2026-11-28). It is never handed the nodes as an array. A problem on a network takes a `NetworkHamiltonian`,
+which it binds to its network geometry, and refuses any other Hamiltonian by name when it is built.
 
 A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
 predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since

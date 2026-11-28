@@ -55,6 +55,8 @@ from .applicator_base import BaseGraphApplicator
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from mfgarchon.geometry.base import GraphGeometry
+
 
 class GraphBCType(Enum):
     """Boundary condition types for graph domains."""
@@ -531,6 +533,16 @@ class GraphApplicator(BaseGraphApplicator):
         for node_bc in config.node_bcs:
             applicator.add_node_bc(node_bc)
         return applicator
+
+    @classmethod
+    def of_the_geometry(cls, geometry: GraphGeometry) -> GraphApplicator | None:
+        """The geometry's node boundary conditions as an applicator, read from the geometry now, or None where it carries
+        none. The geometry is their one holder (#1471), so a reader builds this where it applies them, and a node BC the
+        geometry is given after a problem or a solver is built is the one applied (#1472 stage 2a)."""
+        node_bc = geometry.get_boundary_conditions()
+        if node_bc is None:
+            return None
+        return cls.from_config(node_bc, num_nodes=geometry.num_spatial_points)
 
     @classmethod
     def from_network_geometry(

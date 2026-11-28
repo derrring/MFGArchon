@@ -572,7 +572,7 @@ class FPFVMSolver(BaseFPSolver):
             {"M_initial": M_initial},
         )
         if M_initial is None:
-            M_initial = self.problem.get_initial_density()
+            M_initial = self.problem.get_m_initial()
         m0 = np.asarray(M_initial, dtype=float)
         shape = tuple(self.problem.geometry.get_grid_shape())
         if m0.shape != shape:

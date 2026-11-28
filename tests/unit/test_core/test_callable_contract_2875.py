@@ -624,9 +624,12 @@ def test_a_network_condition_is_read_by_node():
     problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=4, components=components)
     np.testing.assert_allclose(problem.get_initial_density(), [1.0, 2.0, 3.0, 4.0], rtol=0, atol=0)
     np.testing.assert_allclose(problem.get_terminal_value(), [0.0, 0.5, 1.0, 1.5], rtol=0, atol=0)
-    problem.components.initial_node_density_func = lambda i: i
+    # The node fields are the problem's conditions, read when it is built (#1472 stage 2a), so a field that names no slot
+    # is refused there
     with pytest.raises(TypeError, match=r"names no slot"):
-        problem.get_initial_density()
+        NetworkMFGProblem(
+            geometry=network, T=0.5, Nt=4, components=NetworkMFGComponents(initial_node_density_func=lambda i: i)
+        )
 
 
 def test_a_graph_coupling_is_read_by_its_names_in_any_order():

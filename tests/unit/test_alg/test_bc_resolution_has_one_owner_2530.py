@@ -54,7 +54,10 @@ ALLOWED = {
         2,
         "D2's hand-over: the components BC becomes the legacy grid's declaration; it picks nothing",
     ),
-    ("mfgarchon/extensions/topology.py", "__init__"): (1, "a graph's node BCs, which the graph geometry owns (#1471)"),
+    ("mfgarchon/geometry/boundary/applicator_graph.py", "of_the_geometry"): (
+        1,
+        "a graph's node BCs, which the graph geometry owns (#1471), read where they are applied (#1472 stage 2a)",
+    ),
     ("mfgarchon/operators/differential/gradient.py", "value_gradient"): (
         1,
         "the operators' callee: the BC its caller hands it, else the grid's",
@@ -187,15 +190,15 @@ def test_a_planted_rival_is_found(package_copy, form):
 
 
 def test_a_new_read_inside_an_allowed_function_is_found(package_copy):
-    """The allowance pins its site count, so a second read in an allowed function fails too: the topology's node BC."""
-    rel = "mfgarchon/extensions/topology.py"
+    """The allowance pins its site count, so a second read in an allowed function fails too: a graph's node BC."""
+    rel = "mfgarchon/geometry/boundary/applicator_graph.py"
     target = package_copy / rel
     original = target.read_text()
-    anchor = "        node_bc = network_geometry.get_boundary_conditions()\n"
+    anchor = "        node_bc = geometry.get_boundary_conditions()\n"
     assert original.count(anchor) == 1
     try:
-        target.write_text(original.replace(anchor, anchor + "        _ = network_geometry.get_boundary_conditions()\n"))
+        target.write_text(original.replace(anchor, anchor + "        _ = geometry.get_boundary_conditions()\n"))
         violations = _violations(scan(package_copy))
     finally:
         target.write_text(original)
-    assert any("topology.py" in v and "2 rival sites, 1 allowed" in v for v in violations), violations
+    assert any("applicator_graph.py" in v and "2 rival sites, 1 allowed" in v for v in violations), violations

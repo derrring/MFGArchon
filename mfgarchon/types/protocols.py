@@ -35,8 +35,8 @@ class MFGProblem(Protocol):
         """Evaluate Hamiltonian H(x, p, m, t)."""
         ...
 
-    def get_initial_density(self) -> NDArray:
-        """Get initial density m_0(x)."""
+    def get_m_initial(self) -> NDArray:
+        """Get initial density m_0(x), the problem's one source of it (#1472)."""
         ...
 
     def get_initial_value_function(self) -> NDArray:

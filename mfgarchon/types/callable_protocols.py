@@ -603,6 +603,16 @@ class BoundCallable:
                 self.check_on(values)
         return self._read(**values)
 
+    def at_a_node(self, **values: Any) -> Any:
+        """A read on a network, where ``x`` is a node, an `int` that the network geometry's ``node_x`` builds (#1472, the
+        user's ruling of 2026-11-28). A node is neither a coordinate tuple nor a batch, so neither is checked here."""
+        if "x" in values and (isinstance(values["x"], bool) or not isinstance(values["x"], int)):
+            raise TypeError(
+                f"the library handed {getattr(self.fn, '__qualname__', self.fn)!r} x as {type(values['x']).__name__}, "
+                f"and on a network x is a node, an int: this is a defect in the door that called it (#1472)."
+            )
+        return self._read(**values)
+
 
 def bound_attribute(owner: Any, attr: str, slots: Slots, *, role: str) -> BoundCallable:
     """``getattr(owner, attr)`` bound to ``slots``, cached on ``owner`` and keyed on the callable.

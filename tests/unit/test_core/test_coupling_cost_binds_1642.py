@@ -447,8 +447,8 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
       is refused naming the same route.
     - A ``terminal_coupling`` that is not a coupling cost, a plain ``G(x, m)``, is refused, at the ``Model`` and again where
       a problem binds it, so one set after the ``Model`` was built is refused there too.
-    - On a network no solve takes a ``Model`` (#2045); the network's own route, ``node_potential_func``, reaches its
-      HJB's source."""
+    - On a network a coupling cost is refused, naming the route that reaches its HJB's source, the ``Model``'s
+      ``NetworkHamiltonian(node_potential_func=...)``, which this pin runs (#1472)."""
     from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
 
@@ -555,26 +555,29 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     from scipy.sparse import csr_matrix
 
     from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver
-    from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+    from mfgarchon.extensions.topology import NetworkHamiltonian
     from mfgarchon.geometry.graph.network_geometry import CustomNetwork, GridNetwork
 
     pytest.importorskip("igraph")
     ring = np.zeros((6, 6))
     for i in range(6):
         ring[i, (i + 1) % 6] = ring[(i + 1) % 6, i] = 1.0
-    with pytest.raises(NotImplementedError, match=r"network.*NetworkMFGComponents\(node_potential_func="):
+    with pytest.raises(NotImplementedError, match=r"coupling_cost.*network.*NetworkHamiltonian\(node_potential_func="):
         MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x: 0.0)),
+            model=Model(hamiltonian=NetworkHamiltonian(), coupling_cost=PotentialCost(lambda x: 0.0)),
             domain=CustomNetwork(csr_matrix(ring)),
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0 / 6.0, T=0.2),
             Nt=4,
         )
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    network = NetworkMFGProblem(
-        geometry=net, T=0.2, Nt=4, components=NetworkMFGComponents(node_potential_func=lambda t, node: 0.3 * node)
+    network = MFGProblem(
+        model=Model(hamiltonian=NetworkHamiltonian(node_potential_func=lambda t, node: 0.3 * node), volatility=0.0),
+        domain=net,
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0 / 5.0, T=0.2),
+        Nt=4,
     )
-    n = network.num_nodes
+    n = net.num_nodes
     spread = np.ptp(NetworkHJBSolver(network)._source_terms(np.ones(n) / n, 0.0))
     assert spread > 0.5, f"the node potential 0.3 i over 5 nodes spans 1.2 in the source; it spans {spread:.3e}"
 
@@ -948,8 +951,8 @@ def test_each_hjb_solve_is_given_u_T_at_its_own_density(loop, diverge_at):
 
 def test_what_stage_two_does_not_bind_is_refused():
     """A terminal coupling is refused in the multi-population iterator, which passes the stacked densities (#1642, the
-    user's ruling 5), and on a network, where no coupled solve takes a problem (#2568); the network's message names its
-    own route for u(T), ``terminal_node_value_func``. Off a grid, on FEM and meshless geometries, the problem declares G
+    user's ruling 5), and on a network, where no network solver binds one; the message names the route for u(T),
+    ``Conditions(u_terminal=...)`` read at each node, which this pin runs (#1472). Off a grid, on FEM and meshless geometries, the problem declares G
     and binds none, as it does F, and u(T) read with no binding is refused by name (stage 1b's G line; G and F bind on
     HJB-FEM P1, ``test_hjb_fem_binds_the_coupling_cost_1642``); and F
     and G alike by a weak-form HJB solver on a grid problem, meshless Galerkin on its own cloud, which would read the
@@ -1002,10 +1005,19 @@ def test_what_stage_two_does_not_bind_is_refused():
     ring = np.zeros((6, 6))
     for i in range(6):
         ring[i, (i + 1) % 6] = ring[(i + 1) % 6, i] = 1.0
-    with pytest.raises(NotImplementedError, match=r"terminal_coupling.*network.*terminal_node_value_func="):
+    from mfgarchon.extensions.topology import NetworkHamiltonian
+
+    with pytest.raises(NotImplementedError, match=r"terminal_coupling.*network.*Conditions\(u_terminal="):
         MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), terminal_coupling=PotentialCost(lambda x: 0.0)),
+            model=Model(hamiltonian=NetworkHamiltonian(), terminal_coupling=PotentialCost(lambda x: 0.0)),
             domain=CustomNetwork(csr_matrix(ring)),
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0 / 6.0, T=0.2),
             Nt=4,
         )
+    routed = MFGProblem(
+        model=Model(hamiltonian=NetworkHamiltonian(), volatility=0.0),
+        domain=CustomNetwork(csr_matrix(ring)),
+        conditions=Conditions(u_terminal=lambda x: 0.5 * x, m_initial=lambda x: 1.0 / 6.0, T=0.2),
+        Nt=4,
+    )
+    np.testing.assert_array_equal(routed.terminal_value(None), 0.5 * np.arange(6))

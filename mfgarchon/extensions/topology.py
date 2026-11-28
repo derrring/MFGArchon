@@ -30,6 +30,8 @@ from mfgarchon.core.hamiltonian import (
 )
 from mfgarchon.core.mfg_components import MFGComponents, own_copy_for_a_problem
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.core.model import Conditions, Model
+from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
 from mfgarchon.types.callable_protocols import (
     NETWORK_HAMILTONIAN_SLOTS,
     NODE_INTERACTION_SLOTS,
@@ -66,7 +68,7 @@ class NetworkHamiltonian(HamiltonianBase):
     a default quadratic Hamiltonian on edges.
 
     It holds no graph: ``bind(geometry)`` returns a copy bound to a network geometry, whose graph it reads at each read
-    (#1472). `NetworkMFGProblem` binds the one it builds; until #1472's stage 2 no other problem binds the one it is given.
+    (#1472). A problem on a network binds the one it is given (#1472 stage 2a).
 
     Parameters
     ----------
@@ -164,8 +166,7 @@ class NetworkHamiltonian(HamiltonianBase):
         if self._geometry is None:
             raise RuntimeError(
                 "This NetworkHamiltonian is bound to no network geometry, so it has no graph to read: bind it with "
-                ".bind(geometry) before handing it to a problem: only NetworkMFGProblem binds one, the one it builds, until "
-                "#1472's stage 2."
+                ".bind(geometry), or hand it to a problem on that geometry, which binds it (#1472)."
             )
         return self._geometry
 
@@ -411,6 +412,15 @@ class NetworkMFGComponents(MFGComponents):
         pass
 
 
+def _at_each_node(given: Callable | None, role: str, default: float) -> Callable:
+    """A node field as a `Conditions` callable, which the problem reads at each node with the node as x (#1472, the user's
+    ruling of 2026-11-28): the field read by the names it declares, ``(t, node)``, or ``default`` where it is not given."""
+    if given is None:
+        return lambda x: default
+    value = _remembered(given, NODE_VALUE_SLOTS, role)
+    return lambda t, x: value(t=t, node=x)
+
+
 class NetworkMFGProblem(MFGProblem):
     """
     Mean Field Games problem on network structures.
@@ -471,8 +481,11 @@ class NetworkMFGProblem(MFGProblem):
             raise ValueError("NetworkMFGProblem requires a graph geometry (pass geometry=...).")
         network_geometry = geometry  # local name; the remainder of __init__ uses network_geometry
 
-        # Issue #910: the problem's NetworkHamiltonian, which the parent wires as the problem's Hamiltonian.
-        # Construction's checks read none of it on a network geometry (#2901, stage 1c-iii).
+        # The model form, which this class builds from its components until #1472 stage 2b deletes it (stage 2a). Issue
+        # #910: the problem's NetworkHamiltonian, which the problem binds to the geometry (#1472). The node fields are
+        # the problem's conditions, read at each node at t = 0 and t = T as `get_initial_density` read them, the uniform
+        # density and a zero terminal value where they are not given. The deterministic volatility is the components
+        # form's (Sigma = 0); a network solve takes its own at solve time (#1544).
         num_nodes = network_geometry.num_nodes
         net_components = components or NetworkMFGComponents()
         network_hamiltonian = NetworkHamiltonian(
@@ -480,41 +493,26 @@ class NetworkMFGProblem(MFGProblem):
             hamiltonian_dm_func=net_components.hamiltonian_dm_func,
             node_potential_func=net_components.node_potential_func,
             node_interaction_func=net_components.node_interaction_func,
-        ).bind(network_geometry)
-        parent_components = MFGComponents(
-            hamiltonian=network_hamiltonian,
-            m_initial=lambda x: 1.0 / num_nodes,
-            u_terminal=lambda x: 0.0,
         )
-
-        # Initialize parent with geometry (not deprecated xmin/xmax/Nx)
         super().__init__(
-            T=T,
+            model=Model(hamiltonian=network_hamiltonian, volatility=0.0),
+            domain=network_geometry,
+            conditions=Conditions(
+                m_initial=_at_each_node(
+                    net_components.initial_node_density_func, "initial_node_density_func", 1.0 / num_nodes
+                ),
+                u_terminal=_at_each_node(net_components.terminal_node_value_func, "terminal_node_value_func", 0.0),
+                T=T,
+            ),
             Nt=Nt,
-            geometry=network_geometry,
-            components=parent_components,
         )
 
-        # Issue #1474: store the NetworkMFGComponents the NetworkHamiltonian was built from, and wire the
-        # object as the single-source Hamiltonian (`hamiltonian_class`). Previously `self.components` was
-        # overwritten with a fresh instance, orphaning the object (`hamiltonian_class == None`), so FP /
-        # policy iteration fell to divergent legacy paths while RK45 used the method — the three solved
-        # different HJBs. Now all read one Hamiltonian. The problem holds its own copy, so the two writes
-        # below leave the caller's object as given (#2702).
+        # Issue #1474: the problem's components are the NetworkMFGComponents it was given, its own copy (#2702), holding
+        # the Hamiltonian the problem bound, as `hamiltonian` and as the single-source `hamiltonian_class`.
+        bound = self.components._hamiltonian_class
         self.components = own_copy_for_a_problem(net_components)  # type: ignore[assignment]
-        self.components.hamiltonian = network_hamiltonian
-        self.components._hamiltonian_class = network_hamiltonian
-
-        # Issue #1471: node boundary conditions are owned by the graph geometry (GraphGeometry),
-        # not by components. Resolve the geometry's GraphBCConfig once into the single-source
-        # GraphApplicator (the single applier — the pin logic is not re-forked here). Explicit-init
-        # None when the geometry carries no node-BC.
-        self._node_applicator = None
-        node_bc = network_geometry.get_boundary_conditions()
-        if node_bc is not None:
-            from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
-
-            self._node_applicator = GraphApplicator.from_config(node_bc, num_nodes=network_geometry.num_spatial_points)
+        self.components.hamiltonian = bound
+        self.components._hamiltonian_class = bound
 
         self.problem_name = problem_name
 
@@ -594,25 +592,12 @@ class NetworkMFGProblem(MFGProblem):
     # Initial and terminal conditions
 
     def get_initial_density(self) -> np.ndarray:
-        """Initial density distribution on network nodes."""
-        if self.components.initial_node_density_func is not None:  # type: ignore[attr-defined]
-            given = self.components.initial_node_density_func  # type: ignore[attr-defined]
-            density = _remembered(given, NODE_VALUE_SLOTS, "initial_node_density_func")
-            return np.array([density(t=0.0, node=i) for i in range(self.num_nodes)])
-
-        # Default: uniform distribution
-        initial_density = np.ones(self.num_nodes) / self.num_nodes
-        return initial_density
+        """Initial density on the nodes: the problem's own, `get_m_initial` (#1472 stage 2a)."""
+        return self.get_m_initial()
 
     def get_terminal_value(self) -> np.ndarray:
-        """Terminal value function on network nodes."""
-        if self.components.terminal_node_value_func is not None:  # type: ignore[attr-defined]
-            given = self.components.terminal_node_value_func  # type: ignore[attr-defined]
-            value = _remembered(given, NODE_VALUE_SLOTS, "terminal_node_value_func")
-            return np.array([value(t=self.T, node=i) for i in range(self.num_nodes)])
-
-        # Default: zero terminal values
-        return np.zeros(self.num_nodes)
+        """Terminal value on the nodes: the problem's own, `get_u_terminal` (#1472 stage 2a)."""
+        return self.get_u_terminal()
 
     # Graph operators (gradient / divergence / Laplacian) are owned by the geometry
     # (GraphGeometry, Issue #1472) — the graph structural data lives there, not on the problem. The
@@ -624,14 +609,15 @@ class NetworkMFGProblem(MFGProblem):
     def apply_boundary_conditions(self, u: np.ndarray, t: float) -> np.ndarray:
         """Apply the geometry-owned node boundary conditions to the value field (Issue #1471).
 
-        Node-BC lives on the graph geometry and is resolved once into a single-source
-        ``GraphApplicator``; this delegates the value-field (HJB) DIRICHLET pin to it (which copies
-        the input, so ``u`` is not mutated). No-op when the geometry carries no node-BC. The previous
-        ``components.boundary_nodes`` channel (which bypassed the #1456 BC single source) is retired.
+        Node-BC lives on the graph geometry and is read from it at each call, into a single-source ``GraphApplicator``
+        (#1472 stage 2a); this delegates the value-field (HJB) DIRICHLET pin to it (which copies the input, so ``u`` is
+        not mutated). No-op when the geometry carries no node-BC. The previous ``components.boundary_nodes`` channel
+        (which bypassed the #1456 BC single source) is retired.
         """
-        if self._node_applicator is None:
+        node_bc = GraphApplicator.of_the_geometry(cast("NetworkGeometry", self.geometry))
+        if node_bc is None:
             return u
-        return self._node_applicator.apply_hjb(u, t)
+        return node_bc.apply_hjb(u, t)
 
     # Legacy interface compatibility
 

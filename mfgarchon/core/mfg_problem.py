@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 import numpy as np
 
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.geometry.boundary import BoundaryConditions
+    from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
 
 
@@ -845,6 +846,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Initialize arrays (Issue #670: unified naming)
         self.u_terminal: NDArray  # Terminal condition u(T, x)
         self.m_initialial: NDArray  # Initial density m(0, x)
+
+        # On a network, the Hamiltonian the problem is given, bound to its network geometry, before anything reads it
+        self._bind_a_network_hamiltonian()
 
         # Initialize functions
         self._initialize_functions()
@@ -2320,6 +2324,22 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
         return g + np.asarray(energy.flat_derivative(flat, t=self.T), dtype=float).reshape(g.shape)
 
+    def _bind_a_network_hamiltonian(self) -> None:
+        """On a network, the problem's Hamiltonian is the `NetworkHamiltonian` it is given, bound to its network geometry
+        (#1472 stage 2a); a Hamiltonian that is not a network's is refused by name, since the network solvers read a
+        `NetworkHamiltonian`'s methods. The public field is left as given, as a composed Hamiltonian's is (#2702)."""
+        if not self.is_network or self.components is None:
+            return
+        from mfgarchon.extensions.topology import NetworkHamiltonian
+
+        given = self.components._hamiltonian_class
+        if not isinstance(given, NetworkHamiltonian):
+            raise TypeError(
+                f"A problem on a {type(self.geometry).__name__} takes a NetworkHamiltonian, whose methods the network "
+                f"solvers read, and was given {type(given).__name__} (#1472)."
+            )
+        self.components._hamiltonian_class = given.bind(cast("NetworkGeometry", self.geometry))
+
     def _bind_cost(self, field: str) -> EnergyFunctional | None:
         """``model.<field>.bind(self)`` for ``coupling_cost`` and ``terminal_coupling``, where this stage binds one; the
         reason by name where it does not (#1642).
@@ -2335,15 +2355,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             return None
         if self.is_network:
             route = (
-                "give the potential through the network's own route, NetworkMFGComponents(node_potential_func=...)"
+                "give the potential through the Model's NetworkHamiltonian(node_potential_func=...)"
                 if field == "coupling_cost"
-                else "give the terminal values through NetworkMFGComponents(terminal_node_value_func=...)"
+                else "give the terminal values through Conditions(u_terminal=...), read at each node"
             )
             raise NotImplementedError(
-                f"Model({field}=...) on a network: no network solve takes a problem built from a Model -- the "
-                "network solvers take a NetworkMFGProblem, which has no continuous-domain path (#2045), and "
-                "create_network_mfg_solver's coupled iterator refuses every network geometry (#2568). On a network, "
-                f"{route}. F and G on a network are a later stage of #1642."
+                f"Model({field}=...) on a network: no network solver binds it; they read the problem's "
+                f"NetworkHamiltonian and its conditions (#1472). On a network, {route}. F and G on a network are a "
+                "later stage of #1642."
             )
         from mfgarchon.geometry import TensorProductGrid
 
