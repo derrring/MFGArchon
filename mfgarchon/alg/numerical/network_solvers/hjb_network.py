@@ -22,19 +22,24 @@ Key algorithms:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver, InnerSolveFailure, checked_inner_budget
+from mfgarchon.alg.numerical.network_solvers.fp_network import (
+    refuse_a_problem_a_network_solver_cannot_read,
+    refuse_a_rebuilt_graph,
+)
 from mfgarchon.utils.non_finite_read import refuse_a_non_finite_read
 from mfgarchon.utils.numerical.volatility import diffusion_from_volatility
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import NetworkGeometry
 
 
 def _network_diffusion(
@@ -93,6 +98,8 @@ class NetworkHJBSolver(BaseHJBSolver):
     # `components.boundary_nodes`, so it cannot honor a node BC: `False`. The
     # `NetworkPolicyIterationHJBSolver` subclass — which applies them each step — overrides to `True`.
     _honors_node_bc: bool = False
+    # What a solve reads from its problem, refused by name at construction when absent (Issue #2045)
+    _problem_reads: tuple[str, ...] = ("geometry.network_data", "hamiltonian")
 
     def __init__(
         self,
@@ -111,6 +118,7 @@ class NetworkHJBSolver(BaseHJBSolver):
             tolerance: ODE solver tolerance (rtol for solve_ivp)
         """
         super().__init__(problem)
+        refuse_a_problem_a_network_solver_cannot_read(problem, type(self).__name__, self._problem_reads)
 
         self.network_problem = problem
 
@@ -127,29 +135,15 @@ class NetworkHJBSolver(BaseHJBSolver):
                 f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
             )
 
-        # Issue #2045: refuse a non-network problem in the same shape the node-BC check above
-        # uses, rather than letting the first network-only attribute read raise AttributeError.
-        # `NetworkPolicyIterationHJBSolver` sets `_honors_node_bc`, so it SKIPS that check and
-        # used to fall through to here -- an unguarded read that told the caller nothing about
-        # why the solver was inapplicable, and was indistinguishable from a defect in the solver.
         self.scheme = scheme
         self.tolerance = tolerance
 
-        # Network properties. Read inside try/except rather than guarded by `hasattr`: the
-        # fail-fast policy names try-except as the replacement for `hasattr`, and it covers the
-        # wider case -- a problem carrying `num_nodes` but no adjacency accessor fails here too,
-        # where a single-attribute guard would have waved it through to the next line.
-        try:
-            self.num_nodes = problem.num_nodes
-            self.adjacency_matrix = problem.get_adjacency_matrix()
-            self.laplacian_matrix = problem.get_laplacian_matrix()
-        except AttributeError as exc:
-            raise NotImplementedError(
-                f"{type(self).__name__} requires a network problem -- one carrying `num_nodes`, an "
-                f"adjacency matrix and a graph Laplacian. This problem's geometry is "
-                f"{type(problem.geometry).__name__} and it is missing {exc}. The network solvers "
-                f"discretize on nodes and edges and have no continuous-domain path (Issue #2045)."
-            ) from exc
+        # The graph is the geometry's (#1472 stage 1); a problem whose geometry is not a network's is refused above (Issue #2045)
+        self.network = cast("NetworkGeometry", problem.geometry)
+        self._graph_generation = self.network.graph_generation
+        self.num_nodes = self.network.num_nodes
+        self.adjacency_matrix = self.network.network_data.adjacency_matrix
+        self.laplacian_matrix = self.network.network_data.laplacian_matrix
 
         # Time discretization
         self.dt = problem.T / problem.Nt
@@ -162,7 +156,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # Precompute neighbor lists for Hamiltonian evaluation
         self.gradient_ops: dict[int, list[int]] = {}
         for i in range(self.num_nodes):
-            self.gradient_ops[i] = self.network_problem.get_node_neighbors(i)
+            self.gradient_ops[i] = self.network.get_neighbors(i)
 
     def solve_hjb_system(
         self,
@@ -187,6 +181,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
+        refuse_a_rebuilt_graph(type(self).__name__, self.network, self._graph_generation)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
@@ -217,7 +212,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         H = np.zeros(self.num_nodes)
         for i in range(self.num_nodes):
             neighbors = self.gradient_ops[i]
-            H[i] = self.network_problem.hamiltonian(t=t, node=i, neighbors=neighbors, p=u, m=m)
+            H[i] = self.network_problem.hamiltonian(t=t, node=self.network.node_x(i), neighbors=neighbors, p=u, m=m)
         return H
 
     def _source_terms(self, m: np.ndarray, t: float) -> np.ndarray:
@@ -232,7 +227,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # density_coupling` re-derived the coupling on the raw stacked `m`, diverging from the object's
         # `_extract_own_density` for multi-population `m` and corrupting `h_control = h_total - source`.
         H = self.network_problem.hamiltonian_class
-        return np.array([H.source_term(x=i, m=m, t=t) for i in range(self.num_nodes)])
+        return np.array([H.source_term(x=self.network.node_x(i), m=m, t=t) for i in range(self.num_nodes)])
 
     def _solve_ode(
         self,
@@ -310,6 +305,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     # `problem.apply_boundary_conditions` (the node-Dirichlet pin over `boundary_nodes`) at every
     # timestep in `solve_hjb_system`, so it honors a node BC and is exempt from the base gate.
     _honors_node_bc: bool = True
+    _problem_reads = (
+        *NetworkHJBSolver._problem_reads,
+        "apply_boundary_conditions",
+        "hamiltonian_class.has_custom_hamiltonian",
+    )
 
     def __init__(
         self,
@@ -371,6 +371,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Solve HJB using policy iteration; ``volatility`` as `NetworkHJBSolver.solve_hjb_system` reads it."""
+        refuse_a_rebuilt_graph(type(self).__name__, self.network, self._graph_generation)
         # The solution's row handed at the door, its terminal value or its initial density, is read before any work and
         # refused here if it is not finite; every other array is judged by the step that reads it (#2975).
         refuse_a_non_finite_read(
@@ -476,7 +477,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
 
         return {
             i: checked_control(
-                H.optimal_control(x=np.array([i]), m=m, p=u, t=t),
+                H.optimal_control(x=self.network.node_x(i), m=m, p=u, t=t),
                 u,
                 reader="NetworkPolicyIterationHJBSolver",
                 source=H,
@@ -514,7 +515,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                 if a > 0.0:
                     A[i, i] += a
                     A[i, j] -= a
-                    w = self.network_problem.network_data.get_edge_weight(i, j)
+                    w = self.network.network_data.get_edge_weight(i, j)
                     control_cost += 0.5 * a * a / w
             # b: u_next/dt + L(alpha), with L = c(alpha) + V + f the cost-signed running cost. At the
             # optimal-policy fixed point (generator action = 2*H_control, c = H_control) this reduces

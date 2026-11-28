@@ -1,0 +1,7 @@
+- **The copies of a network's graph outside its geometry** (#1472, stage 1). The graph is the network geometry's, and a network Hamiltonian, a network problem and the network solvers read it there. Removed, with what replaces each:
+  - `NetworkHamiltonian(network_data=...)`: `NetworkHamiltonian(...).bind(geometry)`, a copy bound to the network geometry, whose graph it reads at each read. `NetworkMFGProblem` binds the one it builds. `NetworkMFGProblem.network_data` and `num_nodes` stay, as reads of the geometry.
+  - `get_adjacency_matrix()`, `get_laplacian_matrix()`, and the attributes `adjacency_matrix`, `laplacian_matrix` and `incidence_matrix`: `problem.geometry.network_data.adjacency_matrix`, `.laplacian_matrix` and `.incidence_matrix`, the same matrices.
+  - `get_node_neighbors(node)`: `problem.geometry.get_neighbors(node)`.
+  - `get_network_statistics()`: `compute_network_statistics(problem.geometry.network_data)`, from `mfgarchon.geometry.graph.network_geometry`.
+  - The attributes `is_directed`, `is_weighted` and `num_edges`: the same names on `problem.geometry.network_data`.
+  - The attribute `network_geometry`: `problem.geometry`.

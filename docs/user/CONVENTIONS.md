@@ -1036,6 +1036,10 @@ tuple, such as a Hamiltonian's `dp` or `optimal_control`, hands the body that tu
 hands it the finite-difference steps it builds from it, as tuples. A `VariationalMFGProblem` method takes `x` on a line,
 a scalar or an array, and hands the body the one-entry tuple of it.
 
+On a network a node plays `x`. The network solvers hand a network Hamiltonian the node as an `int`, which the network
+geometry's `node_x` builds (#3012). A `NetworkHamiltonian` method you call yourself takes the node as an `int`, a numpy
+integer or a one-entry array of integer dtype, one of the graph's nodes, and refuses any other form by name.
+
 A region is read at one point, where the library reads one, or at points of shape `(N, d)`, one row per point. So a
 predicate you call yourself, such as `sdf_region(sdf)(points)`, takes `(N, d)`, and refuses a 1-D array by name, since
 it does not say whether it is $N$ points on a line or one point in $N$ dimensions: pass `points.reshape(-1, 1)` for
